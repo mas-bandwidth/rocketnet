@@ -17,8 +17,8 @@
 // the pin states a worker reports (rocketnet_server_uring_worker_cpu): a cpu
 // number once pinned, or one of these
 
-#define ROCKETNET_URING_PIN_PENDING -2 // the worker thread has not run its pin yet
-#define ROCKETNET_URING_PIN_NONE -1    // not pinned: not asked for (num_os_cpus 0) or refused (counted, logged by name)
+#define ROCKETNET_URING_PIN_PENDING ( -2 ) // the worker thread has not run its pin yet
+#define ROCKETNET_URING_PIN_NONE ( -1 )  // not pinned: not asked for (num_os_cpus 0) or refused (counted, logged by name)
 
 // why a pin was refused
 

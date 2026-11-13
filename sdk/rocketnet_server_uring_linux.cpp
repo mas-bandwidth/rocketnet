@@ -221,7 +221,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
     if ( fd < 0 )
     {
-        rocketnet_error( "io_uring transport: failed to create socket: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to create socket: %s", rocketnet_platform_socket_error_text( errno ).text );
         return -1;
     }
 
@@ -241,7 +241,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     int one = 1;
     if ( !first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
     {
-        rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", rocketnet_platform_socket_error_text( errno ).text );
         close( fd );
         return -1;
     }
@@ -251,7 +251,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         int zero = 0;
         if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) != 0 )
         {
-            rocketnet_error( "io_uring transport: failed to clear socket ipv6 only: %s", strerror( errno ) );
+            rocketnet_error( "io_uring transport: failed to clear socket ipv6 only: %s", rocketnet_platform_socket_error_text( errno ).text );
             close( fd );
             return -1;
         }
@@ -275,7 +275,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     struct rocketnet_socket_buffer_grant_t send_grant;
     if ( !rocketnet_socket_buffer_request( fd, false, send_buffer_size, &send_grant ) )
     {
-        rocketnet_error( "io_uring transport: failed to set socket send buffer size: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set socket send buffer size: %s", rocketnet_platform_socket_error_text( errno ).text );
         close( fd );
         return -1;
     }
@@ -283,7 +283,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     struct rocketnet_socket_buffer_grant_t receive_grant;
     if ( !rocketnet_socket_buffer_request( fd, true, receive_buffer_size, &receive_grant ) )
     {
-        rocketnet_error( "io_uring transport: failed to set socket receive buffer size: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set socket receive buffer size: %s", rocketnet_platform_socket_error_text( errno ).text );
         close( fd );
         return -1;
     }
@@ -301,16 +301,16 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     struct sockaddr_storage sockaddr;
     socklen_t socklen = rocketnet_server_uring_address_to_sockaddr( &addr, ipv6, &sockaddr );
 
-    if ( socklen == 0 || bind( fd, (struct sockaddr *) &sockaddr, socklen ) < 0 )
+    if ( socklen == 0 || bind( fd, reinterpret_cast<struct sockaddr *>( &sockaddr ), socklen ) < 0 )
     {
-        rocketnet_error( "io_uring transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", rocketnet_platform_socket_error_text( errno ).text );
         close( fd );
         return -1;
     }
 
     if ( first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
     {
-        rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", rocketnet_platform_socket_error_text( errno ).text );
         close( fd );
         return -1;
     }
@@ -320,9 +320,9 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         struct sockaddr_storage bound;
         memset( &bound, 0, sizeof( bound ) );
         socklen_t bound_length = sizeof( bound );
-        if ( getsockname( fd, (struct sockaddr *) &bound, &bound_length ) != 0 )
+        if ( getsockname( fd, reinterpret_cast<struct sockaddr *>( &bound ), &bound_length ) != 0 )
         {
-            rocketnet_error( "io_uring transport: failed to get bound socket port: %s", strerror( errno ) );
+            rocketnet_error( "io_uring transport: failed to get bound socket port: %s", rocketnet_platform_socket_error_text( errno ).text );
             close( fd );
             return -1;
         }
@@ -340,7 +340,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     if ( fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == -1 )
     {
-        rocketnet_error( "io_uring transport: failed to set socket non-blocking: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set socket non-blocking: %s", rocketnet_platform_socket_error_text( errno ).text );
         close( fd );
         return -1;
     }
@@ -588,7 +588,7 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
         if ( result != 0 )
         {
             uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-            rocketnet_warn( "io_uring worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on any cpu", queue->index, cpu, strerror( result ) );
+            rocketnet_warn( "io_uring worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on any cpu", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
             queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
         }
         else
@@ -606,9 +606,9 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
         if ( result != 0 )
         {
             char call[64];
-            snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", param.sched_priority );
-            rocketnet_warn( "io_uring worker %d priority not set: %s refused (%s); it runs at its default priority", queue->index, call, strerror( result ) );
-            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+            (void) snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", param.sched_priority );
+            rocketnet_warn( "io_uring worker %d priority not set: %s refused (%s); it runs at its default priority", queue->index, call, rocketnet_platform_socket_error_text( result ).text );
+            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, rocketnet_platform_socket_error_text( result ).text, "the thread runs at its default priority" );
         }
     }
 }
@@ -791,7 +791,7 @@ static bool rocketnet_server_uring_ring_create( struct rocketnet_server_uring_qu
     const int result = io_uring_queue_init_params( ROCKETNET_URING_ENTRIES, &queue->ring, &params );
     if ( result < 0 )
     {
-        rocketnet_error( "io_uring transport: queue %d: io_uring_queue_init_params failed: %s", queue->index, strerror( -result ) );
+        rocketnet_error( "io_uring transport: queue %d: io_uring_queue_init_params failed: %s", queue->index, rocketnet_platform_socket_error_text( -result ).text );
         return false;
     }
 
@@ -1010,7 +1010,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
         queue->wake_fd = eventfd( 0, EFD_CLOEXEC );
         if ( queue->wake_fd < 0 )
         {
-            rocketnet_error( "io_uring transport: queue %d: eventfd failed: %s", i, strerror( errno ) );
+            rocketnet_error( "io_uring transport: queue %d: eventfd failed: %s", i, rocketnet_platform_socket_error_text( errno ).text );
             rocketnet_server_uring_free( uring );
             return NULL;
         }

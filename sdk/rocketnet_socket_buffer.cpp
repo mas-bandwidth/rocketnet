@@ -28,12 +28,12 @@ bool rocketnet_socket_buffer_note( char * line, int line_bytes, const char * tra
     {
         if ( force_tried )
         {
-            snprintf( line, (size_t) line_bytes, "%s transport: socket %s buffer asked %d bytes, got %d (past %s with %s)", transport, direction, requested_bytes,
+            (void) snprintf( line, (size_t) line_bytes, "%s transport: socket %s buffer asked %d bytes, got %d (past %s with %s)", transport, direction, requested_bytes,
                       granted_bytes, limit, force_name );
         }
         else
         {
-            snprintf( line, (size_t) line_bytes, "%s transport: socket %s buffer asked %d bytes, got %d", transport, direction, requested_bytes, granted_bytes );
+            (void) snprintf( line, (size_t) line_bytes, "%s transport: socket %s buffer asked %d bytes, got %d", transport, direction, requested_bytes, granted_bytes );
         }
         return false;
     }
@@ -41,24 +41,24 @@ bool rocketnet_socket_buffer_note( char * line, int line_bytes, const char * tra
     char force_text[96];
     if ( !force_tried )
     {
-        snprintf( force_text, sizeof( force_text ), "%s not tried", force_name );
+        (void) snprintf( force_text, sizeof( force_text ), "%s not tried", force_name );
     }
     else if ( force_error == EPERM )
     {
-        snprintf( force_text, sizeof( force_text ), "%s refused: the process lacks CAP_NET_ADMIN", force_name );
+        (void) snprintf( force_text, sizeof( force_text ), "%s refused: the process lacks CAP_NET_ADMIN", force_name );
     }
     else if ( force_error != 0 )
     {
-        snprintf( force_text, sizeof( force_text ), "%s refused: errno %d", force_name, force_error );
+        (void) snprintf( force_text, sizeof( force_text ), "%s refused: errno %d", force_name, force_error );
     }
     else
     {
-        snprintf( force_text, sizeof( force_text ), "%s taken and still short", force_name );
+        (void) snprintf( force_text, sizeof( force_text ), "%s taken and still short", force_name );
     }
 
     const char * consequence = receive ? "the kernel drops datagrams that arrive past the grant between updates" : "sends wait on a full socket";
 
-    snprintf( line, (size_t) line_bytes, "%s transport: socket %s buffer asked %d bytes, got %d (%s); %s: set sysctl %s=%d", transport, direction, requested_bytes,
+    (void) snprintf( line, (size_t) line_bytes, "%s transport: socket %s buffer asked %d bytes, got %d (%s); %s: set sysctl %s=%d", transport, direction, requested_bytes,
               granted_bytes, force_text, consequence, limit, requested_bytes );
     return true;
 }
