@@ -5,11 +5,10 @@
 
 // The clean-run rule (tests/counters_expect.h) and COOKIE_REPLY_WITHHELD: a
 // withheld cookie reply is the per-update limit answering one request of a
-// source and withholding its copy (t12 rule 7), so on a clean run it is
-// explained when it withholds no more than it answers: the cookie reasons
-// (which count every withheld request too) are at least twice the withheld
-// count. Withheld with nothing answered, more withheld than answered, or any
-// other refusal, still fails.
+// source and withholding its copies (t12 rule 7), so on a clean run it is
+// explained when at least one cookie reply went out: the cookie reasons
+// (which count every withheld request too) exceed the withheld count.
+// Withheld with nothing answered, or any other refusal, still fails.
 
 #include "test_unit_registry.h"
 
@@ -43,9 +42,9 @@ static void test_clean_run_explains_withheld_copies_of_answered_requests()
     check( clean_run_refusals( 1, 2, 0, 0 ) == 0 );
     check( clean_run_refusals( 2, 4, 0, 0 ) == 0 );
 
-    // more withheld than answered: a source shut out update after update
-    check( clean_run_refusals( 2, 3, 0, 0 ) == 1 );
-    check( clean_run_refusals( 5, 6, 0, 0 ) == 1 );
+    // an update late by several send intervals: one answered, its copies withheld
+    check( clean_run_refusals( 2, 3, 0, 0 ) == 0 );
+    check( clean_run_refusals( 5, 6, 0, 0 ) == 0 );
 
     // the copy of a stale cookie's request, answered once: the withheld copy
     // is explained, the stale cookie itself is a refusal of its own

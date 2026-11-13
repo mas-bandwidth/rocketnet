@@ -188,17 +188,18 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
     // limit answers the first and withholds the copy (t12 rule 7). That is
     // the limit working, so it is explained when a cookie reply did go out:
     // each withheld request is also counted by its cookie reason, so the
-    // reasons less the withheld count are the requests answered. A withheld
-    // request is a copy of one answered in its update, so a clean run
-    // withholds no more than it answers: withheld with none answered, or
-    // more withheld than answered (a bitmap that is never cleared, a source
-    // shut out by another's bit), is still a failure.
+    // reasons less the withheld count are the requests answered. An update
+    // late by k send intervals banks about k copies of one request, so the
+    // number of copies per answered request has no fixed bound; withheld
+    // with none answered is still a failure. A bitmap that is never cleared
+    // is caught by the handshake budget unit tests (exact WITHHELD values
+    // across updates) and by the connect that then times out.
 
     const uint64_t withheld = counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD];
     const uint64_t cookie_reasons = counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] +
                                     counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY] +
                                     counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED];
-    const bool withheld_copies_of_answered = withheld > 0 && cookie_reasons >= 2 * withheld;
+    const bool withheld_copies_of_answered = withheld > 0 && cookie_reasons > withheld;
 
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
