@@ -13103,9 +13103,9 @@ void rocketnet_test_xdp_vlan_stacked_devices_refused()
     rocketnet_xdp_stack_refused( "10.77.15.1:40413", "rnxdpbr", "kind bridge" );
     rocketnet_xdp_stack_refused( "10.77.16.1:40413", "rnxdpmv", "kind macvlan" );
 
-    // a VLAN the transport takes, on a parent that strips the tag on receive
-    // (veth's rx VLAN offload is on when made): the pre-flight refuses it by
-    // name (R2), and with the offload off that refusal is gone
+    // a VLAN the transport takes, on a parent whose rx-vlan-offload flag is
+    // on (a veth's is when made). The pre-flight judges the flag, so it
+    // refuses the server by name (R2); with the flag off that refusal is gone
 
     rocketnet_xdp_veth_run( "ip addr add 10.77.17.1/24 dev rnxdpq.10" );
     rocketnet_xdp_veth_run( "ethtool -K " ROCKETNET_XDP_STACK_LOWER " rxvlan on" );
@@ -13121,7 +13121,8 @@ void rocketnet_test_xdp_vlan_stacked_devices_refused()
     rocketnet_check( pinned_named );
 
     struct rocketnet_server_transport_t * automatic = rocketnet_xdp_link_create( "auto", "10.77.17.1:40413" );
-    const bool auto_fell = automatic != NULL && strcmp( rocketnet_server_transport_io_name( automatic ), "xdp" ) != 0 && strstr( rocketnet_test_captured_log, stripped ) != NULL;
+    const bool auto_fell = automatic != NULL && strcmp( rocketnet_server_transport_io_name( automatic ), "xdp" ) != 0 && strstr( rocketnet_test_captured_log, stripped ) != NULL &&
+                           strstr( rocketnet_test_captured_log, "server transport xdp refused. trying the next candidate" ) != NULL;
     if ( automatic )
     {
         rn_native_server_transport_stop_and_destroy( automatic );

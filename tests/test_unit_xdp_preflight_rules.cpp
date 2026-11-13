@@ -8,8 +8,9 @@
 // under a root; production's root is ""): the kernel command line (B1), the
 // queue IRQs (R4), the real-time throttle (R8), and the queue vectors read
 // again after the attach. No root, no NIC, no socket, no clock: the files are
-// the machine. The VLAN tag rule (R2) is judged from a given flags read. scripts/rocketnet-provision's selftest drives the script's
-// side of the same rules.
+// the machine. The VLAN tag rule (R2) is judged from a given flags read.
+// scripts/rocketnet-provision's selftest drives the script's side of the
+// same rules.
 
 #include <stdio.h>
 #include <string.h>
