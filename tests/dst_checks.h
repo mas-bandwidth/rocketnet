@@ -1343,11 +1343,16 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                     // ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS may still be in flight
                     // (by step; never fewer than the earlier rule owed, every
                     // sequence but the newest 20)
-                    const uint32_t by_count = s->last_sent_seq > 20 ? s->last_sent_seq - 20 : 0;
+                    // sequences start at 0: the count rule owes 0 .. last - 20
+                    // once 21 have been sent, and nothing before; with
+                    // nothing aged past the slack either, nothing is owed
+                    const int count_owes = s->last_sent_seq >= 20;
+                    const uint32_t by_count = count_owes ? s->last_sent_seq - 20 : 0;
                     const uint32_t by_step = rocketnet_dst_check_owed_through( st, s );
-                    const uint32_t settled = by_step == UINT32_MAX || by_step < by_count ? by_count : by_step;
+                    const int owes = by_step != UINT32_MAX || count_owes;
+                    const uint32_t settled = by_step == UINT32_MAX || ( count_owes && by_step < by_count ) ? by_count : by_step;
                     for ( uint32_t seq = s->reliable_base;
-                          seq <= settled && seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
+                          owes && seq <= settled && seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
                     {
                         if ( rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, seq, "reliable_sent" ) &&
                              !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )

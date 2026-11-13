@@ -632,6 +632,38 @@ static void test_dst_check_reliable_in_flight_slack_passes()
 }
 REGISTER_UNIT_TEST( test_dst_check_reliable_in_flight_slack_passes );
 
+// A stream that starts late: all of its sends are younger than the in-flight
+// slack at the end, so the step rule owes none of them, and the count rule
+// (every sequence but the newest 20) owes none while it has sent 20 or
+// fewer. With 21 sends the count rule owes the oldest, however young.
+
+static void dst_check_young_stream( struct rocketnet_dst_check_state_t * st, uint32_t last )
+{
+    rocketnet_dst_check_init( st, 1, 1000 );
+    for ( uint32_t seq = 0; seq <= last; seq++ )
+    {
+        rec_sent( st, 0, 0, 2, seq );
+    }
+    st->step = 1000 + ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS - 1;
+    rocketnet_unit_check( st->failed == 0 );
+    rec_end( st, 0 );
+}
+
+static void test_dst_check_reliable_young_stream_owes_nothing()
+{
+    DST_CHECK_STATE( st );
+    dst_check_young_stream( &st, 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    dst_check_young_stream( &st, 19 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    dst_check_young_stream( &st, 20 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
+}
+REGISTER_UNIT_TEST( test_dst_check_reliable_young_stream_owes_nothing );
+
 // no_unscheduled_end: a session's end is explained only by the script that
 // ended that same generation (explained), and the first connect (generation
 // 0) ends nothing.
