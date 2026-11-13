@@ -24,9 +24,11 @@
 //                   Refresh. A call that returns a change is three model
 //                   steps: Refresh, with the state taken inside the resolve
 //                   callback (the code has set its next deadline and asked
-//                   the kernel), Resolve, the half-written table, which one
-//                   memcpy never shows (a hidden record), and WriteLow, the
-//                   state after the call.
+//                   the kernel), Resolve, the model's half-written table,
+//                   which one memcpy never shows: the walk writes it from
+//                   the table before the call and the answer the resolve
+//                   gave, and WriteLow, the state after the call, which the
+//                   code's own write must match.
 //   copy_high/low   a fill stages a packet to an unlearned address: the real
 //                   rocketnet_xdp_reply_mac gives the table's gateway MAC,
 //                   and the walk copies it in two halves, ReadHigh and
@@ -108,9 +110,11 @@ struct gateway_trace_walk_t
     int read_high;                  // the half the fill has copied, 0 (Nil) for none
     std::vector<gateway_trace_packet_t> staged;
 
-    // the state taken inside the resolve callback
+    // the state taken inside the resolve callback, and the model's state
+    // after Resolve: the answer's first half written, its second pending
     bool resolved;
     tla_record_t at_resolve;
+    tla_record_t after_resolve;
 };
 
 static std::string gateway_trace_pair( int high, int low )
@@ -121,14 +125,14 @@ static std::string gateway_trace_pair( int high, int low )
     return tla_sequence( halves );
 }
 
-static tla_record_t gateway_trace_state( const gateway_trace_walk_t & walk, const char * phase, int pending_low )
+static tla_record_t gateway_trace_state( const gateway_trace_walk_t & walk, const char * phase, int table_high, int table_low, int pending_low )
 {
     tla_record_t state;
     state.add( "phase", tla_string( phase ) );
     state.add( "now", tla_int( walk.now ) );
     state.add( "scheduled", tla_bool( walk.refresh.scheduled ) );
     state.add( "nextTime", tla_int( (int64_t) walk.refresh.next_time ) );
-    state.add( "table", gateway_trace_pair( gateway_trace_half( walk.table.gateway_mac, 0 ), gateway_trace_half( walk.table.gateway_mac + 3, 3 ) ) );
+    state.add( "table", gateway_trace_pair( table_high, table_low ) );
     state.add( "pendingLow", tla_int( pending_low ) );
     state.add( "resolver", gateway_trace_pair( walk.resolver + 1, walk.resolver + 1 ) );
     state.add( "changedAt", tla_int( walk.changed_at ) );
@@ -144,6 +148,12 @@ static tla_record_t gateway_trace_state( const gateway_trace_walk_t & walk, cons
     return state;
 }
 
+// every model variable as the code and the walk hold it now
+static tla_record_t gateway_trace_now( const gateway_trace_walk_t & walk )
+{
+    return gateway_trace_state( walk, walk.phase, gateway_trace_half( walk.table.gateway_mac, 0 ), gateway_trace_half( walk.table.gateway_mac + 3, 3 ), 0 );
+}
+
 // the kernel's neighbour entry: the walk's resolver, found and usable. The
 // refresh has set its next deadline and asked: the model's Refresh to
 // "resolve", whose state is taken here
@@ -152,7 +162,10 @@ static bool gateway_trace_resolve( void * context, int address_type, uint8_t * m
     (void) address_type;
     gateway_trace_walk_t * walk = (gateway_trace_walk_t *) context;
     walk->resolved = true;
-    walk->at_resolve = gateway_trace_state( *walk, "resolve", 0 );
+    const int table_high = gateway_trace_half( walk->table.gateway_mac, 0 );
+    const int table_low = gateway_trace_half( walk->table.gateway_mac + 3, 3 );
+    walk->at_resolve = gateway_trace_state( *walk, "resolve", table_high, table_low, 0 );
+    walk->after_resolve = gateway_trace_state( *walk, "writelow", walk->resolver + 1, table_low, walk->resolver + 1 );
     memcpy( mac, gateway_trace_macs[walk->resolver], 6 );
     *found = walk->fail_resolve != 2;
     if ( walk->fail_resolve == 3 )
@@ -165,18 +178,6 @@ static bool gateway_trace_resolve( void * context, int address_type, uint8_t * m
 static std::string gateway_trace_no_args()
 {
     return tla_sequence( std::vector<std::string>() );
-}
-
-// a step inside one call the walk cannot observe: its state is <<>>, and the
-// Trace module takes whatever the model's step gives (a deterministic step only)
-static tla_record_t gateway_trace_hidden_step( const char * op, const char * act )
-{
-    tla_record_t step;
-    step.add( "op", tla_string( op ) );
-    step.add( "act", tla_string( act ) );
-    step.add( "args", gateway_trace_no_args() );
-    step.add( "state", tla_function( std::vector<std::string>(), std::vector<std::string>() ) );
-    return step;
 }
 
 static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out )
@@ -221,7 +222,7 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
     tla_report_t report;
     const size_t total = (size_t) steps + 1;
 
-    records.push_back( tla_step( "init", "init", gateway_trace_no_args(), gateway_trace_state( walk, walk.phase, 0 ) ) );
+    records.push_back( tla_step( "init", "init", gateway_trace_no_args(), gateway_trace_now( walk ) ) );
 
     while ( records.size() < total )
     {
@@ -232,7 +233,7 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
             walk.changed_at = walk.now;
             walk.changes++;
             report.act( "ChangeGateway" );
-            records.push_back( tla_step( "change_gateway", "ChangeGateway", gateway_trace_no_args(), gateway_trace_state( walk, walk.phase, 0 ) ) );
+            records.push_back( tla_step( "change_gateway", "ChangeGateway", gateway_trace_no_args(), gateway_trace_now( walk ) ) );
             continue;
         }
 
@@ -266,18 +267,18 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
                 if ( records.size() < total )
                 {
                     report.act( "Resolve" );
-                    records.push_back( gateway_trace_hidden_step( "refresh", "Resolve" ) );
+                    records.push_back( tla_step( "refresh", "Resolve", gateway_trace_no_args(), walk.after_resolve ) );
                 }
                 if ( records.size() < total )
                 {
                     report.act( "WriteLow" );
-                    records.push_back( tla_step( "refresh", "WriteLow", gateway_trace_no_args(), gateway_trace_state( walk, walk.phase, 0 ) ) );
+                    records.push_back( tla_step( "refresh", "WriteLow", gateway_trace_no_args(), gateway_trace_now( walk ) ) );
                 }
             }
             else
             {
                 report.act( "Refresh" );
-                records.push_back( tla_step( "refresh", "Refresh", gateway_trace_no_args(), gateway_trace_state( walk, walk.phase, 0 ) ) );
+                records.push_back( tla_step( "refresh", "Refresh", gateway_trace_no_args(), gateway_trace_now( walk ) ) );
                 if ( stale )
                 {
                     report.planted( (int) records.size() );
@@ -294,7 +295,7 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
             walk.read_high = 0;
             walk.fill_mac = NULL;
             report.act( "ReadLow" );
-            records.push_back( tla_step( "copy_low", "ReadLow", gateway_trace_no_args(), gateway_trace_state( walk, walk.phase, 0 ) ) );
+            records.push_back( tla_step( "copy_low", "ReadLow", gateway_trace_no_args(), gateway_trace_now( walk ) ) );
             continue;
         }
 
@@ -309,7 +310,7 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
             }
             walk.read_high = gateway_trace_half( walk.fill_mac, 0 );
             report.act( "ReadHigh" );
-            records.push_back( tla_step( "copy_high", "ReadHigh", gateway_trace_no_args(), gateway_trace_state( walk, walk.phase, 0 ) ) );
+            records.push_back( tla_step( "copy_high", "ReadHigh", gateway_trace_no_args(), gateway_trace_now( walk ) ) );
             continue;
         }
 
@@ -324,7 +325,7 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
         walk.now += delta;
         walk.phase = "receive";
         report.act( "Join" );
-        records.push_back( tla_step( "join", "Join", gateway_trace_no_args(), gateway_trace_state( walk, walk.phase, 0 ) ) );
+        records.push_back( tla_step( "join", "Join", gateway_trace_no_args(), gateway_trace_now( walk ) ) );
     }
 
     report.print();

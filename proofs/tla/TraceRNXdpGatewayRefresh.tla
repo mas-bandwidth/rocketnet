@@ -1,46 +1,49 @@
 ---------------------- MODULE TraceRNXdpGatewayRefresh ----------------------
 (***************************************************************************)
-(* The trace check of RNXdpGatewayRefresh (README-TraceCheck.md).          *)
-(* TraceLog is the record sequence tests/tla_trace_xdp_gateway_refresh.cpp *)
-(* writes from the library's rocketnet_xdp_gateway_refresh and             *)
-(* rocketnet_xdp_reply_mac (sdk/rocketnet_xdp_frame.h): one record per     *)
-(* model step, [op, act, args, state], record 1 "init".                    *)
+(* The trace check of RNXdpGatewayRefresh, copied from the template        *)
+(* TraceRNTraceExample.tla (README-TraceCheck.md).  TraceLog is the record *)
+(* sequence tests/tla_trace_xdp_gateway_refresh.cpp writes from the        *)
+(* library's rocketnet_xdp_gateway_refresh and rocketnet_xdp_reply_mac     *)
+(* (sdk/rocketnet_xdp_frame.h): one record per step, with the operation    *)
+(* the walk called (op), the walk's arguments to it (args), the model      *)
+(* action the code's own result says it took (act), and every model        *)
+(* variable after it (state).  Record 1 is "init".  A refresh call that    *)
+(* returns a change is three records, Refresh, Resolve and WriteLow: the   *)
+(* model's two halves of the one six-byte write.                           *)
 (*                                                                         *)
-(* One refresh call that changes the gateway MAC is three model steps:     *)
-(* Refresh (to "resolve"), Resolve and WriteLow.  The walk takes the       *)
-(* Refresh state inside the resolve callback and the WriteLow state after  *)
-(* the call.  The Resolve state, the table with its first half written,   *)
-(* is never observable: the code writes the six bytes with one memcpy.     *)
-(* Its record is hidden: its state is <<>>, and TraceStep takes whatever   *)
-(* the model's Resolve gives (Matches).  Resolve is deterministic given    *)
-(* the state, so a hidden record never leaves TLC a choice that the next   *)
-(* record could reject on one branch and accept on another.  A hidden      *)
-(* record is used for a deterministic action only.                         *)
+(* TraceStep allows only the recorded action with the recorded arguments,  *)
+(* and only when the operation can be that action (OpActs): a step that    *)
+(* did one thing but landed in a state another action allows is rejected.  *)
+(* The step must be a Next step too, so Next's ranges and guards around an *)
+(* action (\E k \in 1..MaxClaim) hold for the recorded arguments.  A state *)
+(* that names fewer or other fields than VarsRec never matches, and a      *)
+(* record that is not [op, act, args, state] fails the ASSUME: an          *)
+(* under-logged harness fails red, never green.                            *)
 (*                                                                         *)
-(* TraceStep allows only the recorded action, and only when the operation  *)
-(* can be that action (OpActs), into a state that keeps the model's        *)
-(* invariants (TraceInvariant).  NoTornMac here rests on the walk's own    *)
-(* order of refresh, fills and join (the real fill copy and the driver's   *)
-(* join are not driven): it binds the refresh's deadline and writes, not   *)
-(* the join.  A state that names fewer or other fields than VarsRec never  *)
-(* matches.  When no step matches, TraceReject sets                        *)
-(* rejected, so TraceConsistent fails; record ti + 1 is the first code     *)
-(* step that is not the model step it names.  At the last record the trace *)
-(* stutters (TraceDone).                                                   *)
+(* A copy changes only EXTENDS, VarsRec, OpActs, Act and the row's reach   *)
+(* predicates; tools/tla_trace_check.py compares the rest with this text   *)
+(* and checks the shapes of those.                                         *)
+(*                                                                         *)
+(* When no step matches, TraceReject sets rejected, so TraceConsistent     *)
+(* fails; the behaviour TLC prints ends at ti, the last record that        *)
+(* matched, and record ti + 1 is the first code step that is not a model   *)
+(* step.  At the last record the trace stutters (TraceDone).  Nothing here *)
+(* quantifies over the log in a state formula, and nothing reads TraceLog  *)
+(* but Trace (below).                                                      *)
 (***************************************************************************)
 EXTENDS RNXdpGatewayRefresh, Sequences
 
 CONSTANT TraceLog
 
-\* the log through a definition of no arguments: TLC evaluates that once and
-\* keeps it, where every reference to the overridden constant itself builds
-\* the whole log again (a 400-record log with its staged sets: over 110 s and
-\* not done, against 2 s through Records)
-Records == TraceLog
+\* the log as a definition of no arguments, which TLC evaluates once when
+\* it starts; every formula below reads Trace, never TraceLog. Read through
+\* the substituted constant, TLC rebuilds the whole log at each access, and a
+\* 3200-record trace takes 68 s instead of 3 s (bench-nyc-6, 2026-11-12)
+Trace == TraceLog
 
 \* checked once, when TLC starts
-ASSUME /\ Len(Records) >= 2
-       /\ \A n \in DOMAIN Records : DOMAIN Records[n] = {"op", "act", "args", "state"}
+ASSUME /\ Len(TraceLog) >= 2
+       /\ \A n \in DOMAIN TraceLog : DOMAIN TraceLog[n] = {"op", "act", "args", "state"}
 
 VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
@@ -58,7 +61,8 @@ OpActs == [refresh |-> {"Refresh", "Resolve", "WriteLow"},
            change_gateway |-> {"ChangeGateway"},
            join |-> {"Join"}]
 
-\* the action a record names; a name this CASE lacks stops TLC with an error
+\* the action a record names, with the record's arguments; a name this CASE
+\* lacks stops TLC with an error
 Act(a, x) == CASE a = "Refresh" -> Refresh
                [] a = "Resolve" -> Resolve
                [] a = "WriteLow" -> WriteLow
@@ -67,44 +71,42 @@ Act(a, x) == CASE a = "Refresh" -> Refresh
                [] a = "ChangeGateway" -> ChangeGateway
                [] a = "Join" -> Join
 
-\* a hidden record (state <<>>) takes the model's step; any other must equal it
-Matches(r) == DOMAIN r.state = {} \/ VarsRec' = r.state
-
-\* the invariants MCRNXdpGatewayRefresh.cfg checks, on every state the code
-\* reaches
-TraceInvariant == TypeOK /\ NoTornMac /\ FreshAfterPeriod
-
 TraceInit ==
     /\ Init
     /\ ti = 1
-    /\ rejected = (Records[1].op # "init" \/ Records[1].act # "init" \/ VarsRec # Records[1].state)
+    /\ rejected = (Trace[1].op # "init" \/ Trace[1].act # "init" \/ Trace[1].args # <<>>
+                   \/ VarsRec # Trace[1].state)
 
 TraceStep ==
     /\ ~rejected
-    /\ ti < Len(Records)
-    /\ LET r == Records[ti + 1]
+    /\ ti < Len(Trace)
+    /\ LET r == Trace[ti + 1]
        IN /\ r.op \in DOMAIN OpActs
           /\ r.act \in OpActs[r.op]
           /\ Act(r.act, r.args)
-          /\ Matches(r)
-          /\ TraceInvariant'
+          /\ Next
+          /\ VarsRec' = r.state
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 
 TraceReject ==
     /\ ~rejected
-    /\ ti < Len(Records)
+    /\ ti < Len(Trace)
     /\ ~ENABLED TraceStep
     /\ rejected' = TRUE
     /\ UNCHANGED <<vars, ti>>
 
 TraceDone ==
-    /\ rejected \/ ti = Len(Records)
+    /\ rejected \/ ti = Len(Trace)
     /\ UNCHANGED <<vars, ti, rejected>>
 
 TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, rejected>>
 
 \* every record of the trace is the model step it names, from the one before
 TraceConsistent == ~rejected
+
+\* the row's reach predicate: some clean trace stages a packet carrying the
+\* MAC a refresh wrote after the gateway changed (create resolved <<1, 1>>)
+StagedNewMac == \E packet \in staged : packet.mac = <<2, 2>>
 
 =============================================================================
