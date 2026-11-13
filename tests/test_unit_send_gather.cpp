@@ -211,8 +211,11 @@ REGISTER_UNIT_TEST( test_send_gather_one_run_a_destination_at_full_slots );
 
 // the probe wraps the table's end (witness NoProbeMod): two destinations
 // whose home bucket is the last one, so the second probes past the end and
-// must land in bucket 0. Without the mask the probe reads the scratch's next
-// array (the group heads) as buckets and never finds a free one.
+// must land in bucket 0, with an aborted slot between them. Without the mask
+// the probe walks on into the scratch's next arrays: it reads the group heads
+// as buckets and ends at the aborted slot's group cell (-1, "free"), takes
+// that cell for its bucket, and the aborted slot joins the second
+// destination's group. The expected grouping below fails then.
 
 static void test_send_gather_probe_wraps_past_the_last_bucket()
 {
@@ -232,15 +235,15 @@ static void test_send_gather_probe_wraps_past_the_last_bucket()
     }
     check( num == 2 );
 
-    // a, b, a, b: both homed on the last bucket, b displaced to bucket 0
+    // a, an aborted slot, b, b: a and b both homed on the last bucket, b
+    // displaced to bucket 0
     t.stage( found[0], 1000 );
+    t.stage( found[0], 0 );
     t.stage( found[1], 1000 );
-    t.stage( found[0], 1000 );
     t.stage( found[1], 1000 );
     check( t.gather( 64, 65000 ) == 2 );
-    check( t.runs[0].count == 2 && t.runs[1].count == 2 );
-    check( t.run( 0 ) == std::vector<int>( { 0, 2 } ) );
-    check( t.run( 1 ) == std::vector<int>( { 1, 3 } ) );
+    check( t.run( 0 ) == std::vector<int>( { 0 } ) );
+    check( t.run( 1 ) == std::vector<int>( { 2, 3 } ) );
 }
 
 REGISTER_UNIT_TEST( test_send_gather_probe_wraps_past_the_last_bucket );
