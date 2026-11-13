@@ -30,14 +30,14 @@
 // are the lists reset_keeping left, so the model's contract update is
 // checked against the code's compaction.
 //
-// The plant (ROCKETNET_TLA_PLANT_XDP_REPLAY_MARKS in the header) tests the
+// The plant (ROCKETNET_XDP_REPLAY_MARKS_PLANT in the header) tests the
 // forget list's room one late, the reversed witness
 // MCRNXdpReplayMarksLayoutBrokenFullOffByOne: a new key is written at index
 // M. Its effect is a forget that leaves forget_count past the capacity; the
 // walk reports it at that record. No socket, no clock.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_TLA_PLANT_XDP_REPLAY_MARKS 1
+#define ROCKETNET_XDP_REPLAY_MARKS_PLANT 1
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include <stdint.h>

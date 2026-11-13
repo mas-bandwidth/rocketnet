@@ -76,6 +76,13 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include <atomic>
 
 // the kernel prefilter drops nothing the session replay window would accept
+// the trace check's plants (tests/tla_trace_xdp_*.cpp) change the XDP code they
+// name, and only the trace check's plant binaries (ROCKETNET_TLA_PLANT) may
+// build them: a library build refuses every one
+#if !defined( ROCKETNET_TLA_PLANT ) && ( defined( ROCKETNET_XDP_RECEIVE_RING_PLANT ) || defined( ROCKETNET_XDP_REPLAY_PLANT ) || defined( ROCKETNET_XDP_REPLAY_MARKS_PLANT ) || defined( ROCKETNET_XDP_REPLY_MACS_PLANT ) || defined( ROCKETNET_XDP_GATEWAY_REFRESH_PLANT ) )
+#error "an XDP trace plant is defined outside the trace check's plant binaries"
+#endif
+
 static_assert( ROCKETNET_XDP_REPLAY_WINDOW == ROCKETNET_REPLAY_WINDOW_BITS, "the kernel replay window is the userspace replay window" );
 
 // XDP umem frame size must match libxdp expectation

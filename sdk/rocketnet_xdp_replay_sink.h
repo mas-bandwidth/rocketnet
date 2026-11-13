@@ -99,9 +99,9 @@ static inline uint64_t rocketnet_xdp_replay_commit( struct rocketnet_xdp_replay_
     // the trace check's plant (tests/tla_trace_xdp_replay.cpp): every forget
     // the kernel refused is dropped, not kept, the reversed witness
     // MCRNXdpReplayBrokenFailedForgetDropped.cfg (KeepFailedForgets = FALSE)
-#if defined( ROCKETNET_TLA_PLANT_XDP_REPLAY )
+#if defined( ROCKETNET_XDP_REPLAY_PLANT )
     memset( forget_failed, 0, marks->capacity * sizeof( bool ) );
-#endif // #if defined( ROCKETNET_TLA_PLANT_XDP_REPLAY )
+#endif // #if defined( ROCKETNET_XDP_REPLAY_PLANT )
 
     // a full buffer's refusals land in the commit failure count; a refused
     // forget is kept unless an applied mark of its key superseded it, and a

@@ -63,14 +63,14 @@
 // every live session is greeted (a zero mark the buffer refuses holds every
 // keep-alive, the model only that session's).
 //
-// The plant (ROCKETNET_TLA_PLANT_XDP_REPLAY, sdk/rocketnet_xdp_replay_sink.h)
+// The plant (ROCKETNET_XDP_REPLAY_PLANT, sdk/rocketnet_xdp_replay_sink.h)
 // is the reversed witness MCRNXdpReplayBrokenFailedForgetDropped.cfg: the
 // commit drops every forget the kernel refused. Its effect is a commit after
 // which a forget the kernel refused, with no applied mark of its key, is not
 // pending; the walk reports it at that record. No socket, no clock.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_TLA_PLANT_XDP_REPLAY 1
+#define ROCKETNET_XDP_REPLAY_PLANT 1
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include <stddef.h>

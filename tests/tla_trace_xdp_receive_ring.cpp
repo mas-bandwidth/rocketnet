@@ -32,7 +32,7 @@
 // and write no record (the model: "a peek of zero is no step", "a
 // reservation of zero is this step not yet taken").
 //
-// The plant (ROCKETNET_TLA_PLANT_XDP_RECEIVE_RING in the header) is the
+// The plant (ROCKETNET_XDP_RECEIVE_RING_PLANT in the header) is the
 // reversed witness MCRNXdpReceiveRingBrokenPeekPastStaging: the peek asks
 // for the pending return's room alone. Its effect is a peek that returns
 // more descriptors than the staging buffer has room for; the walk reports it
@@ -42,7 +42,7 @@
 // clock.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_TLA_PLANT_XDP_RECEIVE_RING 1
+#define ROCKETNET_XDP_RECEIVE_RING_PLANT 1
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include <stdint.h>

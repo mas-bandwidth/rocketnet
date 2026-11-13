@@ -39,7 +39,7 @@
 // gateway MACs differ in their first three bytes and in their last three,
 // and each half maps to 1 or 2.
 //
-// The plant (ROCKETNET_TLA_PLANT_XDP_GATEWAY_REFRESH): a refresh at or past
+// The plant (ROCKETNET_XDP_GATEWAY_REFRESH_PLANT): a refresh at or past
 // its deadline keeps the old deadline, so every later call resolves again.
 // Its effect, reported at the Refresh record of such a call, is a deadline
 // that did not move past the call's clock.
@@ -51,7 +51,7 @@
 #include <vector>
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_TLA_PLANT_XDP_GATEWAY_REFRESH 1
+#define ROCKETNET_XDP_GATEWAY_REFRESH_PLANT 1
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include "../sdk/rocketnet_address.h"

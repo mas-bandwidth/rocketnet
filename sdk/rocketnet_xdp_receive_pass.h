@@ -44,15 +44,15 @@ static inline uint32_t rocketnet_xdp_receive_peek( struct xsk_ring_cons * ring, 
                                                    const Pending * pending_return, uint32_t * receive_index )
 {
     const uint32_t receive_capacity = staging_capacity - receive_buffer->num_packets;
-#if defined( ROCKETNET_TLA_PLANT_XDP_RECEIVE_RING )
+#if defined( ROCKETNET_XDP_RECEIVE_RING_PLANT )
     // the trace check's plant (tests/tla_trace_xdp_receive_ring.cpp), the
     // reversed witness MCRNXdpReceiveRingBrokenPeekPastStaging: the peek
     // asks for the pending room alone, past the staging room
     (void) receive_capacity;
     const uint32_t receive_limit = (uint32_t) pending_return->available();
-#else  // #if defined( ROCKETNET_TLA_PLANT_XDP_RECEIVE_RING )
+#else  // #if defined( ROCKETNET_XDP_RECEIVE_RING_PLANT )
     const uint32_t receive_limit = (uint32_t) pending_return->available() < receive_capacity ? (uint32_t) pending_return->available() : receive_capacity;
-#endif // #if defined( ROCKETNET_TLA_PLANT_XDP_RECEIVE_RING )
+#endif // #if defined( ROCKETNET_XDP_RECEIVE_RING_PLANT )
     return receive_limit ? xsk_ring_cons__peek( ring, receive_limit, receive_index ) : 0;
 }
 

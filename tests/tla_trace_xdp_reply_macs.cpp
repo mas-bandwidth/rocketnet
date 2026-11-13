@@ -27,13 +27,13 @@
 // address's home and the code's own lookup of each address (abs), so the
 // model's contract is checked against what the lookups return.
 //
-// The plant (ROCKETNET_TLA_PLANT_XDP_REPLY_MACS) is the reversed witness
+// The plant (ROCKETNET_XDP_REPLY_MACS_PLANT) is the reversed witness
 // MCRNXdpReplyMacsLayoutBrokenEvictNewest.cfg: learn's eviction takes the
 // entry learned last. Its effect is a learn that took a LIVE entry of
 // another address that was not the oldest of the address's full window.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_TLA_PLANT_XDP_REPLY_MACS 1
+#define ROCKETNET_XDP_REPLY_MACS_PLANT 1
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include <stdint.h>
