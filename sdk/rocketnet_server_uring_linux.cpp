@@ -210,7 +210,7 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
 
 static void rocketnet_server_uring_set_socket_option( void * user, int level, int option_name, int value )
 {
-    const int fd = *(const int *) user;
+    const int fd = *static_cast<const int *>( user );
     setsockopt( fd, level, option_name, &value, sizeof( value ) );
 }
 

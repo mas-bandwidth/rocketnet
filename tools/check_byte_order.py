@@ -108,7 +108,7 @@ ALLOWED = [
      "the kernel's control message is host order: this process and the local kernel share it"),
     ('sdk/rocketnet_server_gso_linux.cpp', 'memcpy( CMSG_DATA( cmsg ), &segment_bytes, sizeof( segment_bytes ) )',
      "the kernel's control message is host order: this process and the local kernel share it"),
-    ('sdk/rocketnet_server_uring_linux.cpp', 'memcpy( control + CMSG_LEN( 0 ), &stride, sizeof( stride ) )',
+    ('sdk/rocketnet_uring_queue_send.cpp', 'memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) )',
      "the kernel's control message is host order: this process and the local kernel share it"),
     ('sdk/rocketnet_uring_codec.h', 'memcpy( &stride, control + offset + CMSG_LEN( 0 ), sizeof( stride ) )',
      "the kernel's control message is host order: this process and the local kernel share it"),
