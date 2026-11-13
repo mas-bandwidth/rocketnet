@@ -760,10 +760,24 @@ uint64_t rocketnet_protocol_version_hash( int major, int minor )
     return rocketnet_hash_string( text );
 }
 
+// a draw holds the source like the key and token generators (below), since
+// these run before rocketnet_init and beside rocketnet_term on any thread
+// (proofs/tla/RNCryptoSource.tla: a call). A source that cannot open is drawn
+// from anyway: sodium's own draw then aborts with the misuse line, as before.
+static void rocketnet_random_draw( void * data, size_t bytes )
+{
+    const bool held = rocketnet_crypto_acquire();
+    randombytes_buf( data, bytes );
+    if ( held )
+    {
+        rocketnet_crypto_release();
+    }
+}
+
 uint64_t rocketnet_random_uint64()
 {
     uint64_t value;
-    randombytes_buf( &value, sizeof( value ) );
+    rocketnet_random_draw( &value, sizeof( value ) );
     return value;
 }
 
@@ -774,15 +788,16 @@ void rocketnet_random_bytes( uint8_t * data, size_t bytes )
         return;
     }
 
-    randombytes_buf( data, bytes );
+    rocketnet_random_draw( data, bytes );
 }
 
 // The bundled sodium opens its random source on a draw, without a lock,
 // whenever its flag is clear: before sodium_init, and on macOS after
 // rocketnet_term closed the source (proofs/tla/RNCryptoSource.tla DrawCheck,
-// DrawOpen). The key and token generators run before rocketnet_init and
-// beside rocketnet_term on any thread, so each holds the source across its
-// draws (rocketnet_crypto_acquire, rocketnet_crypto_release). The first
+// DrawOpen). The key and token generators and rocketnet_random_uint64 and
+// rocketnet_random_bytes run before rocketnet_init and beside rocketnet_term
+// on any thread, so each holds the source across its draws
+// (rocketnet_crypto_acquire, rocketnet_crypto_release). The first
 // holder opens it under the mutex, and term closes it under the mutex once
 // no holder is left. open, holders and closing change only under the mutex,
 // and open is clear only while holders is zero.
@@ -1008,7 +1023,9 @@ bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void 
 
     // before rocketnet_crypto_open_source, whose sodium_init and stir are the
     // first read of the OS random source; it stays installed after term, for
-    // the key generators that need no init
+    // the key generators that need no init. sodium sets and reads the
+    // handler under its own lock (sodium/README.md, "POSIX lock"), so a
+    // generator's draw on another thread meanwhile reads it whole
 #if defined( ROCKETNET_BUNDLED_SODIUM )
     if ( platform_ready )
     {

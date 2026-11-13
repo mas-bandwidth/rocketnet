@@ -185,7 +185,9 @@ static void test_xdp_frame_fits_mtu_judges_the_ip_packet()
     rocketnet_unit_check( rocketnet_address_parse( &s4, "192.168.1.10:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &d4, "192.168.1.20:40001" ) );
 
+    // the build checksums the payload in place, so it is written first
     uint8_t frame[2048];
+    memset( frame, 0, sizeof( frame ) );
     const int ipv6 = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &s6, &d6, ROCKETNET_MAX_PACKET_BYTES );
     const int ipv4 = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, ROCKETNET_MAX_PACKET_BYTES );
     rocketnet_unit_check( ipv6 == 1514 );
