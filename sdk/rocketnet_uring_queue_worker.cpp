@@ -29,6 +29,10 @@
 #include <errno.h>
 #include <unistd.h>
 
+// the retry timer's timeout (ArmTimer), the same for every worker: the kernel
+// copies it when the timeout is submitted, and nothing writes it
+static struct __kernel_timespec rocketnet_uring_queue_worker_retry_timeout = { 0, (long long) ( ROCKETNET_URING_SEND_RETRY_SECONDS * 1000000000.0 ) };
+
 bool rocketnet_uring_queue_worker_init( struct rocketnet_uring_queue_worker_t * worker, const struct rocketnet_uring_queue_worker_config_t * config )
 {
     rocketnet_assert( worker );
@@ -60,9 +64,6 @@ bool rocketnet_uring_queue_worker_init( struct rocketnet_uring_queue_worker_t * 
     worker->cancels = 0;
     worker->agains = 0;
     worker->wake_value = 0;
-    static_assert( sizeof( worker->timer_spec ) == sizeof( struct __kernel_timespec ), "the timer's timespec is a __kernel_timespec" );
-    worker->timer_spec[0] = 0;
-    worker->timer_spec[1] = (int64_t) ( ROCKETNET_URING_SEND_RETRY_SECONDS * 1000000000.0 );
     memset( &worker->refused, 0, sizeof( worker->refused ) );
     worker->last_send_class = 0;
     for ( int i = 0; i < ROCKETNET_URING_WORKER_NUM_COUNTERS; i++ )
@@ -432,7 +433,7 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
         struct io_uring_sqe * sqe = rocketnet_uring_queue_worker_sqe( worker );
         if ( sqe )
         {
-            io_uring_prep_timeout( sqe, (struct __kernel_timespec *) (void *) worker->timer_spec, 0, 0 );
+            io_uring_prep_timeout( sqe, &rocketnet_uring_queue_worker_retry_timeout, 0, 0 );
             io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_TIMER, q, 0 ) );
             worker->timer_armed = true;
             return ROCKETNET_URING_WORKER_STEP_ARM_TIMER;
