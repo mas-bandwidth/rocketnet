@@ -275,6 +275,11 @@ struct alignas( 64 ) rn_message_open_line_t
 //                       the object
 // ---------------------------------------------------------------
 
+// Cache-line alignment pads this on MSVC (C4324); the padding is the point.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
 struct rn_message_object_t
 {
     void * context;
@@ -332,6 +337,9 @@ struct rn_message_object_t
     void * block;
     int owns_block;
 };
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
 
 struct rocketnet_message_client_t
 {
