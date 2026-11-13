@@ -112,8 +112,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 1608857790 and 22972215, stood 140405631 and 8762043 bytes above what the
 // build reads; the at-most check passed them and the suite hid the actual=
 // lines, so the figures above, computed from them, were never seen to hold.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452159 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210172 )
+// The protocol send reserve, the worker receive drop totals and three
+// appended counters (the Linux note below) move both figures, measured on
+// aws-win-5 (MSVC, Release and Debug, ROCKETNET_TEST_VERBOSE=1):
+// actual=1469504511 for the server, 3776 above, and actual=15258812 for the
+// client, 64 above.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468455935 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
