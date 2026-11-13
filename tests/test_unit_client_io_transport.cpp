@@ -85,8 +85,8 @@ static uint64_t client_io_transport_counter( rocketnet_client_transport_t * tran
     return rocketnet_client_transport_counters( transport )->values[counter];
 }
 
-extern void rocketnet_client_transport_legacy_receive_state_for_test(
-    const rocketnet_client_transport_t * transport, int * fill, int * ready_count, int * free_count );
+extern void rocketnet_client_transport_legacy_receive_state_for_test( const rocketnet_client_transport_t * transport,
+                                                                      struct rocketnet_receive_handoff_t * handoff );
 
 static uint64_t client_io_transport_packets_received( rocketnet_client_transport_t * transport )
 {
@@ -95,8 +95,9 @@ static uint64_t client_io_transport_packets_received( rocketnet_client_transport
     return stats.packets_received;
 }
 
-// BASE publishes up to N-1 batches and retains its producer buffer. Update
-// drains all READY batches that fit, and releases them in the same call.
+// BASE commits its buffer's count at each drain and moves to the free buffer
+// once update has started on its buffer; update reads everything committed
+// before it, within its packet budget (sdk/rocketnet_receive_handoff.h).
 extern void rocketnet_client_transport_legacy_busy_for_test( rocketnet_client_transport_t *, unsigned );
 // Supply an already-completed batch through the bounded fake queue. The
 // handoff buffer holds 1024 packets, but the generic fake queue holds only
@@ -133,7 +134,10 @@ static void test_client_legacy_receive_handoff_and_backpressure()
     check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
 
     uint8_t datagram[64] = {};
-    int fill, ready, free_count;
+    struct rocketnet_receive_handoff_t handoff;
+
+    // two drains: the first moves the worker off the buffer update shares
+    // with it, the second commits into the buffer it moved to
 
     for ( int i = 0; i < 2; ++i )
     {
@@ -141,51 +145,46 @@ static void test_client_legacy_receive_handoff_and_backpressure()
         rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
     }
 
-    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
-    check( fill >= 0 && ready == 2 && free_count == 0 );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &handoff );
+    check( handoff.main != handoff.worker && handoff.committed[handoff.main] == 1 && handoff.committed[handoff.worker] == 1 );
+
+    // a busy mutex leaves update with nothing new; the next update reads both
+
     rocketnet_client_transport_legacy_busy_for_test( transport, 1 );
     rocketnet_client_transport_update( transport, 1000.0 );
     check( client_io_transport_packets_received( transport ) == 0 );
-    rocketnet_client_transport_legacy_busy_for_test( transport, 2 );
+    rocketnet_client_transport_legacy_busy_for_test( transport, 0 );
     rocketnet_client_transport_update( transport, 1000.1 );
     check( client_io_transport_packets_received( transport ) == 2 );
-    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
-    check( ready == 0 && free_count == 0 ); // returned buffers remain caller-owned
-    rocketnet_client_transport_legacy_busy_for_test( transport, 1 );
-    rocketnet_client_transport_update( transport, 1000.2 );
-    check( client_io_transport_packets_received( transport ) == 2 );
-    rocketnet_client_transport_legacy_busy_for_test( transport, 0 );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &handoff );
+    check( handoff.main == handoff.worker && handoff.free >= 0 );
+
+    // Two buffers' worth: the worker fills the buffer update shares, moves to
+    // the free one and fills it too; full, with update not yet started on it,
+    // it keeps it and leaves the last datagram unread.
+
+    fake->source = server;
+    fake->remaining = 2 * ROCKETNET_NUM_CLIENT_PACKETS;
+    rocketnet_client_transport_step_legacy_for_test( transport, 1000.2 );
+    check( fake->remaining == 1 && fake->inbound_count == 0 );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &handoff );
+    check( handoff.main != handoff.worker && handoff.free < 0 &&
+           handoff.committed[handoff.worker] == (uint32_t) ROCKETNET_NUM_CLIENT_PACKETS );
+
+    // Each update has only 1024 packet slots: the first takes the rest of the
+    // buffer update shared and starts on the full one; then the worker moves
+    // on and reads the last datagram; the next update takes everything left.
+
     rocketnet_client_transport_update( transport, 1000.3 );
-    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
-    check( ready == 0 && free_count == 2 );
-
-    // Fill all three buffers; the producer must retain its full buffer and
-    // leave further datagrams unread. Each update has only 1024 packet slots.
-
-    for ( int batch = 0; batch < 3; ++batch )
-    {
-        fake->source = server;
-        fake->remaining = ROCKETNET_NUM_CLIENT_PACKETS;
-        rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
-        check( fake->remaining == 0 && fake->inbound_count == 0 );
-    }
-
-    rocketnet_fake_client_push( fake, &server, datagram, sizeof( datagram ) );
-    rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
-    check( fake->inbound_count == 1 );
-    rocketnet_client_transport_update( transport, 1000.4 );
     check( client_io_transport_packets_received( transport ) == 2 + ROCKETNET_NUM_CLIENT_PACKETS );
-    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
-    check( ready == 1 && free_count == 1 );
-    rocketnet_client_transport_step_legacy_for_test( transport, 1000.5 );
-    check( fake->inbound_count == 0 );
+    rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
+    check( fake->remaining == 0 && fake->inbound_count == 0 );
+    rocketnet_client_transport_update( transport, 1000.4 );
+    check( client_io_transport_packets_received( transport ) == 2 + 2 * ROCKETNET_NUM_CLIENT_PACKETS );
     rocketnet_client_transport_update( transport, 1000.5 );
-    rocketnet_client_transport_update( transport, 1000.6 );
-    rocketnet_client_transport_step_legacy_for_test( transport, 1000.7 );
-    rocketnet_client_transport_update( transport, 1000.7 );
-    check( client_io_transport_packets_received( transport ) == 3 + 3 * ROCKETNET_NUM_CLIENT_PACKETS );
-    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
-    check( ready == 0 && free_count == 2 );
+    check( client_io_transport_packets_received( transport ) == 2 + 2 * ROCKETNET_NUM_CLIENT_PACKETS );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &handoff );
+    check( handoff.main == handoff.worker && handoff.free >= 0 && handoff.tail_cursor == handoff.tail_end );
     rn_test_client_transport_stop_and_destroy( transport );
     check( fake->destroy_calls == 1 );
     delete fake;
@@ -454,10 +453,11 @@ static void test_client_io_deferred_slot_counted_only_when_sent()
 REGISTER_UNIT_TEST( test_client_io_deferred_slot_counted_only_when_sent );
 
 // The receive path through update: a datagram from the server, drained and
-// published by the step (stamped by the config's time_callback), is exposed by
+// committed by the step (stamped by the config's time_callback), is exposed by
 // the next update and reaches the protocol (PACKETS_RECEIVED moves by one);
-// update returns the buffer at its end (Expose, Return). An update with
-// nothing Ready processes nothing.
+// update has then read everything committed and shares the I/O thread's
+// buffer (RNReceiveHandoff Commit, Call). An update with nothing committed
+// processes nothing.
 
 static void test_client_io_update_exposes_published_batch()
 {
@@ -482,13 +482,13 @@ static void test_client_io_update_exposes_published_batch()
     const int clock_calls = clock.calls;
     check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     check( clock.calls > clock_calls );
-    check( io->receive.ready_count == 1 && io->receive_fill == 1 );
+    check( io->receive.committed[0] == 1 && io->receive.worker == 1 );
     check( io->buffer[0]->receive_time[0] == 1000.0 );
 
     clock.now = 1000.5;
     rocketnet_client_transport_update( transport, 1000.5 );
     check( client_io_transport_counter( transport, ROCKETNET_COUNTER_PACKETS_RECEIVED ) == received_before + 1 );
-    check( io->receive_held == -1 && io->receive.ready_count == 0 && io->receive.free_count == 2 );
+    check( io->receive.main == io->receive.worker && io->receive.tail == 0 && io->receive.tail_cursor == io->receive.tail_end );
 
     rn_test_client_transport_stop_and_destroy( transport );
     delete fake;
