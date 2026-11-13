@@ -252,7 +252,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // planned peak is the xdp candidate's and grew by 2498771200 bytes, nothing to
 // the client (measured on bench-nyc-4, gcc, Release, ROCKETNET_DEV=ON, before
 // and after: actual=3111676851 to 5610448051). A Linux build without XDP plans
-// a smaller peak and the check is at most there.
+// a smaller peak and the check is at most there. The xdp transport's
+// server-wide packet id counter left for per-queue ids (a uint64_t; the
+// per-queue fields sit in the queue sockets), so the server is 8 bytes smaller
+// (actual=5610448939 at the XDP rebuild, bench, gcc Debug).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -260,9 +263,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400427ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400419ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400371ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400363ULL )
 #endif // #if defined( __aarch64__ )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137426 )
 #endif // #if defined( _WIN32 )
