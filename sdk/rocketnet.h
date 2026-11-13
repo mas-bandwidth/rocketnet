@@ -1661,7 +1661,7 @@ struct rocketnet_server_config_t
     /// and Windows has no exclusive form of that sharing: a plain bind of
     /// that address and port is refused while the server runs, but a process
     /// that asks for the same sharing can join the port and receive the
-    /// packets steered to its processor. Use one socket where nothing else on
+    /// datagrams steered to its processor. Use one socket where nothing else on
     /// the machine can be trusted with the port.
 
     int num_xdp_queues;
