@@ -278,7 +278,15 @@ def fetch_jobs(env, out, fetch=http_fetch, sleep=time.sleep, clock=time.monotoni
         return left
 
     why = "no try ran"
+    tried = 0
     for attempt in range(TRIES):
+        if attempt > 0 and end - clock() < REQUEST_FLOOR:
+            # checked at the start of every retry, not only before its wait: a sleep that
+            # returns late, or time lost after the check, never starts a try that has under
+            # REQUEST_FLOOR seconds to be answered
+            why += f", and fewer than {REQUEST_FLOOR} s were left for another try"
+            break
+        tried = attempt + 1
         try:
             listing = read_once(fetch, base, headers, request_left)
             late = clock() - end
@@ -298,8 +306,8 @@ def fetch_jobs(env, out, fetch=http_fetch, sleep=time.sleep, clock=time.monotoni
             wait = BACKOFF[attempt] if attempt < len(BACKOFF) else None
             if asked is not None:
                 if clock() + asked + REQUEST_FLOOR > end:
-                    log(f"JOB-LIST=FAIL no verdict: {why}, the server asks for {asked} s, past the "
-                        f"{DEADLINE} s deadline: not asked again early")
+                    log(f"JOB-LIST=FAIL no verdict: {why}, the server asks for {asked} s, which leaves "
+                        f"fewer than {REQUEST_FLOOR} s before the {DEADLINE} s deadline: not asked again early")
                     return 1
                 wait = max(asked, wait or 0)
             if wait is None or clock() + wait + REQUEST_FLOOR > end:
@@ -315,7 +323,7 @@ def fetch_jobs(env, out, fetch=http_fetch, sleep=time.sleep, clock=time.monotoni
             return 1
         log(f"JOB-LIST=OK {listing['total_count']} jobs (try {attempt + 1}/{TRIES})")
         return 0
-    log(f"JOB-LIST=FAIL no verdict: {why} after {attempt + 1} of {TRIES} tries")
+    log(f"JOB-LIST=FAIL no verdict: {why} after {tried} of {TRIES} tries")
     return 1
 
 
@@ -517,6 +525,28 @@ def self_test():
         expect(f"floor: exit {code}", code == 1)
         expect(f"floor: slept {slept}", slept == [])
         expect(f"floor: the log does not say why {lines}", bool(lines) and "would be left for another try" in lines[-1])
+
+        # the floor at the start of the retry: the backoff fits (34 s used, 2 s wait, 9 s left
+        # would not), but the sleep returns late, 3 s past its 2; no try starts with 6 s left
+        out = Path(tmp) / "oversleep.json"
+        now, slept, calls = [0.0], [], []
+
+        def reset_at_32(url, headers, left):
+            calls.append(now[0])
+            now[0] += DEADLINE - REQUEST_FLOOR - 3
+            raise ConnectionResetError("reset")
+
+        def oversleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds + 3
+
+        lines = []
+        code = fetch_jobs(env, out, reset_at_32, oversleep, lambda: now[0], log=lines.append)
+        expect(f"oversleep: exit {code}", code == 1)
+        expect(f"oversleep: tries started at {calls}, want one", len(calls) == 1)
+        expect(f"oversleep: slept {slept}, want [2]", slept == [2])
+        expect(f"oversleep: the log {lines}", bool(lines) and "were left for another try" in lines[-1]
+               and "after 1 of 4 tries" in lines[-1])
 
         # a body that keeps trickling: one byte a second, never ending. The chunked read checks the
         # clock after every chunk and sets each chunk's socket timeout to the time left, so each try
