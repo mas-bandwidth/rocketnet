@@ -488,6 +488,42 @@ static void test_rocketnet_msgx_receive_fill_budget()
     delete test;
 }
 
+// the budget is exact (Stella's review of 4119919c7, note 2): a batch that
+// does not divide the budget asks only for what is left of it, so a socket's
+// reads in a round never pass the budget. A budget of 6 and a batch of 4
+// over a socket of 20: reads of 4 and 2, not 4 and 4
+static void test_rocketnet_msgx_receive_fill_budget_exact()
+{
+    struct receive_fill_test_t * test = receive_fill_test_create( 1, 100 );
+    receive_fill_test_arrive( test, 0, 20, 1000 );
+    const struct rocketnet_msgx_receive_io_t io = receive_fill_test_io( test );
+
+    struct rocketnet_msgx_receive_drain_t drain;
+    rocketnet_msgx_receive_drain_start( &drain, 0 );
+    int count = 0;
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_READ );
+    rocketnet_unit_check( count == 4 && drain.reads == 4 );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_READ );
+    rocketnet_unit_check( count == 2 && drain.reads == 6 );
+    rocketnet_unit_check( drain.pc == ROCKETNET_MSGX_DRAIN_READ );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_BUDGET );
+    rocketnet_unit_check( test->bank_count[test->hand.worker] == 6 && test->sockets[0].count == 14 );
+    rocketnet_unit_check( test->asked_past_room == 0 );
+
+    // a weather error spends one, so the reads after it ask for 4, then 1
+    test->sockets[0].script[0] = EINTR;
+    test->sockets[0].num_script = 1;
+    rocketnet_msgx_receive_drain_start( &drain, 0 );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_WEATHER );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_READ );
+    rocketnet_unit_check( count == 4 && drain.reads == 5 );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_READ );
+    rocketnet_unit_check( count == 1 && drain.reads == 6 );
+    rocketnet_unit_check( test->bank_count[test->hand.worker] == 11 && test->sockets[0].count == 9 );
+    receive_fill_test_conserved( test );
+    delete test;
+}
+
 // the review's case (Emma, E3): 64 connected sockets of 150 datagrams each in
 // one update, 9600 in all, against the bank of one update's whole budget.
 // Every one is banked; a bank of 8192 dropped 1408 of them
@@ -601,5 +637,6 @@ REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather_bounded );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_dead );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_budget );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_budget_exact );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_review_case );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_walk );
