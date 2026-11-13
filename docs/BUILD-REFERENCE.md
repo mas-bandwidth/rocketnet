@@ -60,8 +60,7 @@ source-audit binary `./bin/source_audit` instead: the client/server
 "says messages, not packets" scan
 (`test_client_server_say_messages_not_packets`), the environment-name
 documentation check (`test_config_env_every_name_read_is_documented`), the
-counter-named-by-a-test check (`test_counters_every_counter_is_named_by_a_test`),
-the one-family-per-outcome check
+one-family-per-outcome check
 (`test_counters_every_outcome_in_at_most_one_family`) and the XDP counter-row
 check (`test_xdp_transport_host_every_counter_has_a_case`). It reads
 source, header and doc files through `ROCKETNET_SOURCE_DIR`, opens no socket
@@ -75,7 +74,11 @@ and `tests/wycheproof/*_test.json`) are compiled into it at build time by
 `cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
 regenerated only by the tool `./bin/connect_token_vectors <path>`
 (tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel:
-one job per core, as many as the 1.6 GiB-per-job memory budget allows
+three jobs per cpu the run may use, never more than the host has (the
+unit cases mostly wait; past 3 a cpu the wall stops falling), read from its
+affinity mask on Linux and on a one-group Windows host, so a run held to 4 of
+48 cpus runs 12 jobs and an unrestricted run 48 (the host's cpus on macOS),
+as many as the 1.6 GiB-per-job memory budget allows
 (`SUITE_JOB_MEMORY_BYTES` in `tests/suite_runner.h`; at most 64 on Windows).
 `ROCKETNET_TEST_JOBS` sets the count outright. In a Release
 build a test over 120 seconds is killed and the suite fails. Debug and
@@ -124,8 +127,7 @@ Put a new test in `./bin/test` when the assertion can be reached through a
 state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
-The functional-only sibling binaries are `test_serialize` (a real clock and
-`rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
+The functional-only sibling binaries are `test_xdp_filter` (a kernel, root or CAP_BPF, and
 `usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
 `test_production_client_lifecycle` (DEV=0 only), `test_msgx` and `test_iocp`;
 they are functional tests, never `./bin/test`.
@@ -212,7 +214,6 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
-| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, tests/functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | `nightly-soak.yml` (`tools/run_xdp_filter_guest.sh`) and by hand |
@@ -547,7 +548,7 @@ cmake --build build --target rocketnet_dev --parallel 4
 make -C tests/fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
 ```
 
-That builds the fifteen harnesses in `tests/fuzz/Makefile`'s `TARGETS` (the table
+That builds the sixteen harnesses in `tests/fuzz/Makefile`'s `TARGETS` (the table
 in [tests/fuzz/README.md](../tests/fuzz/README.md) names each one, its seed
 corpus and its dictionary) in `tests/fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
 `-ffp-contract=off` floor as the library. On macOS the link adds
@@ -575,11 +576,11 @@ with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when
 `$HOME/sdk/llvm` carries no libFuzzer runtime, before any build runs.
 `ci.yml`'s
 `Replay the fuzz corpora without libFuzzer` step stays the gate for the
-committed corpora: it builds `fuzz_replay_<harness>` for each of the fifteen
+committed corpora: it builds `fuzz_replay_<harness>` for each of the sixteen
 harnesses and runs each against its `tests/fuzz/corpus*` inputs, which executes
 every committed file exactly once. The
 `ROCKETNET_FUZZ_CC`/`ROCKETNET_FUZZ_CXX` variable mechanism is not Apple
 silicon specific: building the instrumented library with LLVM clang and
-running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the fifteen harnesses with
+running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the sixteen harnesses with
 `-fsanitize=fuzzer,address,undefined` on any host that carries a libFuzzer
 runtime.

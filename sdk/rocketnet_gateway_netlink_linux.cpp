@@ -19,6 +19,7 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/neighbour.h>
+#include <linux/nexthop.h>
 #include <netinet/in.h>
 
 // every header and attribute is copied out of the byte buffer with memcpy
@@ -30,7 +31,7 @@
 // the fields of one attribute walk the parsers read: the first occurrence of
 // each type below ROCKETNET_GATEWAY_NETLINK_MAX_ATTRIBUTE wins
 
-#define ROCKETNET_GATEWAY_NETLINK_MAX_ATTRIBUTE 32
+#define ROCKETNET_GATEWAY_NETLINK_MAX_ATTRIBUTE 64
 
 struct rocketnet_gateway_netlink_attributes_t
 {
@@ -206,11 +207,20 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
 // ---------------------------------------------------------------------------
 // the default route
 
+// a default route that names a nexthop object (RTA_NH_ID) carries its
+// gateway and interface only in that object when the kernel's
+// net.ipv4.nexthop_compat_mode is 0. The dump records the ids of such
+// routes, this many at most, and the route query asks each object after it
+
+#define ROCKETNET_GATEWAY_NETLINK_MAX_NEXTHOP_IDS 8
+
 struct rocketnet_gateway_netlink_route_context_t
 {
     int family;
     int interface_index;
     uint8_t * gateway;
+    uint32_t nexthop_ids[ROCKETNET_GATEWAY_NETLINK_MAX_NEXTHOP_IDS];
+    int num_nexthop_ids;
 };
 
 static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * data, size_t bytes, int family, int want_interface,
@@ -218,9 +228,10 @@ static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * dat
 {
     // every next hop of a multipath default route (RTA_MULTIPATH: rtnexthop
     // records, each followed by its own attributes), for either family. The
-    // first hop whose interface is this one and whose RTA_GATEWAY is the
-    // family's address size is the route. A short or oversized record is
-    // malformed. No hop on this interface is not this interface's route.
+    // first hop whose interface is this one and that carries an RTA_GATEWAY
+    // is the route; a gateway that is not the family's address size is
+    // malformed, as on a single-path route, and so is a short or oversized
+    // record. No hop on this interface is not this interface's route.
 
     const size_t address_bytes = rocketnet_gateway_netlink_address_bytes( family );
 
@@ -251,8 +262,13 @@ static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * dat
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
         }
 
-        if ( next_hop.rtnh_ifindex == want_interface && attributes.value[RTA_GATEWAY] != NULL && attributes.bytes[RTA_GATEWAY] == address_bytes )
+        if ( next_hop.rtnh_ifindex == want_interface && attributes.value[RTA_GATEWAY] != NULL )
         {
+            if ( attributes.bytes[RTA_GATEWAY] != address_bytes )
+            {
+                return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+            }
+
             *interface_index = next_hop.rtnh_ifindex;
             *gateway = attributes.value[RTA_GATEWAY];
             *gateway_bytes = attributes.bytes[RTA_GATEWAY];
@@ -310,6 +326,32 @@ static int rocketnet_gateway_netlink_match_route( const uint8_t * body, size_t b
 
         interface_index = (int) output_interface;
     }
+    else if ( attributes->value[RTA_NH_ID] && attributes->value[RTA_GATEWAY] == NULL && attributes->value[RTA_MULTIPATH] == NULL )
+    {
+        // the route names a nexthop object and nothing else: its id is
+        // recorded, once, and the object is asked after the dump
+
+        uint32_t id = 0;
+        if ( !rocketnet_gateway_netlink_u32( attributes, RTA_NH_ID, &id ) )
+        {
+            return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        }
+
+        for ( int i = 0; i < route->num_nexthop_ids; i++ )
+        {
+            if ( route->nexthop_ids[i] == id )
+            {
+                return ROCKETNET_GATEWAY_NETLINK_MORE;
+            }
+        }
+
+        if ( route->num_nexthop_ids < ROCKETNET_GATEWAY_NETLINK_MAX_NEXTHOP_IDS )
+        {
+            route->nexthop_ids[route->num_nexthop_ids++] = id;
+        }
+
+        return ROCKETNET_GATEWAY_NETLINK_MORE;
+    }
     else if ( attributes->value[RTA_MULTIPATH] )
     {
         // both families: the first next hop on this interface. Hops on
@@ -351,8 +393,73 @@ int rocketnet_gateway_netlink_parse_route( const uint8_t * data, size_t bytes, u
     rocketnet_assert( interface_index > 0 );
     rocketnet_assert( gateway );
 
-    rocketnet_gateway_netlink_route_context_t context = { family, interface_index, gateway };
+    rocketnet_gateway_netlink_route_context_t context;
+    memset( &context, 0, sizeof( context ) );
+    context.family = family;
+    context.interface_index = interface_index;
+    context.gateway = gateway;
     return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWROUTE, sizeof( struct rtmsg ), rocketnet_gateway_netlink_match_route, &context, error );
+}
+
+// ---------------------------------------------------------------------------
+// the nexthop object a default route names
+
+struct rocketnet_gateway_netlink_nexthop_context_t
+{
+    int family;
+    int interface_index;
+    uint32_t id;
+    uint8_t * gateway;
+};
+
+static int rocketnet_gateway_netlink_match_nexthop( const uint8_t * body, size_t body_bytes, const rocketnet_gateway_netlink_attributes_t * attributes, void * context )
+{
+    rocketnet_gateway_netlink_nexthop_context_t * nexthop = (rocketnet_gateway_netlink_nexthop_context_t *) context;
+
+    struct nhmsg message;
+    rocketnet_assert( body_bytes == sizeof( message ) );
+    (void) body_bytes;
+    memcpy( &message, body, sizeof( message ) );
+
+    uint32_t id = 0;
+    if ( attributes->value[NHA_ID] && !rocketnet_gateway_netlink_u32( attributes, NHA_ID, &id ) )
+    {
+        return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+    }
+
+    // a group, a blackhole, another family's or another interface's object,
+    // or one with no gateway names no gateway on this interface
+
+    if ( message.nh_family != nexthop->family || id != nexthop->id || attributes->value[NHA_GROUP] || attributes->value[NHA_BLACKHOLE] )
+    {
+        return ROCKETNET_GATEWAY_NETLINK_MORE;
+    }
+
+    uint32_t output_interface = 0;
+    if ( !rocketnet_gateway_netlink_u32( attributes, NHA_OIF, &output_interface ) || (int) output_interface != nexthop->interface_index )
+    {
+        return ROCKETNET_GATEWAY_NETLINK_MORE;
+    }
+
+    if ( attributes->value[NHA_GATEWAY] == NULL )
+    {
+        return ROCKETNET_GATEWAY_NETLINK_MORE;
+    }
+
+    const size_t address_bytes = rocketnet_gateway_netlink_address_bytes( nexthop->family );
+    if ( attributes->bytes[NHA_GATEWAY] != address_bytes )
+    {
+        return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+    }
+
+    memcpy( nexthop->gateway, attributes->value[NHA_GATEWAY], address_bytes );
+
+    return ROCKETNET_GATEWAY_NETLINK_FOUND;
+}
+
+static int rocketnet_gateway_netlink_parse_nexthop( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error )
+{
+    return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWNEXTHOP, sizeof( struct nhmsg ), rocketnet_gateway_netlink_match_nexthop, context, error );
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +530,208 @@ int rocketnet_gateway_netlink_parse_neighbor( const uint8_t * data, size_t bytes
 }
 
 // ---------------------------------------------------------------------------
+// the link
+
+struct rocketnet_gateway_netlink_link_context_t
+{
+    int interface_index;
+    rocketnet_gateway_netlink_link_t * link;
+};
+
+// a string attribute into a buffer of bytes: NUL-terminated inside its
+// length, and short enough for the buffer, else false
+
+static bool rocketnet_gateway_netlink_string( const rocketnet_gateway_netlink_attributes_t * attributes, unsigned int type, char * out, size_t out_bytes )
+{
+    const uint8_t * value = attributes->value[type];
+    const size_t bytes = attributes->bytes[type];
+    if ( value == NULL || bytes == 0 )
+    {
+        return false;
+    }
+
+    const void * end = memchr( value, '\0', bytes );
+    if ( end == NULL )
+    {
+        return false;
+    }
+
+    const size_t length = (size_t) ( (const uint8_t *) end - value );
+    if ( length >= out_bytes )
+    {
+        return false;
+    }
+
+    memcpy( out, value, length );
+    out[length] = '\0';
+    return true;
+}
+
+static int rocketnet_gateway_netlink_match_link( const uint8_t * body, size_t body_bytes, const rocketnet_gateway_netlink_attributes_t * attributes, void * context )
+{
+    rocketnet_gateway_netlink_link_context_t * query = (rocketnet_gateway_netlink_link_context_t *) context;
+
+    struct ifinfomsg message;
+    rocketnet_assert( body_bytes == sizeof( message ) );
+    (void) body_bytes;
+    memcpy( &message, body, sizeof( message ) );
+
+    if ( message.ifi_index != query->interface_index )
+    {
+        return ROCKETNET_GATEWAY_NETLINK_MORE;
+    }
+
+    rocketnet_gateway_netlink_link_t * link = query->link;
+    memset( link, 0, sizeof( *link ) );
+    link->index = message.ifi_index;
+
+    if ( !rocketnet_gateway_netlink_string( attributes, IFLA_IFNAME, link->name, sizeof( link->name ) ) )
+    {
+        return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+    }
+
+    uint32_t lower = 0;
+    if ( attributes->value[IFLA_LINK] != NULL )
+    {
+        if ( !rocketnet_gateway_netlink_u32( attributes, IFLA_LINK, &lower ) || lower > INT_MAX )
+        {
+            return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        }
+        if ( (int) lower != message.ifi_index )
+        {
+            link->link_index = (int) lower;
+        }
+    }
+
+    link->link_netns = attributes->value[IFLA_LINK_NETNSID] != NULL;
+
+    if ( attributes->value[IFLA_LINKINFO] != NULL )
+    {
+        rocketnet_gateway_netlink_attributes_t info;
+        if ( !rocketnet_gateway_netlink_walk_attributes( attributes->value[IFLA_LINKINFO], attributes->bytes[IFLA_LINKINFO], &info ) )
+        {
+            return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        }
+
+        if ( info.value[IFLA_INFO_KIND] != NULL && !rocketnet_gateway_netlink_string( &info, IFLA_INFO_KIND, link->kind, sizeof( link->kind ) ) )
+        {
+            return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        }
+
+        if ( strcmp( link->kind, "vlan" ) == 0 && info.value[IFLA_INFO_DATA] != NULL )
+        {
+            rocketnet_gateway_netlink_attributes_t data;
+            if ( !rocketnet_gateway_netlink_walk_attributes( info.value[IFLA_INFO_DATA], info.bytes[IFLA_INFO_DATA], &data ) )
+            {
+                return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+            }
+
+            if ( data.value[IFLA_VLAN_ID] != NULL )
+            {
+                uint16_t vlan_id;
+                if ( data.bytes[IFLA_VLAN_ID] != sizeof( vlan_id ) )
+                {
+                    return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+                }
+                memcpy( &vlan_id, data.value[IFLA_VLAN_ID], sizeof( vlan_id ) );
+                link->vlan_id = vlan_id;
+            }
+
+            if ( data.value[IFLA_VLAN_PROTOCOL] != NULL )
+            {
+                uint8_t protocol[2];
+                if ( data.bytes[IFLA_VLAN_PROTOCOL] != sizeof( protocol ) )
+                {
+                    return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+                }
+                memcpy( protocol, data.value[IFLA_VLAN_PROTOCOL], sizeof( protocol ) );
+                link->vlan_protocol = ( protocol[0] << 8 ) | protocol[1];
+            }
+        }
+    }
+
+    return ROCKETNET_GATEWAY_NETLINK_FOUND;
+}
+
+int rocketnet_gateway_netlink_parse_link( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id,
+                                          int interface_index, rocketnet_gateway_netlink_link_t * link, int * error )
+{
+    rocketnet_assert( interface_index > 0 );
+    rocketnet_assert( link );
+
+    rocketnet_gateway_netlink_link_context_t context = { interface_index, link };
+    return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWLINK, sizeof( struct ifinfomsg ), rocketnet_gateway_netlink_match_link, &context, error );
+}
+
+// the device kinds that stack on other devices and carry no queue of their
+// own an AF_XDP socket could bind: the address on one of these is refused
+
+static bool rocketnet_xdp_link_kind_stacked( const char * kind )
+{
+    static const char * const stacked[] = { "bond", "bridge", "team", "macvlan", "macvtap", "ipvlan", "ipvtap" };
+    for ( size_t i = 0; i < sizeof( stacked ) / sizeof( stacked[0] ); i++ )
+    {
+        if ( strcmp( kind, stacked[i] ) == 0 )
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int rocketnet_xdp_link_classify( const rocketnet_gateway_netlink_link_t * device, const rocketnet_gateway_netlink_link_t * lower, const char ** reason )
+{
+    rocketnet_assert( device );
+    rocketnet_assert( reason );
+
+    *reason = NULL;
+
+    if ( rocketnet_xdp_link_kind_stacked( device->kind ) )
+    {
+        *reason = "a device stacked on other devices (bond, bridge, team, macvlan, macvtap, ipvlan or ipvtap)";
+        return ROCKETNET_XDP_LINK_REFUSED;
+    }
+
+    if ( strcmp( device->kind, "vlan" ) != 0 )
+    {
+        return ROCKETNET_XDP_LINK_PLAIN;
+    }
+
+    if ( device->vlan_protocol != 0x8100 )
+    {
+        *reason = "a VLAN device whose tag protocol is not 802.1Q (802.1ad, the outer tag of QinQ)";
+        return ROCKETNET_XDP_LINK_REFUSED;
+    }
+
+    if ( device->vlan_id < 1 || device->vlan_id > 4094 )
+    {
+        *reason = "a VLAN device whose VLAN ID is not 1 to 4094";
+        return ROCKETNET_XDP_LINK_REFUSED;
+    }
+
+    if ( device->link_netns || device->link_index == 0 || lower == NULL )
+    {
+        *reason = "a VLAN device whose parent is not a device in this network namespace";
+        return ROCKETNET_XDP_LINK_REFUSED;
+    }
+
+    if ( strcmp( lower->kind, "vlan" ) == 0 )
+    {
+        *reason = "a VLAN device on another VLAN device (nested tags, QinQ)";
+        return ROCKETNET_XDP_LINK_REFUSED;
+    }
+
+    if ( lower->kind[0] != '\0' && strcmp( lower->kind, "veth" ) != 0 )
+    {
+        *reason = "a VLAN device on a stacked or virtual device (only a physical NIC or veth carries it)";
+        return ROCKETNET_XDP_LINK_REFUSED;
+    }
+
+    return ROCKETNET_XDP_LINK_VLAN;
+}
+
+// ---------------------------------------------------------------------------
 // the socket
 
 // one datagram of a dump fits: the kernel sizes a dump's datagrams to the
@@ -450,7 +759,9 @@ typedef int ( *rocketnet_gateway_netlink_parse_t )( const uint8_t * data, size_t
 
 // one query on a fresh socket: RTM_GETROUTE is a dump of the family's
 // routes; RTM_GETNEIGH asks for the one neighbour entry of neighbor on
-// interface_index (no NLM_F_DUMP), whose single reply is the answer
+// interface_index (no NLM_F_DUMP), and RTM_GETNEXTHOP for the one nexthop
+// object whose id is the 4 bytes at neighbor (no NLM_F_DUMP): each single
+// reply is the answer
 static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_system_t * system, uint16_t request_type, int family,
                                                 int interface_index, const uint8_t * neighbor,
                                                 rocketnet_gateway_netlink_parse_t parse, void * context, int * error )
@@ -493,20 +804,38 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
         return ROCKETNET_GATEWAY_NETLINK_SYSTEM;
     }
 
-    // the request: a header and the family's rtmsg or ndmsg, every other
-    // field zero; the route dump is filtered by the parse, the neighbour
-    // query names its interface and its NDA_DST
+    // the request: a header and the family's rtmsg or ndmsg, or an ifinfomsg,
+    // every other field zero; the route dump is filtered by the parse, the
+    // neighbour query names its interface and its NDA_DST, the link query
+    // its interface. The nexthop query is an nhmsg of no family and the
+    // object's NHA_ID
 
-    uint8_t request[NLMSG_SPACE( sizeof( struct rtmsg ) > sizeof( struct ndmsg ) ? sizeof( struct rtmsg ) : sizeof( struct ndmsg ) ) + RTA_SPACE( 16 )];
+    static_assert( sizeof( struct ifinfomsg ) >= sizeof( struct rtmsg ) && sizeof( struct ifinfomsg ) >= sizeof( struct ndmsg ) && sizeof( struct ifinfomsg ) >= sizeof( struct nhmsg ), "the request holds the largest body" );
+
+    uint8_t request[NLMSG_SPACE( sizeof( struct ifinfomsg ) ) + RTA_SPACE( 16 )];
     memset( request, 0, sizeof( request ) );
 
     const bool dump = request_type == RTM_GETROUTE;
-    const size_t body_bytes = dump ? sizeof( struct rtmsg ) : sizeof( struct ndmsg );
-    const size_t address_bytes = rocketnet_gateway_netlink_address_bytes( family );
+    const bool link = request_type == RTM_GETLINK;
+    const bool nexthop = request_type == RTM_GETNEXTHOP;
+    size_t body_bytes = sizeof( struct ndmsg );
+    if ( dump )
+    {
+        body_bytes = sizeof( struct rtmsg );
+    }
+    else if ( link )
+    {
+        body_bytes = sizeof( struct ifinfomsg );
+    }
+    else if ( nexthop )
+    {
+        body_bytes = sizeof( struct nhmsg );
+    }
+    const size_t address_bytes = nexthop ? sizeof( uint32_t ) : rocketnet_gateway_netlink_address_bytes( family );
 
     struct nlmsghdr header;
     memset( &header, 0, sizeof( header ) );
-    header.nlmsg_len = (uint32_t) ( dump ? NLMSG_LENGTH( body_bytes ) : NLMSG_SPACE( body_bytes ) + RTA_LENGTH( address_bytes ) );
+    header.nlmsg_len = (uint32_t) ( dump || link ? NLMSG_LENGTH( body_bytes ) : NLMSG_SPACE( body_bytes ) + RTA_LENGTH( address_bytes ) );
     header.nlmsg_type = request_type;
     header.nlmsg_flags = (uint16_t) ( dump ? NLM_F_REQUEST | NLM_F_DUMP : NLM_F_REQUEST );
     header.nlmsg_seq = ROCKETNET_GATEWAY_NETLINK_SEQUENCE;
@@ -519,17 +848,28 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
         message.rtm_family = (unsigned char) family;
         memcpy( request + NLMSG_HDRLEN, &message, sizeof( message ) );
     }
+    else if ( link )
+    {
+        struct ifinfomsg message;
+        memset( &message, 0, sizeof( message ) );
+        message.ifi_family = AF_UNSPEC;
+        message.ifi_index = interface_index;
+        memcpy( request + NLMSG_HDRLEN, &message, sizeof( message ) );
+    }
     else
     {
-        struct ndmsg message;
-        memset( &message, 0, sizeof( message ) );
-        message.ndm_family = (unsigned char) family;
-        message.ndm_ifindex = interface_index;
-        memcpy( request + NLMSG_HDRLEN, &message, sizeof( message ) );
+        if ( !nexthop )
+        {
+            struct ndmsg message;
+            memset( &message, 0, sizeof( message ) );
+            message.ndm_family = (unsigned char) family;
+            message.ndm_ifindex = interface_index;
+            memcpy( request + NLMSG_HDRLEN, &message, sizeof( message ) );
+        }
 
         struct rtattr attribute;
         attribute.rta_len = (unsigned short) RTA_LENGTH( address_bytes );
-        attribute.rta_type = NDA_DST;
+        attribute.rta_type = nexthop ? (unsigned short) NHA_ID : (unsigned short) NDA_DST;
         memcpy( request + NLMSG_SPACE( body_bytes ), &attribute, sizeof( attribute ) );
         memcpy( request + NLMSG_SPACE( body_bytes ) + RTA_LENGTH( 0 ), neighbor, address_bytes );
     }
@@ -601,7 +941,7 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
             break;
         }
 
-        // the neighbour query's one reply held no usable entry: nothing more comes
+        // the neighbour or nexthop query's one reply held no usable answer: nothing more comes
 
         if ( !dump )
         {
@@ -649,16 +989,52 @@ static const rocketnet_gateway_netlink_system_t rocketnet_gateway_netlink_libc =
 
 static int rocketnet_gateway_netlink_route_parse( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error )
 {
-    const rocketnet_gateway_netlink_route_context_t * query = (const rocketnet_gateway_netlink_route_context_t *) context;
-    return rocketnet_gateway_netlink_parse_route( data, bytes, sequence, port_id, query->family, query->interface_index, query->gateway, error );
+    // the query's own context, so the nexthop ids the dump names reach the query
+
+    return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWROUTE, sizeof( struct rtmsg ), rocketnet_gateway_netlink_match_route, context, error );
 }
 
 int rocketnet_gateway_netlink_route_with( const rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
                                           uint8_t * gateway, int * error )
 {
     rocketnet_assert( error );
-    rocketnet_gateway_netlink_route_context_t query = { family, interface_index, gateway };
-    return rocketnet_gateway_netlink_dump( system, RTM_GETROUTE, family, interface_index, NULL, rocketnet_gateway_netlink_route_parse, &query, error );
+    rocketnet_gateway_netlink_route_context_t query;
+    memset( &query, 0, sizeof( query ) );
+    query.family = family;
+    query.interface_index = interface_index;
+    query.gateway = gateway;
+    const int result = rocketnet_gateway_netlink_dump( system, RTM_GETROUTE, family, interface_index, NULL, rocketnet_gateway_netlink_route_parse, &query, error );
+    if ( result != ROCKETNET_GATEWAY_NETLINK_DONE )
+    {
+        return result;
+    }
+
+    // no default route on this interface carried its gateway: ask each
+    // nexthop object a default route named (ip nexthop get id N). One that
+    // names a gateway on this interface is the route; the kernel refusing
+    // the query (no such object, or no nexthop objects at all) is no
+    // gateway, the DONE the dump already gave
+
+    for ( int i = 0; i < query.num_nexthop_ids; i++ )
+    {
+        uint8_t id[sizeof( uint32_t )];
+        memcpy( id, &query.nexthop_ids[i], sizeof( id ) );
+
+        rocketnet_gateway_netlink_nexthop_context_t nexthop = { family, interface_index, query.nexthop_ids[i], gateway };
+        const int object = rocketnet_gateway_netlink_dump( system, RTM_GETNEXTHOP, family, interface_index, id, rocketnet_gateway_netlink_parse_nexthop, &nexthop, error );
+        if ( object == ROCKETNET_GATEWAY_NETLINK_ERROR )
+        {
+            *error = 0;
+            continue;
+        }
+
+        if ( object != ROCKETNET_GATEWAY_NETLINK_DONE )
+        {
+            return object;
+        }
+    }
+
+    return ROCKETNET_GATEWAY_NETLINK_DONE;
 }
 
 int rocketnet_gateway_netlink_route( int family, int interface_index, uint8_t * gateway, int * error )
@@ -701,6 +1077,25 @@ int rocketnet_gateway_netlink_neighbor_with( const rocketnet_gateway_netlink_sys
 int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const uint8_t * gateway, uint8_t * mac, int * error )
 {
     return rocketnet_gateway_netlink_neighbor_with( &rocketnet_gateway_netlink_libc, family, interface_index, gateway, mac, error );
+}
+
+static int rocketnet_gateway_netlink_link_parse( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error )
+{
+    const rocketnet_gateway_netlink_link_context_t * query = (const rocketnet_gateway_netlink_link_context_t *) context;
+    return rocketnet_gateway_netlink_parse_link( data, bytes, sequence, port_id, query->interface_index, query->link, error );
+}
+
+int rocketnet_gateway_netlink_link_with( const rocketnet_gateway_netlink_system_t * system, int interface_index,
+                                         rocketnet_gateway_netlink_link_t * link, int * error )
+{
+    rocketnet_assert( error );
+    rocketnet_gateway_netlink_link_context_t query = { interface_index, link };
+    return rocketnet_gateway_netlink_dump( system, RTM_GETLINK, AF_UNSPEC, interface_index, NULL, rocketnet_gateway_netlink_link_parse, &query, error );
+}
+
+int rocketnet_gateway_netlink_link( int interface_index, rocketnet_gateway_netlink_link_t * link, int * error )
+{
+    return rocketnet_gateway_netlink_link_with( &rocketnet_gateway_netlink_libc, interface_index, link, error );
 }
 
 int rocketnet_gateway_netlink_discover_with( const rocketnet_gateway_netlink_system_t * system, int family, int interface_index,

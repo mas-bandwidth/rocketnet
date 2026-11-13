@@ -13,7 +13,7 @@
 (* the first free client record, and for a bind to                         *)
 (* port 0 searches from hub->next_port for a port neither family holds,    *)
 (* stepping with loopback_next_port, which wraps from the range's last     *)
-(* port (65535) to its first (49152), at most once round the range; when   *)
+(* port (65535) to its first, at most once round the range; when          *)
 (* every port of the range is held it refuses the bind (RefuseFull), and   *)
 (* otherwise it writes the entry.                                          *)
 (* loopback_destroy clears the entry only when it names the destroyed      *)
@@ -25,8 +25,11 @@
 (* The abstract contract is the walk the table replaces: WalkFind scans    *)
 (* the live records.  LookupIsWalk states the table lookup returns the     *)
 (* same endpoint for every destination.  Ports run 0..Last; the ephemeral  *)
-(* range is First..Last and Last stands for 65535, so the code's uint16    *)
-(* port + 1 at Last is (Last + 1) mod (Last + 1) = 0.                      *)
+(* range is Low..Last and Last stands for 65535, so the code's uint16      *)
+(* port + 1 at Last is (Last + 1) mod (Last + 1) = 0.  Low is First        *)
+(* (49152, or the DEV seam's port), lowered at create when the range has   *)
+(* fewer ports than the hub has records (loopback_first_port), so          *)
+(* HoldsEveryRecord: a port 0 bind of every record finds a free port.      *)
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a real bug class):               *)
 (*   PlusOne        the entry stores the record index without the + 1     *)
@@ -35,6 +38,7 @@
 (*   BothFamilies   the search tests only the bind's own family            *)
 (*   DualCheck      create without the cross-family dual-stack refusal     *)
 (*   FullCheck      create without the refusal when no port is free       *)
+(*   Sized          the range not lowered for a hub of more records       *)
 (* A destroy that clears the entry without testing that it names the      *)
 (* record is not a witness: DestroyFindsOwnEntry shows the test is always  *)
 (* true under the code's create, so the unguarded clear is equivalent.     *)
@@ -43,7 +47,7 @@ EXTENDS Integers, FiniteSets
 
 CONSTANTS
     Records,        \* 1 + max_clients endpoint records
-    First,          \* ROCKETNET_LOOPBACK_FIRST_PORT
+    First,          \* ROCKETNET_LOOPBACK_FIRST_PORT, or the DEV seam's port
     Last,           \* ROCKETNET_LOOPBACK_LAST_PORT, the largest port
     BindPorts,      \* the ports an explicit bind names (0 asks for an ephemeral port)
     PlusOne,        \* the entry is the record index plus one, 0 for none
@@ -51,14 +55,20 @@ CONSTANTS
     WrapToFirst,    \* loopback_next_port wraps Last to First
     BothFamilies,   \* the search skips a port either family holds
     DualCheck,      \* loopback_create refuses a port shared with a dual-stack wildcard
-    FullCheck       \* loopback_create refuses a port 0 bind when the search finds no free port
+    FullCheck,      \* loopback_create refuses a port 0 bind when the search finds no free port
+    Sized,          \* hub create lowers the range's first port so it holds every record
+    HoldAll         \* the range must hold every record: no DEV seam narrowed it
 
 ASSUME Records \in Nat \ {0}
 ASSUME First \in Nat \ {0} /\ Last \in Nat /\ First <= Last
 ASSUME BindPorts \subseteq 0..Last /\ 0 \in BindPorts
-ASSUME \A f \in {PlusOne, BindCheck, WrapToFirst, BothFamilies, DualCheck, FullCheck} : f \in BOOLEAN
+ASSUME \A f \in {PlusOne, BindCheck, WrapToFirst, BothFamilies, DualCheck, FullCheck, Sized, HoldAll} : f \in BOOLEAN
+ASSUME Records < Last
 
 Recs == 0..(Records - 1)
+
+\* loopback_first_port: First, or lower when First..Last has fewer ports than records
+Low == IF Sized /\ Last + 1 - First < Records THEN Last + 1 - Records ELSE First
 Ports == 0..Last
 Families == {4, 6}
 BindAddrs == {"wild", "a"}          \* a bind's address: the family's wildcard or a specific one
@@ -76,9 +86,10 @@ VARIABLES
     pickedOut,      \* ghost: a search picked a port outside First..Last
     pickedHeld,     \* ghost: a search picked a port some live endpoint holds
     refusedFree,    \* ghost: a bind was refused while a port of the range was free
-    otherCleared    \* ghost: a destroy met an entry naming another record
+    otherCleared,   \* ghost: a destroy met an entry naming another record
+    refusedAny      \* ghost: a port 0 bind was refused
 
-vars == <<live, fam, addr, port, bound, nextPort, registered, pickedOut, pickedHeld, refusedFree, otherCleared>>
+vars == <<live, fam, addr, port, bound, nextPort, registered, pickedOut, pickedHeld, refusedFree, otherCleared, refusedAny>>
 
 \* the entry written for record r, and the record an entry names (NONE for none)
 Encode(r) == IF PlusOne THEN r + 1 ELSE r
@@ -86,7 +97,7 @@ Decode(e) == IF e = 0 THEN NONE ELSE IF PlusOne THEN e - 1 ELSE e
 
 \* loopback_next_port
 NextPort(p) == IF WrapToFirst
-               THEN IF p = Last THEN First ELSE p + 1
+               THEN IF p = Last THEN Low ELSE p + 1
                ELSE (p + 1) % (Last + 1)
 
 Held(f, p) == bound[f][p] # 0
@@ -95,7 +106,7 @@ PortFree(f, p) == IF BothFamilies THEN ~Held(4, p) /\ ~Held(6, p) ELSE ~Held(f, 
 \* the search loop of loopback_create from p, one try per port of the range:
 \* SearchFinds when a try finds a free port, and SearchFrom the port the loop
 \* leaves on, the free port or, when none is, the port after its last try
-Tries == Last - First + 1
+Tries == Last - Low + 1
 
 RECURSIVE SearchFinds(_, _, _)
 SearchFinds(f, p, fuel) == fuel > 0 /\ (PortFree(f, p) \/ SearchFinds(f, NextPort(p), fuel - 1))
@@ -126,12 +137,13 @@ Init ==
     /\ addr = [r \in Recs |-> "wild"]
     /\ port = [r \in Recs |-> 0]
     /\ bound = [f \in Families |-> [p \in Ports |-> 0]]
-    /\ nextPort = First
+    /\ nextPort = Low
     /\ registered = 0
     /\ pickedOut = FALSE
     /\ pickedHeld = FALSE
     /\ refusedFree = FALSE
     /\ otherCleared = FALSE
+    /\ refusedAny = FALSE
 
 \* loopback_create: the held-port and dual-stack refusals, the record, the
 \* port search for a bind to port 0, then the record and its entry written
@@ -149,9 +161,9 @@ Create(server, f, a, bp) ==
           /\ bound' = [bound EXCEPT ![f][p] = Encode(r)]
           /\ nextPort' = IF bp = 0 THEN NextPort(p) ELSE nextPort
           /\ registered' = registered + 1
-          /\ pickedOut' = (pickedOut \/ (bp = 0 /\ (p < First \/ p > Last)))
+          /\ pickedOut' = (pickedOut \/ (bp = 0 /\ (p < Low \/ p > Last)))
           /\ pickedHeld' = (pickedHeld \/ (bp = 0 /\ HeldByAny(p)))
-    /\ UNCHANGED <<refusedFree, otherCleared>>
+    /\ UNCHANGED <<refusedFree, otherCleared, refusedAny>>
 
 \* loopback_create's refusal of a bind to port 0 whose search finds no free
 \* port: past the held-port and dual-stack refusals and with a record free,
@@ -162,7 +174,8 @@ RefuseFull(server, f, a) ==
     /\ ~(DualCheck /\ DualConflict(f, a, 0))
     /\ FreeRecord(server) # NONE
     /\ ~SearchFinds(f, nextPort, Tries)
-    /\ refusedFree' = (refusedFree \/ \E p \in First..Last : ~HeldByAny(p))
+    /\ refusedFree' = (refusedFree \/ \E p \in Low..Last : ~HeldByAny(p))
+    /\ refusedAny' = TRUE
     /\ UNCHANGED <<live, fam, addr, port, bound, nextPort, registered, pickedOut, pickedHeld, otherCleared>>
 
 \* loopback_destroy: the entry cleared only when it names this record
@@ -178,7 +191,7 @@ Destroy(r) ==
     /\ addr' = [addr EXCEPT ![r] = "wild"]
     /\ port' = [port EXCEPT ![r] = 0]
     /\ registered' = registered - 1
-    /\ UNCHANGED <<nextPort, pickedOut, pickedHeld, refusedFree>>
+    /\ UNCHANGED <<nextPort, pickedOut, pickedHeld, refusedFree, refusedAny>>
 
 Next ==
     \/ \E server \in BOOLEAN, f \in Families, a \in BindAddrs, bp \in BindPorts : Create(server, f, a, bp)
@@ -238,7 +251,12 @@ RefusesOnlyWhenFull == ~refusedFree
 
 \* no live endpoint holds port 0, and next_port stays in the range
 NoPortZero == \A r \in Recs : live[r] => port[r] # 0
-NextPortInRange == nextPort \in First..Last
+NextPortInRange == nextPort \in Low..Last
+
+\* a hub's range holds every record: a port 0 bind is never refused
+\* (the hub of ROCKETNET_MAX_CLIENTS clients past 16383 that 49152..65535
+\* cannot hold)
+HoldsEveryRecord == HoldAll => ~refusedAny
 
 \* at most one live endpoint accepts any IPv4 destination: an IPv4 endpoint
 \* bound there, or a dual-stack endpoint bound to the IPv6 wildcard on its port

@@ -1,0 +1,49 @@
+# tools/fuzz_coverage_floors.tsv: the sdk lines each fuzz target's replay must cover, per OS
+# (tools/check_fuzz_coverage.py, run at the end of tools/fuzz_coverage.sh).
+# Columns (tab-separated): target, os (uname -s: Linux or Darwin), min_lines or off.
+#   min_lines: nine tenths of the sdk lines the target covered over its committed corpus and
+#     2000 random inputs (the script's defaults; the night's campaign corpora only add to it),
+#     rounded down. The tenth is a margin, not a measurement: a target under its floor is a
+#     harness that reaches less than it did; read why before moving the floor.
+#   off: the harness is compiled out on that OS (a Linux-only parser); it must cover 0 lines.
+#   all: the union of every target.
+# Measured 2026-11-12. Linux: hetzner2, branch ci/v1.1.8/checks-that-check at 9bb116638 with
+# ROCKETNET_XDP on (Ubuntu clang 21.1.8). Darwin: macbook, the same tree, XDP off (Apple clang 21.0.0);
+# the netlink and io_uring harnesses are Linux parsers and the XDP filter driver is not built.
+# A target with no row for the OS it runs on is refused.
+rocketnet_fuzz	Linux	374
+rocketnet_fuzz_client_transport	Linux	9356
+rocketnet_fuzz_config	Linux	623
+rocketnet_fuzz_connect_token	Linux	450
+rocketnet_fuzz_endpoint	Linux	3831
+rocketnet_fuzz_gateway_netlink	Linux	192
+rocketnet_fuzz_message	Linux	412
+rocketnet_fuzz_receive_structured	Linux	3545
+rocketnet_fuzz_round_trip	Linux	552
+rocketnet_fuzz_server_transport	Linux	9301
+rocketnet_fuzz_session	Linux	11599
+# rocketnet_fuzz_session_raw, 2026-11-12, the rebased end-to-end-checks tree: Linux bench-nyc-1 (Ubuntu clang 21.1.8,
+# XDP on) covered 12956; Darwin macbook (Apple clang 21.0.0) covered 10247. Nine tenths, rounded down.
+rocketnet_fuzz_session_raw	Linux	11660
+rocketnet_fuzz_token_private	Linux	1233
+rocketnet_fuzz_uring_recvmsg	Linux	144
+rocketnet_fuzz_xdp_filter	Linux	270
+rocketnet_fuzz_xdp_frame	Linux	122
+all	Linux	13411
+rocketnet_fuzz	Darwin	385
+rocketnet_fuzz_client_transport	Darwin	6895
+rocketnet_fuzz_config	Darwin	623
+rocketnet_fuzz_connect_token	Darwin	450
+rocketnet_fuzz_endpoint	Darwin	3831
+rocketnet_fuzz_gateway_netlink	Darwin	off
+rocketnet_fuzz_message	Darwin	412
+rocketnet_fuzz_receive_structured	Darwin	3545
+rocketnet_fuzz_round_trip	Darwin	552
+rocketnet_fuzz_server_transport	Darwin	6846
+rocketnet_fuzz_session	Darwin	9149
+rocketnet_fuzz_session_raw	Darwin	9222
+rocketnet_fuzz_token_private	Darwin	1233
+rocketnet_fuzz_uring_recvmsg	Darwin	off
+rocketnet_fuzz_xdp_filter	Darwin	off
+rocketnet_fuzz_xdp_frame	Darwin	122
+all	Darwin	11342

@@ -4,6 +4,7 @@
 */
 
 #include "../tests/test_env_source.h"
+#include "../tests/check_count.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_ack.h"
@@ -95,7 +96,7 @@ extern thread_local unsigned long long g_ack_visit_count;
 #define ROCKETNET_TEST_LOG_RING_LINES 32
 #define ROCKETNET_TEST_LOG_RING_LINE_BYTES 1024
 // a slot holds "<event>: <level>: " in front of a whole captured line: the
-// level name is at most 7 bytes (sdk/rocketnet.cpp:181), so 64 bytes hold
+// level name is at most 7 bytes (sdk/rocketnet.cpp (rocketnet_log_level_name)), so 64 bytes hold
 // the prefix for any uint64 event ordinal
 #define ROCKETNET_TEST_LOG_RING_PREFIX_BYTES 64
 #define ROCKETNET_TEST_LOG_RING_SLOT_BYTES ( ROCKETNET_TEST_LOG_RING_PREFIX_BYTES + ROCKETNET_TEST_LOG_RING_LINE_BYTES )
@@ -188,6 +189,7 @@ static void rocketnet_check_handler( const char * condition,
 #define rocketnet_check( condition )                                                                                 \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !(condition) )                                                                                         \
     {                                                                                                           \
         rocketnet_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );         \
@@ -5368,8 +5370,8 @@ void rocketnet_test_server_keep_alive_pacing()
 
 void rocketnet_test_client_payload_before_first_keep_alive()
 {
-    // a payload racing ahead of the first keep-alive is ignored, as
-    // netcode.io's client does: delivered, it let the application reply on
+    // a payload racing ahead of the first keep-alive is ignored
+    // (TRANSPORT.md t11.3): delivered, it let the application reply on
     // a connection that could not yet send. The keep-alive still connects
     // the client, and the payloads after it are delivered
 
@@ -5687,8 +5689,8 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
             }
             int connected_before = ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-            // before connected the client ignores the payload, as
-            // netcode.io's client does, counted wrong state
+            // before connected the client ignores the payload
+            // (TRANSPORT.md t11.3), counted wrong state
 
             const int delivered = rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof( payload ), &payload_bytes );
             if ( !connected_before )
@@ -5829,8 +5831,8 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
             rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof( payload ), &payload_bytes );
 
             // the standalone ack, sealed from _sending connection response_
-            // and sent once. The client now ignores payloads there (as
-            // netcode.io's client), so it accrues no debt to send it for,
+            // and sent once. The client now ignores payloads there
+            // (TRANSPORT.md t11.3), so it accrues no debt to send it for,
             // but the packet stays legal, and the server's pacing must
             // survive it all the same.
 
@@ -9864,6 +9866,13 @@ void rocketnet_test_ack_debt()
 
     const uint8_t data[4] = { 1, 2, 3, 4 };
 
+    // At a threshold of 1 the two "threshold - 1" loops below run no times:
+    // the "below the threshold" state is zero eliciting packets, which the
+    // first "not due" check covers. A threshold above 1 brings the loops to
+    // life and needs its own below-threshold case: this assert says so.
+
+    static_assert( ROCKETNET_ACK_DEBT_THRESHOLD == 1, "test_ack_debt: a threshold above 1 needs a case with eliciting packets below it" );
+
     for ( int i = 0; i < ROCKETNET_ACK_DEBT_THRESHOLD - 1; i++ )
     {
         time += 0.001;
@@ -11758,7 +11767,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
                 // a ranged row (step_driven's 0 .. 1,
-                // sdk/rocketnet_config.cpp:94) takes its max; a 0 .. 0 row
+                // sdk/rocketnet_config.cpp (rocketnet_client_config_fields)) takes its max; a 0 .. 0 row
                 // takes any value of the full width
 
                 expected_uint64 = field->max_value > field->min_value ? (uint64_t) field->max_value : 9876543210987654321ULL;
@@ -13178,6 +13187,71 @@ void rocketnet_test_xdp_interrupt_matcher()
 
     rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
         " 34:  0  0  IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0\n", "ens1f0" ) );
+}
+
+// the R4 reader over /proc/interrupts lines longer than its buffer, as a host
+// with more than about 372 cpus prints them (11 bytes a cpu): each line yields
+// its own IRQ once, wherever the read splits the interface name, and a line
+// whose number is not followed by ':' is not an IRQ line
+
+static char interrupt_reader_text[65536];
+
+static int interrupt_reader_append( int length, const char * text )
+{
+    const int written = snprintf( interrupt_reader_text + length, sizeof( interrupt_reader_text ) - (size_t) length, "%s", text );
+    rocketnet_check( written >= 0 && length + written < (int) sizeof( interrupt_reader_text ) );
+    return length + written;
+}
+
+void rocketnet_test_xdp_interrupt_reader_long_lines()
+{
+    // the name split by the read at each of its bytes
+
+    for ( int split = 1; split <= 12; split++ )
+    {
+        int length = interrupt_reader_append( 0, "  45:" );
+        while ( length < 4095 - split )
+        {
+            length = interrupt_reader_append( length, " " );
+        }
+        length = interrupt_reader_append( length, " eth0-TxRx-0\n" );
+        length = interrupt_reader_append( length, "98765 eth0\n" );
+
+        FILE * interrupts = fmemopen( interrupt_reader_text, (size_t) length, "r" );
+        rocketnet_check( interrupts );
+
+        int irq = 0;
+        rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+        rocketnet_check( irq == 45 );
+        rocketnet_check( !rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+
+        (void) fclose( interrupts );
+    }
+
+    // 400 cpus in the kernel's layout: the continuation of the line is not
+    // an IRQ line of its own
+
+    int length = interrupt_reader_append( 0, "  45:" );
+    for ( int cpu = 0; cpu < 400; cpu++ )
+    {
+        char count[16];
+        (void) snprintf( count, sizeof( count ), " %10u", 1000u + (unsigned) cpu );
+        length = interrupt_reader_append( length, count );
+    }
+    length = interrupt_reader_append( length, "  IR-PCI-MSI 524288-edge      eth0-TxRx-0\n" );
+    length = interrupt_reader_append( length, "  46:          0  IR-PCI-MSI 524289-edge      eth0-TxRx-1\n" );
+
+    FILE * interrupts = fmemopen( interrupt_reader_text, (size_t) length, "r" );
+    rocketnet_check( interrupts );
+
+    int irq = 0;
+    rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+    rocketnet_check( irq == 45 );
+    rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+    rocketnet_check( irq == 46 );
+    rocketnet_check( !rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+
+    (void) fclose( interrupts );
 }
 
 #endif // #if ROCKETNET_XDP
@@ -14632,6 +14706,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_server_port_zero_needs_a_discovering_transport", rocketnet_test_server_port_zero_needs_a_discovering_transport },
 #if ROCKETNET_XDP
     { "test_xdp_transport_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
+    { "test_xdp_transport_interrupt_reader_long_lines", rocketnet_test_xdp_interrupt_reader_long_lines },
 #endif // #if ROCKETNET_XDP
 #if ROCKETNET_DEV
     { "test_config_override_logging", rocketnet_test_config_override_logging },

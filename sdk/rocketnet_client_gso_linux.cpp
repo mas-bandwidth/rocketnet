@@ -101,6 +101,8 @@ bool rocketnet_client_gso_init( rocketnet_client_gso_t * gso, const rocketnet_cl
     gso->gro_cmsg_faults = 0;
     gso->carry_segment = 0;
     gso->carry_segments = 0;
+    gso->carry_bytes = 0;
+    gso->carry_stride = 0;
     memset( &gso->carry_source, 0, sizeof( gso->carry_source ) );
     return gso->segment;
 }
@@ -211,6 +213,14 @@ static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const
 
         const int error = errno;
 
+        // a signal interrupted the call before it sent anything: call again,
+        // as the platform batch does
+
+        if ( error == EINTR )
+        {
+            continue;
+        }
+
         if ( gso->message_num_packets[sent] > 1 && ( error == EINVAL || error == EIO || error == EOPNOTSUPP ) )
         {
             // the kernel accepted the UDP_SEGMENT probe but refused a live
@@ -309,15 +319,13 @@ int rocketnet_client_gso_gro_segment_bytes( const struct msghdr * header, int me
 }
 
 // the receive errors that are weather, as the platform's receive reads them:
-// skip and keep draining, a bounded number of times per call
+// skip and keep draining while the call's read budget lasts
 
 static bool rocketnet_client_gso_receive_weather( int error )
 {
     return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
            error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
 }
-
-#define ROCKETNET_CLIENT_GSO_RECEIVE_WEATHER_RETRIES 8
 
 // proofs/tla/RNClientGroCarry.tla Deliver: copies the held message's segments
 // into the slots from total, in order, while the call has room, and returns
@@ -328,10 +336,14 @@ static int rocketnet_client_gso_receive_deliver( rocketnet_client_gso_t * gso, r
 {
     while ( gso->carry_segment < gso->carry_segments && total < max_packets )
     {
+        // segment s starts s strides in, below carry_bytes for every s below carry_segments
+
         const int s = gso->carry_segment++;
-        const int bytes = gso->segment_lengths[s];
+        const int offset = s * gso->carry_stride;
+        const int remaining = gso->carry_bytes - offset;
+        const int bytes = remaining < gso->carry_stride ? remaining : gso->carry_stride;
         const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
-        memcpy( packet_data + (size_t) total * (size_t) packet_stride, gso->coalesce_buffer + gso->segment_offsets[s], (size_t) copy_bytes );
+        memcpy( packet_data + (size_t) total * (size_t) packet_stride, gso->coalesce_buffer + offset, (size_t) copy_bytes );
 
         from[total] = gso->carry_source;
         packet_bytes[total] = bytes;
@@ -354,8 +366,15 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
     rocketnet_assert( packet_bytes );
     rocketnet_assert( max_packets > 0 );
 
-    int weather = 0;
-    int skipped = 0;
+    // proofs/tla/RNClientGroCarry.tla ReadBudget: one read budget per call, as
+    // the platform's receive has it (docs/TRANSPORT-INTERNALS.md). Every read
+    // of the socket spends one unit of max_packets: a message kept, a
+    // zero-length, truncated or refused-source datagram skipped (Skip), a
+    // weather errno skipped (Skip). A spent budget ends the call and the next
+    // call carries on, so neither a repeating errno nor a stream of chaff
+    // holds the drain.
+
+    int reads_remaining = max_packets;
 
     // proofs/tla/RNClientGroCarry.tla Deliver: the segments the last call had
     // no room for come first, and the socket is not read while any is held:
@@ -363,11 +382,12 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
 
     int total = rocketnet_client_gso_receive_deliver( gso, from, packet_data, packet_stride, packet_bytes, max_packets, 0 );
 
-    while ( total < max_packets )
+    while ( total < max_packets && reads_remaining > 0 )
     {
-        // proofs/tla/RNClientGroCarry.tla Read: a message can hold up to the
-        // kernel's segment count: past the first slot, one is read only while
-        // all of it fits, and the rest wait in the socket for the next call
+        // proofs/tla/RNClientGroCarry.tla Read: a GRO message holds up to
+        // the kernel's segment count: past the first slot, one is read only
+        // while a message that size fits, and the rest wait in the socket for
+        // the next call (a longer one is carried)
         if ( total > 0 && max_packets - total < ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS )
         {
             break;
@@ -390,11 +410,12 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         const int result = gso->syscalls->recvmmsg( gso->syscall_context, gso->socket, &gso->receive_message, 1 );
 
         gso->receive_syscalls++;
+        reads_remaining--;
 
         if ( result < 0 )
         {
             const int error = errno;
-            if ( rocketnet_client_gso_receive_weather( error ) && weather++ < ROCKETNET_CLIENT_GSO_RECEIVE_WEATHER_RETRIES )
+            if ( rocketnet_client_gso_receive_weather( error ) )
             {
                 continue;
             }
@@ -412,16 +433,13 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         }
 
         // a zero-length datagram or a source the socket does not speak is not
-        // delivered, as the platform's batch receive has it; a stream of them
-        // holds the drain no longer than a batch of packets would
+        // delivered, as the platform's batch receive has it; each spent its
+        // read, so a stream of them holds the drain no longer than a batch of
+        // packets would
 
         const int message_bytes = (int) gso->receive_message.msg_len;
         if ( message_bytes <= 0 )
         {
-            if ( ++skipped >= max_packets )
-            {
-                return total;
-            }
             continue;
         }
 
@@ -431,32 +449,26 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
 
         if ( header->msg_flags & MSG_TRUNC )
         {
-            if ( ++skipped >= max_packets )
-            {
-                return total;
-            }
             continue;
         }
 
         rocketnet_address_t source;
         if ( !gso->syscalls->read_address( gso->syscall_context, &gso->receive_name, &source ) )
         {
-            if ( ++skipped >= max_packets )
-            {
-                return total;
-            }
             continue;
         }
 
+        // cut at the stride (sdk/rocketnet_coalesce.h's receive split, the
+        // segments read off the stride as they are delivered): a local
+        // sender's segmented send can hold more than GRO's 64, and every one
+        // of them is delivered, the ones past this call's room carried
+
         int segment_bytes = rocketnet_client_gso_gro_segment_bytes( header, message_bytes, &gso->gro_cmsg_faults );
-        int num_segments = rocketnet_coalesce_split( message_bytes, segment_bytes, gso->segment_offsets, gso->segment_lengths,
-                                                     ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS );
-        if ( num_segments < 0 )
+        if ( segment_bytes <= 0 || segment_bytes > message_bytes )
         {
-            // a stride that cuts more segments than the kernel ever coalesces is a fault: the message is one datagram
-            gso->gro_cmsg_faults++;
-            num_segments = rocketnet_coalesce_split( message_bytes, 0, gso->segment_offsets, gso->segment_lengths, 1 );
+            segment_bytes = message_bytes;
         }
+        const int num_segments = message_bytes / segment_bytes + ( message_bytes % segment_bytes != 0 ? 1 : 0 );
 
         if ( num_segments > 1 )
         {
@@ -470,6 +482,8 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         // slots is the next call's, before the socket is read again
 
         gso->carry_source = source;
+        gso->carry_bytes = message_bytes;
+        gso->carry_stride = segment_bytes;
         gso->carry_segment = 0;
         gso->carry_segments = num_segments;
         total = rocketnet_client_gso_receive_deliver( gso, from, packet_data, packet_stride, packet_bytes, max_packets, total );
@@ -590,9 +604,20 @@ static void rocketnet_client_gso_send( void * transport, const rocketnet_address
     rocketnet_platform_socket_send_packet( client->socket, to, data, bytes );
 }
 
+// One datagram per call, for a client with no I/O thread (the link simulator
+// on, for one). With UDP_GRO on, the socket hands back a coalesced message:
+// read through the batch receive's split and carry, one slot at a time, so
+// each datagram leaves whole and at its own size, never the message as one.
 static int rocketnet_client_gso_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
     rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
+    if ( client->gso.gro )
+    {
+        int packet_bytes = 0;
+        const int got = rocketnet_client_gso_receive_batch( &client->gso, from, data, capacity, &packet_bytes, 1 );
+        return got > 0 ? packet_bytes : 0;
+    }
+
     return rocketnet_platform_socket_receive_packet( client->socket, from, data, capacity );
 }
 

@@ -18,6 +18,7 @@
 #include <string>
 #include "test_unit_registry.h"
 #include "portable_crt.h"
+#include "source_audit_text.h"
 
 #define check rocketnet_unit_check
 
@@ -51,6 +52,8 @@ static void test_platform_spin_lock_backoff_source()
 {
     std::string header;
     check( platform_text_read( "sdk/rocketnet_platform.h", header ) );
+    // the calls commented out passed when comments were read (VERIFY-3 W16)
+    header = source_audit_code_only( header );
 
     const std::string lock_name = "inline void rocketnet_platform_spin_lock_u64";
     const std::string unlock_name = "inline void rocketnet_platform_spin_unlock_u64";

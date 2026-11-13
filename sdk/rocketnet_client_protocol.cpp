@@ -718,9 +718,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     sodium_memzero( &temporary_keys, sizeof( temporary_keys ) );
 
-    // commit: the nonce, the keys, the erasure of the ephemeral secret -- from this moment the client holds only the four derived keys, exactly as the server does
-
-    memcpy( client->session_nonce, session_nonce, ROCKETNET_SESSION_NONCE_BYTES );
+    // commit: the keys derived above, the erasure of the ephemeral secret -- from this moment the client holds only the four derived keys, exactly as the server does
 
     sodium_memzero( client->client_ephemeral_secret_key, sizeof( client->client_ephemeral_secret_key ) );
 
@@ -885,7 +883,7 @@ typedef int ( *rocketnet_client_type_data_validator_t )( struct rocketnet_client
                                                          const uint8_t * type_data,
                                                          int type_data_bytes );
 
-// The state rung of every session type, as netcode.io's client: a keep-alive,
+// The state rung of every session type (TRANSPORT.md t11.3): a keep-alive,
 // disconnect or standalone ack is processed from sending connection response
 // on, where the session keys are born; a payload only once
 // connected. The keep-alive that connects the client can arrive after the
@@ -1128,11 +1126,15 @@ static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protoco
 {
     (void) type_data_bytes;         // the open sized the eight type bytes
 
-    const uint8_t * p = type_data;
-    int client_index = (int) rocketnet_read_uint32( &p );
-    int max_clients = (int) rocketnet_read_uint32( &p );
+    // both fields are u32 (t10 step 17, t13.1): the index below the slot
+    // count, which is then at least 1; compared as read, so a value with the
+    // top bit set is no negative int
 
-    if ( client_index < 0 || client_index >= max_clients )
+    const uint8_t * p = type_data;
+    const uint32_t client_index = rocketnet_read_uint32( &p );
+    const uint32_t max_clients = rocketnet_read_uint32( &p );
+
+    if ( client_index >= max_clients )
     {
         rocketnet_spam( "client rejected keep-alive. invalid index" );
 
@@ -1200,7 +1202,7 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
         ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_OPENED_SIZE
     };
 
-    // payloads are processed only once connected, as netcode.io's client:
+    // payloads are processed only once connected (TRANSPORT.md t11.3):
     // see rocketnet_client_session_state_accepts
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];

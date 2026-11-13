@@ -140,8 +140,9 @@ static int fuzz_xdp_run( const uint8_t * data, size_t size )
     const bool taken = rocketnet_xdp_frame_receive( f, frame_bytes, address_type, &taken_from, &taken_payload, &taken_bytes, &drops );
 
     const bool served = parsed && ( address_type < 0 || from.type == address_type );
-    const bool due = served && payload_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
-    rocketnet_fuzz_require( taken == due, "receive takes exactly the parsed, served frames that hold the smallest server packet" );
+    const bool mapped = parsed && rocketnet_address_is_ipv4_in_ipv6( &from );
+    const bool due = served && payload_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES && !mapped;
+    rocketnet_fuzz_require( taken == due, "receive takes exactly the parsed, served frames that hold the smallest server packet from a source that is not IPv4-mapped" );
 
     if ( taken )
     {
@@ -342,6 +343,16 @@ static int fuzz_xdp_seed_build( const fuzz_xdp_seed_t * seed, uint8_t * out )
 
 static bool fuzz_seed_write( const char * dir, const char * name, const uint8_t * data, int bytes )
 {
+    // ROCKETNET_FUZZ_WITHHOLD=<seed name> skips that seed and reports it
+    // unwritten, so the generator ends INCOMPLETE: tools/check_fuzz_seeds.sh
+    // runs this control for every generator (VERIFY-5 W4)
+    char withheld[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_WITHHOLD", withheld, sizeof( withheld ) ) && strcmp( withheld, name ) == 0 )
+    {
+        fprintf( stderr, "seed generator: withholding %s\n", name );
+        return false;
+    }
+
     char path[1024];
     if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
     {

@@ -4201,10 +4201,10 @@ UNIT_TEST_SKIPPED_UNLESS( test_receive_view_is_the_record, ROCKETNET_MAX_CHANNEL
 REGISTER_UNIT_TEST( test_release_returns_room );
 UNIT_TEST_SKIPPED_UNLESS( test_release_returns_room, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
-// the message object reads no environment (sdk/rocketnet_message_server.cpp:154):
+// the message object reads no environment (sdk/rocketnet_message_server.cpp):
 // the public budget variables are
 // ROCKETNET_CLIENT_SEND_KBPS and ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by
-// the public creates (sdk/rocketnet_api.cpp:139 and :183).
+// the public creates (sdk/rocketnet_api.cpp (rn_apply_message_and_budget_env)).
 // A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
 // The helpers set and unset the unit environment table on every platform.
 
@@ -5584,7 +5584,7 @@ static void test_message_whole_frame_in_place_finish_edges()
             check( dropped_serial == 3 );
             check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) == over + 1 );
             check( pair.net->server->sent_log.size() == sent );
-            check( (int) slot->written == written_drop );
+            check( (int) slot->written == written_drop + 1 );       // the frame start took counts, as a failed send does
             check( slot->in_place_admitted == 0 && slot->in_place_receipt == 0 );
             check( slot->budget.tokens == 0.0 );
             check( pair.server->object.in_place == 0 && pair.server->object.pending_connection == -1 );

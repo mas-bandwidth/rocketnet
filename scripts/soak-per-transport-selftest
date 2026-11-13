@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+#
+# scripts/soak-per-transport's verdicts on soak logs it did not run: when a
+# failed cell is UNMEASURED (its own log shows the process stalled past the
+# bound, and every failure is one a stall can cause), when it stays FAIL, and
+# when the run prints the nightly watch's UNMEASURED annotation.
+#
+#   bash scripts/soak-per-transport-selftest
+#
+# Needs no build and no network: every leg judges a log with --judge-log.
+# The base log is tests/soak/fixtures/soak-gso-stalled-refusal.log, the gso
+# cell of nightly-soak run 43187852822 (2026-11-12, main) cut to the lines the
+# verdict reads: SEND_RING_FULL = 1560 on a clean run, the main loop's largest
+# gap 544.3 ms at t=1313, 1557194 iterations by t=1794 (868 iterations/s, so
+# the bound is a tenth of 4096 / 868 s = 472 ms). That night every cell ran
+# the portable client; the cells now pin the gso client (all but the portable
+# control), so the legs read a copy whose client_transport_io line says gso.
+# Each leg edits a copy.
+#
+# Prints one line per leg and nothing else on success; a leg that misbehaves
+# prints why and the script exits nonzero.
+#
+# The legs:
+#
+#   1  stalled refusal       -- UNMEASURED, the annotation, exit 1
+#   2  refusal, no stall     -- the gap lowered to 54.3 ms: FAIL, no annotation
+#   3  stall, verify failure -- a PAYLOAD VERIFY FAILED line added: FAIL
+#   4  stall, conservation   -- a CONSERVATION FAILED line added: FAIL
+#   5  one of each           -- gso stalled, portable refused unstalled: one
+#                               UNMEASURED, one FAIL, no annotation, exit 1
+#   6  stalled pass          -- soak exited 0 with the stall: PASS, exit 0
+#   7  no iteration count    -- the bound cannot be derived: FAIL
+#   8  bound scales          -- half the iterations, so the bound is ~944 ms
+#                               and 544.3 ms is under it: FAIL
+#   9  wrong client          -- leg 6's passing run, but the client granted
+#                               portable where the gso cell pins gso: FAIL
+#  10  portable control      -- leg 6's passing run with portable at both
+#                               ends, judged as the portable cell: PASS
+
+set -u
+
+cd "$( dirname "${BASH_SOURCE[0]}" )/.." || exit 1
+
+NAME=soak-per-transport-selftest
+SCRIPT=scripts/soak-per-transport
+BASE=tests/soak/fixtures/soak-gso-stalled-refusal.log
+[ -r "$BASE" ] || { echo "$NAME: no $BASE" >&2; exit 1; }
+
+WORK="$( mktemp -d "${TMPDIR:-/tmp}/$NAME.XXXXXX" )"
+trap 'rm -rf "$WORK"' EXIT
+
+# the recorded night ran the portable client; the gso cell now pins gso
+sed 's/^soak summary: client_transport_io portable$/soak summary: client_transport_io gso/' "$BASE" > "$WORK/base.log"
+grep -qx 'soak summary: client_transport_io gso' "$WORK/base.log" || { echo "$NAME: $BASE has no client_transport_io portable line" >&2; exit 1; }
+BASE="$WORK/base.log"
+
+failures=0
+
+fail()
+{
+    echo "$NAME: leg $1 FAILED: $2"
+    failures=$(( failures + 1 ))
+}
+
+# judge <out> <cell> <log> <status> [<cell> <log> <status>]...: the script's
+# output in <out>, its exit status printed
+judge()
+{
+    local out=$1
+    shift
+    local args=()
+    while [ $# -gt 0 ]; do
+        args+=(--cell "$1" --judge-log "$2" --judge-status "$3")
+        shift 3
+    done
+    local status=0
+    bash "$SCRIPT" "${args[@]}" > "$out" 2>&1 || status=$?
+    echo "$status"
+}
+
+# expect <leg> <out> <status got> <status wanted> <regex that must match>... [! <regex that must not>]...
+expect()
+{
+    local leg=$1 out=$2 got=$3 want=$4
+    shift 4
+    [ "$got" = "$want" ] || fail "$leg" "exit $got, want $want: $(tr '\n' '|' < "$out")"
+    local negate=0 pattern
+    for pattern in "$@"; do
+        if [ "$pattern" = "!" ]; then
+            negate=1
+            continue
+        fi
+        if [ "$negate" = 1 ]; then
+            if grep -qE "$pattern" "$out"; then
+                fail "$leg" "printed /$pattern/: $(tr '\n' '|' < "$out")"
+            fi
+        elif ! grep -qE "$pattern" "$out"; then
+            fail "$leg" "no /$pattern/: $(tr '\n' '|' < "$out")"
+        fi
+        negate=0
+    done
+}
+
+# 1 stalled refusal
+status=$(judge "$WORK/1.out" gso "$BASE" 1)
+expect 1 "$WORK/1.out" "$status" 1 \
+    '^SOAK cell=gso UNMEASURED stalled: iteration_gap_max_ms=544\.3 at t=1313, bound 472 ms .*SEND_RING_FULL = 1560' \
+    '^::warning title=UNMEASURED::soak per transport: gso main loop stalled 544\.3 ms at t=1313, bound 472 ms' \
+    ! 'FAIL'
+echo "leg 1 stalled refusal: UNMEASURED with the annotation"
+
+# 2 refusal, no stall
+sed 's/iteration_gap_max_ms=544\.3 /iteration_gap_max_ms=54.3 /' "$BASE" > "$WORK/2.log"
+status=$(judge "$WORK/2.out" gso "$WORK/2.log" 1)
+expect 2 "$WORK/2.out" "$status" 1 '^SOAK cell=gso FAIL soak exited 1: soak: REFUSAL on a clean run at server: SEND_RING_FULL = 1560' \
+    ! 'UNMEASURED'
+echo "leg 2 refusal without a stall: FAIL, no annotation"
+
+# 3 stall and a verify failure
+{ cat "$BASE"; echo "PAYLOAD VERIFY FAILED at server (100 bytes)"; } > "$WORK/3.log"
+status=$(judge "$WORK/3.out" gso "$WORK/3.log" 1)
+expect 3 "$WORK/3.out" "$status" 1 '^SOAK cell=gso FAIL ' ! 'UNMEASURED'
+echo "leg 3 stall and a verify failure: FAIL"
+
+# 4 stall and a conservation failure
+{ cat "$BASE"; echo "soak: CONSERVATION FAILED at server: PACKETS_RECEIVED"; } > "$WORK/4.log"
+status=$(judge "$WORK/4.out" gso "$WORK/4.log" 1)
+expect 4 "$WORK/4.out" "$status" 1 '^SOAK cell=gso FAIL ' ! 'UNMEASURED'
+echo "leg 4 stall and a conservation failure: FAIL"
+
+# 5 one UNMEASURED and one FAIL
+sed -e 's/iteration_gap_max_ms=544\.3 /iteration_gap_max_ms=54.3 /' -e 's/ server gso$/ server portable/' \
+    -e 's/^soak summary: server_transport_io gso$/soak summary: server_transport_io portable/' "$BASE" > "$WORK/5.log"
+status=$(judge "$WORK/5.out" gso "$BASE" 1 portable "$WORK/5.log" 1)
+expect 5 "$WORK/5.out" "$status" 1 '^SOAK cell=gso UNMEASURED stalled' '^SOAK cell=portable FAIL soak exited 1' \
+    '1 cell\(s\) UNMEASURED and 1 FAILED' ! '^::warning title=UNMEASURED::'
+echo "leg 5 one UNMEASURED and one FAIL: red, no annotation"
+
+# 6 a stalled run that passed
+grep -v '^soak: REFUSAL' "$BASE" > "$WORK/6.log"
+status=$(judge "$WORK/6.out" gso "$WORK/6.log" 0)
+expect 6 "$WORK/6.out" "$status" 0 '^SOAK cell=gso PASS server=gso ' ! 'UNMEASURED'
+echo "leg 6 a stalled run that passed: PASS"
+
+# 7 no iteration count
+grep -v '^soak: [0-9]* iterations' "$BASE" > "$WORK/7.log"
+status=$(judge "$WORK/7.out" gso "$WORK/7.log" 1)
+expect 7 "$WORK/7.out" "$status" 1 '^SOAK cell=gso FAIL ' ! 'UNMEASURED'
+echo "leg 7 no iteration count: FAIL"
+
+# 8 the bound scales with the iteration rate
+sed 's/^soak: 1557194 iterations,/soak: 778597 iterations,/' "$BASE" > "$WORK/8.log"
+grep -q '^soak: 778597 iterations,' "$WORK/8.log" || fail 8 "the base log's last iteration count is not 1557194"
+status=$(judge "$WORK/8.out" gso "$WORK/8.log" 1)
+expect 8 "$WORK/8.out" "$status" 1 '^SOAK cell=gso FAIL ' ! 'UNMEASURED'
+echo "leg 8 half the iteration rate, bound ~944 ms: FAIL"
+
+# 9 the client transport the cell does not pin
+grep -v '^soak: REFUSAL' "$BASE" | sed 's/^soak summary: client_transport_io gso$/soak summary: client_transport_io portable/' > "$WORK/9.log"
+status=$(judge "$WORK/9.out" gso "$WORK/9.log" 0)
+expect 9 "$WORK/9.out" "$status" 1 "^SOAK cell=gso FAIL client transport granted 'portable', the cell pins gso" ! 'PASS'
+echo "leg 9 the gso cell granted the portable client: FAIL"
+
+# 10 the portable control: portable at both ends
+grep -v '^soak: REFUSAL' "$BASE" | sed -e 's/^soak summary: client_transport_io gso$/soak summary: client_transport_io portable/' \
+    -e 's/^soak summary: server_transport_io gso$/soak summary: server_transport_io portable/' > "$WORK/10.log"
+status=$(judge "$WORK/10.out" portable "$WORK/10.log" 0)
+expect 10 "$WORK/10.out" "$status" 0 '^SOAK cell=portable PASS server=portable client=portable ' ! 'FAIL'
+echo "leg 10 the portable control, portable at both ends: PASS"
+
+if [ "$failures" -ne 0 ]; then
+    echo "$NAME: $failures leg(s) failed"
+    exit 1
+fi

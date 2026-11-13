@@ -178,7 +178,7 @@ UNIT_TEST_SKIPPED_UNLESS( test_violation_receipt_only_reliable_connection_takes_
 
 // A RELIABLE_SEQUENCED record on channel 256 carries the WIDE channel field:
 // a 16-byte header (rocketnet_message_flags_header_bytes,
-// sdk/rocketnet_message.cpp:52) and the form byte.
+// sdk/rocketnet_message.cpp) and the form byte.
 // The largest single record is payload_capacity - 17 bytes; one byte more is
 // a block. The boundary size payload_capacity - 16 is written and delivered.
 

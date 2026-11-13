@@ -82,8 +82,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
-                                                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
-                         "an XDP frame holds ethernet, the larger IP header, UDP and a full receive-ceiling packet" );
+                                                         4 + ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
+                         "an XDP frame holds ethernet, one 4-byte 802.1Q tag, the larger IP header, UDP and a full receive-ceiling packet" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE == 4096,
                          "the XDP UMEM frame the transport registers is 4096 bytes" );
 
@@ -295,7 +295,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 // the AEAD integrity limit from the standard's _Replay Protection_: each end
 // counts the sealed packets that fail to open on a connection, across all of
 // that connection's keys, and disconnects it on reaching this many. 2^36 is
-// ChaCha20-Poly1305's forgery bound, the number QUIC and DTLS 1.3 name.
+// ChaCha20-Poly1305's forgery bound (RFC 9001 section 6.6, RFC 9147 section 4.5.3).
 
 #define ROCKETNET_INTEGRITY_LIMIT                               ( 1ULL << 36 )
 

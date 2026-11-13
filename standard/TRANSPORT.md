@@ -2647,8 +2647,8 @@ The server turns a connection request into an encryption mapping, and a connecti
 3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot, and whose connection salt or token identifier matches the mapping's, MUST be answered with that mapping's stored connection challenge packet, byte-identical, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4). A request from that address whose connection salt and token identifier both differ from the mapping's is a new attempt: it MUST go through every later rule, and it MUST be refused, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`, when its token identifier is bound to any source address, its own included. Only once it has passed every check, its signature verified, does it replace the half-open mapping: the server releases that mapping's request claim, removes it, and creates the new mapping in its place, which needs no free mapping slot. A refused request leaves the half-open mapping as it was. A mapping with a connected slot is never replaced.
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
 5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`, and then a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`. Such a token MUST NOT be answered. A server places no limit on a token's lifetime.
-6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
-7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet, at most one to each source address and port per update, checked before the cookie is computed. A request owed a cookie past that limit MUST be ignored, unanswered; it is counted once, by the counter of its cookie (`CONNECTION_REQUEST_NO_COOKIE`, `CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY` or `CONNECTION_REQUEST_COOKIE_EXPIRED`), and the refusal itself has no counter. The client sends again at its send rate. The limit does not spend the handshake work budget of rule 8, does not refuse a request with a valid cookie, and MUST be reset at the start of each update. A server MUST NOT limit the cookie packets of one update in all below the connection requests that update processes. A server MUST hold the per-source limit in memory sized at creation that no source can grow: it MAY keep one bit per index of a keyed hash of the source address and port, the key drawn at server creation and kept secret, so that a collision refuses another source for that update only and cannot be aimed; such a bitmap SHOULD hold at least the cookie reply source bitmap policy value of bits for each connection request one update can process, so that a collision refuses an honest source with probability at most the reciprocal of that value. The value is a chosen bound, not a measured optimum.
+6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server advertises, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse. A server advertises exactly the addresses it was created with, one for each family it serves, and a token address matches only when it equals one of them, port included: a server created at a family's wildcard advertises that wildcard, and accepts a token naming the loopback only when the loopback is an address it was created with.
+7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet, at most one to each source address and port per update, checked before the cookie is computed. A request owed a cookie past that limit MUST be ignored, unanswered; it is counted once, by the counter of its cookie (`CONNECTION_REQUEST_NO_COOKIE`, `CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY` or `CONNECTION_REQUEST_COOKIE_EXPIRED`), and the refusal itself MUST be counted as `CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD`, which is outside the request family. The client sends again at its send rate. The limit does not spend the handshake work budget of rule 8, does not refuse a request with a valid cookie, and MUST be reset at the start of each update. A server MUST NOT limit the cookie packets of one update in all below the connection requests that update processes. A server MUST hold the per-source limit in memory sized at creation that no source can grow: it MAY keep one bit per index of a keyed hash of the source address and port, the key drawn at server creation and kept secret, so that a collision refuses another source for that update only and cannot be aimed; such a bitmap SHOULD hold at least the cookie reply source bitmap policy value of bits for each connection request one update can process, so that a collision refuses an honest source with probability at most the reciprocal of that value. The value is a chosen bound, not a measured optimum.
 8. A server MUST check the per-update handshake work budget after the cheap rungs of rule 9 and immediately before the signature verify of rule 10, and MUST refuse, unanswered, a request that reaches that check when the budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`. Only a request that reaches the check spends budget; a request refused by an earlier rung spends none.
 9. A server MUST apply the cheap rungs below in the order given, before it verifies the signature in rule 10, and MUST stop at the first that refuses:
     1. Ignore, unanswered, a request whose token identifier is bound to a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
@@ -3016,6 +3016,13 @@ that accepts one MUST treat the connection as ended and MUST reset.
 
 The type data of a disconnect is empty; its sealed plaintext holds only the
 ack block.
+
+A client whose connection has ended MUST count each datagram it reads and
+discards after its last send as `CLIENT_RECEIVE_DISCARDED_AT_STOP`, and MUST
+NOT free a datagram queued for it unread. The reference implementation's I/O
+worker, at its exit, reads every datagram still queued on its socket, counts
+each, and closes the socket before the transport reports itself stopped; a
+later datagram meets a closed port, which the operating system counts.
 
 <a id="t13.4"></a>
 ### t13.4. Slot reset
@@ -3758,6 +3765,10 @@ The registry of counters, in index order, is:
 | `PAYLOAD_BATCH_FULL` | `refusal` | `none` |
 | `XDP_RECEIVE_FRAME_DROPPED` | `refusal` | `none` |
 | `DISCONNECT_BURST_DROPPED` | `refusal` | `none` |
+| `CLIENT_RECEIVE_DISCARDED_AT_STOP` | `refusal` | `none` |
+| `CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD` | `refusal` | `none` |
+| `XDP_REPLAY_COMMIT_FAILED` | `refusal` | `none` |
+| `XDP_REPLAY_GREETING_HELD` | `expected` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3870,7 +3881,8 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 00 00 00 39 5f f8 12 00 00 00 a4 58 a7 b3 00 00
 00 98 21 4f fa 00 20 00 49 b0 ba 62 00 08 00 3a
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
-a1 00 00 00
+a1 00 00 00 2d 17 2e 45 00 00 00 b9 92 87 1d 00
+00 00 e3 12 7a fb 00 00 00 43 67 11 59 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -4031,26 +4043,6 @@ the counter list and the test list MUST be the same list.
 The vectors of RN-1 appear in their defining sections. Each vector has a
 unique section-qualified identifier, declared inputs and expected output bytes.
 The vector identifier stays with the case when surrounding prose changes.
-
-<a id="tb"></a>
-## tb. Appendix B: changes from netcode 1.02
-
-This appendix lists, as facts, the differences of RN-1 from netcode 1.02 in
-the bytes on the wire and in the decisions a receiver makes. It states no
-requirements; each difference is specified by the section named in its row.
-
-| Area | netcode 1.02 | RN-1 |
-|---|---|---|
-| Backend trust | The backend and every server share a secret that authenticates connect tokens. | The backend holds an Ed25519 signing keypair and every server holds its public key; a server holds no secret shared with the backend ([t2.2 Key inventory](#t2.2)). |
-| Token authenticity | A connect token carries an AEAD authenticator computed under the shared secret. | The token carries an Ed25519 signature over its signed connect data, and its private block is sealed to the server's X25519 public key ([t6 Connect token](#t6)). |
-| Token scope | A token names a list of candidate servers. | A token names one server at one IPv4 address and one IPv6 address, each optional ([t2 Architecture and key inventory](#t2)). |
-| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the first source address that presents a valid request, until the handshake deadline, and then to the source address whose connection response first opened under it; it admits one live connection ([t12 Handshake: server](#t12)). |
-| Packet keys | The session keys minted into the token are the packet keys. | The token keys key a derivation only; each attempt derives separate handshake and session keys from a client salt, a server session nonce and an ephemeral X25519 exchange ([t7 Key schedule](#t7)). |
-| Forward secrecy | Recovering a token recovers the traffic sealed with its keys. | Recovering a token after a connection has ended does not recover that connection's traffic ([t7 Key schedule](#t7)). |
-| IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
-| Packet prefix | No prefilter header precedes a packet. | Every packet begins with the prefilter header ([t5 Prefilter header](#t5)). |
-| Payload to an unconfirmed client | A keep-alive prefixes every payload until the client is confirmed. | Session keys exist from the challenge, so payloads are delivered from that point with no prefix ([t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)). |
-| A zero timeout | A timeout of zero is accepted. | A timeout outside the field's valid range is refused, and zero is outside it ([t2.3 Configuration surface](#t2.3)). |
 
 <a id="tc"></a>
 ## tc. Appendix C (informative): implementation notes

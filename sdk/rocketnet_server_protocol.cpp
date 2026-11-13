@@ -245,23 +245,15 @@ int rocketnet_server_protocol_cookie_reply_source_index( const struct rocketnet_
     return (int) ( value & ( (uint64_t) words * 64 - 1 ) );
 }
 
-// whether an address is one this server advertises. on a dual-stack server
-// -- bound to the IPv6 wildcard, so it also advertises its IPv4 wildcard --
-// a v4-mapped token address normalises to native IPv4 and matches as the
-// loopback or wildcard the IPv4 client addressed.
+// whether an address is one this server advertises: equal, port included,
+// to the advertised address of its family. A v4-mapped token address
+// normalises to native IPv4 first. There is no other match: a server created
+// at a wildcard advertises the wildcard, so a token naming the loopback is
+// accepted only by a server that advertises the loopback (t12 rule 6).
 
 static int rocketnet_server_address_is_advertised( const struct rocketnet_server_protocol_t * server,
                                                    struct rocketnet_address_t * addr )
 {
-    // dual_stack: a server bound at the IPv6 wildcard ("[::]"), which
-    // advertises the IPv6 wildcard beside the IPv4 wildcard. A server that
-    // names both families (second_public_address) advertises the two named
-    // addresses and is not dual_stack here.
-    static const uint16_t ipv6_wildcard[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-    const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
-                           memcmp( server->advertised_ipv6.data.ipv6, ipv6_wildcard, sizeof( ipv6_wildcard ) ) == 0;
-
     if ( addr->type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( addr ) )
     {
         rocketnet_address_convert_ipv6_to_ipv4( addr );
@@ -273,23 +265,8 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
                rocketnet_address_equal( addr, &server->advertised_ipv6 );
     }
 
-    if ( server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-         rocketnet_address_equal( addr, &server->advertised_ipv4 ) )
-    {
-        return 1;
-    }
-
-    // on a dual-stack server the loopback is an IPv4 address the socket
-    // serves too
-
-    if ( dual_stack && addr->data.ipv4[0] == 127 && addr->data.ipv4[1] == 0 &&
-         addr->data.ipv4[2] == 0 && addr->data.ipv4[3] == 1 &&
-         addr->port == server->advertised_ipv4.port )
-    {
-        return 1;
-    }
-
-    return 0;
+    return server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
+           rocketnet_address_equal( addr, &server->advertised_ipv4 );
 }
 
 // The arrival family's token address (proofs/tla/ServerConnection.tla
@@ -349,8 +326,7 @@ static int rocketnet_server_token_address_is_advertised( const struct rocketnet_
 
             if ( addr.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &addr ) )
             {
-                rocketnet_address_convert_ipv6_to_ipv4( &addr );
-                return rocketnet_server_address_is_advertised( server, &addr );
+                return rocketnet_server_address_is_advertised( server, &addr );     // which converts it to that IPv4 address
             }
         }
 
@@ -687,9 +663,8 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
             // the cookie reply limit of this update, checked before the fresh
             // mac so a refusal costs at most the one index hash: one reply
             // per source address and port (proofs/tla/RNCookieReplyLimits.tla
-            // CookieRequest). Dropped unanswered; the request is counted once,
-            // by its cookie reason above, and the refusal has no counter of
-            // its own. The client sends again at its send rate.
+            // CookieRequest). Dropped unanswered, counted by its cookie reason
+            // above and as COOKIE_REPLY_WITHHELD; the client sends again.
 
             if ( server->cookie_reply_sources )
             {
@@ -697,6 +672,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
                 const int index = rocketnet_server_protocol_cookie_reply_source_index( server, from );
                 if ( index < 0 || ( server->cookie_reply_sources[index >> 6] & ( 1ULL << ( index & 63 ) ) ) != 0 )
                 {
+                    counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD]++;
                     return ROCKETNET_SERVER_PROCESS_IGNORED;
                 }
                 server->cookie_reply_sources[index >> 6] |= 1ULL << ( index & 63 );

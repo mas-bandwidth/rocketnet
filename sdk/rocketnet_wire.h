@@ -185,9 +185,11 @@ ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKET
 // The kernel filter's configuration, written by userspace at server start
 // and read per-packet in the XDP program. One definition serves both sides
 // of the map, and the padding is explicit so the layout cannot depend on
-// either compiler: 4 + 2 + 4 + 1 + 5 + 16 = 32 bytes, no implicit holes.
-// The IPv6 destination sits at offset 16 so the program reads it as four
-// aligned 32-bit words.
+// either compiler: 4 + 2 + 4 + 1 + 1 + 2 + 2 + 16 = 32 bytes, no implicit
+// holes. The IPv6 destination sits at offset 16 so the program reads it as
+// four aligned 32-bit words. vlan_id is the 802.1Q VLAN ID of a server on a
+// VLAN device (big endian, the 12-bit ID in the low bits), 0 untagged: an
+// untagged server writes the same 32 bytes as before it existed.
 
 struct rocketnet_server_xdp_config_t
 {
@@ -195,17 +197,21 @@ struct rocketnet_server_xdp_config_t
     uint16_t public_port;                       // big endian
     uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
     uint8_t filter_epoch;                       // the only epoch this server accepts; 0 in 1.0
-    uint8_t pad[5];                             // zero; fills offsets 11 to 15, up to the IPv6 destination
+    uint8_t pad;                                // zero; offset 11
+    uint16_t vlan_id;                           // big endian; 0 = untagged, else the VLAN ID of the one 802.1Q tag accepted
+    uint8_t pad_vlan[2];                        // zero; offsets 14 and 15, up to the IPv6 destination
     uint8_t public_address_ipv6[16];            // network order; all zero = accept any IPv6 destination address
 };
 
 #ifdef __cplusplus
 static_assert( sizeof( struct rocketnet_server_xdp_config_t ) == 32, "the XDP config map value is 32 bytes" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
+static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, vlan_id ) == 12, "the XDP config VLAN ID is 2-byte aligned" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
 #elif defined( __GNUC__ ) || defined( __clang__ ) // C: __builtin_offsetof is a GNU form; MSVC C checks none of this
 ROCKETNET_WIRE_STATIC_ASSERT( sizeof( struct rocketnet_server_xdp_config_t ) == 32, "the XDP config map value is 32 bytes" );
 ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
+ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_config_t, vlan_id ) == 12, "the XDP config VLAN ID is 2-byte aligned" );
 ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
 #endif // #ifdef __cplusplus
 

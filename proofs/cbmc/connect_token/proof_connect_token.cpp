@@ -51,6 +51,16 @@ unsigned char nondet_uchar( void );
 #define PROOF_HAVOC( p, n ) __CPROVER_havoc_slice( (p), (size_t) (n) )
 #endif // #ifndef __CPROVER__
 
+/* the reachability control: built with -DREACHABILITY_CONTROL, each harness
+   ends in an assertion that must fail, so a harness whose assumptions became
+   unsatisfiable (and so proves anything) goes red. proof.mk runs it beside
+   every proof. */
+#if defined( REACHABILITY_CONTROL )
+#define PROOF_REACHED( harness ) __CPROVER_assert( 0, harness " reachability control" )
+#else
+#define PROOF_REACHED( harness ) ( (void) 0 )
+#endif // #if defined( REACHABILITY_CONTROL )
+
 /* the tally lives in the sdk unit that is compiled in the library; the proof,
    like that unit, holds the one definition */
 
@@ -243,6 +253,8 @@ void harness_read_connect_token( void )
                       "the client-to-server key follows the signature" );
     __CPROVER_assert( output.server_to_client_key[0] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + ROCKETNET_KEY_BYTES] && output.server_to_client_key[ROCKETNET_KEY_BYTES - 1] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + 2 * ROCKETNET_KEY_BYTES - 1],
                       "the server-to-client key follows the client-to-server key" );
+
+    PROOF_REACHED( "harness_read_connect_token" );
 }
 
 /* the signed connect data: every field read at its documented offset, all of
@@ -294,6 +306,8 @@ void harness_read_signed_connect_data( void )
                       "the sealed private block is read at its offset" );
     __CPROVER_assert( ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES <= ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
                       "the sealed block ends inside the signed block" );
+
+    PROOF_REACHED( "harness_read_signed_connect_data" );
 }
 
 /* the private block: every field read at its documented offset, all of them
@@ -321,6 +335,8 @@ void harness_read_connect_token_private( void )
     p += ROCKETNET_USER_DATA_BYTES;
     __CPROVER_assert( (size_t) ( p - buffer ) <= ROCKETNET_PRIVATE_BLOCK_BYTES,
                       "the last private field ends inside the block" );
+
+    PROOF_REACHED( "harness_read_connect_token_private" );
 }
 
 /* the signature verifier: symbolic signed data, signature and backend public
@@ -335,6 +351,8 @@ void harness_verify_signed_connect_data( void )
     const int result = rocketnet_verify_signed_connect_data( signed_data, signature, backend_public_key );
 
     __CPROVER_assert( result == 0 || result == 1, "verify returns 0 or 1" );
+
+    PROOF_REACHED( "harness_verify_signed_connect_data" );
 }
 
 /* the sealed-block opener: exactly 576 bytes of signed data, so the sealed
@@ -353,6 +371,8 @@ void harness_open_connect_token_private( void )
                                                              server_public_key, server_secret_key );
 
     __CPROVER_assert( result == 0 || result == 1, "open returns 0 or 1" );
+
+    PROOF_REACHED( "harness_open_connect_token_private" );
 }
 
 /* the inner consistency check: every private field symbolic, the whole signed
@@ -374,6 +394,8 @@ void harness_private_consistent( void )
     __CPROVER_assert( result == 0 || result == 1, "consistency returns 0 or 1" );
     __CPROVER_assert( result == ( private_fields.protocol_id == signed_protocol_id && private_fields.expire_timestamp == signed_expire ),
                       "consistency compares the protocol id and expire at their offsets" );
+
+    PROOF_REACHED( "harness_private_consistent" );
 }
 
 /* the identifier: the 16-byte hash of exactly 576 symbolic signed bytes. */
@@ -384,6 +406,8 @@ void harness_connect_token_identifier( void )
     uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
 
     rocketnet_connect_token_identifier( identifier, signed_data );
+
+    PROOF_REACHED( "harness_connect_token_identifier" );
 }
 
 int main( void )

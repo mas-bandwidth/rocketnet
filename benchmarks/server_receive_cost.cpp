@@ -221,7 +221,15 @@ int main( int argc, char ** argv )
         CHECK( clients[(size_t) i] );
     }
 
-    // connect every client, stepped by 10 ms of simulated time
+    // connect every client, stepped by 10 ms of simulated time. The joins
+    // are spread as a game backend spreads connect token issue
+    // (docs/PRODUCTION.md, "Spread joins over time"): handshakes_per_update
+    // clients start each 10 ms update, the rate the handshake work budget
+    // processes. Clients that all start in the same instant send in the same
+    // update every send interval and do not all connect.
+
+    const double join_start = receive_cost_clock;
+    const double join_interval = 0.01 / (double) config.handshakes_per_update;
 
     int connected = 0;
     for ( int step = 0; step < 3000 && connected < num_clients; step++ )
@@ -233,6 +241,10 @@ int main( int argc, char ** argv )
 
         for ( int i = 0; i < num_clients; i++ )
         {
+            if ( receive_cost_clock < join_start + join_interval * (double) i )
+            {
+                continue;
+            }
             rocketnet_client_transport_update( clients[(size_t) i], receive_cost_clock );
             rocketnet_client_transport_send_packets( clients[(size_t) i] );
             if ( rocketnet_client_transport_state( clients[(size_t) i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )

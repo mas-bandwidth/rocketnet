@@ -10,8 +10,9 @@
 //     secret-wipe oracle (test_unit_secret_wipe.cpp) does not drive: the token
 //     expiring from sending-connection-request, and the integrity limit
 //     reached on a forged denied. rocketnet_client_set_state runs the
-//     connection reset on every state <= 0 (sdk/rocketnet_client_protocol.cpp:58-59),
-//     and the reset zeroes the ephemeral secret (sdk/rocketnet_connection_reset.cpp:40).
+//     connection reset on every state <= 0 (sdk/rocketnet_client_protocol.cpp),
+//     and the reset zeroes the ephemeral secret (sdk/rocketnet_connection_reset.cpp
+//     (rocketnet_client_protocol_wipe_secrets)).
 //   - the client's and the server's keys at destroy, and only the keys: when
 //     rocketnet_client_destroy and rocketnet_server_destroy free the public
 //     objects and their transports, each object's secret spans are zero and
@@ -618,6 +619,20 @@ static void test_secrets_wiped_destroy_writes_only_keys()
     const int server_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
     const int transport_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[1] );
 
+    // the disconnect already wiped the client's keys, so only the destroy's
+    // own wipe is left to look at: refill the client transport's secret spans
+    // (keys, token, ephemeral key, nonce, the I/O thread's open copy) and the
+    // destroy must zero them again
+
+    {
+        const secrets_wiped_watch_t * client_watch = &secrets_wiped_watches[2];
+        for ( int s = 0; s < client_watch->spans; s++ )
+        {
+            memset( static_cast<uint8_t *>( const_cast<void *>( client_watch->block ) ) + client_watch->offsets[s], 0xC3, client_watch->bytes[s] );
+        }
+    }
+    const int client_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[2] );
+
     std::map<void *, std::vector<uint8_t>> copies;
     for ( std::map<void *, size_t>::iterator it = sizes.begin(); it != sizes.end(); ++it )
     {
@@ -656,6 +671,7 @@ static void test_secrets_wiped_destroy_writes_only_keys()
 
     check( server_secret_before > 0 );
     check( transport_secret_before > 0 );
+    check( client_secret_before > 0 );
     check( watches_freed == 3 );
     check( secret_left == 0 );
     check( written_most <= 256 );
@@ -1526,19 +1542,19 @@ static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing
     secrets_wiped_watch( rocketnet_message_client_transport( rocketnet_client_message_client( pair.client ) ),
                          rocketnet_client_transport_secret_spans_for_test );
 
-    check( secrets_wiped_watches[0].spans == 5 );
+    check( secrets_wiped_watches[0].spans == 4 );
 
     const int keys_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 0 );
     const int token_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 1 );
     const int ephemeral_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 2 );
-    const int io_open_key_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+    const int io_open_key_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 3 );
     const int user_data_connected = secrets_wiped_user_data_live();
     const int planted_connected = secrets_wiped_planted_message_live();
 
     rocketnet_client_disconnect( pair.client );
 
     const int client_secrets_at_disconnect = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
-    const int io_open_key_at_disconnect = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+    const int io_open_key_at_disconnect = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 3 );
 
     for ( int i = 0; i < 100 && rocketnet_server_client_connected( pair.server, 0 ); i++ )
     {
@@ -1597,7 +1613,7 @@ static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing
                          rocketnet_client_transport_secret_spans_for_test );
 
     const int client_secrets_reconnected = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
-    const int io_open_key_reconnected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+    const int io_open_key_reconnected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 3 );
 
     uint8_t fresh_message[32];
     for ( size_t i = 0; i < sizeof( fresh_message ); i++ )

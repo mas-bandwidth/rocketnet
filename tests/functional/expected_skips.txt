@@ -52,7 +52,7 @@ leg windows-dev-sanitized-iocp Windows iocp
 leg windows-dev-sanitized-rio Windows rio
 leg windows-prod-portable Windows portable
 
-reason rocketnet_test_a_transport_pin_is_set the case checks that an env pin is honoured, so it has nothing to check unpinned; the pinned step after each unpinned run runs it with --run
+reason rocketnet_test_a_transport_pin_is_set_and_not_xdp the case checks that an env pin is honoured, so it has nothing to check unpinned (the pinned step after each unpinned run runs it with --run); under an xdp server pin its port-zero server cannot start
 reason rocketnet_test_no_transport_pin_is_set the shared-object hub runs on the default ladder; under a pin it has no meaning, and the leg's unpinned twin runs it
 reason rocketnet_test_server_pin_allows_auto the row exercises the server's auto ladder, which this leg's server pin replaces; the leg's unpinned twin runs it
 reason rocketnet_test_client_pin_allows_auto the row exercises the client's auto ladder, which this leg's client pin replaces; the leg's unpinned twin runs it
@@ -111,7 +111,7 @@ skip test_server_transport_io_ladder_fall rocketnet_test_server_pin_allows_gso l
 skip test_session_reconnect_isolation_io_uring rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_session_reconnect_isolation_xdp rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_transport_all_skipped_uses_auto rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable
-skip test_transport_env_pin_is_honoured rocketnet_test_a_transport_pin_is_set linux-dev,linux-dev-sanitized,linux-prod,linux-s390x,macos-dev,macos-prod,windows-dev,windows-dev-sanitized,windows-prod
+skip test_transport_env_pin_is_honoured rocketnet_test_a_transport_pin_is_set_and_not_xdp linux-dev,linux-dev-sanitized,linux-prod,linux-s390x,macos-dev,macos-prod,windows-dev,windows-dev-sanitized,windows-prod
 skip test_unit_case_memory suite_max_case_rss_mb linux-dev-sanitized,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,windows-dev-sanitized,windows-dev-sanitized-iocp,windows-dev-sanitized-rio
 skip test_uring_server_socket_hygiene rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_xdp_transport_gateway_change_while_serving rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
@@ -121,6 +121,7 @@ skip test_xdp_transport_linux_receive_weather_ipv4 rocketnet_test_linux_xdp_weat
 skip test_xdp_transport_linux_receive_weather_ipv6 rocketnet_test_linux_xdp_weather_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_xdp_transport_max_size_both_ways_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_xdp_transport_max_size_both_ways_ipv6 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_no_native_attach_refused rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_xdp_transport_over_mtu_frame_refused_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_xdp_transport_posix_client_create_destroy_1000 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_xdp_transport_posix_connect_disconnect_1000 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
@@ -129,3 +130,9 @@ skip test_xdp_transport_posix_init_term_1000 rocketnet_test_posix_xdp_offered li
 skip test_xdp_transport_posix_server_create_destroy_1000 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_xdp_transport_posix_server_restart_same_port_100 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_xdp_transport_server_io_pin rocketnet_test_server_pin_allows_xdp linux-dev-portable,linux-prod-portable,linux-s390x-portable
+skip test_xdp_transport_serves_both_families rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_other_vid_and_untagged_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_stacked_devices_refused rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_tag_in_data_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_tag_in_data_ipv6 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_tag_stripped_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable

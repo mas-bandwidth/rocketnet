@@ -40,7 +40,7 @@
       gso        ROCKETNET_SERVER_TRANSPORT=gso
       gso plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1: the
                  development library load links skips the UDP_SEGMENT and
-                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp:657-659)
+                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp)
       io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring, where
                  /proc/sys/kernel/io_uring_disabled reads 0
       xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=1
@@ -48,7 +48,7 @@
                  guest booted with irqaffinity=0 isolcpus=1 nohz_full=1, on a
                  veth pair whose far end sits in its own namespace:
                  LOAD_SERVER_ADDRESS=<near address>:<port> binds the server
-                 (load.c; xdp discovers no port, sdk/rocketnet_drivers.inc:7)
+                 (load.c; xdp discovers no port, its row in sdk/rocketnet_drivers.inc)
                  and LOAD_CLIENT_NETNS=/var/run/netns/<name> opens every client
                  socket in the far namespace.
     load raises RLIMIT_NOFILE to 65536 or the hard limit and refuses by name
@@ -69,6 +69,7 @@
 
 #include "examples/shutdown.h"
 #include "rocketnet.h"
+#include "rocketnet_layers.h"   /* the development counter table counters_agree reads */
 #include "tests/portable_crt.h"
 #include <errno.h>
 #include <float.h>
@@ -1029,6 +1030,625 @@ static void load_server_wire_sample( const struct rocketnet_server_t * server, s
     sample->received = stats.bytes_received;
 }
 
+/* The message accounting both the traffic loop and the quiesce share: the
+   server's delivered client-to-server messages and a client's delivered
+   server-to-client messages, checked against their streams. */
+struct load_message_check_t
+{
+    struct load_timing_t * timing;
+    int num_clients;
+    const int * client_slot;
+    struct load_stream_state_t * c2s_streams;
+    struct load_stream_state_t * s2c_streams;
+    uint64_t * c2s_received_total;
+    int * reliable_errors;
+    int * unreliable_errors;
+};
+
+static void load_take_server_messages( const struct load_message_check_t * check, struct rocketnet_server_t * server )
+{
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = timed_server_receive_messages( check->timing, server ) ) != NULL )
+    {
+        for ( int j = 0; j < batch->num_messages; j++ )
+        {
+            ( *check->c2s_received_total )++;
+
+            uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
+            if ( !verify_message( batch->data[j], batch->bytes[j], LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
+                 msg_client >= (uint32_t) check->num_clients || msg_combo >= LOAD_NUM_COMBOS ||
+                 batch->client_index[j] != check->client_slot[msg_client] )
+            {
+                ( *check->reliable_errors )++;
+                ( *check->unreliable_errors )++;
+            }
+            else
+            {
+                const int expected_rx_ch = ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
+                                             msg_combo == ROCKETNET_RELIABILITY_RELIABLE ||
+                                             msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
+                                             msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
+                                               ? 0
+                                               : (int) msg_combo;
+
+                struct load_stream_state_t * cst = &check->c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
+                const int dup = stream_seen_test_and_set( cst, msg_seq );
+
+                if ( batch->channel[j] != expected_rx_ch )
+                {
+                    if ( combo_is_unreliable_family( msg_combo ) )
+                    {
+                        ( *check->unreliable_errors )++;
+                    }
+                    else
+                    {
+                        ( *check->reliable_errors )++;
+                    }
+                }
+                else if ( combo_is_unreliable_family( msg_combo ) )
+                {
+                    if ( dup != 0 )
+                    {
+                        ( *check->unreliable_errors )++;
+                    }
+
+                    if ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED && msg_seq <= cst->max_seq_seen )
+                    {
+                        ( *check->unreliable_errors )++;
+                    }
+
+                    if ( msg_seq > cst->max_seq_seen )
+                    {
+                        cst->max_seq_seen = msg_seq;
+                    }
+
+                    cst->recv_count++;
+                }
+                else if ( msg_combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
+                {
+                    if ( dup != 0 || msg_seq <= cst->max_seq_seen )
+                    {
+                        ( *check->reliable_errors )++;
+                    }
+                    else
+                    {
+                        cst->max_seq_seen = msg_seq;
+                    }
+
+                    cst->recv_count++;
+                }
+                else if ( combo_is_reliable_every( msg_combo ) )
+                {
+                    if ( dup != 0 )
+                    {
+                        ( *check->reliable_errors )++;
+                    }
+
+                    if ( combo_is_ordered( msg_combo ) && msg_seq != cst->recv_count + 1 )
+                    {
+                        ( *check->reliable_errors )++;
+                    }
+
+                    if ( msg_seq > cst->max_seq_seen )
+                    {
+                        cst->max_seq_seen = msg_seq;
+                    }
+
+                    cst->recv_count++;
+                }
+            }
+        }
+    }
+}
+
+static void load_take_client_messages( const struct load_message_check_t * check, struct rocketnet_client_t * client, int i )
+{
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = timed_client_receive_messages( check->timing, client ) ) != NULL )
+    {
+        for ( int j = 0; j < batch->num_messages; j++ )
+        {
+            uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
+
+            if ( batch->client_index[j] != 0 ||
+                 !verify_message( batch->data[j], batch->bytes[j], LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
+                 msg_client != (uint32_t) i || msg_combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
+                 batch->channel[j] != ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
+            {
+                ( *check->reliable_errors )++;
+            }
+            else
+            {
+                struct load_stream_state_t * sv_st = &check->s2c_streams[i];
+                if ( msg_seq != sv_st->recv_count + 1 || stream_seen_test_and_set( sv_st, msg_seq ) != 0 )
+                {
+                    ( *check->reliable_errors )++;
+                }
+
+                sv_st->recv_count++;
+                sv_st->max_seq_seen = msg_seq;
+            }
+        }
+    }
+
+    struct rocketnet_receipt_t receipts[16];
+    (void) timed_client_receipts( check->timing, client, receipts, 16 );
+}
+
+/* counters_agree accounts for every packet, in each direction, after a
+   quiesce: packets sent = packets received + every counted drop, with the
+   remainder (packets still in flight at the read) printed and required to
+   reach zero. The counted drops are the library's own counters (SEND_FAILED,
+   the XDP prefilter's DROPPED_* and XDP_RECEIVE_FRAME_DROPPED) and the
+   kernel's UDP counters of the namespace the packet died in: SndbufErrors on
+   the sending side (Linux's udp_send_skb counts a full device queue there and
+   returns success to a socket without IP_RECVERR) and InErrors on the
+   receiving side (it includes RcvbufErrors). A /proc/net file reads the
+   namespace it was opened in, so the client namespace's files are opened
+   while the clients are created inside it. */
+struct load_kernel_counters_t
+{
+    int available;
+    uint64_t udp_in_errors;
+    uint64_t udp_rcvbuf_errors;
+    uint64_t udp_sndbuf_errors;
+    uint64_t dev_rx_dropped;
+    uint64_t dev_tx_dropped;
+};
+
+struct load_kernel_source_t
+{
+    int snmp_fd;
+    int dev_fd;
+};
+
+#if defined( __linux__ )
+
+static void load_kernel_open( struct load_kernel_source_t * source )
+{
+    source->snmp_fd = open( "/proc/thread-self/net/snmp", O_RDONLY );
+    source->dev_fd = open( "/proc/thread-self/net/dev", O_RDONLY );
+}
+
+static void load_kernel_close( struct load_kernel_source_t * source )
+{
+    if ( source->snmp_fd >= 0 )
+    {
+        close( source->snmp_fd );
+    }
+
+    if ( source->dev_fd >= 0 )
+    {
+        close( source->dev_fd );
+    }
+
+    source->snmp_fd = -1;
+    source->dev_fd = -1;
+}
+
+static int load_read_proc( int fd, char * buffer, size_t bytes )
+{
+    if ( fd < 0 || lseek( fd, 0, SEEK_SET ) != 0 )
+    {
+        return 0;
+    }
+
+    size_t used = 0;
+    for ( ;; )
+    {
+        if ( used + 1 >= bytes )
+        {
+            return 0; /* larger than the buffer: unreadable, never a truncated count */
+        }
+
+        const ssize_t got = read( fd, buffer + used, bytes - 1 - used );
+        if ( got < 0 )
+        {
+            return 0;
+        }
+
+        if ( got == 0 )
+        {
+            break;
+        }
+
+        used += (size_t) got;
+    }
+
+    buffer[used] = 0;
+    return 1;
+}
+
+static int load_parse_udp( const char * text, struct load_kernel_counters_t * out )
+{
+    const char * header = strstr( text, "\nUdp:" );
+    if ( !header )
+    {
+        return 0;
+    }
+
+    header += 5;
+    const char * values = strstr( header, "\nUdp:" );
+    if ( !values )
+    {
+        return 0;
+    }
+
+    values += 5;
+    int found = 0;
+    for ( ;; )
+    {
+        while ( *header == ' ' )
+        {
+            header++;
+        }
+
+        while ( *values == ' ' )
+        {
+            values++;
+        }
+
+        if ( *header == '\n' || *header == 0 || *values == '\n' || *values == 0 )
+        {
+            break;
+        }
+
+        char name[32];
+        size_t n = 0;
+        while ( *header != 0 && *header != ' ' && *header != '\n' )
+        {
+            if ( n + 1 < sizeof( name ) )
+            {
+                name[n++] = *header;
+            }
+
+            header++;
+        }
+
+        name[n] = 0;
+        char * end = NULL;
+        const unsigned long long value = strtoull( values, &end, 10 );
+        if ( end == values )
+        {
+            return 0;
+        }
+
+        values = end;
+        if ( strcmp( name, "InErrors" ) == 0 )
+        {
+            out->udp_in_errors = value;
+            found++;
+        }
+        else if ( strcmp( name, "RcvbufErrors" ) == 0 )
+        {
+            out->udp_rcvbuf_errors = value;
+            found++;
+        }
+        else if ( strcmp( name, "SndbufErrors" ) == 0 )
+        {
+            out->udp_sndbuf_errors = value;
+            found++;
+        }
+    }
+
+    return found == 3;
+}
+
+static int load_parse_dev( const char * text, struct load_kernel_counters_t * out )
+{
+    /* two header lines, then "name: rx_bytes rx_packets rx_errs rx_drop ...
+       tx_bytes tx_packets tx_errs tx_drop ..." per device */
+    const char * line = strchr( text, '\n' );
+    line = line ? strchr( line + 1, '\n' ) : NULL;
+    if ( !line )
+    {
+        return 0;
+    }
+
+    while ( line[0] == '\n' && line[1] != 0 )
+    {
+        line++;
+        const char * colon = strchr( line, ':' );
+        const char * eol = strchr( line, '\n' );
+        if ( !colon || ( eol && colon > eol ) )
+        {
+            return 0;
+        }
+
+        const char * p = colon + 1;
+        unsigned long long field[12];
+        for ( int f = 0; f < 12; f++ )
+        {
+            char * end = NULL;
+            field[f] = strtoull( p, &end, 10 );
+            if ( end == p )
+            {
+                return 0;
+            }
+
+            p = end;
+        }
+
+        out->dev_rx_dropped += field[3];
+        out->dev_tx_dropped += field[11];
+        if ( !eol )
+        {
+            break;
+        }
+
+        line = eol;
+    }
+
+    return 1;
+}
+
+#endif // #if defined( __linux__ )
+
+static void load_kernel_read( const struct load_kernel_source_t * source, struct load_kernel_counters_t * out )
+{
+    memset( out, 0, sizeof( *out ) );
+#if defined( __linux__ )
+    static char text[65536];
+    out->available = load_read_proc( source->snmp_fd, text, sizeof( text ) ) && load_parse_udp( text, out ) &&
+                     load_read_proc( source->dev_fd, text, sizeof( text ) ) && load_parse_dev( text, out );
+#else
+    (void) source;
+#endif // #if defined( __linux__ )
+}
+
+static void load_kernel_delta( const struct load_kernel_counters_t * now, const struct load_kernel_counters_t * base, struct load_kernel_counters_t * out )
+{
+    memset( out, 0, sizeof( *out ) );
+    out->available = now->available && base->available;
+    if ( out->available )
+    {
+        out->udp_in_errors = now->udp_in_errors - base->udp_in_errors;
+        out->udp_rcvbuf_errors = now->udp_rcvbuf_errors - base->udp_rcvbuf_errors;
+        out->udp_sndbuf_errors = now->udp_sndbuf_errors - base->udp_sndbuf_errors;
+        out->dev_rx_dropped = now->dev_rx_dropped - base->dev_rx_dropped;
+        out->dev_tx_dropped = now->dev_tx_dropped - base->dev_tx_dropped;
+    }
+}
+
+/* The library counters the equations name, found by name in the
+   development counter table (ROCKETNET_DEV). Without it they read as
+   unavailable and the equations judge the stats alone. */
+struct load_accounting_t
+{
+    int counters_available;
+    int send_failed;
+    int packets_received;
+    int xdp_redirected;
+    int xdp_frame_dropped;
+    int xdp_dropped[32];
+    int num_xdp_dropped;
+
+    int separate_namespaces;
+    struct load_kernel_source_t server_source;
+    struct load_kernel_source_t client_source;
+    struct load_kernel_counters_t server_base;
+    struct load_kernel_counters_t client_base;
+
+    /* the client a drop-one run destroyed, sampled after its disconnect */
+    uint64_t destroyed_packets_sent;
+    uint64_t destroyed_packets_received;
+    uint64_t destroyed_send_failed;
+};
+
+static void load_accounting_init( struct load_accounting_t * accounting )
+{
+    memset( accounting, 0, sizeof( *accounting ) );
+    accounting->send_failed = -1;
+    accounting->packets_received = -1;
+    accounting->xdp_redirected = -1;
+    accounting->xdp_frame_dropped = -1;
+    accounting->server_source.snmp_fd = -1;
+    accounting->server_source.dev_fd = -1;
+    accounting->client_source.snmp_fd = -1;
+    accounting->client_source.dev_fd = -1;
+#if ROCKETNET_DEV
+    const int n = rocketnet_num_counters();
+    for ( int k = 0; k < n; k++ )
+    {
+        const char * name = rocketnet_counter_name( k );
+        if ( !name )
+        {
+            continue;
+        }
+
+        if ( strcmp( name, "SEND_FAILED" ) == 0 )
+        {
+            accounting->send_failed = k;
+        }
+        else if ( strcmp( name, "PACKETS_RECEIVED" ) == 0 )
+        {
+            accounting->packets_received = k;
+        }
+        else if ( strcmp( name, "XDP_KERNEL_REDIRECTED" ) == 0 )
+        {
+            accounting->xdp_redirected = k;
+        }
+        else if ( strcmp( name, "XDP_RECEIVE_FRAME_DROPPED" ) == 0 )
+        {
+            accounting->xdp_frame_dropped = k;
+        }
+        else if ( strncmp( name, "XDP_KERNEL_DROPPED_", 19 ) == 0 && accounting->num_xdp_dropped < 32 )
+        {
+            accounting->xdp_dropped[accounting->num_xdp_dropped++] = k;
+        }
+    }
+
+    accounting->counters_available = accounting->send_failed >= 0 && accounting->packets_received >= 0 &&
+                                     accounting->xdp_redirected >= 0 && accounting->xdp_frame_dropped >= 0 &&
+                                     accounting->num_xdp_dropped > 0;
+#endif // #if ROCKETNET_DEV
+}
+
+static uint64_t load_client_counter( const struct load_accounting_t * accounting, struct rocketnet_client_t * client, int counter )
+{
+#if ROCKETNET_DEV
+    if ( accounting->counters_available && counter >= 0 )
+    {
+        return rocketnet_counter_value( rocketnet_client_transport_counter_block( client ), counter );
+    }
+#else
+    (void) client;
+    (void) counter;
+#endif // #if ROCKETNET_DEV
+    (void) accounting;
+    return 0;
+}
+
+static uint64_t load_server_counter( const struct load_accounting_t * accounting, struct rocketnet_server_t * server, int counter )
+{
+#if ROCKETNET_DEV
+    if ( accounting->counters_available && counter >= 0 )
+    {
+        return rocketnet_counter_value( rocketnet_server_transport_counter_block( server ), counter );
+    }
+#else
+    (void) server;
+    (void) counter;
+#endif // #if ROCKETNET_DEV
+    (void) accounting;
+    return 0;
+}
+
+/* One cut of every term, read together. */
+struct load_packet_terms_t
+{
+    uint64_t client_sent;
+    uint64_t client_received;
+    uint64_t client_send_failed;
+    uint64_t server_sent;
+    uint64_t server_received;
+    uint64_t server_send_failed;
+    uint64_t server_prefilter_dropped;
+    uint64_t server_frame_dropped;
+    uint64_t server_redirected;
+    uint64_t server_packets_received_counter;
+    struct load_kernel_counters_t server_kernel;   /* deltas since before the first client */
+    struct load_kernel_counters_t client_kernel;   /* the same namespace's when there is one */
+};
+
+static void load_packet_terms_read( const struct load_accounting_t * accounting, struct rocketnet_server_t * server,
+                                    struct rocketnet_client_t ** clients, int num_clients, struct load_packet_terms_t * terms )
+{
+    memset( terms, 0, sizeof( *terms ) );
+    terms->client_sent = accounting->destroyed_packets_sent;
+    terms->client_received = accounting->destroyed_packets_received;
+    terms->client_send_failed = accounting->destroyed_send_failed;
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        if ( clients[i] )
+        {
+            struct rocketnet_client_stats_t stats;
+            rocketnet_client_stats( clients[i], &stats );
+            terms->client_sent += stats.packets_sent;
+            terms->client_received += stats.packets_received;
+            terms->client_send_failed += load_client_counter( accounting, clients[i], accounting->send_failed );
+        }
+    }
+
+    struct rocketnet_server_stats_t server_stats;
+    rocketnet_server_stats( server, &server_stats );
+    terms->server_sent = server_stats.packets_sent;
+    terms->server_received = server_stats.packets_received;
+    terms->server_send_failed = load_server_counter( accounting, server, accounting->send_failed );
+    for ( int k = 0; k < accounting->num_xdp_dropped; k++ )
+    {
+        terms->server_prefilter_dropped += load_server_counter( accounting, server, accounting->xdp_dropped[k] );
+    }
+
+    terms->server_frame_dropped = load_server_counter( accounting, server, accounting->xdp_frame_dropped );
+    terms->server_redirected = load_server_counter( accounting, server, accounting->xdp_redirected );
+    terms->server_packets_received_counter = load_server_counter( accounting, server, accounting->packets_received );
+
+    struct load_kernel_counters_t now;
+    load_kernel_read( &accounting->server_source, &now );
+    load_kernel_delta( &now, &accounting->server_base, &terms->server_kernel );
+    if ( accounting->separate_namespaces )
+    {
+        load_kernel_read( &accounting->client_source, &now );
+        load_kernel_delta( &now, &accounting->client_base, &terms->client_kernel );
+    }
+}
+
+/* Client to server. With separate namespaces every term is named and the
+   remainder must be zero. In one shared namespace the kernel counters are
+   host-wide, so they bound what the library terms leave rather than name it:
+   remainder is the library-only remainder, kernel the bound it shares with
+   the other direction. */
+static int64_t load_c2s_remainder( const struct load_accounting_t * accounting, const struct load_packet_terms_t * terms )
+{
+    int64_t remainder = (int64_t) terms->client_sent - (int64_t) terms->server_received -
+                        (int64_t) terms->client_send_failed - (int64_t) terms->server_prefilter_dropped - (int64_t) terms->server_frame_dropped;
+    if ( accounting->separate_namespaces )
+    {
+        remainder -= (int64_t) terms->client_kernel.udp_sndbuf_errors + (int64_t) terms->server_kernel.udp_in_errors;
+    }
+
+    return remainder;
+}
+
+static int64_t load_s2c_remainder( const struct load_accounting_t * accounting, const struct load_packet_terms_t * terms )
+{
+    int64_t remainder = (int64_t) terms->server_sent - (int64_t) terms->client_received - (int64_t) terms->server_send_failed;
+    if ( accounting->separate_namespaces )
+    {
+        remainder -= (int64_t) terms->server_kernel.udp_sndbuf_errors + (int64_t) terms->client_kernel.udp_in_errors;
+    }
+
+    return remainder;
+}
+
+/* Frames the XDP prefilter redirected that the server has not yet taken. A
+   socket server's packets never pass the prefilter: nothing redirected, no
+   ring. */
+static int64_t load_ring_frames( const struct load_packet_terms_t * terms )
+{
+    if ( terms->server_redirected == 0 )
+    {
+        return 0;
+    }
+
+    return (int64_t) terms->server_redirected - (int64_t) terms->server_packets_received_counter - (int64_t) terms->server_frame_dropped;
+}
+
+static void load_print_c2s( const struct load_accounting_t * accounting, const struct load_packet_terms_t * t, double cut_s )
+{
+    fprintf( stderr, "load: counters_agree c2s packets at quiesce t=%.3fs: client_sent=%" PRIu64 " = server_received=%" PRIu64 " + client_send_failed=%" PRIu64 " + client_ns_udp_sndbuf_errors=%" PRIu64 " + server_ns_udp_in_errors=%" PRIu64 " (rcvbuf_errors=%" PRIu64 ") + xdp_prefilter_dropped=%" PRIu64 " + xdp_frame_dropped=%" PRIu64 " + in_flight=%" PRId64 "; xdp_ring_frames=%" PRId64 " (redirected=%" PRIu64 " taken=%" PRIu64 ")%s%s\n",
+             cut_s, t->client_sent, t->server_received, t->client_send_failed,
+             accounting->separate_namespaces ? t->client_kernel.udp_sndbuf_errors : t->server_kernel.udp_sndbuf_errors,
+             t->server_kernel.udp_in_errors, t->server_kernel.udp_rcvbuf_errors,
+             t->server_prefilter_dropped, t->server_frame_dropped, load_c2s_remainder( accounting, t ), load_ring_frames( t ),
+             t->server_redirected, t->server_packets_received_counter,
+             accounting->separate_namespaces ? "" : " [one shared namespace: the kernel counters are host-wide and both directions' bound]",
+             accounting->counters_available ? "" : " [library counters unavailable: ROCKETNET_DEV is 0]" );
+    if ( accounting->separate_namespaces )
+    {
+        fprintf( stderr, "load: counters_agree c2s cross-check: client namespace device tx_dropped=%" PRIu64 " against udp_sndbuf_errors=%" PRIu64 " (%s)\n",
+                 t->client_kernel.dev_tx_dropped, t->client_kernel.udp_sndbuf_errors,
+                 t->client_kernel.dev_tx_dropped == t->client_kernel.udp_sndbuf_errors ? "agree" : "DIFFER" );
+    }
+}
+
+static void load_print_s2c( const struct load_accounting_t * accounting, const struct load_packet_terms_t * t, double cut_s, int drop_injected )
+{
+    fprintf( stderr, "load: counters_agree s2c packets at quiesce t=%.3fs: server_sent=%" PRIu64 " = client_received=%" PRIu64 " + server_send_failed=%" PRIu64 " + server_ns_udp_sndbuf_errors=%" PRIu64 " + client_ns_udp_in_errors=%" PRIu64 " (rcvbuf_errors=%" PRIu64 ") + in_flight=%" PRId64 "%s%s\n",
+             cut_s, t->server_sent, t->client_received, t->server_send_failed, t->server_kernel.udp_sndbuf_errors,
+             accounting->separate_namespaces ? t->client_kernel.udp_in_errors : t->server_kernel.udp_in_errors,
+             accounting->separate_namespaces ? t->client_kernel.udp_rcvbuf_errors : t->server_kernel.udp_rcvbuf_errors,
+             load_s2c_remainder( accounting, t ),
+             drop_injected ? " [drop-one: not judged]" : "",
+             accounting->separate_namespaces ? "" : " [one shared namespace: the kernel counters are host-wide and both directions' bound]" );
+    if ( accounting->separate_namespaces )
+    {
+        fprintf( stderr, "load: counters_agree s2c cross-check: client namespace device rx_dropped=%" PRIu64 " against udp_in_errors=%" PRIu64 "\n",
+                 t->client_kernel.dev_rx_dropped, t->client_kernel.udp_in_errors );
+    }
+}
+
 int main( int argc, char ** argv )
 {
     if ( argc < 3 || argc > 4 )
@@ -1379,10 +1999,16 @@ int main( int argc, char ** argv )
     double * client_last_update = (double *) calloc( (size_t) num_clients, sizeof( double ) );
     double * client_max_update_gap = (double *) calloc( (size_t) num_clients, sizeof( double ) );
 
+    /* counters_agree's message bound: the unreliable messages a client
+       finished since its last send_packets that sent a packet. The most of
+       them one send carried is the most one packet can have carried. */
+    uint32_t * client_unreliable_pending = (uint32_t *) calloc( (size_t) num_clients, sizeof( uint32_t ) );
+    uint32_t max_unreliable_per_send = 0;
+
     if ( !clients || !client_ever_connected || !client_connect_seconds || !client_next_combo ||
          ( fixed_message_rate && !client_next_message_due ) ||
          ( fixed_message_rate && ( !client_wire_start || !client_wire_end ) ) ||
-         !c2s_streams || !s2c_streams || !client_last_update || !client_max_update_gap )
+         !c2s_streams || !s2c_streams || !client_last_update || !client_max_update_gap || !client_slot || !client_unreliable_pending )
     {
         fprintf( stderr, "load: allocation failed\n" );
         return 1;
@@ -1411,6 +2037,34 @@ int main( int argc, char ** argv )
         }
     }
 #endif // #if defined( __linux__ )
+
+    // counters_agree's terms: the counter table, and each namespace's kernel
+    // counters as they stand before the first client exists
+
+    struct load_accounting_t accounting;
+    load_accounting_init( &accounting );
+#if defined( __linux__ )
+    load_kernel_open( &accounting.server_source );
+    if ( client_netns >= 0 )
+    {
+        if ( setns( client_netns, CLONE_NEWNET ) != 0 )
+        {
+            fprintf( stderr, "load: setns into %s failed: %s\n", client_netns_path, strerror( errno ) );
+            return 1;
+        }
+
+        load_kernel_open( &accounting.client_source );
+        if ( setns( self_netns, CLONE_NEWNET ) != 0 )
+        {
+            fprintf( stderr, "load: setns back to the server namespace failed: %s\n", strerror( errno ) );
+            return 1;
+        }
+
+        accounting.separate_namespaces = 1;
+    }
+#endif // #if defined( __linux__ )
+    load_kernel_read( &accounting.server_source, &accounting.server_base );
+    load_kernel_read( &accounting.client_source, &accounting.client_base );
 
     for ( int i = 0; i < num_clients; i++ )
     {
@@ -1693,6 +2347,16 @@ int main( int argc, char ** argv )
     unsigned char drain_visited[ROCKETNET_MAX_CLIENTS] = { 0 };
     const double drain_deadline = traffic_start + duration_seconds + drain_seconds;
 
+    struct load_message_check_t message_check;
+    message_check.timing = &timing;
+    message_check.num_clients = num_clients;
+    message_check.client_slot = client_slot;
+    message_check.c2s_streams = c2s_streams;
+    message_check.s2c_streams = s2c_streams;
+    message_check.c2s_received_total = &c2s_received_total;
+    message_check.reliable_errors = &reliable_errors;
+    message_check.unreliable_errors = &unreliable_errors;
+
     while ( !quit )
     {
         const double now = rocketnet_time();
@@ -1742,6 +2406,16 @@ int main( int argc, char ** argv )
                 dropped_client_wire_observed_seconds = rocketnet_time() - dropped_client_wire_start_time;
             }
 
+            // the packet terms are read before the disconnect: a disconnected
+            // client's stats no longer publish its session's packets
+            {
+                struct rocketnet_client_stats_t dropped_stats;
+                rocketnet_client_stats( clients[0], &dropped_stats );
+                accounting.destroyed_packets_sent = dropped_stats.packets_sent;
+                accounting.destroyed_packets_received = dropped_stats.packets_received;
+                accounting.destroyed_send_failed = load_client_counter( &accounting, clients[0], accounting.send_failed );
+            }
+
             rn_cli_client_stop_and_destroy( clients[0], rocketnet_time() );
             clients[0] = NULL;
             drop_injected = 1;
@@ -1777,36 +2451,7 @@ int main( int argc, char ** argv )
                 client_last_update[i] = update_time;
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, rocketnet_client_update( clients[i], update_time ) );
 
-                const struct rocketnet_message_batch_t * batch = NULL;
-                while ( ( batch = timed_client_receive_messages( &timing, clients[i] ) ) != NULL )
-                {
-                    for ( int j = 0; j < batch->num_messages; j++ )
-                    {
-                        uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
-
-                        if ( batch->client_index[j] != 0 ||
-                             !verify_message( batch->data[j], batch->bytes[j], LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
-                             msg_client != (uint32_t) i || msg_combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
-                             batch->channel[j] != ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
-                        {
-                            reliable_errors++;
-                        }
-                        else
-                        {
-                            struct load_stream_state_t * sv_st = &s2c_streams[i];
-                            if ( msg_seq != sv_st->recv_count + 1 || stream_seen_test_and_set( sv_st, msg_seq ) != 0 )
-                            {
-                                reliable_errors++;
-                            }
-
-                            sv_st->recv_count++;
-                            sv_st->max_seq_seen = msg_seq;
-                        }
-                    }
-                }
-
-                struct rocketnet_receipt_t receipts[16];
-                (void) timed_client_receipts( &timing, clients[i], receipts, 16 );
+                load_take_client_messages( &message_check, clients[i], i );
 
                 /* The default offers one pair per update. The opt-in fixed
                    rate offers at most one pair when this client's due time
@@ -1841,6 +2486,10 @@ int main( int argc, char ** argv )
                             {
                                 cst->sent_count = next_seq;
                                 c2s_sent_total++;
+                                if ( combo_is_unreliable_family( combo ) )
+                                {
+                                    client_unreliable_pending[i]++;
+                                }
                             }
                         }
                     }
@@ -1867,7 +2516,30 @@ int main( int argc, char ** argv )
                     }
                 }
 
-                LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_SEND_PACKETS, rocketnet_client_send_packets( clients[i] ) );
+                if ( client_unreliable_pending[i] == 0 )
+                {
+                    LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_SEND_PACKETS, rocketnet_client_send_packets( clients[i] ) );
+                }
+                else
+                {
+                    // only a send with unreliable messages waiting can carry
+                    // one; the stats read stays off every other send
+
+                    struct rocketnet_client_stats_t before_send;
+                    rocketnet_client_stats( clients[i], &before_send );
+                    LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_SEND_PACKETS, rocketnet_client_send_packets( clients[i] ) );
+                    struct rocketnet_client_stats_t after_send;
+                    rocketnet_client_stats( clients[i], &after_send );
+                    if ( after_send.packets_sent != before_send.packets_sent )
+                    {
+                        if ( client_unreliable_pending[i] > max_unreliable_per_send )
+                        {
+                            max_unreliable_per_send = client_unreliable_pending[i];
+                        }
+
+                        client_unreliable_pending[i] = 0;
+                    }
+                }
 
                 const enum rocketnet_client_state_t st = timed_client_state( &timing, clients[i] );
                 if ( client_ever_connected[i] && st != ROCKETNET_CLIENT_STATE_CONNECTED )
@@ -1902,98 +2574,7 @@ int main( int argc, char ** argv )
                     max_server_update_at = t0 - traffic_start;
                 }
 
-                const struct rocketnet_message_batch_t * batch = NULL;
-                while ( ( batch = timed_server_receive_messages( &timing, server ) ) != NULL )
-                {
-                    for ( int j = 0; j < batch->num_messages; j++ )
-                    {
-                        c2s_received_total++;
-
-                        uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
-                        if ( !verify_message( batch->data[j], batch->bytes[j], LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
-                             msg_client >= (uint32_t) num_clients || msg_combo >= LOAD_NUM_COMBOS ||
-                             batch->client_index[j] != client_slot[msg_client] )
-                        {
-                            reliable_errors++;
-                            unreliable_errors++;
-                        }
-                        else
-                        {
-                            const int expected_rx_ch = ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
-                                                         msg_combo == ROCKETNET_RELIABILITY_RELIABLE ||
-                                                         msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
-                                                         msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
-                                                           ? 0
-                                                           : (int) msg_combo;
-
-                            struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
-                            const int dup = stream_seen_test_and_set( cst, msg_seq );
-
-                            if ( batch->channel[j] != expected_rx_ch )
-                            {
-                                if ( combo_is_unreliable_family( msg_combo ) )
-                                {
-                                    unreliable_errors++;
-                                }
-                                else
-                                {
-                                    reliable_errors++;
-                                }
-                            }
-                            else if ( combo_is_unreliable_family( msg_combo ) )
-                            {
-                                if ( dup != 0 )
-                                {
-                                    unreliable_errors++;
-                                }
-
-                                if ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED && msg_seq <= cst->max_seq_seen )
-                                {
-                                    unreliable_errors++;
-                                }
-
-                                if ( msg_seq > cst->max_seq_seen )
-                                {
-                                    cst->max_seq_seen = msg_seq;
-                                }
-
-                                cst->recv_count++;
-                            }
-                            else if ( msg_combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
-                            {
-                                if ( dup != 0 || msg_seq <= cst->max_seq_seen )
-                                {
-                                    reliable_errors++;
-                                }
-                                else
-                                {
-                                    cst->max_seq_seen = msg_seq;
-                                }
-
-                                cst->recv_count++;
-                            }
-                            else if ( combo_is_reliable_every( msg_combo ) )
-                            {
-                                if ( dup != 0 )
-                                {
-                                    reliable_errors++;
-                                }
-
-                                if ( combo_is_ordered( msg_combo ) && msg_seq != cst->recv_count + 1 )
-                                {
-                                    reliable_errors++;
-                                }
-
-                                if ( msg_seq > cst->max_seq_seen )
-                                {
-                                    cst->max_seq_seen = msg_seq;
-                                }
-
-                                cst->recv_count++;
-                            }
-                        }
-                    }
-                }
+                load_take_server_messages( &message_check, server );
 
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_SEND_PACKETS, rocketnet_server_send_packets( server ) );
             }
@@ -2032,6 +2613,70 @@ int main( int argc, char ** argv )
 #if defined( _WIN32 )
     sample_thread_boundary( &threads_peak ); /* after traffic and bounded drain */
 #endif // #if defined( _WIN32 )
+
+    /* counters_agree quiesce, one direction at a time, so each packet
+       equation is read at a cut with nothing left in flight rather than
+       excused by a tolerance. Client to server: the clients stop (no update,
+       no send) and the server keeps taking until every packet the clients
+       sent is received or a counted drop, and the XDP ring is empty. Server
+       to client: then the server stops and the clients keep taking (update
+       and receive, never send_packets) until every packet the server sent is
+       received or a counted drop. Each direction's terms are read at its own
+       cut; whatever is still in flight when the deadline ends a phase is
+       printed as in_flight and fails the run. */
+    const double quiesce_seconds = 2.0;
+    struct load_packet_terms_t c2s_terms;
+    struct load_packet_terms_t s2c_terms;
+    double c2s_cut_s = 0.0;
+    double s2c_cut_s = 0.0;
+    {
+        const double quiesce_start = rocketnet_time();
+        for ( ;; )
+        {
+            rocketnet_server_update( server, rocketnet_time() );
+            load_take_server_messages( &message_check, server );
+            rocketnet_server_send_packets( server );
+            load_packet_terms_read( &accounting, server, clients, num_clients, &c2s_terms );
+            const int closed = load_c2s_remainder( &accounting, &c2s_terms ) == 0 && load_ring_frames( &c2s_terms ) == 0;
+            c2s_cut_s = rocketnet_time() - quiesce_start;
+            if ( closed || c2s_cut_s >= quiesce_seconds )
+            {
+                break;
+            }
+
+            rocketnet_sleep( 0.001 );
+        }
+    }
+
+    {
+        const double quiesce_start = rocketnet_time();
+        for ( ;; )
+        {
+            const double t = rocketnet_time();
+            for ( int i = 0; i < num_clients; i++ )
+            {
+                if ( clients[i] )
+                {
+                    rocketnet_client_update( clients[i], t );
+                    load_take_client_messages( &message_check, clients[i], i );
+                }
+            }
+
+            load_packet_terms_read( &accounting, server, clients, num_clients, &s2c_terms );
+            const int closed = load_s2c_remainder( &accounting, &s2c_terms ) == 0;
+            s2c_cut_s = rocketnet_time() - quiesce_start;
+            if ( closed || s2c_cut_s >= quiesce_seconds )
+            {
+                break;
+            }
+
+            rocketnet_sleep( 0.001 );
+        }
+    }
+#if defined( __linux__ )
+    load_kernel_close( &accounting.server_source );
+    load_kernel_close( &accounting.client_source );
+#endif // #if defined( __linux__ )
 
     // Final verification of all 5 criteria
     if ( rocketnet_server_num_connected_clients( server ) != num_clients )
@@ -2203,7 +2848,60 @@ int main( int argc, char ** argv )
     const int crit2_no_unexpected_disconnect = ( unexpected_disconnects == 0 ) ? 1 : 0;
     const int crit3_reliable_delivery = ( reliable_errors == 0 && c2s_sent_total > 0 ) ? 1 : 0;
     const int crit4_unreliable_integrity = ( unreliable_errors == 0 ) ? 1 : 0;
-    const int crit5_counters_agree = ( c2s_sent_total == c2s_received_total + total_counted_drops ) ? 1 : 0;
+
+    /* counters_agree, every term printed on every run, pass or fail:
+       1. each direction's packet equation closes exactly at its quiesce cut,
+          and the XDP ring is empty there;
+       2. the namespace's device drop counters are printed beside the UDP
+          counters they cross-check;
+       3. the client-to-server messages the library's own message drops do
+          not account for are at most the client-to-server packets counted as
+          dropped times the most unreliable messages one client send carried.
+          Server-to-client messages are reliable only; reliable_delivery
+          judges them. */
+    load_print_c2s( &accounting, &c2s_terms, c2s_cut_s );
+    load_print_s2c( &accounting, &s2c_terms, s2c_cut_s, drop_injected );
+    const int64_t c2s_in_flight = load_c2s_remainder( &accounting, &c2s_terms );
+    const int64_t s2c_in_flight = load_s2c_remainder( &accounting, &s2c_terms );
+    const int64_t ring_frames = load_ring_frames( &c2s_terms );
+    uint64_t c2s_dropped_packets = c2s_terms.client_send_failed + c2s_terms.server_prefilter_dropped + c2s_terms.server_frame_dropped;
+    int packets_agree = 0;
+    if ( drop_injected )
+    {
+        /* drop-one: the destroyed client's disconnect burst reaches the
+           server after its stats were read, and what the server sent it
+           after that is never read, so neither equation can close; the terms
+           are printed and only the XDP ring is judged */
+        c2s_dropped_packets += c2s_terms.client_kernel.udp_sndbuf_errors + c2s_terms.server_kernel.udp_in_errors;
+        packets_agree = ring_frames == 0;
+        fprintf( stderr, "load: counters_agree drop-one: packet equations printed, not judged (the destroyed client's disconnect burst and the server's later packets to it are outside them)\n" );
+    }
+    else if ( accounting.separate_namespaces )
+    {
+        c2s_dropped_packets += c2s_terms.client_kernel.udp_sndbuf_errors + c2s_terms.server_kernel.udp_in_errors;
+        packets_agree = c2s_terms.server_kernel.available && c2s_terms.client_kernel.available &&
+                        c2s_in_flight == 0 && ring_frames == 0 && s2c_in_flight == 0;
+    }
+    else
+    {
+        /* one namespace: its kernel counters are host-wide, so the drops they
+           show bound what the library terms of both directions leave */
+        const uint64_t kernel_bound = s2c_terms.server_kernel.udp_sndbuf_errors + s2c_terms.server_kernel.udp_in_errors;
+        const uint64_t c2s_left = c2s_in_flight > 0 ? (uint64_t) c2s_in_flight : 0;
+        const uint64_t s2c_left = s2c_in_flight > 0 ? (uint64_t) s2c_in_flight : 0;
+        c2s_dropped_packets += c2s_left;
+        packets_agree = c2s_in_flight >= 0 && s2c_in_flight >= 0 && ring_frames == 0 && c2s_left + s2c_left <= kernel_bound;
+        fprintf( stderr, "load: counters_agree shared namespace: c2s_left=%" PRIu64 " + s2c_left=%" PRIu64 " <= host_udp_sndbuf_errors+in_errors=%" PRIu64 " (kernel counters %s)\n",
+                 c2s_left, s2c_left, kernel_bound, s2c_terms.server_kernel.available ? "read" : "unavailable, bound 0" );
+    }
+
+    const int64_t message_lost = (int64_t) c2s_sent_total - (int64_t) c2s_received_total - (int64_t) total_counted_drops;
+    const uint64_t message_bound = c2s_dropped_packets * (uint64_t) max_unreliable_per_send;
+    const int messages_agree = message_lost >= 0 && (uint64_t) message_lost <= message_bound;
+    fprintf( stderr, "load: counters_agree c2s messages: sent=%" PRIu64 " = received=%" PRIu64 " + counted_drops=%" PRIu64 " + lost=%" PRId64 "; lost <= dropped_packets=%" PRIu64 " x max_unreliable_per_send=%u = %" PRIu64 "; s2c unreliable sent=0\n",
+             c2s_sent_total, c2s_received_total, total_counted_drops, message_lost, c2s_dropped_packets, max_unreliable_per_send, message_bound );
+    fprintf( stderr, "load: counters_agree packets=%s messages=%s\n", packets_agree ? "PASS" : "FAIL", messages_agree ? "PASS" : "FAIL" );
+    const int crit5_counters_agree = ( packets_agree && messages_agree ) ? 1 : 0;
 
     if ( !crit3_reliable_delivery || !crit5_counters_agree )
     {
@@ -2395,6 +3093,7 @@ int main( int argc, char ** argv )
     free( s2c_streams );
     free( client_last_update );
     free( client_max_update_gap );
+    free( client_unreliable_pending );
 
     const long fds_pre_term = count_open_fds();
     const long threads_pre_term = count_threads();

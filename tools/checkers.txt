@@ -8,6 +8,7 @@
 scripts/check-fleet-runners-selftest	bash scripts/check-fleet-runners-selftest	-	static.yml	static	Fleet-runner lint selftest
 scripts/lan-proof-selftest	bash scripts/lan-proof-selftest	-	ci.yml	lint	Self-tests of the registered checkers
 scripts/soak-args-selftest	bash scripts/soak-args-selftest	-	ci.yml	platform-selftests	soak argument and summary selftest
+scripts/soak-per-transport-selftest	bash scripts/soak-per-transport-selftest	-	ci.yml	platform-selftests	soak per transport verdict selftest
 scripts/soak-sim-selftest	bash scripts/soak-sim-selftest	-	ci.yml	platform-selftests	soak_sim instrument selftest
 scripts/vm-boot-guard-selftest	bash scripts/vm-boot-guard-selftest	-	ci.yml	platform-selftests	VM boot deadline selftest
 tools/check_abi.py	python3 tools/test_check_abi.py	python3 tools/check_abi.py --header {emptyfile} --exports {emptyfile} --baseline {emptyfile}	ci.yml	build-and-test	Check the 1.x ABI baseline
@@ -16,6 +17,7 @@ tools/check_byte_order.py	python3 tools/check_byte_order.py --self-test	python3 
 tools/check_cbmc_bounds.py	python3 tools/check_cbmc_bounds.py --self-test	python3 tools/check_cbmc_bounds.py --proofs {empty}	cbmc.yml	cbmc	Check the stated proof bounds against the SDK
 tools/check_checkers.py	python3 tools/check_checkers.py --self-test	python3 tools/check_checkers.py --root {empty} --no-run	ci.yml	lint	Every checker is registered, its self-test runs, zero inputs are red
 tools/check_ci_budget.py	python3 tools/check_ci_budget.py --self-test	python3 tools/check_ci_budget.py {emptyfile}	ci.yml	lint	Every per-commit job is bounded to two minutes
+tools/check_client_frame_time.py	python3 tools/check_client_frame_time.py --self-test	python3 tools/check_client_frame_time.py --bin {emptyfile}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_client_server_words.py	python3 tools/test_check_client_server_words.py	python3 tools/check_client_server_words.py --root {empty}	ci.yml	lint	Check client/server words
 tools/check_continue_on_error.py	python3 tools/check_continue_on_error.py --self-test	python3 tools/check_continue_on_error.py --root {empty}	ci.yml	lint	No continue-on-error hides a result
 tools/check_dll_consumer.py	python3 tools/test_check_dll_consumer.py -v	python3 tools/check_dll_consumer.py --build {empty}	ci.yml	lint	Self-tests of the registered checkers
@@ -26,6 +28,9 @@ tools/check_exports.py	python3 tools/test_check_exports.py	python3 tools/check_e
 tools/check_fp_contract.sh	bash tools/check_fp_contract.sh --self-test	bash tools/check_fp_contract.sh {emptyfile}	ci.yml	build-and-test	Check the floating-point floor on every compiler invocation
 tools/check_frame_budget.py	python3 tools/test_check_frame_budget.py -v	python3 tools/check_frame_budget.py --bin {emptyfile} --runs 0	ci.yml	lint	Test the frame-budget checker's verdicts
 tools/check_fuzz_oracle.py	python3 tools/test_check_fuzz_oracle.py -v	python3 tools/check_fuzz_oracle.py {empty}	ci.yml	lint	Self-tests of the registered checkers
+tools/check_fuzz_coverage.py	python3 tools/check_fuzz_coverage.py --self-test	python3 tools/check_fuzz_coverage.py --os Linux {emptyfile}	ci.yml	lint	Test the fuzz floor checkers' verdicts
+tools/check_fuzz_mutants.py	python3 tools/check_fuzz_mutants.py --build build-fuzz --jobs 4	python3 tools/check_fuzz_mutants.py --build {empty}	ci.yml	fuzz-smoke	The committed corpora kill the replay and AEAD mutants
+tools/check_fuzz_stats.py	python3 tools/check_fuzz_stats.py --self-test	python3 tools/check_fuzz_stats.py --target fuzz_header --seconds 1 {emptyfile}	ci.yml	lint	Test the fuzz floor checkers' verdicts
 tools/check_fuzz_regressions.py	python3 tools/check_fuzz_regressions.py --selftest	python3 tools/check_fuzz_regressions.py --root {empty}	ci.yml	lint	Test and check the fuzz regression corpus
 tools/check_hardening.py	python3 tools/test_check_hardening.py	python3 tools/check_hardening.py {empty}	ci.yml	build-and-test	Test the hardening checker's verdicts
 tools/check_header_exports.py	python3 tools/test_check_header_exports.py -v	python3 tools/check_header_exports.py --header {emptyfile} --exports {emptyfile}	ci.yml	lint	Self-tests of the registered checkers
@@ -35,15 +40,18 @@ tools/check_lsan_supp.py	python3 tools/check_lsan_supp.py --self-test	python3 to
 tools/check_make_jobs.py	python3 tools/check_make_jobs.py --self-test	cd {empty} && python3 "$OLDPWD/tools/check_make_jobs.py"	ci.yml	lint	Every parallel build names its job count
 tools/check_memlock.sh	bash tools/test_check_memlock.sh	bash tools/check_memlock.sh --root {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_memory.py	python3 tools/test_check_memory.py -v	printf '#!/bin/sh\n' > {empty}/transport_memory && chmod +x {empty}/transport_memory && python3 tools/check_memory.py {empty}/transport_memory	ci.yml	lint	Self-tests of the registered checkers
+tools/check_msvc_crt.py	python3 tools/check_msvc_crt.py --self-test	python3 tools/check_msvc_crt.py --root {empty}	ci.yml	lint	No CRT call MSVC deprecates where MSVC compiles it
 tools/check_nightly_dispositions.py	python3 tools/test_check_nightly_dispositions.py -v	python3 tools/check_nightly_dispositions.py --root {empty} --list	ci.yml	lint	Test the nightly watch's verdicts
 tools/check_no_owned_linked_lists.py	python3 tools/check_no_owned_linked_lists.py --self-test	python3 tools/check_no_owned_linked_lists.py --root {empty}	ci.yml	lint	Check no owned linked lists
 tools/check_no_thread_local.py	python3 tools/check_no_thread_local.py --self-test	python3 tools/check_no_thread_local.py --root {empty}	ci.yml	build-and-test	Check no thread-local storage in a production build
 tools/check_or_true.py	python3 tools/check_or_true.py --self-test	python3 tools/check_or_true.py --root {empty}	ci.yml	lint	No or-true discards a status in CI shell code
+tools/check_other_libraries.py	python3 tools/test_check_other_libraries.py	python3 tools/check_other_libraries.py --root {empty}	ci.yml	lint	Check rocketnet stands on its own
 tools/check_oss_fuzz_fp_contract.cmake	bash tools/test_check_oss_fuzz_fp_contract.sh	cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT={emptyfile} -P tools/check_oss_fuzz_fp_contract.cmake	ci.yml	lint	Self-tests of the registered checkers
 tools/check_package.py	python3 tools/test_check_package.py -v	python3 tools/check_package.py {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_platform_policy.py	python3 tools/test_check_platform_policy.py -v	python3 tools/check_platform_policy.py --root {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_printed_compared.py	python3 tools/check_printed_compared.py --self-test	python3 tools/check_printed_compared.py --root {empty}	ci.yml	lint	Every printed trace or hash is compared
 tools/check_public_header.py	python3 tools/test_check_public_header.py -v	python3 tools/check_public_header.py --header {emptyfile} --no-run --cc true --cxx true	ci.yml	lint	Self-tests of the registered checkers
+tools/check_refusal_mutants.py	python3 tools/check_refusal_mutants.py --self-test	python3 tools/check_refusal_mutants.py {emptyfile} {emptyfile}	ci.yml	lint	Every split-load refusal is tested
 tools/check_release_doc.py	python3 tools/test_check_release_doc.py -v	python3 tools/check_release_doc.py --root {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_release_gates.py	python3 tools/check_release_gates.py --self-test	python3 tools/check_release_gates.py tools/release_gates.txt {empty}	ci.yml	lint	Test the release and landing tools; check the release gates list
 tools/check_release_tsan.py	python3 tools/test_check_release_tsan.py -v	python3 -c "import sys; sys.path.insert(0, 'tools'); import check_release_tsan as c; from release_testkit import NOW, REPO, SHA, VERSION, FakeApi, green_release; sys.exit(c.check(green_release(FakeApi()), REPO, SHA, VERSION, sys.stdout, gates=[], now=NOW))"	ci.yml	lint	Test the release nightly-gates check
@@ -81,3 +89,10 @@ tools/check_wire_paths.py	python3 tools/check_wire_paths.py --self-test	python3 
 tools/bigendian/run_byte_cases.sh	bash tools/bigendian/test_run_byte_cases.sh	cd {empty} && mkdir tests && touch tests/test_unit_standard_a.cpp tests/test_unit_connect_token_vectors.cpp tests/test_unit_xdp_filter_host.cpp && bash "$OLDPWD/tools/bigendian/run_byte_cases.sh" /usr/bin/true	ci.yml	lint	Test and count the big-endian byte cases
 tools/format/check_format.sh	sh tools/format/test_check_format.sh	cd {empty} && git init -q && CLANG_FORMAT=true sh "$OLDPWD/tools/format/check_format.sh"	ci.yml	lint	Test the format checker
 tools/check_run_shell.py	python3 tools/check_run_shell.py --self-test	python3 tools/check_run_shell.py --root {empty}	ci.yml	lint	Every run step stops on its first failure
+tools/check_run_matrix.py	python3 tools/check_run_matrix.py --self-test	python3 tools/check_run_matrix.py --root {empty}	ci.yml	lint	Every verification cell is declared and wired to the job that runs it
+tools/check_counter_observed.py	python3 tools/check_counter_observed.py --self-test	python3 tools/check_counter_observed.py --root {empty} --build {empty} --platform linux	ci.yml	build-and-test	Every counter is observed by a test
+tools/check_fuzz_seeds.sh	sh tools/check_fuzz_seeds.sh --self-test	sh tools/check_fuzz_seeds.sh --root {empty} --bin {empty} rocketnet_fuzz	ci.yml	build-and-test	Run the fuzz seed generators
+tools/check_independent_steps.py	python3 tools/check_independent_steps.py --self-test	python3 tools/check_independent_steps.py --root {empty}	ci.yml	lint	Every lint check runs on its own verdict
+tools/check_tla_views.py	python3 tools/check_tla_views.py --self-test	python3 tools/check_tla_views.py --root {empty}	ci.yml	lint	Every TLC view is used where its justification holds
+tools/check_workflow_shape.py	python3 tools/check_workflow_shape.py --self-test	python3 tools/check_workflow_shape.py --root {empty}	ci.yml	lint	Every workflow is in the shape the workflow checkers read
+tools/check_workflow_yaml.py	python3 tools/check_workflow_yaml.py --self-test	python3 tools/check_workflow_yaml.py --root {empty}	ci.yml	lint	Every workflow file parses as strict YAML and has a workflow's shape

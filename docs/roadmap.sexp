@@ -100,6 +100,11 @@
    :text "No ruleset requires any check on main (audit 44)."
    :date "2026-10-31" :origin "Audit item 44")
 
+  (item "apply-main-ruleset" :group "decisions" :area "github"
+   :title "Apply the main ruleset before the first outside pull request"
+   :text "Apply .github/rulesets/main.json on GitHub before the first outside pull request. Left off for now (owner, 2026-11-12)."
+   :date "2026-11-12" :origin "Owner, 2026-11-12")
+
   (item "frame-budget-runner-label" :group "decisions" :area "fleet"
    :title "A runner label for the nightly frame budget held only by amd-2 and amd-3"
    :text "rocketnet-quiet also covers hetzner2; the frame budget is a wall-clock gate that compares only on one machine class."
@@ -114,6 +119,11 @@
    :title "xdp stop: count the handoff buffers it abandons"
    :text "When xdp stop gives up on a transmit ring that has stopped draining, the handoff buffers it abandons are counted in no counter. Count them, so a stop that dropped packets says so."
    :date "2026-11-11" :origin "v1.0.1 xdp worker fixes (stop bound for a stalled TX ring)")
+
+  (item "linux-send-ip-recverr" :group "after-v1-0-1" :area "rocketnet"
+   :title "Linux UDP sends: count interface queue drops per socket"
+   :text "On Linux a datagram a full interface queue drops is reported to the send call only with IP_RECVERR set; without it the kernel counts the drop per host (Udp SndbufErrors) and SEND_FAILED never sees it (docs/LINUX.md section 7). Set IP_RECVERR on the portable, gso and io_uring sockets, so the send call returns ENOBUFS and the drop counts in SEND_FAILED, and drain the socket's error queue (MSG_ERRQUEUE). Cost: with IP_RECVERR every ICMP error for a destination (port or host unreachable) is queued on the socket and reported by its next receive call, so each receive path needs an error-queue drain (one more call per drain while the queue is not empty) and a classification of what it reads, where today those errors never reach the socket (section 7)."
+   :date "2026-11-12" :origin "read-everything review: SEND_FAILED's claim about a full interface queue")
 
   (item "xdp-carrier-off-ebusy" :group "after-v1-0-1" :area "rocketnet"
    :title "xdp: EBUSY with the carrier off is counted per frame"

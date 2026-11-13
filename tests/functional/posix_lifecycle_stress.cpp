@@ -12,7 +12,8 @@
     /proc/self/task and the heap in use, counted in whole xdp umems. An xdp
     umem is a posix_memalign block of ROCKETNET_XDP_UMEM_FRAMES *
     ROCKETNET_XDP_FRAME_SIZE bytes per queue, freed with free() at destroy
-    (sdk/rocketnet_server_socket_linux.cpp:1835-1837 and :2131), with no mlock,
+    (sdk/rocketnet_server_socket_linux.cpp (rocketnet_server_socket_create and
+    rocketnet_server_socket_destroy)), with no mlock,
     so it moves neither VmLck nor VmPin; the kernel charges its pin to the
     user's RLIMIT_MEMLOCK account. The Linux cells keep the heap with mmap
     off and trimming off (posix_heap_keep below), so the umem is served from
@@ -41,8 +42,8 @@
     connect/disconnect case is registered once per exact server/client pair.
 
     A connect waits on the client's send rate: the client sends at most once
-    per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:94 and
-    :296), and a handshake is three sends, so on the platform clock alone one
+    per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp (rocketnet_client_protocol_update)),
+    and a handshake is three sends, so on the platform clock alone one
     connect takes 0.2 s. The client here runs on its own clock, the platform
     clock plus the send intervals the wait has skipped (its time_callback and
     the time every update is given), and the wait skips one interval each
@@ -57,7 +58,8 @@
     them. A client whose socket shares a port with one of them never hears
     its server, since the IPv4 datagrams to that port reach the held socket.
     Darwin gives a dual stack IPv6 socket such a port, so the macOS client of
-    an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:854).
+    an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp
+    (rocketnet_client_transport_create_impl)).
 */
 
 #include "../native_shutdown.h"
@@ -501,6 +503,8 @@ static bool posix_xdp_offered()
     return read && strstr( line, "virtme" ) != NULL;
 }
 
+void rocketnet_functional_require_xdp_case( const char * fixture );
+
 static void posix_xdp_setup()
 {
     if ( posix_xdp_made )
@@ -526,6 +530,7 @@ static void posix_xdp_setup()
     }
 
     const struct rocketnet_xdp_test_net_t & net = posix_xdp_net;
+    rocketnet_functional_require_xdp_case( net.netns );
 
     char command[1024];
     snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", net.netns, net.near_name );
@@ -744,17 +749,6 @@ static void posix_cell_end( const posix_env_guard_t * server_guard, const posix_
 
 #define POSIX_XDP_QUEUES 1
 
-// the UMEM an xdp cell's server takes outside the allocator: 0 on a build
-// without the xdp transport, which has no xdp cell that runs
-static uint64_t posix_xdp_umem_bytes()
-{
-#if defined( __linux__ ) && ROCKETNET_XDP
-    return rocketnet_xdp_umem_bytes( POSIX_XDP_QUEUES );
-#else
-    return 0;
-#endif // #if defined( __linux__ ) && ROCKETNET_XDP
-}
-
 static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * cell, const char * address, int max_clients )
 {
     struct rocketnet_server_transport_config_t config;
@@ -781,25 +775,15 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     posix_check( server != NULL );
     posix_check( strcmp( rocketnet_server_transport_io_name( server ), cell->server_granted ) == 0 );
 
-    // the xdp server's UMEM is planned but taken outside the allocator
-    // (tests/plan_rss.h): counted while the server lives
-
-    if ( cell->xdp )
-    {
-        plan_rss_count_outside_allocator( posix_xdp_umem_bytes() );
-    }
+    // the xdp server's UMEM is outside the allocator; tests/plan_rss.h takes
+    // it from the SDK's own count
 
     return server;
 }
 
-static void posix_server_destroy( const posix_cell_t * cell, rocketnet_server_transport_t * server )
+static void posix_server_destroy( rocketnet_server_transport_t * server )
 {
     rn_native_server_transport_stop_and_destroy( server );
-
-    if ( cell->xdp )
-    {
-        plan_rss_uncount_outside_allocator( posix_xdp_umem_bytes() );
-    }
 }
 
 // the client's clock: the platform clock plus the send intervals skipped.
@@ -1144,7 +1128,7 @@ void rocketnet_test_posix_server_create_destroy_1000()
 #endif // #if defined( __GLIBC__ ) && ROCKETNET_XDP
             }
 
-            posix_server_destroy( cell, server );
+            posix_server_destroy( server );
 
             // a leak per cycle exhausts a kernel limit long before the last of
             // 1000 creates, so the counts are also compared after the first
@@ -1323,7 +1307,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
         {
             rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
             fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
-            posix_server_destroy( cell, discovery );
+            posix_server_destroy( discovery );
         }
         else
         {
@@ -1349,7 +1333,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
             rocketnet_client_transport_t * client = posix_client_create( cell, server_address, &clock );
             posix_check( posix_wait_connected( server, client, &clock, 5.0 ) );
             rn_native_client_transport_stop_and_destroy( client );
-            posix_server_destroy( cell, server );
+            posix_server_destroy( server );
         }
 
         const double seconds = posix_now_seconds() - start;
@@ -1381,7 +1365,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
         const posix_resource_counts_t before = posix_stable_counts();
 
         // the server remembers max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO
-        // (8) used tokens (sdk/rocketnet_server_transport.cpp:2057), and a
+        // (8) used tokens (sdk/rocketnet_server_transport.cpp), and a
         // connect whose history is full waits for an entry to expire:
         // an 8-slot server held 64, so about every 65th connect stalled for
         // seconds. 128 slots hold 1024, more than the cycles, so no connect
@@ -1417,7 +1401,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
         const double seconds = posix_now_seconds() - start;
 
         posix_release_ipv4_ports( held_ports, POSIX_HELD_IPV4_PORTS );
-        posix_server_destroy( cell, server );
+        posix_server_destroy( server );
 
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
@@ -1546,7 +1530,7 @@ void rocketnet_test_posix_destroy_under_traffic_100()
             // destroy the server while all eight clients are sending, then
             // stop the senders before the clients themselves are destroyed
 
-            posix_server_destroy( cell, server );
+            posix_server_destroy( server );
 
             running.store( false, std::memory_order_release );
 
@@ -1576,8 +1560,8 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 // The server transport and the gso transport are single allocations of 56 MB
 // and 116 MB (strace of one create: two anonymous mmaps of those sizes),
 // past glibc's largest mmap threshold, so every create maps them fresh and
-// the value-initialising placement new (sdk/rocketnet_server_transport.cpp:1251,
-// sdk/rocketnet_server_gso_linux.cpp:674) faults every page in: ~42k minor
+// the value-initialising placement new (sdk/rocketnet_server_transport.cpp,
+// sdk/rocketnet_server_gso_linux.cpp) faults every page in: ~42k minor
 // faults and ~0.12 s of system time a gso create on a 64-core Linux member.
 // A per-cell case serves those allocations from the main heap and keeps the
 // heap untrimmed, so a create after the first reuses resident pages. The

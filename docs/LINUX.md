@@ -222,9 +222,10 @@ policy say) logs
 (once; later refusals are spam), resends that one run as plain packets, and
 is remembered so its later runs leave plain; every other destination keeps
 segmenting. Only when `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8)
-destinations have refused and no segmented send was ever accepted (a kernel
+refusals have come from destinations the table did not hold (a destination
+displaced from its entry counts again) and no segmented send was ever accepted (a kernel
 that cannot segment) it logs
-`gso transport: live GSO send refused (...). <n> destinations refused and none accepted, degrading to plain sendmmsg`,
+`gso transport: live GSO send refused (...). <n> refusals from destinations not yet remembered and none accepted, degrading to plain sendmmsg`,
 turns segmentation off for the life of the transport, and resends from the
 refused run plain (`sdk/rocketnet_server_gso_linux.cpp`, `sdk/rocketnet_server_gso.h`).
 The degradation is inside the transport, below the ladder (`BUILDING.md`).
@@ -326,9 +327,9 @@ refuses by name on any unmet condition (`BUILDING.md`,
 | --- | --- | --- |
 | B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); grub and reboot | `:27-37` |
 | B2 | `/sys/devices/system/cpu/isolated` is non-empty | `:38-39` |
-| B3 | a vendor NIC driver recent enough for AF_XDP zero copy (reported, not verified) | `:40-45` |
+| B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:40-45` |
 | R1 | euid 0 | `:49` |
-| R2 | the interface exists and is UP; the pre-flight checks it carries the public address | `:50-53` |
+| R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act; the pre-flight checks it carries the public address | `:50-53` |
 | R3 | no XDP program already attached | `:54-64` |
 | R4 | each queue IRQ pinned to its own isolated CPU | `:65-74` |
 | R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:75-77` |
@@ -352,6 +353,59 @@ is below 1500, and refuses a frame larger than it before the TX ring, counting
 each one in `SEND_FAILED` (and logging the first per queue). On such a link
 (GCP's default 1460, PPPoE's 1492, an overlay) keep payloads under the link's
 limit or raise its MTU to 1500.
+
+**Native attach only.** The program attaches in the driver's native mode or not
+at all: generic (skb) mode is never used, because it runs after the kernel has
+built a socket buffer for every packet and gives up what the transport is for.
+When the driver refuses native attach, an explicit `xdp` pin refuses the create
+with `xdp transport refused: server_xdp could not attach in native mode to <if>`,
+and `auto` logs `server transport xdp refused. trying the next candidate` and
+falls to the next rung (`test_xdp_transport_no_native_attach_refused`). The
+NICs read on our machines (`xdp-loader features`, kernel 7.0) all report native
+XDP with AF_XDP zero copy: Intel X710 (`i40e`) and 82599 (`ixgbe`); veth
+attaches natively in the CI guest.
+
+**A VLAN.** The server's public address may be on one 802.1Q VLAN device
+(`eth0.300`, created with `ip link add link eth0 name eth0.300 type vlan id 300`)
+whose parent is a physical NIC or a veth. A VLAN device has no native XDP of its
+own, so the transport attaches to the parent (logging
+`xdp: eth0.300 is 802.1Q VLAN 300 on eth0`), takes only frames tagged with that
+VLAN ID (and untagged frames, which is how a NIC with `rx-vlan-offload` on
+delivers them), passes frames of any other VLAN up the stack, and tags every
+frame it sends. Run the provisioning script on either name: given `eth0.300` it
+says `R3 to R7 act on eth0` and provisions the parent (R2). These are refused by
+name, by the pre-flight and by the script: an 802.1ad (QinQ outer) tag, a VLAN
+on a VLAN, a VLAN on a bond, bridge, team, macvlan or other stacked device, a
+parent in another network namespace, and an address on a bond, bridge, team,
+macvlan, macvtap, ipvlan or ipvtap device itself. The tag takes 4 bytes of the
+frame, not of the payload: a tagged frame is at most 1498 bytes over IPv4 and
+1518 over IPv6, and the 1500-byte MTU above is the VLAN device's.
+
+**Firewalls and conntrack.** The `xdp` transport takes its port's datagrams
+before netfilter, so firewall rules and connection tracking never see them.
+The socket transports (`gso`, `io_uring`, `portable`) go through netfilter like
+any UDP socket. With a ufw-style stateful ruleset (input policy drop, `ct state
+related,established accept`, `udp dport 40000 accept`), connection tracking cost
+the io_uring server's main thread about 9% more CPU in one measured run (38.9%
+to 42.4% at 50,000 echoed payloads a second, 256 clients). To exempt the game
+port from tracking, add a raw-priority table:
+
+```
+table inet rocketnet_notrack {
+    chain prerouting { type filter hook prerouting priority raw; udp dport 40000 notrack }
+    chain output { type filter hook output priority raw; udp sport 40000 notrack }
+}
+```
+
+Untracked packets never match `ct state established`, so the rest of the
+ruleset must accept the port by itself: an input rule `udp dport 40000 accept`
+(ufw's `allow 40000/udp` is one), and, when the output policy is drop, an output
+rule `udp sport 40000 accept`. Without that output rule no client connects.
+Checked in a virtme-ng guest with the server behind a veth in its own network
+namespace: a client connected under no rules, the ufw-style rules, and those
+rules with the exemption (no connection tracking entry left); under an output
+policy of drop it connected only once `udp sport 40000 accept` was added. In
+that same measured run the exemption brought the main thread back to 40.3%.
 
 ### Example machine layout: two XDP queues on 16 cores
 
@@ -400,6 +454,25 @@ with Linux have different feature support. Intel's standalone 2.30.18 driver
 A fork of that driver
 contains the same restriction. Rebuilding that source unchanged does not
 provide zero-copy on Ubuntu 22.04.
+
+Measured on 2026-11-12 on one X710 (firmware 9.00) under Ubuntu 26.04.1,
+kernel 7.0.0-43-generic, with the in-tree `i40e`: the server bound zero copy
+on seven queues and ran for 60 minutes, with 55 sessions of 1,000 or 100
+clients connecting and disconnecting, up to 10.0 Gb/s on the wire and about
+7.24 billion frames received. It recorded no payload error, NIC reset, NETDEV
+watchdog, Tx hang or AF_XDP error. The kernel logged `Failed to allocate some
+buffers on AF_XDP ZC enabled Rx ring` once per queue at bind. That is one
+machine, one kernel and one hour. The in-tree `i40e` of 7.0.0-31-generic
+panicked twice on 2026-10-15 and 10-16 in its zero-copy receive path
+(`i40e_construct_skb_zc`), so the bench server (`tests/client_server/server.c`)
+and `scripts/live-xdp-fleet` still refuse the in-tree `i40e` on a kernel
+older than 7.0.0-43.
+
+**An ixgbe attach takes the link down.** On an 82599 (`ixgbe`, kernel
+7.0.0-42-generic), attaching an XDP program resets the port: the link came
+back 7 to 19 seconds later in every attach recorded on 2026-11-12. Clients whose
+connect starts in that window time out, because a client stops requesting a
+cookie after 10 seconds. Attach before you announce the server.
 
 Start qualification with Ubuntu's supplied `i40e` module on the GA
 `linux-generic` 5.15 track. The
@@ -500,8 +573,8 @@ startup and an `xdp` transport label alone do not establish zero-copy.
   ends in `xdp pre-flight failed: this machine is not provisioned for the XDP data plane`
   (`sdk/rocketnet_server_socket_linux.cpp`). On an unprivileged host
   `auto` therefore falls to `gso` (`.github/workflows/ci.yml`).
-- A real port and a global address: port 0 refuses `xdp` (section 2), and an
-  IPv6 link-local address is refused by name
+- A real port and a global address: port 0 refuses `xdp` (section 2), and a
+  link-local address (IPv4 169.254.0.0/16, IPv6 fe80::/10) is refused by name
   (`sdk/rocketnet_server_socket_linux.cpp`).
 - The gateway's neighbour entry: create refuses `xdp` with `no neighbor entry
   with a link-layer address` when the host has not yet talked to its gateway
@@ -549,7 +622,7 @@ library embeds. The teardown case creates a two-queue veth and sets
 uses one queue and `num_os_cpus=1`, so its worker targets CPU 1. The filter
 guest therefore boots four CPUs and isolates 1-3 to satisfy both cases. With
 those boot-tier settings, a provisioned
-XDP data plane, and no clang on `PATH`, all 18 cases print `ok`, including
+XDP data plane, and no clang on `PATH`, all 19 cases print `ok`, including
 `xdp_on_link_reply_reaches_the_client` and
 `xdp_create_fails_part_way_tears_down`. The explicit object path makes the
 command work when the checkout's build directory differs from the absolute
@@ -644,6 +717,22 @@ What each path does with the errors it can see:
   `sdk/rocketnet_server_uring.h`); a multishot receive that ends is armed
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp`).
+
+**Where a full interface queue's drops are counted.** On Linux a UDP send
+that the interface's queue refuses does not fail: without `IP_RECVERR` the
+kernel turns that `ENOBUFS` into success (`udp_send_skb` in
+`net/ipv4/udp.c`, `udp_v6_send_skb` in `net/ipv6/udp.c`) and counts the
+datagram in `SndbufErrors` of `Udp` in `/proc/net/snmp` (`Udp6SndbufErrors`
+in `/proc/net/snmp6` for IPv6). The queue that dropped it counts it too, in
+the interface's TX dropped (`ip -s link show dev <if>`) or its queueing
+discipline's statistics (`tc -s qdisc show dev <if>`). rocketnet's sockets
+never set `IP_RECVERR`, so these drops are not in `SEND_FAILED` on the
+client's `portable` and `gso` transports or the server's `portable`, `gso`
+and `io_uring` transports; `SEND_FAILED` there counts only sends the call
+itself refused. The kernel's counters are per host and per interface, so a
+drop cannot be attributed to one socket or one server. The `xdp` transport
+writes its own TX ring and is not affected. On macOS and Windows whether a
+full interface queue fails the send call is not verified.
 
 `tests/functional/posix_hard_killed_client.cpp` and `tests/functional/posix_socket_errors.cpp`
 cover a hard-killed client and the socket error paths per transport cell.

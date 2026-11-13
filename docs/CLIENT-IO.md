@@ -45,6 +45,16 @@ backend's `send`) before publishing `quit` (`proofs/tla/RNClientLinkStop.tla`
 `Stop`). Polling (`stopped`) performs no backend work, and reconfiguration
 after stop is refused.
 
+At its exit, after its last send and before it publishes `stopped`, the I/O
+worker reads every datagram still queued on its socket, counts each as
+`CLIENT_RECEIVE_DISCARDED_AT_STOP`, and closes the backend's handles with its
+`close` operation (`rocketnet_client_io_discard_at_stop`,
+`proofs/tla/RNClientIoShutdown.tla` `WorkerQuiesce`). A datagram that arrives
+later meets a closed port, which the operating system counts, so none waits
+unread for destroy to free it. A transport racing both address families has
+no `close` of its own: its worker reads and counts the queue at the exit, and
+its sockets close at destroy (`proofs/tla/RNClientRace.tla`).
+
 Custom BASE drivers without wait/wake retain caller-thread per-packet sends for
 normal traffic, while the disconnect burst is sent from the library's receive
 worker thread (`rocketnet_client_transport_flush_disconnect`); this

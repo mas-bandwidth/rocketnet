@@ -970,7 +970,13 @@ static void test_handshake_map_full_spends_no_work_budget()
 
     rocketnet_server_protocol_update( &test.server, 1000.1 );
 
+    // each refused request is also one MAPPING_TABLE_FULL (server_protocol.cpp,
+    // the capacity rung), the table's own count beside the request's reason
+
+    const uint64_t table_full_before = test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL];
     budgets_flood_spends_nothing( &test, NULL, ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING, 1000.1 );
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] - table_full_before ==
+           (uint64_t) ( 4 * test.server.handshakes_per_update ) );
 
     uint8_t salt[sizeof( rocketnet_test_salt )];
     memcpy( salt, rocketnet_test_salt, sizeof( salt ) );
@@ -979,6 +985,11 @@ static void test_handshake_map_full_spends_no_work_budget()
     struct rocketnet_address_t honest;
     budgets_honest_address( &honest, 0 );
     budgets_honest_challenged( &test, &honest, 0x50000 + capacity, salt, 1000.1 );
+
+    // the replacement found its own mapping: the table was full, yet it counts no MAPPING_TABLE_FULL
+
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] - table_full_before ==
+           (uint64_t) ( 4 * test.server.handshakes_per_update ) );
 
     budgets_server_teardown( &test );
 }
@@ -1346,25 +1357,59 @@ static void test_handshake_cookie_replies_not_capped_by_max_clients()
     const int max_clients = rocketnet_client_slots_max_clients( test.server.client_slots );
     check( max_clients == 4 );
 
+    // the sources are chosen so that no two share a bit of the source
+    // bitmap: which addresses collide depends on the hash bytes the index is
+    // read from, and that read is in host byte order, so a fixed list that
+    // does not collide on one byte order can collide on the other (it did on
+    // s390x). A collision is the limit working, not a cap; this case is about
+    // the cap, so it takes distinct sources by construction.
+
+    const int client_index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &test.client_address );
+    check( client_index >= 0 );
+    struct rocketnet_address_t honest;
+    check( rocketnet_address_parse( &honest, "198.51.100.200:40000" ) );
+    const int last_index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &honest );
+    check( last_index >= 0 && last_index != client_index );
+
+    int used[16 * 4 + 2];
+    int num_used = 0;
+    used[num_used++] = client_index;
+    used[num_used++] = last_index;
+
     int replies = 0;
+    int candidate = 0;
     for ( int i = 0; i < 16 * max_clients; i++ )
     {
         struct rocketnet_address_t address;
-        char addr_str[64];
-        snprintf( addr_str, sizeof( addr_str ), "10.5.0.%d:56789", i + 1 );
-        check( rocketnet_address_parse( &address, addr_str ) );
+        int index = -1;
+        bool fresh = false;
+        while ( !fresh )
+        {
+            check( candidate < 60000 );
+            char addr_str[64];
+            snprintf( addr_str, sizeof( addr_str ), "10.5.%d.%d:56789", candidate / 250, candidate % 250 + 1 );
+            candidate++;
+            check( rocketnet_address_parse( &address, addr_str ) );
+            index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &address );
+            check( index >= 0 );
+            fresh = true;
+            for ( int j = 0; j < num_used; j++ )
+            {
+                if ( used[j] == index )
+                {
+                    fresh = false;
+                }
+            }
+        }
+        used[num_used++] = index;
         if ( budgets_send_cookieless( &test, &address, 0xA0000 + i, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
         {
             replies++;
         }
     }
 
-    struct rocketnet_address_t honest;
-    check( rocketnet_address_parse( &honest, "198.51.100.200:40000" ) );
     check( budgets_send_cookieless( &test, &honest, 0xA0100, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
-    // none of these 65 sources collide in the harness's 4096 bits under its
-    // zero key
     check( replies == 16 * max_clients );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
     check( test.server.counters->handshakes_processed_this_update == 0 );
@@ -1645,6 +1690,59 @@ static void test_handshake_cookie_reply_limit_fresh_every_update()
 }
 
 REGISTER_UNIT_TEST( test_handshake_cookie_reply_limit_fresh_every_update );
+
+// two sources whose bits collide: the harness's source key is all zero, so
+// the keyed hash is fixed and a second source on the first one's bit is
+// found by walking its port. In one update the first source is answered and
+// the second's request is withheld, counted by its cookie reason and by
+// CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD; in the next update the second
+// source's request is answered. A source's own second request in an update
+// is withheld and counted the same way.
+
+static void test_handshake_cookie_reply_withheld_is_counted()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const int first_index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &test.client_address );
+    check( first_index >= 0 );
+
+    struct rocketnet_address_t collider;
+    check( rocketnet_address_parse( &collider, "198.51.100.8:1" ) );
+    bool found = false;
+    for ( int port = 1; port <= 65535; port++ )
+    {
+        collider.port = (uint16_t) port;
+        if ( rocketnet_server_protocol_cookie_reply_source_index( &test.server, &collider ) == first_index )
+        {
+            found = true;
+            break;
+        }
+    }
+    check( found );
+
+    check( budgets_send_cookieless( &test, &test.client_address, 0xF0000, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD] == 0 );
+
+    check( budgets_send_cookieless( &test, &collider, 0xF0001, 1000.0 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD] == 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 2 );
+
+    check( budgets_send_cookieless( &test, &test.client_address, 0xF0002, 1000.0 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD] == 2 );
+
+    // the next update: the withheld source's next request is answered
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+    check( budgets_send_cookieless( &test, &collider, 0xF0003, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD] == 2 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 4 );
+
+    rocketnet_counters_assert_conserved( &test.counters );
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_cookie_reply_withheld_is_counted );
 
 // the update clears the bitmap only after an update in which a cookie reply
 // was considered (it is already clear otherwise): a word the harness marks

@@ -125,7 +125,11 @@ directions. Safety does not use fairness and permits arbitrary forward loss,
 duplication and reordering. The safety configuration uses a TLC `SafetyView` that omits Link send counters
 and delivery pulses only. Under the arbitrary pattern the counters affect no
 loss or guard, and pulses only distinguish actions for temporal fairness. All
-protocol state and wire copies remain in the view. Temporal configurations
+protocol state and wire copies remain in the view. Under any other pattern the
+send counter decides which send is lost, so `SafetyView` is valid only when
+both patterns are arbitrary (tools/check_tla_views.py holds every config to
+that); MCRNChannelNotReceived.cfg, whose patterns alternate, uses no view.
+Temporal configurations
 retain the full state. The ACK wire has capacity one; sequential stale
 or repeated packet ACKs and ACK loss remain possible, but simultaneous ACK
 reordering is outside this bounded instance.

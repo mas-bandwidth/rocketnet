@@ -61,6 +61,7 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_read_write.h"
+#include "rocketnet_fuzz_quiet.h"
 #include "../portable_crt.h"
 
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
@@ -279,7 +280,7 @@ static inline int rocketnet_fuzz_pair_initialize()
     {
         return 1;
     }
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
     rocketnet_quiet( 1 );
 
     return 0;
@@ -706,6 +707,16 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.loopback_hub = pair->hub;
     client_config.step_driven = 1;
+#if defined( ROCKETNET_FUZZ_CLIENT_RAW )
+    // rocketnet_fuzz_session_raw: a link simulator pattern set at create (each
+    // pair of the client's outgoing datagrams swapped, flushed at the end of
+    // every send) takes the client off its I/O-thread decrypt copy
+    // (rocketnet_client_io_core), so the client protocol refuses duplicates
+    // and datagrams that do not open itself (the RAW verdict). With the copy
+    // live, the I/O thread refuses them first and those checks are reached
+    // by no input.
+    client_config.simulated_reverse_window = 2;
+#endif // #if defined( ROCKETNET_FUZZ_CLIENT_RAW )
     client_config.time_callback = rocketnet_fuzz_client_clock;
     client_config.token_epoch_unix_seconds = ROCKETNET_FUZZ_TOKEN_EPOCH_UNIX_SECONDS;
 
@@ -1289,7 +1300,7 @@ static inline void rocketnet_fuzz_pair_dump( struct rocketnet_fuzz_pair_t * pair
 // -----------------------------------------------------------------------
 //  the seed generator: ROCKETNET_FUZZ_SEED_DIR=<dir>
 //
-// yojimbo's gen_seed_corpus, built into the harness so the seeds are made
+// The seed corpus generator, built into the harness so the seeds are made
 // by the same pair the harness replays them on. The generator runs the real
 // handshake from the created state and a scripted session from the
 // connected one (messages both ways, a message large enough to fragment,
@@ -1504,6 +1515,16 @@ static inline int rocketnet_fuzz_record_write( uint8_t * out, uint8_t mode, cons
 
 static inline bool rocketnet_fuzz_seed_write( const char * dir, const char * name, const uint8_t * data, int bytes )
 {
+    // ROCKETNET_FUZZ_WITHHOLD=<seed name> skips that seed and reports it
+    // unwritten, so the generator ends INCOMPLETE: tools/check_fuzz_seeds.sh
+    // runs this control for every generator (VERIFY-5 W4)
+    char withheld[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_WITHHOLD", withheld, sizeof( withheld ) ) && strcmp( withheld, name ) == 0 )
+    {
+        fprintf( stderr, "seed generator: withholding %s\n", name );
+        return false;
+    }
+
     // a truncated path would write the seed to the wrong file: refuse instead
     char path[1024];
     const int path_bytes = snprintf( path, sizeof( path ), "%s/%s", dir, name );

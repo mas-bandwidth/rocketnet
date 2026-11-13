@@ -109,6 +109,16 @@
     "soak: --assert-flat FAILED: link impairment not observed: ...": loss at
     an end with nothing missing in the direction it sends, or duplication at
     an end with no already-received refusal at the other.
+    Every run, flat or not, fails "soak: LINK WITNESS FAILED: ..." when a
+    payload was delivered twice in a row (repeated, in either direction, on
+    any link: the library refuses a duplicate), when a direction whose sender
+    has no simulated loss has anything missing, or when a direction whose
+    sender has no simulated jitter has anything late.
+    ROCKETNET_SOAK_FAULT_SEND=skip|repeat|swap (off by default) makes the
+    client, once, after its tenth payload, skip one size, send one size twice,
+    or send two sizes in swapped order: the planted missing, repeated and late
+    payloads scripts/soak-args-selftest uses as the witness's negative
+    controls.
     ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
     uses as its negative control. ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 creates
@@ -150,7 +160,8 @@
     staged_proxy_max=<n> deferred_run_max=<n> deferred_iterations=<n>
     unacked_span_max=<n> acked_packets=<n> refused_sends=<n>
     iteration_gap_max_ms=<ms> client_lifetime_send_deferred=<n>
-    client_lifetime_send_ring_full=<n> library_bytes=<n>" line, the client
+    client_lifetime_send_ring_full=<n> server_lifetime_send_ring_full=<n>
+    library_bytes=<n>" line, the client
     send path over the interval read from what the library already keeps
     (soak_print_send). staged_proxy_max is a proxy, not the fill ring's
     occupancy, which the library does not expose: it counts only the
@@ -516,6 +527,47 @@ static void soak_link_witness_receive( struct soak_link_witness_t * witness, int
         }
     }
 }
+
+// The witness's verdict on one direction, given the link simulator at its
+// sending end: the number of failures, each printed.
+
+static int soak_link_witness_verdict( const char * direction, const struct soak_link_witness_t * witness, const struct soak_link_t * sender )
+{
+    int failures = 0;
+    if ( witness->repeated != 0 )
+    {
+        printf( "soak: LINK WITNESS FAILED: %s repeated=%llu: a payload was delivered twice in a row\n", direction,
+                (unsigned long long) witness->repeated );
+        failures++;
+    }
+    if ( sender->loss_percent == 0 && witness->missing != 0 )
+    {
+        printf( "soak: LINK WITNESS FAILED: %s missing=%llu with no simulated loss at the sending end\n", direction,
+                (unsigned long long) witness->missing );
+        failures++;
+    }
+    if ( sender->jitter_ms == 0 && witness->late != 0 )
+    {
+        printf( "soak: LINK WITNESS FAILED: %s late=%llu with no simulated jitter at the sending end\n", direction,
+                (unsigned long long) witness->late );
+        failures++;
+    }
+    return failures;
+}
+
+// the next size in a direction's payload cycle
+
+static int soak_next_payload_size( int size )
+{
+    return size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? size + 1 : 1;
+}
+
+// the send faults (ROCKETNET_SOAK_FAULT_SEND): the witness's negative controls
+
+#define SOAK_FAULT_SEND_NONE 0
+#define SOAK_FAULT_SEND_SKIP 1
+#define SOAK_FAULT_SEND_REPEAT 2
+#define SOAK_FAULT_SEND_SWAP 3
 
 // a planted duplicate of any sealed packet (payload, keep-alive, ack,
 // disconnect) is refused as already received, counted by the
@@ -980,17 +1032,21 @@ static void soak_send_interval_reset( struct soak_send_interval_t * send )
     send->iteration_gap_max = 0.0;
 }
 
-static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, int counter_send_deferred, int counter_send_ring_full )
+static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                             int counter_send_deferred, int counter_send_ring_full )
 {
     const struct rocketnet_counters_t * counters = client ? rocketnet_client_transport_counters( client ) : NULL;
+    const struct rocketnet_counters_t * server_counters = server ? rocketnet_server_transport_counters( server ) : NULL;
 
     printf( "soak send: t=%.0f staged_proxy_max=%llu deferred_run_max=%llu deferred_iterations=%llu unacked_span_max=%llu acked_packets=%llu "
-            "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu library_bytes=%lld\n",
+            "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu server_lifetime_send_ring_full=%llu "
+            "library_bytes=%lld\n",
             seconds, (unsigned long long) send->staged_proxy_max, (unsigned long long) send->deferred_run_max,
             (unsigned long long) send->deferred_iterations, (unsigned long long) send->unacked_span_max,
             (unsigned long long) send->acked_packets, (unsigned long long) send->refused_sends, send->iteration_gap_max * 1000.0,
             (unsigned long long) ( counters && counter_send_deferred >= 0 ? rocketnet_counter_value( counters, counter_send_deferred ) : 0 ),
             (unsigned long long) ( counters && counter_send_ring_full >= 0 ? rocketnet_counter_value( counters, counter_send_ring_full ) : 0 ),
+            (unsigned long long) ( server_counters && counter_send_ring_full >= 0 ? rocketnet_counter_value( server_counters, counter_send_ring_full ) : 0 ),
             (long long) soak_library_bytes_read() );
     fflush( stdout );
 }
@@ -1102,6 +1158,37 @@ int main( int argc, char ** argv )
 
     char fault_verify_env[256];
     int fault_verify_pending = ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_VERIFY", fault_verify_env, sizeof( fault_verify_env ) ) && fault_verify_env[0] != '\0' && strcmp( fault_verify_env, "0" ) != 0 ) ? 1 : 0;
+
+    // the link witness's negative controls: the client, once, after its tenth
+    // payload, skips a size (one missing), sends a size twice (one repeated)
+    // or sends two sizes swapped (one late); each must fail the run
+
+    char fault_send_env[256];
+    int fault_send = SOAK_FAULT_SEND_NONE;
+    if ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_SEND", fault_send_env, sizeof( fault_send_env ) ) && fault_send_env[0] != '\0' )
+    {
+        if ( strcmp( fault_send_env, "skip" ) == 0 )
+        {
+            fault_send = SOAK_FAULT_SEND_SKIP;
+        }
+        else if ( strcmp( fault_send_env, "repeat" ) == 0 )
+        {
+            fault_send = SOAK_FAULT_SEND_REPEAT;
+        }
+        else if ( strcmp( fault_send_env, "swap" ) == 0 )
+        {
+            fault_send = SOAK_FAULT_SEND_SWAP;
+        }
+        else
+        {
+            fprintf( stderr, "soak: ROCKETNET_SOAK_FAULT_SEND must be skip, repeat or swap\n" );
+            return 2;
+        }
+        printf( "soak: send fault ARMED -- %s once after the client's tenth payload; the link witness must go red\n", fault_send_env );
+    }
+    int fault_swap_stage = 0;
+    int fault_swap_held = 0;
+    int fault_swap_resume = 0;
 
     // the impairment witness's negative control: the endpoints are created
     // with no loss and no duplication while the run records and prints the
@@ -1581,7 +1668,38 @@ int main( int argc, char ** argv )
                     send_interval.staged_proxy_max = send_interval.staged;
                 }
 
-                client_payload_size = client_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? client_payload_size + 1 : 1;
+                const int sent_size = client_payload_size;
+                client_payload_size = soak_next_payload_size( client_payload_size );
+
+                if ( fault_send != SOAK_FAULT_SEND_NONE && client_sent == 10 )
+                {
+                    if ( fault_send == SOAK_FAULT_SEND_SKIP )
+                    {
+                        client_payload_size = soak_next_payload_size( client_payload_size );
+                    }
+                    else if ( fault_send == SOAK_FAULT_SEND_REPEAT )
+                    {
+                        client_payload_size = sent_size;
+                    }
+                    else
+                    {
+                        fault_swap_held = client_payload_size;
+                        client_payload_size = soak_next_payload_size( client_payload_size );
+                        fault_swap_stage = 1;
+                    }
+                    fault_send = SOAK_FAULT_SEND_NONE;
+                }
+                else if ( fault_swap_stage == 1 )
+                {
+                    fault_swap_resume = client_payload_size;
+                    client_payload_size = fault_swap_held;
+                    fault_swap_stage = 2;
+                }
+                else if ( fault_swap_stage == 2 )
+                {
+                    client_payload_size = fault_swap_resume;
+                    fault_swap_stage = 0;
+                }
             }
 
             if ( client_send_count )
@@ -1615,7 +1733,7 @@ int main( int argc, char ** argv )
                 }
                 server_sent++;
                 connection_server_sent++;
-                server_payload_size = server_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? server_payload_size + 1 : 1;
+                server_payload_size = soak_next_payload_size( server_payload_size );
             }
 
             rocketnet_server_transport_send_packets( server );
@@ -1758,7 +1876,7 @@ int main( int argc, char ** argv )
                 }
             }
 
-            soak_print_send( rocketnet_time() - start_time, &send_interval, client, counter_send_deferred, counter_send_ring_full );
+            soak_print_send( rocketnet_time() - start_time, &send_interval, client, server, counter_send_deferred, counter_send_ring_full );
             soak_send_interval_reset( &send_interval );
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, (unsigned long long) connects,
@@ -1882,6 +2000,14 @@ int main( int argc, char ** argv )
     printf( "soak link witness: server_to_client missing=%llu late=%llu repeated=%llu duplicates_refused=%llu\n",
             (unsigned long long) server_to_client.missing, (unsigned long long) server_to_client.late,
             (unsigned long long) server_to_client.repeated, (unsigned long long) duplicates_refused_at_client );
+
+    // the witness's verdict, every run: a payload delivered twice in a row is
+    // a duplicate the library let through, on any link; with no simulated
+    // loss at the sending end nothing may go missing, and with no simulated
+    // jitter there nothing may arrive late
+
+    failures += (uint64_t) soak_link_witness_verdict( "client_to_server", &client_to_server, &soak_client_link );
+    failures += (uint64_t) soak_link_witness_verdict( "server_to_client", &server_to_client, &soak_server_link );
 
     if ( assert_flat )
     {

@@ -48,6 +48,14 @@ NAMED_PARSER_FILES = [
 
 READ_WRITE_HEADER = "rocketnet_read_write.h"
 
+# The selection's floors, today's counts: a gate whose header search finds
+# fewer files (the header renamed, the text moved) or whose whole set
+# shrinks analyses less while printing the same verdict, so it fails
+# instead. A file that leaves the parser set on purpose lowers its floor in
+# the same change.
+READ_WRITE_FLOOR = 7
+PARSER_FILE_FLOOR = 9
+
 LOCATION = re.compile(r"^(.+?):(\d+):(\d+):\s+(warning|error|fatal error):\s+(.*)$")
 OPTION = re.compile(r"\s*\[(-W[A-Za-z0-9_.=+-]+)\]\s*$")
 ERROR_LINE = re.compile(r"\berror:")
@@ -96,9 +104,16 @@ def load_compile_db():
     return by_file
 
 
-def parser_files():
+def parser_files(root=None):
+    """The parser translation units, sorted; IncompleteRun when the selection is short.
+
+    Every named file must exist, the header search must find at least
+    READ_WRITE_FLOOR files and the set at least PARSER_FILE_FLOOR.
+    """
+    root = root or ROOT
     files = set()
-    sdk = os.path.join(ROOT, "sdk")
+    by_header = 0
+    sdk = os.path.join(root, "sdk")
     for name in sorted(os.listdir(sdk)) if os.path.isdir(sdk) else []:
         if not name.endswith(".cpp"):
             continue
@@ -110,9 +125,17 @@ def parser_files():
             continue
         if READ_WRITE_HEADER in text:
             files.add(os.path.join("sdk", name))
-    for name in NAMED_PARSER_FILES:
-        if os.path.exists(os.path.join(ROOT, name)):
-            files.add(name)
+            by_header += 1
+    missing = [name for name in NAMED_PARSER_FILES if not os.path.exists(os.path.join(root, name))]
+    if missing:
+        raise IncompleteRun("named parser file(s) missing: %s (NAMED_PARSER_FILES)" % ", ".join(missing))
+    files.update(NAMED_PARSER_FILES)
+    if by_header < READ_WRITE_FLOOR:
+        raise IncompleteRun("only %d sdk/*.cpp file(s) include %s, floor %d (READ_WRITE_FLOOR)"
+                            % (by_header, READ_WRITE_HEADER, READ_WRITE_FLOOR))
+    if len(files) < PARSER_FILE_FLOOR:
+        raise IncompleteRun("only %d parser translation unit(s) selected, floor %d (PARSER_FILE_FLOOR)"
+                            % (len(files), PARSER_FILE_FLOOR))
     return sorted(files)
 
 
@@ -163,7 +186,9 @@ def parse_output(text, analyzer):
 def run_gcc_analyzer():
     by_file = load_compile_db()
     findings = []
-    for rel in parser_files():
+    files = parser_files()
+    print("analyzing %d parser translation units: %s" % (len(files), " ".join(files)))
+    for rel in files:
         entry = by_file.get(os.path.join(ROOT, rel))
         if entry is None:
             raise IncompleteRun("no compile command for %s in %s" % (rel, COMPILE_DB))
@@ -231,7 +256,13 @@ def main():
 
     # zero inputs is an error: with no parser translation unit the analyzer
     # runs over nothing and an empty baseline would match
-    units = parser_files()
+    # and a selection under the floors is refused the same way
+    try:
+        units = parser_files()
+    except IncompleteRun as incomplete:
+        print("static gate FAILED: the parser selection under %s is short: %s"
+              % (os.path.join(ROOT, "sdk"), incomplete))
+        return 1
     if not units:
         print("static gate FAILED: 0 parser translation units under %s: nothing was analyzed"
               % os.path.join(ROOT, "sdk"))

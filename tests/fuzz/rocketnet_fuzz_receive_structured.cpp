@@ -6,9 +6,8 @@
 // The stateful receive fuzz target (nightly): a real client and a real server
 // carried across a full handshake and into the session, with the fuzz input
 // consumed as a DECISION STREAM that interleaves legitimate traffic, injected
-// garbage, corrupted-envelope datagrams, and time advances. This is the
-// analog of yojimbo's fuzz_connection_structured -- where raw bytes almost
-// never form a valid packet, this target reaches the deep receive state (ack
+// garbage, corrupted-envelope datagrams, and time advances. Where raw bytes
+// almost never form a valid packet, this target reaches the deep receive state (ack
 // reconstruction, replay window, the session sequence
 // paths) by producing structurally valid packets from the real write paths
 // and then letting the fuzzer decide what to damage and when.
@@ -59,6 +58,7 @@
 #include <cstdio>
 
 #include "../portable_crt.h"
+#include "rocketnet_fuzz_quiet.h"
 
 // the packet types the receive path dispatches on, one bit each, set when a
 // counter shows the type arrived. The seed generator (ROCKETNET_FUZZ_SEED_DIR)
@@ -79,7 +79,8 @@ enum
     ROCKETNET_FUZZ_RECEIVE_CLIENT_KEEP_ALIVE = 1ULL << 9,
     ROCKETNET_FUZZ_RECEIVE_CLIENT_PAYLOAD = 1ULL << 10,
     ROCKETNET_FUZZ_RECEIVE_CLIENT_DISCONNECT = 1ULL << 11,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK = 1ULL << 12
+    ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK = 1ULL << 12,
+    ROCKETNET_FUZZ_RECEIVE_DELIVERY = 1ULL << 13          // the delivery oracle checked 32 or more delivered payloads
 };
 
 static uint64_t rocketnet_fuzz_receive_coverage = 0;
@@ -126,6 +127,52 @@ static void generate_payload( uint8_t * payload_data, int payload_bytes )
     }
 }
 
+// the delivery oracle (VERIFY-5 W2): the server may deliver only payloads the
+// client wrote, each byte as written, and no payload more often than it was
+// written. The client writes the pattern generate_payload makes for its size,
+// so a delivered payload is checked against the pattern for its own size and
+// against the count of payloads of that size the client wrote. Garbage and
+// corrupted envelopes must never open, and a duplicated datagram must never
+// deliver twice (the replay window), so any break is an abort.
+
+static void rocketnet_fuzz_receive_check_delivered( const uint8_t * delivered, int delivered_bytes, int delivered_client_index,
+                                                    const uint32_t * written, uint32_t * opened )
+{
+    if ( delivered_bytes <= 0 )
+    {
+        return;
+    }
+
+    if ( delivered_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
+        fprintf( stderr, "receive_structured: the server delivered %d bytes, more than any payload written\n", delivered_bytes );
+        abort();
+    }
+
+    if ( delivered_client_index < 0 )
+    {
+        fprintf( stderr, "receive_structured: the server delivered %d bytes for no client\n", delivered_bytes );
+        abort();
+    }
+
+    uint8_t expected[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    generate_payload( expected, delivered_bytes );
+    if ( memcmp( expected, delivered, (size_t) delivered_bytes ) != 0 )
+    {
+        fprintf( stderr, "receive_structured: a delivered %d-byte payload is not the bytes the client wrote\n", delivered_bytes );
+        abort();
+    }
+
+    opened[delivered_bytes]++;
+    opened[0]++;    // index 0 is no payload size: it counts every delivery
+    if ( opened[delivered_bytes] > written[delivered_bytes] )
+    {
+        fprintf( stderr, "receive_structured: %u %d-byte payloads delivered, %u written\n",
+                 opened[delivered_bytes], delivered_bytes, written[delivered_bytes] );
+        abort();
+    }
+}
+
 extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 {
     (void) argc;
@@ -136,7 +183,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
         abort();
     }
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     char seed_dir[1024];
     if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
@@ -250,6 +297,13 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     int payload_size = 1;
     const int MAX_OPS = 4096;
 
+    // per payload size: how many the client wrote, how many the server
+    // delivered; payloads_opened[0] counts every delivery
+    uint32_t payloads_written[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1];
+    uint32_t payloads_opened[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1];
+    memset( payloads_written, 0, sizeof( payloads_written ) );
+    memset( payloads_opened, 0, sizeof( payloads_opened ) );
+
     for ( int op = 0; op < MAX_OPS && r.pos < r.size; op++ )
     {
         const uint8_t action = fuzz_u8( &r );
@@ -283,6 +337,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
             const int bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet );
             if ( bytes > 0 )
             {
+                payloads_written[payload_size]++;
                 rocketnet_network_simulator_send( simulator, &client_address, &server_address, packet, bytes, time );
             }
 
@@ -365,10 +420,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                     rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
                 }
 
-                if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
-                {
-                    abort();
-                }
+                rocketnet_fuzz_receive_check_delivered( delivered, delivered_bytes, delivered_client_index, payloads_written, payloads_opened );
             }
 
             rocketnet_server_protocol_update( &server, time );
@@ -411,8 +463,14 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
                 rocketnet_client_protocol_process_packet( &client, packet, bytes, time, delivered, sizeof( delivered ), &delivered_bytes );
-                if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
+
+                // the server here writes keep-alives, acks and handshake
+                // answers, never a payload: anything the client delivers was
+                // never written
+
+                if ( delivered_bytes > 0 )
                 {
+                    fprintf( stderr, "receive_structured: the client delivered %d bytes the server never wrote\n", delivered_bytes );
                     abort();
                 }
             }
@@ -424,6 +482,11 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         const double step = 0.005 + ( fuzz_u8( &r ) % 32 ) * 0.01;
         time += step;
         timestamp = ROCKETNET_TEST_CREATE_TS + (uint64_t) ( time - 100.0 );
+    }
+
+    if ( payloads_opened[0] >= 32 )
+    {
+        rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_DELIVERY;
     }
 
     if ( server_counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] > 0 )
@@ -518,7 +581,8 @@ enum
     ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_DENIED,
     ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_PAYLOAD,
     ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_DISCONNECT,
-    ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK
+    ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK,
+    ROCKETNET_FUZZ_RECEIVE_SEED_DELIVERY
 };
 
 struct rocketnet_fuzz_receive_seed_spec_t
@@ -541,7 +605,8 @@ static const struct rocketnet_fuzz_receive_seed_spec_t rocketnet_fuzz_receive_se
     { "seed_type_client_keep_alive", ROCKETNET_FUZZ_RECEIVE_CLIENT_KEEP_ALIVE, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
     { "seed_type_client_payload", ROCKETNET_FUZZ_RECEIVE_CLIENT_PAYLOAD, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_PAYLOAD },
     { "seed_type_client_disconnect", ROCKETNET_FUZZ_RECEIVE_CLIENT_DISCONNECT, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_DISCONNECT },
-    { "seed_type_client_ack", ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK }
+    { "seed_type_client_ack", ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK },
+    { "seed_delivery_stream", ROCKETNET_FUZZ_RECEIVE_DELIVERY, ROCKETNET_FUZZ_RECEIVE_SEED_DELIVERY }
 };
 
 static void rocketnet_fuzz_receive_append_u8( uint8_t * output, size_t * size, uint8_t value )
@@ -591,16 +656,30 @@ static size_t rocketnet_fuzz_receive_build_seed( int kind, uint8_t * output, siz
         return 0;
     }
 
+    // the head: the simulator seed (two u16), the loss percent and the
+    // duplicate percent. The delivery stream runs with 20% duplicates, so
+    // the replay window is what keeps a payload from delivering twice.
+
     size_t size = 0;
     rocketnet_fuzz_receive_append_u8( output, &size, 1 );
     rocketnet_fuzz_receive_append_u8( output, &size, 0 );
     rocketnet_fuzz_receive_append_u8( output, &size, 0 );
     rocketnet_fuzz_receive_append_u8( output, &size, 0 );
     rocketnet_fuzz_receive_append_u8( output, &size, 0 );
-    rocketnet_fuzz_receive_append_u8( output, &size, 0 );
+    rocketnet_fuzz_receive_append_u8( output, &size, kind == ROCKETNET_FUZZ_RECEIVE_SEED_DELIVERY ? 20 : 0 );
     rocketnet_fuzz_receive_append_handshake( output, &size );
 
-    if ( kind == ROCKETNET_FUZZ_RECEIVE_SEED_PAYLOAD )
+    if ( kind == ROCKETNET_FUZZ_RECEIVE_SEED_DELIVERY )
+    {
+        // 60 payloads, 1 to 60 bytes, one per 5 ms step: the delivery
+        // oracle checks each one that opens
+        for ( int operation = 0; operation < 60; operation++ )
+        {
+            rocketnet_fuzz_receive_append_u8( output, &size, 1 );
+            rocketnet_fuzz_receive_append_u8( output, &size, 0 );
+        }
+    }
+    else if ( kind == ROCKETNET_FUZZ_RECEIVE_SEED_PAYLOAD )
     {
         rocketnet_fuzz_receive_append_u8( output, &size, 1 );
         rocketnet_fuzz_receive_append_u8( output, &size, 31 );

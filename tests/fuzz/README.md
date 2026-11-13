@@ -24,19 +24,12 @@ connect tokens use only the published development keys from
 | `rocketnet_fuzz_server_transport` | the server's real receive loop (`rocketnet_server_transport_update`) and the message server above it | `corpus_server_transport/` | `dict/rocketnet_fuzz_server_transport.dict` |
 | `rocketnet_fuzz_client_transport` | the client's real receive loop (`rocketnet_client_transport_update`) and the message client above it | `corpus_client_transport/` | `dict/rocketnet_fuzz_client_transport.dict` |
 | `rocketnet_fuzz_session` | a scripted session (send, tick, drop, duplicate, reorder, corrupt, inject) checked against the DST invariants in `../dst_checks.h` | `corpus_session/` | `dict/rocketnet_fuzz_session.dict` |
+| `rocketnet_fuzz_session_raw` | the same scripted session with the client off its I/O-thread decrypt copy (a link simulator pattern set at create), so the client protocol's own replay check and open refusal see every session datagram | `corpus_session_raw/` | `dict/rocketnet_fuzz_session.dict` |
 | `rocketnet_fuzz_endpoint` | the message layer's receive after decrypt, direct (`rn_endpoint_on_payload`: record decode, reliable window, channel dispatch, block and sequenced fragment reassembly, CONFIG) beside a real sending endpoint, with a clean-stream oracle (only A's bytes, reliable at most once, no disconnect) | `corpus_endpoint/` | `dict/rocketnet_fuzz_endpoint.dict` |
 | `rocketnet_fuzz_xdp_filter` | the XDP program `sdk/xdp/server_xdp.c` through the host shim (`tests/xdp_host/`), differential against `rocketnet_xdp_frame_parse` and the userspace prefilter rungs; fuzzed on Linux, a no-op where the filter is not built as host C | `corpus_xdp_filter/` | `dict/rocketnet_fuzz_xdp_filter.dict` |
-| `rocketnet_fuzz_differential` | both admission deciders on one abstract case, shared with the fixed gate (`tools/differential/decide.h`); aborts on rocketnet-weaker or an undocumented stricter class | `corpus_differential/` | `dict/rocketnet_fuzz_differential.dict` |
 
 The input format of each target is described in the comment at the top of
-its source file. `rocketnet_fuzz_differential` runs the two admission
-deciders of `tools/differential/` (the fixed gate and this target both use
-`tools/differential/decide.h`) on one abstract case encoded as a 25-byte
-record, and aborts on a `rocketnet-weaker` verdict or a stricter class that
-`tools/differential/README.md` does not document as permitted. It needs the
-pinned netcode checkout to build: the nightly Linux leg checks out
-mas-bandwidth/netcode at tag v1.2.1 into its own path and compiles it the way
-`tools/differential/run.sh` does. `rocketnet_fuzz_server_transport`,
+its source file. `rocketnet_fuzz_server_transport`,
 `rocketnet_fuzz_client_transport` and `rocketnet_fuzz_session` are the pair targets. They share
 `rocketnet_fuzz_pair.h`: a real message server and message client joined by
 the loopback transport, with the harness standing on the wire between them.
@@ -74,11 +67,11 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C tests/fuzz -j 4                 # the fifteen targets (not the differential)
-make -C tests/fuzz compile              # syntax check of all fifteen sources on any host
+make -C tests/fuzz -j 4                 # the sixteen targets
+make -C tests/fuzz compile              # syntax check of all sixteen sources on any host
 ```
 
-`tests/fuzz/Makefile` builds the fifteen targets other than `rocketnet_fuzz_differential` with
+`tests/fuzz/Makefile` builds the sixteen targets with
 `-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
 nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
 nightly builds it:
@@ -141,8 +134,10 @@ the platform source names `WS2_32`, `Qwave` and `winmm` itself.
 LeakSanitizer does not exist on Windows (AddressSanitizer there has no leak
 checker), so the Windows leg runs with `detect_leaks=0` and leaks are
 checked on Linux. The nightly `fuzz-windows` job in
-`.github/workflows/fuzz-nightly.yml` runs exactly these commands for every
-target in the table above; the netcode differential target stays Linux only.
+`.github/workflows/fuzz-nightly.yml` runs exactly these commands for
+thirteen of the targets in the table above: not `rocketnet_fuzz_uring_recvmsg`,
+`rocketnet_fuzz_gateway_netlink` or `rocketnet_fuzz_xdp_filter`, which read
+Linux kernel interfaces (the Makefile's `LINUX_ONLY_TARGETS`).
 
 ### Without libFuzzer: the replay drivers
 
@@ -339,7 +334,7 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 ## In CI
 
-- `ci.yml` `fuzz-smoke` deterministically replays all fifteen committed corpora
+- `ci.yml` `fuzz-smoke` deterministically replays all sixteen committed corpora
   through the `fuzz_replay_*` drivers on every push. The time-boxed
   fixed-seed mutation pass moved to `fuzz-nightly.yml`.
 - `fuzz-nightly.yml` builds the libFuzzer targets on Linux, macOS and
@@ -348,7 +343,7 @@ commit the minimized input to its corpus as `regress_<name>`.
   default; the session target 9600 s on Linux and 2400 s in the NDEBUG
   campaign) and uploads any reproducer. The XDP filter target runs on the
   Linux legs only.
-- `fuzz-nightly.yml` also runs the same fifteen-target matrix under
+- `fuzz-nightly.yml` also runs the same sixteen-target matrix under
   MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
   sodium included, is built with the MSan flags and the instrumented libc++
   headers at `-O1`, exactly as `tools/run_msan.sh` does, and each target
@@ -370,7 +365,9 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 `tests/oss-fuzz/` holds `build.sh`, `Dockerfile` and `project.yaml` for running
 these targets on OSS-Fuzz. `build.sh` compiles the development library from
-`sdk/` and the vendored `sodium/`, links every target present here, zips
+`sdk/` and the vendored `sodium/`, links the fourteen targets its list names
+(every target here but `rocketnet_fuzz_session_raw` and
+`rocketnet_fuzz_xdp_filter`), zips
 each target's corpus to `<target>_seed_corpus.zip` and copies its
 dictionary. Every compile line carries `-ffp-contract=off`, which
 `tools/check_oss_fuzz_fp_contract.cmake` enforces (the `oss_fuzz_fp_contract`

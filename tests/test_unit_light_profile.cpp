@@ -113,8 +113,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 1608857790 and 22972215, stood 140405631 and 8762043 bytes above what the
 // build reads; the at-most check passed them and the suite hid the actual=
 // lines, so the figures above, computed from them, were never seen to hold.
+// v1.2/dead-code removed a client field (session_nonce): the client object is
+// one 64-byte rounding smaller, and the client's actual= line is 15258684
+// (read on aws-win-1, MSVC 19.52.37029, x64, DEV=ON, Release: 15258748 at the
+// tree before that merge, 15258684 after it, same toolset). The server's
+// reading did not move.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452159 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210172 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210108 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -149,8 +154,16 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured); the probe's actual= line is 1469501151.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452575 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987850 )
+// The client I/O core counts the datagrams its worker discards at its exit
+// (sdk/rocketnet_client_io.h, receive_discarded_at_stop, 8 bytes), adding 64
+// to the client (its object's 64-byte rounding) and nothing to the server
+// (measured); the probe's actual= line is 15036490.
+// The appended counter CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD grows every
+// counter block by 8 bytes, adding 64 to the server and 64 to the client
+// (their objects' 64-byte rounding) (measured); the probe's actual= lines
+// are 1469501215 and 15036554.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452639 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -215,8 +228,25 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
 // kept forget count beside it fills existing padding), adding 8 bytes
 // (measured with the writer list: the probe's actual= line is 3111676723).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628147ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137506 )
+// v1.1.9 (read-round-1 on the v1.1.8 release): the development server
+// transport counts its link-simulator lock misses (link_lock_misses, a
+// uint64_t) and the counter block gains CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD,
+// together 128 bytes on the server through its 64-byte rounding. The client
+// reads 912 bytes lower on the merged tree (stats_counted is gone among
+// read-round-1's client changes; the 912 is not split per change). Measured on the merged tree (bench-nyc-6, gcc, Debug and
+// Release, DEV ON, ROCKETNET_TEST_VERBOSE=1): actual=3111676851 and 15185170.
+#if defined( __aarch64__ )
+// Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
+// bytes on aarch64 and 40 on x86-64, so the thread record each worker
+// allocates (sdk/rocketnet_platform.cpp thread_record_t) is 144 bytes, not
+// 136, and the xdp ladder candidate starts one thread for each of its 7
+// default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
+// a Graviton; not the pinned configuration, so the check is at most.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628331ULL )
+#else // #if defined( __aarch64__ )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628275ULL )
+#endif // #if defined( __aarch64__ )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14136594 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
@@ -258,7 +288,7 @@ static void light_check_pin( const char * name, size_t bytes, size_t pin )
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
     check( config->per_client_send_kbps == 256 );
-    check( config->num_channels == 8 );
+    check( config->num_channels == ( ROCKETNET_MAX_CHANNELS < 8 ? ROCKETNET_MAX_CHANNELS : 8 ) );
     check( config->reliable_messages_in_flight == 256 );
     check( config->receive_message_buffer_bytes == 142400 );
     check( config->max_message_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );
@@ -275,7 +305,7 @@ static void light_message_fields_server( const struct rocketnet_server_config_t 
 static void light_message_fields_client( const struct rocketnet_client_config_t * config )
 {
     check( config->send_kbps == 256 );
-    check( config->num_channels == 8 );
+    check( config->num_channels == ( ROCKETNET_MAX_CHANNELS < 8 ? ROCKETNET_MAX_CHANNELS : 8 ) );
     check( config->reliable_messages_in_flight == 256 );
     check( config->receive_message_buffer_bytes == 142400 );
     check( config->max_message_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );

@@ -160,8 +160,9 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 // The unix timestamp a functional case stamps on a connect token, from the
 // clock that judges the token. The server transport reads token_epoch_unix_seconds
 // plus its update time when the epoch is set, else the wall clock
-// (sdk/rocketnet_server_transport.cpp:1885), and the client transport reads
-// its own config's epoch the same way (sdk/rocketnet_client_transport.cpp:812).
+// (sdk/rocketnet_server_transport.cpp, rocketnet_server_transport_update), and the
+// client transport reads its own config's epoch the same way
+// (sdk/rocketnet_client_transport.cpp, rocketnet_client_transport_create_impl).
 // A case passes the epoch it configures and the time it drives the server
 // with; an epoch of zero returns the wall clock both ends then read.
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time )
@@ -172,7 +173,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINES 32
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES 1024
 // a slot holds "<time>: <level>: " in front of a whole captured line: the
-// level name is at most 7 bytes (sdk/rocketnet.cpp:181), so 64 bytes hold
+// level name is at most 7 bytes (sdk/rocketnet.cpp, rocketnet_log_level_word), so 64 bytes hold
 // the prefix for any clock reading below 10^40 seconds
 #define ROCKETNET_FUNCTIONAL_LOG_RING_PREFIX_BYTES 64
 #define ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES ( ROCKETNET_FUNCTIONAL_LOG_RING_PREFIX_BYTES + ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES )

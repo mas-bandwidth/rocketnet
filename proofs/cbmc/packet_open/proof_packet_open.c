@@ -65,6 +65,16 @@ unsigned long long nondet_uint64( void );
 #define PROOF_HAVOC( p, n ) __CPROVER_havoc_slice( (p), (size_t) (n) )
 #endif // #ifndef __CPROVER__
 
+/* the reachability control: built with -DREACHABILITY_CONTROL, each harness
+   ends in an assertion that must fail, so a harness whose assumptions became
+   unsatisfiable (and so proves anything) goes red. proof.mk runs it beside
+   every proof. */
+#if defined( REACHABILITY_CONTROL )
+#define PROOF_REACHED( harness ) __CPROVER_assert( 0, harness " reachability control" )
+#else
+#define PROOF_REACHED( harness ) ( (void) 0 )
+#endif // #if defined( REACHABILITY_CONTROL )
+
 /* libsodium models. */
 
 int crypto_shorthash_siphash24( unsigned char * out,
@@ -198,6 +208,8 @@ void harness_prefilter( void )
     }
 
     __CPROVER_assert( result == packet[0], "an accepted packet returns its type" );
+
+    PROOF_REACHED( "harness_prefilter" );
 }
 
 /* the sealed opener: every packet type byte, sequence, session-nonce and
@@ -327,6 +339,8 @@ void harness_open_sealed_packet( void )
     {
         __CPROVER_assert( missing_pairing == -1, "a required nonce or ephemeral key is refused when missing" );
     }
+
+    PROOF_REACHED( "harness_open_sealed_packet" );
 }
 
 /* the associated data writer: 53 bytes with the ephemeral key, 21 without. */
@@ -356,6 +370,8 @@ void harness_write_packet_associated_data( void )
                                                                       NULL );
     __CPROVER_assert( without_bytes == ROCKETNET_AD_BYTES,
                       "the writer returns 21 bytes without the ephemeral key" );
+
+    PROOF_REACHED( "harness_write_packet_associated_data" );
 }
 
 /* the sequence nonce: four zero bytes then the sequence little-endian, all
@@ -375,6 +391,8 @@ void harness_sequence_nonce( void )
         __CPROVER_assert( nonce[4 + i] == (uint8_t) ( ( sequence >> ( 8 * i ) ) & 0xFF ),
                           "the nonce carries the sequence little-endian" );
     }
+
+    PROOF_REACHED( "harness_sequence_nonce" );
 }
 
 int main( void )

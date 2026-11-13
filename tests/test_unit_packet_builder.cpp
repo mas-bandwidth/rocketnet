@@ -269,7 +269,7 @@ static void test_packet_builder_no_allocation_after_create()
 
     // the hot path: write packets, dispatch records, feed acks, end the update.
     // each update queues its items afresh: the builder skips an item it marked
-    // taken (rn_builder_writable, sdk/rocketnet_packet_builder.cpp:139).
+    // taken (rn_builder_writable, sdk/rocketnet_packet_builder.cpp).
 
     for ( int update = 0; update < 8; update++ )
     {

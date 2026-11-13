@@ -1416,7 +1416,7 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
 {
     // "<end>: <report>" fits the check state's detail[256] (dst_checks.h:120):
     // end is "server" or "clients" (dst_harness.h:1330-1331), and the report
-    // is one counter name and two u64 (sdk/rocketnet_counters.cpp:151). The
+    // is one counter name and two u64 (sdk/rocketnet_counters.cpp). The
     // precisions bound both pieces (16 + 2 + 237 + NUL = 256), so the
     // compiler can prove the line fits at every optimisation level.
 
@@ -1456,6 +1456,12 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             // duplicate fault moves it (seeds 1-200, one fault at a time),
             // as soak_sim's table explains the same row.
             ( duplicates_enabled && i == ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED ) ||
+            // A duplicated cookieless request reaching the server in the
+            // update its first copy was answered in: the per-update cookie
+            // reply limit withholds the copy (t12 rule 7). Measured, seeds
+            // 1-50: seeds 26, 31 and 41, each only with dup beside loss or
+            // jitter.
+            ( duplicates_enabled && i == ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD ) ||
             // Measured mechanism (seeds 1-1000 under clock-back at base:
             // 11 seeds, first seed 13): clock-back rewinds one endpoint's
             // protocol clock by a drawn 10 ms .. 5 s, past the server's

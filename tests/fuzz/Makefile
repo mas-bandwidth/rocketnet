@@ -4,8 +4,7 @@
 # compiled out of the release library, so they must link the development
 # archive and see ROCKETNET_DEV=1. ci.yml's fuzz-smoke covers
 # rocketnet_fuzz against the release library; fuzz-nightly.yml drives the
-# fifteen targets in TARGETS below, with the same flags and link set, plus
-# rocketnet_fuzz_differential, which needs the pinned netcode checkout.
+# sixteen targets in TARGETS below, with the same flags and link set.
 #
 # The bpf/xdp link deps are Linux only; darwin links the same library without
 # them and adds the CoreFoundation and SystemConfiguration frameworks the
@@ -44,6 +43,7 @@ TARGETS = rocketnet_fuzz \
           rocketnet_fuzz_server_transport \
           rocketnet_fuzz_client_transport \
           rocketnet_fuzz_session \
+          rocketnet_fuzz_session_raw \
           rocketnet_fuzz_xdp_frame \
           rocketnet_fuzz_uring_recvmsg \
           rocketnet_fuzz_gateway_netlink \
@@ -96,7 +96,11 @@ rocketnet_fuzz_xdp_filter: rocketnet_fuzz_xdp_filter.cpp $(XDP_FILTER_DEPS) $(LI
 
 # the pair targets compile the server transport and the loopback driver into
 # themselves through rocketnet_fuzz_pair.h, so they rebuild when it changes.
-rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session: rocketnet_fuzz_pair.h
+rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw: rocketnet_fuzz_pair.h rocketnet_fuzz_session.cpp
+
+# the harnesses that silence the library's log install their assert handler
+# from rocketnet_fuzz_quiet.h, so they rebuild when it changes.
+$(TARGETS): rocketnet_fuzz_quiet.h
 
 $(PLAIN_TARGETS): %: %.cpp $(LIB)
 	$(CXX) $(FLAGS) $(SANITIZE) $< $(LIB) $(LINKS) -o $@

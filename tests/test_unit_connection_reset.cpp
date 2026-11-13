@@ -207,7 +207,7 @@ static void test_connection_reset_inventory_covers_every_field()
         }
     }
 
-    check( reset_fields == 36 );
+    check( reset_fields == 35 );
     check( keep_fields == 8 );
 
     reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",
@@ -1726,7 +1726,6 @@ static void reset_loopback_client_timeout_scenario()
     }
 
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( f.clients[0] );
-    rocketnet_client_transport_mark_connection_state_for_test( transport );
 
     for ( int i = 0; i < 400 && rocketnet_message_client_state( f.clients[0] ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
@@ -1757,7 +1756,6 @@ static void reset_loopback_client_denied_scenario()
     check( denied );
 
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( denied );
-    rocketnet_client_transport_mark_connection_state_for_test( transport );
 
     for ( int i = 0; i < 400 && rocketnet_message_client_state( denied ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
@@ -1789,7 +1787,6 @@ static void test_connection_reset_client_disconnect_is_clean()
     memset( &client.keys, 0xA5, sizeof( client.keys ) );
     memset( &client.token, 0xA5, sizeof( client.token ) );
     memset( client.client_ephemeral_secret_key, 0xA5, sizeof( client.client_ephemeral_secret_key ) );
-    memset( client.session_nonce, 0xA5, sizeof( client.session_nonce ) );
     client.send_sequence_handshake = 7;
     client.send_sequence_session = 9;
     client.replay_session.highest_opened = 100;
@@ -1807,12 +1804,9 @@ static void test_connection_reset_client_disconnect_is_clean()
     uint8_t zero_eph[ROCKETNET_KEY_BYTES];
     memset( zero_eph, 0, sizeof( zero_eph ) );
 
-    uint8_t zero_nonce[ROCKETNET_SESSION_NONCE_BYTES];
-    memset( zero_nonce, 0, sizeof( zero_nonce ) );
     check( memcmp( &client.keys, &zero_keys, sizeof( zero_keys ) ) == 0 );
     check( memcmp( &client.token, &zero_token, sizeof( zero_token ) ) == 0 );
     check( memcmp( client.client_ephemeral_secret_key, zero_eph, sizeof( zero_eph ) ) == 0 );
-    check( memcmp( client.session_nonce, zero_nonce, sizeof( zero_nonce ) ) == 0 );
     check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
     check( client.send_sequence_handshake == 0 && client.send_sequence_session == 0 );
     check( client.replay_session.highest_opened == 0 );
@@ -1862,7 +1856,6 @@ static void test_connection_reset_connect_from_each_failure_state()
         // every per-connection field of the earlier attempt dirtied
 
         memset( &client.keys, 0xA5, sizeof( client.keys ) );
-        memset( client.session_nonce, 0xA5, sizeof( client.session_nonce ) );
         memset( client.connection_salt, 0xA5, sizeof( client.connection_salt ) );
         memset( client.client_ephemeral_public_key, 0xA5, sizeof( client.client_ephemeral_public_key ) );
         memset( client.client_ephemeral_secret_key, 0xA5, sizeof( client.client_ephemeral_secret_key ) );
@@ -1902,7 +1895,6 @@ static void test_connection_reset_connect_from_each_failure_state()
 
         uint8_t zeros[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         memset( zeros, 0, sizeof( zeros ) );
-        check( memcmp( client.session_nonce, zeros, sizeof( client.session_nonce ) ) == 0 );
         check( memcmp( client.return_cookie, zeros, sizeof( client.return_cookie ) ) == 0 );
         check( client.has_cookie == 0 );
         check( memcmp( client.latest_cookie, zeros, sizeof( client.latest_cookie ) ) == 0 );
@@ -2558,7 +2550,6 @@ static void test_connection_reset_disconnect_after_a_timeout_is_clean()
 
     check( rocketnet_message_client_state( f.clients[0] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
 
-    rocketnet_client_transport_mark_connection_state_for_test( transport );
     rocketnet_client_transport_disconnect( transport );
     check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     reset_client_transport_clean( transport );

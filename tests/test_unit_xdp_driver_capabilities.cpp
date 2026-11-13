@@ -44,7 +44,7 @@
 
 #include <stddef.h>
 
-// sdk/rocketnet_server_socket_linux.cpp:2286 and :2301
+// defined in sdk/rocketnet_server_socket_linux.cpp
 int rocketnet_server_socket_send_slot( ptrdiff_t offset );
 int rocketnet_server_socket_send_queue( const struct rocketnet_address_t * to, int num_queues );
 
@@ -198,6 +198,22 @@ static void test_xdp_transport_umem_holds_only_the_fill_frames()
     check( rocketnet_xdp_umem_bytes( ROCKETNET_XDP_MAX_QUEUES + 1 ) == 0 );
 }
 
+// the operator budget's figure counts each queue's UMEM once beside the
+// allocator bytes; a transport without UMEM totals its allocator bytes
+
+static void test_xdp_transport_memory_plan_total_counts_umem_once()
+{
+    rocketnet_server_memory_plan_t plan;
+    check( rocketnet_server_transport_memory_plan( NULL, "xdp", plan ) );
+    check( plan.umem_bytes == rocketnet_xdp_umem_bytes( ROCKETNET_XDP_DEFAULT_QUEUES ) );
+    check( plan.umem_bytes > 0 );
+    check( plan.total_bytes == plan.allocator_bytes + plan.umem_bytes );
+
+    check( rocketnet_server_transport_memory_plan( NULL, "portable", plan ) );
+    check( plan.umem_bytes == 0 );
+    check( plan.total_bytes == plan.allocator_bytes );
+}
+
 // R3 of the pre-flight refuses an interface with a program attached in any
 // mode. libbpf reports prog_id 0 when programs are attached in more than one
 // mode (XDP_ATTACHED_MULTI), so the decision reads every per-mode id. The
@@ -237,25 +253,36 @@ static void test_xdp_transport_preflight_refuses_any_attached_mode()
 #if ROCKETNET_DEV
 // The frames each queue's userspace receive dropped, by reason, reach the
 // transport's ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED through the builtin dispatch the
-// counter read calls, once each queue's worker publishes them: two synthetic
-// queues, no socket, no worker (sdk/rocketnet_server_socket_linux.cpp)
+// counter read calls, once each queue's worker publishes them; the replay
+// writer's commit failures and held keep-alives reach ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED
+// and ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD through a second one: two synthetic queues, no
+// socket, no worker, no map (sdk/rocketnet_server_socket_linux.cpp)
 bool rocketnet_server_transport_io_receive_frames_dropped( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                            uint64_t * dropped );
+bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                  uint64_t * commit_failed, uint64_t * greetings_held );
 typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                             uint64_t * dropped );
+typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * commit_failed, uint64_t * greetings_held );
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
 
 static void test_xdp_transport_receive_frames_dropped_counted()
 {
     const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
-    check( rocketnet_server_socket_test_receive_dropped( rocketnet_server_transport_io_receive_frames_dropped, xdp->backend->server ) );
+    check( rocketnet_server_socket_test_receive_dropped( rocketnet_server_transport_io_receive_frames_dropped, rocketnet_server_transport_io_replay_counts,
+                                                         xdp->backend->server ) );
 
     // no other transport answers the dispatch
 
     const rocketnet_transport_definition_t * gso = rocketnet_transport_definition( ROCKETNET_TRANSPORT_GSO );
     uint64_t dropped = 0;
     check( !rocketnet_server_transport_io_receive_frames_dropped( gso->backend->server, NULL, &dropped ) );
+    uint64_t commit_failed = 0;
+    uint64_t greetings_held = 0;
+    check( !rocketnet_server_transport_io_replay_counts( gso->backend->server, NULL, &commit_failed, &greetings_held ) );
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_receive_frames_dropped_counted );
@@ -267,6 +294,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_umem_config_sizes_fill_and_completion_rin
 REGISTER_UNIT_TEST( test_xdp_transport_send_slot_refuses_bad_offsets_before_dividing );
 REGISTER_UNIT_TEST( test_xdp_transport_send_queue_is_one_per_destination );
 REGISTER_UNIT_TEST( test_xdp_transport_umem_holds_only_the_fill_frames );
+REGISTER_UNIT_TEST( test_xdp_transport_memory_plan_total_counts_umem_once );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_any_attached_mode );
 
 #endif // #if ROCKETNET_XDP
