@@ -145,7 +145,7 @@ static void test_server_transport_folds_receive_drop_totals()
     const struct rocketnet_counters_t after = *rocketnet_server_transport_counters( server );
     rocketnet_counters_expect( &again, &after, { { ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL, 1 } } );
 
-    // a datagram the transport received and never handed to main because it
+    // a datagram a transport received and never handed to main because it
     // stopped is RECEIVE_DROPPED_STOPPED alone
     rp_fake_totals[ROCKETNET_RECEIVE_DROP_STOPPED] = 4;
     const struct rocketnet_counters_t stopped = *rocketnet_server_transport_counters( server );

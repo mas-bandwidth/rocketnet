@@ -76,11 +76,10 @@ enum rocketnet_receive_drop_t
     // ROCKETNET_COUNTER_RECEIVE_FAILED.
     ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED,
 
-    // never returned by the prefilter: counted by the transport itself for a
-    // datagram it received but will never hand to main because it is
-    // stopping (a receive that completed after stop began, or one left in a
-    // receive bank main will not take). Feeds
-    // ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED.
+    // never returned by the prefilter: counted by a transport for a datagram
+    // it received but will never hand to main because it is stopping (a
+    // receive that completed after stop began, or one left in a receive bank
+    // main will not take). Feeds ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED.
     ROCKETNET_RECEIVE_DROP_STOPPED,
 
     ROCKETNET_RECEIVE_NUM_DROPS
