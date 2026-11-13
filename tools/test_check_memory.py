@@ -66,7 +66,7 @@ if flag == "--session-plan-only":
     sys.exit(0)
 
 os_rows = {"thread_stack_bytes": stack, "umem_bytes": 0, "mapped_ring_bytes": 0,
-           "os_bytes": stack, "worker_threads": 2}
+           "os_bytes": stack, "worker_threads": 1 if transport == "gso" else 2}
 if flag is None:
     peak = planned + (1 if mode == "over" else 0)
     out(dict(os_rows, planned_bytes=planned, allocator_bytes=planned, sockets=1 + clients if transport == "msgx" else 1,
