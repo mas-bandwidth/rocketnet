@@ -19,7 +19,8 @@ A finding that is present now but not in its baseline fails the job, unless
 it is named in tools/tidy_dispositions.txt: one line per reviewed false
 positive, keyed by the same <tool> <file> <check> <hash> tuple the baselines
 use, with a mandatory reason and a link to its triage entry in
-docs/audits/2026-10-26-static-analysis-triage.md. Each disposition is
+docs/audits/2026-10-26-static-analysis-triage.md whose anchor names one of
+its headings. Each disposition is
 reported by name. A disposition line without a reason (or without its
 triage link) fails the job, a disposition that duplicates a baseline entry
 fails the job, and a disposition whose site no longer produces the finding
@@ -390,14 +391,42 @@ def merge_findings(results):
     return raw, errors
 
 
-def read_dispositions(path):
+def heading_anchors(path):
+    """The anchors a renderer gives the Markdown headings of path, outside
+    fenced code: lowercased, punctuation other than '-' and '_' dropped,
+    spaces turned to '-', and a repeated anchor numbered -1, -2, ..."""
+    anchors = set()
+    seen = {}
+    fenced = False
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.lstrip().startswith("```"):
+                fenced = not fenced
+                continue
+            match = None if fenced else re.match(r"^#{1,6}\s+(.*?)\s*#*\s*$", line)
+            if not match:
+                continue
+            slug = re.sub(r"[^\w\- ]", "", match.group(1).strip().lower()).replace(" ", "-")
+            count = seen.get(slug, 0)
+            seen[slug] = count + 1
+            anchors.add(slug if count == 0 else "%s-%d" % (slug, count))
+    return anchors
+
+
+def read_dispositions(path, triage_path=None):
     """Returns (dispositions, errors). dispositions maps the baseline-shaped
     key '<tool>\\t<file>\\t<check>\\t<hash>' to (reason, triage_link). A line
     without exactly six tab-separated fields, without a non-empty reason,
-    without a link to the triage document, with an unknown tool, or that
-    repeats a key is an error: a reviewed false positive must be named."""
+    without a link to a section of the triage document that exists, with an
+    unknown tool, or that repeats a key is an error: a reviewed false positive
+    must be named, and its link must reach the entry that reviewed it."""
     if not os.path.exists(path):
         return {}, ["no dispositions at %s" % relpath(path)]
+    if triage_path is None:
+        triage_path = os.path.join(ROOT, TRIAGE_DOC)
+    if not os.path.exists(triage_path):
+        return {}, ["no triage document at %s" % relpath(triage_path)]
+    anchors = heading_anchors(triage_path)
     dispositions = {}
     errors = []
     with open(path, "r", encoding="utf-8") as handle:
@@ -421,9 +450,14 @@ def read_dispositions(path):
                 errors.append("%s:%d: disposition without a reason: %s"
                               % (relpath(path), number, key.replace("\t", " ")))
                 continue
-            if not link or TRIAGE_DOC not in link:
-                errors.append("%s:%d: disposition without a link to %s: %s"
+            if not link.startswith(TRIAGE_DOC + "#"):
+                errors.append("%s:%d: disposition without a link to a section of %s: %s"
                               % (relpath(path), number, TRIAGE_DOC,
+                                 key.replace("\t", " ")))
+                continue
+            if link[len(TRIAGE_DOC) + 1:] not in anchors:
+                errors.append("%s:%d: disposition links to %s, which names no heading of %s: %s"
+                              % (relpath(path), number, link, TRIAGE_DOC,
                                  key.replace("\t", " ")))
                 continue
             if key in dispositions:

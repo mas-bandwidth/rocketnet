@@ -96,6 +96,40 @@ class RunTidyGateTest(unittest.TestCase):
         self.assertEqual(code, 1, out.getvalue())
         self.assertIn("0 sdk/*.cpp", out.getvalue())
 
+    def dispositions(self, link):
+        path = Path(self.tmp.name) / "dispositions.txt"
+        path.write_text("\t".join(("cppcheck", URING, "nullPointer", "0" * 16,
+                                   "reviewed: the pointer is checked by the caller", link)) + "\n")
+        return run_tidy.read_dispositions(str(path))
+
+    def test_a_disposition_link_must_name_a_heading_of_the_triage_document(self):
+        doc = run_tidy.TRIAGE_DOC
+        for link in (doc + "#no-such-section", doc + "#new-cppcheck", doc,
+                     "elsewhere.md#new-cppcheck-finding", doc + "x#new-cppcheck-finding"):
+            with self.subTest(link=link):
+                dispositions, errors = self.dispositions(link)
+                self.assertEqual(dispositions, {})
+                self.assertEqual(len(errors), 1, errors)
+        dispositions, errors = self.dispositions(doc + "#new-cppcheck-finding")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(dispositions), 1)
+
+    def test_the_repository_dispositions_all_resolve(self):
+        dispositions, errors = run_tidy.read_dispositions(run_tidy.DISPOSITIONS)
+        self.assertEqual(errors, [])
+        self.assertGreater(len(dispositions), 0)
+
+    def test_heading_anchors_follow_the_rendered_slugs(self):
+        doc = Path(self.tmp.name) / "triage.md"
+        doc.write_text("# Static-analysis triage — 2026-10-26\n"
+                       "## cppcheck 2.19 on the fleet runners\n"
+                       "## Integration of v1.1.3 (2026-11-11)\n"
+                       "```\n## not a heading\n```\n"
+                       "### Dead stores\n### Dead stores\n")
+        self.assertEqual(run_tidy.heading_anchors(str(doc)), {
+            "static-analysis-triage--2026-10-26", "cppcheck-219-on-the-fleet-runners",
+            "integration-of-v113-2026-11-11", "dead-stores", "dead-stores-1"})
+
 
 if __name__ == "__main__":
     unittest.main()
