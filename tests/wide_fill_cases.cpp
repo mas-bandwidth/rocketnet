@@ -1076,6 +1076,7 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
         }
         trace->corrupt += slots[slot].corrupt;
         std::sort( acked_ids[slot].begin(), acked_ids[slot].end() );
+        if ( c == 0 ) { printf( "DBG mode %d threads %d:", (int) mode, num_threads ); for ( size_t i = 0; i < acked_ids[slot].size() && i < 24; i++ ) { printf( " %llu", (unsigned long long) acked_ids[slot][i] ); } printf( "\n" ); }
         for ( size_t i = 0; i < acked_ids[slot].size(); i++ )
         {
             trace->acked_id_sum[slot] += acked_ids[slot][i];
