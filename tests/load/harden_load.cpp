@@ -167,6 +167,21 @@ static double harden_now()
     return (double) std::chrono::duration_cast<std::chrono::nanoseconds>( std::chrono::steady_clock::now().time_since_epoch() ).count() * 1e-9;
 }
 
+// the calling thread's own CPU time: a fill job's core time without the
+// stretches it was not running (an oversubscribed machine preempts it, and
+// wall time would count that as work). 0 where the clock is missing.
+static double harden_thread_cpu()
+{
+#if defined( __linux__ )
+    struct timespec ts;
+    if ( clock_gettime( CLOCK_THREAD_CPUTIME_ID, &ts ) == 0 )
+    {
+        return (double) ts.tv_sec + (double) ts.tv_nsec * 1e-9;
+    }
+#endif // #if defined( __linux__ )
+    return 0.0;
+}
+
 // the wall clock, shared by every role's process on one machine: the cut's
 // phases are wall times so separate processes reach them together
 
@@ -1128,6 +1143,7 @@ struct harden_frame_window_t
     uint64_t frames = 0, overruns = 0;
     uint64_t messages = 0, start_refused = 0, received = 0;
     double jobs_busy_sum = 0; // core seconds the fill jobs spent, summed over the jobs
+    double jobs_cpu_sum = 0;  // the same as the jobs' own thread CPU seconds
 };
 
 static double harden_percentile( std::vector<double> & v, double p )
@@ -1175,6 +1191,7 @@ struct harden_fill_job_t
     uint64_t start_refused = 0;
     uint64_t finish_refused = 0;
     double busy = 0.0; // seconds inside the fill range: the core time the game gives up to the job
+    double cpu = 0.0;  // the job thread's own CPU seconds inside the fill range (busy less preemption)
 };
 
 struct harden_fill_pool_t
@@ -1202,6 +1219,7 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
     const int begin = (int) ( (int64_t) plan.size() * job / num_jobs );
     const int end = (int) ( (int64_t) plan.size() * ( job + 1 ) / num_jobs );
     const double began = harden_now();
+    const double began_cpu = harden_thread_cpu();
     for ( int k = begin; k < end; k++ )
     {
         const harden_fill_item_t & item = plan[(size_t) k];
@@ -1239,6 +1257,7 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
         }
     }
     stats.busy += harden_now() - began;
+    stats.cpu += harden_thread_cpu() - began_cpu;
 }
 
 static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
@@ -1941,6 +1960,7 @@ static int harden_server_main( const harden_options_t & o )
                     w.messages += job.messages;
                     w.start_refused += job.start_refused + job.finish_refused;
                     w.jobs_busy_sum += job.busy;
+                    w.jobs_cpu_sum += job.cpu;
                     job = harden_fill_job_t();
                 }
                 // the fill phase ends here. A client has one filler per fill
@@ -1998,11 +2018,11 @@ static int harden_server_main( const harden_options_t & o )
             const uint64_t ring_full = transport ? rocketnet_counter_value( rocketnet_server_transport_counters( transport ), ROCKETNET_COUNTER_SEND_RING_FULL ) : 0;
             std::vector<double> work_copy = w.work;
             printf( "harden_tick: t=%.1f conn=%d frames=%" PRIu64 " overruns=%" PRIu64 " work_ms avg=%.3f p99=%.3f max=%.3f update=%.3f/%.3f receive=%.3f/%.3f write=%.3f/%.3f send=%.3f/%.3f"
-                    " jobs_core_ms=%.3f msgs_ps=%.0f pkts_ps=%.0f in_msgs_ps=%.0f start_refused=%" PRIu64 " send_ring_full_total=%" PRIu64 "\n",
+                    " jobs_core_ms=%.3f jobs_cpu_ms=%.3f msgs_ps=%.0f pkts_ps=%.0f in_msgs_ps=%.0f start_refused=%" PRIu64 " send_ring_full_total=%" PRIu64 "\n",
                     t_now - started, rocketnet_server_num_connected_clients( server ), w.frames, w.overruns,
                     1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f, 1e3 * harden_percentile( work_copy, 0.99 ), 1e3 * harden_percentile( work_copy, 1.0 ),
                     1e3 * w.update_sum / f, 1e3 * w.update_max, 1e3 * w.receive_sum / f, 1e3 * w.receive_max, 1e3 * w.write_sum / f, 1e3 * w.write_max,
-                    1e3 * w.send_sum / f, 1e3 * w.send_max, 1e3 * w.jobs_busy_sum / f, (double) w.messages / span, (double) ( stats.packets_sent - last_packets_sent ) / span,
+                    1e3 * w.send_sum / f, 1e3 * w.send_max, 1e3 * w.jobs_busy_sum / f, 1e3 * w.jobs_cpu_sum / f, (double) w.messages / span, (double) ( stats.packets_sent - last_packets_sent ) / span,
                     (double) w.received / span, w.start_refused, ring_full );
             fflush( stdout );
             last_packets_sent = stats.packets_sent;
