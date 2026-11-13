@@ -30,6 +30,7 @@
 #   --payload pattern|copy            the message body: verified pattern, or a pre-built body copied in
 #   --port P                          the server's UDP port (default 40000)
 #   --client-remote DIR               the client machine's checkout (default --remote)
+#   --server-arg A / --client-arg A   one more argument to the server's or the clients' harden_load (repeatable)
 #   --server-env K=V                  an environment setting for the server (repeatable)
 #   --profile-seconds S [--profile-after A]  a Windows server samples its own main thread
 #                                     for S seconds from A (default 20) seconds in, and names
@@ -55,6 +56,8 @@ server_ip=""
 remote=""
 client_remote=""
 server_env=""
+server_extra=""
+client_extra=""
 server_os=linux
 profile_after=20
 profile_seconds=""
@@ -91,6 +94,8 @@ while [ $# -gt 0 ]; do
         --client-remote) client_remote="$2"; shift 2 ;;
         --server-env) server_env="$server_env $(printf '%q' "$2")"; shift 2 ;;
         --server-os) server_os="$2"; shift 2 ;;
+        --server-arg) server_extra="$server_extra $(printf '%q' "$2")"; shift 2 ;;
+        --client-arg) client_extra="$client_extra $(printf '%q' "$2")"; shift 2 ;;
         --profile-after) profile_after="$2"; shift 2 ;;
         --profile-seconds) profile_seconds="$2"; shift 2 ;;
         --transport) transport="$2"; shift 2 ;;
@@ -177,8 +182,12 @@ cleanup()
         on_shell "$server_host" "pkill -f '$tool server' 2>/dev/null; true" || true
     fi
     on_shell "$client_host" "pkill -f '$client_tool clients' 2>/dev/null; sudo pkill -f '$client_tool hostile' 2>/dev/null; true" || true
-    if [ "$netem_on" = 1 ] && [ "$server_os" = linux ]; then
-        on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
+    # a Windows server carries no netem, but its client does: the client's is
+    # removed whatever the server is, or it impairs every later cell
+    if [ "$netem_on" = 1 ]; then
+        if [ "$server_os" = linux ]; then
+            on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
+        fi
         on_shell "$client_host" "sudo -n tc qdisc del dev $client_dev root 2>/dev/null; true" || true
     fi
 }
@@ -201,6 +210,13 @@ on "$server_host" rm -rf "$run_dir"
 on "$server_host" mkdir -p "$run_dir"
 on "$client_host" rm -rf "$client_run_dir"
 on "$client_host" mkdir -p "$client_run_dir"
+
+if [ -z "$netem" ] && on_shell "$client_host" "tc qdisc show dev $client_dev | grep -q netem"; then
+    # a netem left on the client by a cell that did not clean up would impair
+    # this one unnamed: refuse rather than measure through it
+    echo "harden_pair: refused: a netem qdisc is already on $client_host $client_dev (tc qdisc del dev $client_dev root)" >&2
+    exit 1
+fi
 
 if [ -n "$netem" ]; then
     # only the cell's UDP is impaired: a prio root whose fourth band holds the
@@ -244,6 +260,7 @@ end_at=$(( $(date +%s) + join_seconds + seconds + 8 ))
 server_args=$(printf '%q ' "$tool" server --address "$address" --transport "$transport" \
     --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$server_dev" --warm-seconds "$warm_seconds" --sample-seconds 60 \
     "${server_shape[@]}")
+server_args="$server_args${server_extra:-}"
 if [ -n "$profile_seconds" ]; then
     server_args="$server_args --profile-after $(printf '%q' "$profile_after") --profile-seconds $(printf '%q' "$profile_seconds")"
 fi
@@ -263,7 +280,7 @@ if [ -z "$key" ]; then
 fi
 
 on_shell "$client_host" "ulimit -n 65536; cd $(printf '%q' "$client_run_dir") && nohup $(printf '%q ' "$client_tool" clients --address "$address" --key "$key" \
-    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
+    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}")$client_extra > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
 
 if [ "$hostile" = "1" ]; then
     # after the players are on: the replay kind needs their packets on the wire

@@ -34,6 +34,12 @@ harden_row()
             # chosen by the caller from the cap (TRACER-WIDE-SEND.md)
             server_shape=(--base 1 --burst 15 --burst-clients "${burst_clients:-3}" --reliable-every 1 --big-every 60 --big-bytes 3000)
             ;;
+        spaceload)
+            # space game's real load at the server (harden_load --frame-shape space --load
+            # peak|average, passed with --server-arg): the load flags set the messages, so
+            # the row adds none; players send the default input
+            server_shape=()
+            ;;
         churn)
             client_shape=(--messages 1 --reliable-every 1 --join-rate 100 --churn-clients 200 --churn-rate 20 --token-timeout 5)
             ;;
