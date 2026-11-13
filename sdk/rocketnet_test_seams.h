@@ -105,10 +105,12 @@ void rocketnet_dev_fail_disconnect_sealed_writes( int count );
 // (rocketnet_client_io_discard_at_stop, sdk/rocketnet_client_io.h) calls this once per
 // poll of its stop_woken wait instead of sleeping, so a unit case can run the
 // exit inside stop's wake call on one thread and see that no close happens
-// while the wake is still to return. The function stores stop_woken itself
-// when it lets the wait end, and fails at its own poll ceiling, so the wait
-// cannot hang the suite and does not sleep. NULL, the default, leaves the
-// sleep. Per process. Defined in sdk/rocketnet_client_transport.cpp.
+// while the wake is still to return. The wait ends only when stop_woken is
+// stored, and the hook replaces the sleep, so every function set here must
+// store stop_woken itself within a bounded number of polls (and fail its
+// case at that ceiling); one that never does spins forever. So the wait does
+// not sleep and cannot hang the suite. NULL, the default, leaves the sleep.
+// Per process. Defined in sdk/rocketnet_client_transport.cpp.
 
 typedef void rocketnet_dev_client_io_stop_wait_function_t( void * context );
 

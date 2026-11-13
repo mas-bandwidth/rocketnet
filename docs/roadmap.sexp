@@ -606,7 +606,7 @@
    :text "MCLoopbackQueue.cfg (Capacity 4, BacklogMax 2) never fills the queue, so Send's full-drop branch is never explored (COVERAGE.tsv says so), and Drop does not increment dropped although loopback_client_receive and loopback_server_receive_batch count it. Give the cfg a backlog that reaches the drop and model the counter, with a reversed witness of an uncounted drop."
    :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-10 (read, not run)")
 
-  (item "portable-tx-wait-kind-witness" :group "tests" :area "sdk"
+  (item "portable-tx-wait-kind-witness" :group "review-v1-2" :area "sdk"
    :title "The portable tx worker's choice of wait has no witness"
    :text "portable_tx_worker (sdk/rocketnet_driver_builtin.cpp, the WAIT / WAIT_CARRY branch) maps the step's result to wake_wait(0.1) or wake_wait_writable(0.001) inline, and the carry_wake fixture checks only the step's enum, so swapping the two waits passes every unit case. Lift the mapping into a pure helper the worker calls (step result -> wait kind and timeout) and check it in the fixture, red on a swapped branch. The portable transport is the fallback, so this waits until it is worth an sdk change."
    :date "2026-11-13" :origin "Tests review v1.2 merge, row TM154 (P9)")
