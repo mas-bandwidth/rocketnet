@@ -168,25 +168,11 @@ jobs:
             -lbpf -lxdp -luring -lpthread \
             -o "bin/${{ fromJSON(matrix.leg).target }}"
 
-      - name: Fuzz ${{ fromJSON(matrix.leg).target }}
-        env:
-          ASAN_OPTIONS: detect_leaks=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: |
-          set -euo pipefail
-          mkdir -p "corpus/${{ fromJSON(matrix.leg).target }}"
-          T="${{ github.event.inputs.max_total_time || fromJSON(matrix.leg).seconds || '900' }}"
-          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with ${{ fromJSON(matrix.leg).dict }}"
-          ./"bin/${{ fromJSON(matrix.leg).target }}" \
-            "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
-            -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
-          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
-          python3 tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
-
       # The two bounded mutation passes that used to run per commit live here,
-      # on the nightly tier: a copy of the committed seed corpus, a fixed seed
-      # and a few seconds, so a slow night still turns a crash into a verdict.
+      # on the nightly tier, before the campaign: a copy of the committed seed
+      # corpus, a fixed seed, 5 s and no leak check. A crash they reach is a
+      # verdict (with its reproducer uploaded) in seconds, not after the campaign
+      # has spent its time; a red pass skips the campaign.
       - name: Bounded mutation pass (time-boxed, fixed seed)
         if: fromJSON(matrix.leg).target == 'rocketnet_fuzz'
         env:
@@ -202,6 +188,22 @@ jobs:
         run: |
           cp -r tests/fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
           ./bin/rocketnet_fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
+      - name: Fuzz ${{ fromJSON(matrix.leg).target }}
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          set -euo pipefail
+          mkdir -p "corpus/${{ fromJSON(matrix.leg).target }}"
+          T="${{ github.event.inputs.max_total_time || fromJSON(matrix.leg).seconds || '900' }}"
+          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with ${{ fromJSON(matrix.leg).dict }}"
+          ./"bin/${{ fromJSON(matrix.leg).target }}" \
+            "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
+            -dict="${{ fromJSON(matrix.leg).dict }}" \
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python3 tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       # libFuzzer writes a reproducer to the working dir on a crash; keep it.
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
@@ -663,7 +665,7 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # MemorySanitizer over the same fourteen-target matrix, Linux only (row 262's
+  # MemorySanitizer over the fuzz job's targets, Linux only (row 262's
   # macOS and Windows cells are n and -: MSan is a Linux instrument). Every
   # linked object must be instrumented: the development library, vendored
   # sodium included, is configured with the MSan flags and the instrumented
@@ -694,10 +696,10 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg:
-          - '{"target":"rocketnet_fuzz","source":"tests/fuzz/rocketnet_fuzz.cpp","seeds":"tests/fuzz/corpus","dict":"tests/fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_connect_token","source":"tests/fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"tests/fuzz/corpus_connect_token","dict":"tests/fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_receive_structured","source":"tests/fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"tests/fuzz/corpus_receive_structured","dict":"tests/fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_message","source":"tests/fuzz/rocketnet_fuzz_message.cpp","seeds":"tests/fuzz/corpus_message","dict":"tests/fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz","source":"tests/fuzz/rocketnet_fuzz.cpp","seeds":"tests/fuzz/corpus","dict":"tests/fuzz/dict/rocketnet_fuzz.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"tests/fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"tests/fuzz/corpus_connect_token","dict":"tests/fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"tests/fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"tests/fuzz/corpus_receive_structured","dict":"tests/fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"tests/fuzz/rocketnet_fuzz_message.cpp","seeds":"tests/fuzz/corpus_message","dict":"tests/fuzz/dict/rocketnet_fuzz_message.dict"}'
           - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
@@ -769,14 +771,16 @@ jobs:
       # and the fleet's runners do not share one clang (18.1.3 on
       # one Linux x64 host, 21.1.8 on another). An engine keyed
       # only by OS and arch is reused across them and fails to link, so the
-      # clang version is part of the key and of the prefix restore-key.
+      # clang version is part of the key. So is a hash of the recipe (the build
+      # step below, in this file) and of the pin and libc++ it builds against
+      # (tools/build_msan_libcxx.sh): the build step keeps any engine it finds,
+      # so a changed recipe must miss the cache, and there is no prefix
+      # restore-key to bring an old engine back.
       - name: Restore the MSan libFuzzer engine
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .msan-libfuzzer
-          key: msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-${{ steps.msan-clang.outputs.version }}-v1
-          restore-keys: |
-            msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-${{ steps.msan-clang.outputs.version }}-
+          key: msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-${{ steps.msan-clang.outputs.version }}-${{ hashFiles('.github/workflows/fuzz-nightly.yml', 'tools/build_msan_libcxx.sh') }}
 
       - name: Build the MSan libFuzzer engine
         timeout-minutes: 50
@@ -787,12 +791,12 @@ jobs:
             exit 0
           fi
           version=$(clang++ -dumpversion)
-          # the tarball and pins tools/build_msan_libcxx.sh verifies
-          case "$version" in
-            18.1.3) sha256=2929f62d69dec0379e529eb632c40e15191e36f3bd58c2cb2df0413a0dc48651 ;;
-            21.1.8) sha256=4633a23617fa31a3ea51242586ea7fb1da7140e426bd62fc164261fe036aa142 ;;
-            *) echo "TOOL-MISSING llvm-project source pin for clang $version (add it to tools/build_msan_libcxx.sh) on ${RUNNER_NAME:-$(hostname)}"; exit 1 ;;
-          esac
+          # the tarball and pin tools/build_msan_libcxx.sh verifies, read from that
+          # script's `<version>) sha256=<hex> ;;` row: the pin is typed once, there
+          sha256=$(awk -v v="$version)" '$1 == v && $2 ~ /^sha256=[0-9a-f]+$/ { sub(/^sha256=/, "", $2); print $2 }' tools/build_msan_libcxx.sh)
+          if [ "${#sha256}" -ne 64 ]; then
+            echo "TOOL-MISSING llvm-project source pin for clang $version (add it to tools/build_msan_libcxx.sh) on ${RUNNER_NAME:-$(hostname)}"; exit 1
+          fi
           work=.msan-libfuzzer
           mkdir -p "$work"
           tarball="llvm-project-$version.src.tar.xz"
