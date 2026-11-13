@@ -150,7 +150,7 @@ static void check_read_write()
     CHECK( rocketnet_read_uint32( &r ) == 0x12345678 );
     CHECK( rocketnet_read_uint64( &r ) == 0x1122334455667788ULL );
 
-    // STANDARD.md Appendix A's associated data prefix: version then
+    // the associated data prefix of standard/TRANSPORT.md t9.1: version then
     // protocol id, little-endian, exactly these bytes
 
     uint8_t ad[12];

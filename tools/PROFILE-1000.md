@@ -81,11 +81,15 @@ its measurements and the remaining work before a complete budget gate.
 
 1. Add bounded fixed histograms near the existing `update_us` accounting.
    Allocate all buckets before traffic; never allocate in a timed region.
-   Record `rocketnet_time()` immediately around each call, increment the
-   correct bin, exact invocation count, exact maximum and exact count of calls
-   at or above 100 µs. Do not silently drop or overwrite observations. Label
-   histogram percentiles as **upper bounds** at their stated bucket
-   resolution; report overflow explicitly.
+   Read a monotonic clock immediately around each call (`load.c` uses its own
+   `load_clock_ns`, CLOCK_MONOTONIC or QueryPerformanceCounter, not
+   `rocketnet_time()`), increment the correct bin, exact invocation count,
+   exact maximum and exact count of calls at or above 100 µs. Do not silently
+   drop or overwrite observations. Label histogram percentiles as **upper
+   bounds** at their stated bucket resolution. Not yet done: an explicit
+   overflow count. Samples of 100 ms or more land in the last bucket, and a
+   percentile that falls there reports the exact maximum, but the number of
+   such samples is not printed.
 2. Measure `client_update`, `client_receive_messages` (including the final
    NULL call), `client_receipts`, `client_start_message`/`finish_message`,
    `client_send_packets`, `server_update`, `server_receive_messages`
@@ -101,8 +105,8 @@ its measurements and the remaining work before a complete budget gate.
    `client_receive_messages`, `client_receipts`, `client_start_message`,
    `client_finish_message`, `server_update`, `server_send_packets`,
    `server_client_connected`, `server_num_connected_clients`,
-   `server_receive_messages`, `server_start_message`, and
-   `server_finish_message`. Use one documented p99 rank convention and retain raw
+   `server_receive_messages`, `server_start_message`,
+   `server_finish_message`, and `server_disconnect_reason`. Use one documented p99 rank convention and retain raw
    histogram buckets. A count of zero means **unmeasured**, not a passing
    zero latency. The timing collector must not alter message/receipt
    consumption, and calibrated clock overhead is never subtracted from the

@@ -97,4 +97,4 @@ uname -sn
 ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
 ```
 
-The two rungs the guest runs are the auto ladder and the portable pin. The auto ladder refuses xdp in this guest (no attached data plane) and falls through. The xdp pin test asserts that refusal. It does not attach xdp.
+The two rungs the guest runs are the auto ladder and the portable pin. xdp is not built in this guest: the guest installs no clang, so the configure step compiles XDP out ("XDP off: no clang with the BPF target was found"). The auto ladder skips the transport that is not built, and a pin to xdp is refused with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`; the xdp pin test asserts that refusal. It does not attach xdp.
