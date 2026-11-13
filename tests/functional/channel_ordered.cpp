@@ -49,6 +49,11 @@ static const double rocketnet_ordered_timeout = 180.0;
 // rule changes.
 static const double rocketnet_ordered_multiple = 13.0;
 
+// After the last message is delivered the run keeps pumping this many updates
+// (2 s at 60 Hz, past every resend the 100 ms worst-case path can still have
+// in flight) and collects: any delivery then is a message delivered twice.
+static const int rocketnet_ordered_drain_updates = 120;
+
 static int rocketnet_ordered_size( int index )
 {
     static const int sizes[8] = { 16, 1000, 65536, 128, 131072, 512, 262144, 64 };
@@ -241,7 +246,10 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
             const int expected_index = measurement.delivered;
             if ( expected_index >= rocketnet_ordered_message_count )
             {
-                break;
+                // every message was delivered once already: this one is a second copy
+                printf( "%s: delivery %d of %d messages sent (%d bytes)\n", name, expected_index + 1,
+                        rocketnet_ordered_message_count, delivery.bytes );
+                rocketnet_ordered_check( expected_index < rocketnet_ordered_message_count );
             }
 
             const int expected_bytes = rocketnet_ordered_size( expected_index );
@@ -282,16 +290,31 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     const int complete = next_to_send == rocketnet_ordered_message_count &&
                          measurement.delivered == rocketnet_ordered_message_count;
 
+    // the bounded drain: the link keeps running after completion, and nothing
+    // more may be delivered (exactly once, not at least once)
+    int delivered_after_complete = 0;
+    for ( int i = 0; complete && i < rocketnet_ordered_drain_updates; i++ )
+    {
+        rocketnet_channel_harness_pump( &h, rocketnet_ordered_step );
+        rocketnet_channel_delivery_t extra = {};
+        while ( rocketnet_ordered_collect( &h, client_to_server, &extra ) )
+        {
+            delivered_after_complete++;
+        }
+    }
+    const int exactly_once = delivered_after_complete == 0;
+
     const int within_budget = measurement.completion_seconds <= rocketnet_ordered_multiple * measurement.lower_bound_seconds;
     const int no_overflow = rocketnet_channel_harness_overflows( &h ) == 0;
     const int no_allocations = rocketnet_channel_allocator_calls == h.allocations_after_create;
 
-    if ( !complete || !within_budget || !no_overflow || !no_allocations )
+    if ( !complete || !within_budget || !no_overflow || !no_allocations || !exactly_once )
     {
-        printf( "seed=0x%016llx\n", (unsigned long long) h.seed );
+        printf( "seed=0x%016llx delivered_after_complete=%d\n", (unsigned long long) h.seed, delivered_after_complete );
         const char * reason = !complete ? "incomplete" : !within_budget ? "budget_multiple"
                                                      : !no_overflow     ? "harness_overflow"
-                                                                        : "allocation_after_create";
+                                                     : !no_allocations  ? "allocation_after_create"
+                                                                        : "delivered_after_complete";
 
         const rn_message_object_t * sender = client_to_server ? &h.message_client->object : &h.message_server->object;
         const int connection = client_to_server ? 0 : h.client_slot;
@@ -311,6 +334,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     rocketnet_ordered_check( within_budget );
     rocketnet_ordered_check( no_overflow );
     rocketnet_ordered_check( no_allocations );
+    rocketnet_ordered_check( exactly_once );
     rocketnet_channel_harness_destroy( &h );
 
     return 1;
