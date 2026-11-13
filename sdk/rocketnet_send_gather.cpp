@@ -66,7 +66,7 @@ static inline const struct rocketnet_address_t * rocketnet_send_gather_to( const
 
 static inline int rocketnet_send_gather_bytes( const int * packet_bytes, size_t bytes_stride, int slot )
 {
-    return *(const int *) ( (const uint8_t *) packet_bytes + (size_t) slot * bytes_stride );
+    return packet_bytes[(size_t) slot * ( bytes_stride / sizeof( int ) )];
 }
 
 // a destination's home bucket: FNV-1a of its address bytes and port
@@ -96,7 +96,7 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
 {
     rocketnet_assert( scratch );
 
-    if ( count < 0 || count > scratch->max_slots || max_segments < 1 || max_bytes < 1 )
+    if ( count < 0 || count > scratch->max_slots || max_segments < 1 || max_bytes < 1 || bytes_stride % sizeof( int ) != 0 )
     {
         return -1;
     }

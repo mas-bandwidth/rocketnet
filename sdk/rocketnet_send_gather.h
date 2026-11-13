@@ -53,13 +53,15 @@ size_t rocketnet_send_gather_scratch_bytes( int max_slots );
 bool rocketnet_send_gather_scratch_init( struct rocketnet_send_gather_scratch_t * scratch, void * memory, int max_slots );
 
 // Groups count slots. Slot i's destination is *(const rocketnet_address_t *)
-// ( (const uint8_t *) to + i * to_stride ) and its size is *(const int *)
-// ( (const uint8_t *) packet_bytes + i * bytes_stride ), so a transport passes
+// ( (const uint8_t *) to + i * to_stride ) and its size is
+// packet_bytes[i * bytes_stride / sizeof( int )] (a slot record holding the int
+// has a stride that is a multiple of sizeof( int )), so a transport passes
 // its own slot records without copying. Writes the slot indices to order
 // (count entries at most: destinations in the order of their first slot,
 // each destination's slots in staged order) and the runs to runs (count
 // entries at most), and returns the number of runs. Refuses (-1) when count
-// exceeds the scratch's max_slots, max_segments < 1 or max_bytes < 1; a
+// exceeds the scratch's max_slots, max_segments < 1, max_bytes < 1 or bytes_stride
+// is not a multiple of sizeof( int ); a
 // packet larger than max_bytes is a run of its own. The grouping is a stable
 // counting placement, no links: O(count) with the table at most half full.
 int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stride,

@@ -394,8 +394,8 @@ static void test_uring_send_queues_allocation_bytes_follows_the_size()
         const uint64_t bytes = rocketnet_uring_send_queues_allocation_bytes( 2, slots );
         const uint64_t frames = 2ULL * ROCKETNET_URING_SEND_BANKS * (uint64_t) slots;
         check( bytes > previous );
-        check( bytes >= frames * ROCKETNET_FRAME_STRIDE );
-        check( bytes <= frames * ( ROCKETNET_FRAME_STRIDE + sizeof( struct rocketnet_uring_send_slot_t ) ) + 4096 );
+        check( bytes >= frames * (uint64_t) ROCKETNET_FRAME_STRIDE );
+        check( bytes <= frames * ( (uint64_t) ROCKETNET_FRAME_STRIDE + (uint64_t) sizeof( struct rocketnet_uring_send_slot_t ) ) + 4096 );
         previous = bytes;
     }
 

@@ -103,6 +103,10 @@ static void test_send_gather_refuses_bad_arguments()
     check( t.gather( 64, 0 ) == -1 );
     check( t.gather( 64, 65000 ) == 1 );
 
+    // a byte-count stride that is not a whole number of ints is refused
+    check( rocketnet_send_gather( &t.bank[0].to, sizeof( gather_test_slot_t ), &t.bank[0].packet_bytes, sizeof( gather_test_slot_t ) + 1,
+                                  (int) t.bank.size(), 64, 65000, &t.scratch, t.order.data(), t.runs.data() ) == -1 );
+
     // nothing staged: no runs
     check( rocketnet_send_gather( NULL, 0, NULL, 0, 0, 64, 65000, &t.scratch, NULL, NULL ) == 0 );
 }
