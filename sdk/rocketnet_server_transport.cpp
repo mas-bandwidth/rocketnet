@@ -5892,9 +5892,10 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     }
 
     // the gso, io_uring, iocp and rio transports' own counts are the public
-    // rows GSO_PACKETS_SENT .. RIO_COMMITS, cumulative, assigned on read; a
-    // transport writes its own rows and the rest of the range reads 0, so
-    // every platform has every row
+    // rows GSO_PACKETS_SENT .. RIO_COMMITS, and the rio, iocp, gso and xdp
+    // transports' refused pins *_PIN_REFUSALS, cumulative, assigned on read;
+    // a transport writes its own rows and the rest reads 0, so every platform
+    // has every row
 
     uint64_t transport_rows[ROCKETNET_NUM_COUNTERS] = {};
     if ( rocketnet_server_transport_io_transport_counters( server_transport->io.operations, server_transport->io.instance, transport_rows ) )
@@ -5903,10 +5904,11 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         {
             server_transport->counters.values[i] = transport_rows[i];
         }
-        // the rio transport's pin refusals, the row after the shared ones
+        // each transport's pin refusals, the rows after the shared ones
         server_transport->counters.values[ROCKETNET_COUNTER_RIO_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_RIO_PIN_REFUSALS];
         server_transport->counters.values[ROCKETNET_COUNTER_IOCP_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_IOCP_PIN_REFUSALS];
         server_transport->counters.values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_GSO_PIN_REFUSALS];
+        server_transport->counters.values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_XDP_PIN_REFUSALS];
     }
 
     return &server_transport->counters;

@@ -325,6 +325,33 @@ static void test_xdp_transport_receive_frames_dropped_counted()
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_receive_frames_dropped_counted );
+
+// Each refusal of an xdp thread's pin is counted once, the refused thread
+// leaves core 0, and the count is the public row
+// ROCKETNET_COUNTER_XDP_PIN_REFUSALS, read by value through the builtin
+// dispatch the transport's counter read calls: two synthetic queues pinned
+// through fake affinity calls, no socket, no worker, no thread's affinity
+// changed (sdk/rocketnet_server_socket_linux.cpp)
+bool rocketnet_server_transport_io_transport_counters( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                       uint64_t * values );
+typedef bool rocketnet_server_socket_test_transport_counters_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                                uint64_t * values );
+bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_transport_counters_t * dispatch,
+                                                const struct rocketnet_server_transport_io_operations_t * xdp );
+
+SUITE_CASE_RSS_BOUND( test_xdp_transport_refused_pin_is_counted, xdp_two_queue_rss_bound_mb );
+
+static void test_xdp_transport_refused_pin_is_counted()
+{
+    const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
+    check( xdp && xdp->backend && xdp->backend->server );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );    // each refused pin logs
+    check( rocketnet_server_socket_test_pin_refusals( rocketnet_server_transport_io_transport_counters, xdp->backend->server ) );
+    rocketnet_log_level( saved_level );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_refused_pin_is_counted );
 #endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_xdp_transport_prefilter_counters_transport_reports_them );
