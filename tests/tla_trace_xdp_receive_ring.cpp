@@ -392,7 +392,9 @@ static int trace_xdp_receive_ring( uint64_t seed, int steps, const char * out )
         }
         else
         {
-            if ( w.taking || w.staging.num_packets == 0 )
+            // the application drains seldom, so the staging buffer fills
+            // across passes and the peek is cut to its room
+            if ( w.taking || w.staging.num_packets == 0 || ( w.staging.num_packets < RING_STAGE_CAPACITY && random.below( 4 ) != 0 ) )
             {
                 continue;
             }
