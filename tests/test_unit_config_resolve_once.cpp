@@ -15,10 +15,12 @@
 //     filter it was created with
 //   - a variable set before create is validated at create: an invalid
 //     ROCKETNET_CLIENT_TRANSPORT is refused by create, not by connect
-//   - in a production build (ROCKETNET_DEV=0), a private packet filter set
-//     only through ROCKETNET_SERVER_PACKET_FILTER or
-//     ROCKETNET_CLIENT_PACKET_FILTER is accepted, and the published test
-//     filter set only through the environment is refused at create
+//
+// Not here: that a production build (ROCKETNET_DEV=0) accepts a private
+// packet filter set only through ROCKETNET_SERVER_PACKET_FILTER or
+// ROCKETNET_CLIENT_PACKET_FILTER, and refuses the published test filter set
+// only through the environment, needs the real environment and runs in the
+// functional test_platform_primitives.
 //
 // Every case runs in memory on the loopback transport with step-driven
 // clients: no socket, no thread, and time from 1000.0 as an argument.
