@@ -3308,10 +3308,10 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// message open on their own clients; a server used from one thread may
 /// use it too.
 ///
-/// One difference: an unreliable message that fits one packet leaves in
-/// its packet from this call, on the calling thread, rather than waiting
-/// for rocketnet_server_send_packets. If the server has no room to send it
-/// in this update, the call returns 0, the message is dropped and
+/// One difference: an unreliable message small enough to fit in one packet
+/// is sent from this call, on the calling thread, rather than waiting for
+/// rocketnet_server_send_packets. If the server has no room to send it in
+/// this update, the call returns 0, the message is dropped and
 /// ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counts it. Every
 /// other message is queued as by rocketnet_server_finish_message.
 ///

@@ -1293,6 +1293,11 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
  */
 int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport );
 
+// true when the transport is not staged: its payload frames go through the
+// server transport's own ring (send_capacity slots an update), as the
+// in-memory and plain socket transports' do. a NULL transport is false
+bool rocketnet_server_transport_send_buffered( const struct rocketnet_server_transport_t * server_transport );
+
 // a NULL server_transport is a counted no-op that returns 0
 /** @brief Check whether a slot currently holds a connected client.
  * @param server_transport [in] Created server transport; NULL is a counted no-op.

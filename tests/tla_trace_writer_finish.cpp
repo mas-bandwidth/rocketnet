@@ -55,7 +55,7 @@
 //   sent     the packets the fake transport was handed finished
 //   refused  MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY, read by value
 //   walked   the packets send_packets finished (rn_send_pass_cost_t
-//            packets_finished, counted on the walk's thread)
+//            frames_finished, counted on the walk's thread)
 //
 // Two variables the code holds no word for are kept by the walk from the
 // calls the code ran, as the fillphase layer keeps its control state and its
@@ -393,7 +393,7 @@ static tla_record_t wf_state( const wf_walk_t * walk )
     state.add( "starts", tla_int( (int64_t) ( started + wf_message_counter( walk, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) ) ) );
     state.add( "sent", tla_int( (int64_t) finished ) );
     state.add( "refused", tla_int( (int64_t) wf_message_counter( walk, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) ) );
-    state.add( "walked", tla_int( (int64_t) rn_send_pass_cost_read().packets_finished ) );
+    state.add( "walked", tla_int( (int64_t) rn_send_pass_cost_read().frames_finished ) );
     return state;
 }
 
@@ -657,7 +657,9 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
               "    MaxStarts = %d\n"
               "    SealAtFinish = TRUE\n"
               "    RefuseNoCapacity = TRUE\n"
-              "    CheckOwner = TRUE\n",
+              "    CheckOwner = TRUE\n"
+              "    Buffered = FALSE\n"
+              "    RingRefuses = FALSE\n",
               capacity, steps );
     const bool written = !fault && tla_write_trace( out, "MCTraceWriterFinish", seed, "TraceRNWriterFinish", "", constants, records );
 

@@ -1277,6 +1277,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     const int transport_max = rn_message_send_transport_max( object, reliability );
     bool frame_refused = false;
     int pending = RN_MESSAGE_OPEN_PENDING;
+    bool ring_short = false;                            // the transport had no slot beyond the round kept for the main thread's send
 
     // RNOutgoingBuild StartInPlace: a fitting unreliable message reserves its
     // declared maximum at the open build's committed end, or opens a frame;
@@ -1372,6 +1373,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
              object->link.send_capacity_available( object->link.transport ) <= send_connections )
         {
             header = RN_ENDPOINT_IN_PLACE_QUEUED;
+            ring_short = true;
         }
         if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
         {
@@ -1417,7 +1419,15 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                                       ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&
                                         ( connection->region->channel_send[channel].queue_head != RN_DESCRIPTOR_NONE ||
                                           connection->ordered.ack.chunk_head != RN_RESEND_NONE ) );
-            if ( !behind_queue )
+
+            // on a buffered transport a start the ring had no slot for (the
+            // round kept for the main thread's send, or a refused frame) is
+            // not a refusal: the ring holds one round and the main thread's
+            // send carries the message, as it does for the serial finish
+            // (proofs/tla/RNWriterFinish.tla Start, Buffered)
+            const bool ring_only = ( ring_short || header >= 0 ) && object->link.send_buffered &&
+                                   object->link.send_buffered( object->link.transport );
+            if ( !behind_queue && !ring_only )
             {
                 pending = RN_MESSAGE_OPEN_PENDING_NO_CAPACITY;
             }
@@ -1524,7 +1534,7 @@ uint32_t rn_message_object_finish_client( struct rn_message_object_t * object, i
     return rn_message_object_finish_as( object, index, bytes, true );
 }
 
-// proofs/tla/RNWriterFinish.tla Finish: with writer set, the packet is sealed in the call or the start with no capacity refused.
+// proofs/tla/RNWriterFinish.tla Finish: with writer set, the frame is sealed in the call or the start with no capacity refused.
 static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object, int index, int bytes, bool writer )
 {
     // RNChannel Enqueue's second half: the message joins its channel's queue
@@ -1636,7 +1646,7 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
         open->in_place_payload = NULL;
         rn_message_open_close( object, open );
 
-        // the writer's finish seals the packet now, on this thread
+        // the writer's finish seals the frame now, on this thread
         // (RNWriterFinish SealAtFinish): built, ack-stamped, numbered,
         // encrypted and handed to the network threads; the serial finish
         // keeps it open for the next record until it is full
@@ -1869,7 +1879,7 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
             }
         }
 
-        RN_SEND_PASS_COST( packets_finished );
+        RN_SEND_PASS_COST( frames_finished );
         const int wire_bytes = link->finish_packet( link->transport, &context, payload_bytes );
         if ( wire_bytes > 0 )
         {
@@ -1904,7 +1914,7 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
 #if ROCKETNET_DEV
         if ( object->connections[i].unreliable_build.writer.payload && object->connections[i].unreliable_build.writer.records > 0 )
         {
-            RN_SEND_PASS_COST( packets_finished );
+            RN_SEND_PASS_COST( frames_finished );
         }
 #endif // #if ROCKETNET_DEV
         rn_message_flush_unreliable( object, i, false );
@@ -2320,6 +2330,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->send_packets = RN_LINK_FORWARD( rocketnet_server_transport_send_packets )::call;
     link->send_capacity_available = RN_LINK_FORWARD( rocketnet_server_transport_send_capacity_available )::call;
     link->send_connected_count = RN_LINK_FORWARD( rocketnet_server_transport_num_connected_clients )::call;
+    link->send_buffered = RN_LINK_FORWARD( rocketnet_server_transport_send_buffered )::call_const;
     // P9a: the transport's id of the connection in the slot, 0 while it is
     // free; a reconnect into the slot has a new id even with the same client id
     // and inside one update, so Observe resets the slot for it
