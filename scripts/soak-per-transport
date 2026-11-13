@@ -60,12 +60,13 @@
 # the link impairment not observed, the wrong transport) is FAIL whatever the
 # host did. The bound is the bank
 # arithmetic of the smallest server send ring: the gso transport holds
-# ROCKETNET_GSO_SEND_QUEUE_SIZE (4096) packets per producer bank, and the soak
-# sends about one packet per iteration, so a refusal needs the send worker held
-# for 4096 iterations, 4096 / (iterations per second) seconds (about 4.7 s at
-# the nightly's ~865 iterations/s). The main loop is a different thread from
-# the worker, so its gap is only a sample of how starved the host was: the
-# bound is a tenth of that refusal gap (about 470 ms at ~865/s). The tenth is
+# ROCKETNET_GSO_SEND_QUEUE_SIZE (16384, read from sdk/rocketnet_server_gso.h
+# at start) packets per producer bank, and the soak sends about one packet per
+# iteration, so a refusal needs the send worker held for 16384 iterations,
+# 16384 / (iterations per second) seconds (about 18.9 s at the nightly's ~868
+# iterations/s). The main loop is a different thread from the worker, so its
+# gap is only a sample of how starved the host was: the bound is a tenth of
+# that refusal gap (about 1888 ms at ~868/s). The tenth is
 # a margin chosen, not measured; a clean bench host's largest gap over 1800 s
 # was 106 ms (HARDEN-SERVER-TRANSPORTS.md F1).
 # When at least one cell was UNMEASURED and every other cell passed, the run
@@ -92,7 +93,8 @@
 #   --judge-status N the soak exit status that the matching log ended with
 #
 # Exit status: 0 when every cell run passed, 1 when any failed, was skipped or
-# was unmeasured, 2 on a malformed option.
+# was unmeasured, 2 on a malformed option or when the bank size cannot be read
+# from the header.
 
 set -u
 
@@ -108,8 +110,14 @@ VM_KERNEL="$HOME/vm-kernels/vmlinuz-$(uname -r)"
 JUDGE_LOGS=()
 JUDGE_STATUSES=()
 # ROCKETNET_GSO_SEND_QUEUE_SIZE (sdk/rocketnet_server_gso.h): the packets one
-# producer bank holds; the stall bound's arithmetic (the header above)
-SEND_BANK_PACKETS=4096
+# producer bank holds; the stall bound's arithmetic (the header above). Read
+# from the header so the bound follows the transport.
+GSO_HEADER="$SCRIPT_DIR/../sdk/rocketnet_server_gso.h"
+SEND_BANK_PACKETS=$(sed -nE 's/^#define ROCKETNET_GSO_SEND_QUEUE_SIZE[[:space:]]+([0-9]+)[[:space:]]*$/\1/p' "$GSO_HEADER" 2>/dev/null)
+if [ -z "$SEND_BANK_PACKETS" ]; then
+    echo "$NAME: no ROCKETNET_GSO_SEND_QUEUE_SIZE in $GSO_HEADER" >&2
+    exit 2
+fi
 STALL_MARGIN=10
 
 usage()
