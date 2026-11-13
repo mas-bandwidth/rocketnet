@@ -258,6 +258,15 @@ remote endpoint.
    one-way delay, `backlog_bytes` the reliable bytes waiting, `rd` is at most
    `message_resend_delay_max_ms` and `rate_usable` is the send budget of
    [m9.4 Send budget](#m9.4) in bytes per second times `min(1, 0.1 / u)`.
+   This holds while each sender's sent-packet map holds every tracked send
+   written between a send and the processing of its acknowledgement
+   ([m9.1 Acknowledgement mapping](#m9.1)). Past that, map pressure can keep
+   the sender from retiring its lowest unacknowledged number for as long as the
+   excess lasts; with the reliable timeout disabled the connection stays up
+   meanwhile. Messages the receiver already delivered stay delivered exactly
+   once, but a message waiting for a number past the window (rule 2) is not
+   sent until that number is retired, so its delivery can come later than the
+   bound above.
    That bound holds while the budget is the limit that binds. When another
    limit binds first, the backlog drains at that slower rate and the bound
    uses it in place of `rate_usable`: `packets_per_update` packets per update,
