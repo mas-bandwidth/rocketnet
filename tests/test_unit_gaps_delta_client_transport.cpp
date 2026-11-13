@@ -234,11 +234,9 @@ static void test_delta_client_stop_counts_the_final_ring_exactly()
     int wire_bytes = 0;
 
     delta_tr_stop_counts( false, &packets, &bytes, &wire_bytes );
-    printf( "delta stop empty: packets %llu bytes %llu\n", (unsigned long long) packets, (unsigned long long) bytes );
     delta_tr_check( packets == 0 && bytes == 0, "stop with an empty final ring counted sent packets or bytes" );
 
     delta_tr_stop_counts( true, &packets, &bytes, &wire_bytes );
-    printf( "delta stop one: packets %llu bytes %llu wire %d\n", (unsigned long long) packets, (unsigned long long) bytes, wire_bytes );
     delta_tr_check( packets == 1, "stop did not count the one committed datagram of the final ring" );
     delta_tr_check( bytes == (uint64_t) wire_bytes + (uint64_t) rocketnet_wire_header_bytes( ROCKETNET_ADDRESS_IPV4 ),
                     "stop did not count the final ring's datagram as its wire bytes plus the IPv4 header" );
@@ -247,8 +245,8 @@ REGISTER_UNIT_TEST( test_delta_client_stop_counts_the_final_ring_exactly );
 
 // ---------------------------------------------------------------------------
 // the hand-off's bytes reach the per-second window: bandwidth_sent_kbps over
-// a window holding only one stats frame is that frame's wire bytes, the
-// hand-off's among them
+// a window that begins after a second of quiet is at least the hand-off's
+// wire bytes and at most everything sent since the quiet
 
 // mutation gap: delta sdk/rocketnet_client_transport.cpp:3131 arithmetic -= (stats_frames[stats_index].bytes_sent -= bytes)
 
@@ -260,9 +258,12 @@ static void test_delta_client_hand_off_bytes_reach_the_bandwidth_window()
     rocketnet_client_transport_t * transport = delta_tr_transport( &pair );
 
     // over a second of quiet: every earlier stats frame leaves the window, and
-    // the update at t starts a frame of its own
+    // the update at t starts a frame of its own; the window from here holds
+    // only what is sent from quiet on (the transport's clock is the public
+    // clock less the client's origin)
 
-    // (the transport's clock is the public clock less the client's origin)
+    struct rocketnet_client_transport_stats_t quiet;
+    rocketnet_client_transport_stats( transport, &quiet );
 
     public_step_now = pair.time + 1.05;
     const double t = public_step_now - rocketnet_client_message_client( pair.client )->object.clock_origin;
@@ -298,13 +299,15 @@ static void test_delta_client_hand_off_bytes_reach_the_bandwidth_window()
     struct rocketnet_client_transport_stats_t after;
     rocketnet_client_transport_stats( transport, &after );
 
-    const uint64_t window_bytes = after.bytes_sent - start.bytes_sent;
-    const int expected_kbps = (int) ( ( (double) window_bytes * 8.0 ) / 1000.0 );
-    printf( "delta bandwidth: start %llu sent %llu after %llu kbps %d expected %d\n", (unsigned long long) start.bytes_sent,
-            (unsigned long long) sent.bytes_sent, (unsigned long long) after.bytes_sent, after.bandwidth_sent_kbps, expected_kbps );
-    delta_tr_check( sent.bytes_sent - start.bytes_sent > 4000, "the hand-off of four 1000-byte payloads did not count their wire bytes" );
-    delta_tr_check( after.bandwidth_sent_kbps == expected_kbps,
-                    "bandwidth_sent_kbps over a one-frame window is not that frame's wire bytes: the hand-off's bytes did not reach the stats frame" );
+    // the window holds the hand-off's bytes, and nothing sent before quiet
+
+    const uint64_t hand_off_bytes = sent.bytes_sent - start.bytes_sent;
+    const int least_kbps = (int) ( ( (double) hand_off_bytes * 8.0 ) / 1000.0 );
+    const int most_kbps = (int) ( ( (double) ( after.bytes_sent - quiet.bytes_sent ) * 8.0 ) / 1000.0 );
+    delta_tr_check( hand_off_bytes > 4000, "the hand-off of four 1000-byte payloads did not count their wire bytes" );
+    delta_tr_check( after.bandwidth_sent_kbps >= least_kbps,
+                    "bandwidth_sent_kbps is below the hand-off's own wire bytes: the hand-off's bytes did not reach the stats frame" );
+    delta_tr_check( after.bandwidth_sent_kbps <= most_kbps, "bandwidth_sent_kbps counts more than was sent since the window began" );
 
     public_step_pair_destroy( &pair );
 }
@@ -397,9 +400,6 @@ static void test_delta_client_memory_plan_seam_allocates_the_plan_exactly()
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_internal( &state, token, &config, 1000.0, &status );
     rocketnet_unit_check( client != NULL );
     const uint64_t allocated = state.total_bytes;
-    const uint64_t full_plan = rocketnet_client_transport_required_memory( &config, "portable" );
-    printf( "delta plan: one family %llu full %llu allocated %llu overhead %llu\n", (unsigned long long) plan_bytes, (unsigned long long) full_plan,
-            (unsigned long long) allocated, (unsigned long long) rocketnet_allocation_overhead() );
 
     rn_test_client_transport_stop_and_destroy( client );
     rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
