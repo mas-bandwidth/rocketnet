@@ -25,7 +25,8 @@
 // took, the slot retired) and state every model variable: the bank, the
 // table, the code's order array and send state, and the history the fakes
 // saw (each packet's departures, each client's last packet sent, and the
-// order and cross-client flags). TraceRNMsgxSendRuns.tla checks the trace.
+// order and cross-client flags). proofs/tla/TraceRNMsgxSendRuns.tla checks
+// the trace.
 // The bank is the walk's input: the cfg gives it as Bank, so Init is that one
 // bank. No socket, no clock, no thread.
 //

@@ -15,8 +15,9 @@ A bank of `Size` claims (`num_packets` clamped at the bank's size, so
 `Claims` holds a value past it). Each packet has a client (its destination),
 the stamp a fill thread gave it (table slot, `-1` the shared socket, and the
 slot's generation) and whether it is live (`packet_bytes > 0`; an aborted or
-never finished packet is not). Every slot is open at `OpenGen(s)` when the
-send starts (slot 0 at generation 1, slot 1 at 0), so a stamp at the other
+never finished packet is not). Every slot is open at `OpenGen(s)` (from the set
+`OpenGenAt` of `s * GenSpan + g`) when the
+send starts (slot 0 at generation 1, slot 1 at 0 in the checked configs), so a stamp at the other
 generation is stale; `Retire` closes a slot while the worker sends. A slot's
 socket is connected to the client stamped at its open generation.
 
@@ -49,25 +50,30 @@ next update's replay walk, which may retire or open that client's socket.
 - **`Sort`**: `rocketnet_msgx_send_runs_sort`, its three loops over
   `bucket[]` (capacity + 2 entries) as recursive operators: count by key,
   prefix sums, place `order[bucket[key]++] = i`.
-- **`LoopTop`**: the top of `rocketnet_msgx_send_runs_send`'s loop: the bank
-  done; an aborted head skipped; a head that resolves to no socket sent alone
-  on the shared socket (sent, dropped, or full: kept); or the run built
-  (`Build`: the head's slot and generation, aborted packets skipped, at most
-  `Batch` live ones).
-- **`SendAll`**, **`SendPartial`**, **`SendFull`**, **`SendRefused`**,
+- **`HeadDone`**, **`HeadSkip`**, **`HeadShared`**, **`HeadDropped`**,
+  **`HeadKept`**, **`HeadRun`**: the top of the send's loop, one action per
+  outcome: the bank done; an aborted head skipped; a head that resolves to no
+  socket sent alone on the shared socket (sent, dropped, or full: kept); or
+  the run built (`Build`: the head's slot and generation, aborted packets
+  skipped, at most `Batch` live ones).
+- **`SendAll`**, **`SendPartial(k)`**, **`SendFull`**, **`SendRefused`**,
   **`SendDead`**, **`SendError`**: the connected send's answers. A partial
-  send walks the cursor past exactly that many live packets (`Advance`);
-  nothing taken and full keep the run; a refusal goes again once and a second
-  is an error; dead reports the run's stamp and starts the resend loop; any
-  other error drops the run, counted.
-- **`Dead`**: one packet of the dead run on the shared socket.
-- **`Kept`**: `rocketnet_server_msgx_worker` after a false return: past
-  `RetriesAfterQuit` retries after quit every live packet from the cursor is
-  dropped, counted; otherwise the next call starts at the same cursor.
+  send of `k` walks the cursor past exactly that many live packets
+  (`Advance`); nothing taken and full keep the run; a refusal goes again once
+  and a second is an error; dead reports the run's stamp and starts the
+  resend loop; any other error drops the run, counted.
+- **`DeadDone`**, **`DeadSkip`**, **`DeadShared`**, **`DeadDropped`**,
+  **`DeadKept`**: the dead run's resend, one packet per step, on the shared
+  socket.
+- **`GiveUp`**, **`Resume`**: `rocketnet_msgx_send_runs_give_up` after a
+  false return: past `RetriesAfterQuit` retries after quit (the count rises
+  on every check after quit, the last one too) every live packet from the
+  cursor is dropped, counted; otherwise the next call starts at the same
+  cursor.
 
 Environment: `Quit` (main sets shutdown) and `Retire(s)` (main retires a
-slot). The worker reads shutdown only in `Kept` and the table only at a
-resolve in `LoopTop`, so each is taken just before that read; any other
+slot). The worker reads shutdown only in `GiveUp` and `Resume` and the table only
+at a resolve at `HeadDone` .. `HeadRun`, so each is taken just before that read; any other
 placement reaches the same reads. A run already resolved still reaches its
 peer: the table's quarantine keeps that socket open and connected until the
 pass ends (RNMsgxSocketTable `NoCrossClient`).
@@ -152,9 +158,19 @@ linux-amd64 bench (amd-1); the records are in `RUNS.tsv`.
 | `MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg` | `NoCrossClient` | 36,750 | 45,460 | 8.5 |
 | `MCRNMsgxSendRunsBrokenDeadNoResend.cfg` | `CursorSafe` | 36,712 | 45,416 | 19.5 |
 
-## Not yet bound to the code
+## Bound to the code
 
-There is no trace check for this module yet: the unit tests
-(`tests/test_unit_msgx_send_runs.cpp`) run the real header over a fake with
-the same answers, including a seeded walk of 2,000 random banks against these
-invariants, but no trace of the header is checked as a behaviour of `Spec`.
+`TraceRNMsgxSendRuns.tla` is the trace check of this module (layer
+`msgxsendruns`, `proofs/tla/README-TraceCheck.md`): the seeded walk of
+`tests/tla_trace_msgx_send_runs.cpp` stages one bank of 18 to 24 packets and
+drives the real sort and `rocketnet_msgx_send_runs_step` over a fake table
+and fake sends, one record per step with the action the call's own answer
+names. The bank is the walk's input, given to the cfg as `Bank` (`{}` in every
+model config: every bank `Init` admits), so a trace's `Init` is that one
+state. The plant, a run builder that crosses a generation
+(`rocketnet_msgx_send_runs_same_generation`, `sdk/rocketnet_msgx_send_runs.cpp`),
+must be rejected at the first record it changes; `MCTraceRNMsgxSendRunsSelf.cfg`
+and `MCTraceRNMsgxSendRunsSelfBrokenSortBlind.cfg` are the checker's own
+controls. The unit tests (`tests/test_unit_msgx_send_runs.cpp`) also run the
+real header over a fake, including a seeded walk of 2,000 random banks against
+these invariants.
