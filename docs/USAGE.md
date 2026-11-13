@@ -556,9 +556,9 @@ forms are ignored there, with a log line). A server
 created at `0.0.0.0:40000` advertises `0.0.0.0:40000` and accepts only tokens
 that name that address, so pass the address your clients reach. With port 0
 the advertised port is the one start binds, so mint tokens with the address
-the running server reports (`rocketnet_server_ipv4_address`,
-`rocketnet_server_ipv6_address`, or `rocketnet_server_port`), not the create
-argument. It returns a stopped server
+string the running server reports, port included
+(`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`), not the
+create argument. `rocketnet_server_port` returns that port alone, as a number. It returns a stopped server
 with `ROCKETNET_STATUS_OK`, or NULL with the specific refusal status, and binds
 nothing. `rocketnet_server_start` binds the
 transport and accepts clients; `rocketnet_server_stop` disconnects every
