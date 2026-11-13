@@ -879,7 +879,7 @@ static int rocketnet_server_transport_send_queue_of( const rocketnet_server_tran
 // Not reserved, by design: the cookie replies to requests that carry no
 // valid cookie. They answer unauthenticated sources at whatever rate those
 // send, so no constant bounds them; they compete with the game's packets and are
-// refused like it when the staging is full.
+// refused like them when the staging is full.
 static void rocketnet_server_transport_send_reserves( const rocketnet_server_transport_t * server_transport, uint64_t * reserve )
 {
     const struct rocketnet_client_slots_t * slots = server_transport->protocol.client_slots;
