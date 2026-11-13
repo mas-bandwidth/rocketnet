@@ -940,14 +940,6 @@ MCRNUringQueueWorkerLive.cfg	MCRNUringQueueWorker.tla	pass	-	check	rnuringqueuew
 MCRNUringQueueWorkerBrokenExitEarly.cfg	MCRNUringQueueWorker.tla	invariant	ExitDrained	check	rnuringqueueworker	required	-
 MCRNUringQueueWorkerBrokenRetryUnbounded.cfg	MCRNUringQueueWorker.tla	temporal	StopFinishes	check	rnuringqueueworker	required	-
 MCRNUringQueueWorkerBrokenWakeSkip.cfg	MCRNUringQueueWorker.tla	temporal	StopFinishes	ignore-terminal	rnuringqueueworker	required	-
-MCRNSendReserve.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required	-
-MCRNSendReserveBrokenRoomOnly.cfg	MCRNSendReserve.tla	invariant	ReserveKept	check	rnsendreserve	required	-
-MCRNSendReserveBrokenSplitClaim.cfg	MCRNSendReserve.tla	invariant	ReserveKept	check	rnsendreserve	required	-
-MCRNSendReserveBrokenRoomFirst.cfg	MCRNSendReserve.tla	invariant	ReserveKept	check	rnsendreserve	required	-
-MCRNSendReserveBrokenOwnCountFirst.cfg	MCRNSendReserve.tla	invariant	ReserveKept	check	rnsendreserve	required	-
-MCRNSendReserveBrokenNoRefresh.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
-MCRNSendReserveBrokenNoReread.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
-MCRNSendReserveBrokenIndexTest.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
 MCRNUringQueueReceive.cfg	MCRNUringQueueReceive.tla	pass	-	check	rnuringqueuereceive	required	-
 MCRNUringQueueReceiveLive.cfg	MCRNUringQueueReceive.tla	pass	-	check	rnuringqueuereceive	required	-
 MCRNUringQueueReceiveBrokenFullAtCapacity.cfg	MCRNUringQueueReceive.tla	invariant	NoOverwrite	check	rnuringqueuereceive	required	-

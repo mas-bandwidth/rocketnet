@@ -7,6 +7,7 @@
 #include "rocketnet_test_seams.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_server_uring.h"
+#include "rocketnet_receive_prefilter.h" // ROCKETNET_RECEIVE_NUM_DROPS, in the built transport and the stub alike
 
 #include <new>
 #include <atomic>
@@ -53,7 +54,6 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_server_gso.h"
-#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_send_queue.h"
 #include "rocketnet_uring_queue_send.h"
 #include "rocketnet_uring_queue_worker.h"
@@ -591,7 +591,9 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues, int max_clients )
     }
 
     uint64_t bytes = rocketnet_memory_allocations( { sizeof( rocketnet_server_uring_t ), (uint64_t) queues * sizeof( rocketnet_server_uring_queue_t ), banks, send } );
-    if ( !bytes || !rocketnet_memory_add( bytes, (uint64_t) queues, receive ) || !rocketnet_memory_add( bytes, 1, view ) )
+    // and each queue's worker thread: its platform thread record
+    if ( !bytes || !rocketnet_memory_add( bytes, (uint64_t) queues, receive ) || !rocketnet_memory_add( bytes, 1, view ) ||
+         !rocketnet_memory_add( bytes, (uint64_t) queues, rocketnet_platform_thread_allocation_bytes() ) )
     {
         return 0;
     }

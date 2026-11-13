@@ -2701,7 +2701,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
         plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes( queues, config->max_clients );
         plan.mapped_ring_bytes = rocketnet_server_uring_mapped_bytes( queues );
-        plan.worker_threads = 0;
+        plan.worker_threads = queues; // a worker per queue owns its ring
         plan.sockets = queues;
     }
 #if ROCKETNET_XDP
