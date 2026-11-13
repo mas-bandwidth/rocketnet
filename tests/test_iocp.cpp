@@ -3014,6 +3014,46 @@ static void test_rio_create_failure_drains_posted_receives()
         CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, stage + 16 * 2, NULL, &options ) );
         CHECK( rocketnet_server_rio_test_lanes_made() - made == 2 );
         CHECK( live_allocations.load() == baseline );
+        // lane 0 was given a port; the failed create hands the caller (and
+        // the next transport of the ladder) the port 0 it asked for
+        CHECK( bind.port == 0 );
+    }
+
+    // a made lane that never stops (its sends held): the rollback's wait is
+    // bounded, the lane is leaked whole and counted, create returns NULL with
+    // port 0, and the leaked lane, released, stops and is freed
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_rio_options_t options;
+        options.lanes = 4;
+        options.packet_filter = NULL;
+        const uint64_t leaks = rocketnet_server_rio_create_leaks();
+        rocketnet_server_rio_test_set_hold_rollback( true );
+        const double start = rocketnet_platform_time();
+        CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 1 + 16 * 1, NULL, &options ) );
+        const double seconds = rocketnet_platform_time() - start;
+        rocketnet_server_rio_test_set_hold_rollback( false );
+        printf( "  rio create rollback with a lane that never stops: %.0f ms\n", seconds * 1000.0 );
+        CHECK( seconds < 10.0 );
+        CHECK( rocketnet_server_rio_create_leaks() - leaks == 1 );
+        CHECK( bind.port == 0 );
+        CHECK( rocketnet_server_rio_test_finish_rollback_leak() );
+        CHECK( live_allocations.load() == baseline );
+    }
+
+    // a bind refused for want of buffers (stage 8, WSAENOBUFS) reads
+    // OUT_OF_MEMORY, not TRANSPORT_BIND_REFUSED, in lane 0 and in lane 1
+    for ( int stage : { 8, 8 + 16 * 1 } )
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_rio_options_t options;
+        options.lanes = 2;
+        options.packet_filter = NULL;
+        int status = ROCKETNET_STATUS_OK;
+        CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, stage, &status, &options ) );
+        CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+        CHECK( bind.port == 0 );
+        CHECK( live_allocations.load() == baseline );
     }
 
     printf( "test_rio_transport_create_failure_drains_posted_receives\n" );
