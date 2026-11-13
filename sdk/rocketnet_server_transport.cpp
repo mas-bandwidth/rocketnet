@@ -2079,8 +2079,8 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
 // open that ran out of memory ends the ladder rather than falling).
 
 static int rocketnet_server_transport_open_in_order( struct rocketnet_server_transport_t * server_transport, void * context,
-                                                   const struct rocketnet_server_transport_resolved_t * resolved,
-                                                   rocketnet_address_t * bind_address, int * status )
+                                                     const struct rocketnet_server_transport_resolved_t * resolved,
+                                                     rocketnet_address_t * bind_address, int * status )
 {
     const struct rocketnet_server_transport_config_t * config = &resolved->config;
     const char * public_address_string = resolved->public_address_string;
