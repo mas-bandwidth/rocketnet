@@ -2,8 +2,10 @@ name: Nightly examples
 
 # The examples are programs over the real transport and the wall clock, so
 # they are the functional tier, not the per-commit gate. This workflow builds
-# and runs the whole series on the same Linux, macOS and Windows runners
-# ci.yml uses, once a night and on demand, and never on a commit.
+# and runs the series (tools/run_examples.py) on the same Linux, macOS and
+# Windows runners ci.yml uses, once a night and on demand, and never on a
+# commit. The backend pair (example_backend_server and example_backend_client,
+# tools/run_backend_examples.py) runs on Linux only.
 
 on:
   schedule:
@@ -66,17 +68,14 @@ jobs:
         run: cmake --build build --config Release --parallel 4
 
       - name: Check the examples against the house rules
-        if: runner.os != 'Windows'
         run: python3 tools/check_examples.py
 
       - name: Run the examples
-        if: runner.os != 'Windows'
         run: python3 tools/run_examples.py --build build
 
       # the backend pair: example_backend_server, a backend from
       # examples/backend/ (Go, then C#) minting the token, example_backend_client
       - name: Run the backend examples
-        if: runner.os != 'Windows'
         env:
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
           DOTNET_NOLOGO: 1
@@ -93,32 +92,17 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
-            for tool in cmake clang c++ xxd python3; do
-              if ! command -v "$tool" >/dev/null 2>&1; then
-                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
-                missing=1
-              fi
-            done
-            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
-              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
-              missing=1
-            fi
-            exit "$missing"
-          fi
-          for tool in cmake gcc g++ clang xxd pkg-config; do
+          # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+          for tool in cmake clang c++ xxd python3; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
             fi
           done
-          for lib in libbpf libxdp libsodium liburing; do
-            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
-              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
-              missing=1
-            fi
-          done
+          if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+            echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+            missing=1
+          fi
           exit "$missing"
 
       - name: Configure
@@ -159,7 +143,9 @@ jobs:
           bash tools/run_functional.sh dev arch -x86_64 ./bin/functional
           # a pin covers every create in the process, so the suite's own
           # per-pump cases run unpinned above; the pinned cells run the
-          # transport-matrix socket cases, as .github/workflows/ci.yml:322-373 does
+          # transport-matrix socket cases (ci.yml's "Transport family matrix"
+          # step, socket_cases) on two of its six macOS cells,
+          # portable/portable and msgx/msgx
           for transport in portable msgx; do
             for case in test_loopback_transport_udp test_loopback_transport_ipv6 \
                         test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured; do
