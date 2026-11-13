@@ -145,7 +145,7 @@ on_shell()
 server_running()
 {
     if [ "$server_os" = windows ]; then
-        on_shell "$server_host" "tasklist //NH //FI 'IMAGENAME eq harden_load.exe' | grep -c harden_load || true"
+        on_shell "$server_host" "tasklist //NH //FI 'IMAGENAME eq harden_load.exe' | awk '/harden_load/ { n++ } END { print n + 0 }'"
     else
         on_shell "$server_host" "pgrep -x harden_load | wc -l"
     fi
