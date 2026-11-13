@@ -18,6 +18,7 @@ EXTENDS ClientConnection
 SafetyInvariants ==
     /\ TypeOK /\ ConnectedMeansHandshake /\ TimeoutHonoured /\ DeadlineHonoured
     /\ AtMostOneLiveSession /\ OneRequestFamily /\ CommitsOnAnswer
+    /\ EarlySendPerAdvance
 
 \* the family race runs (MCClientConnectionRace.cfg and its reversed witness
 \* MCClientConnectionBrokenCommitEarly.cfg): a token naming both families on
@@ -30,6 +31,10 @@ MCCommitEarly   == TRUE
 \* witness MCClientConnectionBrokenCookieReplaces.cfg): an observer of the
 \* request sends cookies echoing the attempt's salt with a mac of its own
 MCForgery       == TRUE
+
+\* the early-send witness (MCClientConnectionBrokenEarlyAnyCookie.cfg): every
+\* accepted cookie arms the early send, not only the advance from 1 to 2
+MCEarlyAnyCookie == TRUE
 
 (***************************************************************************)
 (* Reachability.  A probe, not a rule: the client is connected and its     *)

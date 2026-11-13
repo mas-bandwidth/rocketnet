@@ -16272,6 +16272,139 @@ static void rocketnet_test_message_client_create_takes_the_create_budget()
     }
 }
 
+#if ROCKETNET_DEV
+
+// Update-count latency cases over real loopback sockets (functional: real
+// sockets and real worker threads, protocol time stepped at 60 Hz). Each
+// update the application runs is: server update, client update, receive,
+// client send_packets, server send_packets. They count updates, not time.
+
+struct rocketnet_latency_pair_t
+{
+    struct rocketnet_server_t * server;
+    struct rocketnet_client_t * client;
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+};
+
+static void rocketnet_latency_pair_server( struct rocketnet_latency_pair_t * pair )
+{
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    server_config.transport = "portable";
+    pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    rocketnet_check( pair->server );
+    rocketnet_check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_ipv4_address( pair->server, pair->server_address, sizeof( pair->server_address ) ) );
+    rocketnet_server_public_key( pair->server, pair->server_key );
+    pair->client = NULL;
+}
+
+static void rocketnet_latency_pair_connect( struct rocketnet_latency_pair_t * pair, uint64_t client_id )
+{
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    rocketnet_check( rocketnet_create_dev_connect_token( pair->server_address, NULL, pair->server_key, ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS, client_id, ROCKETNET_DEV_PROTOCOL_ID, rocketnet_functional_token_timestamp( 0, rocketnet_platform_time() ), NULL, token ) == ROCKETNET_STATUS_OK );
+    struct rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    client_config.transport = "portable";
+    pair->client = rocketnet_client_create( NULL, &client_config, NULL );
+    rocketnet_check( pair->client );
+    rocketnet_check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
+}
+
+static uint64_t rocketnet_latency_client_sent( struct rocketnet_client_t * client )
+{
+    struct rocketnet_client_stats_t stats;
+    rocketnet_client_stats( client, &stats );
+    return stats.packets_sent;
+}
+
+// The update time steps at 60 Hz; a short real sleep lets the loopback
+// datagrams and the worker threads move between updates.
+static double rocketnet_latency_step( double now )
+{
+    rocketnet_sleep( 0.002 );
+    return now + 1.0 / 60.0;
+}
+
+static void rocketnet_latency_drain( struct rocketnet_latency_pair_t * pair )
+{
+    while ( rocketnet_client_receive_messages( pair->client ) )
+    {
+    }
+    while ( rocketnet_server_receive_messages( pair->server ) )
+    {
+    }
+}
+
+// TRANSPORT.md t11 rule 7: the advance a reply makes (cookie: 1 -> 2,
+// challenge: 2 -> 3) brings the next handshake send forward. The client
+// takes at most one update between the update that processed the reply and
+// its next handshake send; before the fix it waited out the 0.1 s send
+// interval, five or six updates at 60 Hz.
+void rocketnet_test_handshake_send_follows_reply()
+{
+    struct rocketnet_latency_pair_t pair;
+    rocketnet_latency_pair_server( &pair );
+    double now = 1000.0;
+    for ( int attempt = 0; attempt < 8; attempt++ )
+    {
+        rocketnet_latency_pair_connect( &pair, (uint64_t) 0x5100 + (uint64_t) attempt );
+        int state = (int) ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE;
+        int advance_update[5] = { -1, -1, -1, -1, -1 };
+        int send_update[5] = { -1, -1, -1, -1, -1 };
+        uint64_t sent = rocketnet_latency_client_sent( pair.client );
+        for ( int update = 0; update < 600 && state != (int) ROCKETNET_CLIENT_STATE_CONNECTED; update++ )
+        {
+            rocketnet_server_update( pair.server, now );
+            rocketnet_client_update( pair.client, now );
+            const int after = (int) rocketnet_client_state( pair.client );
+            rocketnet_check( after >= state );
+            if ( after != state && after >= 2 && after <= 4 )
+            {
+                advance_update[after] = update;
+            }
+            state = after;
+            rocketnet_latency_drain( &pair );
+            rocketnet_client_send_packets( pair.client );
+            rocketnet_server_send_packets( pair.server );
+            const uint64_t sent_now = rocketnet_latency_client_sent( pair.client );
+            if ( sent_now > sent && state >= 2 && state <= 3 && send_update[state] < 0 )
+            {
+                send_update[state] = update;
+            }
+            sent = sent_now;
+            now = rocketnet_latency_step( now );
+        }
+        rocketnet_check( state == (int) ROCKETNET_CLIENT_STATE_CONNECTED );
+        for ( int s = 2; s <= 3; s++ )
+        {
+            rocketnet_check( advance_update[s] >= 0 && send_update[s] >= 0 );
+            const int updates = send_update[s] - advance_update[s];
+            if ( updates > 1 )
+            {
+                printf( "attempt %d: state %d entered at update %d, first send at update %d\n", attempt, s, advance_update[s], send_update[s] );
+            }
+            rocketnet_check( updates <= 1 );
+        }
+        rocketnet_client_disconnect( pair.client );
+        for ( int i = 0; i < 600 && !rocketnet_client_disconnected( pair.client ); i++ )
+        {
+            rocketnet_client_update( pair.client, now );
+            rocketnet_server_update( pair.server, now );
+            rocketnet_server_send_packets( pair.server );
+            now = rocketnet_latency_step( now );
+        }
+        rn_cli_client_stop_and_destroy( pair.client, now );
+        pair.client = NULL;
+    }
+    rn_cli_server_stop_and_destroy( pair.server );
+}
+
+#endif // ROCKETNET_DEV
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_client_destroy_early_threaded_frees", test_client_destroy_early_threaded_frees, NULL },
@@ -16490,6 +16623,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_config_precedence", rocketnet_test_config_precedence, rocketnet_test_server_pin_is_not_xdp },
 #if ROCKETNET_DEV
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries, NULL },
+    { "test_handshake_send_follows_reply", rocketnet_test_handshake_send_follows_reply, NULL },
     { "test_public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected, NULL },
     { "test_server_stop_disconnects_every_client_portable", rocketnet_test_server_stop_disconnects_every_client_portable, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
