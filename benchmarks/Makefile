@@ -36,7 +36,7 @@ probe_darwin: probe_darwin.c
 bench_msgx: bench_msgx.c bench_common.h
 	$(CC) $(CFLAGS) -o bench_msgx bench_msgx.c
 
-bench_kqueue: bench_kqueue.c bench_common.h
+bench_kqueue: bench_kqueue.c bench_common.h bench_sendto.h
 	$(CC) $(CFLAGS) -o bench_kqueue bench_kqueue.c
 
 bench_nw: bench_nw.c bench_common.h
@@ -45,7 +45,7 @@ bench_nw: bench_nw.c bench_common.h
 probe: probe.c
 	$(CC) $(CFLAGS) -static -o probe probe.c
 
-bench_portable: bench_portable.c bench_common.h
+bench_portable: bench_portable.c bench_common.h bench_sendto.h
 	$(CC) $(CFLAGS) -o bench_portable bench_portable.c
 
 bench_gso: bench_gso.c bench_common.h
