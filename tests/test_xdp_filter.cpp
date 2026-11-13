@@ -35,6 +35,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_replay_marks.h"
 #include "rocketnet_xdp_socket_config.h"
+#include "functional/xdp_test_net.h"
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -1403,10 +1404,25 @@ static bool replay_key_layout_matches_header( filter_t * filter )
 }
 
 // The AF_XDP bind on a veth pair the case owns, inside the virtme-ng guest only.
+//
+// The veth cases take their names and addresses from xdp_test_net.h, per
+// process and case, never fixed ones: a second run in the same kernel, or a
+// functional veth case beside it, then never deletes this run's pair or
+// namespace, and each case removes only what its own commands made.
 
-static const char * zc_veth = "rnxsk0";
 static const char * case_skip_reason = NULL;
-static const char * zc_veth_far = "rnxsk1";
+
+static bool xdp_case_net( const char * case_name, struct rocketnet_xdp_test_net_t * net )
+{
+    char reason[512];
+    if ( !rocketnet_xdp_test_net_take( case_name, net, reason, sizeof( reason ) ) )
+    {
+        printf( "  FAIL %s\n", reason );
+        return false;
+    }
+
+    return true;
+}
 
 static bool inside_virtme_guest()
 {
@@ -1565,6 +1581,14 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
         return true;
     }
 
+    struct rocketnet_xdp_test_net_t net;
+    if ( !xdp_case_net( "xsk_bind_falls_back_to_copy", &net ) )
+    {
+        return false;
+    }
+    const char * zc_veth = net.near_name;
+    const char * zc_veth_far = net.far_name;
+
     // a failed add means the pair is not ours (the name may already be taken), so nothing is removed
 
     char command[256];
@@ -1603,13 +1627,9 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
 // its far end in a network namespace with no default route; the example
 // server runs with the xdp transport on the near end, the example client runs in
 // the namespace, and every frame the server sends must carry the far end's
-// MAC as its destination. The namespace and the veth pair are removed on
-// every exit path.
+// MAC as its destination. The namespace and the veth pair are the case's own
+// (xdp_test_net.h), and what the case made is removed on every exit path.
 
-#define ONLINK_NAMESPACE "rnonlink"
-#define ONLINK_NEAR "rnonlink0"
-#define ONLINK_FAR "rnonlink1"
-#define ONLINK_SERVER_ADDRESS "10.77.1.1:40000"
 #define ONLINK_WANT_FRAMES 150
 #define ONLINK_SECONDS 20.0
 #define ONLINK_MAX_CLIENTS "4"
@@ -1750,6 +1770,10 @@ struct onlink_environment_t
     pid_t client = -1;
     char server_log[64] = "/tmp/rocketnet_onlink_server_XXXXXX";
     char client_log[64] = "/tmp/rocketnet_onlink_client_XXXXXX";
+    char netns[24] = "";
+    char near_name[24] = "";
+    bool made_netns = false;    // only what this case's own commands made is removed
+    bool made_link = false;
 
     ~onlink_environment_t()
     {
@@ -1775,9 +1799,22 @@ struct onlink_environment_t
         {
             close( client_netns_fd );
         }
-        if ( system( "ip netns del " ONLINK_NAMESPACE " 2>/dev/null; ip link del " ONLINK_NEAR " 2>/dev/null" ) != 0 )
+        char command[128];
+        if ( made_netns )
         {
-            // already gone: the namespace takes its veth end with it
+            snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null", netns );
+            if ( system( command ) != 0 )
+            {
+                // already gone
+            }
+        }
+        if ( made_link )
+        {
+            snprintf( command, sizeof( command ), "ip link del %s 2>/dev/null", near_name );
+            if ( system( command ) != 0 )
+            {
+                // already gone: the namespace takes its veth end with it
+            }
         }
         unlink( server_log );
         unlink( client_log );
@@ -1809,7 +1846,23 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
     snprintf( server_path, sizeof( server_path ), "%s/server", exe );
     snprintf( client_path, sizeof( client_path ), "%s/client", exe );
 
+    struct rocketnet_xdp_test_net_t net;
+    if ( !xdp_case_net( "xdp_on_link_reply_reaches_the_client", &net ) )
+    {
+        return false;
+    }
+
+    char server_address[48];
+    snprintf( server_address, sizeof( server_address ), "%s:40000", net.near4 );
+    uint8_t onlink_server_ipv4[4];
+    if ( inet_pton( AF_INET, net.near4, onlink_server_ipv4 ) != 1 )
+    {
+        return false;
+    }
+
     onlink_environment_t environment;
+    snprintf( environment.netns, sizeof( environment.netns ), "%s", net.netns );
+    snprintf( environment.near_name, sizeof( environment.near_name ), "%s", net.near_name );
 
     {
         const int server_log_fd = mkstemp( environment.server_log );
@@ -1834,27 +1887,42 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         }
     }
 
-    if ( system( "ip netns del " ONLINK_NAMESPACE " 2>/dev/null; ip link del " ONLINK_NEAR " 2>/dev/null" ) != 0 )
-    {
-        // nothing left from an earlier run
-    }
+    // xdp_test_net.h removed anything an earlier holder of these names or
+    // this slot left; a failed add is not ours, so nothing of it is removed
 
-    if ( !onlink_run( "ip netns add " ONLINK_NAMESPACE ) ||
-         !onlink_run( "ip link add " ONLINK_NEAR " type veth peer name " ONLINK_FAR ) ||
-         !onlink_run( "ip link set " ONLINK_FAR " netns " ONLINK_NAMESPACE ) ||
-         !onlink_run( "ip addr add 10.77.1.1/24 dev " ONLINK_NEAR ) ||
-         !onlink_run( "ip link set " ONLINK_NEAR " up" ) ||
-         !onlink_run( "echo 2 > /sys/class/net/" ONLINK_NEAR "/napi_defer_hard_irqs" ) ||
-         !onlink_run( "echo 200000 > /sys/class/net/" ONLINK_NEAR "/gro_flush_timeout" ) ||
-         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip addr add 10.77.1.2/24 dev " ONLINK_FAR ) ||
-         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set " ONLINK_FAR " up" ) ||
-         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set lo up" ) )
+    char command[256];
+    snprintf( command, sizeof( command ), "ip netns add %s", net.netns );
+    environment.made_netns = onlink_run( command );
+    if ( !environment.made_netns )
+    {
+        return false;
+    }
+    snprintf( command, sizeof( command ), "ip link add %s type veth peer name %s", net.near_name, net.far_name );
+    environment.made_link = onlink_run( command );
+    if ( !environment.made_link )
     {
         return false;
     }
 
+    char steps[8][256];
+    snprintf( steps[0], sizeof( steps[0] ), "ip link set %s netns %s", net.far_name, net.netns );
+    snprintf( steps[1], sizeof( steps[1] ), "ip addr add %s/24 dev %s", net.near4, net.near_name );
+    snprintf( steps[2], sizeof( steps[2] ), "ip link set %s up", net.near_name );
+    snprintf( steps[3], sizeof( steps[3] ), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs", net.near_name );
+    snprintf( steps[4], sizeof( steps[4] ), "echo 200000 > /sys/class/net/%s/gro_flush_timeout", net.near_name );
+    snprintf( steps[5], sizeof( steps[5] ), "ip netns exec %s ip addr add %s/24 dev %s", net.netns, net.far4, net.far_name );
+    snprintf( steps[6], sizeof( steps[6] ), "ip netns exec %s ip link set %s up", net.netns, net.far_name );
+    snprintf( steps[7], sizeof( steps[7] ), "ip netns exec %s ip link set lo up", net.netns );
+    for ( int i = 0; i < 8; i++ )
+    {
+        if ( !onlink_run( steps[i] ) )
+        {
+            return false;
+        }
+    }
+
     environment.home_netns_fd = open( "/proc/self/ns/net", O_RDONLY );
-    environment.client_netns_fd = open( "/var/run/netns/" ONLINK_NAMESPACE, O_RDONLY );
+    environment.client_netns_fd = open( net.netns_path, O_RDONLY );
     if ( environment.home_netns_fd < 0 || environment.client_netns_fd < 0 )
     {
         printf( "  FAIL could not open the network namespaces\n" );
@@ -1874,7 +1942,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         const int probe = socket( AF_INET, SOCK_DGRAM, 0 );
         struct ifreq ifr;
         memset( &ifr, 0, sizeof( ifr ) );
-        strncpy( ifr.ifr_name, ONLINK_FAR, sizeof( ifr.ifr_name ) - 1 );
+        memcpy( ifr.ifr_name, net.far_name, strnlen( net.far_name, sizeof( ifr.ifr_name ) - 1 ) ); // a name is at most 13 characters (xdp_test_net.h)
         const bool have_mac = probe >= 0 && ioctl( probe, SIOCGIFHWADDR, &ifr ) == 0;
         if ( have_mac )
         {
@@ -1884,7 +1952,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         {
             close( probe );
         }
-        client_ifindex = (int) if_nametoindex( ONLINK_FAR );
+        client_ifindex = (int) if_nametoindex( net.far_name );
         environment.capture_fd = socket( AF_PACKET, SOCK_RAW, htons( ETH_P_IP ) );
         if ( environment.capture_fd >= 0 )
         {
@@ -1917,8 +1985,8 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         return false;
     }
 
-    environment.server = onlink_spawn( server_path, ONLINK_SERVER_ADDRESS, environment.server_log, -1, true, environment.stdin_pipe[0] );
-    environment.client = onlink_spawn( client_path, ONLINK_SERVER_ADDRESS, environment.client_log, environment.client_netns_fd, false, environment.stdin_pipe[0] );
+    environment.server = onlink_spawn( server_path, server_address, environment.server_log, -1, true, environment.stdin_pipe[0] );
+    environment.client = onlink_spawn( client_path, server_address, environment.client_log, environment.client_netns_fd, false, environment.stdin_pipe[0] );
 
     // every frame from the server's address and port, judged by its
     // destination MAC
@@ -1954,7 +2022,6 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
             continue;
         }
 
-        static const uint8_t onlink_server_ipv4[4] = { 10, 77, 1, 1 };
         const int ihl = ( frame[14] & 0x0F ) * 4;
         const uint16_t source_port = (uint16_t) ( ( frame[14 + ihl] << 8 ) | frame[14 + ihl + 1] );
         if ( memcmp( frame + 26, onlink_server_ipv4, 4 ) != 0 || source_port != 40000 )
@@ -1982,21 +2049,25 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
     onlink_stop( environment.server );
     environment.server = -1;
 
-    const bool server_was_xdp = onlink_log_has( environment.server_log, "server transport started on " ONLINK_SERVER_ADDRESS " [xdp]" );
-    const bool server_had_no_gateway = onlink_log_has( environment.server_log, "server found no gateway on " ONLINK_NEAR );
+    char started_line[96];
+    snprintf( started_line, sizeof( started_line ), "server transport started on %s [xdp]", server_address );
+    char no_gateway_line[96];
+    snprintf( no_gateway_line, sizeof( no_gateway_line ), "server found no gateway on %s", net.near_name );
+    const bool server_was_xdp = onlink_log_has( environment.server_log, started_line );
+    const bool server_had_no_gateway = onlink_log_has( environment.server_log, no_gateway_line );
     const bool client_connected = onlink_log_has( environment.client_log, "client state: connected" );
     const bool exchanged = onlink_log_has( environment.client_log, "client sent " );
 
     bool ok = true;
     if ( !server_had_no_gateway )
     {
-        printf( "  FAIL the server did not run without a gateway on " ONLINK_NEAR "\n" );
+        printf( "  FAIL the server did not run without a gateway on %s\n", net.near_name );
         ok = false;
     }
 
     if ( !server_was_xdp )
     {
-        printf( "  FAIL the server did not start with the xdp transport on " ONLINK_NEAR "\n" );
+        printf( "  FAIL the server did not start with the xdp transport on %s\n", net.near_name );
         ok = false;
     }
 
@@ -2030,9 +2101,6 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
 // own, never die on a signal (a Debug build aborts on the mutex assert when
 // destroy destroys a mutex create never made).
 
-#define TEARDOWN_NEAR "rnteardown0"
-#define TEARDOWN_FAR "rnteardown1"
-#define TEARDOWN_SERVER_ADDRESS "10.78.1.1:40000"
 #define TEARDOWN_SECONDS 30.0
 
 // the cpus in /sys/devices/system/cpu/isolated ("1-2,5" counts 3)
@@ -2111,6 +2179,16 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
     char server_path[4200];
     snprintf( server_path, sizeof( server_path ), "%s/server", exe );
 
+    // the veth pair and its address are the case's own (xdp_test_net.h)
+
+    struct rocketnet_xdp_test_net_t net;
+    if ( !xdp_case_net( "xdp_create_fails_part_way_tears_down", &net ) )
+    {
+        return false;
+    }
+    char server_address[48];
+    snprintf( server_address, sizeof( server_address ), "%s:40000", net.near4 );
+
     char server_log[64] = "/tmp/rocketnet_teardown_server_XXXXXX";
     {
         const int server_log_fd = mkstemp( server_log );
@@ -2131,17 +2209,23 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
         }
     }
 
-    if ( system( "ip link del " TEARDOWN_NEAR " 2>/dev/null" ) != 0 )
-    {
-        // nothing left from an earlier run
-    }
+    // xdp_test_net.h removed anything an earlier holder of these names left;
+    // a failed add is not ours, so only a pair this case made is removed
 
-    bool ok = onlink_run( "ip link add " TEARDOWN_NEAR " numtxqueues 2 numrxqueues 2 type veth peer name " TEARDOWN_FAR " numtxqueues 2 numrxqueues 2" ) &&
-              onlink_run( "ip addr add 10.78.1.1/24 dev " TEARDOWN_NEAR ) &&
-              onlink_run( "ip link set " TEARDOWN_NEAR " up" ) &&
-              onlink_run( "echo 2 > /sys/class/net/" TEARDOWN_NEAR "/napi_defer_hard_irqs" ) &&
-              onlink_run( "echo 200000 > /sys/class/net/" TEARDOWN_NEAR "/gro_flush_timeout" ) &&
-              onlink_run( "ip link set " TEARDOWN_FAR " up" );
+    char command[256];
+    snprintf( command, sizeof( command ), "ip link add %s numtxqueues 2 numrxqueues 2 type veth peer name %s numtxqueues 2 numrxqueues 2", net.near_name, net.far_name );
+    const bool made_link = onlink_run( command );
+    bool ok = made_link;
+    char steps[5][256];
+    snprintf( steps[0], sizeof( steps[0] ), "ip addr add %s/24 dev %s", net.near4, net.near_name );
+    snprintf( steps[1], sizeof( steps[1] ), "ip link set %s up", net.near_name );
+    snprintf( steps[2], sizeof( steps[2] ), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs", net.near_name );
+    snprintf( steps[3], sizeof( steps[3] ), "echo 200000 > /sys/class/net/%s/gro_flush_timeout", net.near_name );
+    snprintf( steps[4], sizeof( steps[4] ), "ip link set %s up", net.far_name );
+    for ( int i = 0; ok && i < 5; i++ )
+    {
+        ok = onlink_run( steps[i] );
+    }
 
     int status = 0;
     bool exited = false;
@@ -2162,7 +2246,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
             setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "2", 1 );
             setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2", 1 );
             setenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", "1", 1 );
-            execl( server_path, server_path, TEARDOWN_SERVER_ADDRESS, "--max-clients", ONLINK_MAX_CLIENTS, (char *) NULL );
+            execl( server_path, server_path, server_address, "--max-clients", ONLINK_MAX_CLIENTS, (char *) NULL );
             _exit( 127 );
         }
 
@@ -2220,9 +2304,13 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
         onlink_print_tail( "server", server_log );
     }
 
-    if ( system( "ip link del " TEARDOWN_NEAR " 2>/dev/null" ) != 0 )
+    if ( made_link )
     {
-        // already gone
+        snprintf( command, sizeof( command ), "ip link del %s 2>/dev/null", net.near_name );
+        if ( system( command ) != 0 )
+        {
+            // already gone
+        }
     }
 
     unlink( server_log );
