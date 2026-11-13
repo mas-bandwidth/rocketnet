@@ -3230,6 +3230,40 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server );
 
+/// Finishes the message open on client_index.
+/// Uses the same size, return and abort rules as
+/// rocketnet_server_finish_message. Use it when fill threads each hold a
+/// message open on their own clients; rocketnet_server_finish_message,
+/// which names no client, finishes only while one message is open on the
+/// whole server.
+///
+/// Needs a message opened by rocketnet_server_start_message on client_index
+/// of a running server; otherwise it asserts in a debug build and returns 0
+/// in a release build. Thread: a fill call. Between a main-thread call and
+/// the next, any number of threads may make fill calls, each client index
+/// from one thread; see rocketnet_server_t.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot the message was opened on, 0 to
+/// max_clients - 1. Any other value counts as API misuse and returns 0.
+/// @param bytes_written The bytes written into the open message.
+/// @return The message's nonzero receipt serial, or 0 when nothing was
+/// queued.
+
+ROCKETNET_EXPORT uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * server, int client_index, int bytes_written );
+
+/// Cancels the message open on client_index and releases its memory.
+/// Does nothing if no message is open there.
+///
+/// Callable running or stopped. Thread: a fill call, as
+/// rocketnet_server_finish_client_message.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param client_index The slot, 0 to max_clients - 1. Any other value
+/// counts as API misuse and does nothing.
+
+ROCKETNET_EXPORT void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, int client_index );
+
 /// Returns true if rocketnet_server_start_message to client_index with the
 /// same channel, reliability and max_bytes would be given room now.
 /// Use it like rocketnet_client_can_send_message. Each client has its own

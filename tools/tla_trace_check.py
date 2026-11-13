@@ -79,6 +79,10 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
+    "fillphase": {
+        "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
+        "quiet": False,
+    },
 }
 
 STEPS = 400

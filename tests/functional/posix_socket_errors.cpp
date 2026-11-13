@@ -768,7 +768,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
         uint8_t * frame = at_server ? rocketnet_client_transport_start_packet( pair.client, POSIX_WEATHER_VALID_BYTES, &context )
                                     : rocketnet_server_transport_start_packet( pair.server, pair.client_index, POSIX_WEATHER_VALID_BYTES, &context );
         posix_check( frame != NULL );
-        posix_valid_payload( index, frame + context.payload_index );
+        posix_valid_payload( index, frame );
 
         if ( at_server )
         {
@@ -1448,8 +1448,8 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
             struct rocketnet_packet_context_t context;
             uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
             posix_check( frame != NULL );
-            memset( frame + context.payload_index, 0xdd, 16 );
-            frame[context.payload_index + 1] = (uint8_t) i;
+            memset( frame, 0xdd, 16 );
+            frame[1] = (uint8_t) i;
             posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
         }
 
@@ -1553,8 +1553,8 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
             struct rocketnet_packet_context_t context;
             uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
             posix_check( frame != NULL );
-            memset( frame + context.payload_index, 0x5a, 16 );
-            frame[context.payload_index] = (uint8_t) ( tag + i );
+            memset( frame, 0x5a, 16 );
+            frame[0] = (uint8_t) ( tag + i );
             posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
         }
 
@@ -1612,7 +1612,7 @@ static void posix_transport_stop_drains_refused_bank( int ipv6, int error )
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
         posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0xdd, 16 );
+        memset( frame, 0xdd, 16 );
         posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
     }
 
@@ -2251,8 +2251,8 @@ static void posix_linux_client_traffic_resumes( struct posix_pair_t * pair, int 
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_client_transport_start_packet( pair->client, 16, &context );
         posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0x5a, 16 );
-        frame[context.payload_index] = (uint8_t) ( tag + i );
+        memset( frame, 0x5a, 16 );
+        frame[0] = (uint8_t) ( tag + i );
         posix_check( rocketnet_client_transport_finish_packet( pair->client, &context, 16 ) > 0 );
     }
 
@@ -2297,8 +2297,8 @@ static void posix_linux_server_traffic_resumes( struct posix_pair_t * pair, int 
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( pair->server, pair->client_index, 16, &context );
         posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0x5a, 16 );
-        frame[context.payload_index] = (uint8_t) ( tag + i );
+        memset( frame, 0x5a, 16 );
+        frame[0] = (uint8_t) ( tag + i );
         posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
     }
 
@@ -2450,7 +2450,7 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void ( *fail 
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( pair->server, pair->client_index, 16, &context );
         posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0xdd, 16 );
+        memset( frame, 0xdd, 16 );
         posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
     }
 
@@ -3792,7 +3792,7 @@ static void posix_xdp_weather( int ipv6 )
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_client_transport_start_packet( client, POSIX_WEATHER_VALID_BYTES, &context );
         posix_check( frame != NULL );
-        posix_valid_payload( index, frame + context.payload_index );
+        posix_valid_payload( index, frame );
         posix_check( rocketnet_client_transport_finish_packet( client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
         rocketnet_client_transport_send_packets( client );
     };
