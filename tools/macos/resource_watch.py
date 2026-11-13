@@ -220,21 +220,38 @@ def judge(rows, out=sys.stdout):
     return "FLAT", []
 
 
-def watch(pid, csv_path, interval, stop_after=None, until=None):
-    """sample pid until it exits, stop_after seconds pass, or until() turns true"""
+def watch(pid, csv_path, interval, stop_after=None, until=None, child=None):
+    """sample pid until it exits, stop_after seconds pass, or until() turns true.
+    child, when pid is our own Popen, is asked through poll(), so its exit
+    status stays with it (alive() would reap it and lose the status). The
+    SIGINT and SIGTERM handlers it installs are put back on return."""
     rows = []
     stopping = [False]
 
     def on_signal(signum, frame):
         stopping[0] = True
 
-    signal.signal(signal.SIGINT, on_signal)
-    signal.signal(signal.SIGTERM, on_signal)
+    if child is not None:
+        def running():
+            return child.poll() is None
+    else:
+        def running():
+            return alive(pid)
+
+    previous = {number: signal.signal(number, on_signal) for number in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        return watch_rows(pid, csv_path, interval, stop_after, until, rows, stopping, running)
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
+def watch_rows(pid, csv_path, interval, stop_after, until, rows, stopping, running):
     start = time.monotonic()
     with open(csv_path, "w") as csv:
         csv.write("time_s,fds,threads,rss_bytes,phys_footprint_bytes\n")
         next_at = start
-        while not stopping[0] and alive(pid):
+        while not stopping[0] and running():
             now = time.monotonic()
             if stop_after is not None and now - start >= stop_after:
                 break
@@ -243,7 +260,7 @@ def watch(pid, csv_path, interval, stop_after=None, until=None):
             if now >= next_at:
                 s = sample(pid)
                 if s is None:
-                    if not alive(pid):
+                    if not running():
                         break
                 else:
                     t = round(now - start, 3)
@@ -267,7 +284,7 @@ LEAKER = (
 def planted_leak_check(csv_path, seconds):
     child = subprocess.Popen([sys.executable, "-I", "-c", LEAKER])
     try:
-        rows = watch(child.pid, csv_path, 1.0, stop_after=seconds)
+        rows = watch(child.pid, csv_path, 1.0, stop_after=seconds, child=child)
     finally:
         child.kill()
         child.wait()
@@ -305,7 +322,7 @@ def main(argv):
     if command:
         child = subprocess.Popen(command)
         pid = child.pid
-    rows = watch(pid, args.csv, args.interval)
+    rows = watch(pid, args.csv, args.interval, child=child)
     child_rc = None
     if child is not None:
         if child.poll() is None:
