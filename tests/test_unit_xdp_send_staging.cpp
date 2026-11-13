@@ -637,15 +637,18 @@ REGISTER_UNIT_TEST( test_xdp_transport_send_packet_id_is_per_queue );
 static void test_xdp_transport_handoff_lock_is_bounded()
 {
     int attempts = 0;
-    rocketnet_unit_check( rocketnet_xdp_handoff_lock( [&attempts]() { return ++attempts == 3; }, ROCKETNET_XDP_HANDOFF_TRIES ) );
+    rocketnet_unit_check( rocketnet_xdp_handoff_lock( [&attempts]()
+                                                      { return ++attempts == 3; }, ROCKETNET_XDP_HANDOFF_TRIES ) );
     rocketnet_unit_check( attempts == 3 );
 
     attempts = 0;
-    rocketnet_unit_check( !rocketnet_xdp_handoff_lock( [&attempts]() { ++attempts; return false; }, ROCKETNET_XDP_HANDOFF_TRIES ) );
+    rocketnet_unit_check( !rocketnet_xdp_handoff_lock( [&attempts]()
+                                                       { ++attempts; return false; }, ROCKETNET_XDP_HANDOFF_TRIES ) );
     rocketnet_unit_check( attempts == ROCKETNET_XDP_HANDOFF_TRIES );
 
     attempts = 0;
-    rocketnet_unit_check( !rocketnet_xdp_handoff_lock( [&attempts]() { ++attempts; return true; }, 0 ) );
+    rocketnet_unit_check( !rocketnet_xdp_handoff_lock( [&attempts]()
+                                                       { ++attempts; return true; }, 0 ) );
     rocketnet_unit_check( attempts == 0 );
 }
 
