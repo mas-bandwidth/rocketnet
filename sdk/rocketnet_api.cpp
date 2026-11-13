@@ -2269,8 +2269,8 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
         stats->packet_loss_percent = (double) transport_stats.packet_loss;
         stats->packets_sent_per_second = transport_stats.packets_sent_per_second;
         stats->packets_received_per_second = transport_stats.packets_received_per_second;
-        stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
-        stats->bandwidth_received_kbps = transport_stats.bandwidth_received_kbps;
+        stats->bandwidth_sent_kbps = (double) transport_stats.bandwidth_sent_kbps;
+        stats->bandwidth_received_kbps = (double) transport_stats.bandwidth_received_kbps;
     }
 
     stats->packets_sent = counts[RN_CLIENT_PACKETS_SENT];
