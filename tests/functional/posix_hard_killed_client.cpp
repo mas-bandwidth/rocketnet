@@ -1787,8 +1787,8 @@ static const posix_seam_case_t posix_seam_cases[] = {
 
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
-// io_uring last, so the cells before it keep their indexes where the kernel
-// refuses the ring and the io_uring cells are not registered
+// every cell is registered on every host; where the kernel refuses the ring
+// the io_uring cells are named skips (rocketnet_posix_hard_killed_client_test_skip)
 
 static const char * posix_hk_server_names[] = { "portable", "gso", "io_uring" };
 static const char * posix_hk_client_names[] = { "portable" };
@@ -1801,22 +1801,12 @@ static const char * posix_hk_client_names[] = { "portable" };
 #define POSIX_HK_NUM_CLIENTS ( (int) ( sizeof(posix_hk_client_names) / sizeof(posix_hk_client_names[0]) ) )
 #define POSIX_HK_MAX_CELL_CASES ( 3 * POSIX_HK_MAX_SERVERS * 2 * POSIX_HK_NUM_CLIENTS )
 
-// the server transports registered on this host: every name, except
-// io_uring where rocketnet_server_uring_available() is false
+// the server transports of the matrix: every name on every host, so a cell
+// this host cannot run is reported as a named skip, never left out
 
 static int posix_hk_num_servers()
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    static int count = -1;
-    if ( count < 0 )
-    {
-        count = rocketnet_server_uring_available() ? POSIX_HK_MAX_SERVERS : POSIX_HK_MAX_SERVERS - 1;
-    }
-
-    return count;
-#else
     return POSIX_HK_MAX_SERVERS;
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 }
 
 static int posix_hk_num_cell_cases()
@@ -1858,6 +1848,35 @@ const char * rocketnet_posix_hard_killed_client_test_name( int index )
     posix_hk_cell_of( index, &kind, &cell );
     snprintf( posix_hk_names[index], sizeof( posix_hk_names[index] ), "%s_%s_%s_client_%s", posix_hk_kinds[kind], cell.server, cell.ipv6 ? "ipv6" : "ipv4", cell.client );
     return posix_hk_names[index];
+}
+
+// the predicate that keeps a registered case from running on this host, as
+// its SKIPPED line names it, or NULL when it runs: the io_uring cells where
+// rocketnet_server_uring_available() is false. Those six, as
+// tests/functional/expected_skips.txt lists them for the hosts without
+// io_uring: test_posix_hard_killed_client_io_uring_ipv4_client_portable,
+// test_posix_hard_killed_client_io_uring_ipv6_client_portable,
+// test_posix_send_to_closed_port_io_uring_ipv4_client_portable,
+// test_posix_send_to_closed_port_io_uring_ipv6_client_portable,
+// test_posix_client_server_gone_io_uring_ipv4_client_portable,
+// test_posix_client_server_gone_io_uring_ipv6_client_portable
+const char * rocketnet_posix_hard_killed_client_test_skip( int index )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    if ( index < posix_hk_num_cell_cases() )
+    {
+        int kind = 0;
+        posix_hk_cell_t cell;
+        posix_hk_cell_of( index, &kind, &cell );
+        if ( strcmp( cell.server, "io_uring" ) == 0 && !rocketnet_server_uring_available() )
+        {
+            return "rocketnet_server_uring_available";
+        }
+    }
+#else
+    (void) index;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    return NULL;
 }
 
 void rocketnet_posix_hard_killed_client_test_run( int index )
@@ -1910,6 +1929,11 @@ int rocketnet_posix_hard_killed_client_test_count()
 const char * rocketnet_posix_hard_killed_client_test_name( int )
 {
     return "";
+}
+
+const char * rocketnet_posix_hard_killed_client_test_skip( int )
+{
+    return NULL;
 }
 
 void rocketnet_posix_hard_killed_client_test_run( int )
