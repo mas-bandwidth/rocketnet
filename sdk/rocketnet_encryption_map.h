@@ -184,4 +184,12 @@ bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_ma
                                                   const struct rocketnet_encryption_map_handle_t * handle );
 #endif // #if ROCKETNET_DEV
 
+// mutation gaps r2-hs begin
+#if ROCKETNET_DEV
+// Sets the generation the next add hands out; 0 is the spent state in which
+// every add fails, without running 2^64 adds.
+void rocketnet_encryption_map_test_set_next_generation( struct rocketnet_encryption_map_t * map, uint64_t next_generation );
+#endif // #if ROCKETNET_DEV
+// mutation gaps r2-hs end
+
 #endif // ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H

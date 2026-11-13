@@ -615,3 +615,13 @@ bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_ma
     return handle != NULL && rocketnet_encryption_map_remove_generation( map, handle->index, handle->generation );
 }
 #endif // #if ROCKETNET_DEV
+
+// mutation gaps r2-hs begin
+#if ROCKETNET_DEV
+void rocketnet_encryption_map_test_set_next_generation( struct rocketnet_encryption_map_t * map, uint64_t next_generation )
+{
+    rocketnet_assert( map );
+    map->next_generation = next_generation;
+}
+#endif // #if ROCKETNET_DEV
+// mutation gaps r2-hs end

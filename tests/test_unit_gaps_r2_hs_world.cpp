@@ -690,3 +690,75 @@ static void test_gaps_r2_hs_client_payload_size_refusals()
 }
 
 REGISTER_UNIT_TEST( test_gaps_r2_hs_client_payload_size_refusals );
+
+#if ROCKETNET_DEV
+
+// mutation gap: hunt 2/1444
+// mutation gap: hunt 2/1445
+//
+// A request that replaces a half-open mapping skips the table-full rung (it
+// reuses its address's mapping), so the one way its add can fail is a map
+// whose generations are spent. That failure is counted as both
+// COULD_NOT_ADD_MAPPING and MAPPING_TABLE_FULL, like the full table's
+// refusal, and the request is ignored with nothing sent. The spent
+// generations are set through the map's DEV seam; 2^64 adds are not run.
+
+static void test_gaps_r2_hs_replacement_add_failure_counted()
+{
+    struct r2hs_world_t * world = r2hs_world_create();
+
+    // the first client leaves a half-open mapping at the address
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    r2hs_world_mint( token_data, 0x5151 );
+    check( rocketnet_client_protocol_connect( &world->client, token_data, 1000.0, ROCKETNET_TEST_CREATE_TS ) );
+    r2hs_world_exchange( world, 1000.0, 1000.0 );
+    r2hs_world_exchange( world, 1000.2, 1000.2 );
+    check( world->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    check( r2hs_world_mapping( world )->control->client_index == -1 );
+
+    // a second client at the same address with another salt and another
+    // token: its cookie first, then the request that replaces the mapping
+
+    struct rocketnet_counters_t second_counters;
+    memset( &second_counters, 0, sizeof( second_counters ) );
+    struct rocketnet_client_protocol_t * second = (struct rocketnet_client_protocol_t *) calloc( 1, sizeof( struct rocketnet_client_protocol_t ) );
+    check( second != NULL );
+    rocketnet_client_protocol_init( second, &second_counters );
+    r2hs_world_mint( token_data, 0x6262 );
+    check( rocketnet_client_protocol_connect( second, token_data, 1000.4, ROCKETNET_TEST_CREATE_TS ) );
+
+    int bytes = 0;
+    rocketnet_client_protocol_update( second, 1000.4, world->packet, &bytes );
+    check( bytes > 0 );
+    check( r2hs_world_to_server( world, world->packet, bytes, 1000.4 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    int payload_bytes = 0;
+    check( rocketnet_client_protocol_process_packet( second, world->response, world->response_bytes, 1000.4, world->payload,
+                                                     (int) sizeof( world->payload ), &payload_bytes ) );
+    check( second->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+
+    rocketnet_client_protocol_update( second, 1000.6, world->packet, &bytes );
+    check( bytes > 0 );
+
+    const uint64_t * values = world->server_counters.values;
+    const uint64_t could_not_add_before = values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING];
+    const uint64_t table_full_before = values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL];
+
+    rocketnet_encryption_map_test_set_next_generation( world->server.encryption_map, 0 );
+    const int result = r2hs_world_to_server( world, world->packet, bytes, 1000.6 );
+
+    check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( world->response_bytes == 0 );
+    r2hs_world_fault_if( values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] != could_not_add_before + 1,
+                         "a replacement whose add failed was not counted COULD_NOT_ADD_MAPPING" );
+    r2hs_world_fault_if( values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] != table_full_before + 1,
+                         "a replacement whose add failed was not counted MAPPING_TABLE_FULL" );
+
+    rocketnet_encryption_map_test_set_next_generation( world->server.encryption_map, 1 );
+    free( second );
+    r2hs_world_destroy( world );
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2_hs_replacement_add_failure_counted );
+
+#endif // #if ROCKETNET_DEV
