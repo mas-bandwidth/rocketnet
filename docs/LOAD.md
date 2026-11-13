@@ -213,10 +213,12 @@ The light profile is the SDK's public light-client geometry: eight channels (or
 1415-byte (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`) maximum message, a
 141,500-byte send buffer, a 128-message send queue, 256 packets in flight, 4
 packets and 4 unreliable messages per update, 100 sequenced messages held, and
-128 receipts. Its
-256-kbps per-client send budget is 2.13 times the roughly 120-kbps wire rate
-of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
-120,000 bits/s). The reliable timeout stays at its default, 0 (off). On the Linux x86-64
+128 receipts. It sizes for one application message of up to 1415 bytes
+per 100 ms to each client, which can go in up to two packets. Its
+256-kbps per-client send budget is 2.13 times a single-packet reference, one
+1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 = 120,000
+bits/s, about 120 kbps); a 1415-byte message that takes two packets sends
+more than that reference. The reliable timeout stays at its default, 0 (off). On the Linux x86-64
 Release development build (`ROCKETNET_DEV=1`, io_uring and XDP built) described
 in the tables below, at `max_clients = 1000`
 the server's `rocketnet_server_required_memory` is 2,147,358,194 bytes and the

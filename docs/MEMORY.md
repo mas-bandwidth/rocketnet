@@ -100,14 +100,17 @@ will deploy; the regeneration details are in
 [LOAD.md](LOAD.md#deterministic-memory-planning-and-regenerated-sizing-examples).
 
 A light-client server uses `rocketnet_server_light_config`, which fills the
-defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
-client at 10 Hz (10 * 1,500 * 8 = 120,000 bits/s, about 120 kbps). The
-per-client send budget is 256 kbps (256 / 120 = 2.13). The largest message
+defaults and then sizes for one application message of up to 1,415 bytes
+per 100 ms to each client (10 Hz). For reference, one 1,500-byte MTU packet
+per 100 ms is 10 * 1,500 * 8 = 120,000 bits/s, about 120 kbps; that is a
+single-packet reference, not what the largest message sends, since that
+message can take two packets (below). The per-client send budget is 256 kbps
+(2.13 times the reference). The largest message
 is `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1` (1,415 bytes). That is above every
 one-record limit (`rocketnet_max_unfragmented_message_bytes`: 1,411 bytes for
 `UNRELIABLE` and `UNRELIABLE_WITH_ACK_RECEIPT`, less for the other modes), so a 1,415-byte message is sent in up
 to two parts, and an unreliable one is sent as its reliable type. Over the
-default 10 s connection timeout, that rate is 100 messages; a 1,415-byte
+default 10 s connection timeout, one message per 100 ms is 100 messages; a 1,415-byte
 message can take two window numbers, so the reliable window is 256. The receive buffer is 142,400
 bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
@@ -471,7 +474,7 @@ each normal client adds its own one background network thread.
 On Windows the plan is committed as it is allocated. Windows charges memory
 against the machine's commit limit (RAM plus the page file) when it is
 allocated, not when it is touched. Create allocates the server's message
-block, most of the plan; start allocates the transport (the RIO registered
+block; start allocates the transport (the RIO registered
 region included), and a client's transport is allocated at connect.
 `rocketnet_server_required_memory` is the peak over that whole lifecycle, so
 a running server can commit up to all of it though far less is ever

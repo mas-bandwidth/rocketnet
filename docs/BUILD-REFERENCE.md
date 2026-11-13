@@ -421,11 +421,18 @@ payloads. Ctrl+C stops either. For a first loopback try from your own project,
 see [Installing and embedding the SDK](BUILDING.md#installing-and-embedding-the-sdk).
 
 A rocketnet server binds the wildcard address on its port (`0.0.0.0:40000` for
-the example server) unless `bind_ipv4_address` or `bind_ipv6_address` names one
-of the machine's addresses, so on an interactive desktop the first run of `server.exe`,
+the example server; `[::]` for a server of both families) unless
+`bind_ipv4_address` or `bind_ipv6_address` names one of the machine's
+addresses, so on an interactive desktop the first run of `server.exe`,
 `functional.exe` or a game server raises the Windows Defender Firewall dialog.
 Loopback traffic works whatever is chosen there; allow access only on the
 networks remote clients connect from.
+
+Each bind field applies only to a server that serves its family alone: start
+refuses either config field on a server of both families, or a field of the
+other family, with `ROCKETNET_STATUS_INVALID_ADDRESS`. The environment forms
+(`ROCKETNET_SERVER_BIND_IPV4_ADDRESS`, `ROCKETNET_SERVER_BIND_IPV6_ADDRESS`)
+are ignored there with one log line instead.
 
 The build compiles `sdk/xdp/server_xdp.c` to `server_xdp.o` with a clang that
 has the BPF target. It embeds the bytes in the library. The server host needs no
