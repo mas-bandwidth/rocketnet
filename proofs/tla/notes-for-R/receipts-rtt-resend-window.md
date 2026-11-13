@@ -78,6 +78,8 @@ Line numbers are at the M3 head (base 4f2960e5 plus the sent-map merge).
   `// acks before the timeout check: proofs/tla/RNResendTiming.tla AcksOpen, DeadlineUpdateTakesAcks`
 - `sdk/rocketnet_window_send.cpp:46` (`rn_window_send_position`), extend:
   `// standard/MESSAGES.md m5.1 boundary padding; proofs/tla/RNRing.tla Pos, PlaceSingle and PlaceBlock; proofs/tla/RNBlocks.tla Pos (SpanInsideRing)`
+- `sdk/rocketnet_channel.cpp:966`, replace "RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)" with:
+  `RNBlocks!Receive (the anchor by (channel, ordering), the refusal of a chunk that disagrees with it, the copy to ring + index * F)`
 - `sdk/rocketnet_channel.cpp:913` (the anchor agreement test), add:
   `// proofs/tla/RNBlocks.tla Receive, Refused (MCRNBlocksBrokenNoAnchorCheck.cfg without it)`
 - `sdk/rocketnet_window_receive.cpp` above `rn_window_receive_accept`, extend its citation with:

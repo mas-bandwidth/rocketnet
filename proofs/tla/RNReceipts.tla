@@ -43,8 +43,9 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* is written (rn_endpoint_in_place_finish, rn_endpoint_unreliable_drop_all in
 \* sdk/rocketnet_endpoint.cpp) or the transport refuses the packet's frame or
 \* finish (rn_endpoint_in_place_failed, and the RN_ENDPOINT_PACKET_UNRELIABLE
-\* arm of rn_endpoint_packet_failed; the finish_packet refusal in
-\* rn_message_flush_unreliable, sdk/rocketnet_message_server.cpp). In both the record was never committed
+\* arm of rn_endpoint_packet_failed). rn_message_flush_unreliable
+\* (sdk/rocketnet_message_server.cpp) does both: a budget refusal before
+\* finish_packet, and the finish_packet refusal. In both the record was never committed
 \* (rn_window_ack_commit_receipt_packet runs only for a packet the transport
 \* sent), so SweepLoss's drop arm needs the record off the wire; dropped is
 \* its ghost. BrokenDropAfterWrite is a reversed witness: the drop arm

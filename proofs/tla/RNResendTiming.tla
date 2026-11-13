@@ -706,12 +706,16 @@ SilenceEnd ==
 \* rn_endpoint_tick runs rn_window_ack_check_timeout at the same time
 \* (rocketnet_message_server.cpp), so an ack processed in the update the
 \* deadline falls in keeps the connection.  TimedOut becomes true only on
-\* the Tick into that update (Tick needs Live), so at phase "walk" with no
+\* the Tick into that update (Tick needs Live; except in the BlockClock
+\* witness, whose late chunk's clock starts at 0), so at phase "walk" with no
 \* call yet, t = Deadline(r) is the moment before the check: Ack and Sample
 \* are taken there whatever TimedOut says, and a state that stays TimedOut
 \* is the end (Done).  CheckBeforeAcks is the reversed witness: the acks
 \* gated by TimedOut, the check before them
-\* (CheckBeforeAcks <- CheckBeforeAcksOn).
+\* (CheckBeforeAcks <- CheckBeforeAcksOn).  Seed still needs Live, though the
+\* code seeds before the check too (rocketnet_message_server.cpp, before
+\* rn_endpoint_tick): a seed moves only the resend delay, never a deadline,
+\* so no timeout depends on it.
 CheckBeforeAcks == FALSE
 CheckBeforeAcksOn == TRUE
 AcksOpen == ~silenced /\ (\E r \in Records : ~acked[r]) /\ (CheckBeforeAcks => ~TimedOut)
@@ -810,13 +814,25 @@ AttemptsBeforeTimeout ==
     \A r \in Records : (TimeoutOn /\ ~acked[r] /\ OnWire(r) /\ t = Deadline(r)) => attempts[r] >= MinAttempts
 
 \* An ack that arrives in the update the deadline falls in is taken before
-\* the timeout check (the order of the message update): at the start of that
-\* update the record can still be acknowledged.  Reversed witness
+\* the timeout check (the order of the message update), and keeps the
+\* connection: at the start of that update, when r is the only record at or
+\* past its deadline, r can still be acknowledged and the step leaves the
+\* connection up.  This checks the order of the update's steps, which is
+\* what the code fixes; it adds no timing claim.  Reversed witness
 \* MCRNResendTimingBrokenCheckBeforeAcks.cfg (the check first).
 DeadlineUpdateTakesAcks ==
     \A r \in Records :
-        (Timed /\ phase = "walk" /\ calls = 0 /\ ~silenced /\ ~acked[r] /\ attempts[r] > 0 /\ t = Deadline(r))
-            => ENABLED Ack(r)
+        (/\ Timed /\ phase = "walk" /\ calls = 0 /\ ~silenced
+         /\ ~acked[r] /\ attempts[r] > 0 /\ t = Deadline(r)
+         /\ \A o \in Records \ {r} : acked[o] \/ ~OnWire(o) \/ t < Deadline(o))
+            => ENABLED (Ack(r) /\ ~Ended')
+
+\* ConfigAccepted as a state predicate.  TLC evaluates a constant-level
+\* invariant once, before the search, and reports a FALSE one as an error,
+\* not a counterexample; conjoined with TypeOK it is checked in each state,
+\* so a configuration the rule refuses is a counterexample at the initial
+\* state (MCRNResendTimingBelowTimeoutFloor.cfg).
+TypedConfigAccepted == TypeOK /\ ConfigAccepted
 
 \* Under the rule no unacked record waits more than its delay's bound for
 \* its next send while the connection is up: RtoMax for a small record,

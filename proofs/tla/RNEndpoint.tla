@@ -211,7 +211,7 @@ Writable(e) == {relQ[e][i] : i \in {j \in DOMAIN relQ[e] :
 \* resends on the resend delay alone (RNResendTiming lets a sample set it
 \* anywhere in its range and relates it to no round trip), so it can resend
 \* while a copy or its ack is in flight.  A composed bounded-network proof
-\* is a roadmap entry (README-RNEndpoint.md).
+\* is a proposed roadmap entry (README-RNEndpoint.md).
 WireOutOf(e)  == IF e = "a" THEN abWire ELSE baWire
 InFlight(e)   == UNION {WireOutOf(e)[i].pkt.rel : i \in DOMAIN WireOutOf(e)}
 AckInFlight(e) ==

@@ -301,10 +301,11 @@ first send.
 Before this revision a type-5 LOSS came only after a sent packet's deadline
 or its sent-map entry's eviction. The code also reports LOSS at once, with
 no sent-map record, for a type-5 message none of whose parts was written:
-the send budget drops it (`rn_endpoint_unreliable_drop_all`,
-`rn_message_flush_unreliable`) or the transport refuses its finish or its
-packet (`rn_endpoint_in_place_finish`, `rn_endpoint_in_place_failed`, the
-`RN_ENDPOINT_PACKET_UNRELIABLE` arm of `rn_endpoint_packet_failed`). That is
+the send budget drops it (`rn_endpoint_in_place_finish`,
+`rn_endpoint_unreliable_drop_all`) or the transport refuses its frame or its
+packet (`rn_endpoint_in_place_failed`, the `RN_ENDPOINT_PACKET_UNRELIABLE`
+arm of `rn_endpoint_packet_failed`); `rn_message_flush_unreliable` does
+both, a budget refusal and a `finish_packet` refusal. That is
 now `SweepLoss`'s drop arm: a type-5 serial with no part in `sentNums` may
 take LOSS at once; it is recorded in the ghost `dropped`, and it carries no
 fairness (the code drops only under a budget or a refusal). A serial that

@@ -253,7 +253,9 @@ AnchorFor(r) == IF anchor[r.ord].cnt = 0
 
 \* a chunk (count 2 or more: the code's block path) the receiver refuses:
 \* rn_block_shape_valid's index below count, check 8's span inside the
-\* ring (a chunk not the last knows the end to within one unit), and
+\* ring (every chunk checked to within one unit of the end, as the code
+\* checks a chunk not the last; the code checks the last chunk exactly, so
+\* this is weaker for it, and SpanInsideRing covers a correct sender), and
 \* rn_channels_block_collect's test that the anchor is still collecting and
 \* agrees on count, first number and base (MESSAGE_BAD_BLOCK), which
 \* AnchorCheck <- AnchorCheckOff drops

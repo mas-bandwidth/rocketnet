@@ -85,8 +85,10 @@ Invariants:
   completes the message and then drains; here `Deliver` is its own step, which
   only adds interleavings.
 - **The receiver's checks** are modelled as one refusal (revision 1.1): the
-  index below the count, the span inside the ring (a chunk not the last knows
-  the end to within one unit, as the code's), and the count, first number and
+  index below the count, the span inside the ring (every chunk to within one
+  unit of the end, as the code checks a chunk not the last; the code checks
+  the last chunk exactly, so the model is weaker there), and the count, first
+  number and
   base against the anchor. The code's other refusals of a chunk (the slot
   collision, the completed block's first and last descriptors, the total
   against `max_message_bytes`) need a sender that lies in other ways and are

@@ -83,8 +83,10 @@ An end in error does nothing more: the object disconnects it (section 11).
   whose remote endpoint is live (rn_window_ack_check_timeout), which the
   liveness cases leave out. A composed proof over a bounded network
   (bounded loss and delay, the resend delay above the round trip, the
-  attempts landing before the timeout) is a roadmap entry
-  (`endpoint-bounded-network-liveness`), not a claim of this model.
+  attempts landing before the timeout) is a proposed roadmap entry
+  (`endpoint-bounded-network-liveness`, in
+  `proofs/tla/notes-for-R/receipts-rtt-resend-window.md` until it lands in
+  `docs/roadmap.sexp`), not a claim of this model.
 - **A configuration** is its `num_channels`, the field the instances vary.
   ConfigCompare compares the whole configuration value, which stands for the
   field-by-field comparison of section 13.4 (version, enabled mask,

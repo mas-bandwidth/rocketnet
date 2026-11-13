@@ -173,7 +173,10 @@ value exhausts TLC's tableau.
   earlier records kept. Before this revision every number of a packet was read against
   the `R` the packet found and the packet was all or nothing. The committed instances
   with one record a packet have the same state graph; `MCRNWindowSafetyTwo.cfg` checks
-  two records a packet.
+  two records a packet, each read against the `R` the earlier one left. The branch that
+  keeps the records before a violation is reached only by a sender that trips one, and
+  the witnesses, at one record a packet, stop at their violation; it is the code's
+  order, not a checked property.
 
 ## How to run it
 
