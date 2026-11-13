@@ -299,6 +299,7 @@ scripts/vm-boot-guard-selftest|linux|x86_64|gcc|Release|devON|none|-~-|default	c
 scripts/vm-boot-guard|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	build-and-test	Transport family matrix (every transport on IPv4, IPv6 and dual stack)	scripts/vm-boot-guard	per-commit	user/releaser script (scripts/)
 scripts/vm-tier-missing|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/vm-tier-missing	owed:2026-11-19	user/releaser script (scripts/)
 server_receive_cost|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	server_receive_cost	owed:2026-11-19	benchmark built per commit, run by no workflow step
+server_update_ack_cost|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	server_update_ack_cost	owed:2026-11-19	benchmark built per commit, run by no workflow step
 soak_sim|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	platform-selftests	soak_sim	scripts/soak-sim-selftest	per-commit	soak simulator
 soak|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-soak.yml	soak	*	soak	nightly	soak (per transport on Linux)
 soak|macos|arm64|appleclang|Release|devON|none|-~-|default	nightly-soak.yml	soak	*	soak	nightly	soak (per transport on Linux)

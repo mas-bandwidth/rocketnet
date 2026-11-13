@@ -329,4 +329,4 @@ static void ack_apply_differential( uint64_t seed, int updates, Schedule schedul
     rocketnet_free( NULL, w );
 }
 
-#endif // #ifndef ROCKETNET_TESTS_ACK_APPLY_DIFFERENTIAL_H
+#endif // ROCKETNET_TESTS_ACK_APPLY_DIFFERENTIAL_H
