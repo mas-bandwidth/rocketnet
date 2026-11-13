@@ -59,7 +59,7 @@ static int portable_rx_capacity( const rocketnet_server_transport_config_t * con
     // an RX bank holds one update's receive budget for the configured clients
     // (64 per client), so main can take a full update from one bank and the worker
     // can fill the next meanwhile. The banks are one allocation sized at create
-    // from max_clients: a 4-client server does not carry the 70 MB a 1000-client
+    // from max_clients: a 4-client server does not carry the 280 MB a 1000-client
     // server needs.
 
     const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;

@@ -201,7 +201,8 @@ static inline int rocketnet_server_receive_packets_per_update( int max_clients )
 // on one queue receives twice what it can send in an update. It is not the
 // whole server's send budget, which is queues x the send queue (a runtime
 // count): at 2 queues and 1000 clients the server starts up to 32768 an
-// update and its receive budget is 64000, still twice; at the default 7
+// update and its receive budget is 64000, just under twice (twice is 65536);
+// at the default 7
 // queues the send side can start 114688 an update, and the per-queue receive
 // staging (ROCKETNET_XDP_RECV_QUEUE_SIZE, twice the send queue, asserted
 // above) is what holds twice the send on every queue.
@@ -299,12 +300,15 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 // process batch's capacity -- the arrays it protects -- never the queue size,
 // or the tail of a full queue writes past the arrays.
 //
-// The consequence of the correct guard is capacity, not safety: because the
-// queue can stage more than the arrays hold, a single tick that delivers
-// more than the budget to one server DROPS the excess. That is correct
-// behaviour under flood, and at the design load (64 packets per client) it
-// is exactly the budget. If you would rather never drop, raise max_clients or
-// RECEIVE_PACKETS_PER_CLIENT so the arrays cover a full queue drain.
+// The consequence of the correct guard is capacity, not safety. At the
+// smallest sizing (512 clients) the arrays hold 64 * 512 = 32768, exactly one
+// full queue drain (the receive staging is twice the send queue, and the
+// budget assert above holds it to that), so one queue's full drain never drops; but
+// several queues drain into the same batch, and a tick that delivers more
+// than the budget across them DROPS the excess. That is correct behaviour
+// under flood, and at the design load (64 packets per client) it is exactly
+// the budget. If you would rather never drop, raise max_clients or
+// RECEIVE_PACKETS_PER_CLIENT so the arrays cover every queue's full drain.
 
 #define ROCKETNET_NUM_CLIENT_PACKETS                                      1024
 
