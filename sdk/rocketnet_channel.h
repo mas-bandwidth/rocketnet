@@ -306,7 +306,7 @@ void rn_channels_block_cost_reset();
 rn_block_cost_t rn_channels_block_cost_read();
 
 // Present only in the unit-test library: this thread's held-index lookups
-// (rn_held_find), counted as work done.
+// (rn_held_find calls, not the probe steps inside each), counted as work done.
 void rn_channels_held_finds_reset();
 uint64_t rn_channels_held_finds_read();
 #endif // #if ROCKETNET_DEV

@@ -180,7 +180,8 @@ StartPayload ==
     /\ UNCHANGED <<memoBlock, memoHigh, repeatExact>>
 
 \* A sequence spent and never sent: a client start_packet takes it and then
-\* refuses (the client's send ring or lease table), or an already-started
+\* refuses (the client's lease table; its send ring refuses before the
+\* sequence is taken), or an already-started
 \* client packet is aborted or its finish is refused. The server assigns its
 \* sequence only after finish accepts the payload and reserves its wire
 \* frame, so its refused starts, aborted starts and refused finishes spend

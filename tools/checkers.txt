@@ -99,3 +99,4 @@ tools/check_tla_views.py	python3 tools/check_tla_views.py --self-test	python3 to
 tools/check_workflow_shape.py	python3 tools/check_workflow_shape.py --self-test	python3 tools/check_workflow_shape.py --root {empty}	ci.yml	lint	Every workflow is in the shape the workflow checkers read
 tools/check_workflow_yaml.py	python3 tools/check_workflow_yaml.py --self-test	python3 tools/check_workflow_yaml.py --root {empty}	ci.yml	lint	Every workflow file parses as strict YAML and has a workflow's shape
 tools/check_debug_unit_shards.py	python3 tools/check_debug_unit_shards.py --self-test	python3 tools/check_debug_unit_shards.py {emptyfile}	ci.yml	lint	Self-tests of the registered checkers
+tools/fetch_run_jobs.py	python3 tools/fetch_run_jobs.py --self-test	GH_TOKEN= python3 tools/fetch_run_jobs.py {emptyfile}	ci.yml	lint	Self-tests of the registered checkers

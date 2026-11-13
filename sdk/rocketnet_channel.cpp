@@ -136,8 +136,11 @@ static inline uint32_t rn_held_home( uint64_t key, uint32_t entries )
 }
 
 #if ROCKETNET_DEV
-// Unit-library instrumentation only: the held-index lookups this thread made,
-// so a test bounds the receive path's work per record by count, not by time.
+// Unit-library instrumentation only: the held-index lookups (rn_held_find
+// calls) this thread made, so a test bounds the lookups per record by count,
+// not by time. The probe steps inside a call are not counted: a call scans
+// from the key's home cell to the key or an empty cell, and the 2W-cell table
+// never holds more than W entries (rn_held_insert), so it stops within W + 1.
 static thread_local uint64_t rn_held_finds;
 void rn_channels_held_finds_reset() { rn_held_finds = 0; }
 uint64_t rn_channels_held_finds_read() { return rn_held_finds; }
@@ -2043,8 +2046,8 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 // A partial packet may already have delivered an earlier record; its retry
 // deduplicates that prefix while the refused record remains unmarked.
 // A duplicate (layer 3 will drop it) releases nothing: it reserves one, as a
-// record ahead of its turn does, and never looks up the held run, so resent
-// numbers at the read index cost O(1) each
+// record ahead of its turn does, and never looks up the held run: a resent
+// number at the read index makes no held-index lookup
 // (proofs/tla/RNOrderingWrap.tla ReceiveDuplicate).
 
 // proofs/tla/RNOrderingWrap.tla Receive: the reservation, the dispatch and the drain compare orderings modulo 2^24 with the 32-bit read index

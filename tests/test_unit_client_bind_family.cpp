@@ -415,10 +415,11 @@ static void test_client_connect_keeps_the_family_that_answers()
     rocketnet_unit_check( late_cookie_sent );
     rocketnet_unit_check( rocketnet_client_transport_counters( transport )->values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] >= 1 );
 
-    // destroy frees both families, the closed one too, and closes nothing more
+    // the reading step's exit closes the kept family too (proofs/tla/RNClientRace.tla
+    // ReaderExit); destroy frees both families and closes nothing more
 
     rn_test_client_transport_stop_and_destroy( transport );
-    rocketnet_unit_check( fake->close_calls == 1 );
+    rocketnet_unit_check( fake->close_calls == 2 );
     rocketnet_unit_check( fake->destroy_calls == 2 );
     delete fake;
     bind_family_server_teardown( &server );
@@ -577,8 +578,9 @@ static void test_client_race_won_by_the_primary_drops_the_second()
     rocketnet_unit_check( rocketnet_client_transport_receive_packet( transport, received, (int) sizeof( received ) ) == (int) sizeof( sent_payload ) );
     rocketnet_unit_check( memcmp( received, sent_payload, sizeof( sent_payload ) ) == 0 );
 
+    // the losing family closed at the commit, the kept one at the exit
     rn_test_client_transport_stop_and_destroy( transport );
-    rocketnet_unit_check( fake->close_calls == 1 );
+    rocketnet_unit_check( fake->close_calls == 2 );
     rocketnet_unit_check( fake->destroy_calls == 2 );
     delete fake;
     bind_family_server_teardown( &server );
@@ -1476,12 +1478,13 @@ static void race_world_run( bool batch, int winner, race_loser_cookie_t loser_co
     rocketnet_unit_check( lost->num_sent == w->loser_at_commit.num_sent );
 
     // destroy frees each family once; the losing one stays closed once and
-    // the kept one is closed by its destroy, not by close
+    // the kept one is closed once, by the reading step's exit
+    // (proofs/tla/RNClientRace.tla ReaderExit)
 
     race_harness_teardown( h );
     rocketnet_unit_check( lost->num_sent == w->loser_at_commit.num_sent );
     rocketnet_unit_check( won->destroy_calls == 1 && lost->destroy_calls == 1 );
-    rocketnet_unit_check( won->close_calls == 0 && lost->close_calls == 1 );
+    rocketnet_unit_check( won->close_calls == 1 && lost->close_calls == 1 );
     delete w;
 }
 
@@ -1627,8 +1630,12 @@ static void test_client_race_each_family_wins_and_the_other_is_dropped()
 
 REGISTER_UNIT_TEST( test_client_race_each_family_wins_and_the_other_is_dropped );
 
-// A race nobody answers, destroyed in flight: each family is freed once and
-// neither is closed (only a commit closes a family before destroy).
+// A race nobody answers, stopped and destroyed in flight
+// (proofs/tla/RNClientRace.tla ExitedIsClosed; standard/TRANSPORT.md t13.3):
+// datagrams queued on both families at the stop are read and counted as
+// CLIENT_RECEIVE_DISCARDED_AT_STOP by the reading step's exit, which then
+// closes both families, before destroy, so none waits unread for destroy to
+// free it. Destroy frees each family once and closes nothing more.
 
 static void test_client_race_destroyed_in_flight_frees_both()
 {
@@ -1645,11 +1652,29 @@ static void test_client_race_destroyed_in_flight_frees_both()
         }
         rocketnet_unit_check( rocketnet_client_transport_state( h->transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
         rocketnet_unit_check( h->pair.fake[0].num_sent > 0 && h->pair.fake[0].num_sent == h->pair.fake[1].num_sent );
+
+        const uint8_t junk[1] = { 0xEE };
+        rocketnet_fake_client_push( &h->pair.fake[0], &h->ipv6_server, junk, 1 );
+        rocketnet_fake_client_push( &h->pair.fake[0], &h->ipv6_server, junk, 1 );
+        rocketnet_fake_client_push( &h->pair.fake[1], &h->ipv4_server, junk, 1 );
+        rocketnet_fake_client_push( &h->pair.fake[1], &h->ipv4_server, junk, 1 );
+        rocketnet_fake_client_push( &h->pair.fake[1], &h->ipv4_server, junk, 1 );
+
+        rocketnet_client_transport_stop( h->transport );
+        rn_test_client_transport_wait_stopped( h->transport );
+        rocketnet_unit_check( rocketnet_client_transport_counters( h->transport )->values[ROCKETNET_COUNTER_CLIENT_RECEIVE_DISCARDED_AT_STOP] == 5 );
+        for ( int family = 0; family < 2; family++ )
+        {
+            rocketnet_unit_check( h->pair.fake[family].inbound_count == 0 );
+            rocketnet_unit_check( h->pair.fake[family].close_calls == 1 );
+            rocketnet_unit_check( h->pair.fake[family].destroy_calls == 0 );
+        }
+
         race_harness_teardown( h );
         for ( int family = 0; family < 2; family++ )
         {
             rocketnet_unit_check( h->pair.fake[family].destroy_calls == 1 );
-            rocketnet_unit_check( h->pair.fake[family].close_calls == 0 );
+            rocketnet_unit_check( h->pair.fake[family].close_calls == 1 );
         }
         delete h;
     }
