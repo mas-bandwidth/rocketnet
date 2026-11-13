@@ -30,8 +30,9 @@
 // uses it keeps the safety checks on deliveries it can attribute and drops
 // the liveness check. A connection the script itself tears down (a sealed
 // disconnect, or a long enough silence) also skips liveness; a script with
-// neither, whose wire was never silent either way for half the timeout, must
-// end connected.
+// neither, whose wire was never silent either way for half the timeout before
+// any drop (the quiet a drop causes never counts), must end
+// connected.
 //
 // INPUT: [selector][op]...
 //   selector bit 4: start the script during the handshake
@@ -75,6 +76,10 @@ static uint64_t rocketnet_fuzz_session_delivered_tally[2][ROCKETNET_FUZZ_NUM_CHA
 // clean delivery, and the longest silence either way so far
 static double rocketnet_fuzz_session_heard[2];
 static double rocketnet_fuzz_session_dark;
+// whether the pair was connected after the last step, and whether it has
+// dropped since the script began: from the drop on, the silence is frozen
+static bool rocketnet_fuzz_session_was_up;
+static bool rocketnet_fuzz_session_went_down;
 
 static int rocketnet_fuzz_session_stream_index( int session, int channel )
 {
@@ -254,16 +259,30 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
     rocketnet_fuzz_session_receive( pair );
     rocketnet_fuzz_pair_send( pair );
     rocketnet_fuzz_pair_check_no_allocation( pair );
+
+    // a connected pair dropping: the longest silence either way up to now is
+    // the one that has to account for it, so it is taken here and frozen
+    const bool up = rocketnet_fuzz_pair_connected( pair );
+    if ( rocketnet_fuzz_session_was_up && !up && !rocketnet_fuzz_session_went_down )
+    {
+        rocketnet_fuzz_session_went_down = true;
+        for ( int direction = 0; direction < 2; direction++ )
+        {
+            rocketnet_fuzz_session_dark = std::max( rocketnet_fuzz_session_dark, pair->time - rocketnet_fuzz_session_heard[direction] );
+        }
+    }
+    rocketnet_fuzz_session_was_up = up;
 }
 
 // the wire delivering everything captured one way (0 client -> server, 1
 // server -> client), at least one datagram: the receiver hears the sender now.
-// The time since the last such delivery is a silence the script imposed;
-// the longest is kept
+// The time since the last such delivery is a silence, measured only until a
+// drop (rocketnet_fuzz_session_update), so a drop cannot excuse itself with
+// the quiet it causes; the longest is kept
 static void rocketnet_fuzz_session_heard_from( const struct rocketnet_fuzz_pair_t * pair, int direction )
 {
     const struct rocketnet_fuzz_ring_t * ring = direction == 0 ? &pair->c2s : &pair->s2c;
-    if ( ring->count == 0 )
+    if ( ring->count == 0 || rocketnet_fuzz_session_went_down )
     {
         return;
     }
@@ -368,6 +387,8 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     rocketnet_fuzz_session_heard[0] = pair->time;
     rocketnet_fuzz_session_heard[1] = pair->time;
     rocketnet_fuzz_session_dark = 0.0;
+    rocketnet_fuzz_session_was_up = rocketnet_fuzz_pair_connected( pair );
+    rocketnet_fuzz_session_went_down = false;
 
     static uint8_t buffer[ROCKETNET_RECEIVE_CEILING];
     static uint8_t packet[ROCKETNET_RECEIVE_CEILING];
@@ -532,8 +553,10 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
         rocketnet_fuzz_session_clean_step( pair );
     }
 
-    // the longest silence either way, to the end of the quiet window
-    for ( int direction = 0; direction < 2; direction++ )
+    // the longest silence either way, to the end of the quiet window; when the
+    // connection dropped, the silence that counts is the one before the drop
+    // (rocketnet_fuzz_session_update), not the quiet the drop itself caused
+    for ( int direction = 0; direction < 2 && !rocketnet_fuzz_session_went_down; direction++ )
     {
         rocketnet_fuzz_session_dark = std::max( rocketnet_fuzz_session_dark, pair->time - rocketnet_fuzz_session_heard[direction] );
     }
