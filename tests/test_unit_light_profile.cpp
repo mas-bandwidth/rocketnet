@@ -122,7 +122,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452223 )
+// The per-update receive budget at 64 a client (it was 16; the XDP send
+// queue fix, so the receive budget holds twice the send) grows the process
+// views, the payload batch and the cookie reply bitmap, adding 354722304
+// bytes to the server and nothing to the client (measured on the Windows CI
+// runner, MSVC, x64, Release, before and after: 1469500735 to 1824223039).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1823174527 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14340460 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
