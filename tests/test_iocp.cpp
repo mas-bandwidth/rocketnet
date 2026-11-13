@@ -3087,6 +3087,9 @@ static void test_windows_create_refused_for_commit_is_out_of_memory()
     status = ROCKETNET_STATUS_OK;
     CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status ) );
     CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    // the create got as far as binding an ephemeral port before the worker was
+    // refused; the failed create hands the caller back the port 0 it asked for
+    CHECK( bind.port == 0 );
     CHECK( live_allocations.load() == baseline );
 
     rocketnet_platform_set_priority_calls_for_testing( saved );
