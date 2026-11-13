@@ -1316,6 +1316,244 @@ static void test_reservation_of_control_and_unordered_records()
     node_free( b );
 }
 
+// One code-3 record of one byte at ring 0 on channel 0, written raw: the
+// hostile sequences below name numbers and orderings no sender's write makes.
+
+static rocketnet_message_record_t raw_ordered_record( uint32_t number, uint32_t ordering, const uint8_t * byte )
+{
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+    record.number = number;
+    record.ordering = ordering;
+    record.data = byte;
+    record.bytes = 1;
+
+    return record;
+}
+
+// Every ordering from 1 to W - 1 held complete, ordering 0 never sent: the
+// longest held run a channel can have behind its read index.
+
+static void hold_the_longest_run( node_t * b )
+{
+    const uint32_t W = b->region->window;
+    const uint8_t byte = 0x5A;
+    alignas( 16 ) uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+
+    uint32_t next = 1;
+    while ( next < W )
+    {
+        rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+        while ( next < W )
+        {
+            const rocketnet_message_record_t record = raw_ordered_record( next, next, &byte );
+            if ( !rocketnet_message_writer_add( &writer, &record ) )
+            {
+                break;
+            }
+            next++;
+        }
+
+        const int bytes = rocketnet_message_writer_finish( &writer );
+        check( rn_ordered_receive( &b->ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    }
+
+    check( b->region->held_count == W - 1 );
+    check( b->region->channel_receive[0].ordered_read == 0 );
+}
+
+// A duplicate's delivery reservation is one, never the channel's held run
+// (proofs/tla/RNOrderingWrap.tla ReceiveDuplicate): it delivers nothing. A sender
+// holding the longest run behind the read index and then sending payloads of
+// duplicate numbers at that index made the server's main thread look up every
+// held ordering for every record, W - 1 lookups a 13-byte record, with no
+// violation counted. What is counted is held-index lookups (rn_held_find
+// calls), at most one a record whatever W is; the probe steps inside a call
+// are not counted (the index's own rule bounds them: 2W cells, at most W
+// used, so a call meets an empty cell within W + 1 steps). With one
+// delivery left the duplicates are taken, not deferred. Then the honest end:
+// ordering 0 releases the whole run, W deliveries.
+
+static void duplicates_at_the_read_index_leg( int window )
+{
+    rocketnet_message_config_t config;
+    node_config( &config, window, 262144, 262144, 800000 );
+    if ( config.packets_in_flight < window )
+    {
+        config.packets_in_flight = window;
+    }
+
+    node_t * b = node_new( &config, 8 );
+    check( b->region->window == (uint32_t) window );
+    const uint32_t W = b->region->window;
+    rn_channels_t * channels = &b->ordered.channels;
+
+    hold_the_longest_run( b );
+
+    const uint8_t byte = 0x5A;
+    alignas( 16 ) uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    rocketnet_message_writer_t writer;
+    rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+    uint64_t records = 0;
+    for ( ;; )
+    {
+        const rocketnet_message_record_t record = raw_ordered_record( (uint32_t) ( 1 + records % ( W - 1 ) ), 0, &byte );
+        if ( !rocketnet_message_writer_add( &writer, &record ) )
+        {
+            break;
+        }
+        records++;
+    }
+    const int bytes = rocketnet_message_writer_finish( &writer );
+    check( records >= 100 );
+
+    const uint64_t duplicates = counter( b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE );
+    rn_channels_held_finds_reset();
+    check( rn_ordered_receive( &b->ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    const uint64_t finds = rn_channels_held_finds_read();
+    check( finds <= records );
+    check( counter( b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) == duplicates + records );
+    check( channels->deliveries == 0 );
+
+    // one delivery left: a duplicate reserves one, as a record ahead of its
+    // turn does, not the run, so the packet is taken; with none left it is
+    // deferred, uncounted, as before
+
+    channels->deliveries = channels->delivery_capacity - 1;
+    check( rn_ordered_receive( &b->ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( counter( b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) == duplicates + 2 * records );
+    channels->deliveries = channels->delivery_capacity;
+    check( rn_ordered_receive( &b->ordered, payload, bytes ) == ROCKETNET_CHANNEL_RECEIVE_DEFERRED );
+    check( counter( b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) == duplicates + 2 * records );
+    channels->deliveries = 0;
+
+    check( b->region->held_count == W - 1 );
+    check( b->region->channel_receive[0].ordered_read == 0 );
+    check( channels->error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( !rn_region_exhausted( b->region ) );
+
+    // the honest end: ordering 0 arrives and releases the whole run
+
+    rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+    const rocketnet_message_record_t first = raw_ordered_record( 0, 0, &byte );
+    check( rocketnet_message_writer_add( &writer, &first ) == 1 );
+    const int first_bytes = rocketnet_message_writer_finish( &writer );
+    check( rn_ordered_receive( &b->ordered, payload, first_bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( channels->deliveries == W );
+    check( b->region->channel_receive[0].ordered_read == W );
+    check( b->region->held_count == 0 );
+    check( channels->error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( !rn_region_exhausted( b->region ) );
+
+    node_free( b );
+}
+
+static void test_duplicates_at_the_read_index_never_scan_the_held_run()
+{
+    duplicates_at_the_read_index_leg( 1024 );
+    duplicates_at_the_read_index_leg( 65536 );
+}
+
+// The same reservation for fresh block fragments at the read index: a
+// fragment that cannot complete its block releases nothing, so it reserves
+// one delivery with one lookup, not the held run behind it
+// (proofs/tla/RNOrderingWrap.tla ReceivePartial). A block of eight at
+// ordering 0 (numbers 0 .. 7), every ordering after it held complete; the
+// fragments 1 .. 7 arrive one a payload, each at most a few held-index
+// lookups (rn_held_find calls, as above) whatever W is, and each is taken
+// with one delivery left; fragment 0 completes the block and releases the
+// whole run.
+
+static void fragments_at_the_read_index_leg( int window )
+{
+    rocketnet_message_config_t config;
+    node_config( &config, window, 262144, 262144, 800000 );
+    if ( config.packets_in_flight < window )
+    {
+        config.packets_in_flight = window;
+    }
+
+    node_t * b = node_new( &config, 8 );
+    check( b->region->window == (uint32_t) window );
+    const uint32_t W = b->region->window;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t count = 8;
+    const uint32_t H = W - count;
+    rn_channels_t * channels = &b->ordered.channels;
+
+    const uint8_t byte = 0x5A;
+    alignas( 16 ) uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint32_t k = 0;
+    while ( k < H )
+    {
+        rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+        while ( k < H )
+        {
+            const rocketnet_message_record_t record = raw_ordered_record( count + k, 1 + k, &byte );
+            if ( !rocketnet_message_writer_add( &writer, &record ) )
+            {
+                break;
+            }
+            k++;
+        }
+
+        const int bytes = rocketnet_message_writer_finish( &writer );
+        check( rn_ordered_receive( &b->ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    }
+    check( b->region->held_count == H );
+
+    static uint8_t fragment_data[ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+    for ( uint32_t n = 0; n < count; n++ )
+    {
+        const uint32_t index = ( n + 1 ) % count;            // fragment 0 last
+        rocketnet_message_record_t record;
+        memset( &record, 0, sizeof( record ) );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+        record.block = 1;
+        record.number = index;
+        record.ordering = 0;
+        record.fragment = index;
+        record.fragments = count - 1;
+        record.ring = index * F / 16;
+        record.data = fragment_data;
+        record.bytes = (int) F;
+
+        rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+        check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+        const int bytes = rocketnet_message_writer_finish( &writer );
+
+        // one delivery left: a fragment that completes nothing is taken, not deferred
+
+        channels->deliveries = index != 0 ? channels->delivery_capacity - 1 : 0;
+        rn_channels_held_finds_reset();
+        check( rn_ordered_receive( &b->ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        if ( index != 0 )
+        {
+            check( rn_channels_held_finds_read() <= 4 );
+            check( channels->deliveries == channels->delivery_capacity - 1 );
+            check( b->region->channel_receive[0].ordered_read == 0 );
+        }
+    }
+
+    check( channels->deliveries == 1 + H );
+    check( b->region->channel_receive[0].ordered_read == 1 + H );
+    check( b->region->held_count == 0 );
+    check( channels->error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( !rn_region_exhausted( b->region ) );
+
+    node_free( b );
+}
+
+static void test_fragments_at_the_read_index_never_scan_the_held_run()
+{
+    fragments_at_the_read_index_leg( 1024 );
+    fragments_at_the_read_index_leg( 65536 );
+}
+
 static void test_large_between_small_keeps_order()
 {
     boundary_sizes_leg();
@@ -3764,6 +4002,8 @@ UNIT_TEST_SKIPPED_UNLESS( test_large_between_small_keeps_order_with_refused_pack
 REGISTER_UNIT_TEST( test_reservation_counts_the_held_run_past_2_to_the_24 );
 REGISTER_UNIT_TEST( test_reservation_takes_a_packet_that_fits_exactly );
 REGISTER_UNIT_TEST( test_reservation_of_control_and_unordered_records );
+REGISTER_UNIT_TEST( test_duplicates_at_the_read_index_never_scan_the_held_run );
+REGISTER_UNIT_TEST( test_fragments_at_the_read_index_never_scan_the_held_run );
 REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
 UNIT_TEST_SKIPPED_UNLESS( test_chunks_placed_by_index_not_arrival, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_no_partial_delivery );

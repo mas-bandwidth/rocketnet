@@ -328,13 +328,24 @@ not permit an unbounded backlog. None
 of these rules sets a frame, packet-send or ACK rate.
 
 On the GSO and XDP receive sides the worker fills its bank outside the
-receive mutex. Under the mutex it only moves bank pointers or indices: it
-publishes a filled bank and takes a free one. Main, with a try-acquire,
-swaps the published bank for the one it has finished reading. Neither thread
-copies packets while it holds the mutex. `RNGsoHandoff.RxPublish` and
-`RxClaim` model the GSO exchange. A GSO worker pass that finds its bank full
-and cannot publish it, or whose receive fails, sleeps 1 ms before the next
-pass instead of polling again at once (`RNGsoHandoff.RxBacksOff`). Each GSO
+receive mutex, and under the mutex only indices and counts move; neither
+thread copies packets while it holds it. On XDP the worker publishes a
+filled bank and takes a free one, and main, with a try-acquire, swaps the
+published bank for the one it has finished reading. GSO uses the receive
+handoff of `sdk/rocketnet_receive_handoff.h` over three buffers: at the end
+of each pass with results the worker commits its buffer's count under the
+mutex, and moves to the free buffer once main has started on its buffer;
+main, with a try-acquire at each call, reads the worker's buffer in place up
+to the committed count, after the unread tail of the buffer it held before.
+A datagram committed before main's call is returned by that call unless the
+mutex was busy, the per-update budget cut the call, or the call began with
+datagrams left from a cut call: main then reads the tail and its own buffer
+but moves on to the worker's only at its next call (`RNReceiveHandoff.DeliveredByNextCall`, bound to the code by
+the `receive-handoff` trace check; `RNGsoHandoff.RxFill` and `RxCall` are
+the same exchange beside the send side and the stop count). A GSO worker
+pass that finds its buffer full while main has not started on it, or whose
+receive fails, sleeps 1 ms before the next pass instead of polling again at
+once (`RNGsoHandoff.RxBacksOff`). Each GSO
 `receive_packets` call starts after the queue where the previous call's
 packet budget ran out, as XDP's does, so a full queue cannot starve the
 queues after it (`RNGsoRecvWalk`).

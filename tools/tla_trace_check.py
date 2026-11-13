@@ -99,7 +99,7 @@ LAYERS = {
             "RetireDead": "one slot of a sweep call's dead-report loop, taken whole as SweepCall",
             "Close": "one entry of a sweep call's close loop, taken whole as SweepCall",
         },
-        "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired"],
+        "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired", "RegisterRefused"],
         "steps": 500,
     },
     "msgxsendruns": {
@@ -109,6 +109,12 @@ LAYERS = {
         # of a 400-step walk would be Done records, each paid for by the
         # template's ASSUME
         "steps": 150,
+    },
+    "msgxreceivefill": {
+        "modules": ["RNMsgxReceiveFill.tla", "TraceRNMsgxReceiveFill.tla"],
+        "untraced": {"Done": "the model's end once the worker has exited and the arrivals bound is spent, a stutter; "
+                             "the walk's bound is one past its own arrivals, so it never gets there"},
+        "reach": ["ShortRoom", "Held", "BudgetCaps"],
     },
     "iocp-admit": {
         "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
@@ -138,6 +144,13 @@ LAYERS = {
         "untraced": {"Done": "the model's stutter once every bound is spent; the walk's flush bound is its length, so it never "
                              "gets there, and Done is no call of the code"},
         "reach": ["BankFull", "TurnedOverEveryBank", "NoFreeBank"],
+    },
+    "receive-handoff": {
+        "modules": ["RNReceiveHandoff.tla", "TraceRNReceiveHandoff.tla"],
+        "untraced": {},
+        "ghost": {"late": "history for DeliveredByNextCall: a call that returned less than was committed before it; the code "
+                          "keeps no such word"},
+        "reach": ["MainOnWorkerBuffer", "WorkerAhead", "TailPending", "WorkerFull"],
     },
     "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
@@ -263,17 +276,23 @@ LAYERS = {
 # runner's check step is spread by seed. Measured (bench-nyc-5, ccacc2a0b): msgx
 # 68 to 86 s a seed alone with its reach, two TLC runs of about 21 s a seed;
 # xdp-reply-macs 43 to 59 s a seed; every other layer 3 to 34 s whole.
+# "layer:reach" moves a layer's reach predicates out of its home into that
+# shard, which walks the layer's seeds (the walk alone, as the home does) and
+# tries each predicate on them; coverage stays at the home. A layer's reach is
+# in at most one such entry, and only a layer with reach predicates has one.
+# msgx's reach (five predicates, RegisterRefused found late) doubled its home's
+# check step (aws-gso-x86, 37fe98dd9: 78.7 s against main's 41.5 s).
 SHARD_SEEDS = range(1, 5)
 SHARDS = [
     ["msgx:1"],
     ["msgx:2", "xdp-replay"],
     ["msgx:3", "gso"],
-    ["msgx:4", "msgxsendruns", "gather"],
+    ["msgx:4", "msgxsendruns", "gather", "msgx:reach"],
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
-    ["ackapply", "bank", "receive"],
-    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks"],
+    ["ackapply", "bank", "receive", "msgxreceivefill"],
+    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
 ]
 
 STEPS = 400
@@ -919,10 +938,11 @@ def listed(binary_path):
 
 
 def shard_pairs(shards):
-    """([[(layer, seed), ...] per shard], [failure]): SHARDS expanded, and every way it is not a partition of
-    LAYERS x SHARD_SEEDS: an entry naming no layer or no seed of SHARD_SEEDS, a pair in two shards, a pair in
-    none, an empty shard"""
-    failures, expanded, where = [], [], {}
+    """([[(layer, seed), ...] per shard], {layer: shard of its reach}, [failure]): SHARDS expanded, and every
+    way it is not a partition of LAYERS x SHARD_SEEDS: an entry naming no layer or no seed of SHARD_SEEDS, a
+    pair in two shards, a pair in none, an empty shard; a layer's reach moved twice, or moved for a layer with
+    no reach predicate"""
+    failures, expanded, where, reach_at = [], [], {}, {}
     count = len(shards)
     for i, shard in enumerate(shards):
         pairs = []
@@ -930,6 +950,14 @@ def shard_pairs(shards):
             layer, _, seed = entry.partition(":")
             if layer not in LAYERS:
                 failures.append(f"shard {i}/{count}: {entry} names no layer of LAYERS")
+                continue
+            if seed == "reach":
+                if not LAYERS[layer].get("reach"):
+                    failures.append(f"shard {i}/{count}: {entry} moves the reach of a layer with no reach predicate")
+                elif layer in reach_at:
+                    failures.append(f"{entry} is listed twice, in shards {reach_at[layer]}/{count} and {i}/{count}")
+                else:
+                    reach_at[layer] = i
                 continue
             if seed and not (seed.isdigit() and int(seed) in SHARD_SEEDS):
                 failures.append(f"shard {i}/{count}: {entry} names no seed of {SHARD_SEEDS.start}-{SHARD_SEEDS.stop - 1}")
@@ -947,7 +975,7 @@ def shard_pairs(shards):
         for seed in SHARD_SEEDS:
             if (layer, seed) not in where:
                 failures.append(f"{layer}:{seed} is listed in no shard: it would never be checked per commit")
-    return expanded, failures
+    return expanded, reach_at, failures
 
 
 def table_rows():
@@ -985,23 +1013,27 @@ def main():
     index, count = int(shard.group(1)), int(shard.group(2))
     # the shard table is checked on every run, so a table that drops or
     # doubles a pair is red wherever the check runs
-    expanded, table_failures = shard_pairs(SHARDS)
+    expanded, reach_at, table_failures = shard_pairs(SHARDS)
     failed += [f"SHARDS: {f}" for f in table_failures]
     if count == 1:
         pairs = [(n, seed) for n in names for seed in args.seeds]
+        moved = set()
     elif count == len(SHARDS):
         if args.layer != "all" or args.seeds != SHARD_SEEDS:
             parser.error(f"--shard {args.shard} is a shard of SHARDS: it needs --layer all and "
                          f"--seeds {SHARD_SEEDS.start}-{SHARD_SEEDS.stop - 1}")
         pairs = expanded[index]
+        moved = {n for n, i in reach_at.items() if i == index}
     else:
         parser.error(f"--shard {args.shard}: SHARDS holds {len(SHARDS)} shards; use I/{len(SHARDS)}, or 0/1 for every seed")
     # an empty shard checks nothing: never TRACE-CHECK OK
-    if not pairs:
+    if not pairs and not moved:
         parser.error(f"--shard {args.shard} holds no (layer, seed) pair, so nothing would be checked")
-    names = sorted({n for n, _ in pairs})
-    # a layer's coverage and reach run where its first seed is
-    homes = [n for n in names if (n, args.seeds.start) in pairs]
+    # a layer's coverage runs where its first seed is, and its reach there too
+    # unless a "layer:reach" entry moved it (0/1 runs every layer's reach)
+    homes = sorted({n for n, seed in pairs if seed == args.seeds.start})
+    reach_here = sorted(moved | {n for n in homes if count == 1 or n not in reach_at})
+    names = sorted({n for n, _ in pairs} | moved)
     if args.library_config is None:
         failed.append(f"no {args.bin / 'tla_trace_config.txt'}: the library's definitions are not known")
 
@@ -1091,7 +1123,8 @@ def main():
     # the directory check_seed uses, so their actions are counted here and the
     # reach predicates can try them; TLC accepts each in its own shard, and the
     # summary job is green only when every shard is
-    elsewhere = [(n, seed) for n in homes for seed in args.seeds if (n, seed) not in pairs]
+    elsewhere = [(n, seed) for n in sorted(set(homes) | set(reach_here)) for seed in args.seeds
+                 if (n, seed) not in pairs]
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         walked = list(pool.map(lambda p: coverage_walk(args, p[0], LAYERS[p[0]], p[1]), elsewhere))
     for (n, seed), (report, log, failures) in zip(elsewhere, walked):
@@ -1113,7 +1146,7 @@ def main():
             failed.append(f"layer {n}: the trace records {act}, which is not an action of the spec's Next")
     # each reach predicate tries the seeds in turn, the predicates at once
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        checks = [(n, p, []) for n in homes for p in LAYERS[n].get("reach", [])]
+        checks = [(n, p, []) for n in reach_here for p in LAYERS[n].get("reach", [])]
         hits = list(pool.map(lambda c: reached(args, c[0], LAYERS[c[0]], c[1], c[2]), checks))
     for (n, predicate, log), hit in zip(checks, hits):
         if not hit:
@@ -1126,7 +1159,7 @@ def main():
         print(f"TRACE-CHECK FAILED reruns={reruns}")
         return 1
     print(f"TRACE-CHECK OK layers={','.join(names)} seeds={args.seeds.start}-{args.seeds.stop - 1} "
-          f"pairs={len(pairs)} homes={','.join(homes)} reruns={reruns}")
+          f"pairs={len(pairs)} homes={','.join(homes)} reach={','.join(reach_here)} reruns={reruns}")
     return 0
 
 

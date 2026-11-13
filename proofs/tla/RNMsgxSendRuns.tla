@@ -36,9 +36,9 @@
 (* last packet of client c (of that stamp) sent, and a flag records each  *)
 (* send that broke an order or reached another client.                    *)
 (*                                                                         *)
-(* The code has StableSort, GenBreak, PartialSkipsAborted and DeadResends *)
-(* TRUE; each broken config flips one and must fail its named invariant   *)
-(* (README-RNMsgxSendRuns.md).                                             *)
+(* The code has StableSort, GenBreak, PartialSkipsAborted, DeadResends    *)
+(* and PartialContinues TRUE; each broken config flips one and must fail  *)
+(* its named property (README-RNMsgxSendRuns.md).                         *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -57,7 +57,9 @@ CONSTANTS
     GenBreak,           \* TRUE: a run ends at a change of generation
     PartialSkipsAborted,\* TRUE: a partial send's cursor counts only live packets as taken
     DeadResends,        \* TRUE: a dead run leaves through the shared socket
-    OpenGenAt,          \* the generation each slot is open at when the send starts:
+    PartialContinues,   \* TRUE: a partial send goes on with the rest at once (FALSE:
+                        \* the call keeps the bank and the worker waits, R124)
+    OpenGenAt,         \* the generation each slot is open at when the send starts:
                         \* s * GenSpan + g for slot s open at generation g
     Bank                \* {}: every bank Init admits; else the one bank, as the set
                         \* of BankCode(i, packet) over its packets (a trace's input)
@@ -329,15 +331,21 @@ SendAll ==
     /\ pc' = "head"
     /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, stalls, retires >>
 
-\* a prefix of k taken: k is the send's answer
+\* a prefix of k taken: k is the send's answer.  The socket took data, so
+\* the call goes on at HEAD with the rest (the cursor rises by at least one,
+\* so no bound is needed); PartialContinues FALSE is the old code, which
+\* kept the bank and slept the worker's retry wait after progress (R124)
 SendPartial(k) ==
     /\ pc = "send"
-    /\ stalls < MaxStalls
+    /\ PartialContinues \/ stalls < MaxStalls
     /\ k \in 1..(Len(run) - 1)
     /\ SetH(SendSeq(H, run, k, Remote(slot[hd])))
     /\ cursor' = Advance(cursor, 0, k)
-    /\ stalls' = stalls + 1
-    /\ pc' = "kept"
+    /\ IF PartialContinues
+       THEN /\ pc' = "head"
+            /\ UNCHANGED stalls
+       ELSE /\ pc' = "kept"
+            /\ stalls' = stalls + 1
     /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, retires >>
 
 \* nothing taken (0) or full: the run kept
@@ -517,6 +525,11 @@ ResumeExact ==
 
 \* a dead report names a connected stamp, never the shared socket
 DeadReportsConnected == ~bad.dead
+
+\* the call keeps the bank (and the worker waits) only on an answer that
+\* took nothing: a send that put packets on the wire never ends the call
+KeptOnlyWhenNothingLeft ==
+    [][(pc' = "kept") => (hist' = hist)]_vars
 
 
 =============================================================================

@@ -135,8 +135,24 @@ static inline uint32_t rn_held_home( uint64_t key, uint32_t entries )
     return (uint32_t) ( h & ( entries - 1 ) );
 }
 
+#if ROCKETNET_DEV
+// Unit-library instrumentation only: the held-index lookups (rn_held_find
+// calls) this thread made, so a test bounds the lookups per record by count,
+// not by time. The probe steps inside a call are not counted: a call scans
+// from the key's home cell to the key or an empty cell, and the 2W-cell table
+// never holds more than W entries (rn_held_insert), so it stops within W + 1.
+static thread_local uint64_t rn_held_finds;
+void rn_channels_held_finds_reset() { rn_held_finds = 0; }
+uint64_t rn_channels_held_finds_read() { return rn_held_finds; }
+#define RN_HELD_FIND_COUNT() ( rn_held_finds++ )
+#else
+#define RN_HELD_FIND_COUNT() ( (void) 0 )
+#endif // #if ROCKETNET_DEV
+
 static uint32_t rn_held_find( const rn_region_t * region, uint64_t key )
 {
+    RN_HELD_FIND_COUNT();
+
     const uint32_t entries = region->held_entries;
     uint32_t i = rn_held_home( key, entries );
 
@@ -2029,9 +2045,13 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 // Reserve all deliveries this record can release before accepting its number.
 // A partial packet may already have delivered an earlier record; its retry
 // deduplicates that prefix while the refused record remains unmarked.
+// A duplicate (layer 3 will drop it) releases nothing: it reserves one, as a
+// record ahead of its turn does, and never looks up the held run: a resent
+// number at the read index makes no held-index lookup
+// (proofs/tla/RNOrderingWrap.tla ReceiveDuplicate).
 
 // proofs/tla/RNOrderingWrap.tla Receive: the reservation, the dispatch and the drain compare orderings modulo 2^24 with the 32-bit read index
-static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels, const rocketnet_message_record_t * record )
+static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels, const rocketnet_message_record_t * record, bool duplicate )
 {
     if ( record->control )
     {
@@ -2040,7 +2060,7 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
 
     uint32_t needed = 1;
 
-    if ( record->code != ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED || record->channel >= channels->num_channels )
+    if ( duplicate || record->code != ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED || record->channel >= channels->num_channels )
     {
         return needed;
     }
@@ -2050,6 +2070,31 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
     if ( rn_u24( record->ordering ) != rn_u24( rx->ordered_read ) )
     {
         return needed;
+    }
+
+    // An in-turn block fragment releases the run only when it completes its
+    // block (rn_channels_dispatch_chunk): the first fragment seen never does,
+    // a block having two or more, and a later one only as the last missing.
+    // One lookup, so fragments arriving at the read index never pay for the
+    // run they cannot release (proofs/tla/RNOrderingWrap.tla ReceivePartial).
+    // Any other fragment is counted with the run, an over-count when the
+    // dispatch refuses it (a refusal ends the connection).
+
+    if ( record->block )
+    {
+        const uint32_t block_held = rn_held_find( region, rn_held_key( record->channel, record->ordering ) );
+        if ( block_held == RN_DESCRIPTOR_NONE )
+        {
+            return needed;
+        }
+
+        const rn_held_entry_t * entry = &region->held_index[block_held];
+        const rn_receive_descriptor_t * anchor = &region->receive_descriptors[entry->number & ( region->window - 1 )];
+        if ( entry->used == RN_HELD_COLLECTING && anchor->live && (uint32_t) anchor->number == entry->number &&
+             (uint32_t) anchor->block_have + 1 < record->fragments + 1 )
+        {
+            return needed;
+        }
     }
 
     // at most one sequenced hold can be released by this channel's drain,
@@ -2115,7 +2160,8 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
                                 record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED );
         if ( numbered )
         {
-            const uint32_t needed = rn_receive_delivery_reservation( channels, &record );
+            const bool duplicate = rn_window_receive_duplicate( &ordered->receive, &record );
+            const uint32_t needed = rn_receive_delivery_reservation( channels, &record, duplicate );
             if ( channels->deliveries > channels->delivery_capacity || needed > channels->delivery_capacity - channels->deliveries )
             {
                 return ROCKETNET_CHANNEL_RECEIVE_DEFERRED;

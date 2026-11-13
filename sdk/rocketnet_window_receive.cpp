@@ -32,6 +32,39 @@ void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region
     receive->violation = ROCKETNET_MESSAGE_VIOLATION_NONE;
 }
 
+// standard/MESSAGES.md m5.2, RNWindow Accept's duplicate test alone, read
+// only: true for a number behind R or already received. Nothing is counted or
+// claimed. Any other record, a window violation included, is false.
+// rn_window_receive_accept decides a record the same way while R and the bits
+// are unchanged, and counts the duplicate.
+// proofs/tla/RNOrderingWrap.tla ReceiveDuplicate: the reservation asks it
+// first, so a duplicate reserves one delivery, never the held run
+bool rn_window_receive_duplicate( const rn_window_receive_t * receive, const rocketnet_message_record_t * record )
+{
+    rocketnet_assert( receive && receive->region && record );
+
+    if ( receive->violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    {
+        return false;
+    }
+
+    const uint32_t W = receive->region->window;
+    const int32_t delta = rocketnet_message_u24_delta( record->number, receive->R );
+    if ( delta < 0 )
+    {
+        return true;
+    }
+
+    if ( (uint32_t) delta >= W || receive->R > UINT64_MAX - (uint32_t) delta )
+    {
+        return false;
+    }
+
+    const uint32_t index = (uint32_t) ( ( receive->R + (uint32_t) delta ) & ( W - 1 ) );
+
+    return ( receive->region->received_bits[index >> 6] & ( 1ULL << ( index & 63 ) ) ) != 0;
+}
+
 // standard/MESSAGES.md m5.2 and m4; RNWindow Recon and Accept. The
 // caller applies records in wire order and stops a payload on VIOLATION (R6).
 // proofs/tla/RNWindow.tla OpenPacket

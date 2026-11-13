@@ -198,6 +198,15 @@ static void test_server_gso_drain_budget()
 
 REGISTER_UNIT_TEST( test_server_gso_drain_budget );
 
+// The kernel's drops at a queue socket (SO_RXQ_OVFL, cumulative, 32-bit)
+// are counted in the overflow tally, across a wrap, through the receive seam.
+static void test_server_gso_socket_overflow_counted()
+{
+    check( rocketnet_server_gso_test_socket_overflow_counted() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_socket_overflow_counted );
+
 // a drain asks recvmmsg only for messages whose every segment fits the
 // buffer, so nothing it reads is dropped as overflow
 static void test_server_gso_drain_room()
@@ -796,15 +805,16 @@ static void test_server_gso_receive_queue_rotation()
     check( seen[claimed] == 0 );
     check( seen[claimed + 1] == 0 );
 
-    // the claimed queues have a free buffer again, the others still hold the
-    // ready buffer the first update did not claim. Each update claims the
-    // next queue after the last it filled: every queue delivers within as
-    // many updates as there are queues.
+    // the queues the first update read from have their worker on a free
+    // buffer again; the others still hold the full buffer the first update
+    // did not reach. Each update starts at the next queue after the last it
+    // filled: every queue delivers within as many updates as there are
+    // queues.
     for ( int round = 1; round < queues; round++ )
     {
         for ( int q = 0; q < queues; q++ )
         {
-            // a queue still holding its ready buffer refuses; that is the point
+            // a queue whose worker buffer is still full refuses; that is the point
             rocketnet_server_gso_test_publish_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE );
         }
         rocketnet_server_gso_receive_packets( gso );
