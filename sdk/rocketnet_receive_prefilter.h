@@ -15,20 +15,41 @@
 
 #include <atomic>
 
-// The receive drop reasons a server transport counts itself, before a
-// datagram reaches main: each reason names the counters main's ladder adds
-// for the same datagram (rocketnet_receive_drop_counters), so a drop made on a
-// transport's own thread reads exactly as main would have counted it. A
-// transport's workers count into rocketnet_receive_drop_tally_t tallies, one
-// writer each, and its receive_drop_totals operation (sdk/rocketnet_driver.h)
-// sums them for the server to fold into its counters.
+// The worker-side prefilter: the stateless first rungs of the server's
+// receive ladder, run by a transport's own receive worker before a datagram
+// takes a slot in the receive bank, so garbage cannot evict a connected
+// player's packets.
+//
+// It is pure. It reads the datagram and the server's packet filter value and
+// nothing else. The filter value is fixed for the server's life: it is the
+// config's packet_filter, which the transport receives at create in
+// rocketnet_server_transport_io_config_t.transport->packet_filter. A
+// transport copies those ROCKETNET_FILTER_VALUE_BYTES bytes into its own
+// state at create and passes them to every call. No published copy, no lock, no
+// main-thread state: any number of workers may call it at once.
+//
+// A datagram it accepts still runs the whole ladder on main, which repeats
+// these checks; the worker's checks are a strict prefix of main's, so an
+// accepted datagram is never refused here and accepted there for the same
+// reason, and a refused one is counted exactly as main would have counted it
+// (rocketnet_receive_drop_counters; the unit test
+// test_unit_receive_prefilter checks the two against each other).
+//
+// What it refuses, in main's order (sdk/rocketnet_server_protocol.cpp,
+// rocketnet_server_protocol_process_received):
+//   1. the prefilter header: too short, too large, wrong epoch, wrong value;
+//   2. a reserved type (9 and up);
+//   3. a type only a server sends (denied, challenge, cookie);
+//   4. a server-inbound type whose size its type forbids (the request's exact
+//      size, the response's exact size, the session types' wire floor).
+// What it cannot refuse, by design: anything that needs a key or a table
+// (signatures, tokens, replays, unknown sources). Those still reach main.
 
 enum rocketnet_receive_drop_t
 {
     ROCKETNET_RECEIVE_ACCEPT = 0,
 
-    // the stateless rungs of main's ladder, in its order
-    // (sdk/rocketnet_server_protocol.cpp, rocketnet_server_protocol_process_received)
+    // returned by rocketnet_receive_prefilter
     ROCKETNET_RECEIVE_DROP_TOO_SHORT,
     ROCKETNET_RECEIVE_DROP_TOO_LARGE,
     ROCKETNET_RECEIVE_DROP_WRONG_EPOCH,
@@ -56,6 +77,56 @@ enum rocketnet_receive_drop_t
 
     ROCKETNET_RECEIVE_NUM_DROPS
 };
+
+// Returns ROCKETNET_RECEIVE_ACCEPT or the one reason main would refuse the
+// datagram on its stateless rungs. packet_bytes is the datagram's original
+// length (a truncated datagram keeps its length, as the driver interface
+// requires), and packet_data holds at least min(packet_bytes,
+// ROCKETNET_PREFILTER_BYTES) readable bytes. Reads no other state.
+static inline enum rocketnet_receive_drop_t rocketnet_receive_prefilter( const uint8_t * packet_data, int packet_bytes,
+                                                                         const uint8_t * packet_filter )
+{
+    const int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, packet_filter );
+    switch ( packet_type )
+    {
+        case ROCKETNET_PREFILTER_TOO_SHORT:   return ROCKETNET_RECEIVE_DROP_TOO_SHORT;
+        case ROCKETNET_PREFILTER_TOO_LARGE:   return ROCKETNET_RECEIVE_DROP_TOO_LARGE;
+        case ROCKETNET_PREFILTER_WRONG_EPOCH: return ROCKETNET_RECEIVE_DROP_WRONG_EPOCH;
+        case ROCKETNET_PREFILTER_WRONG_VALUE: return ROCKETNET_RECEIVE_DROP_WRONG_VALUE;
+        default:                              break;
+    }
+
+    if ( packet_type >= ROCKETNET_FIRST_RESERVED_PACKET_TYPE )
+    {
+        return ROCKETNET_RECEIVE_DROP_RESERVED_TYPE;
+    }
+
+    switch ( packet_type )
+    {
+        case ROCKETNET_CONNECTION_REQUEST_PACKET:
+            return packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_REQUEST_WRONG_SIZE;
+        case ROCKETNET_CONNECTION_DENIED_PACKET:
+        case ROCKETNET_CONNECTION_CHALLENGE_PACKET:
+        case ROCKETNET_CONNECTION_COOKIE_PACKET:
+            return ROCKETNET_RECEIVE_DROP_WRONG_DIRECTION;
+        case ROCKETNET_CONNECTION_RESPONSE_PACKET:
+            return packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_RESPONSE_WRONG_SIZE;
+        case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET:
+            return packet_bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_KEEP_ALIVE_WRONG_SIZE;
+        case ROCKETNET_CONNECTION_PAYLOAD_PACKET:
+            return packet_bytes >= ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_PAYLOAD_WRONG_SIZE;
+        case ROCKETNET_CONNECTION_DISCONNECT_PACKET:
+            return packet_bytes >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_DISCONNECT_WRONG_SIZE;
+        case ROCKETNET_CONNECTION_ACK_PACKET:
+            return packet_bytes >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_ACK_WRONG_SIZE;
+        default:
+            break;
+    }
+
+    // every type below the reserved range has a case above
+    rocketnet_assert( 0 );
+    return ROCKETNET_RECEIVE_DROP_RESERVED_TYPE;
+}
 
 // The server counters one drop adds, written to counters[] in order; returns
 // how many (at most ROCKETNET_RECEIVE_DROP_MAX_COUNTERS). They are exactly
