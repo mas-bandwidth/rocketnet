@@ -180,13 +180,12 @@ for in-process minting with ephemeral keys in singleplayer and listen servers.
 who extracts it mints tokens every server of the title accepts. A shipped
 client receives its token from the backend.
 
-Under the public call is the internal binary writer,
-`rocketnet_write_production_connect_token` in
-[sdk/rocketnet_connect_token.h](../sdk/rocketnet_connect_token.h), which the SDK's
-tests and tools also use. It draws the two token keys, seals the private block
-to the server key, signs the signed connect data with the backend key, and
-wipes its copy of the private fields. `rocketnet_create_dev_connect_token` is
-the same call over the published development backend key.
+`rocketnet_create_connect_token` draws the two token keys fresh for each
+token, seals the private block to the server key, signs the signed connect
+data with the backend key, and wipes its copy of the private fields.
+`rocketnet_create_dev_connect_token` writes the same token with the published
+development keys. A backend in another language writes the token format in
+[STANDARD.md](STANDARD.md), as the two example backends below do.
 
 [examples/backend](../examples/backend/README.md) has two backends that implement the same
 token format: Go ([go/main.go](../examples/backend/go/main.go),
