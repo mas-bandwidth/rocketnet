@@ -41,8 +41,9 @@ in a build without XDP) is not skipped: its pin refuses at start with
 `auto` inside a list refuses the create.
 
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
-(1000) is pin-only: it stays in the availability list, so an explicit name
-always selects it, but `auto` never chooses it. The loopback transport is the
+(1000) is pin-only: it stays in the availability list, so a list of that one
+name selects it, but `auto` never chooses it, and in a longer list it is
+skipped with one log line (standard/TRANSPORT.md t2.4). The loopback transport is the
 one row pin-only on both endpoints. The pin-only check reads the
 endpoint's own column, so a transport can rank in one endpoint's `auto` order
 and be pin-only on the other. The loopback transport is in-process, carries datagrams through memory with no
@@ -185,18 +186,18 @@ create from the server's configured `max_clients`; see
 [Memory and capacity](MEMORY.md#maximum-clients).
 
 The server process batch `rocketnet_server_receive_packets_per_update`
-(`sdk/rocketnet_constants.h`, 16000 at 1000 clients) bounds packets exposed for
+(`sdk/rocketnet_constants.h`, 64000 at 1000 clients) bounds packets exposed for
 protocol processing. Datagrams discarded before that batch is returned are
 bounded per receive call by the read budget below.
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
-| portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`rocketnet_server_receive_packets_per_update`) |
-| msgx | portable batch, 256–1000 | 16000 per update |
-| loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
-| gso | 4096 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
-| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
-| xdp | 4096 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
+| portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 64000 per update (`rocketnet_server_receive_packets_per_update`) |
+| msgx | portable batch, 256–1000 | 64000 per update |
+| loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (65536 at 1000 clients), with 64000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
+| gso | 16384 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 32768 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
+| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 64000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
+| xdp | 16384 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 32768 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
 | iocp | 2048 (`rocketnet_server_iocp_send_queue_size`) | 4096 queue (`rocketnet_server_iocp_receive_queue_size`) |
 | rio | 2048 per phase (`rocketnet_server_rio_send_queue_size`) | 4096 posted receives (`rocketnet_server_rio_receives`) |
 
@@ -208,7 +209,7 @@ GSO's three send banks are shared across all sockets. Only its current
 producer bank can be filled; the transmit worker consumes published banks.
 io_uring likewise has two shared 2048-slot send phases, and an incomplete send
 continues to occupy its phase. `num_xdp_queues` adds receive queues and changes socket
-rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
+rotation; it does not multiply the 16384-slot GSO or 2048-slot io_uring send
 capacity (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
 
@@ -241,7 +242,7 @@ budget is its `max_packets`; a single-packet call's is `ROCKETNET_PLATFORM_RECEI
 generic batch pump and the Windows per-packet loop (`sdk/rocketnet_platform.cpp`).
 The Linux GSO server worker's drain (`rocketnet_server_gso_drain`,
 `sdk/rocketnet_server_gso_linux.cpp`) counts each message and interrupted call
-against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (8192). It checks that threshold before
+against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (32768). It checks that threshold before
 each receive batch; the final batch can take the count past it by at most
 `ROCKETNET_GSO_RECV_BATCH - 1` (63).
 The Linux GSO client's plain fallback uses the platform helpers; its GRO path
@@ -712,7 +713,7 @@ main thread makes no call for it. The flush builds
 each reply with the server address of the destination's family as the source,
 and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or
-`AF_INET6` and refuse an IPv6 link-local address (fe80::/10) by name. Each
+`AF_INET6` and refuse a link-local address (169.254.0.0/16, fe80::/10) by name. Each
 family's gateway MAC comes from that family's default route and neighbour
 table, read at create through rtnetlink (`sdk/rocketnet_gateway_netlink.h`: an
 `RTM_GETROUTE` dump for the default route's gateway on the interface, then an
@@ -776,7 +777,10 @@ replay window (`ROCKETNET_HISTORY_PACKETS`, 4096 by default) or more behind
 the high-water the userspace window sets, and never writes the map. The
 kernel window is the userspace window, so a reordered packet that every other
 transport accepts is accepted on XDP too. The transport marks each connected
-client after every update.
+client after every update. A forget or mark the commit cannot apply is kept,
+applied again at the next commit, and counted as `XDP_REPLAY_COMMIT_FAILED`; a
+keep-alive held because its session's first mark is not yet applied is counted
+as `XDP_REPLAY_GREETING_HELD`.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
