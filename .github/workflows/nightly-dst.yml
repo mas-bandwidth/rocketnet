@@ -115,7 +115,7 @@ jobs:
           # every registered test_dst_ case, as the binary itself lists them (--list), never a
           # hand-kept copy of the names that goes stale as cases are added
           list="$("$DST_BIN/test$DST_EXE" --list | tr -d '\r')"
-          cases="$(printf '%s\n' "$list" | grep '^test_dst_' || true)"
+          cases="$(printf '%s\n' "$list" | awk '/^test_dst_/')"
           [ -n "$cases" ] || { echo "check failed: test --list names no test_dst_ case"; exit 1; }
           n=0
           for c in $cases; do
@@ -345,7 +345,7 @@ jobs:
           # every registered test_dst_ case, as the binary itself lists them (--list), never a
           # hand-kept copy of the names that goes stale as cases are added
           list="$("$DST_BIN/test$DST_EXE" --list | tr -d '\r')"
-          cases="$(printf '%s\n' "$list" | grep '^test_dst_' || true)"
+          cases="$(printf '%s\n' "$list" | awk '/^test_dst_/')"
           [ -n "$cases" ] || { echo "check failed: test --list names no test_dst_ case"; exit 1; }
           n=0
           for c in $cases; do
@@ -607,7 +607,7 @@ jobs:
           # every registered test_dst_ case, as the binary itself lists them (--list), never a
           # hand-kept copy of the names that goes stale as cases are added
           list="$("$DST_BIN/test$DST_EXE" --list | tr -d '\r')"
-          cases="$(printf '%s\n' "$list" | grep '^test_dst_' || true)"
+          cases="$(printf '%s\n' "$list" | awk '/^test_dst_/')"
           [ -n "$cases" ] || { echo "check failed: test --list names no test_dst_ case"; exit 1; }
           n=0
           for c in $cases; do
