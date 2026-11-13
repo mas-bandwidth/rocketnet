@@ -522,9 +522,20 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
 // proofs/tla/RNMessageOpen.tla Open and Close: a connection's one open start,
 // and the object's count of them (fill threads open and close on different
 // connections at once, so the count and the last index are atomics)
+// the calling thread's line: line 0 for the client, and for a server whose
+// game has not named a client yet (one thread at a time; no thread id, no hash)
+static int rn_message_open_line_index( const rn_message_object_t * object )
+{
+    if ( !object->fill_phase || !rocketnet_fill_phase_armed( object->fill_phase ) )
+    {
+        return 0;
+    }
+    return rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() );
+}
+
 static rn_message_open_line_t * rn_message_open_line( rn_message_object_t * object )
 {
-    return &object->open_lines[rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() )];
+    return &object->open_lines[rn_message_open_line_index( object )];
 }
 
 static void rn_message_open_set( rn_message_object_t * object, int index, int pending = RN_MESSAGE_OPEN_PENDING )
@@ -559,7 +570,7 @@ int64_t rn_message_open_count( const rn_message_object_t * object )
 
 int rn_message_open_last( const rn_message_object_t * object )
 {
-    const rn_message_open_line_t * line = &object->open_lines[rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() )];
+    const rn_message_open_line_t * line = &object->open_lines[rn_message_open_line_index( object )];
     return (int) rocketnet_platform_atomic_load_u64( const_cast<uint64_t *>( &line->last_open ) );
 }
 

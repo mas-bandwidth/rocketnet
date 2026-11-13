@@ -1053,11 +1053,7 @@ struct rocketnet_client_t;
 ///   before a game thread calls again. Join the game threads' work, or pass
 ///   a barrier, in both directions.
 /// - Between one main thread call and the next, every one of the three calls
-///   for one client index comes from one thread (this rule is in force from
-///   the server's first rocketnet_server_finish_client_message or
-///   rocketnet_server_abort_client_message on; a server that never makes
-///   those calls is used one thread at a time, and its threads may send to
-///   one client in turn), so a message is finished or
+///   for one client index comes from one thread, so a message is finished or
 ///   aborted by the thread that started it. (rocketnet_server_finish_message
 ///   and rocketnet_server_abort_message, the calls of a server used one
 ///   thread at a time, may come from another thread: they count as a main
@@ -1067,10 +1063,15 @@ struct rocketnet_client_t;
 ///   messages two threads write to one client between two
 ///   rocketnet_server_send_packets calls may then leave in either order.
 ///
-/// The check. The three calls, and the main thread calls that change the
-/// server (update, send_packets, receive_messages, receipts, a client's send
-/// rate, the disconnects and stop), are checked in every build. One that
-/// breaks a rule is refused: it does nothing, it is counted
+/// The check. It begins at the server's first
+/// rocketnet_server_finish_client_message or
+/// rocketnet_server_abort_client_message: a server that never makes those
+/// calls is used one thread at a time, as ever, its threads may send to one
+/// client in turn, and nothing is checked, refused or counted. From that call
+/// on, in every build, the three calls and the main thread calls that change
+/// the server (update, send_packets, receive_messages, receipts, a client's
+/// send rate, the disconnects and stop) are checked. One that breaks a rule
+/// is refused: it does nothing, it is counted
 /// (MAIN_THREAD_CALL_OVERLAP for a main thread call and another call at
 /// once, CLIENT_SEND_TWO_THREADS for a second thread on one client), and it
 /// asserts in a debug build. A refused start returns NULL and a refused
