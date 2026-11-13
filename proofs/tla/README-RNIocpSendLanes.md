@@ -26,7 +26,8 @@ to 65,536.
 
 | Action | Code |
 |---|---|
-| `Start(d, l)` | `rocketnet_server_iocp_start_packet`: `l = DestLane[d]` (`rocketnet_iocp_lane_index`, FNV-1a over the fields `rocketnet_address_equal` compares), then that lane's free operation |
+| `Start(d, l, i)` | `rocketnet_server_iocp_start_packet`: `l = DestLane(d)` (`rocketnet_iocp_lane_index`, FNV-1a over the fields `rocketnet_address_equal` compares, given as the set `DestLaneAt` of `d * Lanes + l`), then that lane's free operation `i`, the one the pop returns |
+| `StartRefused(d, l)` | `rocketnet_server_iocp_start_packet` when lane `l` has no free operation: nothing changes |
 | `Post(l)` | `rocketnet_iocp_send_worker` for lane `l` over `rocketnet_iocp_send_bank` |
 | `Complete(i)` | `rocketnet_iocp_retire_send`, then `rocketnet_iocp_release_send` to the lane its index names |
 

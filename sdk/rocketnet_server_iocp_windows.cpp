@@ -364,7 +364,7 @@ static int rocketnet_iocp_lane_index( const rocketnet_address_t * to, int lanes 
 static int rocketnet_iocp_op_lane( uint32_t index, int send_queue_size, int lanes )
 {
 #if defined( ROCKETNET_IOCP_SEND_LANES_PLANT )
-    // the trace check's plant (tests/tla_trace_iocp.cpp): the carve read the
+    // the trace check's plant (tests/tla_trace_iocp_lanes.cpp): the carve read the
     // wrong way, index % lanes. Its trace must fail.
     (void) send_queue_size;
     return (int) ( index % (uint32_t) lanes );
@@ -2331,7 +2331,8 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
     }
     // every packet of a destination stages in its one lane, so the lane's
     // TX worker posts a client's packets in the order they were started
-    // (proofs/tla/RNIocpSendLanes.tla Start)
+    // (proofs/tla/RNIocpSendLanes.tla Start; a lane with no free operation
+    // refuses it, StartRefused)
     rocketnet_iocp_lane_t * lane = iocp->lanes[rocketnet_iocp_lane_index( to, iocp->num_lanes )];
     rocketnet_iocp_ref_t ref;
     if ( !rocketnet_iocp_acquire_send( iocp, lane, &ref ) )

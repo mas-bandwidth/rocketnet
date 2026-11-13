@@ -5,8 +5,10 @@
 (* operations each: operation i belongs to lane i \div Size                *)
 (* (rocketnet_iocp_lane_of_index), the operations are carved lane by lane, *)
 (* and each lane's free queue starts with its own operations.  A packet to *)
-(* destination d stages in lane DestLane[d] (rocketnet_iocp_lane_index,    *)
-(* the address hash), taking that lane's free operation; the lane's TX     *)
+(* destination d stages in lane DestLane(d) (rocketnet_iocp_lane_index,    *)
+(* the address hash, given as the set DestLaneAt of d * Lanes + l, which a *)
+(* cfg can carry where a function cannot), taking that lane's free         *)
+(* operation, or is refused when it has none (StartRefused); the lane's TX *)
 (* worker posts its bank in staged order; a completion releases the        *)
 (* operation to the free queue of the lane its index names                 *)
 (* (rocketnet_iocp_release_send).  A packet handle keeps IndexBits bits    *)
@@ -31,18 +33,24 @@ CONSTANTS
     Lanes,          \* rocketnet_server_iocp_send_lanes
     Size,           \* rocketnet_server_iocp_send_queue_size, one lane's operations
     Dests,          \* destinations
-    DestLane,       \* [Dests -> 0 .. Lanes - 1]: rocketnet_iocp_lane_index
+    DestLaneAt,     \* rocketnet_iocp_lane_index: d * Lanes + l for destination d in lane l
     IndexBits,      \* the packet handle's index bits (16 in the code)
     MaxStarts,      \* exploration bound: packets started
     AnyLane,        \* defect: a packet stages in any lane
     ReleaseMod      \* defect: release to lane i % Lanes
 
 ASSUME Lanes >= 1 /\ Size >= 1 /\ MaxStarts >= 1 /\ IndexBits >= 1
-ASSUME DestLane \in [ Dests -> 0 .. Lanes - 1 ]
+ASSUME Dests \subseteq Nat
 ASSUME AnyLane \in BOOLEAN /\ ReleaseMod \in BOOLEAN
 
 Ops == 0 .. Lanes * Size - 1
 LaneIds == 0 .. Lanes - 1
+
+\* every destination is in exactly one lane
+ASSUME \A d \in Dests : Cardinality( { l \in LaneIds : d * Lanes + l \in DestLaneAt } ) = 1
+
+\* the destination's lane: rocketnet_iocp_lane_index
+DestLane( d ) == CHOOSE l \in LaneIds : d * Lanes + l \in DestLaneAt
 
 \* the code's carve: operation i is lane i \div Size's
 OpLane( i ) == i \div Size
@@ -74,16 +82,28 @@ Init ==
 Starts == LET Sum[ S \in SUBSET Dests ] == IF S = {} THEN 0 ELSE LET d == CHOOSE x \in S : TRUE IN started[d] + Sum[ S \ { d } ]
           IN Sum[ Dests ]
 
-\* rocketnet_server_iocp_start_packet: the destination's lane, that lane's
-\* free operation, the next slot of that lane's producer bank
-Start( d, l ) ==
+\* the lane a packet to d stages in
+StageLane( d, l ) == IF AnyLane THEN TRUE ELSE l = DestLane( d )
+
+\* rocketnet_server_iocp_start_packet: the destination's lane l, that lane's
+\* free operation i (the one the pop returns), the next slot of that lane's
+\* producer bank
+Start( d, l, i ) ==
     /\ Starts < MaxStarts
-    /\ IF AnyLane THEN TRUE ELSE l = DestLane[d]
+    /\ StageLane( d, l )
     /\ Len( free[l] ) > 0
+    /\ i = Head( free[l] )
     /\ free' = [ free EXCEPT ![l] = Tail( @ ) ]
-    /\ bank' = [ bank EXCEPT ![l] = Append( @, << Head( free[l] ), d, started[d] >> ) ]
+    /\ bank' = [ bank EXCEPT ![l] = Append( @, << i, d, started[d] >> ) ]
     /\ started' = [ started EXCEPT ![d] = @ + 1 ]
     /\ UNCHANGED << inflight, posted >>
+
+\* rocketnet_server_iocp_start_packet refused: the destination's lane has no
+\* free operation, and nothing changes
+StartRefused( d, l ) ==
+    /\ StageLane( d, l )
+    /\ free[l] = << >>
+    /\ UNCHANGED vars
 
 \* rocketnet_iocp_send_worker over rocketnet_iocp_send_bank: the lane's bank
 \* posted in staged order
@@ -104,7 +124,8 @@ Complete( i ) ==
     /\ UNCHANGED << bank, started, posted >>
 
 Next ==
-    \/ \E d \in Dests, l \in LaneIds : Start( d, l )
+    \/ \E d \in Dests, l \in LaneIds, i \in Ops : Start( d, l, i )
+    \/ \E d \in Dests, l \in LaneIds : StartRefused( d, l )
     \/ \E l \in LaneIds : Post( l )
     \/ \E i \in Ops : Complete( i )
 

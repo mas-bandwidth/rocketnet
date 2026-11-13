@@ -87,6 +87,7 @@ LAYERS = {
     "iocp-lanes": {
         "modules": ["RNIocpSendLanes.tla", "TraceRNIocpSendLanes.tla"],
         "untraced": {},
+        "reach": ["LaneEmpty"],
     },
     "bank": {
         "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],

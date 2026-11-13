@@ -5,23 +5,27 @@
 
 // The IOCP send-lanes layer of the TLA+ trace check
 // (proofs/tla/README-TraceCheck.md), layer iocp-lanes: the send lanes
-// (proofs/tla/RNIocpSendLanes.tla) over the
-// code's own free queues, destination hash and carve
-// (rocketnet_server_iocp_test_lanes_*). Start takes an operation from the
-// destination's lane, Post moves a lane's staged packets to in flight in
-// staged order, Complete releases one in-flight operation to the lane its
-// index names. Every lane's free queue is read back from the code after each
-// step. The plant compiles the carve as index % lanes
-// (ROCKETNET_IOCP_SEND_LANES_PLANT): operations land in the wrong lanes and
-// the trace fails TraceConsistent.
+// (proofs/tla/RNIocpSendLanes.tla) over the code's own free queues,
+// destination hash and carve (rocketnet_server_iocp_test_lanes_*). Each step
+// is one call:
+// - acquire: start_packet's pop from the destination's lane. The lane the
+//   hash returned and the operation the pop returned are the arguments of
+//   Start, or StartRefused when the pop returns none.
+// - post: a lane's TX worker posts its bank whole, in staged order (the
+//   walk's bank, as the worker's three banks seen as one sequence).
+// - release: a completion releases one in-flight operation to the lane its
+//   index names (Complete).
+// Every lane's free queue is read back from the code after each step; the
+// code's hash of every destination is the cfg's DestLaneAt.
+//
+// The plant (ROCKETNET_IOCP_SEND_LANES_PLANT) compiles the carve as
+// index % lanes: a release lands in another lane's queue (or finds it full
+// and is refused). That is the planted effect, shown at the release's record.
 //
 // The walk's code compiles in every development build, so it needs no
 // socket, no thread and no Windows.
 
 #include "../sdk/rocketnet_internal.h"
-#include "../sdk/rocketnet_protocol.h"
-#include "../sdk/rocketnet_receive_prefilter.h"
-#include "../sdk/rocketnet_wire.h"
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_server_iocp.h"
 
@@ -44,6 +48,10 @@ int rocketnet_server_iocp_test_lane_index( const rocketnet_address_t * to, int l
 #define IOCP_LANES_LANES 3
 #define IOCP_LANES_SIZE 4
 #define IOCP_LANES_DESTS 6
+#define IOCP_LANES_OPS ( IOCP_LANES_LANES * IOCP_LANES_SIZE )
+
+// rocketnet_iocp_packet_ref: the low 16 bits of a packet handle name the operation
+#define IOCP_LANES_INDEX_BITS 16
 
 struct iocp_lanes_staged_t
 {
@@ -62,16 +70,6 @@ struct iocp_lanes_walk_t
     std::vector<int64_t> posted[IOCP_LANES_DESTS + 1];
 };
 
-static std::string iocp_lanes_sequence( const std::vector<std::string> & items )
-{
-    std::string text = "<<";
-    for ( size_t i = 0; i < items.size(); ++i )
-    {
-        text += ( i > 0 ? ", " : "" ) + items[i];
-    }
-    return text + ">>";
-}
-
 static tla_record_t iocp_lanes_record( const iocp_lanes_walk_t & walk )
 {
     std::vector<std::string> lane_keys;
@@ -80,20 +78,24 @@ static tla_record_t iocp_lanes_record( const iocp_lanes_walk_t & walk )
     for ( int l = 0; l < IOCP_LANES_LANES; ++l )
     {
         lane_keys.push_back( tla_int( l ) );
-        int indexes[IOCP_LANES_LANES * IOCP_LANES_SIZE];
-        const int count = rocketnet_server_iocp_test_lanes_free( walk.lanes, l, indexes, IOCP_LANES_LANES * IOCP_LANES_SIZE );
+        int indexes[IOCP_LANES_OPS];
+        const int count = rocketnet_server_iocp_test_lanes_free( walk.lanes, l, indexes, IOCP_LANES_OPS );
         std::vector<std::string> free_items;
         for ( int k = 0; k < count; ++k )
         {
             free_items.push_back( tla_int( indexes[k] ) );
         }
-        free_values.push_back( iocp_lanes_sequence( free_items ) );
+        free_values.push_back( tla_sequence( free_items ) );
         std::vector<std::string> bank_items;
         for ( const iocp_lanes_staged_t & staged : walk.bank[l] )
         {
-            bank_items.push_back( "<<" + tla_int( staged.op ) + ", " + tla_int( staged.dest ) + ", " + tla_int( staged.seq ) + ">>" );
+            std::vector<std::string> entry;
+            entry.push_back( tla_int( staged.op ) );
+            entry.push_back( tla_int( staged.dest ) );
+            entry.push_back( tla_int( staged.seq ) );
+            bank_items.push_back( tla_sequence( entry ) );
         }
-        bank_values.push_back( iocp_lanes_sequence( bank_items ) );
+        bank_values.push_back( tla_sequence( bank_items ) );
     }
 
     std::string inflight = "{";
@@ -115,7 +117,7 @@ static tla_record_t iocp_lanes_record( const iocp_lanes_walk_t & walk )
         {
             posted_items.push_back( tla_int( seq ) );
         }
-        posted_values.push_back( iocp_lanes_sequence( posted_items ) );
+        posted_values.push_back( tla_sequence( posted_items ) );
     }
 
     tla_record_t record;
@@ -125,6 +127,11 @@ static tla_record_t iocp_lanes_record( const iocp_lanes_walk_t & walk )
     record.add( "started", tla_function( dest_keys, started_values ) );
     record.add( "posted", tla_function( dest_keys, posted_values ) );
     return record;
+}
+
+static std::string iocp_lanes_args( int a )
+{
+    return tla_sequence( std::vector<std::string>( 1, tla_int( a ) ) );
 }
 
 static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
@@ -139,7 +146,7 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
     memset( walk.started, 0, sizeof( walk.started ) );
 
     // six destinations; the code's hash puts them in lanes, written into the
-    // trace as DestLane
+    // cfg as DestLaneAt
     for ( int d = 1; d <= IOCP_LANES_DESTS; ++d )
     {
         memset( &walk.dest[d], 0, sizeof( walk.dest[d] ) );
@@ -155,32 +162,39 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
     random.state = seed;
 
     std::vector<tla_record_t> records;
-    records.push_back( iocp_lanes_record( walk ) );
+    tla_report_t report;
+    records.push_back( tla_step( "init", "init", "<<>>", iocp_lanes_record( walk ) ) );
 
     int64_t starts = 0;
-    int plant_fired = 0;
-    bool refused = false;
-    for ( int step = 0; step < steps && !refused; ++step )
+    while ( (int) records.size() < steps + 1 )
     {
         const int action = random.below( 3 );
         if ( action == 0 )
         {
-            // Start: an empty lane refuses and nothing changes, as the
-            // model's guard says
+            // Start: the pop's result names the action; an empty lane
+            // refuses and nothing changes
             const int d = 1 + random.below( IOCP_LANES_DESTS );
             int lane = 0;
             const int op = rocketnet_server_iocp_test_lanes_acquire( walk.lanes, &walk.dest[d], &lane );
-            if ( op < 0 )
+            std::vector<std::string> args;
+            args.push_back( tla_int( d ) );
+            args.push_back( tla_int( lane ) );
+            const char * act = "StartRefused";
+            if ( op >= 0 )
             {
-                continue;
+                act = "Start";
+                args.push_back( tla_int( op ) );
+                walk.bank[lane].push_back( { op, d, walk.started[d] } );
+                walk.started[d]++;
+                starts++;
             }
-            walk.bank[lane].push_back( { op, d, walk.started[d] } );
-            walk.started[d]++;
-            starts++;
+            report.act( act );
+            records.push_back( tla_step( "acquire", act, tla_sequence( args ), iocp_lanes_record( walk ) ) );
         }
         else if ( action == 1 )
         {
-            // Post: one lane's bank, whole, in staged order
+            // Post: one lane's bank, whole, in staged order; an empty bank
+            // posts nothing, and the walk makes no call
             const int l = random.below( IOCP_LANES_LANES );
             if ( walk.bank[l].empty() )
             {
@@ -192,6 +206,8 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
                 walk.posted[staged.dest].push_back( staged.seq );
             }
             walk.bank[l].clear();
+            report.act( "Post" );
+            records.push_back( tla_step( "post", "Post", iocp_lanes_args( l ), iocp_lanes_record( walk ) ) );
         }
         else
         {
@@ -203,52 +219,43 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
             const size_t k = (size_t) random.below( (int) walk.inflight.size() );
             const int op = walk.inflight[k];
             walk.inflight.erase( walk.inflight.begin() + (long) k );
-            if ( !rocketnet_server_iocp_test_lanes_release( walk.lanes, op ) )
+            // false only when the lane the release names is full, which only
+            // a release to the wrong lane finds: the operation is then in no
+            // free queue and not in flight, which no model step makes
+            const bool released = rocketnet_server_iocp_test_lanes_release( walk.lanes, op );
+            report.act( "Complete" );
+            records.push_back( tla_step( "release", "Complete", iocp_lanes_args( op ), iocp_lanes_record( walk ) ) );
+            // the planted effect, where it shows: the operation is not at the
+            // tail of its own carve's free queue
+            int indexes[IOCP_LANES_OPS];
+            const int count = rocketnet_server_iocp_test_lanes_free( walk.lanes, op / IOCP_LANES_SIZE, indexes, IOCP_LANES_OPS );
+            if ( !released || count == 0 || indexes[count - 1] != op )
             {
-                // only a release to the wrong lane finds it full; the walk
-                // writes the state the refusal left (the operation in no
-                // free queue and not in flight, which no model step makes)
-                // and stops
-                plant_fired++;
-                refused = true;
-                records.push_back( iocp_lanes_record( walk ) );
-                continue;
+                report.planted( (int) records.size() );
             }
-            // the release landed in the lane of its carve, or the plant moved it
-            const int own_lane = op / IOCP_LANES_SIZE;
-            int indexes[IOCP_LANES_LANES * IOCP_LANES_SIZE];
-            const int count = rocketnet_server_iocp_test_lanes_free( walk.lanes, own_lane, indexes, IOCP_LANES_LANES * IOCP_LANES_SIZE );
-            plant_fired += count > 0 && indexes[count - 1] == op ? 0 : 1;
         }
-        records.push_back( iocp_lanes_record( walk ) );
     }
 
-    // the plant build must fire for its trace to be a witness; the clean
-    // build never does
-    printf( "PLANT-FIRED %d\n", plant_fired );
+    rocketnet_server_iocp_test_lanes_destroy( walk.lanes );
 
-    std::string dest_lane = "MCDestLane == (";
+    report.print();
+
+    // the code's hash of each destination, as the model's DestLaneAt: d * Lanes + l
+    std::string dest_lane_at = "{";
     for ( int d = 1; d <= IOCP_LANES_DESTS; ++d )
     {
         const int lane = rocketnet_server_iocp_test_lane_index( &walk.dest[d], IOCP_LANES_LANES );
-        dest_lane += ( d > 1 ? " @@ " : "" ) + tla_int( d ) + " :> " + tla_int( lane );
+        dest_lane_at += ( d > 1 ? ", " : "" ) + tla_int( (int64_t) d * IOCP_LANES_LANES + lane );
     }
-    dest_lane += ")\n";
-    rocketnet_server_iocp_test_lanes_destroy( walk.lanes );
+    dest_lane_at += "}";
 
     char constants[512];
     snprintf( constants, sizeof( constants ),
-              "    Lanes = %d\n    Size = %d\n    Dests = {1, 2, 3, 4, 5, 6}\n    DestLane <- MCDestLane\n    IndexBits = 16\n"
+              "    Lanes = %d\n    Size = %d\n    Dests = {1, 2, 3, 4, 5, 6}\n    DestLaneAt = %s\n    IndexBits = %d\n"
               "    MaxStarts = %d\n    AnyLane = FALSE\n    ReleaseMod = FALSE\n",
-              IOCP_LANES_LANES, IOCP_LANES_SIZE, (int) starts + 1 );
+              IOCP_LANES_LANES, IOCP_LANES_SIZE, dest_lane_at.c_str(), IOCP_LANES_INDEX_BITS, (int) starts + 1 );
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceIocpLanesPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceIocpLanesSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
-    return tla_write_trace( out, name, "TraceRNIocpSendLanes", dest_lane, constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceIocpLanes", seed, "TraceRNIocpSendLanes", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "iocp-lanes", trace_iocp_lanes );
