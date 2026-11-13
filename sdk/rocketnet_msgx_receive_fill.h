@@ -58,10 +58,12 @@ inline void rocketnet_msgx_receive_banks_init( struct rocketnet_msgx_receive_ban
     banks->stopped = false;
 }
 
-// MainStop, main's, at rocketnet_server_msgx_stop: the tail of main's own
-// bank is counted stopped by the caller, and from here main claims nothing.
-// A bank ready now or published later stays the worker's to count at its
-// exit (RNMsgxReceiveFill Exit), so every datagram read is counted once.
+// proofs/tla/RNMsgxReceiveFill.tla MainStop, main's, at
+// rocketnet_server_msgx_stop: the tail of main's own bank is counted stopped
+// by the caller, and from here main claims nothing. A bank ready now or
+// published later stays the worker's to count at its exit (Exit, in
+// rocketnet_server_msgx_receive_worker), so every datagram read is counted
+// once.
 // Only main reads or writes the flag: no lock
 inline void rocketnet_msgx_receive_stop( struct rocketnet_msgx_receive_banks_t * banks )
 {

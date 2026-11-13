@@ -54,11 +54,14 @@ released id moved.
 - Tests and models: the fixes above carry tests that were red before, and
   model changes with reversed witnesses (RNReceiveHandoff, RNGsoHandoff,
   RNClientRace, RNMsgxReceiveFill, RNIocpRetryStop, RNIocpEndpoints), with
-  their trace walks where the layer has one. Two checks that
-  `fix/v1.1.x/msgx-residue` failed on its own are repaired in the merge: the
-  model coverage table carried the `fill-phase` row twice (one row is kept,
-  main's), and a citation in `README-RNMsgxReceiveFill.md` named the test
-  in a form the citation check reads as a missing symbol (reworded).
+  their trace walks where the layer has one. Three model-coverage checks
+  that `fix/v1.1.x/msgx-residue` failed on its own are repaired in the
+  merge: the coverage table carried the `fill-phase` row twice (one row is
+  kept, main's); a citation in `README-RNMsgxReceiveFill.md` named the test
+  in a form the citation check reads as a missing symbol (reworded); and
+  the strict action check, which the first red had kept from running, found
+  RNMsgxReceiveFill's MainStop and Exit uncited in its header and Done not
+  named as an environment action (cited and named).
 
 The branches merged, at these commits:
 
