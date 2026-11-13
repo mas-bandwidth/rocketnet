@@ -1362,6 +1362,28 @@ static int rn_message_send_transport_max( const struct rn_message_object_t * obj
     return unreliable && object->link.max_payload_bytes ? object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
+// DIAGNOSTIC ONLY (branch tests/v1.2/goal-rio-diag, never for main): why an unreliable start leaves the in-place path
+#include <atomic>
+#include <stdio.h>
+struct rn_diag_t
+{
+    std::atomic<uint64_t> n[16];
+    std::atomic<int> min_cap{ 1 << 30 };
+    std::atomic<int> conn_seen{ 0 };
+    ~rn_diag_t()
+    {
+        static const char * names[16] = { "unrel_starts", "packed_in_place", "whole_in_place", "elig_negative", "pk_frame_unavail", "pk_not_affordable",
+                                          "pk_start_null", "wf_cap_le_conn", "wf_not_affordable", "wf_start_null_or_small", "wf_header_neg", "fallback", "queued_after", "x13", "x14", "x15" };
+        for ( int i = 0; i < 13; i++ )
+        {
+            fprintf( stderr, "rn_diag: %s=%llu\n", names[i], (unsigned long long) n[i].load() );
+        }
+        fprintf( stderr, "rn_diag: min_capacity_seen=%d connected_count_seen=%d\n", min_cap.load(), conn_seen.load() );
+    }
+};
+static rn_diag_t rn_diag;
+#define RN_DIAG( i ) rn_diag.n[i].fetch_add( 1, std::memory_order_relaxed )
+
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
 {
     // proofs/tla/RNSlots.tla Request: reserves room for one message and returns the pointer the application writes.
@@ -1429,6 +1451,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 
     if ( unreliable && object->link.start_packet )
     {
+        RN_DIAG( 0 );
         const int eligible = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
         int header = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
         if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED )
@@ -1443,6 +1466,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 
         rn_message_packet_build_t * build = &connection->unreliable_build;
         const int room = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
+        if ( eligible < 0 ) { RN_DIAG( 3 ); }
         if ( eligible >= 0 && bytes <= room - header )
         {
             const bool receipt = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
@@ -1460,10 +1484,13 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 
                 const int reserve = object->link.send_connected_count ? object->link.send_connected_count( object->link.transport ) : object->num_connections;
                 const bool frame_available = !object->link.send_capacity_available || object->link.send_capacity_available( object->link.transport ) > reserve;
+                if ( !frame_available ) { RN_DIAG( 4 ); }
+                if ( frame_available && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) ) { RN_DIAG( 5 ); }
                 if ( frame_available && rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time ) >= 0 &&
                      rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
                 {
                     uint8_t * frame = object->link.start_packet( object->link.transport, index, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &build->context );
+                    if ( !frame ) { RN_DIAG( 6 ); }
                     frame_refused = frame == NULL && object->link.max_payload_bytes && transport_max >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
                     if ( frame && build->context.payload_capacity >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
                     {
@@ -1480,6 +1507,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             {
                 rn_endpoint_in_place_begin( connection, channel, reliability, bytes, header );
                 open->in_place = 2;
+                RN_DIAG( 1 );
                 open->in_place_payload = build->writer.payload + build->writer.bytes;
                 rn_message_open_set( object, index );
                 return open->in_place_payload + header;
@@ -1513,14 +1541,23 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         // but application call order cannot consume another client's turn.
 
         const int send_connections = object->link.send_connected_count ? object->link.send_connected_count( object->link.transport ) : object->num_connections;
+        if ( header < 0 ) { RN_DIAG( 10 ); }
+        if ( header >= 0 && object->link.send_capacity_available )
+        {
+            const int cap = object->link.send_capacity_available( object->link.transport );
+            int m = rn_diag.min_cap.load(); while ( cap < m && !rn_diag.min_cap.compare_exchange_weak( m, cap ) ) {}
+            rn_diag.conn_seen.store( send_connections );
+        }
         if ( header >= 0 && object->link.send_capacity_available &&
              object->link.send_capacity_available( object->link.transport ) <= send_connections )
         {
+            RN_DIAG( 7 );
             header = RN_ENDPOINT_IN_PLACE_QUEUED;
         }
         if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
         {
             header = RN_ENDPOINT_IN_PLACE_QUEUED;               // the bucket cannot pay it now: the write pass decides
+            RN_DIAG( 8 );
         }
 
         if ( header >= 0 && !frame_refused )
@@ -1528,6 +1565,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             const int request = header + bytes + 1;
             rocketnet_packet_context_t context;
             uint8_t * frame = object->link.start_packet( object->link.transport, index, request, &context );
+            if ( !frame ) { RN_DIAG( 9 ); }
             if ( frame && context.payload_capacity < request )
             {
                 object->link.abort_packet( object->link.transport, &context );
@@ -1538,6 +1576,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             {
                 rn_endpoint_in_place_begin( connection, channel, reliability, bytes, header );
                 open->in_place = 1;
+                RN_DIAG( 2 );
                 open->in_place_context = context;
                 open->in_place_payload = frame + context.payload_index;
                 rn_message_open_set( object, index );
@@ -1552,6 +1591,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 
         if ( header >= 0 || header == RN_ENDPOINT_IN_PLACE_QUEUED )
         {
+            RN_DIAG( 11 );
             rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
         }
     }
