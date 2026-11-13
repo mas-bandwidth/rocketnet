@@ -288,7 +288,7 @@ it would otherwise be overtaken by it, when the send budget cannot pay it, or
 when the update's packet allowance is spent. A sender counts each such message
 once in `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`. A receiver reads both forms alike.
 
-A sender MUST encode every other message as one or more records in a RECORDS payload. The records MUST be written back to back, with no padding, and MUST fill the body exactly. An unreliable message that exceeds its one-record limit MUST be sent under its reliable twin as the promotion rule states; it MUST NOT be fragmented and MUST NOT be split across payloads.
+A sender MUST encode every other message as one or more records in a RECORDS payload. The records MUST be written back to back, with no padding, and MUST fill the body exactly. An unreliable message that exceeds its one-record limit MUST be sent under its reliable twin as the promotion rule states; the twin is a reliable message, and travels as a block when it exceeds its own one-record limit ([m2.1 One-record limits and promotion](#m2.1)). A record under wire code 0 or 1 MUST NOT be fragmented and MUST NOT be split across payloads.
 
 <a id="m2.1"></a>
 ### m2.1. One-record limits and promotion
@@ -307,6 +307,8 @@ The one-record limit of a reliability is the largest message that reliability se
 When the connection layer's payload capacity is below the row `maximum payload size`, the UNRELIABLE_SEQUENCED one-record limit is that capacity less the record's header and the form byte. A sender MUST send a message at or below its one-record limit without fragmentation: as SINGLE when permitted by [m2 Payload forms and sender size rules](#m2), otherwise as exactly one record. A sender MUST send a reliable message above that limit as a block of consecutive fragments of the row `block stride` bytes; only the last fragment MAY be shorter, and every fragment MUST carry at least 1 byte.
 
 A sender MUST promote an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to its reliable twin: code 0 to code 2, code 1 to code 4, and code 5 to its reliable receipt twin (reliability 6, wire code 2) with the ACKED receipt kept. The receiver observes the twin's wire code. The sender MUST count each promotion once per send in `MESSAGE_PROMOTED_UNRELIABLE`, `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` or `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT`, according to the reliability the application chose.
+
+Promotion does not change the receiver's enabled mask ([m11 CONFIG control record](#m11)). The mask admits wire codes, and a promoted record carries its twin's code, which check 6 of [m4 Receiver checks](#m4) refuses as `MESSAGE_TYPE_NOT_ENABLED` when the mask does not hold it. A configuration that enables UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT without a reliability that sends under the twin's code (code 2: RELIABLE or its receipt twin; code 4: RELIABLE_SEQUENCED) cannot carry a message above that one-record limit, and an application that sends one enables the twin's reliability too.
 
 A sender MUST refuse a message above the configured maximum message size. For UNRELIABLE, UNRELIABLE_SEQUENCED and UNRELIABLE_WITH_ACK_RECEIPT that is the only refusal by size: a message at or below the configured maximum and above its one-record limit MUST be promoted, never refused by size, and a refused message MUST NOT be promoted. The row `record maximum message` bounds the data length of one record, not of a message: a message above its one-record limit travels as a block, and no record carries more than the row `record maximum message`. A receiver MUST accept a reliable or CONTROL record only in a payload no longer than the row `maximum payload size`.
 
@@ -1743,7 +1745,7 @@ The flags byte carries the code in bits 0 to 2, BLOCK in bit 3, WIDE in bit 4, C
 | ring | after the present fields before it | 2 | u16 | code 3 or 4, or BLOCK set | 0 to 65535 |
 | sequencing | after the present fields before it | 3 | u24 | code 1 or 4 | 0 to 16777215 |
 | ordering | after the present fields before it | 3 | u24 | code 1, 3 or 4 | 0 to 16777215 |
-| channel | after the present fields before it | 1 or 2 | u8 or u16 | code 1, 3 or 4 | 0 to 255, or 0 to 65535 when WIDE |
+| channel | after the present fields before it | 1 or 2 | u8 or u16 | code 1, 3 or 4 | 0 to 255; 256 to 65535 when WIDE |
 | fragment | after the present fields before it | 2 | u16 | BLOCK set | 0 to fragments |
 | fragments | after the present fields before it | 2 | u16 | BLOCK set | 1 to 65535; the fragment count minus one |
 | data | after the present fields before it | length | bytes[length] | always | any bytes |
@@ -3039,12 +3041,12 @@ trace: short path: a 20 ms sample, resend passes at 0.040, 0.109, 0.111 and 0.22
 
 The first seven bytes are the short path's resend counts at its four passes,
 then the timeout checks at 9.999 and 10.000 seconds, then the error value. The
-last three are the long path's resend counts.
+last four are the long path's resend counts.
 
 ```vector m9.budget-trace
 clock: 1000.0
 rate: the client default
-trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, promoted to reliable sequenced and its first packet written
+trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 2147483647 (no send budget), then one 13000-byte unreliable sequenced item is offered, promoted to reliable sequenced and its first packet written
 00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
 00 01 01 01
 ```
@@ -3054,7 +3056,7 @@ WAIT, DROP and REFUSED are 0, 1, 2 and 3; the setter's success is 1. They are
 the reliable item, the seven unreliable items that fit, the unreliable item
 that is dropped, the reliable item that waits, the unreliable item behind it
 that is dropped, the refill's reliable item, the setter and the new-rate
-reliable item. The last six bytes are, in order, the setter to 0 returning
+reliable item. The last six bytes are, in order, the setter to 2147483647 returning
 success, a packet request of more than zero, the first packet written larger
 than one maximum packet (0: the promoted item is a reliable block, sent one
 maximum packet at a time), the unreliable queue empty, no bytes charged to the
@@ -3116,7 +3118,7 @@ WIDE   |      channel, little-endian   |
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---:|---:|---|---|---|
 | channel, narrow | 0 | 1 | u8 | channel number | any u8 channel number |
-| channel, wide | 0 | 2 | u16 | channel number | any u16 channel number |
+| channel, wide | 0 | 2 | u16 | channel number | 256 to 65535, below the channel count |
 
 | Name | Value | Units | Meaning |
 |---|---:|---|---|
@@ -3147,7 +3149,7 @@ configuration: build-specific maximum at least 301; num_channels 301
    connection layer reports the connection established.
 4. When the reliable timeout is configured
    ([m9.3 Resend classes and the reliable timeout](#m9.3)), an endpoint MUST end
-   the connection with `RELIABLE_TIMEOUT` when an update is at or after the
+   the connection with `RELIABLE_TIMED_OUT` when an update is at or after the
    start of the CONFIG wait plus the reliable timeout and it has not accepted
    the remote endpoint's CONFIG. When the reliable timeout is disabled, the
    CONFIG wait has no clock of its own: an endpoint MUST NOT end the connection
@@ -3251,7 +3253,7 @@ An endpoint has one CONFIG state per connection.
 | Waiting | CONFIG body accepted | every compared field is equal | the CONFIG wait ends | Verified |
 | Waiting | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
 | Waiting | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |
-| Waiting | update | the reliable timeout is configured, and the update is at or after the start of the CONFIG wait plus the reliable timeout | end the connection with `RELIABLE_TIMEOUT` | none |
+| Waiting | update | the reliable timeout is configured, and the update is at or after the start of the CONFIG wait plus the reliable timeout | end the connection with `RELIABLE_TIMED_OUT` | none |
 | Verified | CONFIG body accepted | every compared field is equal | no change | Verified |
 | Verified | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
 | Verified | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |

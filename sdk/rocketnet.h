@@ -566,8 +566,9 @@ enum rocketnet_receipt_status_t
 
     /// The connection layer acknowledged the send that carried the message.
     /// The receiver's message layer may still have dropped the message
-    /// (counted MESSAGE_UNRELIABLE_DELIVERY_FULL or by the sequenced drop
-    /// counters), and its application may not have read it.
+    /// (counted by the SDK-internal counter MESSAGE_UNRELIABLE_DELIVERY_FULL
+    /// or the sequenced drop counters, which no call in this header reads),
+    /// and its application may not have read it.
 
     ROCKETNET_RECEIPT_STATUS_ACKED = 1
 };
@@ -707,6 +708,12 @@ enum rocketnet_client_state_t
     ROCKETNET_CLIENT_STATE_CONNECTED = 4
 };
 
+/// Counter names in this header written in capitals, such as
+/// MESSAGE_NOT_RECEIVED or SEND_RESERVE_REFUSED, are the SDK's internal
+/// counters, the registry of the standard's error handling section. No call
+/// in this header reads them: an application sees their effect through the
+/// stats structs below, the client state and the disconnect reason.
+///
 /// rocketnet_client_stats fills this struct.
 /// Packet, byte, payload, resend, duplicate, receipt and budget counts are
 /// the connection that is held. They start at 0 when that connection starts,
@@ -2607,8 +2614,9 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 /// Every message delivered by the previous update must already be taken:
 /// loop rocketnet_client_receive_messages until it returns NULL before the
 /// next update. A message still in the receive queue at update is API
-/// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
-/// connection ends in ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
+/// misuse: it asserts in a debug build, counts the SDK-internal counter
+/// MESSAGE_NOT_RECEIVED, and the connection ends in
+/// ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
 ///
 /// Callable in every client state. Before the first connect it only checks
 /// the time; after disconnect it steps the old attempt's shutdown. Thread: not
@@ -3130,8 +3138,8 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 /// Every message delivered by the previous update must already be taken:
 /// loop rocketnet_server_receive_messages until it returns NULL before the
 /// next update. A message still in the receive queue at update is API
-/// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
-/// sending client's slot is disconnected with
+/// misuse: it asserts in a debug build, counts the SDK-internal counter
+/// MESSAGE_NOT_RECEIVED, and the sending client's slot is disconnected with
 /// ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
@@ -3214,11 +3222,11 @@ ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t 
 /// keep-alive is given one place an update out of the kept part. A message
 /// that would take more is not lost by that: it waits in its queue, as a
 /// message does when the transport is full, and goes out in a later call
-/// once the transport has sent what it holds. The counter
+/// once the transport has sent what it holds. The SDK-internal counter
 /// SEND_RESERVE_REFUSED counts the sends held back this way. Before this
-/// rule a send was held back only when the whole room was spent, which
-/// SEND_RING_FULL counted; SEND_RING_FULL still counts a send room that is
-/// full. The portable and loopback transports keep nothing back.
+/// rule a send was held back only when the whole room was spent, which the
+/// SDK-internal counter SEND_RING_FULL counted; it still counts a send room
+/// that is full. The portable and loopback transports keep nothing back.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
 /// thread-safe; the caller owns the server one thread at a time.
@@ -3533,7 +3541,7 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// One difference: an unreliable message small enough to fit in one packet
 /// is sent alone from this call, on the calling thread, rather than waiting
 /// for rocketnet_server_send_packets to pack it with others. If the update's send limits leave no room to send it, the call
-/// returns 0, the message is dropped and
+/// returns 0, the message is dropped and the SDK-internal counter
 /// ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counts it. Every
 /// other message is queued as by rocketnet_server_finish_message: a larger
 /// one, a reliable one, one that must keep its order behind a message already

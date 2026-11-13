@@ -1249,7 +1249,11 @@ promise that an API object, worker, or backing memory is immediately destroyed.
 **Slot reset.** Releasing a slot clears the client id, the user data, the confirmed flag
 and the mapping reference, and destroys the associated encryption mapping — which zeroes
 its keys and its sequence and replay state, the mapping being their only home. A
-released slot is immediately available for reuse. An implementation must zero the key
+released slot is given out again no sooner than the update after the first update that
+ends with it free, so the application reads every end before the slot changes hands; a
+connection response that finds only such slots is ignored, not denied, and its client's
+next response takes a slot. Both that ignore and a real denial count
+`CONNECTION_RESPONSE_NO_SLOTS`. An implementation must zero the key
 material rather than merely marking the slot free.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
@@ -1737,11 +1741,14 @@ attempt does; the challenge is the type 2 sealed vector above in its full framin
 sequence 1.
 
 [RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
-**The frozen connect token** is reproducible byte-for-byte from its published minting
-inputs, including the fixed ephemeral secret that replaces the random draw ([RN-1 t6.5 Token string and published vectors](TRANSPORT.md#t6.5) rule 5), and a conforming
-server-side implementation also verifies its signature against the test backend public
-key, opens its sealed block with the test server keypair, and recovers the private
-fields listed in the fixed inputs. The token identifier printed above is the 16-byte
+**The frozen connect token** is a fixed known answer. Its seal's ephemeral key was a
+random draw that is not published, so its sealed block is checked by opening it, not by
+minting it again; byte-for-byte minting from published inputs, the ephemeral secret
+included, is what the version 1 connect token vector file covers ([RN-1 t6.5 Token string and published vectors](TRANSPORT.md#t6.5) rule 5). A conforming
+server-side implementation verifies the frozen token's signature against the development
+backend public key, opens its sealed block with the development server keypair
+([RN-1 t19.2 Development keys](TRANSPORT.md#t19.2)), and recovers the private fields
+listed in its inputs. The token identifier printed above is the 16-byte
 unkeyed `crypto_generichash` of its first 576 bytes and is deterministic.
 
 <a id="tc"></a>
@@ -2080,7 +2087,8 @@ It differs from the text shipped with v1.0.0 in these places:
   [RN-1 t19.1 Amplification](TRANSPORT.md#t19.1): a server sends at most one connection
   cookie to each source address and port per update, held in a bitmap under a keyed hash
   of at least 16 bits for each connection request one update can process; a request owed
-  a cookie past it is ignored, counted only by its cookie's reason as before, and the limit
+  a cookie past it is ignored, counted by its cookie's reason as before and also as
+  `CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD`, outside the request family, and the limit
   does not spend the handshake work budget.
 - [RN-1 t17 Timing and defaults](TRANSPORT.md#t17), item 12: a request whose signature
   verifies and is then refused for a sealed block that does not open, sealed fields that

@@ -505,4 +505,19 @@
    :title "A strict option: refuse to start when a Linux transport worker cannot be kept off CPU 0"
    :text "When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run)."
    :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
+
+  (item "zero-pad-refusal-reasons" :group "review-v1-2" :area "rocketnet"
+   :title "Give the two zero-pad refusals their own counters"
+   :text "A server counts a signed connect data zero pad that is not all zero as CONNECTION_REQUEST_WRONG_VERSION (sdk/rocketnet_server_protocol.cpp about 563-587), and a private block zero pad that is not all zero as CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK, which also records a failed-signature budget failure (about 848-853). TRANSPORT.md t6.4 now states where each check sits and states both as exceptions to t18 rule 2. Counters are ABI and the counter set is frozen for the point release, so the reasons get their own counters in a release that may add counters; then t6.4 drops the exception."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-80")
+
+  (item "response-no-slots-own-counter" :group "review-v1-2" :area "rocketnet"
+   :title "Count a response ignored for just-freed slots apart from a denial"
+   :text "A connection response that finds only slots freed in the same update is ignored, not denied, and counts CONNECTION_RESPONSE_NO_SLOTS, the counter of a real denial (sdk/rocketnet_server_protocol.cpp about 1176-1186); connections_denied_full sums both. TRANSPORT.md t12 rule 13 and t13.4 now state the ignore. Give it its own reason in a release that may add counters, and update t12, t18 and the stats doc with it."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-105")
+
+  (item "promotion-enabled-mask" :group "review-v1-2" :area "rocketnet"
+   :title "Refuse at the sender a promotion the receiver's enabled mask refuses"
+   :text "A sender promotes an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to the twin's wire code (2 or 4), but checks only the chosen reliability against the enabled mask; both ends share the mask, and the receiver refuses the promoted record as MESSAGE_TYPE_NOT_ENABLED. MESSAGES.md m2.1 now states the constraint. A later release chooses one: a counted refusal at the sender, or config validation that an enabled unreliable reliability brings its twin's code."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-114")
  ))

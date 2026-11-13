@@ -583,8 +583,11 @@ has not exited.
 A client moves from `ROCKETNET_CLIENT_STATE_DISCONNECTED` through the handshake
 states to `ROCKETNET_CLIENT_STATE_CONNECTED`. Every negative value is a state that ended the attempt or the connection, one per way it can end,
 and the client stays in it until disconnect resets it or a new connect starts
-another attempt; `rocketnet_client_disconnected` must
-also be true before reconnect or destroy. Read the state with `rocketnet_client_state`, its name with
+another attempt. `rocketnet_client_disconnected` stays false in a negative
+state, so reconnect from one by calling connect directly, and poll
+`rocketnet_client_disconnected` only after connect returns
+`ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, then retry; after
+`rocketnet_client_disconnect`, wait for it before reconnect or destroy. Read the state with `rocketnet_client_state`, its name with
 `rocketnet_client_state_name`; the state itself is how the connection ended.
 `rocketnet_client_index` reports the client's slot on the server, an `int`,
 while CONNECTED, and `-1` in any other state.

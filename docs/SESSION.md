@@ -20,12 +20,16 @@ the connection salt. Handshake secrets are wiped when their lifetime ends.
 Authenticated session packets pass the replay window before their contents are
 admitted. Disconnect resets per-connection protocol and message state while
 preserving the client object's configured transport and reusable allocation;
-a later connect supplies a fresh token, which names the server address. Before
-calling `rocketnet_client_connect` to reconnect after `rocketnet_client_disconnect`
-or a negative terminal client state, poll `rocketnet_client_disconnected` (stepping
-`rocketnet_client_update` on step-driven clients) until it returns `true`; while the
-previous attempt's worker is still stopping, `rocketnet_client_connect` refuses with
-`ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
+a later connect supplies a fresh token, which names the server address. To
+reconnect after `rocketnet_client_disconnect`, poll `rocketnet_client_disconnected`
+(stepping `rocketnet_client_update` on step-driven clients) until it returns
+`true`, then call `rocketnet_client_connect`. From a negative terminal client
+state, call `rocketnet_client_connect` directly: `rocketnet_client_disconnected`
+stays `false` in a negative state until a disconnect or the next connect, so
+polling it first never ends. While the previous attempt's worker is still
+stopping, `rocketnet_client_connect` refuses with
+`ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` and keeps the state; then poll
+`rocketnet_client_disconnected` until it returns `true` and connect again.
 
 In development builds (`ROCKETNET_DEV=1`), `rocketnet_create_dev_connect_token`
 mints local tokens signed with the published development key matching
