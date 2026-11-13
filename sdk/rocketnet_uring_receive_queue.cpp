@@ -665,6 +665,21 @@ static int rocketnet_uring_receive_queue_buffer( struct rocketnet_uring_receive_
         const enum rocketnet_receive_drop_t drop = queue->has_filter ? rocketnet_receive_prefilter( data, bytes, queue->packet_filter ) : ROCKETNET_RECEIVE_ACCEPT;
         if ( drop != ROCKETNET_RECEIVE_ACCEPT )
         {
+            if ( drop == ROCKETNET_RECEIVE_DROP_WRONG_VALUE )
+            {
+                static std::atomic<int> diag_shown{ 0 };
+                if ( diag_shown.fetch_add( 1 ) < 12 )
+                {
+                    char text[200];
+                    int at = 0;
+                    for ( int b = 0; b < 16 && b < bytes; b++ )
+                    {
+                        at += snprintf( text + at, sizeof( text ) - (size_t) at, "%02x", data[b] );
+                    }
+                    fprintf( stderr, "DIAG-PREFILTER wrong value: queue %d from type %d port %d len %d first16 %s pid %d\n", queue->index, (int) from.type, (int) from.port, bytes, text, (int) getpid() );
+                    fflush( stderr );
+                }
+            }
             rocketnet_receive_drop_tally_count( &queue->tally, drop );
             continue;
         }
