@@ -3629,7 +3629,10 @@ bool rocketnet_server_socket_test_queue_room()
     auto * sockets = (rocketnet_server_xdp_socket_t *) socket_storage;
     for ( int q = 0; q < queues; q++ )
     {
-        new ( &sockets[q] ) rocketnet_server_xdp_socket_t();
+        // default-initialised, not value-initialised: the members take their own
+        // initialisers and the megabytes of buffers stay untouched, so the case
+        // costs no resident memory beyond one queue's
+        new ( &sockets[q] ) rocketnet_server_xdp_socket_t;
         sockets[q].send_flow_index.store( sockets[q].send_handoff.producer );
     }
     server->num_queues = queues;
