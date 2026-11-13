@@ -595,8 +595,10 @@ def judge_release(api, repo, version, ref, out, stage="pre", gates=None, now=Non
                       f"--resume waits for its Release Check and publishes)", file=out)
         except NotFound:
             say(True, f"tag {version} does not exist yet")
-        # a release is published as latest: one below a version already
-        # tagged would take latest from it
+        # a stable release is published as latest: one below a version
+        # already tagged would take latest from it. A prerelease is not made
+        # latest and is held to the same order. The tags are read here, before
+        # the tag is pushed: a higher tag pushed in between is not seen
         newest = newest_version_tag(api, repo)
         if newest is not None:
             say(version_key(version) >= version_key(newest),
