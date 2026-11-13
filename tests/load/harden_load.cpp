@@ -2241,6 +2241,9 @@ static int harden_server_main( const harden_options_t & o )
             printf( "harden_pool_refused: pin_refused=%d pin_error=%d realtime_refused=%d realtime_error=%d (error codes are errno, or GetLastError on Windows; priority is SCHED_FIFO max, or THREAD_PRIORITY_TIME_CRITICAL on Windows)\n",
                     harden_pin.pin_refused.load(), harden_pin.pin_error.load(), harden_pin.realtime_refused.load(), harden_pin.realtime_error.load() );
         }
+#if defined( __APPLE__ )
+        printf( "harden_pool_advisory: pinning is advisory on macOS: no hard CPU pinning; threads get QOS_CLASS_USER_INTERACTIVE and an affinity tag (pinned counts accepted tags, realtime counts QoS set; on macOS the pin_error is a kern_return_t)\n" );
+#endif // #if defined( __APPLE__ )
         fflush( stdout );
     }
     double last_plan_time = 0.0; // space: when the frame the task staged was built from game state

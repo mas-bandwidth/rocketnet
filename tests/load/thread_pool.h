@@ -33,6 +33,15 @@
     realtime class gets, the counterpart of SCHED_FIFO max. A setting the
     system refuses is counted (pin_refused, realtime_refused) with the first
     error code, and harden_load prints that in the row.
+
+    macOS has no hard CPU pinning. The thread gets the highest quality of
+    service class (QOS_CLASS_USER_INTERACTIVE, the performance cores first) and
+    an affinity tag (thread_policy_set THREAD_AFFINITY_POLICY, tag cpu + 1: a
+    hint that threads with different tags should run on different cache
+    domains; Apple silicon refuses it). Both are advice to the scheduler, so
+    the layout is advisory on macOS and harden_load says so in the row. A
+    setting the system refuses is counted, with the first error code (the
+    kern_return_t of thread_policy_set, or the pthread error).
 */
 
 #ifndef HARDEN_THREAD_POOL_H
@@ -43,6 +52,13 @@
 #include <winsock2.h>
 #include <windows.h>
 #endif // #if defined( _WIN32 )
+
+#if defined( __APPLE__ )
+#include <mach/mach.h>
+#include <mach/thread_policy.h>
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif // #if defined( __APPLE__ )
 
 #include <TaskScheduler.h>
 
@@ -187,6 +203,32 @@ static void harden_pin_this_thread( int cpu )
     {
         int none = 0;
         harden_pin.realtime_error.compare_exchange_strong( none, (int) GetLastError() );
+        harden_pin.realtime_refused.fetch_add( 1 );
+    }
+#elif defined( __APPLE__ )
+    // advisory: an affinity tag (cpu + 1; 0 is "no tag") and the top QoS class
+    thread_affinity_policy_data_t policy;
+    policy.affinity_tag = cpu + 1;
+    const kern_return_t pin_result = thread_policy_set( pthread_mach_thread_np( pthread_self() ), THREAD_AFFINITY_POLICY, (thread_policy_t) &policy, THREAD_AFFINITY_POLICY_COUNT );
+    if ( pin_result == KERN_SUCCESS )
+    {
+        harden_pin.pinned.fetch_add( 1 );
+    }
+    else
+    {
+        int none = 0;
+        harden_pin.pin_error.compare_exchange_strong( none, (int) pin_result );
+        harden_pin.pin_refused.fetch_add( 1 );
+    }
+    const int realtime_result = pthread_set_qos_class_self_np( QOS_CLASS_USER_INTERACTIVE, 0 );
+    if ( realtime_result == 0 )
+    {
+        harden_pin.realtime.fetch_add( 1 );
+    }
+    else
+    {
+        int none = 0;
+        harden_pin.realtime_error.compare_exchange_strong( none, realtime_result );
         harden_pin.realtime_refused.fetch_add( 1 );
     }
 #else
