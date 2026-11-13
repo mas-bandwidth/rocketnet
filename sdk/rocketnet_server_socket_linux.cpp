@@ -83,7 +83,12 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #error "an XDP trace plant is defined outside the trace check's plant binaries"
 #endif
 
+// the library's own build defines no trace window; a trace plant binary,
+// which compiles this file with the xdp-replay trace check's window of 2
+// (ROCKETNET_TLA_XDP_REPLAY_WINDOW, CMakeLists.txt), is not the library
+#if !defined( ROCKETNET_TLA_XDP_REPLAY_WINDOW )
 static_assert( ROCKETNET_XDP_REPLAY_WINDOW == ROCKETNET_REPLAY_WINDOW_BITS, "the kernel replay window is the userspace replay window" );
+#endif // #if !defined( ROCKETNET_TLA_XDP_REPLAY_WINDOW )
 
 // XDP umem frame size must match libxdp expectation
 static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must be 4096" );
