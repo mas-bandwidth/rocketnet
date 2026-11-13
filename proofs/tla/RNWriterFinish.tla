@@ -21,6 +21,15 @@
 (* wrote (NothingLeftForWalk), and every writer message is sent or        *)
 (* refused once (Accounted).                                              *)
 (*                                                                         *)
+(* Buffered: the transport sends through the server's own ring, sized one  *)
+(* slot a client, all of it the round the main thread's send keeps. There  *)
+(* a start the ring had no slot for is not a refusal: it is queued and the *)
+(* main thread's send carries it, as the serial finish's is, so nothing is *)
+(* lost (BufferedNeverRefuses, Accounted); NothingLeftForWalk is the       *)
+(* staged transports' property only. Reversed witness:                     *)
+(* MCRNWriterFinishBrokenRingRefuses (the start marked as having no        *)
+(* capacity) breaks BufferedNeverRefuses.                                  *)
+(*                                                                         *)
 (* Reversed witness: MCRNWriterFinishBrokenNoOwner (no ownership check, a  *)
 (* second writer on a client in one phase) breaks OneWriter. SealAtFinish  *)
 (* and RefuseNoCapacity set FALSE describe the serial finish (the build    *)
@@ -29,12 +38,14 @@
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Writers, Clients, NoOwner, Capacity, MaxStarts,
-          SealAtFinish, RefuseNoCapacity, CheckOwner
+          SealAtFinish, RefuseNoCapacity, CheckOwner,
+          Buffered,     \* the transport sends through the server's own ring (the in-memory and plain socket transports)
+          RingRefuses   \* reversed witness: a start the ring had no slot for is marked as having no capacity
 
 VARIABLES phase,        \* "main" or "fill"
           owner,        \* client -> the writer that owns it this fill phase, or NoOwner
           touched,      \* client -> the writers that touched its send state this fill phase
-          open,         \* client -> "none", "inplace" or "nocap": the start open on it
+          open,         \* client -> "none", "inplace", "nocap" or "ring": the start open on it
           build,        \* client -> 1 while an in-place packet is held open, unsealed
           queued,       \* client -> writer messages queued for the walk
           cap,          \* frames of the update's capacity left
@@ -49,7 +60,7 @@ TypeOK ==
     /\ phase \in {"main", "fill"}
     /\ owner \in [Clients -> Writers \cup {NoOwner}]
     /\ touched \in [Clients -> SUBSET Writers]
-    /\ open \in [Clients -> {"none", "inplace", "nocap"}]
+    /\ open \in [Clients -> {"none", "inplace", "nocap", "ring"}]
     /\ build \in [Clients -> 0..1]
     /\ queued \in [Clients -> Nat]
     /\ cap \in 0..Capacity
@@ -88,7 +99,7 @@ Start(w, c) ==
     /\ IF cap > 0 /\ build[c] = 0
           THEN /\ open' = [open EXCEPT ![c] = "inplace"]
                /\ cap' = cap - 1
-          ELSE /\ open' = [open EXCEPT ![c] = "nocap"]
+          ELSE /\ open' = [open EXCEPT ![c] = IF Buffered /\ ~RingRefuses THEN "ring" ELSE "nocap"]
                /\ cap' = cap
     /\ UNCHANGED << phase, build, queued, sent, refused, walked >>
 
@@ -105,7 +116,7 @@ Finish(w, c) ==
                        /\ UNCHANGED << build, queued, refused >>
                   ELSE /\ build' = [build EXCEPT ![c] = 1]
                        /\ UNCHANGED << queued, sent, refused >>
-          ELSE IF RefuseNoCapacity
+          ELSE IF RefuseNoCapacity /\ open[c] = "nocap"
                   THEN /\ refused' = refused + 1
                        /\ UNCHANGED << build, queued, sent >>
                   ELSE /\ queued' = [queued EXCEPT ![c] = @ + 1]
@@ -144,6 +155,10 @@ OneWriter == \A c \in Clients : Cardinality(touched[c]) <= 1
 
 \* the walk never finishes a writer's message
 NothingLeftForWalk == walked = 0 /\ \A c \in Clients : build[c] = 0 /\ queued[c] = 0
+
+\* on a buffered transport the ring holds one round, the main thread's: a
+\* start it had no slot for waits for that round and is never refused
+BufferedNeverRefuses == Buffered => refused = 0
 
 \* every finished writer message was sent or refused, once
 OpenCount == Cardinality({c \in Clients : open[c] # "none"})

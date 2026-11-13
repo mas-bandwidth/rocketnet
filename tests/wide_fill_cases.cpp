@@ -47,6 +47,7 @@
 
 #define WIDE_FILL_PROTOCOL 0x57494445F1110001ULL
 #define WIDE_FILL_MAX_CLIENTS 16
+#define WIDE_FILL_FULL_SERVER_CLIENTS 1000         // the full-server case: every slot of a 1000-client server connected
 
 static double g_wide_fill_now = 1000.0;
 static double wide_fill_clock( void * ) { return g_wide_fill_now; }
@@ -74,12 +75,12 @@ struct wide_fill_world_t
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     rocketnet_loopback_hub_t * hub;
     rocketnet_server_t * server;
-    rocketnet_client_t * clients[WIDE_FILL_MAX_CLIENTS];
+    rocketnet_client_t * clients[WIDE_FILL_FULL_SERVER_CLIENTS];
     int num_clients;
     double time;
 };
 
-static void wide_fill_world_create( wide_fill_world_t * world, int num_clients, int packets_per_update = 0 )
+static void wide_fill_world_create( wide_fill_world_t * world, int num_clients, int packets_per_update = 0, int max_clients = WIDE_FILL_MAX_CLIENTS )
 {
     memset( world, 0, sizeof( *world ) );
     rocketnet_quiet( 1 );
@@ -93,13 +94,13 @@ static void wide_fill_world_create( wide_fill_world_t * world, int num_clients, 
     }
     check( rocketnet_generate_backend_keypair_from_seed( seed, world->backend_public, world->backend_secret ) == ROCKETNET_STATUS_OK );
 
-    world->hub = rocketnet_loopback_hub_create( NULL, WIDE_FILL_MAX_CLIENTS, NULL );
+    world->hub = rocketnet_loopback_hub_create( NULL, max_clients, NULL );
     check( world->hub != NULL );
 
     rocketnet_server_config_t server_config;
     rocketnet_server_default_config( &server_config );
     server_config.protocol_id = WIDE_FILL_PROTOCOL;
-    server_config.max_clients = WIDE_FILL_MAX_CLIENTS;
+    server_config.max_clients = max_clients;
     memcpy( server_config.backend_public_key, world->backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
     server_config.loopback_hub = world->hub;
@@ -185,7 +186,7 @@ static void wide_fill_connect_all( wide_fill_world_t * world )
         check( rn_test_client_connect_after_completion( world->clients[c], token ) == ROCKETNET_STATUS_OK );
     }
 
-    for ( int step = 0; step < 600; step++ )
+    for ( int step = 0; step < 600 + world->num_clients; step++ )   // a full 1000-client server connects about two a step
     {
         int connected = 0;
         for ( int c = 0; c < world->num_clients; c++ )
@@ -968,7 +969,7 @@ static void writer_finish_main( wide_fill_world_t * world, wide_fill_slot_t * sl
 {
     rn_send_pass_cost_reset();
     rocketnet_server_send_packets( world->server );
-    trace->walk_packets += rn_send_pass_cost_read().packets_finished;
+    trace->walk_packets += rn_send_pass_cost_read().frames_finished;
 
     wide_fill_clients_step( world );
     rocketnet_server_update( world->server, world->time );
@@ -1237,7 +1238,135 @@ static void test_writer_finish_no_capacity_refused()
     check( serial.walk_packets > writer.walk_packets );
 }
 
+// A full server on a buffered transport (the in-memory one): 1000 clients,
+// every slot connected, so the server's send ring (one slot a client) holds
+// exactly the round the main thread's send keeps and no slot beyond it. The
+// game threads finish one packet-sized unreliable message per client per
+// frame. None is refused: each waits for the main thread's send, as the
+// serial finish's does, and every one arrives
+// (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY reads 0 by value).
+struct full_server_frame_t
+{
+    rocketnet_server_t * server;
+    const int * slot_of_client;
+    int num_clients;
+    int num_threads;
+    int frame;
+    int bytes;
+    uint32_t * not_started;                             // one a thread
+    uint32_t * not_finished;                            // one a thread
+};
+
+static void full_server_job( const full_server_frame_t * f, int thread )
+{
+    for ( int c = 0; c < f->num_clients; c++ )
+    {
+        if ( ( c + f->frame ) % f->num_threads != thread )
+        {
+            continue;                                   // another thread's client this frame
+        }
+        const int slot = f->slot_of_client[c];
+        uint8_t * p = rocketnet_server_start_message( f->server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, f->bytes );
+        if ( !p )
+        {
+            f->not_started[thread]++;
+            continue;
+        }
+        wide_fill_write( p, f->bytes, 0, slot, (uint32_t) f->frame, (uint32_t) f->frame );
+        if ( rocketnet_server_finish_client_message( f->server, slot, f->bytes ) == 0 )
+        {
+            f->not_finished[thread]++;
+        }
+    }
+}
+
+static void test_writer_finish_full_server_buffered_all_delivered()
+{
+    const int clients = WIDE_FILL_FULL_SERVER_CLIENTS;
+    const int num_threads = 8;
+    const int frames = 4;
+    const int bytes = 1000;
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, clients, 0, clients );
+    wide_fill_connect_all( &world );
+
+    std::vector<int> slot_of_client( (size_t) clients );
+    std::vector<wide_fill_slot_t> slots( (size_t) clients );
+    memset( slots.data(), 0, slots.size() * sizeof( wide_fill_slot_t ) );
+    for ( int c = 0; c < clients; c++ )
+    {
+        slot_of_client[(size_t) c] = rocketnet_client_index( world.clients[c] );
+        slots[(size_t) slot_of_client[(size_t) c]].last_unreliable = -1;
+    }
+
+    const uint64_t no_capacity = writer_finish_message_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY );
+    uint32_t not_started[8] = {};
+    uint32_t not_finished[8] = {};
+
+    for ( int frame = 0; frame < frames + 8; frame++ )
+    {
+        // main thread: what the game threads finished goes out, then update and receive
+
+        rocketnet_server_send_packets( world.server );
+        wide_fill_clients_step( &world );
+        rocketnet_server_update( world.server, world.time );
+        while ( rocketnet_server_receive_messages( world.server ) != NULL )
+        {
+        }
+        for ( int c = 0; c < clients; c++ )
+        {
+            const int slot = slot_of_client[(size_t) c];
+            wide_fill_client_receive( &world, c, &slots[(size_t) slot], slot );
+        }
+
+        // the game threads, joined before the next main thread call; the
+        // last eight frames only drain
+
+        if ( frame < frames )
+        {
+            full_server_frame_t f;
+            f.server = world.server;
+            f.slot_of_client = slot_of_client.data();
+            f.num_clients = clients;
+            f.num_threads = num_threads;
+            f.frame = frame;
+            f.bytes = bytes;
+            f.not_started = not_started;
+            f.not_finished = not_finished;
+
+            std::vector<std::thread> threads;
+            for ( int t = 0; t < num_threads; t++ )
+            {
+                threads.emplace_back( full_server_job, &f, t );
+            }
+            for ( std::thread & thread : threads )
+            {
+                thread.join();
+            }
+        }
+
+        world.time += 1.0 / 60.0;
+    }
+
+    for ( int t = 0; t < num_threads; t++ )
+    {
+        check( not_started[t] == 0 );
+        check( not_finished[t] == 0 );
+    }
+    for ( int c = 0; c < clients; c++ )
+    {
+        const wide_fill_slot_t * s = &slots[(size_t) slot_of_client[(size_t) c]];
+        check( s->corrupt == 0 );
+        check( s->received[0] == (uint32_t) frames );   // every one delivered, once
+    }
+    check( writer_finish_message_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) == no_capacity );
+
+    wide_fill_world_destroy( &world );
+}
+
 REGISTER_UNIT_TEST( test_writer_finish_equals_serial );
+REGISTER_UNIT_TEST( test_writer_finish_full_server_buffered_all_delivered );
 REGISTER_UNIT_TEST( test_writer_finish_no_capacity_refused );
 REGISTER_UNIT_TEST( test_wide_fill_one_thread );
 REGISTER_UNIT_TEST( test_wide_fill_four_threads );

@@ -957,3 +957,5 @@ MCRNAckApplyPhaseBrokenLoadTake.cfg	MCRNAckApplyPhase.tla	invariant	OneTaker	che
 MCRNAckApplyPhaseBrokenNoGatherWhenFull.cfg	MCRNAckApplyPhase.tla	invariant	InBounds	check	rnackapplyphase	required	-
 MCRNAckApplyPhaseBrokenSettleWhileOpen.cfg	MCRNAckApplyPhase.tla	invariant	OneTaker	check	rnackapplyphase	required	-
 MCRNAckApplyPhaseBrokenTailNotAdvanced.cfg	MCRNAckApplyPhase.tla	invariant	ChainWhole	check	rnackapplyphase	required	-
+MCRNWriterFinishBuffered.cfg	MCRNWriterFinish.tla	pass	-	check	rnwriterfinish	required	-
+MCRNWriterFinishBrokenRingRefuses.cfg	MCRNWriterFinish.tla	invariant	BufferedNeverRefuses	check	rnwriterfinish	required	-

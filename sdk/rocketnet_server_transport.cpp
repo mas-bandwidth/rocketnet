@@ -930,6 +930,11 @@ static bool rocketnet_server_transport_staged( const rocketnet_server_transport_
     return rocketnet_server_transport_io_has( transport->io, ROCKETNET_TRANSPORT_STAGED );
 }
 
+bool rocketnet_server_transport_send_buffered( const struct rocketnet_server_transport_t * server_transport )
+{
+    return server_transport && !rocketnet_server_transport_staged( server_transport );
+}
+
 // The unit seam: the send capacity the next create reads. 0 keeps the
 // default. It is consumed by that create so one case cannot shape another.
 #if ROCKETNET_DEV

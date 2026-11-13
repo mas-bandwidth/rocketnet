@@ -126,6 +126,14 @@ struct rn_message_link_t
     // connected clients whose next send round must remain available
     int ( *send_connected_count )( void * transport );
 
+    // true when the transport sends through the server's own ring of
+    // max_clients-sized slots (the in-memory and plain socket transports),
+    // false when it stages frames in its own send queue. NULL (the client's
+    // link, the unit suite's fakes): false. The writer's finish reads it: on
+    // a buffered transport a start the ring had no slot for is queued for
+    // the main thread's send as the serial finish queues it, never refused
+    bool ( *send_buffered )( const void * transport );
+
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots
     // Observe). The server's link answers
     // rocketnet_server_transport_client_connection_id, which differs for every
@@ -223,11 +231,13 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
 // fill phase (sdk/rocketnet_fill_phase.h) and by main-thread operations.
 // rn_message_open_t pending: nonzero while a start is open. NO_CAPACITY is a
 // fitting unreliable start that found no capacity to be written in place (no
-// transport frame, the round kept for the write pass, packets_per_update
-// spent, or a budget that cannot pay it) and took the queued path: the serial
-// finish queues it for send_packets as before; the writer's finish
-// (rn_message_object_finish_client) refuses it, so nothing a writer finishes
-// is left for send_packets (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY)
+// transport frame, the round kept for the main thread's send, the update's
+// send limit spent, or a budget that cannot pay it) and took the queued path:
+// the serial finish queues it for the main thread's send as before; the
+// writer's finish (rn_message_object_finish_client) refuses it, so nothing a
+// writer finishes is left for that send (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY).
+// On a buffered transport (rn_message_link_t send_buffered) a start the ring
+// had no slot for is not marked: it queues from either finish
 #define RN_MESSAGE_OPEN_PENDING 1
 #define RN_MESSAGE_OPEN_PENDING_NO_CAPACITY 2
 
@@ -406,13 +416,13 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes );
 
 // the writer's finish (rocketnet_server_finish_client_message): as
-// rn_message_object_finish, except that the packet holding an unreliable
+// rn_message_object_finish, except that the frame holding an unreliable
 // message written in place is sealed, ack-stamped, encrypted and handed to
 // the transport in this call, and an unreliable start that found no capacity
 // (RN_MESSAGE_OPEN_PENDING_NO_CAPACITY) is refused, its start aborted and
 // MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counted. A message the writer
-// finishes is either on its way to the network or refused; send_packets
-// builds nothing of it. Large and ordering-queued messages (no in-place
+// finishes is either on its way to the network or refused; the main thread's
+// send builds nothing of it. Large and ordering-queued messages (no in-place
 // form) queue as on the serial finish.
 uint32_t rn_message_object_finish_client( struct rn_message_object_t * object, int index, int bytes );
 
@@ -458,13 +468,13 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 // The send pass's cost, counted on this thread by
 // rn_message_object_send_packets (development builds only): the connection
 // slots its rounds visit, the frames started and then aborted in it, and the
-// packets it finished (open builds sealed at BeginFlush and frames written):
-// the work send_packets did that a writer's finish could have done.
+// frames it finished (open builds sealed at BeginFlush and frames written):
+// the work the main thread's send did that a writer's finish could have done.
 struct rn_send_pass_cost_t
 {
     uint64_t slot_visits;
     uint64_t frames_aborted;
-    uint64_t packets_finished;
+    uint64_t frames_finished;
 };
 
 void rn_send_pass_cost_reset();
