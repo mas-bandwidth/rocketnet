@@ -222,7 +222,8 @@ _OPERATOR = r"[A-Z][A-Za-z0-9_]*"
 CITED_OPERATORS_RE = re.compile(
     r"`?\)?(?:'s)?[ \t]+`?(" + _OPERATOR + r"(?:`?(?:[ \t]*,[ \t]*|[ \t]+and[ \t]+|[ \t]+or[ \t]+|[ \t]*/[ \t]*)`?"
     + _OPERATOR + r")*)")
-_MODULE_REF_RE = re.compile(r"\bEXTENDS\b([^\n]*)|\bINSTANCE\s+([A-Za-z_][A-Za-z0-9_]*)")
+# an EXTENDS list runs on past a line that ends in a comma
+_MODULE_REF_RE = re.compile(r"\bEXTENDS\b((?:[^\n]*,[ \t]*\n)*[^\n]*)|\bINSTANCE\s+([A-Za-z_][A-Za-z0-9_]*)")
 # a CONSTANT(S) or VARIABLE(S) list runs to the next line that starts in column 0
 _DECLARATION_RE = re.compile(r"\b(?:CONSTANTS?|VARIABLES?)\b(.*?)(?=^\S|\Z)", re.S | re.M)
 

@@ -566,6 +566,18 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertIn("ActMod EnvStep: sdk/act.c", out)
         self.assertIn("ACTIONS UNCITED 1", out)
 
+    def test_model_citation_reads_a_wrapped_extends_list(self):
+        # an EXTENDS list that wraps after a comma extends every module named
+        # on its later lines too (Astra, gates review of 1b98c9bb6)
+        code_text = ("// proofs/tla/ActMod.tla ActionA ActionB EnvStep\n"
+                     "// proofs/tla/MCActMod.tla ExtraStep\n")
+        root = self.plant_action_repo(code_text)
+        (root / "proofs" / "tla" / "Extra.tla").write_text("---- MODULE Extra ----\nExtraStep == TRUE\n====\n")
+        (root / "proofs" / "tla" / "MCActMod.tla").write_text(
+            "---- MODULE MCActMod ----\nEXTENDS Naturals,\n        ActMod,\n        Extra\n====\n")
+        code, out = run_check(root)
+        self.assertEqual(code, 0, out)
+
     def test_model_citation_of_a_missing_module_fails(self):
         # the code cited proofs/tla/RNMessageOpen.tla, which was never written (FG-A4)
         code_text = ("// proofs/tla/ActMod.tla ActionA ActionB EnvStep\n"

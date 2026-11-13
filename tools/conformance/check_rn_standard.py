@@ -118,12 +118,15 @@ PRINTERS = r"""
 static void rn_pin_print( int row, const char * value ) { printf( "%d\ts\t%s\n", row, value ); }
 static void rn_pin_print( int row, double value ) { printf( "%d\tr\t%.17g\n", row, value ); }
 static void rn_pin_print( int row, float value ) { printf( "%d\tr\t%.9g\n", row, (double) value ); }
+// an enum is signed when its underlying type is (is_signed is false for every enum)
+template <typename T, bool is_enum = std::is_enum<T>::value> struct rn_pin_signed : std::is_signed<T> {};
+template <typename T> struct rn_pin_signed<T, true> : std::is_signed<typename std::underlying_type<T>::type> {};
 template <typename T> static void rn_pin_print( int row, T value )
 {
     static_assert( std::is_integral<T>::value || std::is_enum<T>::value, "a pin expression is an integer, a real or a string" );
     // only a signed type prints negative: an unsigned value with bit 63 set is
     // that unsigned number, never a negative one
-    if ( std::is_signed<T>::value && (long long) value < 0 )
+    if ( rn_pin_signed<T>::value && (long long) value < 0 )
         printf( "%d\ti\t%lld\n", row, (long long) value );
     else
         printf( "%d\ti\t%llu\n", row, (unsigned long long) value );
