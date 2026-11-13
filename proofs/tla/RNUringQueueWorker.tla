@@ -1,31 +1,42 @@
 ---------------------------- MODULE RNUringQueueWorker ----------------------------
 (***************************************************************************)
 (* One queue's worker thread of the io_uring server (layer L3 of the       *)
-(* per-queue send): its own ring, on which it submits the queue's sends    *)
-(* and its multishot receive, and sleeps in one wait for any completion.   *)
-(* Main hands it work (a published bank) and wakes it through an eventfd   *)
-(* the worker keeps a READ armed on: a write made while no read is armed  *)
-(* stays in the eventfd's count and completes the next read at once.       *)
+(* per-queue send, sdk/rocketnet_uring_queue_worker.cpp): its own ring, on *)
+(* which it submits the queue's sends and its multishot receive, and       *)
+(* sleeps in one wait for any completion.  Main publishes banks to it      *)
+(* (RNUringQueueSend's handoff) and wakes it through an eventfd the worker *)
+(* keeps a READ armed on: a write made while no read is armed stays in the *)
+(* eventfd's count and completes the next read at once.                    *)
 (*                                                                         *)
-(* u is the work waiting to be submitted (runs, abstractly), k the runs in  *)
-(* the kernel, K the room the ring has for them.  The kernel answers each   *)
-(* run ok or -EAGAIN; -EAGAIN hands the run back (RNUringQueueSend's       *)
-(* hand-back) and blocks sending until a POLLOUT poll on the socket fires: *)
-(* no spinning.  Main's stop sets quit and writes the eventfd; the worker, *)
-(* once it sees quit, cancels its receive, keeps sending what it holds,    *)
-(* and once quit is seen and -EAGAIN has answered MaxRetry times it        *)
-(* abandons what still waits (the stop's bounded retries: a socket that    *)
-(* stays full must not hold the stop forever).  It exits only when nothing *)
-(* of its is in the kernel: no run, no receive, no wake read, no poll.     *)
-(* Main joins it after.                                                    *)
+(* ready is the banks published and not claimed, held whether the worker   *)
+(* holds one, u the runs of the held bank waiting to be submitted, k its    *)
+(* runs in the kernel, K the room the ring has for them.  A claim cuts a    *)
+(* bank into any number of runs up to R.  The kernel answers each run ok   *)
+(* (sent or failed), -EAGAIN or a segment refusal.  -EAGAIN hands the run   *)
+(* back and blocks submits until a POLLOUT poll on the socket fires: no     *)
+(* spinning.  A refusal hands the run back as one run a packet, sent again *)
+(* with no block; a run to a destination known to refuse is split the same *)
+(* way before any send, and a run to a destination the socket cannot name  *)
+(* is dropped without one.  A bank retires once nothing of it waits and    *)
+(* none of its runs is in the kernel or unreaped.                          *)
+(*                                                                         *)
+(* Main's stop sets quit and writes the eventfd; the worker, once it sees  *)
+(* quit, cancels its receive and its wake read, keeps sending what is      *)
+(* published, and once quit is seen and -EAGAIN has answered MaxRetry     *)
+(* times it abandons what waits and cancels its poll (the stop's bounded   *)
+(* retries: a socket that stays full must not hold the stop forever).  It  *)
+(* exits only when nothing of its is in the kernel or waiting.  Main joins *)
+(* it after.  A cancel's own completion is not modelled: it changes none   *)
+(* of these variables, and the code's exit waits for it besides.           *)
 (*                                                                         *)
 (* The checked claims:                                                     *)
-(*   ExitDrained   (invariant) the worker exits only with no run in the    *)
-(*                 kernel or waiting, no completion unreaped, its receive  *)
-(*                 ended and no wake read or poll armed: nothing the       *)
-(*                 kernel still writes or reads outlives the thread.       *)
+(*   ExitDrained   (invariant) the worker exits only with no bank held or  *)
+(*                 ready, no run in the kernel, no completion unreaped,    *)
+(*                 its receive ended and no wake read or poll armed:       *)
+(*                 nothing the kernel still writes or reads outlives the   *)
+(*                 thread.                                                 *)
 (*   StopFinishes  (liveness) once main stops, the worker exits.           *)
-(*   Drains        (liveness) before the stop, work main hands over is     *)
+(*   Drains        (liveness) before the stop, what main publishes is      *)
 (*                 submitted: a sleeping worker is always woken.           *)
 (*                                                                         *)
 (* Rule switches, each changed in one reversed witness:                    *)
@@ -39,45 +50,52 @@
 (***************************************************************************)
 EXTENDS Integers
 
-CONSTANTS U,          \* work main may hand over before the stop
+CONSTANTS U,          \* banks main may publish before the stop
+          R,          \* the most runs waiting in one bank
           K,          \* runs the ring holds in the kernel at once
           MaxRetry,   \* -EAGAIN answers after the stop before the worker abandons
           MaxAgain,   \* -EAGAIN answers before the stop (bounds the state space)
+          MaxRefuse,  \* segment refusals (bounds the state space)
           ExitRule,   \* "drained" or "early"
           RetryRule,  \* "bounded" or "unbounded"
           WakeRule    \* "armed" or "skip"
 
-ASSUME U \in Nat /\ K >= 1 /\ MaxRetry >= 1 /\ MaxAgain \in Nat
+ASSUME U \in Nat /\ R >= 1 /\ K >= 1 /\ MaxRetry >= 1 /\ MaxAgain \in Nat /\ MaxRefuse \in Nat
 ASSUME ExitRule \in {"drained", "early"} /\ RetryRule \in {"bounded", "unbounded"} /\ WakeRule \in {"armed", "skip"}
 
 VARIABLES quit,       \* main asked the worker to stop
           seen,       \* the worker has read quit
           st,         \* the worker: "awake", "asleep" or "exited"
-          handed,     \* work main handed over so far
-          u,          \* work waiting to be submitted
+          handed,     \* banks main published so far
+          ready,      \* banks published, not claimed
+          held,       \* the worker holds a bank
+          u,          \* runs of the held bank waiting to be submitted
           k,          \* runs in the kernel
-          cOk,        \* ok completions posted, not reaped
+          cOk,        \* ok (sent or failed) completions posted, not reaped
           cAgain,     \* -EAGAIN completions posted, not reaped
+          cRef,       \* segment refusals posted, not reaped
           blocked,    \* a run came back -EAGAIN: no submit until the poll fires
-          poll,       \* "none", "armed" or "posted" (its completion ready)
+          poll,       \* "none", "armed", "cancelling" or "posted" (its completion ready)
           recv,       \* the multishot receive: "armed", "cancelling", "posted" (its last completion ready) or "ended"
-          wakeRead,   \* the eventfd READ: "none", "armed" or "posted"
+          wakeRead,   \* the eventfd READ: "none", "armed", "cancelling" or "posted"
           wakeCount,  \* the eventfd's count is nonzero
           agains,     \* -EAGAIN answers since the stop was seen, up to MaxRetry
-          againsBefore \* -EAGAIN answers before it
+          againsBefore, \* -EAGAIN answers before it
+          refusals    \* segment refusals so far
 
-vars == <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+vars == <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 Init ==
     /\ quit = FALSE /\ seen = FALSE /\ st = "awake"
-    /\ handed = 0 /\ u = 0 /\ k = 0 /\ cOk = 0 /\ cAgain = 0
+    /\ handed = 0 /\ ready = 0 /\ held = FALSE /\ u = 0 /\ k = 0
+    /\ cOk = 0 /\ cAgain = 0 /\ cRef = 0
     /\ blocked = FALSE /\ poll = "none" /\ recv = "armed"
     /\ wakeRead = "none" /\ wakeCount = FALSE
-    /\ agains = 0 /\ againsBefore = 0
+    /\ agains = 0 /\ againsBefore = 0 /\ refusals = 0
 
-\* main writes the eventfd: a READ armed completes, else the count stays
+\* main writes the eventfd: a READ in the kernel completes, else the count stays
 Signal ==
-    IF wakeRead = "armed"
+    IF wakeRead \in {"armed", "cancelling"}
       THEN /\ wakeRead' = "posted" /\ UNCHANGED wakeCount
       ELSE /\ wakeCount' = TRUE /\ UNCHANGED wakeRead
 
@@ -86,157 +104,225 @@ Publish ==
     /\ ~quit
     /\ handed < U
     /\ handed' = handed + 1
-    /\ u' = u + 1
+    /\ ready' = ready + 1
     /\ Signal
-    /\ UNCHANGED <<quit, seen, st, k, cOk, cAgain, blocked, poll, recv, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, agains, againsBefore, refusals>>
 
 \* main: stop, then the wake
 Stop ==
     /\ ~quit
     /\ quit' = TRUE
     /\ Signal
-    /\ UNCHANGED <<seen, st, handed, u, k, cOk, cAgain, blocked, poll, recv, agains, againsBefore>>
+    /\ UNCHANGED <<seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, agains, againsBefore, refusals>>
 
 ---------------------------------------------------------------------------
 \* the kernel
 
-KernelComplete(res) ==
+KernelOk ==
     /\ k > 0
-    /\ res = "again" => (seen \/ againsBefore < MaxAgain)
-    /\ k' = k - 1
-    /\ IF res = "ok" THEN cOk' = cOk + 1 /\ UNCHANGED cAgain ELSE cAgain' = cAgain + 1 /\ UNCHANGED cOk
-    /\ againsBefore' = IF res = "again" /\ ~seen THEN againsBefore + 1 ELSE againsBefore
-    /\ UNCHANGED <<quit, seen, st, handed, u, blocked, poll, recv, wakeRead, wakeCount, agains>>
+    /\ k' = k - 1 /\ cOk' = cOk + 1
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
-\* the socket has room again (or the poll is cancelled)
+KernelAgain ==
+    /\ k > 0
+    /\ seen \/ againsBefore < MaxAgain
+    /\ k' = k - 1 /\ cAgain' = cAgain + 1
+    /\ againsBefore' = IF ~seen THEN againsBefore + 1 ELSE againsBefore
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, cOk, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, refusals>>
+
+KernelRefuse ==
+    /\ k > 0
+    /\ refusals < MaxRefuse
+    /\ k' = k - 1 /\ cRef' = cRef + 1
+    /\ refusals' = refusals + 1
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+
+\* the socket has room again, or the poll is cancelled
 KernelPoll ==
-    /\ poll = "armed"
+    /\ poll \in {"armed", "cancelling"}
     /\ poll' = "posted"
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, recv, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 \* the cancelled multishot posts its last completion
 KernelRecvEnd ==
     /\ recv = "cancelling"
     /\ recv' = "posted"
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, poll, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 \* the armed READ takes the eventfd's count
 KernelWakeRead ==
-    /\ wakeRead = "armed" /\ wakeCount
+    /\ wakeRead \in {"armed", "cancelling"} /\ wakeCount
     /\ wakeRead' = "posted" /\ wakeCount' = FALSE
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, poll, recv, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, agains, againsBefore, refusals>>
 
-Ready == cOk > 0 \/ cAgain > 0 \/ poll = "posted" \/ recv = "posted" \/ wakeRead = "posted"
+\* the cancelled READ posts its completion
+KernelWakeEnd ==
+    /\ wakeRead = "cancelling"
+    /\ wakeRead' = "posted"
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeCount, agains, againsBefore, refusals>>
+
+\* a held bank's runs not done: waiting, in the kernel or unreaped
+Runs == u + k + cOk + cAgain + cRef
+
+Ready == cOk > 0 \/ cAgain > 0 \/ cRef > 0 \/ poll = "posted" \/ recv = "posted" \/ wakeRead = "posted"
 
 \* the wait returns: a completion is ready
 KernelWakesWorker ==
     /\ st = "asleep" /\ Ready
     /\ st' = "awake"
-    /\ UNCHANGED <<quit, seen, handed, u, k, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 ---------------------------------------------------------------------------
 \* the worker, awake
 
 Awake == st = "awake"
 
+Abandoning == seen /\ RetryRule = "bounded" /\ agains >= MaxRetry
+
 Observe ==
     /\ Awake /\ quit /\ ~seen
     /\ seen' = TRUE
-    /\ UNCHANGED <<quit, st, handed, u, k, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 ReapOk ==
     /\ Awake /\ cOk > 0
     /\ cOk' = cOk - 1
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
-\* -EAGAIN: the run back, sending blocked, a POLLOUT poll armed
+\* -EAGAIN: the run back, sending blocked until a poll fires
 ReapAgain ==
     /\ Awake /\ cAgain > 0
     /\ cAgain' = cAgain - 1
     /\ u' = u + 1
     /\ blocked' = TRUE
-    /\ poll' = IF poll = "none" THEN "armed" ELSE poll
     /\ agains' = IF seen /\ agains < MaxRetry THEN agains + 1 ELSE agains
-    /\ UNCHANGED <<quit, seen, st, handed, k, cOk, recv, wakeRead, wakeCount, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, k, cOk, cRef, poll, recv, wakeRead, wakeCount, againsBefore, refusals>>
+
+\* a refusal: the run back as one or more runs, with no block
+ReapRefused ==
+    /\ Awake /\ cRef > 0
+    /\ cRef' = cRef - 1
+    /\ u' \in (u + 1)..(u + 1 + R - Runs)
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, k, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 ReapPoll ==
     /\ Awake /\ poll = "posted"
     /\ poll' = "none" /\ blocked' = FALSE
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, recv, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 ReapRecvEnd ==
     /\ Awake /\ recv = "posted"
     /\ recv' = "ended"
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, poll, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 ReapWake ==
     /\ Awake /\ wakeRead = "posted"
     /\ wakeRead' = "none"
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, poll, recv, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeCount, agains, againsBefore, refusals>>
+
+\* a bank all of whose runs are done goes back to the free FIFO
+Retire ==
+    /\ Awake /\ held /\ u = 0 /\ k = 0 /\ cOk = 0 /\ cAgain = 0 /\ cRef = 0
+    /\ held' = FALSE
+    /\ UNCHANGED <<quit, seen, st, handed, ready, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
+
+\* the oldest ready bank, cut into runs
+Claim ==
+    /\ Awake /\ ~held /\ ready > 0
+    /\ ready' = ready - 1 /\ held' = TRUE
+    /\ u' \in 0..R
+    /\ UNCHANGED <<quit, seen, st, handed, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
+
+CanSend == Awake /\ held /\ ~blocked /\ u > 0 /\ k < K
 
 Submit ==
-    /\ Awake /\ ~blocked /\ u > 0 /\ k < K
+    /\ CanSend
     /\ u' = u - 1 /\ k' = k + 1
-    /\ UNCHANGED <<quit, seen, st, handed, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
+
+\* a run to a destination known to refuse segmentation: one run a packet
+Split ==
+    /\ CanSend /\ Runs < R
+    /\ u' \in (u + 1)..(u + R - Runs)
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
+
+\* a run to a destination the socket cannot name: dropped, no send
+Drop ==
+    /\ CanSend
+    /\ u' = u - 1
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
+
+\* past MaxRetry answers of -EAGAIN since the stop, what waits is abandoned
+Abandon ==
+    /\ Awake /\ Abandoning /\ held /\ u > 0
+    /\ u' = 0
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
+
+\* the POLLOUT poll a -EAGAIN asked for, unless the stop gave up on the socket
+ArmPoll ==
+    /\ Awake /\ blocked /\ poll = "none" /\ ~Abandoning
+    /\ poll' = "armed"
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 \* the wake read is armed again until the stop is seen
 ArmWake ==
     /\ Awake /\ ~seen /\ wakeRead = "none"
     /\ wakeRead' = "armed"
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, poll, recv, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeCount, agains, againsBefore, refusals>>
 
-\* the stop seen: the receive is cancelled, and the wake read once nothing
-\* else is left
+\* the stop seen: the receive and the wake read are cancelled, and the poll
+\* once the stop has given up on the socket
 CancelRecv ==
     /\ Awake /\ seen /\ recv = "armed"
     /\ recv' = "cancelling"
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, poll, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 CancelWake ==
     /\ Awake /\ seen /\ wakeRead = "armed"
-    /\ wakeRead' = "posted"
-    /\ UNCHANGED <<quit, seen, st, handed, u, k, cOk, cAgain, blocked, poll, recv, wakeCount, agains, againsBefore>>
+    /\ wakeRead' = "cancelling"
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeCount, agains, againsBefore, refusals>>
 
-\* past MaxRetry answers of -EAGAIN since the stop, what waits is abandoned
-Abandon ==
-    /\ Awake /\ seen /\ RetryRule = "bounded" /\ agains >= MaxRetry /\ u > 0
-    /\ u' = 0
-    /\ UNCHANGED <<quit, seen, st, handed, k, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+CancelPoll ==
+    /\ Awake /\ Abandoning /\ poll = "armed"
+    /\ poll' = "cancelling"
+    /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
-Drained == k = 0 /\ u = 0 /\ cOk = 0 /\ cAgain = 0 /\ recv = "ended" /\ wakeRead = "none" /\ poll = "none"
+Drained ==
+    /\ ~held /\ ready = 0 /\ u = 0 /\ k = 0 /\ cOk = 0 /\ cAgain = 0 /\ cRef = 0
+    /\ recv = "ended" /\ wakeRead = "none" /\ poll = "none"
 
 Exit ==
     /\ Awake /\ seen
     /\ (ExitRule = "drained" => Drained)
     /\ st' = "exited"
-    /\ UNCHANGED <<quit, seen, handed, u, k, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
-\* nothing to do now: the wait. The code sleeps only with the wake read
-\* armed (or the stop seen, when what it waits for is its own work in the
-\* kernel), and never with a completion ready or a submit it could make
+\* everything the worker does awake but sleep and exit
+Busy ==
+    \/ Observe \/ ReapOk \/ ReapAgain \/ ReapRefused \/ ReapPoll \/ ReapRecvEnd \/ ReapWake
+    \/ Retire \/ Claim \/ Submit \/ Split \/ Drop \/ Abandon
+    \/ ArmPoll \/ CancelRecv \/ CancelWake \/ CancelPoll
+
+\* nothing to do now: the wait. The code sleeps only with nothing it could
+\* do, the wake read armed (WakeRule "armed") and not able to exit
 Sleep ==
     /\ Awake
-    /\ ~Ready
-    /\ ~(~blocked /\ u > 0 /\ k < K)
-    /\ ~(quit /\ ~seen)
-    /\ ~(~seen /\ wakeRead = "none" /\ WakeRule = "armed")
-    /\ ~(seen /\ (recv = "armed" \/ wakeRead = "armed" \/ (RetryRule = "bounded" /\ agains >= MaxRetry /\ u > 0)))
-    /\ ~(seen /\ Drained)
+    /\ ~ENABLED Busy
+    /\ ~ENABLED Exit
+    /\ WakeRule = "armed" => ~ENABLED ArmWake
     /\ st' = "asleep"
-    /\ UNCHANGED <<quit, seen, handed, u, k, cOk, cAgain, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore>>
+    /\ UNCHANGED <<quit, seen, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals>>
 
 \* the worker has exited and main has joined: stutter
 Done ==
     /\ st = "exited"
     /\ UNCHANGED vars
 
-WorkerStep ==
-    \/ Observe \/ ReapOk \/ ReapAgain \/ ReapPoll \/ ReapRecvEnd \/ ReapWake
-    \/ Submit \/ ArmWake \/ CancelRecv \/ CancelWake \/ Abandon \/ Exit \/ Sleep
+WorkerStep == Busy \/ ArmWake \/ Exit \/ Sleep
 
 KernelStep ==
-    \/ \E res \in {"ok", "again"} : KernelComplete(res)
-    \/ KernelPoll \/ KernelRecvEnd \/ KernelWakeRead \/ KernelWakesWorker
+    \/ KernelOk \/ KernelAgain \/ KernelRefuse
+    \/ KernelPoll \/ KernelRecvEnd \/ KernelWakeRead \/ KernelWakeEnd \/ KernelWakesWorker
 
 Next == Publish \/ Stop \/ WorkerStep \/ KernelStep \/ Done
 
@@ -245,8 +331,9 @@ Spec == Init /\ [][Next]_vars
 \* the worker and the kernel keep going; main may stop or not
 Fairness ==
     /\ WF_vars(WorkerStep)
-    /\ WF_vars(\E res \in {"ok", "again"} : KernelComplete(res))
-    /\ WF_vars(KernelPoll) /\ WF_vars(KernelRecvEnd) /\ WF_vars(KernelWakeRead) /\ WF_vars(KernelWakesWorker)
+    /\ WF_vars(KernelOk \/ KernelAgain \/ KernelRefuse)
+    /\ WF_vars(KernelPoll) /\ WF_vars(KernelRecvEnd) /\ WF_vars(KernelWakeRead) /\ WF_vars(KernelWakeEnd)
+    /\ WF_vars(KernelWakesWorker)
 
 LiveSpec == Spec /\ Fairness
 
@@ -254,11 +341,15 @@ LiveSpec == Spec /\ Fairness
 
 TypeOK ==
     /\ quit \in BOOLEAN /\ seen \in BOOLEAN /\ st \in {"awake", "asleep", "exited"}
-    /\ handed \in 0..U /\ u \in 0..U /\ k \in 0..K /\ cOk \in 0..K /\ cAgain \in 0..K
-    /\ blocked \in BOOLEAN /\ poll \in {"none", "armed", "posted"}
+    /\ handed \in 0..U /\ ready \in 0..U /\ held \in BOOLEAN /\ u \in 0..R /\ k \in 0..K
+    /\ cOk \in 0..K /\ cAgain \in 0..K /\ cRef \in 0..K
+    /\ blocked \in BOOLEAN /\ poll \in {"none", "armed", "cancelling", "posted"}
     /\ recv \in {"armed", "cancelling", "posted", "ended"}
-    /\ wakeRead \in {"none", "armed", "posted"} /\ wakeCount \in BOOLEAN
-    /\ agains \in 0..MaxRetry /\ againsBefore \in 0..MaxAgain
+    /\ wakeRead \in {"none", "armed", "cancelling", "posted"} /\ wakeCount \in BOOLEAN
+    /\ agains \in 0..MaxRetry /\ againsBefore \in 0..MaxAgain /\ refusals \in 0..MaxRefuse
+
+\* a held bank's runs: waiting, in the kernel or unreaped, never past R
+RunsBounded == Runs <= R
 
 \* nothing of the worker's is in the kernel once it has exited
 ExitDrained == st = "exited" => Drained
@@ -268,7 +359,7 @@ SeenOnlyAfterQuit == seen => quit
 
 StopFinishes == quit ~> (st = "exited")
 
-\* before the stop, what main hands over is submitted
-Drains == [](u > 0 /\ ~quit => <>(u = 0 \/ quit))
+\* before the stop, what main publishes is submitted
+Drains == [](((ready > 0 \/ u > 0) /\ ~quit) => <>((ready = 0 /\ u = 0) \/ quit))
 
 =============================================================================

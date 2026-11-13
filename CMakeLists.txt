@@ -1344,6 +1344,15 @@ if(ROCKETNET_BUILD_TOOLS)
     target_link_libraries(tla_trace_plant PRIVATE rocketnet_dev)
     rocketnet_use_sodium(tla_trace_plant)
     target_compile_features(tla_trace_plant PRIVATE cxx_std_11)
+    if(TARGET RocketNet::Uring)
+        # the io_uring worker's layer (tests/tla_trace_queue_worker.cpp) is
+        # walked only where the driver is; the plant build compiles the
+        # worker's source itself
+        foreach(trace_target tla_trace tla_trace_plant)
+            target_compile_definitions(${trace_target} PRIVATE ROCKETNET_IO_URING=1)
+            target_link_libraries(${trace_target} PRIVATE RocketNet::Uring)
+        endforeach()
+    endif()
     add_executable(keygen tools/keygen.cpp)
     add_executable(transport_memory benchmarks/transport_memory.cpp)
     add_executable(client_main_thread_cost benchmarks/client_main_thread_cost.cpp)

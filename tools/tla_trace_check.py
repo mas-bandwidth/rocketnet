@@ -51,6 +51,10 @@ LAYERS = {
         "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
         "quiet": True,
     },
+    "queue-worker": {
+        "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],
+        "quiet": True,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"

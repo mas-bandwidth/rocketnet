@@ -27,7 +27,8 @@
 // ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT times since it saw the stop it
 // abandons what still waits (counted) and cancels its poll. It exits only
 // when nothing of its is in the kernel: no run, no receive, no wake read, no
-// poll, no cancel. Main joins it after.
+// poll (a cancel itself holds nothing: its completion may come after).
+// Main joins it after.
 //
 // proofs/tla/RNUringQueueWorker.tla models the loop: each part of pass names
 // the action it implements. The kernel is behind a small interface
@@ -68,6 +69,24 @@ struct rocketnet_uring_queue_send_t;
 #define ROCKETNET_URING_WORKER_CONTINUE                                      0      // more to do now: submit without waiting and pass again
 #define ROCKETNET_URING_WORKER_SLEEP                                         1      // nothing to do: submit and wait for a completion
 #define ROCKETNET_URING_WORKER_EXIT                                          2      // the stop seen and nothing in the kernel
+
+// what one step did
+#define ROCKETNET_URING_WORKER_STEP_NONE                                     0      // nothing: Sleep
+#define ROCKETNET_URING_WORKER_STEP_EXIT                                     1      // Exit
+#define ROCKETNET_URING_WORKER_STEP_OBSERVE                                  2
+#define ROCKETNET_URING_WORKER_STEP_REAP                                     3
+#define ROCKETNET_URING_WORKER_STEP_RETIRE                                   4
+#define ROCKETNET_URING_WORKER_STEP_CLAIM                                    5
+#define ROCKETNET_URING_WORKER_STEP_ABANDON                                  6
+#define ROCKETNET_URING_WORKER_STEP_SUBMIT                                   7
+#define ROCKETNET_URING_WORKER_STEP_SPLIT                                    8
+#define ROCKETNET_URING_WORKER_STEP_DROP                                     9
+#define ROCKETNET_URING_WORKER_STEP_ARM_POLL                                10
+#define ROCKETNET_URING_WORKER_STEP_ARM_RECV                                11
+#define ROCKETNET_URING_WORKER_STEP_ARM_WAKE                                12
+#define ROCKETNET_URING_WORKER_STEP_CANCEL_RECV                             13
+#define ROCKETNET_URING_WORKER_STEP_CANCEL_WAKE                             14
+#define ROCKETNET_URING_WORKER_STEP_CANCEL_POLL                             15
 
 // the worker's counters, one writer, the worker
 #define ROCKETNET_URING_WORKER_COUNTER_SUBMITS                               0      // io_uring_enter calls: submits and waits
@@ -148,7 +167,6 @@ struct rocketnet_uring_queue_worker_t
     alignas( 64 ) bool seen;                        // seen
     bool blocked;                                   // blocked: a run came back -EAGAIN, no submit until the poll fires
     bool poll_armed;                                // poll # "none"
-    bool poll_wanted;                               // blocked with no poll armed yet: the next pass arms it
     bool wake_armed;                                // wakeRead # "none"
     bool cancelled_recv;
     bool cancelled_wake;
@@ -165,10 +183,21 @@ struct rocketnet_uring_queue_worker_t
 // when a config value is out of range or the platform has no io_uring.
 bool rocketnet_uring_queue_worker_init( struct rocketnet_uring_queue_worker_t * worker, const struct rocketnet_uring_queue_worker_config_t * config );
 
-// the worker's: one pass of the loop, without waiting. Observes the stop,
-// reaps a batch of completions, submits what it may, arms what it needs, and
-// says what to do next (ROCKETNET_URING_WORKER_*).
+// the worker's: one pass of the loop, without waiting: steps until nothing
+// is left to do without the kernel, reaping at most
+// ROCKETNET_URING_WORKER_CQE_BATCH completions, and says what to do next
+// (ROCKETNET_URING_WORKER_*): sleep (submit what it prepared and wait),
+// continue (completions left past the batch: submit and pass again), exit.
 int rocketnet_uring_queue_worker_pass( struct rocketnet_uring_queue_worker_t * worker );
+
+// one step of the loop: one of RNUringQueueWorker's worker actions (a
+// ROCKETNET_URING_WORKER_STEP_* naming it), taken in a fixed order: observe
+// the stop, reap the oldest ready completion (when reap), retire, claim,
+// abandon, send one run, arm the poll, arm the receive and the wake read
+// before the stop or cancel them after it, exit. NONE: nothing to do
+// without the kernel (RNUringQueueWorker Sleep). The trace walk drives it
+// one step a record.
+int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * worker, bool reap );
 
 // the worker thread's body: pass, then submit (waiting when pass says
 // sleep), until pass says exit. A refused submit is logged once and retried

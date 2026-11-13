@@ -357,29 +357,28 @@ static void test_uring_queue_worker_init_refuses_bad_config()
 REGISTER_UNIT_TEST( test_uring_queue_worker_init_refuses_bad_config );
 
 // RNUringQueueWorker ArmWake and Sleep: the first pass arms the receive and
-// the wake read; with nothing else to do the next pass sleeps, and never
-// before the wake read is armed
+// the wake read and then sleeps (its submit waits); it never sleeps before
+// the wake read is armed
 
 static void test_uring_queue_worker_sleeps_only_with_the_wake_armed()
 {
     worker_test_t t( 4, 8, 2 );
     check( t.ok );
 
-    check( t.step() == ROCKETNET_URING_WORKER_CONTINUE );
+    check( t.step() == ROCKETNET_URING_WORKER_SLEEP );
     check( t.receive.arms == 1 );
     check( t.of( IORING_OP_RECVMSG ).size() == 1 );
     check( t.of( IORING_OP_READ ).size() == 1 );
     check( t.of( IORING_OP_READ )[0].user_data == rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ) );
     check( t.worker.wake_armed );
-
-    check( t.step() == ROCKETNET_URING_WORKER_SLEEP );
     check( t.kernel.waits == 1 );
+    check( t.step() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.kernel.submitted.size() == 2 );
 
     // the wake completes: the read is armed again before the next sleep
     t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), 8, 0 );
-    check( t.step() == ROCKETNET_URING_WORKER_CONTINUE );
-    check( t.of( IORING_OP_READ ).size() == 2 );
     check( t.step() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.of( IORING_OP_READ ).size() == 2 );
 
     // with no submission entry free the wake cannot be armed: the pass that
     // reaps it does not sleep, and the read is armed once there is room
@@ -388,9 +387,8 @@ static void test_uring_queue_worker_sleeps_only_with_the_wake_armed()
     check( t.step() == ROCKETNET_URING_WORKER_CONTINUE );
     check( !t.worker.wake_armed );
     t.kernel.capacity = WORKER_TEST_SQ_MAX;
-    check( t.step() == ROCKETNET_URING_WORKER_CONTINUE );
-    check( t.worker.wake_armed );
     check( t.step() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.worker.wake_armed );
 
     // a receive multishot that ends is armed again
     t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), -ENOBUFS, 0 );

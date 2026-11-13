@@ -46,7 +46,6 @@ bool rocketnet_uring_queue_worker_init( struct rocketnet_uring_queue_worker_t * 
     worker->seen = false;
     worker->blocked = false;
     worker->poll_armed = false;
-    worker->poll_wanted = false;
     worker->wake_armed = false;
     worker->cancelled_recv = false;
     worker->cancelled_wake = false;
@@ -172,10 +171,6 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
     {
         rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_SOCKET_FULL );
         worker->blocked = true;
-        if ( !worker->poll_armed )
-        {
-            worker->poll_wanted = true;
-        }
         if ( worker->seen && worker->agains < worker->config.max_retry )
         {
             worker->agains++;
@@ -259,95 +254,64 @@ static bool rocketnet_uring_queue_worker_abandoning( const struct rocketnet_urin
     return worker->seen && worker->agains >= worker->config.max_retry;
 }
 
-// RNUringQueueWorker Submit (and Abandon): the runs of the held bank, then
-// of each ready bank, while the ring has room, retiring each bank once its
-// runs are all complete. Returns true when anything changed.
-
-static bool rocketnet_uring_queue_worker_submit_runs( struct rocketnet_uring_queue_worker_t * worker )
-{
-    struct rocketnet_uring_queue_send_t * send = worker->config.send;
-    const int q = worker->config.queue_index;
-    bool progress = false;
-
-    for ( ;; )
-    {
-        if ( rocketnet_uring_queue_send_held( send, q ) < 0 && rocketnet_uring_queue_send_claim( send, q ) < 0 )
-        {
-            break;
-        }
-
-        if ( rocketnet_uring_queue_worker_abandoning( worker ) && rocketnet_uring_queue_send_abandon( send, q ) > 0 )
-        {
-            progress = true;
-        }
-
-        while ( !worker->blocked && worker->in_kernel < worker->config.max_in_kernel &&
-                worker->config.kernel.space( worker->config.kernel.context ) > 0 )
-        {
-            struct rocketnet_uring_queue_send_run_t run;
-            if ( !rocketnet_uring_queue_send_next( send, q, &run ) )
-            {
-                break;
-            }
-
-            progress = true;
-
-            if ( run.count > 1 && rocketnet_segment_refused_contains( &worker->refused, run.to ) )
-            {
-                const bool split = rocketnet_uring_queue_send_split( send, q, &run );
-                rocketnet_assert( split );
-                (void) split;
-                continue;
-            }
-
-            struct msghdr * message = rocketnet_uring_queue_send_message( send, q, &run, worker->config.ipv6 );
-            if ( !message )
-            {
-                rocketnet_uring_queue_send_complete( send, q, run.tag, ROCKETNET_URING_QUEUE_SEND_FAILED );
-                rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_SEND_DROPPED, (uint64_t) run.count );
-                continue;
-            }
-
-            struct io_uring_sqe * sqe = rocketnet_uring_queue_worker_sqe( worker );
-            rocketnet_assert( sqe );
-            io_uring_prep_sendmsg( sqe, worker->config.fd, message, 0 );
-            io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_SEND, q, run.tag ) );
-            worker->in_kernel++;
-            if ( run.count > 1 && !run.plain )
-            {
-                rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_GSO_SENDS );
-            }
-        }
-
-        // RNUringQueueSend WorkerRetire: the bank's last completion taken
-        if ( rocketnet_uring_queue_send_retire( send, q ) )
-        {
-            progress = true;
-            continue;
-        }
-
-        break;
-    }
-
-    return progress;
-}
-
-// what the worker has in the kernel or waiting: RNUringQueueWorker Drained
-// is its negation with the stop seen
+// what the worker has in the kernel or waiting, the stop seen: RNUringQueueWorker
+// Drained. The caller has found no bank to claim and no completion ready.
 
 static bool rocketnet_uring_queue_worker_drained( const struct rocketnet_uring_queue_worker_t * worker )
 {
-    return worker->in_kernel == 0 && worker->cancels == 0 && !worker->wake_armed && !worker->poll_armed &&
+#if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
+    (void) worker;
+    return true;                                    // the plant: ExitRule "early", the witness "exit before drain"
+#else  // #if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
+    return worker->in_kernel == 0 && !worker->wake_armed && !worker->poll_armed &&
            !rocketnet_uring_queue_worker_receive_armed( worker ) && rocketnet_uring_queue_send_held( worker->config.send, worker->config.queue_index ) < 0;
+#endif // #if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
 }
 
-int rocketnet_uring_queue_worker_pass( struct rocketnet_uring_queue_worker_t * worker )
+// RNUringQueueWorker Submit, Split, Drop: the next run of the held bank. A
+// run to a destination known to refuse segmentation is cut plain before any
+// send; one the socket's family cannot name is dropped without one.
+
+static int rocketnet_uring_queue_worker_send_one( struct rocketnet_uring_queue_worker_t * worker, const struct rocketnet_uring_queue_send_run_t * run )
+{
+    struct rocketnet_uring_queue_send_t * send = worker->config.send;
+    const int q = worker->config.queue_index;
+
+    if ( run->count > 1 && rocketnet_segment_refused_contains( &worker->refused, run->to ) )
+    {
+        const bool split = rocketnet_uring_queue_send_split( send, q, run );
+        rocketnet_assert( split );
+        (void) split;
+        return ROCKETNET_URING_WORKER_STEP_SPLIT;
+    }
+
+    struct msghdr * message = rocketnet_uring_queue_send_message( send, q, run, worker->config.ipv6 );
+    if ( !message )
+    {
+        rocketnet_uring_queue_send_complete( send, q, run->tag, ROCKETNET_URING_QUEUE_SEND_FAILED );
+        rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_SEND_DROPPED, (uint64_t) run->count );
+        return ROCKETNET_URING_WORKER_STEP_DROP;
+    }
+
+    struct io_uring_sqe * sqe = rocketnet_uring_queue_worker_sqe( worker );
+    rocketnet_assert( sqe );
+    io_uring_prep_sendmsg( sqe, worker->config.fd, message, 0 );
+    io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_SEND, q, run->tag ) );
+    worker->in_kernel++;
+    if ( run->count > 1 && !run->plain )
+    {
+        rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_GSO_SENDS );
+    }
+    return ROCKETNET_URING_WORKER_STEP_SUBMIT;
+}
+
+int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * worker, bool reap )
 {
     rocketnet_assert( worker );
 
+    struct rocketnet_uring_queue_send_t * send = worker->config.send;
     const int q = worker->config.queue_index;
     const struct rocketnet_uring_queue_worker_kernel_t * kernel = &worker->config.kernel;
-    bool progress = false;
 
     // RNUringQueueWorker Observe
 
@@ -358,43 +322,55 @@ int rocketnet_uring_queue_worker_pass( struct rocketnet_uring_queue_worker_t * w
         {
             worker->config.receive.stop( worker->config.receive.context );
         }
-        progress = true;
+        return ROCKETNET_URING_WORKER_STEP_OBSERVE;
     }
 
-    // RNUringQueueWorker ReapOk, ReapAgain, ReapPoll, ReapRecvEnd, ReapWake
+    // RNUringQueueWorker ReapOk, ReapAgain, ReapRefused, ReapPoll,
+    // ReapRecvEnd, ReapWake: the oldest ready completion
 
-    struct rocketnet_uring_queue_worker_completion_t completions[ROCKETNET_URING_WORKER_CQE_BATCH];
-    const int reaped = kernel->peek( kernel->context, completions, ROCKETNET_URING_WORKER_CQE_BATCH );
-    for ( int i = 0; i < reaped; i++ )
+    struct rocketnet_uring_queue_worker_completion_t completion;
+    const bool ready = kernel->peek( kernel->context, &completion, 1 ) == 1;
+    if ( ready && reap )
     {
-        rocketnet_uring_queue_worker_reap_one( worker, &completions[i] );
+        rocketnet_uring_queue_worker_reap_one( worker, &completion );
+        kernel->advance( kernel->context, 1 );
+        return ROCKETNET_URING_WORKER_STEP_REAP;
     }
-    if ( reaped > 0 )
+
+    // RNUringQueueWorker Retire, Claim, Abandon
+
+    const int held = rocketnet_uring_queue_send_held( send, q );
+    if ( held >= 0 && rocketnet_uring_queue_send_retire( send, q ) )
     {
-        kernel->advance( kernel->context, reaped );
-        progress = true;
+        return ROCKETNET_URING_WORKER_STEP_RETIRE;
     }
-    if ( reaped == ROCKETNET_URING_WORKER_CQE_BATCH )
+
+    if ( held < 0 && rocketnet_uring_queue_send_claim( send, q ) >= 0 )
     {
-        rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_REAP_DEFERRED );
+        return ROCKETNET_URING_WORKER_STEP_CLAIM;
     }
 
-    // RNUringQueueWorker Submit, Abandon
-
-    if ( rocketnet_uring_queue_worker_submit_runs( worker ) )
+    const bool abandoning = rocketnet_uring_queue_worker_abandoning( worker );
+    if ( held >= 0 && abandoning && rocketnet_uring_queue_send_abandon( send, q ) > 0 )
     {
-        progress = true;
+        return ROCKETNET_URING_WORKER_STEP_ABANDON;
     }
 
-    // the poll a -EAGAIN asked for (ReapAgain arms it); none once the stop
-    // has given up on the socket
+    // RNUringQueueWorker Submit, Split, Drop
 
-    if ( rocketnet_uring_queue_worker_abandoning( worker ) )
+    if ( held >= 0 && !worker->blocked && worker->in_kernel < worker->config.max_in_kernel && kernel->space( kernel->context ) > 0 )
     {
-        worker->poll_wanted = false;
+        struct rocketnet_uring_queue_send_run_t run;
+        if ( rocketnet_uring_queue_send_next( send, q, &run ) )
+        {
+            return rocketnet_uring_queue_worker_send_one( worker, &run );
+        }
     }
 
-    if ( worker->poll_wanted && !worker->poll_armed && !worker->cancelled_poll )
+    // RNUringQueueWorker ArmPoll: the poll a -EAGAIN asked for, unless the
+    // stop has given up on the socket
+
+    if ( worker->blocked && !worker->poll_armed && !abandoning )
     {
         struct io_uring_sqe * sqe = rocketnet_uring_queue_worker_sqe( worker );
         if ( sqe )
@@ -402,22 +378,19 @@ int rocketnet_uring_queue_worker_pass( struct rocketnet_uring_queue_worker_t * w
             io_uring_prep_poll_add( sqe, worker->config.fd, POLLOUT );
             io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_POLL, q, 0 ) );
             worker->poll_armed = true;
-            worker->poll_wanted = false;
-            progress = true;
+            return ROCKETNET_URING_WORKER_STEP_ARM_POLL;
         }
     }
 
     if ( !worker->seen )
     {
-        // the receive's re-arm (RNUringQueueReceive Arm)
+        // the receive's re-arm (RNUringQueueReceive Arm): the model's
+        // receive stays armed until the stop
 
-        if ( rocketnet_uring_queue_worker_has_receive( worker ) && worker->config.receive.needs_arm( worker->config.receive.context ) )
+        if ( rocketnet_uring_queue_worker_has_receive( worker ) && worker->config.receive.needs_arm( worker->config.receive.context ) &&
+             worker->config.receive.arm( worker->config.receive.context, rocketnet_uring_queue_worker_sqe( worker ) ) )
         {
-            struct io_uring_sqe * sqe = rocketnet_uring_queue_worker_sqe( worker );
-            if ( worker->config.receive.arm( worker->config.receive.context, sqe ) )
-            {
-                progress = true;
-            }
+            return ROCKETNET_URING_WORKER_STEP_ARM_RECV;
         }
 
         // RNUringQueueWorker ArmWake
@@ -430,50 +403,95 @@ int rocketnet_uring_queue_worker_pass( struct rocketnet_uring_queue_worker_t * w
                 io_uring_prep_read( sqe, worker->config.wake_fd, &worker->wake_value, sizeof( worker->wake_value ), 0 );
                 io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, q, 0 ) );
                 worker->wake_armed = true;
-                progress = true;
+                return ROCKETNET_URING_WORKER_STEP_ARM_WAKE;
             }
         }
+
+        return ROCKETNET_URING_WORKER_STEP_NONE;
     }
-    else
+
+    // RNUringQueueWorker CancelRecv, CancelWake, CancelPoll
+
+    if ( rocketnet_uring_queue_worker_receive_armed( worker ) && !worker->cancelled_recv &&
+         rocketnet_uring_queue_worker_cancel( worker, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, q, 0 ), ROCKETNET_URING_CANCEL_RECV ) )
     {
-        // RNUringQueueWorker CancelRecv, CancelWake; and the poll, once the
-        // stop has given up on the socket
+        worker->cancelled_recv = true;
+        return ROCKETNET_URING_WORKER_STEP_CANCEL_RECV;
+    }
 
-        if ( rocketnet_uring_queue_worker_receive_armed( worker ) && !worker->cancelled_recv &&
-             rocketnet_uring_queue_worker_cancel( worker, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, q, 0 ), ROCKETNET_URING_CANCEL_RECV ) )
-        {
-            worker->cancelled_recv = true;
-            progress = true;
-        }
+    if ( worker->wake_armed && !worker->cancelled_wake &&
+         rocketnet_uring_queue_worker_cancel( worker, rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, q, 0 ), ROCKETNET_URING_CANCEL_WAKE ) )
+    {
+        worker->cancelled_wake = true;
+        return ROCKETNET_URING_WORKER_STEP_CANCEL_WAKE;
+    }
 
-        if ( worker->wake_armed && !worker->cancelled_wake &&
-             rocketnet_uring_queue_worker_cancel( worker, rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, q, 0 ), ROCKETNET_URING_CANCEL_WAKE ) )
-        {
-            worker->cancelled_wake = true;
-            progress = true;
-        }
+    if ( abandoning && worker->poll_armed && !worker->cancelled_poll &&
+         rocketnet_uring_queue_worker_cancel( worker, rocketnet_uring_tag( ROCKETNET_URING_TAG_POLL, q, 0 ), ROCKETNET_URING_CANCEL_POLL ) )
+    {
+        worker->cancelled_poll = true;
+        return ROCKETNET_URING_WORKER_STEP_CANCEL_POLL;
+    }
 
-        if ( rocketnet_uring_queue_worker_abandoning( worker ) && worker->poll_armed && !worker->cancelled_poll &&
-             rocketnet_uring_queue_worker_cancel( worker, rocketnet_uring_tag( ROCKETNET_URING_TAG_POLL, q, 0 ), ROCKETNET_URING_CANCEL_POLL ) )
-        {
-            worker->cancelled_poll = true;
-            progress = true;
-        }
+    // RNUringQueueWorker Exit (ExitRule "drained"): no completion ready, no
+    // bank to claim, and nothing of the worker's in the kernel
 
-        // RNUringQueueWorker Exit: nothing of the worker's in the kernel or
-        // waiting (ExitRule "drained")
+    if ( !ready && rocketnet_uring_queue_worker_drained( worker ) )
+    {
+        return ROCKETNET_URING_WORKER_STEP_EXIT;
+    }
 
-        if ( rocketnet_uring_queue_worker_drained( worker ) )
+    // RNUringQueueWorker Sleep
+
+    return ROCKETNET_URING_WORKER_STEP_NONE;
+}
+
+int rocketnet_uring_queue_worker_pass( struct rocketnet_uring_queue_worker_t * worker )
+{
+    rocketnet_assert( worker );
+
+    int reaped = 0;
+    for ( ;; )
+    {
+        const int step = rocketnet_uring_queue_worker_step( worker, reaped < ROCKETNET_URING_WORKER_CQE_BATCH );
+        if ( step == ROCKETNET_URING_WORKER_STEP_EXIT )
         {
             return ROCKETNET_URING_WORKER_EXIT;
         }
+        if ( step == ROCKETNET_URING_WORKER_STEP_REAP )
+        {
+            reaped++;
+            continue;
+        }
+        if ( step != ROCKETNET_URING_WORKER_STEP_NONE )
+        {
+            continue;
+        }
+
+        // nothing more to do without the kernel: a full batch reaped leaves
+        // the rest for a pass right after the submit, and a wake read the
+        // full submission queue had no room for is armed by a pass right
+        // after it (RNUringQueueWorker Sleep: never with the wake read
+        // down before the stop); otherwise the submit waits for the next
+        // completion
+        if ( !worker->seen && !worker->wake_armed )
+        {
+            return ROCKETNET_URING_WORKER_CONTINUE;
+        }
+        if ( reaped == ROCKETNET_URING_WORKER_CQE_BATCH )
+        {
+            struct rocketnet_uring_queue_worker_completion_t completion;
+            const struct rocketnet_uring_queue_worker_kernel_t * kernel = &worker->config.kernel;
+            if ( kernel->peek( kernel->context, &completion, 1 ) == 1 )
+            {
+                rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_REAP_DEFERRED );
+                return ROCKETNET_URING_WORKER_CONTINUE;
+            }
+        }
+        return ROCKETNET_URING_WORKER_SLEEP;
     }
-
-    // RNUringQueueWorker Sleep: nothing done this pass, and the wake read
-    // armed (or the stop seen and its cancels in the kernel)
-
-    return progress ? ROCKETNET_URING_WORKER_CONTINUE : ROCKETNET_URING_WORKER_SLEEP;
 }
+
 
 void rocketnet_uring_queue_worker_run( struct rocketnet_uring_queue_worker_t * worker )
 {
