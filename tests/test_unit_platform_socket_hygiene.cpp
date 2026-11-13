@@ -199,6 +199,56 @@ static void test_platform_socket_hygiene_refused_source_reads_next()
     rocketnet_unit_check( from.data.ipv6[7] == 1 );
 }
 
+// native IPv4 sources through the same seam: the first from port 0, which
+// the receive rule refuses (rocketnet_address_accept_received_source), the
+// second from 127.0.0.1:40001
+static int platform_socket_hygiene_ipv4_port_zero_receive( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from )
+{
+    int * calls = (int *) user;
+    const int index = ( *calls )++;
+    if ( index >= 2 )
+    {
+        return -1;
+    }
+    struct sockaddr_in * in4 = (struct sockaddr_in *) from;
+    in4->sin_family = AF_INET;
+    in4->sin_port = htons( index == 0 ? 0 : 40001 );
+    in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    const char * payload = index == 0 ? "zero" : "good";
+    rocketnet_unit_check( max_packet_size >= 4 );
+    memcpy( packet_data, payload, 4 );
+    return 4;
+}
+
+static void test_platform_socket_hygiene_source_port_zero_reads_next()
+{
+    // the platform converter (rocketnet_platform_sockaddr_to_address), which
+    // the portable, IOCP and gso client receives share, refuses a native
+    // IPv4 source from port 0 and reads on to the next datagram
+
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    socket.ipv6 = false;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    socket.handle = INVALID_SOCKET;
+#else
+    socket.handle = -1;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    int calls = 0;
+    rocketnet_platform_socket_set_receive_hook( &socket, platform_socket_hygiene_ipv4_port_zero_receive, &calls );
+    struct rocketnet_address_t from;
+    memset( &from, 0, sizeof( from ) );
+    uint8_t packet[64];
+    const int bytes = rocketnet_platform_socket_receive_packet( &socket, &from, packet, (int) sizeof( packet ) );
+    rocketnet_platform_socket_set_receive_hook( &socket, NULL, NULL );
+
+    rocketnet_unit_check( bytes == 4 );
+    rocketnet_unit_check( memcmp( packet, "good", 4 ) == 0 );
+    rocketnet_unit_check( calls == 2 );
+    rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV4 );
+    rocketnet_unit_check( from.port == 40001 );
+}
+
 static void test_platform_socket_hygiene_refused_source_then_drained()
 {
     // only refused datagrams queued: the receive drops each, then reports
@@ -702,6 +752,7 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_accepts_mapped );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_source_port_zero_reads_next );
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_platform_receive_weather_drain_is_bounded );

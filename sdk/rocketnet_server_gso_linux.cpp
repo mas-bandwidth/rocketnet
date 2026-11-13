@@ -3803,9 +3803,10 @@ bool rocketnet_server_gso_test_drain_budget()
     bool valid = true;
     bool full = false;
 
-    // a source port of 0 is refused as an unusable source: the kernel
-    // refuses a send to destination port 0 with EINVAL, segmented or plain,
-    // so a reply would read as a segmentation refusal
+    // a source port of 0 is refused by rocketnet's return-endpoint policy
+    // (legal UDP, but a reply to it cannot be addressed): the kernel refuses
+    // a send to destination port 0 with EINVAL, segmented or plain, so a
+    // reply would read as a segmentation refusal
     // (rocketnet_address_accept_received_source)
 
     const rocketnet_server_gso_test_kind_t discards[] = { ROCKETNET_SERVER_GSO_TEST_EMPTY, ROCKETNET_SERVER_GSO_TEST_REFUSED,

@@ -932,10 +932,12 @@ void rocketnet_test_received_native_sources_untouched()
 
 void rocketnet_test_received_source_port_zero_dropped()
 {
-    // a source port of 0 is refused on every path and family: no reply can
-    // reach it (the kernel refuses a send to destination port 0 with EINVAL,
-    // which a segmented send would read as the destination refusing
-    // segmentation)
+    // the receive rule refuses a source port of 0 in every family and socket
+    // mode: legal UDP, but rocketnet's return-endpoint policy, since a reply
+    // to it cannot be addressed (the kernel refuses a send to destination
+    // port 0 with EINVAL, which a segmented send would read as the
+    // destination refusing segmentation). Whether each transport's adapter
+    // calls the rule is its own case's to show.
 
     const char * sources[] = { "1.2.3.4:0", "[2001:db8::1]:0", "[::ffff:1.2.3.4]:0" };
 

@@ -149,7 +149,10 @@ static void address_acceptance_table()
             check_row( rocketnet_address_parse( &from, row->source ), i, row->cite );
         }
 
-        const struct rocketnet_address_t before = from;
+        // a byte copy, padding included, so the memcmp below compares only
+        // what the rule could have written
+        struct rocketnet_address_t before;
+        memcpy( &before, &from, sizeof( before ) );
 
         const bool accepted = rocketnet_address_accept_received_source( &from, socket_mode_is_dual_stack( row->mode ) );
 
