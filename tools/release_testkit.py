@@ -22,7 +22,7 @@ OTHER = "b" * 40
 MAIN_SHA = "c" * 40
 ANCESTOR = "d" * 40
 NOW = datetime.datetime(2026, 11, 20, 12, 0, 0, tzinfo=datetime.timezone.utc)
-VERSION = "v1.1.8"
+VERSION = "v1.2.0"  # a minor release: every tier gates it
 
 CI_JOBS = ["linux / Debug / unit", "lint (workflows, format, standard, tool selftests)"]
 CI_SKIPPED = ["unit-case coverage", "backend example / ${{ matrix.backend }}"]
@@ -165,7 +165,7 @@ class FakeApi:
 
 
 def green_release(api, version=VERSION, sha=SHA, branch_ruleset=True):
-    """Every v1.1.8 gate green for sha."""
+    """Every gate green for sha."""
     api.files[("sdk/rocketnet.h", sha)] = header(version)
     api.files[(f"docs/RELEASE-NOTES-{version}.md", sha)] = f"# rocketnet {version}\n"
     if branch_ruleset:
