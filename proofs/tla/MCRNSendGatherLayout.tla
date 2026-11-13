@@ -11,4 +11,11 @@ EXTENDS RNSendGatherLayout
 
 MCHash(d) == IF d = 1 THEN 7 ELSE 6
 
+\* the gather as its caller sees it (RNSendGatherCall, the spec the trace
+\* check binds the code to): wherever the layout model ends, its order and
+\* runs are that module's for the same bank
+Call == INSTANCE RNSendGatherCall
+
+MatchesCall == AtEnd(order = Call!GatherOrder /\ runs = Call!GatherRuns)
+
 =============================================================================
