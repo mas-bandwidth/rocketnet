@@ -123,7 +123,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452223 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14340460 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -167,7 +167,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452639 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988874 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
