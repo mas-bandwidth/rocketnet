@@ -11,14 +11,14 @@
 //
 //   refresh         the receive call's refresh. Its resolve callback is the
 //                   kernel's neighbour entry (the model's resolver), found
-//                   and usable. The model's resolve always answers, so the
-//                   walk fails a resolve (an error, no entry, or an unusable
-//                   MAC) only when the entry holds the table's MAC already:
-//                   the code must then keep the table, deadline moved, which
-//                   is the model's Refresh with no change, and must not lose
-//                   the gateway (the fills' lookups would find none). A
-//                   failed resolve against a changed entry is outside the
-//                   model and its unit tests' (tests/test_unit_xdp_gateway_refresh.cpp).
+//                   and usable, or, on about half the calls at or past the
+//                   deadline, a failed resolve (an error, no entry, or an
+//                   unusable MAC), whatever the entry holds: the code must
+//                   then keep the table, deadline moved, which is the
+//                   model's failure branch of Refresh (failures and
+//                   resolveFailing, counted by the walk when the callback
+//                   fails), and must not lose the gateway (the fills'
+//                   lookups would find none).
 //                   One family only: the model has one MAC; the two-family
 //                   slots are the unit tests'. A call that returns no change is one
 //                   Refresh. A call that returns a change is three model
@@ -45,6 +45,15 @@
 // its deadline keeps the old deadline, so every later call resolves again.
 // Its effect, reported at the Refresh record of such a call, is a deadline
 // that did not move past the call's clock.
+//
+// What the trace binds and what it does not: the walk calls
+// rocketnet_xdp_gateway_refresh itself, in its own receive phase. It never
+// drives rocketnet_server_socket_refresh_gateway or the receive call that
+// runs it, so the claim that the refresh runs with the fills joined (the
+// model's RefreshInFill = FALSE) is the code's call site and its review,
+// not this trace: moving that call to a fill thread would still pass here.
+// The Resolve record's half-written table is built by the walk (above),
+// not observed in the code.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -66,7 +75,8 @@
 #define GATEWAY_TRACE_MAX_STEP      7               // the clock's step between updates: under, at and past the period
 #define GATEWAY_TRACE_MAX_TIME      1000000         // the trace cfg's MaxTime: no walk reaches it
 #define GATEWAY_TRACE_MAX_CHANGES   1000000         // the trace cfg's MaxChanges: no walk reaches it
-#define GATEWAY_TRACE_ENTRIES       64              // the smallest table rocketnet_xdp_reply_macs_bind takes
+#define GATEWAY_TRACE_MAX_FAILURES  1000000         // the trace cfg's MaxFailures: no walk reaches it
+#define GATEWAY_TRACE_ENTRIES      64              // the smallest table rocketnet_xdp_reply_macs_bind takes
 
 static_assert( ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS == (double) GATEWAY_TRACE_PERIOD, "the trace's Period is the refresh period, in whole seconds" );
 
@@ -91,6 +101,7 @@ struct gateway_trace_packet_t
     int high;
     int low;
     int time;
+    bool failing;
 };
 
 struct gateway_trace_walk_t
@@ -105,6 +116,8 @@ struct gateway_trace_walk_t
     int now;
     int changed_at;
     int changes;
+    int failures;                   // resolves the callback failed (the model's failures)
+    bool failing;                   // the last resolve failed (the model's resolveFailing)
     const char * phase;
     const uint8_t * fill_mac;       // the MAC a fill is copying, NULL when no fill is mid-copy
     int read_high;                  // the half the fill has copied, 0 (Nil) for none
@@ -142,9 +155,12 @@ static tla_record_t gateway_trace_state( const gateway_trace_walk_t & walk, cons
     for ( size_t i = 0; i < walk.staged.size(); i++ )
     {
         staged += ( i > 0 ? ", " : "" );
-        staged += "[mac |-> " + gateway_trace_pair( walk.staged[i].high, walk.staged[i].low ) + ", time |-> " + tla_int( walk.staged[i].time ) + "]";
+        staged += "[mac |-> " + gateway_trace_pair( walk.staged[i].high, walk.staged[i].low ) + ", time |-> " + tla_int( walk.staged[i].time ) +
+                  ", failing |-> " + tla_bool( walk.staged[i].failing ) + "]";
     }
     state.add( "staged", staged + "}" );
+    state.add( "failures", tla_int( walk.failures ) );
+    state.add( "resolveFailing", tla_bool( walk.failing ) );
     return state;
 }
 
@@ -162,6 +178,11 @@ static bool gateway_trace_resolve( void * context, int address_type, uint8_t * m
     (void) address_type;
     gateway_trace_walk_t * walk = (gateway_trace_walk_t *) context;
     walk->resolved = true;
+    walk->failing = walk->fail_resolve != 0;
+    if ( walk->failing )
+    {
+        walk->failures++;
+    }
     const int table_high = gateway_trace_half( walk->table.gateway_mac, 0 );
     const int table_low = gateway_trace_half( walk->table.gateway_mac + 3, 3 );
     walk->at_resolve = gateway_trace_state( *walk, "resolve", table_high, table_low, 0 );
@@ -189,6 +210,8 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
     walk.now = 0;
     walk.changed_at = 0;
     walk.changes = 0;
+    walk.failures = 0;
+    walk.failing = false;
     walk.phase = "receive";
     walk.fill_mac = NULL;
     walk.read_high = 0;
@@ -244,7 +267,7 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
             struct rocketnet_xdp_gateway_change_t changes[2];
             walk.resolved = false;
             walk.fail_resolve = 0;
-            if ( memcmp( walk.table.gateway_mac, gateway_trace_macs[walk.resolver], 6 ) == 0 && random.below( 2 ) == 0 )
+            if ( random.below( 2 ) == 0 )
             {
                 walk.fail_resolve = 1 + random.below( 3 );
             }
@@ -291,7 +314,7 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
         // by half, or the fills are joined and the next update starts
         if ( walk.read_high != 0 )
         {
-            walk.staged.push_back( { walk.read_high, gateway_trace_half( walk.fill_mac + 3, 3 ), walk.now } );
+            walk.staged.push_back( { walk.read_high, gateway_trace_half( walk.fill_mac + 3, 3 ), walk.now, walk.failing } );
             walk.read_high = 0;
             walk.fill_mac = NULL;
             report.act( "ReadLow" );
@@ -330,10 +353,11 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
 
     report.print();
 
-    char constants[256];
+    char constants[512];
     snprintf( constants, sizeof( constants ),
-              "    Period = %d\n    MaxTime = %d\n    MaxStep = %d\n    MaxChanges = %d\n    RefreshInFill = FALSE\n    RefreshNever = FALSE\n",
-              GATEWAY_TRACE_PERIOD, GATEWAY_TRACE_MAX_TIME, GATEWAY_TRACE_MAX_STEP, GATEWAY_TRACE_MAX_CHANGES );
+              "    Period = %d\n    MaxTime = %d\n    MaxStep = %d\n    MaxChanges = %d\n    MaxFailures = %d\n"
+              "    RefreshInFill = FALSE\n    RefreshNever = FALSE\n    FailureKeepsTable = TRUE\n",
+              GATEWAY_TRACE_PERIOD, GATEWAY_TRACE_MAX_TIME, GATEWAY_TRACE_MAX_STEP, GATEWAY_TRACE_MAX_CHANGES, GATEWAY_TRACE_MAX_FAILURES );
     return tla_write_trace( out, "MCTraceXdpGatewayRefresh", seed, "TraceRNXdpGatewayRefresh", "", constants, records ) ? 0 : 1;
 }
 

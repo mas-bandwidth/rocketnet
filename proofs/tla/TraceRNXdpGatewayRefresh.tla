@@ -52,7 +52,7 @@ VARIABLES ti,        \* the index of the record the state matches
 VarsRec == [phase |-> phase, now |-> now, scheduled |-> scheduled, nextTime |-> nextTime,
             table |-> table, pendingLow |-> pendingLow, resolver |-> resolver,
             changedAt |-> changedAt, changes |-> changes, readHigh |-> readHigh,
-            staged |-> staged]
+            staged |-> staged, failures |-> failures, resolveFailing |-> resolveFailing]
 
 \* the actions each operation of the code can be
 OpActs == [refresh |-> {"Refresh", "Resolve", "WriteLow"},
