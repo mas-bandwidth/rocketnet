@@ -2,6 +2,10 @@
 """Run one job of a workflow's steps here, as the runner would, before asking for a dispatch.
 
     python3 tools/replay_ci_steps.py WORKFLOW JOB [--set NAME=VALUE ...] [--logs DIR] [--list]
+                                     [--result FILE] [--allow-over-cap]
+    python3 tools/replay_ci_steps.py --rows WORKFLOW [--job JOB ...] [--set inputs.full=true]
+    python3 tools/replay_ci_steps.py --coverage WORKFLOW --commit SHA [--job JOB ...]
+                                     [--set inputs.full=true] RESULT ...
     python3 tools/replay_ci_steps.py --self-test
 
 Run it from the top of a fresh checkout of the commit (a new `git worktree`,
@@ -19,9 +23,14 @@ WORKFLOW (e.g. .github/workflows/ci.yml), takes the job whose key is JOB
   host's); a matrix.* the job reads and --set did not give is an error,
   never a silent empty string. steps.* outputs are empty.
 - The env: of the workflow, the job and the step apply, in that order.
-- The shell is the runner's: `bash -e` when the step names none, `bash
-  --noprofile --norc -eo pipefail` for `shell: bash`, `sh -e` for `shell: sh`.
-  working-directory: is honoured.
+- The shell is the one the runner would use: the step's own `shell:`, else
+  the job's `defaults: run: shell:`, else the workflow's (ci.yml sets `bash
+  --noprofile --norc -euo pipefail {0}`), else GitHub's documented default
+  for a run step on Linux and macOS, `bash -e {0}`. `shell: bash` is `bash
+  --noprofile --norc -eo pipefail {0}`, `sh` is `sh -e {0}`, `python` runs
+  python3, `pwsh` is `pwsh -command ". '{0}'"`, and any other value is a
+  command template whose {0} is the step's script. working-directory: is
+  honoured the same way (step, then the job's defaults, then the workflow's).
 - What a step writes to $GITHUB_ENV and $GITHUB_PATH reaches the steps after
   it. RUNNER_TEMP, GITHUB_WORKSPACE, GITHUB_RUN_ID and the rest are set to
   local stand-ins.
@@ -31,9 +40,51 @@ WORKFLOW (e.g. .github/workflows/ci.yml), takes the job whose key is JOB
 `uses:` steps (checkout, caches, uploads) are not run and are listed as such.
 Each run step prints its name, its exit status and its seconds; its output
 goes to DIR/step-N.log (default a new temporary directory, outside the
-checkout) and the tail of a red one is
-printed. Exit 0 when every step that ran exited 0, else 1; 2 for a usage or
-workflow error. --list prints the steps and whether each would run.
+checkout) and the tail of a red one is printed. --list prints the steps and
+whether each would run.
+
+TIME. The job's `timeout-minutes:` is evaluated as the runner would (per
+commit `${{ inputs.full && 7200 || 2 }}` is two minutes; GitHub's default
+is 360) and so is each step's. The replay never stops a step at a cap: it
+runs every step to its end and then reports, on its last line, both whether
+every step passed and the seconds the run steps took against the job's cap.
+A job whose run steps sum past the cap, or a step past its own cap, is
+reported as OVER CAP with the seconds. Checkout, caches and the runner's own
+setup are not timed, so the real job takes longer than the sum.
+
+Exit 0 when every step that ran exited 0 within the caps; 1 when a step was
+red; 3 when every step passed but the job or a step went OVER CAP, unless
+--allow-over-cap (off by default) says this host may be slower than the
+runner, in which case OVER CAP is still printed and the exit is 0; 2 for a
+usage or workflow error.
+
+--result FILE writes the replay's verdict as JSON (workflow, job, the --set
+values, the commit at HEAD, whether the tree was clean when the replay
+started, each step's exit and seconds, the total, the cap, the exit status)
+for --coverage.
+
+ROWS AND COVERAGE. A split job runs as several matrix rows (the shards of the
+trace check, Debug unit, functional; the checks and source_checks rows) or
+several jobs (the lint shards). --rows WORKFLOW lists every row of every job
+the workflow runs on a commit (or of the --job JOBs named), with the check
+name GitHub gives it and the --set values that replay it: the matrix is
+expanded as GitHub does (the product of its lists, then exclude:, then
+include:, which adds its values to every row it matches on the matrix's own
+keys and is a new row when it matches none). --set inputs.full=true lists
+the nightly tier instead. A job with `if: inputs.full` is listed as not run
+on a commit.
+
+--coverage WORKFLOW --commit SHA RESULT... reads replay result files (or
+every *.json in a directory) and says, row by row, which rows have a green
+replay at SHA from a clean tree and which have none (RED, OVER CAP, or
+NONE); exit 0 only when every row listed has a green replay. A result
+matches a row when its job is the row's and every matrix value the job's
+steps read is the row's (empty when the row has none).
+
+A summary job (one with needs:, such as lint's and the trace check's) reads
+the run's own job list from GitHub and other jobs' results: it CANNOT BE
+REPLAYED, and --rows and --coverage say so for each one by name rather than
+leave it out. Its verdict exists only in a real run.
 
 This is a stand-in, not a CI run: the runner image, its load and its tools
 are this host's. A green replay says the step commands pass here; only the
@@ -44,6 +95,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -121,14 +173,53 @@ def mapping(lines, i, key_indent):
     return out
 
 
+def defaults_run(lines, i, key_indent):
+    """The run: mapping (shell, working-directory) of a defaults: key at lines[i]."""
+    j = i + 1
+    while j < len(lines):
+        line = lines[j]
+        if not line.strip() or line.strip().startswith("#"):
+            j += 1
+            continue
+        if indent(line) <= key_indent:
+            break
+        if indent(line) == key_indent + 2 and line.strip() == "run:":
+            out = mapping(lines, j, key_indent + 2)
+            unknown = set(out) - {"shell", "working-directory"}
+            if unknown:
+                raise ReplayError("line %d: defaults: run: %s is not known to the replay" % (j + 1, sorted(unknown)))
+            return out
+        j += 1
+    return {}
+
+
+def job_keys(text):
+    """Every job key under jobs:, in file order."""
+    lines = text.split("\n")
+    keys = []
+    inside = False
+    for line in lines:
+        if line.strip() and not line.startswith(" ") and not line.startswith("#"):
+            inside = line.rstrip() == "jobs:"
+            continue
+        match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if inside and match:
+            keys.append(match.group(1))
+    return keys
+
+
 def parse(text, job_key):
     lines = text.split("\n")
     anchors = {}
     workflow_env = {}
+    workflow_defaults = {}
     job = None
     for i, line in enumerate(lines):
         if line.startswith("env:"):
             workflow_env = mapping(lines, i, 0)
+        if line.startswith("defaults:"):
+            workflow_defaults = defaults_run(lines, i, 0)
+    for i, line in enumerate(lines):
         if line == "  %s:" % job_key:
             job = i
             break
@@ -139,6 +230,9 @@ def parse(text, job_key):
         if lines[i].strip() and not lines[i].strip().startswith("#") and indent(lines[i]) <= 2:
             end = i
             break
+    info = {"name": None, "if": None, "needs": [], "timeout": None, "defaults": {}, "runs-on": None,
+            "matrix": None, "matrix_keys": set()}
+    strategy = None
     # every run: anchor in the file, for the aliases
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -153,8 +247,36 @@ def parse(text, job_key):
         stripped = line.strip()
         if indent(line) == 4 and stripped.startswith("env:"):
             job_env = mapping(lines, i, 4)
+        if indent(line) == 4 and not stripped.startswith("#"):
+            key, sep, rest = stripped.partition(":")
+            rest = rest.strip()
+            if sep and key == "defaults":
+                info["defaults"] = defaults_run(lines, i, 4)
+            elif sep and key == "timeout-minutes":
+                info["timeout"] = unquote(rest)
+            elif sep and key == "if":
+                info["if"] = unquote(rest)
+            elif sep and key == "name":
+                info["name"] = unquote(rest)
+            elif sep and key == "runs-on":
+                info["runs-on"] = rest
+            elif sep and key == "needs":
+                if rest:
+                    value, _ = flow(rest, 0)
+                    info["needs"] = value if isinstance(value, list) else [value]
+                else:
+                    needs = []
+                    k = i + 1
+                    while k < end and (not lines[k].strip() or indent(lines[k]) > 4):
+                        if lines[k].strip().startswith("- "):
+                            needs.append(unquote(lines[k].strip()[2:]))
+                        k += 1
+                    info["needs"] = needs
+            elif sep and key == "strategy":
+                strategy = i
         if stripped.startswith("- ") and indent(line) == 6:
-            step = {"name": None, "run": None, "if": None, "env": {}, "shell": None, "uses": None, "wd": None, "id": None}
+            step = {"name": None, "run": None, "if": None, "env": {}, "shell": None, "uses": None, "wd": None, "id": None,
+                    "timeout": None}
             # the step's keys: the first sits after "- ", the rest at indent 8
             j = i
             while j < end:
@@ -175,7 +297,9 @@ def parse(text, job_key):
                     elif key == "if":
                         step["if"] = unquote(rest)
                     elif key == "shell":
-                        step["shell"] = rest
+                        step["shell"] = unquote(rest)
+                    elif key == "timeout-minutes":
+                        step["timeout"] = unquote(rest)
                     elif key == "uses":
                         step["uses"] = rest
                     elif key == "id":
@@ -199,7 +323,189 @@ def parse(text, job_key):
             i = j
             continue
         i += 1
-    return workflow_env, job_env, steps
+    strategy_end = strategy
+    if strategy is not None:
+        strategy_end = strategy + 1
+        while strategy_end < end and (not lines[strategy_end].strip() or indent(lines[strategy_end]) > 4):
+            strategy_end += 1
+        info["matrix"] = matrix_block(lines, strategy, strategy_end)
+    for k in range(job + 1, end):
+        if strategy is not None and strategy <= k < strategy_end:
+            continue
+        if lines[k].strip().startswith("runs-on:") or lines[k].strip().startswith("#"):
+            continue
+        # an if: is an expression whole; elsewhere only ${{ }} reads the matrix
+        spans = [lines[k]] if re.match(r"^\s*(- )?if:", lines[k]) else re.findall(r"\$\{\{(.*?)\}\}", lines[k])
+        for span in spans:
+            info["matrix_keys"].update(re.findall(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_-]*)", span))
+    return {"workflow_env": workflow_env, "workflow_defaults": workflow_defaults, "job_env": job_env, "steps": steps,
+            "job": info}
+
+
+# --- the matrix --------------------------------------------------------------
+
+def flow(text, pos):
+    """A YAML flow value ({...}, [...], a quoted or plain scalar) at text[pos:]; returns (value, end)."""
+    while pos < len(text) and text[pos] == " ":
+        pos += 1
+    if pos >= len(text):
+        return None, pos
+    head = text[pos]
+    if head in "{[":
+        close = "}" if head == "{" else "]"
+        out = {} if head == "{" else []
+        pos += 1
+        while True:
+            while pos < len(text) and text[pos] in " ,":
+                pos += 1
+            if pos >= len(text):
+                raise ReplayError("unclosed %s in %r" % (head, text))
+            if text[pos] == close:
+                return out, pos + 1
+            if head == "{":
+                colon = text.find(":", pos)
+                if colon < 0:
+                    raise ReplayError("no key: in %r" % text)
+                key = unquote(text[pos:colon])
+                value, pos = flow(text, colon + 1)
+                out[key] = value
+            else:
+                value, pos = flow(text, pos)
+                out.append(value)
+    if head in "'\"":
+        end = pos + 1
+        while end < len(text):
+            if text[end] == head and head == "'" and text[end + 1:end + 2] == "'":
+                end += 2
+                continue
+            if text[end] == "\\" and head == '"':
+                end += 2
+                continue
+            if text[end] == head:
+                break
+            end += 1
+        raw = text[pos + 1:end]
+        value = raw.replace("''", "'") if head == "'" else json.loads('"%s"' % raw)
+        return value, end + 1
+    end = pos
+    while end < len(text) and text[end] not in ",]}" and not text.startswith(" #", end):
+        end += 1
+    return plain(text[pos:end].strip()), end
+
+
+def plain(word):
+    if word in ("true", "false"):
+        return word == "true"
+    if word in ("null", "~", ""):
+        return None
+    if re.match(r"^-?\d+$", word):
+        return int(word)
+    return word
+
+
+def matrix_value(lines, i, key_indent, rest):
+    """The value of a matrix key: an expression, a flow value or a block list."""
+    if rest.startswith("${{"):
+        return rest
+    if rest and not rest.startswith("#"):
+        return flow(rest, 0)[0]
+    items = []
+    j = i + 1
+    while j < len(lines) and (not lines[j].strip() or indent(lines[j]) > key_indent):
+        stripped = lines[j].strip()
+        if stripped.startswith("- "):
+            body = stripped[2:].strip()
+            if body.startswith("{") or body.startswith("["):
+                items.append(flow(body, 0)[0])
+            elif re.match(r"^[A-Za-z0-9_-]+:", body):
+                item = {}
+                item_indent = indent(lines[j]) + 2
+                key, _, value = body.partition(":")
+                item[key.strip()] = flow(value, 0)[0]
+                k = j + 1
+                while k < len(lines) and (not lines[k].strip() or indent(lines[k]) >= item_indent):
+                    inner = lines[k].strip()
+                    if inner and not inner.startswith("#"):
+                        if indent(lines[k]) != item_indent or ":" not in inner:
+                            raise ReplayError("line %d: matrix entry the replay cannot read: %s" % (k + 1, inner))
+                        key, _, value = inner.partition(":")
+                        item[key.strip()] = flow(value, 0)[0]
+                    k += 1
+                items.append(item)
+                j = k
+                continue
+            else:
+                items.append(flow(body, 0)[0])
+        elif stripped and not stripped.startswith("#"):
+            raise ReplayError("line %d: matrix entry the replay cannot read: %s" % (j + 1, stripped))
+        j += 1
+    return items
+
+
+def matrix_block(lines, strategy, end):
+    """strategy: matrix: as {key: value or ${{ expression }}}; None when the strategy has no matrix."""
+    for i in range(strategy + 1, end):
+        if lines[i].strip() == "matrix:":
+            key_indent = indent(lines[i]) + 2
+            out = {}
+            j = i + 1
+            while j < end:
+                line = lines[j]
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    if indent(line) < key_indent:
+                        break
+                    if indent(line) == key_indent:
+                        key, sep, rest = stripped.partition(":")
+                        if not sep:
+                            raise ReplayError("line %d: matrix entry the replay cannot read: %s" % (j + 1, stripped))
+                        out[key.strip()] = matrix_value(lines, j, key_indent, rest.strip())
+                j += 1
+            return out
+    return None
+
+
+def text_of(value):
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def expand(matrix, context):
+    """The matrix's rows, as GitHub expands them: the product, then exclude:, then include:."""
+    resolved = {}
+    for key, value in matrix.items():
+        if isinstance(value, str) and value.startswith("${{"):
+            value = evaluate(value.strip()[3:-2], context)
+        resolved[key] = value
+    base = [key for key in resolved if key not in ("include", "exclude")]
+    rows = []
+    if base:
+        rows = [{}]
+        for key in base:
+            if not isinstance(resolved[key], list):
+                raise ReplayError("matrix.%s is not a list" % key)
+            rows = [dict(row, **{key: value}) for row in rows for value in resolved[key]]
+    for entry in resolved.get("exclude") or []:
+        rows = [row for row in rows
+                if not all(key in row and text_of(row[key]) == text_of(value) for key, value in entry.items())]
+    added = []
+    for entry in resolved.get("include") or []:
+        matched = False
+        for row in rows:
+            # an include joins every row whose own matrix values it agrees with
+            if all(text_of(row[key]) == text_of(value) for key, value in entry.items() if key in base):
+                row.update(entry)
+                matched = True
+        if not matched:
+            added.append(dict(entry))
+    return rows + added
 
 
 # --- expressions ---------------------------------------------------------
@@ -402,9 +708,26 @@ def condition(step, context):
 
 # --- running ---------------------------------------------------------------
 
-def shell_command(step, script_path):
-    shell = step["shell"]
+def step_shell(step, parsed):
+    """The shell: the step's own, else the job's defaults, else the workflow's; None is GitHub's default."""
+    for shell in (step["shell"], parsed["job"]["defaults"].get("shell"), parsed["workflow_defaults"].get("shell")):
+        if shell:
+            return shell
+    return None
+
+
+def step_directory(step, parsed):
+    for directory in (step["wd"], parsed["job"]["defaults"].get("working-directory"),
+                      parsed["workflow_defaults"].get("working-directory")):
+        if directory:
+            return directory
+    return None
+
+
+def shell_command(shell, script_path, name="step"):
+    """The command GitHub runs a run: step's script with, on Linux and macOS."""
     if shell is None:
+        # GitHub's documented default for a run step with no shell anywhere
         return ["bash", "-e", script_path]
     if shell == "bash":
         return ["bash", "--noprofile", "--norc", "-eo", "pipefail", script_path]
@@ -412,7 +735,35 @@ def shell_command(step, script_path):
         return ["sh", "-e", script_path]
     if shell == "python":
         return ["python3", script_path]
-    raise ReplayError("step %r: shell %r is not known to the replay" % (step["name"], shell))
+    if shell == "pwsh":
+        return ["pwsh", "-command", ". '%s'" % script_path]
+    words = shlex.split(shell)
+    if "{0}" not in words:
+        raise ReplayError("step %r: shell %r is not known to the replay and names no {0}" % (name, shell))
+    return [script_path if word == "{0}" else word for word in words]
+
+
+def minutes(text, context, default):
+    """A timeout-minutes value (a number or an expression), in seconds."""
+    if text is None:
+        return default * 60.0
+    value = substitute(text, context) if "${{" in text else text
+    try:
+        return float(value) * 60.0
+    except ValueError:
+        raise ReplayError("timeout-minutes %r reads %r, not a number" % (text, value))
+
+
+def git_state():
+    """The commit at HEAD here and whether the tree is clean (untracked files count), or (None, False)."""
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    except OSError:
+        return None, False
+    if head.returncode != 0 or status.returncode != 0:
+        return None, False
+    return head.stdout.strip(), status.stdout.strip() == ""
 
 
 def read_env_file(path):
@@ -438,9 +789,17 @@ def read_env_file(path):
     return out
 
 
-def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout):
-    workflow_env, job_env, steps = parse(open(workflow).read(), job_key)
+def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout, allow_over_cap=False, result=None,
+           clock=time.monotonic, state=git_state):
+    parsed = parse(open(workflow).read(), job_key)
+    workflow_env, job_env, steps = parsed["workflow_env"], parsed["job_env"], parsed["steps"]
     context = Context(sets)
+    # the commit and whether the tree is clean, read before any step writes to it
+    commit, clean = state() if result is not None and not list_only else (None, False)
+    job_cap = minutes(parsed["job"]["timeout"], context, 360)
+    total = 0.0
+    over = []
+    timings = []
     os.makedirs(logs, exist_ok=True)
     logs = os.path.abspath(logs)
     temp = os.path.join(logs, "runner-temp")
@@ -490,14 +849,23 @@ def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout):
         with open(script, "w") as handle:
             handle.write(substitute(step["run"], context) + "\n")
         log_path = os.path.join(logs, "step-%d.log" % number)
+        command = shell_command(step_shell(step, parsed), script, step["name"])
+        step_cap = minutes(step["timeout"], context, 0) if step["timeout"] is not None else None
         out.write("== %s\n" % step["name"])
         out.flush()
-        start = time.monotonic()
+        start = clock()
         with open(log_path, "w") as log:
-            status = subprocess.run(shell_command(step, script), cwd=step["wd"] or None, env=env, stdout=log,
+            status = subprocess.run(command, cwd=step_directory(step, parsed), env=env, stdout=log,
                                     stderr=subprocess.STDOUT).returncode
+        seconds = clock() - start
+        total += seconds
         ran += 1
-        out.write("   exit %d after %.1f s (%s)\n" % (status, time.monotonic() - start, log_path))
+        cap_text = "" if step_cap is None else ", its cap %.0f s" % step_cap
+        out.write("   exit %d after %.1f s%s (%s)\n" % (status, seconds, cap_text, log_path))
+        timings.append({"name": step["name"], "exit": status, "seconds": round(seconds, 1), "cap": step_cap})
+        if step_cap is not None and seconds > step_cap:
+            over.append("step %r took %.1f s against its cap of %.0f s" % (step["name"], seconds, step_cap))
+            out.write("   OVER CAP: %.1f s against the step's cap of %.0f s\n" % (seconds, step_cap))
         if status != 0:
             if step["id"]:
                 context.outcomes[step["id"]] = "failure"
@@ -507,8 +875,165 @@ def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout):
             out.write("FAIL %s\n" % step["name"])
     if list_only:
         return 0
-    out.write("replay: %s job %s, %d step(s) run, %s\n" % (workflow, job_key, ran, "RED" if context.status != "success" else "green"))
-    return 0 if context.status == "success" else 1
+    if total > job_cap:
+        over.insert(0, "the run steps took %.1f s against the job's cap of %.0f s" % (total, job_cap))
+    green = context.status == "success"
+    if not green:
+        status = 1
+    elif over and not allow_over_cap:
+        status = 3
+    else:
+        status = 0
+    for line in over:
+        out.write("OVER CAP: %s\n" % line)
+    if over and allow_over_cap:
+        out.write("OVER CAP allowed by --allow-over-cap: this host may be slower than the runner; the runner "
+                  "cancels a job at its cap\n")
+    out.write("replay: %s job %s, %d step(s) run, %s, %.1f s against the job's cap of %.0f s%s "
+              "(checkout, caches and runner setup not timed)\n"
+              % (workflow, job_key, ran, "green" if green else "RED", total, job_cap,
+                 ": OVER CAP" if total > job_cap else (": a step OVER CAP" if over else ", within the cap")))
+    if result is not None:
+        with open(result, "w") as handle:
+            json.dump({"workflow": os.path.basename(workflow), "job": job_key, "sets": sets, "commit": commit,
+                       "clean": clean, "host": platform.node(), "green": green, "seconds": round(total, 1),
+                       "cap_seconds": job_cap, "over_cap": over, "allow_over_cap": allow_over_cap,
+                       "exit": status, "steps": timings}, handle, indent=1, sort_keys=True)
+            handle.write("\n")
+        out.write("replay: result in %s (commit %s, tree %s at the start)\n"
+                  % (result, commit or "unknown", "clean" if clean else "NOT CLEAN"))
+    return status
+
+
+# --- rows and coverage -------------------------------------------------------
+
+def workflow_rows(workflow, jobs, sets):
+    """(rows, summaries, skipped): every replayable row the workflow runs, every summary job, every job not run.
+
+    A row is {job, name, values (matrix key -> text, the keys the job's steps read), sets (the --set list)}.
+    """
+    text = open(workflow).read()
+    keys = job_keys(text)
+    for job in jobs:
+        if job not in keys:
+            raise ReplayError("no job %r under jobs: in %s" % (job, workflow))
+    rows, summaries, skipped = [], [], []
+    for job in jobs or keys:
+        parsed = parse(text, job)
+        info = parsed["job"]
+        context = Context(dict(sets))
+        if info["if"] is not None and not condition({"if": info["if"]}, context):
+            skipped.append((job, info["name"] or job, info["if"]))
+            continue
+        if info["needs"]:
+            summaries.append((job, info["name"] or job, info["needs"]))
+            continue
+        matrix_rows = expand(info["matrix"], context) if info["matrix"] else [{}]
+        all_keys = set()
+        for row in matrix_rows:
+            all_keys.update(row)
+        for row in matrix_rows:
+            row_sets = dict(sets)
+            for key in all_keys | info["matrix_keys"]:
+                row_sets["matrix.%s" % key] = text_of(row.get(key))
+            row_context = Context(row_sets)
+            name = substitute(info["name"], row_context) if info["name"] else job
+            values = {key: text_of(row.get(key)) for key in sorted(info["matrix_keys"])}
+            runs_on = info["runs-on"] or ""
+            match = re.match(r"^\$\{\{(.*)\}\}$", runs_on)
+            if match:
+                try:
+                    value = evaluate(match.group(1), row_context)
+                    runs_on = ",".join(value) if isinstance(value, list) else text_of(value)
+                except ReplayError:
+                    pass
+            rows.append({"job": job, "name": name, "values": values, "runs-on": runs_on,
+                         "sets": ["matrix.%s=%s" % (key, value) for key, value in sorted(values.items())]})
+    return rows, summaries, skipped
+
+
+def print_rows(workflow, jobs, sets, out=sys.stdout):
+    rows, summaries, skipped = workflow_rows(workflow, jobs, sets)
+    tier = "nightly tier (inputs.full)" if truthy(Context(sets).lookup("inputs.full")) else "a commit"
+    for row in rows:
+        command = " ".join(["python3 tools/replay_ci_steps.py", workflow, row["job"]] +
+                           ["--set %s" % shlex.quote(item) for item in row["sets"]])
+        out.write("ROW %s\n    runs-on %s\n    %s\n" % (row["name"], row["runs-on"], command))
+    for job, name, needs in summaries:
+        out.write("CANNOT REPLAY %s (job %s): it needs %s and reads the run's job list; only a real run has "
+                  "its verdict\n" % (name, job, ", ".join(needs)))
+    for job, name, why in skipped:
+        out.write("NOT RUN %s (job %s) on %s: if: %s\n" % (name, job, tier, why))
+    out.write("rows: %s on %s: %d replayable row(s), %d summary job(s) that cannot be replayed, %d job(s) not run\n"
+              % (workflow, tier, len(rows), len(summaries), len(skipped)))
+    return 0
+
+
+def read_results(paths):
+    results = []
+    for path in paths:
+        files = [path]
+        if os.path.isdir(path):
+            files = sorted(os.path.join(path, name) for name in os.listdir(path) if name.endswith(".json"))
+        for name in files:
+            try:
+                with open(name) as handle:
+                    data = json.load(handle)
+            except (OSError, ValueError) as error:
+                raise ReplayError("result %s cannot be read: %s" % (name, error))
+            data["file"] = name
+            results.append(data)
+    return results
+
+
+def matches(row, result, workflow, commit, full):
+    if result.get("job") != row["job"] or result.get("workflow") != os.path.basename(workflow):
+        return False
+    if not result.get("commit") or not commit or not result["commit"].startswith(commit):
+        return False
+    sets = result.get("sets") or {}
+    if text_of(plain(sets.get("inputs.full", ""))) != text_of(full):
+        return False
+    for key, value in row["values"].items():
+        if sets.get("matrix.%s" % key, "") != value:
+            return False
+    return True
+
+
+def coverage(workflow, jobs, sets, commit, paths, out=sys.stdout):
+    if len(commit) < 7:
+        raise ReplayError("--commit wants at least seven hex digits of the commit, got %r" % commit)
+    rows, summaries, skipped = workflow_rows(workflow, jobs, sets)
+    results = read_results(paths)
+    full = True if truthy(Context(sets).lookup("inputs.full")) else None
+    counts = {"GREEN": 0, "RED": 0, "OVER CAP": 0, "NOT CLEAN": 0, "NONE": 0}
+    for row in rows:
+        found = [result for result in results if matches(row, result, workflow, commit, full)]
+        verdict, detail = "NONE", "no replay result at %s" % commit
+        for result in found:
+            if not result.get("clean"):
+                rank, text = "NOT CLEAN", "replayed from a tree that was not clean"
+            elif not result.get("green"):
+                rank, text = "RED", "a step was red"
+            elif result.get("over_cap") and not result.get("allow_over_cap"):
+                rank, text = "OVER CAP", "; ".join(result["over_cap"])
+            else:
+                rank, text = "GREEN", "%.1f s against the cap of %.0f s%s" % (
+                    result.get("seconds", 0), result.get("cap_seconds", 0),
+                    (": OVER CAP, allowed (%s)" % "; ".join(result["over_cap"])) if result.get("over_cap") else "")
+            order = ["NONE", "NOT CLEAN", "RED", "OVER CAP", "GREEN"]
+            if order.index(rank) > order.index(verdict):
+                verdict, detail = rank, "%s (%s, on %s)" % (text, result["file"], result.get("host", "?"))
+        counts[verdict] += 1
+        out.write("%-9s %s: %s\n" % (verdict, row["name"], detail))
+    for job, name, needs in summaries:
+        out.write("CANNOT REPLAY %s (job %s): it needs %s and reads the run's job list; only a real run has "
+                  "its verdict\n" % (name, job, ", ".join(needs)))
+    out.write("coverage: %s at %s: %d row(s): %d green, %d red, %d over cap, %d not clean, %d with no replay; "
+              "%d summary job(s) cannot be replayed\n"
+              % (workflow, commit, len(rows), counts["GREEN"], counts["RED"], counts["OVER CAP"], counts["NOT CLEAN"],
+                 counts["NONE"], len(summaries)))
+    return 0 if rows and counts["GREEN"] == len(rows) else 1
 
 
 # --- self-test ---------------------------------------------------------------
@@ -577,6 +1102,118 @@ jobs:
 """
 
 
+# The workflow's and a job's defaults: run: shell:, as ci.yml sets them.
+SHELLS = """\
+name: shells
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+jobs:
+  workflow-default:
+    runs-on: x
+    steps:
+      - name: A red first pipe stage
+        run: false | cat
+      - name: An unset variable
+        if: always()
+        run: echo "$NOT_SET_ANYWHERE"
+      - name: A green step
+        if: always()
+        run: echo green > green.txt
+  job-default:
+    runs-on: x
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: An unset variable under the job's bash
+        run: echo "${NOT_SET_ANYWHERE}unset-ok" > job-unset.txt
+      - name: A red first pipe stage under the job's bash
+        run: false | cat
+  step-shell:
+    runs-on: x
+    steps:
+      - name: The step's own sh
+        shell: sh
+        run: false | true
+      - name: A template shell
+        shell: bash --noprofile --norc -e {0}
+        run: echo template > template.txt
+"""
+
+# The caps: a per-commit job of two minutes, a step with its own cap.
+CAPS = """\
+name: caps
+jobs:
+  capped:
+    runs-on: x
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    steps:
+      - name: one
+        run: "true"
+      - name: two
+        run: "true"
+      - name: three
+        run: "true"
+  step-capped:
+    runs-on: x
+    steps:
+      - name: within the job, past its own cap
+        timeout-minutes: 1
+        run: "true"
+"""
+
+# A split job: a matrix product, an exclude: expression, include: rows that join
+# a row and rows that match none, a nightly-only job and a summary job.
+ROWS = """\
+name: rows
+jobs:
+  split:
+    name: ${{ matrix.os }} / ${{ matrix.leg }}${{ matrix.shard && format(' ({0})', matrix.shard) || '' }}
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux, macos]
+        leg: [unit, checks]
+        exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"macos","leg":"checks"},{"os":"linux","leg":"unit"}]') }}
+        include:
+          - { os: linux, runner: '["self-hosted","Linux"]' }
+          - { os: macos, runner: '["self-hosted","macOS"]' }
+          - { os: linux, leg: checks, split: true }
+          - { os: linux, leg: unit, shard: 0/2, runner: '["self-hosted","Linux"]' }
+          - { os: linux, leg: unit, shard: 1/2, runner: '["self-hosted","Linux"]' }
+    steps:
+      - name: Leg
+        if: matrix.leg == 'checks' && !matrix.split
+        run: echo ${{ matrix.shard }}
+  blocks:
+    name: block (${{ matrix.leg }})
+    runs-on: x
+    strategy:
+      matrix:
+        include:
+          - leg: a
+            shard: 0/2
+          - leg: b
+            shard: none
+    steps:
+      - run: echo ${{ matrix.shard }}
+  nightly:
+    if: inputs.full
+    runs-on: x
+    steps:
+      - run: "true"
+  summary:
+    name: split summary
+    needs: [split, blocks]
+    if: always()
+    runs-on: x
+    steps:
+      - run: "true"
+"""
+
+
 def self_test():
     failed = 0
     with tempfile.TemporaryDirectory() as directory:
@@ -636,6 +1273,152 @@ def self_test():
                 checks.append(("an absent job is an error", False))
             except ReplayError:
                 checks.append(("an absent job is an error", True))
+
+            # (a) the shell the workflow would use
+            shells = os.path.join(directory, "shells.yml")
+            with open(shells, "w") as handle:
+                handle.write(SHELLS)
+            sink = Sink()
+            status = replay(shells, "workflow-default", {}, os.path.join(directory, "logs-shells-1"), out=sink)
+            checks += [
+                ("shell: workflow defaults have pipefail", "FAIL A red first pipe stage" in sink.text),
+                ("shell: workflow defaults have -u", "FAIL An unset variable" in sink.text),
+                ("shell: workflow defaults, green step stays green", read("green.txt") == "green"),
+                ("shell: workflow defaults, the replay is red", status == 1 and "RED" in sink.text),
+            ]
+            sink = Sink()
+            status = replay(shells, "job-default", {}, os.path.join(directory, "logs-shells-2"), out=sink)
+            checks += [
+                ("shell: job defaults override the workflow's (no -u)", read("job-unset.txt") == "unset-ok"),
+                ("shell: job defaults' bash has pipefail", "FAIL A red first pipe stage under" in sink.text),
+            ]
+            sink = Sink()
+            status = replay(shells, "step-shell", {}, os.path.join(directory, "logs-shells-3"), out=sink)
+            checks += [
+                ("shell: a step's own sh overrides the workflow's", "FAIL The step's own sh" not in sink.text),
+                ("shell: a {0} template runs the script", read("template.txt") == "template"),
+            ]
+
+            # (b) the job's cap and each step's, on a clock the test turns
+            caps = os.path.join(directory, "caps.yml")
+            with open(caps, "w") as handle:
+                handle.write(CAPS)
+
+            def clock(seconds):
+                ticks = [0]
+
+                def now():
+                    ticks[0] += 1
+                    return ticks[0] * seconds
+                return now
+
+            sink = Sink()
+            status = replay(caps, "capped", {}, os.path.join(directory, "logs-caps-1"), out=sink, clock=clock(50))
+            checks += [
+                ("cap: run steps past the job's cap exit 3", status == 3),
+                ("cap: says green and OVER CAP with the seconds",
+                 "3 step(s) run, green, 150.0 s against the job's cap of 120 s: OVER CAP" in sink.text),
+                ("cap: each step's seconds are printed", sink.text.count("exit 0 after 50.0 s") == 3),
+            ]
+            sink = Sink()
+            status = replay(caps, "capped", {}, os.path.join(directory, "logs-caps-2"), out=sink, clock=clock(50),
+                            allow_over_cap=True)
+            checks += [
+                ("cap: --allow-over-cap exits 0", status == 0),
+                ("cap: --allow-over-cap still says OVER CAP",
+                 "OVER CAP allowed by --allow-over-cap" in sink.text and ": OVER CAP" in sink.text),
+            ]
+            sink = Sink()
+            status = replay(caps, "capped", {"inputs.full": "true"}, os.path.join(directory, "logs-caps-3"),
+                            out=sink, clock=clock(50))
+            checks.append(("cap: the nightly tier's cap holds the same steps",
+                           status == 0 and "against the job's cap of 432000 s, within the cap" in sink.text))
+            sink = Sink()
+            status = replay(caps, "capped", {}, os.path.join(directory, "logs-caps-4"), out=sink, clock=clock(30))
+            checks.append(("cap: within the cap exits 0", status == 0 and "OVER CAP" not in sink.text))
+            sink = Sink()
+            status = replay(caps, "step-capped", {}, os.path.join(directory, "logs-caps-5"), out=sink,
+                            clock=clock(61))
+            checks.append(("cap: a step past its own cap exits 3",
+                           status == 3 and "61.0 s against the step's cap of 60 s" in sink.text))
+
+            # (c) every row of a split job, and which rows a replay covers
+            rows_path = os.path.join(directory, "rows.yml")
+            with open(rows_path, "w") as handle:
+                handle.write(ROWS)
+            rows, summaries, skipped = workflow_rows(rows_path, [], {})
+            names = [row["name"] for row in rows]
+            checks += [
+                ("rows: product, exclude, include joins and new rows",
+                 names == ["linux / checks", "macos / unit", "linux / unit (0/2)", "linux / unit (1/2)",
+                           "block (a)", "block (b)"]),
+                ("rows: an include joins the row it matches", rows[0]["values"] == {
+                    "leg": "checks", "os": "linux", "shard": "", "split": "true"}),
+                ("rows: runs-on is not a value a replay sets", "runner" not in rows[0]["values"]),
+                ("rows: a summary job cannot be replayed, by name",
+                 summaries == [("summary", "split summary", ["split", "blocks"])]),
+                ("rows: a nightly-only job is not run on a commit", [job for job, _, _ in skipped] == ["nightly"]),
+            ]
+            full_rows, _, full_skipped = workflow_rows(rows_path, [], {"inputs.full": "true"})
+            checks.append(("rows: nightly tier, later includes overwrite added values",
+                           [row["name"] for row in full_rows] == [
+                               "linux / unit (1/2)", "linux / checks", "macos / unit", "macos / checks",
+                               "block (a)", "block (b)", "nightly"] and not full_skipped))
+            sink = Sink()
+            print_rows(rows_path, [], {}, out=sink)
+            checks.append(("rows: --rows names the summary job it cannot replay",
+                           "CANNOT REPLAY split summary (job summary)" in sink.text))
+
+            results = os.path.join(directory, "results")
+            os.makedirs(results)
+            sha = "abc1234" + "0" * 33
+
+            def result(name, job, values, **fields):
+                data = {"workflow": "rows.yml", "job": job, "commit": sha, "clean": True, "green": True,
+                        "seconds": 10.0, "cap_seconds": 120.0, "over_cap": [], "allow_over_cap": False,
+                        "sets": dict(("matrix.%s" % key, value) for key, value in values.items())}
+                data.update(fields)
+                with open(os.path.join(results, name + ".json"), "w") as handle:
+                    json.dump(data, handle)
+
+            split = {"leg": "", "os": "", "shard": "", "split": ""}
+            result("checks", "split", dict(split, leg="checks", os="linux", split="true"))
+            result("checks-wrong-values", "split", dict(split, leg="checks", os="linux"), green=False)
+            result("macos-unit", "split", dict(split, leg="unit", os="macos"), over_cap=["150 s against 120 s"])
+            result("unit-0", "split", dict(split, leg="unit", os="linux", shard="0/2"),
+                   over_cap=["150 s against 120 s"], allow_over_cap=True)
+            result("unit-1-other-commit", "split", dict(split, leg="unit", os="linux", shard="1/2"),
+                   commit="def5678" + "0" * 33)
+            result("block-a", "blocks", {"leg": "a", "shard": "0/2"}, green=False)
+            result("block-b", "blocks", {"leg": "b", "shard": "none"}, clean=False)
+            sink = Sink()
+            status = coverage(rows_path, [], {}, "abc1234", [results], out=sink)
+            lines = dict((line[10:].split(":")[0], line[:9].strip()) for line in sink.text.split("\n")
+                         if line[:9].strip() in ("GREEN", "RED", "OVER CAP", "NOT CLEAN", "NONE"))
+            checks += [
+                ("coverage: each row's verdict", lines == {
+                    "linux / checks": "GREEN", "macos / unit": "OVER CAP", "linux / unit (0/2)": "GREEN",
+                    "linux / unit (1/2)": "NONE", "block (a)": "RED", "block (b)": "NOT CLEAN"}),
+                ("coverage: a row with no green replay exits 1", status == 1),
+                ("coverage: names the summary job it cannot replay",
+                 "CANNOT REPLAY split summary (job summary)" in sink.text),
+            ]
+
+            # a real replay's result file covers its row, at the commit it ran on
+            ran = os.path.join(directory, "ran")
+            os.makedirs(ran)
+            for row in workflow_rows(rows_path, ["blocks"], {})[0]:
+                sets = dict(item.split("=", 1) for item in row["sets"])
+                replay(rows_path, "blocks", sets, os.path.join(directory, "logs-" + row["values"]["leg"]), out=Sink(),
+                       result=os.path.join(ran, row["values"]["leg"] + ".json"), state=lambda: (sha, True))
+            sink = Sink()
+            status = coverage(rows_path, ["blocks"], {}, sha, [ran], out=sink)
+            checks.append(("coverage: replay --result files cover their rows",
+                           status == 0 and "2 row(s): 2 green" in sink.text))
+            sink = Sink()
+            status = coverage(rows_path, ["blocks"], {}, "def5678", [ran], out=sink)
+            checks.append(("coverage: another commit's replays cover nothing",
+                           status == 1 and "2 with no replay" in sink.text))
         finally:
             os.chdir(cwd)
     for name, ok in checks:
@@ -660,6 +1443,11 @@ def main(argv):
     sets = {}
     logs = None
     list_only = False
+    allow_over_cap = False
+    result = None
+    mode = None
+    commit = None
+    jobs = []
     positional = []
     i = 0
     while i < len(args):
@@ -674,8 +1462,23 @@ def main(argv):
         elif arg == "--logs" and i + 1 < len(args):
             logs = args[i + 1]
             i += 2
+        elif arg == "--result" and i + 1 < len(args):
+            result = args[i + 1]
+            i += 2
+        elif arg == "--commit" and i + 1 < len(args):
+            commit = args[i + 1]
+            i += 2
+        elif arg == "--job" and i + 1 < len(args):
+            jobs.append(args[i + 1])
+            i += 2
         elif arg == "--list":
             list_only = True
+            i += 1
+        elif arg == "--allow-over-cap":
+            allow_over_cap = True
+            i += 1
+        elif arg in ("--rows", "--coverage"):
+            mode = arg
             i += 1
         elif arg.startswith("-"):
             print("replay: unknown flag %r" % arg)
@@ -683,14 +1486,25 @@ def main(argv):
         else:
             positional.append(arg)
             i += 1
-    if len(positional) != 2:
-        print("replay: want WORKFLOW JOB")
-        return 2
-    if logs is None:
-        # outside the checkout, which CI's is clean of
-        logs = tempfile.mkdtemp(prefix="replay-ci-steps-")
     try:
-        return replay(positional[0], positional[1], sets, logs, list_only)
+        if mode == "--rows":
+            if len(positional) != 1:
+                print("replay: --rows wants WORKFLOW")
+                return 2
+            return print_rows(positional[0], jobs, sets)
+        if mode == "--coverage":
+            if len(positional) < 2 or commit is None:
+                print("replay: --coverage wants WORKFLOW --commit SHA RESULT...")
+                return 2
+            return coverage(positional[0], jobs, sets, commit, positional[1:])
+        if len(positional) != 2 or jobs or commit:
+            print("replay: want WORKFLOW JOB")
+            return 2
+        if logs is None:
+            # outside the checkout, which CI's is clean of
+            logs = tempfile.mkdtemp(prefix="replay-ci-steps-")
+        return replay(positional[0], positional[1], sets, logs, list_only, allow_over_cap=allow_over_cap,
+                      result=result)
     except ReplayError as error:
         print("replay: %s" % error)
         return 2
