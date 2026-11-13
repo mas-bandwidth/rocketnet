@@ -1329,14 +1329,25 @@ static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_t
            server_transport->io.operations->send_room( server_transport->io.instance ) <= 0;
 }
 
-// The fill frames the queues still allow this phase, summed: each queue's
-// budget as its room reads now less its claims, and the own frames not yet
-// taken (RNSendReserve). INT_MAX before main first opens the budget.
+// The calling thread's fill line, read only.
+static const struct rocketnet_server_fill_line_t * rocketnet_server_fill_line_of_caller( const struct rocketnet_server_transport_t * server_transport )
+{
+    return &server_transport->fill_lines[rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() )];
+}
+
+// The fill frames the queues still allow this phase to the calling thread,
+// summed: each queue's budget as its room reads now less its claims, the
+// grants of the caller's line's tail (claimed and its to take), and the own
+// frames not yet taken (RNSendReserve). Another line's tail is not the
+// caller's to take, so it counts as taken. INT_MAX before main first opens
+// the budget.
 static int rocketnet_server_transport_fill_budget_left( const rocketnet_server_transport_t * server_transport )
 {
+    const struct rocketnet_server_fill_line_t * line = rocketnet_server_fill_line_of_caller( server_transport );
     uint64_t left = rocketnet_server_transport_load_u64( &server_transport->fill_own_frames_left );
     for ( int queue = 0; queue < server_transport->send_queues; ++queue )
     {
+        left += rocketnet_server_transport_load_u64( &line->tails[queue] ) & ROCKETNET_SERVER_FILL_HALF_MASK;
         const uint64_t opened = rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] );
         if ( opened == UINT64_MAX )
         {
@@ -1354,9 +1365,11 @@ static int rocketnet_server_transport_fill_budget_left( const rocketnet_server_t
 // free slots on a buffered transport; on a staged one the transport's own
 // send room, and no more than the fill budget the protocol reserve leaves
 // (RNSendReserve), so a full staging or a spent budget stops the fair send
-// pass where the next unserved client waits. Conservative during a wide fill:
-// the chunks the fill lines hold and have not used count as taken, both the
-// ring slots past the counter and the reserve claims (rocketnet_server_fill_line_t).
+// pass where the next unserved client waits. Both count what the calling
+// thread may still take: its own fill line's unused chunk (ring slots or
+// reserve grants) counts as free, another line's as taken
+// (rocketnet_server_fill_line_t), so a thread filling alone reads the exact
+// figure.
 // proofs/tla/RNServerSendFair.tla FirstVisit and LaterVisit: the shared cap each visit tests, charged per frame start, kept on abort.
 int rocketnet_server_transport_send_capacity_available( const rocketnet_server_transport_t * server_transport )
 {
@@ -1373,7 +1386,12 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
     // num_packets is moved by fetch-add in start_packet on job threads during
     // a wide fill: read it atomically too.
     const uint64_t used = rocketnet_platform_atomic_load_u64( const_cast<volatile uint64_t *>( &server_transport->payload_ring.num_packets ) );
-    return used >= (uint64_t) server_transport->send_capacity ? 0 : (int) ( (uint64_t) server_transport->send_capacity - used );
+    const uint64_t chunk = rocketnet_server_transport_load_u64( &rocketnet_server_fill_line_of_caller( server_transport )->ring );
+    const uint64_t next = chunk & ROCKETNET_SERVER_FILL_HALF_MASK;
+    const uint64_t end = chunk >> ROCKETNET_SERVER_FILL_HALF_BITS;
+    const uint64_t own = end > next ? end - next : 0;
+    const uint64_t free_slots = ( used >= (uint64_t) server_transport->send_capacity ? 0 : (uint64_t) server_transport->send_capacity - used ) + own;
+    return free_slots >= (uint64_t) INT_MAX ? INT_MAX : (int) free_slots;
 }
 
 // Every refused start is counted once, by what refused it: the id
