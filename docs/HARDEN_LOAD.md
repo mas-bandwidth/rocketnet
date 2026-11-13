@@ -37,7 +37,7 @@ in `rocketnet_layers.h`:
   `start_packet` returns the frame.
 - Main joins the jobs, then writes the reliable and big messages through the message server, then calls send_packets.
 
-N = 0 (the default) keeps every write on main.
+N = 0 (the default) keeps every write on main. N is at most 64.
 
 ## The verdict
 
@@ -61,7 +61,10 @@ duplicate row passes a gap of zero or below.
 **The players.** Players must deliver unreliable messages at or above `--min-delivery`, with no errors and no
 unplanned ends among the stable clients.
 
-**The frame.** The frame passes when work p99 is at or under `--frame-p99-us`.
+**The frame.** The frame passes when work p99 is at or under `--frame-p99-us`, 5000 by default. Work is rocketnet's
+time on the game thread: update, receive, the write (fill jobs joined) and send. The rest of a 60 Hz game frame belongs
+to the game. Each `harden_tick:` also prints `jobs_core_ms`, the fill jobs' busy time per frame summed over the jobs,
+because the game needs those cores too.
 
 **The server.** The library must conserve its counters, and fds, threads and library bytes must stay flat from the
 post-warmup sample to the end.

@@ -43,7 +43,8 @@
     verified the same way. Each
     second it prints "harden_tick:" (connected, frames, overruns past one
     frame, the work time per frame avg/p99/max split into update, receive,
-    write and send_packets, messages and packets per second, start refusals),
+    write and send_packets, the fill jobs' summed busy time per frame as
+    jobs_core_ms, messages and packets per second, start refusals),
     and each --sample-seconds a "harden_sample:" (fds, threads, resident
     bytes, library bytes and every nonzero counter): the long-run mode reads
     those against process_resources.h's flat rule, the nightly soak's method.
@@ -453,7 +454,7 @@ struct harden_options_t
     std::string profile_out = "profile.txt";
     std::string logs;
     int netem_duplicates = 0;
-    int frame_p99_us = 12000;
+    int frame_p99_us = 5000; // rocketnet's share of a 60 Hz game frame: the rest of the game runs in it too
     double min_delivery = 99.9;
     uint64_t protocol_id = HARDEN_PROTOCOL_ID;
 };
@@ -1126,6 +1127,7 @@ struct harden_frame_window_t
     double update_max = 0, receive_max = 0, write_max = 0, send_max = 0;
     uint64_t frames = 0, overruns = 0;
     uint64_t messages = 0, start_refused = 0, received = 0;
+    double jobs_busy_sum = 0; // core seconds the fill jobs spent, summed over the jobs
 };
 
 static double harden_percentile( std::vector<double> & v, double p )
@@ -1172,6 +1174,7 @@ struct harden_fill_job_t
     alignas( 64 ) uint64_t messages = 0;
     uint64_t start_refused = 0;
     uint64_t finish_refused = 0;
+    double busy = 0.0; // seconds inside the fill range: the core time the game gives up to the job
 };
 
 struct harden_fill_pool_t
@@ -1198,6 +1201,7 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
     const int num_jobs = (int) pool->jobs.size();
     const int begin = (int) ( (int64_t) plan.size() * job / num_jobs );
     const int end = (int) ( (int64_t) plan.size() * ( job + 1 ) / num_jobs );
+    const double began = harden_now();
     for ( int k = begin; k < end; k++ )
     {
         const harden_fill_item_t & item = plan[(size_t) k];
@@ -1234,6 +1238,7 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
             stats.messages++;
         }
     }
+    stats.busy += harden_now() - began;
 }
 
 static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
@@ -1329,6 +1334,7 @@ typedef LONG( NTAPI * harden_nt_query_thread_t )( HANDLE, int, PVOID, ULONG, PUL
 typedef DWORD( WINAPI * harden_sym_set_options_t )( DWORD );
 typedef BOOL( WINAPI * harden_sym_initialize_t )( HANDLE, PCSTR, BOOL );
 typedef BOOL( WINAPI * harden_sym_from_addr_t )( HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO );
+typedef BOOL( WINAPI * harden_sym_cleanup_t )( HANDLE );
 
 struct harden_profile_thread_t
 {
@@ -1546,6 +1552,23 @@ static void harden_profile_run( harden_profile_t * p )
     for ( harden_profile_thread_t & t : threads )
     {
         CloseHandle( t.handle );
+    }
+
+    // give back what DbgHelp opened, and stay alive until the server ends:
+    // the resource judgement compares handles and threads from the
+    // post-warmup sample to the end, and the profile must not move either
+    if ( dbghelp )
+    {
+        const harden_sym_cleanup_t sym_cleanup = reinterpret_cast<harden_sym_cleanup_t>( reinterpret_cast<void *>( GetProcAddress( dbghelp, "SymCleanup" ) ) );
+        if ( sym_from_addr && sym_cleanup )
+        {
+            sym_cleanup( GetCurrentProcess() );
+        }
+        FreeLibrary( dbghelp );
+    }
+    while ( !p->stop.load() )
+    {
+        Sleep( 50 );
     }
 }
 #endif // #if defined( _WIN32 )
@@ -1838,6 +1861,7 @@ static int harden_server_main( const harden_options_t & o )
                 {
                     w.messages += job.messages;
                     w.start_refused += job.start_refused + job.finish_refused;
+                    w.jobs_busy_sum += job.busy;
                     job = harden_fill_job_t();
                 }
                 for ( const harden_fill_item_t & item : plan )
@@ -1881,11 +1905,11 @@ static int harden_server_main( const harden_options_t & o )
             const uint64_t ring_full = transport ? rocketnet_counter_value( rocketnet_server_transport_counters( transport ), ROCKETNET_COUNTER_SEND_RING_FULL ) : 0;
             std::vector<double> work_copy = w.work;
             printf( "harden_tick: t=%.1f conn=%d frames=%" PRIu64 " overruns=%" PRIu64 " work_ms avg=%.3f p99=%.3f max=%.3f update=%.3f/%.3f receive=%.3f/%.3f write=%.3f/%.3f send=%.3f/%.3f"
-                    " msgs_ps=%.0f pkts_ps=%.0f in_msgs_ps=%.0f start_refused=%" PRIu64 " send_ring_full_total=%" PRIu64 "\n",
+                    " jobs_core_ms=%.3f msgs_ps=%.0f pkts_ps=%.0f in_msgs_ps=%.0f start_refused=%" PRIu64 " send_ring_full_total=%" PRIu64 "\n",
                     t_now - started, rocketnet_server_num_connected_clients( server ), w.frames, w.overruns,
                     1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f, 1e3 * harden_percentile( work_copy, 0.99 ), 1e3 * harden_percentile( work_copy, 1.0 ),
                     1e3 * w.update_sum / f, 1e3 * w.update_max, 1e3 * w.receive_sum / f, 1e3 * w.receive_max, 1e3 * w.write_sum / f, 1e3 * w.write_max,
-                    1e3 * w.send_sum / f, 1e3 * w.send_max, (double) w.messages / span, (double) ( stats.packets_sent - last_packets_sent ) / span,
+                    1e3 * w.send_sum / f, 1e3 * w.send_max, 1e3 * w.jobs_busy_sum / f, (double) w.messages / span, (double) ( stats.packets_sent - last_packets_sent ) / span,
                     (double) w.received / span, w.start_refused, ring_full );
             fflush( stdout );
             last_packets_sent = stats.packets_sent;
