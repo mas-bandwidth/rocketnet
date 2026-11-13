@@ -3942,6 +3942,9 @@ void rocketnet_server_transport_update_begin( struct rocketnet_server_transport_
         return;
     }
     server_transport->update_received = rocketnet_server_transport_update_receive( server_transport, time ) ? 1 : 0;
+
+    // proofs/tla/RNAckPhase.tla OpenAcks: the receive loop is done; only ack
+    // calls and update_end are taken until update_end
     rocketnet_fill_phase_open_ack_phase( &server_transport->fill_phase );
 }
 
@@ -3970,8 +3973,9 @@ bool rocketnet_server_transport_update_acks( struct rocketnet_server_transport_t
         return false;
     }
 
-    // proofs/tla/RNAckPhase.tla Apply: the client's own endpoint, segment and
-    // counts; nothing another client's call writes
+    // proofs/tla/RNAckPhase.tla AckStart (the scope's claim above) and
+    // AckStep: the client's own endpoint, segment and counts; nothing
+    // another client's call writes
 
     rocketnet_server_protocol_apply_acks( &server_transport->protocol, client_index );
 
@@ -3981,11 +3985,11 @@ bool rocketnet_server_transport_update_acks( struct rocketnet_server_transport_t
         out->num_acked = rocketnet_server_acks_client_acked( acks, client_index, &out->packet_ids, &connection_id );
         out->connection_id = connection_id;
 
-        // settled (RNAckPhase Settled): the slot still holds the connection
-        // the ids were received for (no reset in the receive loop, which
-        // update_begin finished) and its endpoint holds no internal error,
-        // the one end the rest of the update can give a slot that received
-        // in this update (the timeout needs silence)
+        // settled (proofs/tla/RNAckPhase.tla AckEnd): the slot still holds
+        // the connection the ids were received for (no reset in the receive
+        // loop, which update_begin finished) and its endpoint holds no
+        // internal error, the one end the rest of the update can give a slot
+        // that received in this update (the timeout needs silence)
 
         out->settled = connection_id != 0 &&
                        rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index ) == connection_id &&
@@ -4235,6 +4239,8 @@ static void rocketnet_server_transport_update_finish( struct rocketnet_server_tr
     // batch is fixed here, before this update builds any reply or ack, so no
     // packet opened later can join it.
 
+    // proofs/tla/RNAckPhase.tla Sweep: after the gather, so no send lands on
+    // an endpoint with a block still deferred.
     // the sweep, then per client: the paced keep-alive or -- when the ack
     // debt has reached the threshold with no other block going out -- the
     // standalone ack, into send frames. The per-slot ACK statistics need no

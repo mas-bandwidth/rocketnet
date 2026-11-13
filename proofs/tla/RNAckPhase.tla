@@ -14,7 +14,7 @@
 (* that client's deferred blocks first (ResetFlush).  Then the ack phase:  *)
 (* any thread applies a client's blocks, one thread per client (AckStart,  *)
 (* AckStep, AckEnd), and the message layer takes a settled client's ids    *)
-(* at once (TakeAcks).  After the join, main applies every client nobody  *)
+(* at once (AckEnd).    After the join, main applies every client nobody  *)
 (* called and copies the ids into the public batch in arrival order, the   *)
 (* counts summed (Gather); then the maintenance sweep sends (Sweep); then  *)
 (* the message layer's drain takes the batch's ids of every client not    *)
@@ -329,8 +329,8 @@ AckStep(t) ==
     /\ UNCHANGED << phase, updates, narr, nresets, touched, resetNow, mode, owner, tc, tlist, epoch, batch, count,
                     taken, delivered, sentPending, serial >>
 
-\* the call ends: the list emptied (head = -1); then TakeAcks: the message
-\* layer takes the client's ids now when the slot is settled (Settled: no
+\* the call ends: the list emptied (head = -1); then the message
+\* layer takes the client's ids now when the slot is settled (settled: no
 \* reset in the loop, one connection tag, no internal error, the slot bound
 \* to it; the model leaves the rest to the environment) and none were taken
 AckEnd(t) ==

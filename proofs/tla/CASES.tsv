@@ -927,3 +927,12 @@ MCRNFillPhaseBrokenNoRestore.cfg	MCRNFillPhase.tla	invariant	NoFalseAlarm	check	
 MCRNFillPhaseBrokenNoEpochLook.cfg	MCRNFillPhase.tla	invariant	OneFiller	check	rnfillphase	required	-
 MCRNFillPhaseBrokenScanOne.cfg	MCRNFillPhase.tla	invariant	Sound	check	rnfillphase	required	-
 MCRNFillPhaseN3.cfg	MCRNFillPhase.tla	pass	-	check	rnfillphase	bench	three-fillers-two-clients-over-budget
+MCRNAckPhase.cfg	MCRNAckPhase.tla	pass	-	check	rnackphase	required	-
+MCRNAckPhaseBrokenTwoAppliers.cfg	MCRNAckPhase.tla	invariant	ArrivalOrder	check	rnackphase	required	-
+MCRNAckPhaseBrokenGatherByClient.cfg	MCRNAckPhase.tla	invariant	PublicOrder	check	rnackphase	required	-
+MCRNAckPhaseBrokenSweepBeforeGather.cfg	MCRNAckPhase.tla	invariant	NoSendBeforeApply	check	rnackphase	required	-
+MCRNAckPhaseBrokenResetNoFlush.cfg	MCRNAckPhase.tla	invariant	PublicOrder	check	rnackphase	required	-
+MCRNAckPhaseBrokenSpillNoFlush.cfg	MCRNAckPhase.tla	invariant	PublicOrder	check	rnackphase	required	-
+MCRNAckPhaseBrokenCountsBeforeApply.cfg	MCRNAckPhase.tla	invariant	CountsExact	check	rnackphase	required	-
+MCRNAckPhaseBrokenDrainTaken.cfg	MCRNAckPhase.tla	invariant	MessageOnce	check	rnackphase	required	-
+MCRNAckPhaseBrokenTakeTwice.cfg	MCRNAckPhase.tla	invariant	MessageOnce	check	rnackphase	required	-

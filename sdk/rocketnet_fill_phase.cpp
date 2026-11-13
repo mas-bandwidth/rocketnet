@@ -286,7 +286,8 @@ static bool rn_fill_phase_begin( struct rocketnet_fill_phase_t * fill_phase, int
 
     // the look passed: no main operation ran since FillBegin and none can
     // begin while this call is counted, so ack_phase is the value of this
-    // call's phase (RNAckPhase KindLook)
+    // call's phase (the kind check: RNAckPhase.tla takes it as given, its
+    // ack calls inside the phase and no main operation in it)
 
     const bool kind_refused = !look_refused && fill_phase->ack_phase.load() != ( ack ? 1u : 0u );
 

@@ -2465,6 +2465,9 @@ int rocketnet_server_acks_test_direct = 0;
 int rocketnet_server_acks_test_entry_capacity = 0;
 #endif // #if ROCKETNET_DEV
 
+// proofs/tla/RNAckPhase.tla Begin: an update starts deferring, nothing left
+// over from the last one
+
 void rocketnet_server_acks_begin_update( struct rocketnet_server_acks_t * acks, double time )
 {
     rocketnet_assert( acks );
@@ -2571,7 +2574,7 @@ void rocketnet_server_acks_apply_client( struct rocketnet_server_acks_t * acks, 
         return;
     }
 
-    // proofs/tla/RNAckPhase.tla Apply: the client's blocks in arrival order,
+    // proofs/tla/RNAckPhase.tla AckStep: the client's blocks in arrival order,
     // into its own segment and counts; the segment holds every id a client
     // can surface in an update, so nothing defers
 

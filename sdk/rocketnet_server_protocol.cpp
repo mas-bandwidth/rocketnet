@@ -1202,7 +1202,9 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     counters[ROCKETNET_COUNTER_CLIENT_CONNECTED]++;
 
     // the first keep-alive: how the client learns its index and transitions
-    // to connected
+    // to connected. The receive loop's one session send: the slot was
+    // assigned in this update, so nothing of its client is deferred yet
+    // (proofs/tla/RNAckPhase.tla FirstKeepAlive)
 
     int keep_alive_bytes = rocketnet_server_write_keep_alive( server, client_index, current_time, response_packet );
     if ( keep_alive_bytes == 0 )
@@ -1586,9 +1588,10 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         const uint64_t connection_id = rocketnet_server_protocol_connection_id( server, client_index );
 
         // the block is deferred to the client's ack call (proofs/tla/RNAckPhase.tla
-        // Defer); with no room left the update spills: every deferred block is
-        // applied and gathered here, and this one and the rest of the update's
-        // are applied as they come
+        // Defer); with no room left the update spills (RNAckPhase.tla
+        // Spill): every deferred block is applied and gathered here, and this
+        // one and the rest of the update's are applied as they come
+        // (RNAckPhase.tla Inline)
 
         if ( !rocketnet_server_acks_defer( server->acks, client_index, &block, connection_id ) )
         {

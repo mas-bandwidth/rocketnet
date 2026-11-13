@@ -985,7 +985,7 @@ bool rn_message_object_update_acks( struct rn_message_object_t * object, int cli
         return false;
     }
 
-    // proofs/tla/RNAckPhase.tla TakeAcks: the drain's admit, made now, is the
+    // proofs/tla/RNAckPhase.tla AckEnd: the drain's admit, made now, is the
     // one the back would make only when nothing between here and its Observe
     // can change the slot: the transport still holds the connection the ids
     // were received for, with no internal error (settled), and the slot is
@@ -1199,7 +1199,7 @@ static void rn_message_object_update_back( struct rn_message_object_t * object, 
                 continue;
             }
 
-            // proofs/tla/RNAckPhase.tla TakenSettled: an ack call handed this
+            // proofs/tla/RNAckPhase.tla AckEnd (settled): an ack call handed this
             // slot its ids only for a connection Observe keeps
             rocketnet_assert( !object->hot_connections[i].acks_taken && "an ack call took the ids of a slot Observe changed" );
 
@@ -1295,7 +1295,7 @@ static void rn_message_object_update_back( struct rn_message_object_t * object, 
             }
             else if ( object->hot_connections[index].acks_taken )
             {
-                // proofs/tla/RNAckPhase.tla TakeAcks: the slot's ack call
+                // proofs/tla/RNAckPhase.tla Drain: the slot's ack call
                 // admitted and applied every one of its ids of this update
                 k = end;
                 continue;
