@@ -898,7 +898,8 @@ static void wide_fill_start_here_close_there( bool finish )
         check( rn_message_open_count( object ) == 1 );
 
         uint32_t serial = 0;
-        std::thread other( [&]() {
+        std::thread other( [&]()
+                           {
             if ( finish )
             {
                 serial = rocketnet_server_finish_message( world.server, 8 );
@@ -906,8 +907,7 @@ static void wide_fill_start_here_close_there( bool finish )
             else
             {
                 rocketnet_server_abort_message( world.server );
-            }
-        } );
+            } } );
         other.join();
 
         check( rn_message_open_count( object ) == 0 );
