@@ -42,9 +42,11 @@ and bumps the major version.
 4. **Smaller is read as a prefix, with defaults after it.** A caller compiled
    against an older header passes a smaller `config_bytes`: the library reads
    the caller's fields as it set them and takes the defaults for every field
-   past them. A smaller size must end where one of the struct's fields ends,
-   as an older struct does; a size that ends inside a field is refused with
-   `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
+   past them. A smaller size must be one an older struct can have: where one
+   of the struct's fields ends, or an earlier revision's `sizeof` (its last
+   field's end rounded up to its alignment, trailing padding included, which
+   can fall between two fields); any other size, such as one that ends inside
+   a field, is refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
 5. **The library never reads or writes past `config_bytes`.** Every byte the
    library reads from or writes to the caller's struct is below the caller's
    `config_bytes`. A `NULL` config, where a call accepts one, means the
@@ -106,11 +108,16 @@ key through `rocketnet_server_public_key`; destroy wipes the server's secret
 copy. The caller wipes its supplied copy after create. See [Keys](KEYS.md).
 
 The internal transport and message configs keep oldest-first known-size lists
-in the internal layer header, checked in `sdk/rocketnet_abi.cpp`; the public
-configs need no such list: rule 3 reads a larger size only as far as the
-library knows, and rule 4 accepts a smaller size only when it ends where one of
-the struct's fields ends. A size below the struct that ends inside a field is
-refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
+in the internal layer header, checked in `sdk/rocketnet_abi.cpp`. The public
+configs keep a list too, in `sdk/rocketnet_api.cpp`
+(`rn_client_config_field_ends`, `rn_server_config_field_ends`,
+`rn_connect_token_config_field_ends`): every field end, plus each recorded
+revision `sizeof` that is not one (`ROCKETNET_CLIENT_CONFIG_BYTES_n` and
+`ROCKETNET_SERVER_CONFIG_BYTES_n` in `sdk/rocketnet_layers.h`, which lie in a
+revision's trailing padding). Rule 3 reads a larger size only as far as the
+library knows, and rule 4 accepts a smaller size only when it is on that list.
+Any other size below the struct is refused with
+`ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
 
 ## 4. The Other Public Structs
 
