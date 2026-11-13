@@ -1478,6 +1478,10 @@ struct harden_stage_t
 
 #define HARDEN_SPACE_RING 2 // the frame ring of plans (space's snapshots: frame % 128, SnapshotManager.h)
 
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 ) // the cache-line aligned counters pad their struct: the padding is the point
+#endif // #if defined( _MSC_VER )
 struct harden_space_t
 {
     ThreadPool pool;
@@ -1512,6 +1516,9 @@ struct harden_space_t
     double task_update_seconds = 0, task_send_seconds = 0; // --space-net task: the task's send_packets and update
     double task_sent_at = 0;                               // --space-net task: when the task's send_packets began
 };
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
 
 // the per-client part of the server update, over a range of client slots:
 // a plain range call any job system can make (rocketnet_server_update_client)
