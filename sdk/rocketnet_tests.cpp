@@ -7673,10 +7673,11 @@ void rocketnet_test_server_disconnect_client()
         rocketnet_check( !rocketnet_client_protocol_process_packet( &client, burst + (size_t) i * (size_t) ROCKETNET_SEND_BUDGET, burst_bytes, 200.0, payload, sizeof( payload ), &payload_bytes ) );
         rocketnet_check( payload_bytes == 0 );
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-        rocketnet_counters_expect( &copy_before, &client_counters,
-                                   { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
-                                     { ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED, 1 },
-                                     { ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_STATE, 1 } } );
+        rocketnet_check( rocketnet_counters_expect_core( &copy_before, &client_counters,
+                                                         { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
+                                                           { ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED, 1 },
+                                                           { ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_STATE, 1 } },
+                                                         NULL, 0 ) );
     }
 
     // a second disconnect of the same index does nothing, loudly countable
@@ -14798,7 +14799,7 @@ static void rocketnet_test_reply_opens_a_later_update_on( const rocketnet_client
         rocketnet_client_transport_update( client, time );
     }
     rocketnet_check( rocketnet_client_transport_stopped( client ) );
-    rocketnet_counters_assert_conserved( rocketnet_client_transport_counters( client ) );
+    rocketnet_check( rocketnet_counters_conserved( rocketnet_client_transport_counters( client ), NULL, 0 ) == 1 );
     rocketnet_client_transport_destroy( client );
 
     rocketnet_free( NULL, remote );
@@ -14915,7 +14916,7 @@ void rocketnet_test_client_index_range_checked()
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     rocketnet_test_server_teardown( &test );
-    rocketnet_counters_assert_conserved( &client_counters );
+    rocketnet_check( rocketnet_counters_conserved( &client_counters, NULL, 0 ) == 1 );
 
     // the adopting state: the client has sent its connection response and
     // the server has established the session, but no keep-alive has reached
@@ -14932,8 +14933,9 @@ void rocketnet_test_client_index_range_checked()
     int payload_client_index = -1;
     double time = 100.0;
 
-    for ( ; time < 105.0 && rocketnet_test_established_mapping( &test ) == NULL; time += 0.01 )
+    for ( int step = 0; step < 500 && rocketnet_test_established_mapping( &test ) == NULL; step++ )
     {
+        time = 100.0 + 0.01 * (double) step;
         int packet_bytes = 0;
         rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
         if ( packet_bytes <= 0 )
