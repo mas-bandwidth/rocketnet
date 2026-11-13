@@ -813,7 +813,7 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
          o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->fill_jobs < 0 || o->fill_jobs > HARDEN_MAX_FILL_JOBS || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES || o->input_bytes < HARDEN_HEADER_BYTES || o->input_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 64 ||
          o->big_every < 0 || o->big_bytes < HARDEN_HEADER_BYTES || ( o->payload_copy && o->big_bytes > HARDEN_COPY_BODY_BYTES ) || o->sample_seconds < 1 || o->quiet_seconds < 0.1 || o->token_timeout < 1 ||
          o->pps < 0.0 || o->sockets < 1 || o->sockets > 4096 || o->warm_seconds < 0 || o->game_threads < 0 || o->game_threads > HARDEN_MAX_THREADS ||
-         ( o->space_shape && ( o->game_threads < 2 || o->fill_jobs > 0 ) ) || o->world_ms < 0.0 || o->game_load < 0.0 || o->game_load > 1.0 )
+         ( o->space_shape && ( o->game_threads < 2 || o->fill_jobs > 0 || ( o->space_send_wide && o->big_every > 0 ) ) ) || o->world_ms < 0.0 || o->game_load < 0.0 || o->game_load > 1.0 )
     {
         fprintf( stderr, "harden_load: an option is out of range\n" );
         return false;
@@ -1491,6 +1491,7 @@ struct harden_space_t
     // written by the task, read by the main thread after the join
     double task_began = 0, task_ended = 0, commit_seconds = 0;
     uint64_t messages = 0, refused = 0;
+    uint64_t tick = 0; // the frame the task writes, for the reliable trickle each job writes with its own players
     struct alignas( 64 ) busy_t
     {
         double seconds = 0;
@@ -1576,6 +1577,24 @@ static void harden_space_write_players( platform_task_args_t * args )
         {
             const harden_fill_item_t & item = plan[(size_t) k];
             harden_server_slot_t & slot = ( *space->slots )[(size_t) item.slot];
+            if ( o.reliable_every > 0 && space->tick % (uint64_t) o.reliable_every == 0 )
+            {
+                // the reliable trickle: written here, by the thread that owns this player this frame, because the
+                // library's fill phase gives a player to one thread (main writing it first refuses the jobs' writes)
+                uint8_t * r = rocketnet_server_start_message( space->server, (uint64_t) item.slot, HARDEN_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.reliable_bytes );
+                if ( r )
+                {
+                    harden_write_message( r, o.reliable_bytes, HARDEN_KIND_RELIABLE, item.client_id, item.connection, slot.next[HARDEN_KIND_RELIABLE]++ );
+                    if ( rocketnet_server_finish_client_message( space->server, item.slot, o.reliable_bytes ) != 0 )
+                    {
+                        messages++;
+                    }
+                }
+                else
+                {
+                    refused++;
+                }
+            }
             for ( int n = 0; n < item.count; n++ )
             {
                 const uint32_t sequence = slot.next[HARDEN_KIND_BURST];
@@ -2582,7 +2601,10 @@ static int harden_server_main( const harden_options_t & o )
                     }
                     frame_plan.push_back( harden_fill_item_t{ i, client_count( bursting_seen, connected_count ), id, connection } );
                     bursting_seen++;
-                    write_reliable_and_big( i, id, connection, slot );
+                    if ( !o.space_send_wide )
+                    {
+                        write_reliable_and_big( i, id, connection, slot );
+                    }
                 }
             }
             const double t_reliable = harden_now();
@@ -2606,6 +2628,7 @@ static int harden_server_main( const harden_options_t & o )
             if ( !frame_plan.empty() || o.space_net_in_task )
             {
                 space.plan = &frame_plan;
+                space.tick = tick;
                 last_plan_time = harden_now();
                 space.task = space.pool.AddTask( harden_space_task, &space );
             }
