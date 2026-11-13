@@ -1096,7 +1096,7 @@ static enum rocketnet_status_t rn_client_config_read( rocketnet_client_config_t 
 // build (rocketnet_loopback_hub_check). Any other list never reads the hub:
 // loopback in a longer list is skipped at the parse.
 
-static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, const struct rocketnet_transport_ladder_t & ladder, const struct rocketnet_loopback_hub_t * hub )
+static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, const struct rocketnet_transport_order_t & ladder, const struct rocketnet_loopback_hub_t * hub )
 {
     for ( int i = 0; i < ladder.num_candidates; i++ )
     {
@@ -1146,8 +1146,8 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
 
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
-    struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder, false ) )
+    struct rocketnet_transport_order_t ladder;
+    if ( !rocketnet_transport_order_parse( transport->transport, available, num_available, &ladder, false ) )
     {
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
     }
@@ -1189,7 +1189,7 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
 
     uint64_t total = rn_client_header_bytes + connection_bytes;
     if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) ||
-         !rocketnet_memory_add( total, 1, rocketnet_client_transport_ladder_allocator_bytes( &transport ) ) ||
+         !rocketnet_memory_add( total, 1, rocketnet_client_transport_order_allocator_bytes( &transport ) ) ||
          !rocketnet_memory_add( total, 1, rn_required_memory_slack_bytes ) )
     {
         return 0;
@@ -2548,8 +2548,8 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
 
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
-    struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder ) )
+    struct rocketnet_transport_order_t ladder;
+    if ( !rocketnet_transport_order_parse( transport->transport, available, num_available, &ladder ) )
     {
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
     }
@@ -2588,7 +2588,7 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
     // retires it and the next start frees it before it creates the next, so
     // a restart takes the same bytes again; then the slack
 
-    const uint64_t transport_bytes = rocketnet_server_transport_ladder_allocator_bytes( &transport );
+    const uint64_t transport_bytes = rocketnet_server_transport_order_allocator_bytes( &transport );
 
     sodium_memzero( &transport, sizeof( transport ) );
 

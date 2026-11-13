@@ -16,7 +16,7 @@ archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. The major version names SDK calling/layout
 compatibility, separately from the wire version; see [ABI compatibility](BUILDING.md#abi-compatibility).
 
-Deploying a server on Linux: [docs/LINUX.md](LINUX.md) covers the build, the production `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Both builds offer portable as the final Linux fallback.
+Deploying a server on Linux: [docs/LINUX.md](LINUX.md) covers the build, the production `xdp -> gso -> io_uring -> portable` transport list and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Both builds offer portable as the final Linux fallback.
 
 RocketNet requires CMake 3.20 or later. The Windows instructions below use
 Visual Studio 18, whose generator requires CMake 4.2 or later. Recorded Linux

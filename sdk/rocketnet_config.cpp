@@ -985,7 +985,7 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 }
 
 // ----------------------------------------------------------------
-//                        the transport ladder
+//                        the transport list
 // ----------------------------------------------------------------
 
 static int rocketnet_transport_id_from_name( const char * name, int name_length )
@@ -1001,14 +1001,14 @@ static int rocketnet_transport_id_from_name( const char * name, int name_length 
     return -1;
 }
 
-bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server )
+bool rocketnet_transport_order_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_order_t * ladder, bool server )
 {
     rocketnet_assert( available );
     rocketnet_assert( num_available > 0 );
     rocketnet_assert( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
     rocketnet_assert( ladder );
 
-    memset( ladder, 0, sizeof( struct rocketnet_transport_ladder_t ) );
+    memset( ladder, 0, sizeof( struct rocketnet_transport_order_t ) );
 
     // auto -- explicitly, or as the zero value -- expands to the
     // platform's recommended order for this endpoint

@@ -370,7 +370,7 @@ static void test_client_transport_refuses_when_connect_fails()
     int status = ROCKETNET_STATUS_OK;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_internal( &clock, token, &config, clock.now, &operations, fake, &status );
     check( transport == NULL );
-    check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+    check( status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
     check( fake->connect_calls >= 1 );
     check( fake->destroy_calls == fake->connect_calls );
     check( fake->num_sent == 0 );

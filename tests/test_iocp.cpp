@@ -3025,7 +3025,7 @@ static void test_rio_create_failure_drains_posted_receives()
     }
 
     // a bind refused for want of buffers (stage 8, WSAENOBUFS) reads
-    // OUT_OF_MEMORY, which ends the transport ladder, and frees everything
+    // OUT_OF_MEMORY, which ends the transport list, and frees everything
 
     {
         rocketnet_address_t bind = address( "127.0.0.1:0" );
@@ -3043,7 +3043,7 @@ static void test_rio_create_failure_drains_posted_receives()
 // thread create returns NULL with OUT_OF_MEMORY for each memory and commit
 // error and leaves the status untouched for any other (its callers then report
 // THREAD_CREATE_FAILED), with nothing live. A transport create refused so
-// returns NULL with OUT_OF_MEMORY, which ends the transport ladder, and frees
+// returns NULL with OUT_OF_MEMORY, which ends the transport list, and frees
 // everything it made: iocp is refused at its send worker, before any receive
 // is posted; rio at its worker, after every receive is posted, so its inline
 // drain runs first.

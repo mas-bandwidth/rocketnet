@@ -98,7 +98,7 @@ The executables this guide runs: `./bin/test` (the unit suite, no sockets,
 `TRANSPORTS.md`), `./bin/test_lifecycle`, `./bin/transport_memory`
 (`BUILDING.md`) and `./bin/test_xdp_filter` (`TRANSPORTS.md`).
 
-## 2. The transport ladder
+## 2. The transport list
 
 `sdk/rocketnet_drivers.inc` is the registry. Each row carries a name, a
 platform mask and a server and client preference rank; a lower nonzero rank
@@ -139,12 +139,12 @@ exceeds it (`sdk/rocketnet_server_transport.cpp`).
 **How to read what was granted.** `rocketnet_server_transport_name` and
 `rocketnet_client_transport_name` return the transport that won
 (`sdk/rocketnet.h`). At INFO level the server logs
-`server transport ladder granted <name> after refusals: <list>` when an
+`server transport <name> granted after refusals: <list>` when an
 earlier candidate refused (`sdk/rocketnet_server_transport.cpp`) and
 `server transport started on <address> [<name>] (<development|production> keys)`
 (`sdk/rocketnet_server_transport.cpp`). A list with no grant ends in
 the error
-`server transport ladder exhausted with no grant. refused: <list>. skipped for platform: <list>`
+`server transport: no transport found. refused: <list>. skipped for platform: <list>`
 (`sdk/rocketnet_server_transport.cpp`).
 
 ## 3. Pinning by environment
@@ -228,7 +228,7 @@ that cannot segment) it logs
 `gso transport: live GSO send refused (...). <n> refusals from destinations not yet remembered and none accepted, degrading to plain sendmmsg`,
 turns segmentation off for the life of the transport, and resends from the
 refused run plain (`sdk/rocketnet_server_gso_linux.cpp`, `sdk/rocketnet_server_gso.h`).
-The degradation is inside the transport, below the ladder (`BUILDING.md`).
+The degradation is inside the transport, below the transport list (`BUILDING.md`).
 
 ## 5. io_uring
 
@@ -273,7 +273,7 @@ stay in the completion queue for a later call and are counted
   provided buffer ring. `rocketnet_server_uring_available()` probes this once
   (`sdk/rocketnet_server_uring_linux.cpp`); on no, create logs
   `io_uring transport refused: this kernel does not accept the io_uring ring, opcodes or provided buffer ring the transport needs`
-  and the ladder falls (`sdk/rocketnet_server_uring_linux.cpp`).
+  and the next transport is tried (`sdk/rocketnet_server_uring_linux.cpp`).
   Multishot receive must be in the liburing headers the build used
   (`sdk/rocketnet_server_uring_linux.cpp`), and the running kernel must
   accept a multishot `RECVMSG` (Linux 6.0 or later). The create probe does
@@ -836,7 +836,7 @@ What each transport needs, from the requirements above:
 - **io_uring**: kernel policy that permits the process to create rings
   (section 5), and a seccomp profile that allows the `io_uring_setup`, `io_uring_enter` and `io_uring_register`
   calls liburing makes. A refusing profile makes the probe fail and the
-  ladder falls (section 5). Pin it, since `auto` grants `gso` first.
+  the next transport is tried (section 5). Pin it, since `auto` grants `gso` first.
 - **xdp**: euid 0 in the container (R1), the kernel's grant of an AF_XDP
   socket and a BPF program load (K1), permission to raise `RLIMIT_MEMLOCK`
   to unlimited (section 8), the NIC itself in the container's network
@@ -874,7 +874,7 @@ bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 gso 0'
 bash -c 'ulimit -n 64 && ./bin/transport_memory 1000 1416 io_uring 4'
 ```
 
-`./bin/functional` with no pin runs over the `auto` ladder, which on an
+`./bin/functional` with no pin runs over the `auto` transport order, which on an
 unprivileged host is `gso` (`.github/workflows/ci.yml`).
 Then the section 3 matrix loop, the section 6 no-root checks and `vng` lines,
 and the section 7 ICMP check.

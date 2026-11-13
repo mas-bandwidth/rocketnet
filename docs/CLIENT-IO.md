@@ -109,7 +109,7 @@ The client's `auto` order is the native client first and `portable` last:
 `gso` then `portable` on Linux, `msgx` then `portable` on macOS, and `iocp`
 then `portable` on Windows.
 `portable` is the fallback everywhere: a native client whose create refuses
-is logged once and the ladder opens `portable` (TRANSPORTS.md, "Client
+is logged once and the transport order opens `portable` (TRANSPORTS.md, "Client
 transports").
 
 Receive authentication, replay checks, packet opening and message admission

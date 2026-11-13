@@ -2,7 +2,7 @@
 
 Verdict: HOLD. On 2026-10-24 the XDP bench NIC refused the zero-copy bind. On
 2026-11-11, on kernel 7.0, the same NIC bound zero copy (see the update at the
-end), but the load_split ladder has still not been made, so zero-copy operation
+end), but the load_split series has still not been made, so zero-copy operation
 is not qualified.
 
 ## Run
@@ -91,7 +91,7 @@ Create log (sdk/rocketnet_server_socket_linux.cpp:1760 and :1898-1903):
 | XDP bench negotiated mode | copy mode on all queues |
 | production game server machine (out-of-tree i40e) | not tried: held for the game server |
 | load_split plan-server / plan-client-shard | not made |
-| load_split ladder 10/100/250/500/1000, zero copy | not made: no zero-copy server |
+| load_split series 10/100/250/500/1000, zero copy | not made: no zero-copy server |
 
 ## Decision owed (coordinator)
 
@@ -123,6 +123,6 @@ zero-copy performance result.
 - Timing: the merger's timing verdict failed (server update p99 13.5 ms); this
   cell is not the timing qualification.
 
-Still not made: the load_split ladder 10/100/250/500/1000 on a dedicated
+Still not made: the load_split series 10/100/250/500/1000 on a dedicated
 cabled port. The bench's only cabled port is its uplink, so zero-copy
 performance stays unqualified.

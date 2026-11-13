@@ -301,7 +301,7 @@ bool rocketnet_platform_receive_status_is_reset( int status );
 // A create that fails at a kernel object (a socket, event, thread, completion
 // port, RIO registration, queue or first receive post) with a Win32 or Winsock
 // error that says the machine is out of memory or commit writes OUT_OF_MEMORY
-// through status (rocketnet_create_status), so the transport ladder ends the
+// through status (rocketnet_create_status), so the transport list ends the
 // create there instead of trying the next transport: ERROR_NOT_ENOUGH_MEMORY
 // (the value of WSA_NOT_ENOUGH_MEMORY), ERROR_OUTOFMEMORY,
 // ERROR_COMMITMENT_LIMIT, ERROR_NO_SYSTEM_RESOURCES and WSAENOBUFS (what

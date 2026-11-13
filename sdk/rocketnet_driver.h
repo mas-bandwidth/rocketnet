@@ -58,7 +58,7 @@ enum rocketnet_server_transport_io_flags_t
 // rocketnet_create_status (sdk/rocketnet_internal.h), which never replaces an
 // OUT_OF_MEMORY already written; the platform socket, wake and thread creates
 // take the status for this. A NULL that leaves it OK is a refusal, and the
-// transport ladder falls to the next candidate; OUT_OF_MEMORY ends the ladder
+// transport list falls to the next candidate; OUT_OF_MEMORY ends the ladder
 // and the create (sdk/rocketnet_server_transport.cpp,
 // sdk/rocketnet_client_transport.cpp).
 struct rocketnet_server_transport_io_config_t
