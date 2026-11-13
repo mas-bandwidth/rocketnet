@@ -9,7 +9,7 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
+#define _WIN32_WINNT 0x0601 // Windows 7: processor groups (GetLogicalProcessorInformationEx, SetThreadGroupAffinity)
 #endif // #ifndef _WIN32_WINNT
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -1956,7 +1956,6 @@ static bool rocketnet_iocp_exclusive_probe( const rocketnet_address_t * bind_add
                  bind( probe, (sockaddr *) &address, address_bytes ) != SOCKET_ERROR;
     if ( !bound )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
         rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         rocketnet_warn( "iocp transport refused: the exclusive probe could not bind port %d (Winsock %d): another socket holds it",
                         bind_address->port, WSAGetLastError() );
@@ -2401,7 +2400,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
             DWORD returned = 0;
             if ( WSAIoctl( socket, SIO_CPU_AFFINITY, &processor, sizeof( processor ), NULL, 0, &returned, NULL, NULL ) == SOCKET_ERROR )
             {
-                rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+                rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
                 rocketnet_error( "iocp transport refused: SIO_CPU_AFFINITY to processor %d was refused (Winsock %d); workers share the port only through it",
                                  iocp->processors[e], WSAGetLastError() );
                 goto failed;
