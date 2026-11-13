@@ -2043,37 +2043,12 @@ sodium_init(void)
 
 #ifdef _WIN32
 
-static CRITICAL_SECTION _sodium_lock;
-static volatile LONG    _sodium_lock_initialized;
-
-int
-_sodium_crit_init(void)
-{
-    LONG status = 0L;
-
-    while ((status = InterlockedCompareExchange(&_sodium_lock_initialized,
-                                                1L, 0L)) == 1L) {
-        Sleep(0);
-    }
-
-    switch (status) {
-    case 0L:
-        InitializeCriticalSection(&_sodium_lock);
-        return InterlockedExchange(&_sodium_lock_initialized, 2L) == 1L ? 0 : -1;
-    case 2L:
-        return 0;
-    default: /* should never be reached */
-        return -1;
-    }
-}
+static SRWLOCK _sodium_lock = SRWLOCK_INIT;
 
 int
 sodium_crit_enter(void)
 {
-    if (_sodium_crit_init() != 0) {
-        return -1; /* LCOV_EXCL_LINE */
-    }
-    EnterCriticalSection(&_sodium_lock);
+    AcquireSRWLockExclusive(&_sodium_lock);
     assert(locked == 0);
     locked = 1;
 
@@ -2090,7 +2065,7 @@ sodium_crit_leave(void)
         return -1;
     }
     locked = 0;
-    LeaveCriticalSection(&_sodium_lock);
+    ReleaseSRWLockExclusive(&_sodium_lock);
 
     return 0;
 }

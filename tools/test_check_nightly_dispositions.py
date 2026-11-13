@@ -690,9 +690,10 @@ class Unmeasured(WatchCase):
                 self.assertTrue(why.strip(), (name, regex))
                 total += 1
         self.assertGreater(total, 0, "no workflow declares ROCKETNET_MAY_NOT_MEASURE")
-        reports = [why for name, _ in watch.scheduled_workflows(root)
-                   for _, why in watch.may_not_measure(root, name, watch.REPORT_ONLY)]
-        self.assertEqual(2, len(reports), "the macOS and Windows frame-budget legs are report-only")
+        reports = sorted(name for name, _ in watch.scheduled_workflows(root)
+                         for _, why in watch.may_not_measure(root, name, watch.REPORT_ONLY))
+        self.assertEqual(["nightly-client-frame-time.yml"] * 2 + ["nightly-frame-budget.yml"] * 2, reports,
+                         "the macOS and Windows legs of the frame-budget and client-frame-time nightlies are report-only")
         self.assertTrue(all(why.strip() for why in reports), reports)
 
 

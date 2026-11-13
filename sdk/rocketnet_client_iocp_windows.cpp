@@ -113,7 +113,12 @@ static void rocketnet_client_iocp_dequeue( rocketnet_client_iocp_t * iocp, doubl
         rocketnet_assert( iocp->state[receive] == ROCKETNET_CLIENT_IOCP_RECEIVE_POSTED );
 
         iocp->num_posted--;
-        if ( completion->ok && completion->packet_bytes > 0 && completion->packet_bytes <= iocp->buffer_bytes )
+
+        // an empty datagram and one past the buffer (the binding reads the
+        // rest into a discard buffer, so the length is true) are records:
+        // the transport's prefilter counts them, TOO_SHORT and TOO_LARGE
+
+        if ( completion->ok && completion->packet_bytes >= 0 )
         {
             iocp->state[receive] = (uint8_t) ROCKETNET_CLIENT_IOCP_RECEIVE_READY;
             iocp->packet_bytes[receive] = completion->packet_bytes;
@@ -125,8 +130,8 @@ static void rocketnet_client_iocp_dequeue( rocketnet_client_iocp_t * iocp, doubl
         }
         else
         {
-            // an error, an abort, an unreadable source or an empty datagram:
-            // nothing to copy, so the buffer goes back to the kernel
+            // an error, an abort or an unreadable source: nothing to copy,
+            // so the buffer goes back to the kernel
             if ( !iocp->closed )
             {
                 iocp->receives_failed++;
@@ -188,7 +193,8 @@ int rocketnet_client_iocp_receive_batch( rocketnet_client_iocp_t * iocp, rocketn
         rocketnet_assert( iocp->state[receive] == ROCKETNET_CLIENT_IOCP_RECEIVE_READY );
 
         const int bytes = iocp->packet_bytes[receive];
-        const int copy = bytes < packet_stride ? bytes : packet_stride;
+        const int held = bytes < iocp->buffer_bytes ? bytes : iocp->buffer_bytes;
+        const int copy = held < packet_stride ? held : packet_stride;
         memcpy( packet_data + (size_t) num_packets * (size_t) packet_stride, iocp->buffers + (size_t) receive * (size_t) iocp->buffer_bytes, (size_t) copy );
 
         from[num_packets] = iocp->from[receive];
@@ -294,7 +300,7 @@ bool rocketnet_client_iocp_close( rocketnet_client_iocp_t * iocp, int max_waits,
 struct rocketnet_client_iocp_receive_t
 {
     OVERLAPPED overlapped;
-    WSABUF buffer;
+    WSABUF buffers[2];
     DWORD flags;
     INT from_bytes;
     sockaddr_storage from;
@@ -311,6 +317,7 @@ struct rocketnet_client_iocp_io_t
     rocketnet_client_iocp_receive_t receives[ROCKETNET_CLIENT_IOCP_RECEIVES];
     OVERLAPPED_ENTRY entries[ROCKETNET_CLIENT_IOCP_RECEIVES + 1];
     uint8_t buffers[ROCKETNET_CLIENT_IOCP_RECEIVES * ROCKETNET_CLIENT_IOCP_RECEIVE_BYTES];
+    uint8_t overflow[ROCKETNET_CLIENT_IOCP_OVERFLOW_BYTES];
 };
 
 static bool rocketnet_client_iocp_address_read( const sockaddr_storage * storage, int bytes, bool dual_stack, rocketnet_address_t * address )
@@ -331,20 +338,27 @@ static bool rocketnet_client_iocp_win32_post_receive( void * context, int receiv
     rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
     rocketnet_client_iocp_receive_t * op = &client->receives[receive];
     memset( &op->overlapped, 0, sizeof( op->overlapped ) );
-    op->buffer.buf = (char *) buffer;
-    op->buffer.len = (ULONG) buffer_bytes;
+    op->buffers[0].buf = (char *) buffer;
+    op->buffers[0].len = (ULONG) buffer_bytes;
+
+    // the rest of a datagram past the buffer lands in the one discard buffer
+    // every receive shares and nothing reads, so the completion's length is
+    // the datagram's true length (as the portable receive does)
+
+    op->buffers[1].buf = (char *) client->overflow;
+    op->buffers[1].len = (ULONG) sizeof( client->overflow );
     op->flags = 0;
     op->from_bytes = (INT) sizeof( op->from );
     op->index = receive;
 
-    const int result = WSARecvFrom( (SOCKET) client->socket->handle, &op->buffer, 1, NULL, &op->flags,
+    const int result = WSARecvFrom( (SOCKET) client->socket->handle, op->buffers, 2, NULL, &op->flags,
                                     (sockaddr *) &op->from, &op->from_bytes, &op->overlapped, NULL );
     if ( result == 0 )
     {
         return true; // completed at once; the completion is still queued on the port
     }
 
-    // pending covers a queued datagram longer than the buffer too: Windows 11 does not fail that post at once with WSAEMSGSIZE, its one completion carries the truncation (tests/test_iocp.cpp test_windows_oversize_receive_at_post)
+    // pending covers a queued datagram longer than the buffer too: Windows 11 does not fail that post at once with WSAEMSGSIZE, its one completion carries the datagram (tests/test_iocp.cpp test_windows_oversize_receive_at_post)
 
     const int error = WSAGetLastError();
     if ( error == WSA_IO_PENDING )
@@ -403,7 +417,7 @@ static int rocketnet_client_iocp_win32_dequeue( void * context, rocketnet_client
         completion->receive = op->index;
         completion->packet_bytes = (int) entry->dwNumberOfBytesTransferred;
 
-        // Internal is the completion's status: zero is success; an ICMP report, a datagram larger than the buffer and closesocket's abort all carry nothing to copy
+        // Internal is the completion's status: zero is success; an ICMP report and closesocket's abort carry nothing to copy. The discard buffer holds any UDP payload, so no datagram truncates.
 
         completion->ok = entry->Internal == 0 &&
                          rocketnet_client_iocp_address_read( &op->from, op->from_bytes, client->ipv6, &completion->from );
@@ -642,5 +656,13 @@ const rocketnet_client_transport_io_operations_t rocketnet_client_iocp_operation
     rocketnet_client_iocp_wake_operation, rocketnet_client_iocp_send_failures, rocketnet_client_iocp_connect,
     rocketnet_client_iocp_close_operation, NULL
 };
+
+// the bytes the iocp client's create allocates for its record, so the client
+// memory plan counts the record itself, never a copy of its layout
+
+uint64_t rocketnet_client_iocp_io_allocation_bytes()
+{
+    return rocketnet_memory_allocations( { sizeof( rocketnet_client_iocp_io_t ) } );
+}
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

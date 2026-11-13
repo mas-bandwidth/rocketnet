@@ -146,6 +146,55 @@ class RunStaticGateTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertEqual(self.baseline.read_text(), "kept\n")
 
+    def test_the_gate_names_what_it_analysed(self):
+        code, out = self.gate("", 0)
+        self.assertEqual(code, 0, out)
+        self.assertIn("analyzing 1 parser translation units: %s" % TU, out)
+
+
+class ParserSelectionTest(unittest.TestCase):
+    """The real parser_files() over a scratch sdk/: a short selection fails."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "sdk").mkdir()
+        for name in run_static.NAMED_PARSER_FILES:
+            (self.root / name).write_text("int named;\n")
+        for index in range(run_static.READ_WRITE_FLOOR):
+            (self.root / "sdk" / ("rocketnet_wire_%d.cpp" % index)).write_text(
+                '#include "%s"\n' % run_static.READ_WRITE_HEADER)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_the_full_selection_passes(self):
+        files = run_static.parser_files(str(self.root))
+        self.assertEqual(len(files), len(run_static.NAMED_PARSER_FILES) + run_static.READ_WRITE_FLOOR)
+
+    def test_a_renamed_header_fails(self):
+        # the review's case: rename the header and only the named files remain
+        for path in (self.root / "sdk").glob("rocketnet_wire_*.cpp"):
+            path.write_text('#include "rocketnet_bytes.h"\n')
+        with self.assertRaises(run_static.IncompleteRun) as raised:
+            run_static.parser_files(str(self.root))
+        self.assertIn("READ_WRITE_FLOOR", str(raised.exception))
+
+    def test_a_named_file_that_moved_fails(self):
+        (self.root / run_static.NAMED_PARSER_FILES[0]).unlink()
+        with self.assertRaises(run_static.IncompleteRun) as raised:
+            run_static.parser_files(str(self.root))
+        self.assertIn(run_static.NAMED_PARSER_FILES[0], str(raised.exception))
+
+    def test_an_empty_sdk_fails(self):
+        for path in (self.root / "sdk").iterdir():
+            path.unlink()
+        with self.assertRaises(run_static.IncompleteRun):
+            run_static.parser_files(str(self.root))
+
+    def test_the_real_tree_meets_both_floors(self):
+        self.assertGreaterEqual(len(run_static.parser_files()), run_static.PARSER_FILE_FLOOR)
+
 
 if __name__ == "__main__":
     unittest.main()

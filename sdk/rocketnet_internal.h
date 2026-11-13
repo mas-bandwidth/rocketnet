@@ -591,6 +591,16 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 #define ROCKETNET_DEFAULT_NUM_CHANNELS         32
 #endif // #if ROCKETNET_MAX_CHANNELS < 32
 
+// the light profile's num_channels: 8, or the build's ROCKETNET_MAX_CHANNELS
+// when that is smaller, so every build's light config is one its create
+// accepts
+
+#if ROCKETNET_MAX_CHANNELS < 8
+#define ROCKETNET_LIGHT_NUM_CHANNELS           ROCKETNET_MAX_CHANNELS
+#else
+#define ROCKETNET_LIGHT_NUM_CHANNELS           8
+#endif // #if ROCKETNET_MAX_CHANNELS < 8
+
 // the largest reliable window W, the maximum of reliable_messages_in_flight
 
 #define ROCKETNET_MESSAGE_WINDOW_MAX           ( 1 << 20 )         // 1048576
@@ -735,5 +745,10 @@ extern void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t *
 // nothing, when sodium cannot initialize.
 bool rocketnet_crypto_acquire( void );
 void rocketnet_crypto_release( void );
+
+// the client plan less the family race: what a one-family create allocates
+// (sdk/rocketnet_client_transport.cpp); 0 where there is no plan
+struct rocketnet_client_transport_config_t;
+uint64_t rocketnet_client_transport_required_memory_one_family( const struct rocketnet_client_transport_config_t * config, const char * transport );
 
 #endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

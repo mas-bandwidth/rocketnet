@@ -31,7 +31,12 @@
 #           judged by the gates in force then; the output names the rest)
 # events    push          the push to main of the commit (per-commit tier)
 #           pull_request  the pull request's head commit (tools/land.py)
-#           nightly       any run whose head is the commit (schedule or dispatch)
+#           nightly       any run whose head is the commit (schedule or dispatch);
+#                         minor-only: from v1.1.8 a point release (vX.Y.Z, Z
+#                         not 0, no pre-release suffix) skips these rows, printed
+#                         as MINOR ONLY; a pre-release or a
+#                         minor or major release (Z = 0) is judged by them
+#                         (owner, 2026-11-13: point releases have fast tests only)
 #           tag           the push of the release tag
 #
 # The run, nightly-tier and tag gates in force from v1.0.0-preview-6 are the
@@ -62,7 +67,7 @@ roadmap.yml | - | jobs-if-ran | v1.1.8 | push,pull_request | path-filtered: judg
 roadmap.yml | roadmap (sexp parses, ids unique) | skip | v1.1.8 | push | if: pull_request
 roadmap.yml | roadmap (regenerate ROADMAP.md on main) | skip | v1.1.8 | pull_request | if: not a pull request, on main
 
-# --- nightly tier: runs whose head is the release commit
+# --- nightly tier: runs whose head is the release commit (minor and major releases only)
 nightly-ci.yml | - | run | v1.0.0-preview-6 | nightly | Nightly CI (ci.yml with full: true) green
 nightly-ci.yml | - | jobs | v1.1.8 | nightly | Nightly CI: every job success (none skipped, none cancelled)
 cbmc.yml | - | run | v1.0.0-preview-6 | nightly | CBMC arithmetic leaf proofs green

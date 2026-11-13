@@ -636,9 +636,9 @@ static void test_arrival_family_accepts_the_matching_ipv4_address()
 
 REGISTER_UNIT_TEST( test_arrival_family_accepts_the_matching_ipv4_address );
 
-// rocketnet_server_address_is_advertised: the IPv4 loopback stands for the
-// server only on an IPv6-wildcard ("[::]") server. A server that names a
-// public IPv4 and a public IPv6 address refuses a token naming 127.0.0.1.
+// rocketnet_server_address_is_advertised: the IPv4 loopback is accepted only
+// by a server that advertises it. A server that names a public IPv4 and a
+// public IPv6 address refuses a token naming 127.0.0.1.
 
 static void test_loopback_transport_named_two_family_server_refuses_a_token()
 {

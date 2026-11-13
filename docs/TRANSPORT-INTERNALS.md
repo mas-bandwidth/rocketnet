@@ -41,8 +41,9 @@ in a build without XDP) is not skipped: its pin refuses at start with
 `auto` inside a list refuses the create.
 
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
-(1000) is pin-only: it stays in the availability list, so an explicit name
-always selects it, but `auto` never chooses it. The loopback transport is the
+(1000) is pin-only: it stays in the availability list, so a list of that one
+name selects it, but `auto` never chooses it, and in a longer list it is
+skipped with one log line (standard/TRANSPORT.md t2.4). The loopback transport is the
 one row pin-only on both endpoints. The pin-only check reads the
 endpoint's own column, so a transport can rank in one endpoint's `auto` order
 and be pin-only on the other. The loopback transport is in-process, carries datagrams through memory with no
@@ -293,7 +294,7 @@ the create log line names each feature as yes or no.
   pending when the next run posts keeps the stride it was posted with. Every
   frame of a run stays owned until that one completion retires the run. A live
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
-  resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+  resends the run frame by frame, counted in `ROCKETNET_COUNTER_IOCP_USO_FALLBACKS`.
   `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
   and by RIO: IOCP runs one completion worker plus one send worker and RIO one
   I/O worker, so a client's datagrams are not reordered by several workers
@@ -494,7 +495,7 @@ hands deferred sends to one of three phases; a phase stays worker-owned until
 its sends complete, and four receive banks cross the same bounded ownership seam.
 Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
-`ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
+`ROCKETNET_COUNTER_RIO_*` counters (public rows, sdk/rocketnet_counters.h) report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
 dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
 three send phases and four receive banks are implemented in
@@ -611,7 +612,7 @@ probes once that the kernel accepts the ring, the opcodes and the provided
 buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30 in development, 50 in production)
 in the Linux `auto` order; it has no client side.
 
-Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,
+Its counters (the public `ROCKETNET_COUNTER_URING_*` rows) are packets sent and received,
 submit syscalls, send drops, receive drops for size, bank overflow and
 unconvertible source, receives ended for want of buffers, multishot
 re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
@@ -712,7 +713,7 @@ main thread makes no call for it. The flush builds
 each reply with the server address of the destination's family as the source,
 and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or
-`AF_INET6` and refuse an IPv6 link-local address (fe80::/10) by name. Each
+`AF_INET6` and refuse a link-local address (169.254.0.0/16, fe80::/10) by name. Each
 family's gateway MAC comes from that family's default route and neighbour
 table, read at create through rtnetlink (`sdk/rocketnet_gateway_netlink.h`: an
 `RTM_GETROUTE` dump for the default route's gateway on the interface, then an
@@ -776,7 +777,10 @@ replay window (`ROCKETNET_HISTORY_PACKETS`, 4096 by default) or more behind
 the high-water the userspace window sets, and never writes the map. The
 kernel window is the userspace window, so a reordered packet that every other
 transport accepts is accepted on XDP too. The transport marks each connected
-client after every update.
+client after every update. A forget or mark the commit cannot apply is kept,
+applied again at the next commit, and counted as `XDP_REPLAY_COMMIT_FAILED`; a
+keep-alive held because its session's first mark is not yet applied is counted
+as `XDP_REPLAY_GREETING_HELD`.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which

@@ -1077,7 +1077,7 @@ enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet
     // minimums; it never clamps. These assignments stay inside those ranges.
 
     RN_LIGHT_SET( send_kbps, 256 );                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
-    RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    RN_LIGHT_SET( num_channels, ROCKETNET_LIGHT_NUM_CHANNELS );                  // one channel per reliability mode (fewer in a build of fewer); one 10 Hz update uses one mode
     RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
     RN_LIGHT_SET( receive_message_buffer_bytes, 142400 );                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
     RN_LIGHT_SET( max_message_bytes, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
@@ -1122,9 +1122,9 @@ static enum rocketnet_status_t rn_client_config_read( rocketnet_client_config_t 
     return ROCKETNET_STATUS_OK;
 }
 
-// A list naming loopback needs a hub this library can use: present, and made
-// by this build (rocketnet_loopback_hub_check). A list that does not name
-// loopback never reads the hub.
+// A loopback pin needs a hub this library can use: present, and made by this
+// build (rocketnet_loopback_hub_check). Any other list never reads the hub:
+// loopback in a longer list is skipped at the parse.
 
 static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, const struct rocketnet_transport_ladder_t & ladder, const struct rocketnet_loopback_hub_t * hub )
 {
@@ -1138,7 +1138,7 @@ static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, con
         const enum rocketnet_status_t status = rocketnet_loopback_hub_check( hub );
         if ( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING )
         {
-            rocketnet_error( "%s create refused: the transport list names loopback and loopback_hub is NULL; create a hub with rocketnet_loopback_hub_create and set loopback_hub", endpoint );
+            rocketnet_error( "%s create refused: the transport is loopback and loopback_hub is NULL; create a hub with rocketnet_loopback_hub_create and set loopback_hub", endpoint );
         }
         else if ( status != ROCKETNET_STATUS_OK )
         {
@@ -2508,7 +2508,7 @@ enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet
     // minimums; it never clamps. These assignments stay inside those ranges.
 
     RN_LIGHT_SET( per_client_send_kbps, 256 );                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
-    RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    RN_LIGHT_SET( num_channels, ROCKETNET_LIGHT_NUM_CHANNELS );                  // one channel per reliability mode (fewer in a build of fewer); one 10 Hz update uses one mode
     RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
     RN_LIGHT_SET( receive_message_buffer_bytes, 142400 );                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
     RN_LIGHT_SET( max_message_bytes, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these

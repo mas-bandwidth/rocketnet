@@ -422,7 +422,7 @@ static int g_mc_reliable_timeout_ms = 0;
 static void mc_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
-    config->num_channels = 4;
+    config->num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     config->reliable_messages_in_flight = 64;
     config->receive_message_buffer_bytes = 65536;
     config->max_message_bytes = 16384;
@@ -714,7 +714,7 @@ static void test_message_config_mismatch_ends_both_connections()
     rocketnet_message_config_t client_config;
     mc_config( &server_config );
     mc_config( &client_config );
-    client_config.num_channels = 3;
+    client_config.num_channels = server_config.num_channels - 1; // 3 against 4; 1 against 2 in a two-channel build
 
     mc_pair_t pair;
     memset( &pair, 0, sizeof( pair ) );
@@ -751,11 +751,16 @@ static void test_message_config_mismatch_ends_both_connections()
 
     check( g_mc_mismatch_lines == 2 );
 
+    char server_value[16];
+    char client_value[16];
+    snprintf( server_value, sizeof( server_value ), " %d", server_config.num_channels );
+    snprintf( client_value, sizeof( client_value ), " %d", client_config.num_channels );
+
     for ( int i = 0; i < 2 && i < g_mc_mismatch_lines; i++ )
     {
         check( strstr( g_mc_mismatch_line[i], "num_channels" ) != NULL );
-        check( strstr( g_mc_mismatch_line[i], " 4 " ) != NULL || strstr( g_mc_mismatch_line[i], " 4" ) != NULL );
-        check( strstr( g_mc_mismatch_line[i], " 3 " ) != NULL || strstr( g_mc_mismatch_line[i], " 3" ) != NULL );
+        check( strstr( g_mc_mismatch_line[i], server_value ) != NULL );
+        check( strstr( g_mc_mismatch_line[i], client_value ) != NULL );
     }
 
     mc_pair_teardown( &pair );
@@ -1048,8 +1053,9 @@ static void test_config_vector_is_library_default()
     record.bytes = ROCKETNET_MESSAGE_CONFIG_BYTES;
     record.control = 1;
 
-    static const uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
-                                        0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+                           0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    expected[10] = (uint8_t) ROCKETNET_DEFAULT_NUM_CHANNELS; // num_channels: 32, or the build's ROCKETNET_MAX_CHANNELS when lower
     uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     struct rocketnet_message_writer_t writer;
     rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
@@ -1228,7 +1234,7 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
 
 // The store's large class only has to hold one chunk: a message larger than a
 // large chunk takes a span of the send spans, never the store
-// (sdk/rocketnet_allocator.h:313-315, sdk/rocketnet_allocator.cpp:1121-1124).
+// (sdk/rocketnet_allocator.h (RN_SPAN_MIN_BYTES), sdk/rocketnet_allocator.cpp (rn_region_send_take)).
 // An obsolete pre-span floor demanded one large chunk per fragment of
 // max_message_bytes, so it refused the default settings with a 1 MiB send
 // store even though the span path carries the maximal message.
@@ -1256,7 +1262,7 @@ static void test_message_config_send_store_one_mib_accepted()
 // The smallest send store the table accepts (12288 bytes) with the default
 // 1 MiB max_message_bytes carries every size, each way: a message of 1152
 // bytes takes a store chunk, 1153 and the maximal message take a span
-// (sdk/rocketnet_allocator.h:313-315). Validation alone accepted this config
+// (sdk/rocketnet_allocator.h (RN_SPAN_MIN_BYTES)). Validation alone accepted this config
 // once the pre-span floor went; here the bytes cross the pair and arrive
 // equal to the bytes sent.
 
@@ -1321,13 +1327,16 @@ static void test_message_config_minimal_send_store_carries_maximal_message()
 
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
+UNIT_TEST_SKIPPED_UNLESS( test_message_config_mismatch_ends_both_connections, ROCKETNET_MAX_CHANNELS >= 2 ); // two channel counts that differ
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
+UNIT_TEST_SKIPPED_UNLESS( test_message_config_equal_connects_and_verifies, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_message_config_first_loss_still_verifies );
 REGISTER_UNIT_TEST( test_message_config_never_received_is_reliable_timeout );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_config_vector_is_library_default );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_sent_map_holds_a_window_burst );
+UNIT_TEST_SKIPPED_UNLESS( test_message_config_sent_map_holds_a_window_burst, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );
@@ -1335,6 +1344,7 @@ REGISTER_UNIT_TEST( test_message_config_reserve_past_32_bits_refused_by_validate
 REGISTER_UNIT_TEST( test_message_config_send_store_one_mib_accepted );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_minimal_send_store_carries_maximal_message );
+UNIT_TEST_SKIPPED_UNLESS( test_message_config_minimal_send_store_carries_maximal_message, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 #endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
@@ -1361,4 +1371,5 @@ static void test_message_config_cases_opted_in()
 }
 
 REGISTER_UNIT_TEST( test_message_config_cases_opted_in );
+UNIT_TEST_SKIPPED_UNLESS( test_message_config_cases_opted_in, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 #endif // #if ROCKETNET_DEV

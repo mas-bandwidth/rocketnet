@@ -325,6 +325,8 @@ struct rocketnet_server_transport_t
     rocketnet_platform_mutex_t link_simulator_mutex;
 #if ROCKETNET_DEV
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
+    int link_setting_busy_for_test; // the next setting takes that meet the lock held
+    uint64_t link_lock_misses;      // link sends dropped because the simulator's lock was busy
 #endif // #if ROCKETNET_DEV
 
     // The disconnect bursts waiting to leave (proofs/tla/ServerSession.tla
@@ -964,8 +966,8 @@ static uint64_t rocketnet_server_transport_load_u64( const uint64_t * value )
 // only after their frame has left the room, so they are read before the
 // room: a frame staged between the reads is then counted nowhere, never
 // twice. Read again after the room and started over if either moved, so no
-// frame staged in between is lost to the fill either (RNSendReserve Read1,
-// Read2, Read3; witnesses RoomFirst and NoReread). Each start over follows a
+// frame staged in between is lost to the fill either (proofs/tla/RNSendReserve.tla
+// Read1, Read2, Read3; witnesses RoomFirst and NoReread). Each start over follows a
 // frame some other filler staged, so the loop ends.
 static uint64_t rocketnet_server_transport_queue_budget_now( const struct rocketnet_server_transport_t * server_transport, int queue )
 {
@@ -1052,9 +1054,12 @@ static uint64_t rocketnet_server_transport_refresh_fill_budget( struct rocketnet
     return rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] );
 }
 
-// proofs/tla/RNSendReserve.tla OwnClaim, Claim, Check, Read1-3: a client's
-// first frame this phase takes its own reserved frame when it has one;
-// otherwise one atomic add on the queue's claims, granted below the budget.
+// proofs/tla/RNSendReserve.tla OwnClaim, Size, Claim, Check, Read1, Read2,
+// Read3: a client's first frame this phase takes its own reserved frame when
+// it has one; otherwise one atomic add on the queue's claims, granted below
+// the budget. The code's chunk is one frame, so Size always sizes one, and
+// the claim is that one add: ClaimStore, the separate store after the load,
+// is the SplitClaim witness's step and never the code's.
 // At or past it the budget is raised to what the queue's state allows now,
 // and the claims outstanding, this one among them, are tested against it:
 // not this claim's index, which a refused claim ahead of it has raised
@@ -1091,16 +1096,19 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
     return -1;
 }
 
-// RNSendReserve Count and OwnCount: a granted frame the transport staged has
-// left its queue's room, and only now is it counted. An own frame counted
-// before it left the room would lower the reserve the budget keeps back
-// while the room still held it (witness OwnCountFirst).
+// proofs/tla/RNSendReserve.tla Stage, OwnIo, Count, OwnCount, Continue and
+// End: a granted frame the transport staged (Stage; OwnIo for an own frame)
+// has left its queue's room, and only now is it counted. An own frame
+// counted before it left the room would lower the reserve the budget keeps
+// back while the room still held it (witness OwnCountFirst). With a chunk of
+// one frame the run's tail is empty once its frame is counted: Continue never
+// takes another and End gives nothing back.
 static void rocketnet_server_transport_fill_started( struct rocketnet_server_transport_t * server_transport, int queue, bool own )
 {
     rocketnet_platform_atomic_add_u64( own ? &server_transport->fill_own_used[queue] : &server_transport->fill_started[queue], 1 );
 }
 
-// RNSendReserve Stage, a queue with no room: the transport refused the
+// proofs/tla/RNSendReserve.tla Stage, a queue with no room: the transport refused the
 // granted frame, so the claim is taken back and the grant goes to the next
 // frame. An own frame refused stays taken: its client's keep-alive is still
 // due and its frame stays in the reserve.
@@ -1245,41 +1253,55 @@ static bool rocketnet_server_link_active( rocketnet_server_transport_t * transpo
     {
         return false;
     }
+#if ROCKETNET_DEV
+    if ( transport->link_setting_busy_for_test > 0 )
+    {
+        // the lock is held across this one take, as another thread holding
+        // it would: a waiting setting stays waiting and the take answers the
+        // setting already in force
+        transport->link_setting_busy_for_test--;
+        rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+        const bool active = rocketnet_network_simulator_take_setting( transport->link_simulator, &transport->link_simulator_mutex );
+        rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+        return active || rocketnet_network_simulator_patterns_active( transport->link_simulator );
+    }
+#endif // #if ROCKETNET_DEV
     return rocketnet_network_simulator_take_setting( transport->link_simulator, &transport->link_simulator_mutex ) ||
            rocketnet_network_simulator_patterns_active( transport->link_simulator );
 }
 
-// Returns true when the datagram went to the platform send or the simulator
-// took it (a simulated loss inside the simulator is still a datagram sent and
-// lost on the wire), and false when the simulator's lock was busy and the
-// datagram was dropped here. A datagram is counted sent only once the link
-// took it, so the callers charge the sent statistics on true alone.
+// Gives the datagram to an active link simulator. The caller read the setting
+// active, once, for this operation, and the send acts on that read: a second
+// read here could apply a setting handed over since and answer inactive, and
+// a staged transport has no send_batch to take the datagram then.
+//
+// Returns true when the simulator took the datagram (a simulated loss inside
+// the simulator is still a datagram sent and lost on the wire), and false when
+// the simulator's lock was busy and the datagram was dropped here. A datagram
+// is counted sent only once the link took it, so the callers charge the sent
+// statistics on true alone.
 static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport,
                                         const rocketnet_address_t * to,
                                         const uint8_t * packet_data, int packet_bytes )
 {
     // Datagram staging is best effort. In particular, a shutdown burst must
     // never wait for a producer that still owns the simulator lock.
-    if ( !rocketnet_server_link_active( transport ) )
-    {
-        rocketnet_platform_send_t send;
-        send.to = to;
-        send.packet_data = packet_data;
-        send.packet_bytes = packet_bytes;
-        transport->io.operations->send_batch( transport->io.instance, &send, 1 );
-        return true;
-    }
+    // Only a development build has a link simulator, so a lock miss happens
+    // only there: the datagram is dropped and counted in the development count
+    // link_lock_misses, not in SEND_RING_FULL, which names a full send ring.
 #if ROCKETNET_DEV
     if ( transport->link_busy_sends_for_test > 0 )
     {
         transport->link_busy_sends_for_test--;
-        rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+        rocketnet_platform_atomic_add_u64( &transport->link_lock_misses, 1 );
         return false;
     }
 #endif // #if ROCKETNET_DEV
     if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
     {
-        rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+#if ROCKETNET_DEV
+        rocketnet_platform_atomic_add_u64( &transport->link_lock_misses, 1 );
+#endif // #if ROCKETNET_DEV
         return false;
     }
 
@@ -1317,11 +1339,27 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
 
 // The unit seam for a lock miss without a second thread: the next `sends`
 // link sends through an active simulator take the lock-miss path, counting
-// SEND_RING_FULL as a real miss does, and never touch the mutex.
+// link_lock_misses as a real miss does, and never touch the mutex.
 void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends )
 {
     rocketnet_assert( server_transport );
     server_transport->link_busy_sends_for_test = sends > 0 ? sends : 0;
+}
+
+// The unit seam for a setting take that meets the lock held without a second
+// thread: the next `takes` reads of the link setting hold the simulator's lock
+// across the take, so a setting handed over stays waiting and the read answers
+// the setting already in force, as a real lock miss does.
+void rocketnet_server_transport_link_setting_busy_for_test( struct rocketnet_server_transport_t * server_transport, int takes )
+{
+    rocketnet_assert( server_transport );
+    server_transport->link_setting_busy_for_test = takes > 0 ? takes : 0;
+}
+
+uint64_t rocketnet_server_transport_link_lock_misses_for_test( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->link_lock_misses;
 }
 
 // The unit seam for a staged transport without a staged socket: exchanges the
@@ -3026,8 +3064,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
         protocol->advertised_ipv6 = public_address;
 
         // a server created at the IPv6 wildcard is dual-stack: it serves
-        // IPv4 as well, so it also advertises its IPv4 wildcard and IPv4
-        // tokens for the loopback are accepted
+        // IPv4 as well, so it also advertises its IPv4 wildcard; a token for
+        // the IPv4 loopback is accepted only when 127.0.0.1 is advertised too
 
         int wildcard = 1;
         for ( int i = 0; i < 8 && wildcard; i++ )
@@ -3877,12 +3915,12 @@ static void rocketnet_server_transport_update_body( struct rocketnet_server_tran
         if ( !frame_data )
         {
             // proofs/tla/RNServerMaintenanceSweep.tla SweepStep: a full staging
-            // ends the sweep with the cursor on this slot. A refusal for want of
-            // a link-layer destination is this address's alone and does not
-            // clear by the next update: it is counted SEND_NO_LINK_ADDRESS, the
-            // slot's keep-alive stays due, and the sweep serves the rest.
+            // ends the sweep with the cursor on this slot. A refusal with room
+            // left (SEND_NO_LINK_ADDRESS, or SEND_FAILED for an address the
+            // transport cannot carry) is this address's alone: its keep-alive
+            // stays due, and the sweep serves the rest, as the drain does.
 
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, client_address ) )
             {
                 break;
             }
@@ -4249,6 +4287,20 @@ void rocketnet_server_transport_abort_packet( rocketnet_server_transport_t * ser
     {
         rocketnet_server_transport_abort_packet_unchecked( server_transport, &trusted, backend_id );
     }
+    else if ( server_transport->packet_leases.retired( *context ) )
+    {
+        // a lease reset by update, send_packets or stop: refused, counted and
+        // logged in every build, never asserted (rocketnet_server.h)
+        rocketnet_api_misuse_record();
+        rocketnet_error( "server abort packet refused: the lease was reset by update, send_packets or stop" );
+    }
+    else
+    {
+        // no start, a second abort, an abort after finish, or a modified or
+        // wrong-owner context
+        rocketnet_assert( false );
+        rocketnet_api_misuse_record();
+    }
     context->frame = NULL;
 }
 
@@ -4353,7 +4405,8 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
         // Return 0, count api_misuses, and log. Do not assert: a debug-only
         // trap compiled out of release is not a refusal the caller can see.
         // The frame is not sealed. Any other miss (no start, a second finish,
-        // a finish after abort, a modified or wrong-owner context) still asserts.
+        // a finish after abort, a modified or wrong-owner context) asserts in
+        // a debug build and is counted in every build.
         if ( server_transport->packet_leases.retired( *context ) )
         {
             rocketnet_api_misuse_record();
@@ -4363,6 +4416,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
         }
 
         rocketnet_assert( false );
+        rocketnet_api_misuse_record();
         context->frame = NULL;
         return 0;
     }
@@ -4993,6 +5047,16 @@ static void rocketnet_server_transport_fold_receive_drops( struct rocketnet_serv
     }
 }
 
+// the xdp replay writer's counts (sdk/rocketnet_driver_builtin.cpp), declared
+// here beside their one reader
+bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                  uint64_t * commit_failed, uint64_t * greetings_held );
+
+// the builtin transports' own counter rows (sdk/rocketnet_driver_builtin.cpp),
+// declared here beside their one reader
+bool rocketnet_server_transport_io_transport_counters( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                       uint64_t * values );
+
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -5045,6 +5109,32 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     if ( rocketnet_server_transport_io_receive_frames_dropped( server_transport->io.operations, server_transport->io.instance, &frames_dropped ) )
     {
         server_transport->counters.values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] = frames_dropped;
+    }
+
+    // the xdp replay writer's counts are its own cumulative counts too,
+    // assigned on read; both are written on this thread
+
+    uint64_t replay_commit_failed = 0;
+    uint64_t replay_greetings_held = 0;
+    if ( rocketnet_server_transport_io_replay_counts( server_transport->io.operations, server_transport->io.instance, &replay_commit_failed,
+                                                      &replay_greetings_held ) )
+    {
+        server_transport->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED] = replay_commit_failed;
+        server_transport->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD] = replay_greetings_held;
+    }
+
+    // the gso, io_uring, iocp and rio transports' own counts are the public
+    // rows GSO_PACKETS_SENT .. RIO_COMMITS, cumulative, assigned on read; a
+    // transport writes its own rows and the rest of the range reads 0, so
+    // every platform has every row
+
+    uint64_t transport_rows[ROCKETNET_NUM_COUNTERS] = {};
+    if ( rocketnet_server_transport_io_transport_counters( server_transport->io.operations, server_transport->io.instance, transport_rows ) )
+    {
+        for ( int i = ROCKETNET_COUNTER_GSO_PACKETS_SENT; i <= ROCKETNET_COUNTER_RIO_COMMITS; ++i )
+        {
+            server_transport->counters.values[i] = transport_rows[i];
+        }
     }
 
     return &server_transport->counters;
@@ -5189,6 +5279,10 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
 
 double rocketnet_server_transport_heard_age( const struct rocketnet_server_transport_t * server_transport, int client_index )
 {
+    if ( !server_transport )
+    {
+        return -1.0;
+    }
     const struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     if ( !protocol->acks || client_index < 0 || client_index >= protocol->acks->max_clients || !rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
     {

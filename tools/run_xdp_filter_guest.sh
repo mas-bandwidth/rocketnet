@@ -3,9 +3,9 @@
 # Licensed under the GNU Affero General Public License v3.0
 #
 # Runs ./bin/test_xdp_filter -v against the built server_xdp.o inside a
-# virtme-ng (vng) guest of the host's matching kernel, requiring all 18
+# virtme-ng (vng) guest of the host's matching kernel, requiring all 19
 # registered BPF_PROG_TEST_RUN and guest-only XDP cases to print "ok" with
-# zero skips and the exact final line "test_xdp_filter: 18 cases passed".
+# zero skips and the exact final line "test_xdp_filter: 19 cases passed".
 #
 #   bash tools/run_xdp_filter_guest.sh [options]
 #
@@ -59,6 +59,7 @@ REQUIRED_CASES=(
     "ipv6_icmpv6_passes"
     "ipv6_same_drops_as_ipv4"
     "config_layout_matches_header"
+    "vlan_server_takes_its_tag"
     "replay_drops_behind_the_window"
     "replay_never_writes_the_map"
     "replay_key_layout_matches_header"
@@ -67,7 +68,7 @@ REQUIRED_CASES=(
     "xsk_bind_falls_back_to_copy"
 )
 EXPECTED_CASE_COUNT=${#REQUIRED_CASES[@]}
-EXPECTED_SUMMARY="test_xdp_filter: 18 cases passed"
+EXPECTED_SUMMARY="test_xdp_filter: 19 cases passed"
 
 usage()
 {
@@ -276,7 +277,7 @@ host_snapshot()
     local label=$1
     echo "=== host_$label ==="
     echo "loadavg: $(cat /proc/loadavg 2>/dev/null || echo unknown)"
-    echo "test_interfaces: $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp)' | tr '\n' ' ')"
+    echo "test_interfaces: $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp|x[0-9]+[0-9a-f]{2}[ab])' | tr '\n' ' ')"
     echo "netns: $(ip netns list 2>/dev/null | tr '\n' ' ')"
     echo "xdp_links: $(ip link show 2>/dev/null | grep -E 'xdp|prog/xdp' | tr '\n' ' ')"
     echo "processes: $(ps -eo pid=,comm=,args= 2>/dev/null | grep -E '(/bin/test_xdp_filter|/bin/server|/bin/client)' | grep -v grep | grep -v "$NAME")"
@@ -318,7 +319,7 @@ echo "guest_test_exit=\$rc" > "$GUEST_STATUS"
 
 {
     echo "=== guest_after ==="
-    echo "guest_test_interfaces: \$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp)' | tr '\n' ' ')"
+    echo "guest_test_interfaces: \$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp|x[0-9]+[0-9a-f]{2}[ab])' | tr '\n' ' ')"
     echo "guest_netns: \$(ip netns list 2>/dev/null | tr '\n' ' ')"
     echo "guest_xdp_links: \$(ip link show 2>/dev/null | grep -E 'xdp|prog/xdp' | tr '\n' ' ')"
     echo "guest_bpf_pins: \$(find /sys/fs/bpf -mindepth 1 \\( -type f -o -name 'rocketnet*' \\) 2>/dev/null | tr '\n' ' ')"

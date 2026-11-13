@@ -42,6 +42,12 @@ if args and args[0] == "--install":
     (package / "RocketNetTargets.cmake").write_text(
         "add_library(RocketNet::rocketnet STATIC IMPORTED)" + chr(10) +
         "add_library(RocketNet::rocketnet_shared SHARED IMPORTED)" + chr(10))
+    # the rest of what a real install writes: tools/check_package.py holds
+    # the installed tree to its INSTALLED_FILES
+    for rel in ("include/rocketnet.h", "share/rocketnet/LICENSE", "share/rocketnet/sodium/LICENSE",
+                "lib/cmake/RocketNet/RocketNetTargets-release.cmake", "lib/librocketnet.a", "lib/librocketnet_shared.so"):
+        (prefix / rel).parent.mkdir(parents=True, exist_ok=True)
+        (prefix / rel).write_text("")
 elif args and args[0] == "--build":
     pass
 elif "-S" in args:

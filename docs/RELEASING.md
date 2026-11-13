@@ -12,7 +12,7 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. At this revision, the full label is
-`"v1.1.8"` and the integers are `1.1.8`. The development branch uses
+`"v1.1.9"` and the integers are `1.1.9`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The header label does not identify the current checkout as a release. Check
@@ -22,7 +22,7 @@ Advancing a label alone neither tags nor publishes a release.
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.1.8` and
+version. It exports `RocketNet_VERSION_STRING` as `v1.1.9` and
 `RocketNet_VERSION_PRERELEASE` as an empty string. There is no separate public
 prerelease macro.
 
@@ -128,6 +128,16 @@ In outline, from v1.1.8:
   (the second check) and `release gates passed on the tag` (the tag run's
   final job, red unless the second check and the version check succeeded).
 
+Which tiers gate which release (the owner, 2026-11-13: "I want each point
+release to have fast tests only"): from v1.1.8 a point release (vX.Y.Z with
+Z not 0 and no pre-release suffix) is gated by the per-commit tier and the
+tag push only. A minor or major release (Z is 0), and every pre-release, is
+gated by every tier. The rows whose events are `nightly` are the minor-only
+rows: both `tools/release.py` and the second
+check on the tag skip them for a point release and print each as `MINOR ONLY`.
+The nightly tier still runs on `main`'s schedule; none of it is deleted or
+muted, and a red in it is fixed in the next point release.
+
 A version is judged by the gates in force for it: the gates that were the
 release requirement from v1.0.0-preview-6 (the per-commit runs green, Nightly
 CI, CBMC, TLC records and the threaded TSan leg green) and the gates added on
@@ -180,11 +190,17 @@ makes the same checks required on `main` itself.
    configure refuses a mismatch. Leave the development branch at `dev` and
    `255.255.255`. Check the export list and consumers for public API changes.
    Write the release notes as `docs/RELEASE-NOTES-<version>.md` (below).
+   Freeze the counter ids the release ships: add the line
+   `python3 tools/check_counter_contract.py --released v<version>` prints to
+   `tests/counter_contract.inc`, beside the earlier releases' lines. The lint
+   check refuses a shipping version without its line, and any later change to
+   a frozen row.
 2. Run `python3 tools/check_release_doc.py`. It exits 0 when this document
    names every version site that `release-check.yml`'s `version-consistency`
    job reads, and exits 1 naming any site this document omits.
 3. Land the release pull request with `python3 tools/land.py <pr>`.
-4. Dispatch the nightly tier on the merged commit once it is `main`'s head:
+4. For a minor or major release, dispatch the nightly tier on the merged
+   commit once it is `main`'s head (a point release skips this step):
    `gh workflow run nightly-ci.yml --ref main`, and the same for `nightly.yml`,
    `cbmc.yml`, `tlc.yml` (a dispatched run is never replaced by a scheduled
    one) and `msan.yml`. Resolve the analyzer evidence limitation above before

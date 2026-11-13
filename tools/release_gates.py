@@ -65,6 +65,19 @@ def version_key(text):
     return numbers + (0, parts)
 
 
+# From v1.1.8 a point release (PATCH not 0) is gated by the per-commit tier
+# and the tag run only; the nightly-tier rows gate a minor or major release
+# (owner, 2026-11-13: "I want each point release to have fast tests only").
+POINT_RELEASE_RULE_FROM = "v1.1.8"
+
+
+def is_point_release(version):
+    """True for vX.Y.Z with Z > 0 and no pre-release suffix, from
+    POINT_RELEASE_RULE_FROM on; a pre-release is judged by every tier."""
+    key = version_key(version)
+    return key[2] > 0 and key[3] == 1 and key >= version_key(POINT_RELEASE_RULE_FROM)
+
+
 # ---------------------------------------------------------------- the list
 
 class Gate:
@@ -555,8 +568,14 @@ def judge_release(api, repo, version, ref, out, stage="pre", gates=None, now=Non
             say(True, f"tag {version} does not exist yet")
 
     contexts = required_contexts(api, repo, sha)
-    verdicts, not_in_force = evaluate(ctx, gates, ("push", "nightly"), version, contexts,
+    point = is_point_release(version)
+    verdicts, not_in_force = evaluate(ctx, gates, ("push",) if point else ("push", "nightly"), version, contexts,
                                       f"{RULESET_PATH} at the commit")
+    if point:
+        for g in gates:
+            if "nightly" in g.events and g.in_force(version):
+                print(f"MINOR ONLY {g.label()}: a point release ({version}) is gated by the per-commit tier; "
+                      f"this gate runs on main's schedule and gates the next minor release", file=out)
     for verdict in verdicts:
         print(verdict.line(), file=out)
         if not verdict.ok:

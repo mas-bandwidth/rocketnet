@@ -970,4 +970,17 @@ inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
 #endif // #if defined( _MSC_VER )
 }
 
+// The error a socket call just failed with (errno; WSAGetLastError on
+// Windows), read before anything else can change it, and its text in the one
+// form every socket failure line uses: "errno 98 EADDRINUSE (Address already
+// in use)", or "Winsock 10048 WSAEADDRINUSE". A number with no name here
+// prints its number and "?".
+struct rocketnet_platform_error_text_t
+{
+    char text[128];
+};
+
+int rocketnet_platform_socket_error();
+struct rocketnet_platform_error_text_t rocketnet_platform_socket_error_text( int error );
+
 #endif // ROCKETNET_SDK_ROCKETNET_PLATFORM_H

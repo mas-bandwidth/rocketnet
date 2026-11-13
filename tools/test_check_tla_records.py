@@ -4,6 +4,7 @@
 Run: python3 tools/test_check_tla_records.py -v
 """
 
+import csv
 import io
 import sys
 import tempfile
@@ -81,15 +82,55 @@ def write_tsv(path, columns, rows):
 
 class CheckTlaRecordsTest(unittest.TestCase):
 
-    def run_fixture(self, cases, runs):
+    def run_fixture(self, cases, runs, declared_debt=None):
+        """Check a fixture; declared_debt defaults to the fixture's own debt rows."""
+        if declared_debt is None:
+            declared_debt = frozenset(c["config"] for c in cases if c["debt"] not in ("", "-"))
         with tempfile.TemporaryDirectory() as tmp:
             cases_path = Path(tmp) / "CASES.tsv"
             runs_path = Path(tmp) / "RUNS.tsv"
             write_tsv(cases_path, check_tla_records.CASES_COLUMNS, cases)
             write_tsv(runs_path, check_tla_records.RUNS_COLUMNS, runs)
             out = io.StringIO()
-            code = check_tla_records.check(cases_path, runs_path, out, forbid_stale=False)
+            code = check_tla_records.check(
+                cases_path, runs_path, out, forbid_stale=False, declared_debt=declared_debt)
             return code, out.getvalue()
+
+    def test_debt_outside_the_pinned_set_rejected(self):
+        # VERIFY-6 A13: a healthy case moved to debt in CASES.tsv alone, and
+        # measured honestly under a 1 s budget.
+        cases = [
+            case_row("MCPause.cfg", "MCPause.tla", "pass", "-", gate="bench", debt="too-slow-today"),
+        ]
+        runs = [run_row("MCPause.cfg", "MCPause.tla", "pass", "-", "124", "FAIL", generated="-", distinct="-")]
+        code, text = self.run_fixture(cases, runs, declared_debt=frozenset())
+        self.assertEqual(code, 1)
+        self.assertIn("MCPause.cfg: declared timeout debt in CASES.tsv but not in DECLARED_DEBT", text)
+
+    def test_pinned_debt_no_longer_declared_rejected(self):
+        cases = [case_row("MCPass.cfg", "MCPass.tla", "pass", "-")]
+        runs = [run_row("MCPass.cfg", "MCPass.tla", "pass", "-", "0", "PASS")]
+        code, text = self.run_fixture(cases, runs, declared_debt=frozenset({"MCPass.cfg", "MCGone.cfg"}))
+        self.assertEqual(code, 1)
+        self.assertIn("MCPass.cfg: in DECLARED_DEBT but not declared timeout debt in CASES.tsv", text)
+        self.assertIn("MCGone.cfg: in DECLARED_DEBT but not declared timeout debt in CASES.tsv", text)
+
+    def test_record_under_another_budget_rejected(self):
+        cases = [case_row("MCPass.cfg", "MCPass.tla", "pass", "-")]
+        row = run_row("MCPass.cfg", "MCPass.tla", "pass", "-", "0", "PASS")
+        row["budget"] = "1"
+        code, text = self.run_fixture(cases, [row])
+        self.assertEqual(code, 1)
+        self.assertIn("MCPass.cfg: measured under budget '1', not the pinned 110 s", text)
+
+    def test_committed_debt_is_the_pinned_set(self):
+        with check_tla_records.DEFAULT_CASES.open(encoding="utf-8", newline="") as handle:
+            declared = {
+                row["config"]
+                for row in csv.DictReader(handle, delimiter="\t")
+                if row["debt"] not in ("", "-")
+            }
+        self.assertEqual(declared, set(check_tla_records.DECLARED_DEBT))
 
     def stale_fixture(self, edit):
         """A current record of MCEx.cfg, then edit(tla_dir), then the default check."""
@@ -108,7 +149,7 @@ class CheckTlaRecordsTest(unittest.TestCase):
             write_tsv(tla / "RUNS.tsv", check_tla_records.RUNS_COLUMNS, [row])
             edit(tla)
             out = io.StringIO()
-            code = check_tla_records.check(tla / "CASES.tsv", tla / "RUNS.tsv", out)
+            code = check_tla_records.check(tla / "CASES.tsv", tla / "RUNS.tsv", out, declared_debt=frozenset())
             return code, out.getvalue(), files
 
     def test_current_record_passes_stale_check(self):
@@ -163,7 +204,7 @@ class CheckTlaRecordsTest(unittest.TestCase):
             write_tsv(tla / "RUNS.tsv", check_tla_records.RUNS_COLUMNS, runs)
             out = io.StringIO()
             code = check_tla_records.check(
-                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False)
+                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False, declared_debt=frozenset())
             return code, out.getvalue()
 
     def test_property_without_reversed_liveness_witness_rejected(self):
@@ -195,7 +236,7 @@ class CheckTlaRecordsTest(unittest.TestCase):
                       [run_row("MCPlain.cfg", "MCPlain.tla")])
             out = io.StringIO()
             code = check_tla_records.check(
-                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False)
+                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False, declared_debt=frozenset())
             self.assertEqual(code, 0, out.getvalue())
 
     def test_committed_ledgers_pass(self):

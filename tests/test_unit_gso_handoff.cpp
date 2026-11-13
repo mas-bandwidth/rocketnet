@@ -116,6 +116,16 @@ static void test_server_gso_drain_room()
 
 REGISTER_UNIT_TEST( test_server_gso_drain_room );
 
+// receives whose UDP_GRO control was truncated (MSG_CTRUNC) are counted in
+// GRO_CMSG_FAULTS once each after main's fold, as io_uring counts them; no
+// socket, no thread, no clock
+static void test_server_gso_gro_cmsg_faults_counted()
+{
+    check( rocketnet_server_gso_test_gro_cmsg_faults() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_gro_cmsg_faults_counted );
+
 static void test_server_gso_receive_backoff()
 {
     check( rocketnet_server_gso_test_receive_backoff() );
@@ -275,11 +285,11 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     check( socket.segment_port == 40001 );
     check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 4 );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS] == 1 );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 4 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_GSO_SENDS] == 1 );
 
     // a later send to another destination is still segmented
     memset( &socket, 0, sizeof( socket ) );
@@ -334,7 +344,7 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) == 0 );
 
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
 
     // the tier stays plain
     memset( &socket, 0, sizeof( socket ) );
@@ -374,11 +384,11 @@ static void test_server_gso_plain_resend_failures()
         check( socket.plain_fail == 0 );
         check( socket.plain_packets == 0 );
 
-        uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+        uint64_t counters[ROCKETNET_NUM_COUNTERS];
         rocketnet_server_gso_counters( gso, counters );
-        check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] == 2 );
-        check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 0 );
-        check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+        check( counters[ROCKETNET_COUNTER_GSO_SEND_SYSCALLS] == 2 );
+        check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 0 );
+        check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
 
         rocketnet_server_gso_test_close( gso );
     }
@@ -401,11 +411,11 @@ static void test_server_gso_plain_resend_failures()
     check( socket.plain_packets == 1 );
     check( socket.plain_ports[0] == 44001 );
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] == 3 );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 1 );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 1 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_SYSCALLS] == 3 );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 1 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 1 );
 
     rocketnet_server_gso_test_close( gso );
 }
@@ -507,10 +517,10 @@ static void test_server_gso_segment_refusal_is_per_destination()
     check( socket.plain_packets == 3 * rounds );
     check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == (uint64_t) ( 3 * rounds ) );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == (uint64_t) ( 3 * rounds ) );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
 
     // the accepting destination's run is one segmented send, and the
     // refusing destination's run in the same batch leaves plain, unrefused
@@ -525,7 +535,7 @@ static void test_server_gso_segment_refusal_is_per_destination()
     check( socket.refusals == 0 );
 
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
 
     rocketnet_server_gso_test_close( gso );
 }
@@ -592,6 +602,18 @@ static void test_server_gso_receive_queue_rotation()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_receive_queue_rotation );
+
+// the case needs a receive budget past one queue and short of two, the
+// default 1000 clients' geometry; at ROCKETNET_MAX_CLIENTS 512 the budget is
+// exactly one queue, and the case is skipped and reported there
+
+static bool gso_budget_spans_two_queues()
+{
+    const int budget = rocketnet_server_receive_packets_per_update( ROCKETNET_DEFAULT_MAX_CLIENTS );
+    return budget > ROCKETNET_GSO_RECV_QUEUE_SIZE && budget < 2 * ROCKETNET_GSO_RECV_QUEUE_SIZE;
+}
+
+UNIT_TEST_SKIPPED_UNLESS( test_server_gso_receive_queue_rotation, gso_budget_spans_two_queues() );
 
 // The segmented runs a flush builds, read back from the messages it hands
 // sendmmsg: a run to one destination holds packets of the first one's size,
@@ -686,11 +708,11 @@ static void test_server_gso_segment_runs_gather_their_own_packets()
     check( socket->port[2] == 40000 && socket->iovecs[2] == 1 && socket->stride[2] == 0 );
     check( socket->bytes[2][0] == 200 && socket->first[2][0] == 0x23 && socket->last[2][0] == 0x23 );
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 4 );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS] == 1 );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 4 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_GSO_SENDS] == 1 );
 
     rocketnet_server_gso_test_close( gso );
     delete socket;

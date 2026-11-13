@@ -132,6 +132,8 @@ struct spec_t
     int ipv6_after_fragment_next;               // protocol after that chain
     int ipv6_first_extension_length;            // second byte of the first header in that chain
     int ipv4_ihl;                               // IPv4 header words, 5 to 15; the options are zero bytes
+    int vlan_tci;                               // a tag after the MACs with this TCI; -1 = untagged
+    uint16_t vlan_ethertype;                    // the tag's ethertype: 0x8100 (802.1Q) or 0x88a8 (802.1ad)
 };
 
 static spec_t spec_default( bool ipv6 )
@@ -154,6 +156,8 @@ static spec_t spec_default( bool ipv6 )
     spec.ipv6_after_fragment_next = IP_UDP;
     spec.ipv6_first_extension_length = -1;
     spec.ipv4_ihl = 5;
+    spec.vlan_tci = -1;
+    spec.vlan_ethertype = 0x8100;
     return spec;
 }
 
@@ -174,6 +178,12 @@ static void build_frame( frame_t * frame, const spec_t & spec )
 
     memset( p, 0x02, 6 );                       // destination mac
     memset( p + 6, 0x04, 6 );                   // source mac
+    if ( spec.vlan_tci >= 0 )
+    {
+        put16( p + 12, spec.vlan_ethertype );
+        put16( p + 14, (uint16_t) spec.vlan_tci );
+        p += 4;
+    }
     put16( p + 12, spec.ipv6 ? ETH_P_IPV6 : ETH_P_IP );
     p += ROCKETNET_ETHERNET_HEADER_BYTES;
 
@@ -443,10 +453,11 @@ static bool load_filter( filter_t * filter, const char * path )
 // is the map's own value size, so the bytes are the layout the program was
 // compiled against.
 
-static bool write_config( filter_t * filter, const uint8_t * ipv4, const uint8_t * ipv6 )
+static bool write_config( filter_t * filter, const uint8_t * ipv4, const uint8_t * ipv6, uint16_t vlan_id = 0 )
 {
     struct rocketnet_server_xdp_config_t config;
     memset( &config, 0, sizeof( config ) );
+    config.vlan_id = htons( vlan_id );
 
     if ( ipv4 )
     {
@@ -1006,6 +1017,68 @@ static bool config_layout_matches_header( filter_t * filter )
     {
         printf( "  FAIL stats map value is %u bytes, the header says %u\n", bpf_map__value_size( stats_map ), (unsigned) sizeof( struct rocketnet_server_xdp_stats_t ) );
         ok = false;
+    }
+
+    return ok;
+}
+
+// 802.1Q: the rows of the host tier's
+// test_xdp_transport_host_vlan_server_takes_its_tag, judged by the
+// verifier-accepted program. The config's vlan_id is written at the offset
+// the library's header names, so a layout disagreement with the object
+// fails the redirect rows
+
+static bool vlan_server_takes_its_tag( filter_t * filter )
+{
+    bool ok = true;
+    for ( int family = 0; family < 2; family++ )
+    {
+        const bool ipv6 = family == 1;
+        const uint8_t * ipv4_address = ipv6 ? NULL : server_ipv4;
+        const uint8_t * ipv6_address = ipv6 ? server_ipv6 : NULL;
+
+        spec_t tagged = spec_default( ipv6 );
+        tagged.vlan_tci = 42;
+
+        // a server on VLAN 42
+
+        ok &= write_config( filter, ipv4_address, ipv6_address, 42 );
+        ok &= run_frame( filter, "vlan server: its tag", tagged, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+
+        spec_t priority = tagged;
+        priority.vlan_tci = 0xF000 | 42;
+        ok &= run_frame( filter, "vlan server: its tag with priority and DEI", priority, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+
+        ok &= run_frame( filter, "vlan server: its frame stripped of the tag", spec_default( ipv6 ), XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+
+        spec_t other = tagged;
+        other.vlan_tci = 43;
+        ok &= run_frame( filter, "vlan server: another VLAN", other, XDP_PASS, NO_COUNTER );
+
+        spec_t ad = tagged;
+        ad.vlan_ethertype = 0x88a8;
+        ok &= run_frame( filter, "vlan server: an 802.1ad tag", ad, XDP_PASS, NO_COUNTER );
+
+        for ( int cut = 14; cut < 18; cut++ )
+        {
+            spec_t truncated = tagged;
+            truncated.truncate_to = cut;
+            ok &= run_frame( filter, "vlan server: a tag cut by the frame end", truncated, XDP_PASS, NO_COUNTER );
+        }
+
+        spec_t epoch = tagged;
+        epoch.epoch = (uint8_t) ( filter_epoch + 1 );
+        ok &= run_frame( filter, "vlan server: behind its tag, a wrong epoch", epoch, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH );
+
+        spec_t large = tagged;
+        large.packet_bytes = ROCKETNET_RECEIVE_CEILING + 1;
+        ok &= run_frame( filter, "vlan server: behind its tag, one byte over the ceiling", large, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
+
+        // an untagged server passes every tag
+
+        ok &= write_config( filter, ipv4_address, ipv6_address, 0 );
+        ok &= run_frame( filter, "untagged server: a tagged frame", tagged, XDP_PASS, NO_COUNTER );
+        ok &= run_frame( filter, "untagged server: its untagged frame", spec_default( ipv6 ), XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
     }
 
     return ok;
@@ -1602,7 +1675,7 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     }
 
     // the case connects one client: a message object sized for the default
-    // 1000 clients does not fit the guest (server.c:920, :975)
+    // 1000 clients does not fit the guest (server.c)
 
     if ( xdp_server )
     {
@@ -1951,7 +2024,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
 // A create that fails part way tears down what it built and nothing else.
 // The example server runs with two XDP queues on a two-queue veth and the
 // development-only seam ROCKETNET_TEST_XDP_FAIL_AT_QUEUE=1
-// (sdk/rocketnet_server_socket_linux.cpp:1919-1937, the top of the create queue loop):
+// (sdk/rocketnet_server_socket_linux.cpp, the top of the create queue loop):
 // queue 0 is fully built, queue 1 fails before its mutexes exist, and create
 // calls destroy. The server must report the injected failure and exit on its
 // own, never die on a signal (a Debug build aborts on the mutex assert when
@@ -2176,6 +2249,7 @@ static const case_t cases[] = {
     { "ipv6_icmpv6_passes", ipv6_icmpv6_passes },
     { "ipv6_same_drops_as_ipv4", ipv6_same_drops_as_ipv4 },
     { "config_layout_matches_header", config_layout_matches_header },
+    { "vlan_server_takes_its_tag", vlan_server_takes_its_tag },
     { "replay_drops_behind_the_window", replay_drops_behind_the_window },
     { "replay_never_writes_the_map", replay_never_writes_the_map },
     { "replay_key_layout_matches_header", replay_key_layout_matches_header },

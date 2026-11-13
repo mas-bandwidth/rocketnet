@@ -11,6 +11,7 @@
 #include "msan_scale_allocator.h"
 #include "rocketnet.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_history.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -117,17 +118,17 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (read on aws-win-1, MSVC 19.52.37029, x64, DEV=ON, Release: 15258748 at the
 // tree before that merge, 15258684 after it, same toolset). The server's
 // reading did not move.
-// The protocol send reserve, the worker receive drop totals and three
-// appended counters (the Linux note below) then move both figures, measured
-// on aws-win-5 (MSVC 19.52.37029, x64, DEV=ON, Release and Debug,
-// ROCKETNET_TEST_VERBOSE=1) on the tree with session_nonce removed:
-// actual=1469504511 for the server, 3776 above, and actual=15258812 for the
-// client, two 64-byte roundings above (the object's rounding moved with the
-// removed field). The two fill-phase counters and the two bind addresses
-// add 512 bytes to the server (actual=1469505023, measured on aws-win-5)
-// and nothing to the client.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456511 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
+// v1.1.9 (read-round-1 and the branches with it) grew both: the client's
+// actual= line is 15389036 (test.exe Debug, plain and under Application
+// Verifier) and the server's 1469500799 (under Application Verifier), read on
+// aws-win-5 at integrate/v1.1.9-candidate a303a5458.
+// v1.2/shared-fill-and-prefilter on v1.1.9 (the protocol send reserve, the
+// worker receive drop totals, the two bind addresses and 56 appended counter
+// rows, the Linux note below): with 60 rows the CI legs read actual=1469505983
+// and 15389932 (wip run 43350932541, Release, DEV=ON); the 56-row table is
+// computed 64 lower on the server and level on the client, as macOS measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468457343 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -162,16 +163,21 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured); the probe's actual= line is 1469501151.
-// The protocol send reserve, the worker receive drop totals and three
-// appended counters (the Linux note below) add 3776 bytes to the server
-// and two 64-byte roundings to the client (measured on the studio, Apple
-// clang, Release, DEV=ON); the probe's actual= lines are 1469504927 and
-// 15036554.
-// The two fill-phase counters and the server config's two bind addresses
-// (bind_ipv4_address, bind_ipv6_address) add 512 bytes to the server and
-// nothing to the client (measured); the probe's actual= line is 1469505439.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456927 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
+// The client I/O core counts the datagrams its worker discards at its exit
+// (sdk/rocketnet_client_io.h, receive_discarded_at_stop, 8 bytes), adding 64
+// to the client (its object's 64-byte rounding) and nothing to the server
+// (measured); the probe's actual= line is 15036490.
+// The appended counter CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD grows every
+// counter block by 8 bytes, adding 64 to the server and 64 to the client
+// (their objects' 64-byte rounding) (measured); the probe's actual= lines
+// are 1469501215 and 15036554.
+// v1.2/shared-fill-and-prefilter on v1.1.9 (the protocol send reserve, the
+// worker receive drop totals, the two bind addresses and 56 appended counter
+// rows, the Linux note below) move the server 5120 and the client 896
+// (studio, Apple clang, Debug, DEV=ON, ROCKETNET_TEST_VERBOSE=1): the probe's
+// actual= lines are 1469506335 and 15037450.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468457759 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988874 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -236,20 +242,32 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
 // kept forget count beside it fills existing padding), adding 8 bytes
 // (measured with the writer list: the probe's actual= line is 3111676723).
-// The protocol send reserve keeps, per send queue, a fill budget, its claims,
-// the grants staged, the own frames used and the reserve (five uint64_t by
-// ROCKETNET_SERVER_MAX_SEND_QUEUES, 2560 bytes), and one own-frame flag a
-// client slot with their count (1008 bytes); the worker receive drops keep
-// their totals (a uint64_t a reason, 128 bytes); and three counters are
-// appended (24 bytes, in every counter block). Measured on bench-nyc-6
-// (gcc, Debug, ROCKETNET_TEST_VERBOSE=1): actual=3111680499 for the server,
-// 3776 above the last reading with the object's alignment, and
-// actual=15186146 for the client, 64 above it (the counters cross its
-// object's 64-byte rounding). The two fill-phase counters move the client
-// another 64 (actual=15186210, bench-nyc-6), and they and the two bind
-// addresses move the server 576 (actual=3111681075).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632499ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137634 )
+// v1.1.9 (read-round-1 on the v1.1.8 release): the development server
+// transport counts its link-simulator lock misses (link_lock_misses, a
+// uint64_t) and the counter block gains CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD,
+// together 128 bytes on the server through its 64-byte rounding. The client
+// reads 912 bytes lower on the merged tree (stats_counted is gone among
+// read-round-1's client changes; the 912 is not split per change). Measured on the merged tree (bench-nyc-6, gcc, Debug and
+// Release, DEV ON, ROCKETNET_TEST_VERBOSE=1): actual=3111676851 and 15185170.
+// v1.2/shared-fill-and-prefilter on v1.1.9: the protocol send reserve (five
+// uint64_t a send queue and an own-frame flag a client slot), the worker
+// receive drop totals, the two bind addresses and 56 appended counter rows
+// (the branch's 3 at 224-226, the transports' 52 at 227-278 and
+// RECEIVE_DROPPED_RETIRED at 279, 448 bytes in every counter block) move the
+// server 5120 and the client 896 (bench-nyc-6, gcc, Debug, DEV ON,
+// ROCKETNET_TEST_VERBOSE=1): actual=3111681971 and 15186066.
+#if defined( __aarch64__ )
+// Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
+// bytes on aarch64 and 40 on x86-64, so the thread record each worker
+// allocates (sdk/rocketnet_platform.cpp thread_record_t) is 144 bytes, not
+// 136, and the xdp ladder candidate starts one thread for each of its 7
+// default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
+// a Graviton; not the pinned configuration, so the check is at most.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110633451ULL )
+#else // #if defined( __aarch64__ )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110633395ULL )
+#endif // #if defined( __aarch64__ )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137490 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
@@ -291,7 +309,7 @@ static void light_check_pin( const char * name, size_t bytes, size_t pin )
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
     check( config->per_client_send_kbps == 256 );
-    check( config->num_channels == 8 );
+    check( config->num_channels == ( ROCKETNET_MAX_CHANNELS < 8 ? ROCKETNET_MAX_CHANNELS : 8 ) );
     check( config->reliable_messages_in_flight == 256 );
     check( config->receive_message_buffer_bytes == 142400 );
     check( config->max_message_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );
@@ -308,7 +326,7 @@ static void light_message_fields_server( const struct rocketnet_server_config_t 
 static void light_message_fields_client( const struct rocketnet_client_config_t * config )
 {
     check( config->send_kbps == 256 );
-    check( config->num_channels == 8 );
+    check( config->num_channels == ( ROCKETNET_MAX_CHANNELS < 8 ? ROCKETNET_MAX_CHANNELS : 8 ) );
     check( config->reliable_messages_in_flight == 256 );
     check( config->receive_message_buffer_bytes == 142400 );
     check( config->max_message_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );
@@ -345,6 +363,11 @@ static void test_light_profile_server_1000_required_memory()
 
 REGISTER_UNIT_TEST( test_light_profile_server_1000_required_memory );
 
+// the pins are read at the default history (ROCKETNET_HISTORY_PACKETS 4096): a
+// longer history sizes every connection's records above them, and no figure
+// is read there to check against, so that build skips and reports the case
+UNIT_TEST_SKIPPED_UNLESS( test_light_profile_server_1000_required_memory, ROCKETNET_HISTORY_PACKETS == 4096 );
+
 static void test_light_profile_client_required_memory()
 {
     struct rocketnet_client_config_t config;
@@ -359,6 +382,7 @@ static void test_light_profile_client_required_memory()
 }
 
 REGISTER_UNIT_TEST( test_light_profile_client_required_memory );
+UNIT_TEST_SKIPPED_UNLESS( test_light_profile_client_required_memory, ROCKETNET_HISTORY_PACKETS == 4096 );     // the history pin, as above
 
 static void test_light_profile_configs_create()
 {

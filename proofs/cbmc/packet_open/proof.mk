@@ -3,6 +3,8 @@
 # in seconds, so the reader is in the per-commit `all` set (cbmc.yml) rather
 # than on the nightly list: a change that stops rocketnet_protocol.cpp from
 # parsing in the C front end goes red on the pull request that makes it.
+# Each harness is followed by its reachability control
+# (check_reachability_control.sh), so an unsatisfiable harness goes red.
 
 PACKET_OPEN_SOURCE = packet_open/proof_packet_open.c
 PACKET_OPEN_FLAGS = --object-bits 12 -DNDEBUG -I$(SDK) -I$(SDK)/../sodium
@@ -32,5 +34,10 @@ proofs-packet_open:
 	    fi; \
 	    echo "$$harness $$verdict"; \
 	    rm -f "$$output"; \
-	    if [ $$status -ne 0 ]; then exit 1; fi; \
+	    if [ $$status -ne 0 ] || [ "$$verdict" != "VERIFICATION SUCCESSFUL" ]; then exit 1; fi; \
+	    status=0; \
+	    $(CBMC) $(CBMC_FLAGS) --unwind 64 $(PACKET_OPEN_FLAGS) -DREACHABILITY_CONTROL=1 --function $$harness \
+	        $(PACKET_OPEN_SOURCE) > "$$output" 2>&1 || status=$$?; \
+	    $(CURDIR)/check_reachability_control.sh cbmc $$harness $$status "$$output" || { rm -f "$$output"; exit 1; }; \
+	    rm -f "$$output"; \
 	done

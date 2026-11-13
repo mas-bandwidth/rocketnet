@@ -85,6 +85,7 @@ static void server_receive_low_tick_check( bool condition, const char * expressi
 
 // the log lines of the case, captured through the library's log callback
 static char server_receive_low_tick_log[16384];
+static char server_receive_low_tick_log_read_copy[16384];
 static std::atomic_flag server_receive_low_tick_log_lock = ATOMIC_FLAG_INIT;
 
 static void server_receive_low_tick_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
@@ -116,6 +117,19 @@ static void server_receive_low_tick_clear_log()
     }
     server_receive_low_tick_log[0] = '\0';
     server_receive_low_tick_log_lock.clear( std::memory_order_release );
+}
+
+// a copy of the log to search, taken under the spinlock: the workers may
+// still be logging while the case reads
+
+static const char * server_receive_low_tick_log_read()
+{
+    while ( server_receive_low_tick_log_lock.test_and_set( std::memory_order_acquire ) )
+    {
+    }
+    memcpy( server_receive_low_tick_log_read_copy, server_receive_low_tick_log, sizeof( server_receive_low_tick_log_read_copy ) );
+    server_receive_low_tick_log_lock.clear( std::memory_order_release );
+    return server_receive_low_tick_log_read_copy;
 }
 
 #if !defined( _WIN32 ) || ROCKETNET_DEV
@@ -185,11 +199,11 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 
     char expected[64];
     snprintf( expected, sizeof( expected ), "%d requested bytes", request );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, "socket receive buffer" ) != NULL );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), "socket receive buffer" ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), expected ) != NULL );
 
 #if defined( _WIN32 ) && ROCKETNET_DEV
-    const char * actual_grant_text = strstr( server_receive_low_tick_log, "actual grant " );
+    const char * actual_grant_text = strstr( server_receive_low_tick_log_read(), "actual grant " );
     server_receive_low_tick_require( actual_grant_text != NULL );
     actual_grant_text += strlen( "actual grant " );
 
@@ -202,23 +216,23 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 
     const bool warning_grant_override_used = actual_grant >= request;
 
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, "DEV test warning grant override" ) != NULL );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log,
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), "DEV test warning grant override" ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(),
                                              warning_grant_override_used ? "bytes applied" : "bytes not needed" ) != NULL );
     char override_text[64];
     const int warning_decision_grant = warning_grant_override_used ? warning_grant_override : actual_grant;
     snprintf( override_text, sizeof( override_text ), "granted %d of", warning_decision_grant );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, override_text ) != NULL );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, server_receive_low_tick_limit_name() ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), override_text ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), server_receive_low_tick_limit_name() ) != NULL );
 
     char expected_warning[384];
     const char * warning_reason = warning_grant_override_used ? "DEV test warning grant override; actual socket grant was reported above" : "packets arriving between updates past the grant are dropped by the kernel";
     snprintf( expected_warning, sizeof( expected_warning ),
               "socket receive buffer granted %d of %d requested bytes; %s: raise %s",
               warning_decision_grant, request, warning_reason, server_receive_low_tick_limit_name() );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected_warning ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), expected_warning ) != NULL );
     printf( "server_receive_buffer_observed_log_begin\n%sserver_receive_buffer_observed_log_end\n",
-            server_receive_low_tick_log );
+            server_receive_low_tick_log_read() );
 #endif // #if defined( _WIN32 ) && ROCKETNET_DEV
 
     rocketnet_server_transport_stop( server );
@@ -247,12 +261,12 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 
     server_receive_low_tick_clear_log();
     rocketnet_server_receive_buffer_granted( "functional", oversized_request, warned_grant );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, "socket receive buffer" ) != NULL );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, server_receive_low_tick_limit_name() ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), "socket receive buffer" ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), server_receive_low_tick_limit_name() ) != NULL );
 
     char granted_text[64];
     snprintf( granted_text, sizeof( granted_text ), "granted %d of", warned_grant );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, granted_text ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), granted_text ) != NULL );
 #endif // #if !defined( _WIN32 )
 
 #if defined( _WIN32 ) && ROCKETNET_DEV
@@ -307,9 +321,9 @@ void rocketnet_test_server_gso_receive_buffer_request()
 
     char expected[96];
     snprintf( expected, sizeof( expected ), "server gso: socket receive buffer granted " );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), expected ) != NULL );
     snprintf( expected, sizeof( expected ), "of %d requested bytes", request );
-    server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log_read(), expected ) != NULL );
 
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, 1000.0 );

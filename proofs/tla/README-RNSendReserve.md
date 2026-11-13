@@ -51,9 +51,11 @@ completion port, a ring the kernel drains) come back to the fill.
   (room - (reserve - own_used))`, and the claims outstanding (this one among
   them) are tested against it. Refused, the claim is taken back whole. A
   refused chunk is claimed again as one frame. A refused single claim is
-  counted as `SEND_RESERVE_REFUSED_TAILS_HELD` while another filler holds a
-  chunk (its claim added and not yet taken back, or its tail not yet staged),
-  else as `SEND_RESERVE_REFUSED`.
+  counted as `SEND_RESERVE_REFUSED`. The code claims one frame at a time
+  (`Chunk` = 1), so no filler ever holds a chunk; a code with chunks would
+  name a refusal while another filler holds one (its claim added and not
+  yet taken back, or its tail not yet staged) apart from a true full, under a
+  counter that exists only once that code does.
 - **`Stage`, `Count`, `Continue`, `End`**: `io_start_packet` stages a
   granted frame from the run's tail, then `fill_started` counts it, one
   atomic add per frame on the queue's count. The run stages its next frame
@@ -79,8 +81,10 @@ completion port, a ring the kernel drains) come back to the fill.
   before chunks: one frame per filler in flight.
 - **`TailsNamed`**: a single claim refused while the room it read had a frame
   for it past every filler in flight (one frame each) comes only while
-  another filler holds a chunk, so the code counts it under its own name,
-  `SEND_RESERVE_REFUSED_TAILS_HELD`, apart from a true full. The slack chunks
+  another filler holds a chunk, so a code with chunks can count it under its
+  own name, apart from a true full (the model's comment names it
+  SEND_RESERVE_REFUSED_TAILS_HELD; no such counter exists while the code's
+  `Chunk` is 1, since then the refusal cannot happen). The slack chunks
   hold is at most fillers x (`Chunk` - 1) frames past the one frame each
   filler in flight is allowed anyway.
 

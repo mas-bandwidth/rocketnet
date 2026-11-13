@@ -2227,7 +2227,23 @@ static struct rocketnet_message_server_t * rn_message_server_create( void * cont
         kbps = resolved->server_send_kbps;
     }
 
-    const int max_clients = rn_message_server_max_clients( transport_config );
+    // the count the transport will admit: the internal create's transport
+    // applies the environment itself (rocketnet_server_transport_create_current_internal),
+    // so the object is sized from the same count, read here without the
+    // override's log, which the transport writes; a resolved config is final
+
+    int max_clients = rn_message_server_max_clients( transport_config );
+    if ( !resolved_memory_budget )
+    {
+        char env_name[64];
+        char env_value[32];
+        int env_max_clients = 0;
+        if ( rocketnet_config_env_var_name_for( "server", "max_clients", env_name, (int) sizeof( env_name ) ) && rocketnet_platform_getenv( env_name, env_value, sizeof( env_value ) ) == 1 &&
+             rocketnet_config_parse_int_value( env_value, &env_max_clients ) )
+        {
+            max_clients = env_max_clients;
+        }
+    }
 
     // refuse before the transport opens a socket: the config, the budget, and
     // a caller block too short for the layout create sizes at this budget

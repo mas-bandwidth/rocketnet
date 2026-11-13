@@ -56,6 +56,8 @@ struct allocator_state
     std::atomic<int> live{ 0 };
     std::atomic<int> calls{ 0 };
     std::atomic<int> fail_at{ 0 };
+    std::atomic<uint64_t> live_bytes{ 0 };          // bytes asked for and not yet released
+    std::atomic<uint64_t> peak_bytes{ 0 };          // the most live_bytes has been
 };
 
 static void * allocate( void * context, size_t bytes )
@@ -83,6 +85,17 @@ static void * allocate( void * context, size_t bytes )
     memset( (void *) address, 0xA5, bytes );
     ++state.live;
 
+    // the size sits at the base, below the pointer to it: address is at
+    // least base + 24, so the two never meet
+
+    const uint64_t size = (uint64_t) bytes;
+    memcpy( base, &size, sizeof( size ) );
+    const uint64_t live_bytes = state.live_bytes.fetch_add( size ) + size;
+    uint64_t peak = state.peak_bytes.load();
+    while ( live_bytes > peak && !state.peak_bytes.compare_exchange_weak( peak, live_bytes ) )
+    {
+    }
+
     return (void *) address;
 }
 
@@ -93,6 +106,9 @@ static void release( void * context, void * pointer )
     void * base = NULL;
     memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
     check( --state.live >= 0 );
+    uint64_t size = 0;
+    memcpy( &size, base, sizeof( size ) );
+    state.live_bytes.fetch_sub( size );
     free( base );
 }
 
@@ -723,7 +739,7 @@ static void check_component_create_sweeps( allocator_state & state )
 // a valid connect token with future timestamps, minted with the production
 // test backend secret (the library's non-development build has no dev minting)
 
-static void write_valid_token( uint8_t * token, uint64_t create, uint64_t expire )
+static void write_valid_token( uint8_t * token, uint64_t create, uint64_t expire, bool both_families = false )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
@@ -745,6 +761,16 @@ static void write_valid_token( uint8_t * token, uint64_t create, uint64_t expire
 
     signed_fields.ipv4_address[4] = 0x40;
     signed_fields.ipv4_address[5] = 0x9c;
+
+    // and [::1]:40000 beside it: the client races the two families
+
+    if ( both_families )
+    {
+        signed_fields.address_flags |= ROCKETNET_ADDRESS_FLAG_IPV6;
+        signed_fields.ipv6_address[14] = 1;
+        signed_fields.ipv6_address[16] = 0x40;
+        signed_fields.ipv6_address[17] = 0x9c;
+    }
 
     // not the published development server key, which a production build
     // (ROCKETNET_DEV=0) refuses at connect
@@ -878,6 +904,75 @@ static void check_client_memory_budget( allocator_state & state )
     check( client != NULL );
     rn_native_client_transport_stop_and_destroy( client );
     unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
+}
+
+// The plan is exactly what create allocates: for each client transport that
+// opens sockets on this platform, a one-family token's create reaches
+// rocketnet_client_transport_required_memory_one_family at its peak, and a
+// two-family token's create, which races both families on two sockets, each
+// with its wake, reaches rocketnet_client_transport_required_memory. Not one
+// byte more, which would break the operator budget, and not one byte less,
+// which would refuse a create that fits. Functional: real sockets on
+// 127.0.0.1 and ::1, and the network thread.
+
+static void check_client_plan_is_what_create_allocates( allocator_state & state )
+{
+    // the plans below are per transport: hold an env pin aside, as the server check does
+
+    char pinned_transport[64];
+    const bool transport_pinned = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", pinned_transport, sizeof( pinned_transport ) ) != 0;
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+
+    const char * transports[] = {
+        "portable",
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        "gso",
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        "msgx",
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        "iocp",
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    };
+
+    for ( const char * transport : transports )
+    {
+        rocketnet_client_transport_config_t config;
+        rocketnet_client_transport_default_config( &config );
+        memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+        snprintf( config.transport, sizeof( config.transport ), "%s", transport );
+
+        const uint64_t plans[2] = { rocketnet_client_transport_required_memory_one_family( &config, transport ),
+                                    rocketnet_client_transport_required_memory( &config, transport ) };
+        check( plans[0] > 0 && plans[1] > plans[0] );
+
+        for ( int both_families = 0; both_families < 2; both_families++ )
+        {
+            uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+            const uint64_t now = (uint64_t) time( NULL );
+            write_valid_token( token, now - 100, now + 100000, both_families != 0 );
+
+            const uint64_t live_before = state.live_bytes.load();
+            state.peak_bytes.store( live_before );
+            rocketnet_client_transport_t * client = rocketnet_client_transport_create( &state, token, &config, 0.0 );
+            check( client != NULL );
+            const uint64_t peak = state.peak_bytes.load() - live_before;
+            rn_native_client_transport_stop_and_destroy( client );
+
+            if ( peak != plans[both_families] )
+            {
+                fprintf( stderr, "%s client create (%s) peaked at %llu bytes, plan %llu\n", transport, both_families ? "two families" : "one family",
+                         (unsigned long long) peak, (unsigned long long) plans[both_families] );
+            }
+            check( peak == plans[both_families] );
+        }
+    }
+
+    if ( transport_pinned )
+    {
+        setenv( "ROCKETNET_CLIENT_TRANSPORT", pinned_transport, 1 );
+    }
 }
 
 // rocketnet_malloc and rocketnet_free from worker threads while another
@@ -1312,6 +1407,7 @@ int main( int argc, char ** argv )
     check_component_create_sweeps( state );
     check_server_memory_budget( state );
     check_client_memory_budget( state );
+    check_client_plan_is_what_create_allocates( state );
     check_game_clock_client_create( state );
     check( state.live == baseline );
 

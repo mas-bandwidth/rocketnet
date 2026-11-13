@@ -1557,6 +1557,7 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     reset_server_teardown( &f );
 }
 REGISTER_UNIT_TEST( test_connection_reset_server_slot_reuse_is_clean );
+UNIT_TEST_SKIPPED_UNLESS( test_connection_reset_server_slot_reuse_is_clean, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 // A delayed reset keeps the mapping index and generation captured when the
 // client slot was assigned. If that numeric mapping index has since been
@@ -1702,6 +1703,7 @@ static void test_connection_reset_server_reset_touches_only_its_slot()
     reset_server_teardown( &f );
 }
 REGISTER_UNIT_TEST( test_connection_reset_server_reset_touches_only_its_slot );
+UNIT_TEST_SKIPPED_UNLESS( test_connection_reset_server_reset_touches_only_its_slot, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 
 #if ROCKETNET_DEV
 
@@ -1724,7 +1726,6 @@ static void reset_loopback_client_timeout_scenario()
     }
 
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( f.clients[0] );
-    rocketnet_client_transport_mark_connection_state_for_test( transport );
 
     for ( int i = 0; i < 400 && rocketnet_message_client_state( f.clients[0] ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
@@ -1755,7 +1756,6 @@ static void reset_loopback_client_denied_scenario()
     check( denied );
 
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( denied );
-    rocketnet_client_transport_mark_connection_state_for_test( transport );
 
     for ( int i = 0; i < 400 && rocketnet_message_client_state( denied ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
@@ -2550,7 +2550,6 @@ static void test_connection_reset_disconnect_after_a_timeout_is_clean()
 
     check( rocketnet_message_client_state( f.clients[0] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
 
-    rocketnet_client_transport_mark_connection_state_for_test( transport );
     rocketnet_client_transport_disconnect( transport );
     check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     reset_client_transport_clean( transport );

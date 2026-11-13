@@ -181,6 +181,9 @@ and owns the connected client. It omits startup and shutdown; the
 ```c
 #include "rocketnet.h"
 
+/* the application's own */
+void process_message( int channel, enum rocketnet_reliability_t reliability, const uint8_t * data, int bytes );
+
 void client_frame( struct rocketnet_client_t * client, double time )
 {
     /* 1. pump the transport and take in what arrived */
@@ -408,6 +411,10 @@ more than one batch.
 
 ```c
 #include "rocketnet.h"
+
+/* the application's own */
+void process_message( int client_index, int channel, enum rocketnet_reliability_t reliability,
+                      const uint8_t * data, int bytes );
 
 void server_frame( struct rocketnet_server_t * server, int client_index, int channel, double time )
 {
@@ -824,10 +831,10 @@ that is no transport anywhere is a typo and fails loudly. When every name in a
 list is skipped for this platform or endpoint, the endpoint falls back to its
 `auto` order with a warning. The accessor on each
 end reports the transport that won. See [TRANSPORTS.md](TRANSPORTS.md) for the
-full registry table and privilege requirements. `loopback` is pin-only and
-also needs the config's `loopback_hub`: a hub from
+full registry table and privilege requirements. `loopback` is pin-only (a
+list of that one name; in a longer list it is skipped) and also needs the config's `loopback_hub`: a hub from
 `rocketnet_loopback_hub_create`, shared by the server and its clients and
-destroyed after them; create refuses a list naming `loopback` with a `NULL`
+destroyed after them; create refuses a `loopback` pin with a `NULL`
 hub (`LOOPBACK_HUB_MISSING`).
 
 Every transport serves IPv4, IPv6, or both: `rocketnet_server_create` takes an

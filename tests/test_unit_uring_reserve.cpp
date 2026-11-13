@@ -220,10 +220,10 @@ static void test_io_uring_send_burst_spreads_across_socket_pool()
     rocketnet_unit_check( fake.sends == sends );
     rocketnet_unit_check( used == 2 );
 
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) sends );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] == (uint64_t) sends );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 0 );
 
     uring_reserve_fake_stop_and_destroy( uring );
 }
@@ -254,11 +254,11 @@ static void test_io_uring_send_burst_beyond_one_socket_buffer_uses_siblings()
         rocketnet_unit_check( fake.sends_on_socket[queue] <= fake.send_capacity );
     }
 
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
     rocketnet_unit_check( fake.sends == sends );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) sends );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] == (uint64_t) sends );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 0 );
 
     uring_reserve_fake_stop_and_destroy( uring );
 }

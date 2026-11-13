@@ -1078,6 +1078,28 @@ static void pc_run( const pc_kind_t * kinds, int num_clients, int capacity, pc_r
     pc_world_t world;
     pc_world_create( &world, num_clients, capacity );
 
+    // packets_sent counts the connect too, and the connect does not always
+    // take the same number of updates: the server answers one cookie request
+    // per source per update, by a bit of a bitmap at a SipHash of the source
+    // address under a key drawn at create, so two clients whose addresses
+    // share a bit in the first update leave the later one unanswered until
+    // its next send (rocketnet_server_protocol.cpp, the cookie reply limit).
+    // Its connect then takes one more update, and every client already
+    // connected is sent one more packet in it (about 1 run in 2000 with 16
+    // clients; the loopback ports differ between the runs of one process, so
+    // seeding the key does not repeat it). The record counts the packets of
+    // these PC_TICKS updates only, from what each client had been sent when
+    // they began.
+
+    uint64_t sent_before[PC_MAX_CLIENTS];
+    for ( int c = 0; c < num_clients; c++ )
+    {
+        struct rocketnet_server_client_stats_t stats;
+        memset( &stats, 0, sizeof( stats ) );
+        rocketnet_server_client_stats( world.server, world.slot[c], &stats );
+        sent_before[c] = stats.packets_sent;
+    }
+
     int start[PC_MAX_CLIENTS];
     int member = 0;
     for ( int c = 0; c < num_clients; c++ )
@@ -1164,7 +1186,7 @@ static void pc_run( const pc_kind_t * kinds, int num_clients, int capacity, pc_r
             struct rocketnet_server_client_stats_t stats;
             memset( &stats, 0, sizeof( stats ) );
             rocketnet_server_client_stats( world.server, world.slot[c], &stats );
-            record->server_packets[c][tick] = stats.packets_sent;
+            record->server_packets[c][tick] = stats.packets_sent - sent_before[c];
             check( rocketnet_server_client_connected( world.server, world.slot[c] ) );
         }
 
@@ -1718,8 +1740,11 @@ static void test_server_send_capacity_spare_slots_keep_in_place()
 
 REGISTER_UNIT_TEST( test_server_send_capacity_spare_slots_keep_in_place );
 REGISTER_UNIT_TEST( test_server_send_cap_two_three_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_two_three_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_server_send_cap_one_two_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_one_two_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_server_send_cap_one_three_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_one_three_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 #endif // #if ROCKETNET_DEV
 
 // The configuration test_server_send_capacity_default_covers_clients creates: the

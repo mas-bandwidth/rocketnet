@@ -2647,8 +2647,8 @@ The server turns a connection request into an encryption mapping, and a connecti
 3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot, and whose connection salt or token identifier matches the mapping's, MUST be answered with that mapping's stored connection challenge packet, byte-identical, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4). A request from that address whose connection salt and token identifier both differ from the mapping's is a new attempt: it MUST go through every later rule, and it MUST be refused, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`, when its token identifier is bound to any source address, its own included. Only once it has passed every check, its signature verified, does it replace the half-open mapping: the server releases that mapping's request claim, removes it, and creates the new mapping in its place, which needs no free mapping slot. A refused request leaves the half-open mapping as it was. A mapping with a connected slot is never replaced.
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
 5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`, and then a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`. Such a token MUST NOT be answered. A server places no limit on a token's lifetime.
-6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
-7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet, at most one to each source address and port per update, checked before the cookie is computed. A request owed a cookie past that limit MUST be ignored, unanswered; it is counted once, by the counter of its cookie (`CONNECTION_REQUEST_NO_COOKIE`, `CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY` or `CONNECTION_REQUEST_COOKIE_EXPIRED`), and the refusal itself has no counter. The client sends again at its send rate. The limit does not spend the handshake work budget of rule 8, does not refuse a request with a valid cookie, and MUST be reset at the start of each update. A server MUST NOT limit the cookie packets of one update in all below the connection requests that update processes. A server MUST hold the per-source limit in memory sized at creation that no source can grow: it MAY keep one bit per index of a keyed hash of the source address and port, the key drawn at server creation and kept secret, so that a collision refuses another source for that update only and cannot be aimed; such a bitmap SHOULD hold at least the cookie reply source bitmap policy value of bits for each connection request one update can process, so that a collision refuses an honest source with probability at most the reciprocal of that value. The value is a chosen bound, not a measured optimum.
+6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server advertises, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse. A server advertises exactly the addresses it was created with, one for each family it serves, and a token address matches only when it equals one of them, port included: a server created at a family's wildcard advertises that wildcard, and accepts a token naming the loopback only when the loopback is an address it was created with.
+7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet, at most one to each source address and port per update, checked before the cookie is computed. A request owed a cookie past that limit MUST be ignored, unanswered; it is counted once, by the counter of its cookie (`CONNECTION_REQUEST_NO_COOKIE`, `CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY` or `CONNECTION_REQUEST_COOKIE_EXPIRED`), and the refusal itself MUST be counted as `CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD`, which is outside the request family. The client sends again at its send rate. The limit does not spend the handshake work budget of rule 8, does not refuse a request with a valid cookie, and MUST be reset at the start of each update. A server MUST NOT limit the cookie packets of one update in all below the connection requests that update processes. A server MUST hold the per-source limit in memory sized at creation that no source can grow: it MAY keep one bit per index of a keyed hash of the source address and port, the key drawn at server creation and kept secret, so that a collision refuses another source for that update only and cannot be aimed; such a bitmap SHOULD hold at least the cookie reply source bitmap policy value of bits for each connection request one update can process, so that a collision refuses an honest source with probability at most the reciprocal of that value. The value is a chosen bound, not a measured optimum.
 8. A server MUST check the per-update handshake work budget after the cheap rungs of rule 9 and immediately before the signature verify of rule 10, and MUST refuse, unanswered, a request that reaches that check when the budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`. Only a request that reaches the check spends budget; a request refused by an earlier rung spends none.
 9. A server MUST apply the cheap rungs below in the order given, before it verifies the signature in rule 10, and MUST stop at the first that refuses:
     1. Ignore, unanswered, a request whose token identifier is bound to a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
@@ -3016,6 +3016,13 @@ that accepts one MUST treat the connection as ended and MUST reset.
 
 The type data of a disconnect is empty; its sealed plaintext holds only the
 ack block.
+
+A client whose connection has ended MUST count each datagram it reads and
+discards after its last send as `CLIENT_RECEIVE_DISCARDED_AT_STOP`, and MUST
+NOT free a datagram queued for it unread. The reference implementation's I/O
+worker, at its exit, reads every datagram still queued on its socket, counts
+each, and closes the socket before the transport reports itself stopped; a
+later datagram meets a closed port, which the operating system counts.
 
 <a id="t13.4"></a>
 ### t13.4. Slot reset
@@ -3758,14 +3765,66 @@ The registry of counters, in index order, is:
 | `PAYLOAD_BATCH_FULL` | `refusal` | `none` |
 | `XDP_RECEIVE_FRAME_DROPPED` | `refusal` | `none` |
 | `DISCONNECT_BURST_DROPPED` | `refusal` | `none` |
+| `CLIENT_RECEIVE_DISCARDED_AT_STOP` | `refusal` | `none` |
+| `CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD` | `refusal` | `none` |
+| `XDP_REPLAY_COMMIT_FAILED` | `refusal` | `none` |
+| `XDP_REPLAY_GREETING_HELD` | `expected` | `none` |
 | `RECEIVE_DROPPED_FULL` | `refusal` | `none` |
 | `SEND_RESERVE_REFUSED` | `refusal` | `none` |
 | `RECEIVE_FAILED` | `refusal` | `none` |
-| `FILL_PHASE_OVERLAP` | `refusal` | `none` |
-| `FILL_TWO_FILLERS` | `refusal` | `none` |
-| `RECEIVE_DROPPED_STOPPED` | `expected` | `none` |
-| `SEND_RESERVE_REFUSED_TAILS_HELD` | `refusal` | `none` |
-| `RECEIVE_DROPPED_UNKNOWN_SHARE` | `refusal` | `none` |
+| `GSO_PACKETS_SENT` | `expected` | `none` |
+| `GSO_PACKETS_RECEIVED` | `expected` | `none` |
+| `GSO_SEND_SYSCALLS` | `expected` | `none` |
+| `GSO_RECEIVE_SYSCALLS` | `expected` | `none` |
+| `GSO_SEND_DROPPED` | `refusal` | `none` |
+| `GSO_RECEIVE_DROPPED_SIZE` | `refusal` | `none` |
+| `GSO_RECEIVE_DROPPED_OVERFLOW` | `refusal` | `none` |
+| `GSO_GSO_SENDS` | `expected` | `none` |
+| `GSO_GRO_BATCHES` | `expected` | `none` |
+| `GSO_RECEIVE_DROPPED_SOURCE` | `refusal` | `none` |
+| `GSO_RECEIVE_ERRORS` | `refusal` | `none` |
+| `GSO_GRO_CMSG_FAULTS` | `refusal` | `none` |
+| `URING_PACKETS_SENT` | `expected` | `none` |
+| `URING_PACKETS_RECEIVED` | `expected` | `none` |
+| `URING_SUBMIT_SYSCALLS` | `expected` | `none` |
+| `URING_SEND_DROPPED` | `refusal` | `none` |
+| `URING_RECEIVE_DROPPED_SIZE` | `refusal` | `none` |
+| `URING_RECEIVE_DROPPED_OVERFLOW` | `refusal` | `none` |
+| `URING_RECEIVE_DROPPED_SOURCE` | `refusal` | `none` |
+| `URING_RECEIVE_NO_BUFFERS` | `refusal` | `none` |
+| `URING_RECEIVE_REARMS` | `expected` | `none` |
+| `URING_REAP_DEFERRED` | `expected` | `none` |
+| `URING_SEND_DEFERRED` | `expected` | `none` |
+| `URING_RECEIVE_DROPPED_NO_BUFFER` | `refusal` | `none` |
+| `URING_RECEIVE_REARM_FAILED` | `refusal` | `none` |
+| `URING_GSO_SENDS` | `expected` | `none` |
+| `URING_GSO_FALLBACKS` | `refusal` | `none` |
+| `URING_GRO_BATCHES` | `expected` | `none` |
+| `URING_GRO_CMSG_FAULTS` | `refusal` | `none` |
+| `IOCP_SEND_COMPLETED` | `expected` | `none` |
+| `IOCP_SEND_FAILED` | `refusal` | `none` |
+| `IOCP_RECEIVE_COMPLETED` | `expected` | `none` |
+| `IOCP_RECEIVE_DROPPED` | `refusal` | `none` |
+| `IOCP_RECEIVE_TOO_SHORT` | `refusal` | `none` |
+| `IOCP_RECEIVE_TOO_LARGE` | `refusal` | `none` |
+| `IOCP_RECEIVE_REPOST_FAILED` | `refusal` | `none` |
+| `IOCP_COMPLETION_BATCHES` | `expected` | `none` |
+| `IOCP_USO_SENDS` | `expected` | `none` |
+| `IOCP_URO_BATCHES` | `expected` | `none` |
+| `IOCP_USO_FALLBACKS` | `refusal` | `none` |
+| `RIO_PACKETS_SENT` | `expected` | `none` |
+| `RIO_PACKETS_RECEIVED` | `expected` | `none` |
+| `RIO_SEND_FULL` | `refusal` | `none` |
+| `RIO_SEND_FAILED` | `refusal` | `none` |
+| `RIO_SEND_WAITS` | `expected` | `none` |
+| `RIO_RECEIVE_FAILED` | `refusal` | `none` |
+| `RIO_RECEIVE_DROPPED_SIZE` | `refusal` | `none` |
+| `RIO_RECEIVE_TOO_SHORT` | `refusal` | `none` |
+| `RIO_RECEIVE_TOO_LARGE` | `refusal` | `none` |
+| `RIO_RECEIVE_DROPPED_OVERFLOW` | `refusal` | `none` |
+| `RIO_RECEIVE_REPOST_FAILED` | `refusal` | `none` |
+| `RIO_COMMITS` | `expected` | `none` |
+| `RECEIVE_DROPPED_RETIRED` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3878,10 +3937,33 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 00 00 00 39 5f f8 12 00 00 00 a4 58 a7 b3 00 00
 00 98 21 4f fa 00 20 00 49 b0 ba 62 00 08 00 3a
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
-a1 00 00 00 51 8b 57 c4 00 00 00 83 0e ee 6b 00
-00 00 b2 57 b6 3d 00 00 00 b8 28 ec 42 00 00 00
-d5 28 0b 6d 00 00 00 ad 33 2a 98 01 00 00 9f ba
-38 0a 00 00 00 da d9 59 af 00 00 00
+a1 00 00 00 2d 17 2e 45 00 00 00 b9 92 87 1d 00
+00 00 e3 12 7a fb 00 00 00 43 67 11 59 01 00 00
+51 8b 57 c4 00 00 00 83 0e ee 6b 00 00 00 b2 57
+b6 3d 00 00 00 65 49 cc 1d 01 00 00 3c c1 dc 99
+01 00 00 a2 dc 5f 4e 01 00 00 2d 51 77 64 01 00
+00 2e 8d cf ce 00 00 00 4d 0f e9 bf 00 00 00 72
+01 67 0e 00 00 00 a4 dc a2 4d 01 00 00 ce f0 27
+50 01 00 00 31 98 e4 c3 00 00 00 e4 9c 37 6b 00
+00 00 68 09 2e e5 00 00 00 0f c9 48 b4 01 00 00
+82 1f 85 6d 01 00 00 d2 cb e0 04 01 00 00 8c 73
+05 28 00 00 00 0b 08 c6 d9 00 00 00 18 62 20 fd
+00 00 00 3f 54 16 85 00 00 00 d6 b3 6f 47 00 00
+00 a7 b8 3d 12 01 00 00 9b d6 0d f4 01 00 00 11
+ae 54 4d 01 00 00 34 c7 86 56 00 00 00 de bd d7
+13 00 00 00 de 1b fe 8a 01 00 00 0a 8a 1e 7f 00
+00 00 78 1a 4f 7d 01 00 00 46 6a 51 94 00 00 00
+af a7 9e 56 01 00 00 8b 78 7a f1 00 00 00 f6 62
+a5 c4 01 00 00 b1 a1 85 38 00 00 00 98 9f b0 ca
+00 00 00 d9 6d c2 32 00 00 00 d6 08 07 de 00 00
+00 96 08 d9 fc 01 00 00 9c ce fc 4d 01 00 00 c6
+51 bf 7f 01 00 00 00 b0 c8 9c 00 00 00 da 8a 2b
+51 01 00 00 37 df 03 d7 01 00 00 1c 31 f2 57 00
+00 00 d4 1f 4d 66 00 00 00 69 7d ae d0 01 00 00
+05 4c ed e0 00 00 00 2a 63 c3 16 00 00 00 6f 54
+6f 12 00 00 00 62 5c 63 05 00 00 00 f9 e3 01 87
+00 00 00 a1 e9 0d d3 00 00 00 2c 79 8c cf 01 00
+00 dd 5b 1f d0 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

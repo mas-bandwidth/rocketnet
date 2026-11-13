@@ -2988,7 +2988,15 @@ earlier class.
 The sender MUST decide that the budget refuses a packet before it takes a
 transport frame for the packet, so a refused packet takes no frame of the
 update's send capacity and, on a client, spends no sequence
-([m1.8 Per-client scope](#m1.8)).
+([m1.8 Per-client scope](#m1.8)). A packed unreliable build already open
+when reliable work becomes due MAY be aborted when it is sealed, because the
+bucket no longer holds the build's bytes and the one maximum packet kept for
+the reliable work. Its records are dropped and counted as
+MESSAGE_UNRELIABLE_OVER_BUDGET. On a server the aborted build spends no
+sequence. On a client it burns the one sequence its frame took: that sequence
+is never sent, so the server never acknowledges it, and a block that names
+it has no acknowledgment effect ([m1.8 Per-client scope](#m1.8);
+[RN-1 t15.3 Building and processing](TRANSPORT.md#t15.3)).
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|

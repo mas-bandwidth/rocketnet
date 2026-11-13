@@ -267,3 +267,4 @@ static void test_standard_delivery_unreliable_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_delivery_unreliable_vectors );
+UNIT_TEST_SKIPPED_UNLESS( test_standard_delivery_unreliable_vectors, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1

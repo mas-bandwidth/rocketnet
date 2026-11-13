@@ -63,6 +63,7 @@ struct windows_socket_errors_transport_t
 {
     const char * transport;
     bool ipv6;
+    const char * client; // the client transport; NULL is portable
 };
 
 static const char * windows_socket_errors_host( bool ipv6 )
@@ -287,7 +288,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", transport->client ? transport->client : "portable" );
     session->client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     windows_socket_errors_require( session->client != NULL );
 
@@ -333,6 +334,14 @@ static uint64_t windows_socket_errors_refusals( const struct rocketnet_counters_
 
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
+        // the transports' own rows (GSO_ through RIO_) are the transport's
+        // counts, which windows_socket_errors_transport_drops reads; summed
+        // here as well they would count each of those drops twice
+
+        if ( i >= ROCKETNET_COUNTER_GSO_PACKETS_SENT && i <= ROCKETNET_COUNTER_RIO_COMMITS )
+        {
+            continue;
+        }
         if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL )
         {
             sum += rocketnet_counter_value( counters, i );
@@ -348,28 +357,22 @@ static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_ses
 
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
-        uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+        uint64_t counters[ROCKETNET_NUM_COUNTERS];
         rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) instance, counters );
 
         // Size drops now also enter the server's public prefilter counters.
         // Keep this aggregate one event per datagram while retaining the
         // transport's legacy RECEIVE_DROPPED total for its direct readers.
 
-        return counters[ROCKETNET_IOCP_RECEIVE_DROPPED] -
-               counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] -
-               counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+        return counters[ROCKETNET_COUNTER_IOCP_RECEIVE_DROPPED] -
+               counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT] -
+               counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE];
     }
 
-    if ( strcmp( session->transport.transport, "rio" ) == 0 )
-    {
-        uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
-        rocketnet_server_rio_counters( (rocketnet_server_rio_t *) instance, counters );
-
-        // RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above;
-        // failed completions are still transport-only drops.
-
-        return counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED];
-    }
+    // rio: RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above,
+    // and its failed completions and full-bank drops reach the server's own
+    // RECEIVE_FAILED and RECEIVE_DROPPED_FULL through the backend's
+    // receive_drop_totals, so the refusals above count every rio drop once
 
     return 0;
 }
@@ -583,7 +586,7 @@ static void windows_server_counts_runt_as_prefilter_too_short_rio_case()
 }
 
 // the prefilter counters a client's refusal of a datagram from the server it
-// dialed lands on (sdk/rocketnet_protocol.cpp:186-211): short, large, then
+// dialed lands on (sdk/rocketnet_protocol.cpp): short, large, then
 // the epoch byte, then the filter value. Seeded garbage never carries the
 // session's filter value.
 struct windows_socket_errors_prefilter_t
@@ -628,7 +631,7 @@ static void windows_socket_errors_prefilter_read( struct rocketnet_client_transp
 // First from the server's own socket (reached through the portable server
 // transport's instance, rocketnet_portable_server_test_socket),
 // the one source the client listens to: every datagram reaches the client's
-// prefilter (sdk/rocketnet_client_protocol.cpp:1300-1305) and lands on the
+// prefilter (sdk/rocketnet_client_protocol.cpp) and lands on the
 // counter its size and bytes name. rocketnet_platform_socket_send_packet
 // sends no zero-length datagram (it asserts packet_bytes > 0), so the empty
 // one goes in the second leg only. Then from the raw test socket, a source
@@ -639,9 +642,12 @@ static void windows_socket_errors_prefilter_read( struct rocketnet_client_transp
 // prefilter. On an unconnected socket each would count
 // CLIENT_RECEIVE_FOREIGN_SOURCE. The case proves each server datagram is
 // counted once, the I/O thread keeps receiving and the client stays connected.
-static void windows_client_drops_oversize_and_garbage( bool ipv6 )
+// It runs with the portable client and with the iocp client, whose receive
+// posts a second buffer so a datagram past its record reaches the prefilter
+// as too large at its true length.
+static void windows_client_drops_oversize_and_garbage( bool ipv6, const char * client )
 {
-    windows_socket_errors_transport_t transport = { "portable", ipv6 };
+    windows_socket_errors_transport_t transport = { "portable", ipv6, client };
     windows_socket_errors_session_t session;
     windows_socket_errors_session_start( &session, &transport );
 
@@ -744,8 +750,8 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
         windows_socket_errors_tick( &session );
     }
 
-    printf( "windows_client_drops_oversize_and_garbage %s: from the server %llu (too short %llu of %llu, too large %llu of %llu, wrong epoch %llu of %llu, wrong value %llu of %llu, refusals %llu, foreign %llu); from a foreign source %llu (foreign source %llu, refusals %llu, prefilter %s); client received %llu payloads during and %llu after, server received %llu\n",
-            ipv6 ? "ipv6" : "ipv4", (unsigned long long) sent_from_server,
+    printf( "windows_client_drops_oversize_and_garbage %s %s client: from the server %llu (too short %llu of %llu, too large %llu of %llu, wrong epoch %llu of %llu, wrong value %llu of %llu, refusals %llu, foreign %llu); from a foreign source %llu (foreign source %llu, refusals %llu, prefilter %s); client received %llu payloads during and %llu after, server received %llu\n",
+            ipv6 ? "ipv6" : "ipv4", client, (unsigned long long) sent_from_server,
             (unsigned long long) too_short, (unsigned long long) expect.too_short, (unsigned long long) too_large, (unsigned long long) expect.too_large,
             (unsigned long long) wrong_epoch, (unsigned long long) expect.wrong_epoch, (unsigned long long) wrong_value, (unsigned long long) expect.wrong_value,
             (unsigned long long) server_leg_refusals, (unsigned long long) server_leg_foreign,
@@ -829,6 +835,67 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
     rocketnet_platform_socket_destroy( socket );
 }
 
+#if ROCKETNET_DEV
+// The rio backend's failed receive completions reach the server's own
+// RECEIVE_FAILED through its receive_drop_totals, one for one with the
+// transport's RIO_RECEIVE_FAILED at the same site; nothing reads as a full
+// bank that the transport did not drop past its bank.
+static void windows_server_rio_failed_receives_reach_the_server_case()
+{
+    windows_socket_errors_transport_t transport = { "rio", false };
+    windows_socket_errors_session_t session;
+    windows_socket_errors_session_start( &session, &transport );
+
+    rocketnet_server_rio_t * rio = (rocketnet_server_rio_t *) rocketnet_server_transport_io_name_for_testing( session.server );
+    uint64_t rio_before[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, rio_before );
+    const struct rocketnet_counters_t before = *rocketnet_server_transport_counters( session.server );
+
+    const int failures = 5;
+    rocketnet_server_rio_test_fail_next( rio, ROCKETNET_RIO_TEST_FAULT_RECEIVE_COMPLETION, failures, WSAENOBUFS );
+
+    std::vector<windows_socket_errors_datagram_t> datagrams( (size_t) failures );
+    for ( size_t i = 0; i < datagrams.size(); i++ )
+    {
+        datagrams[i].bytes.resize( 64, 0x5a );
+    }
+    windows_socket_errors_inject( &session, rocketnet_server_transport_port( session.server ), datagrams );
+
+    uint64_t failed = 0;
+    const double drain = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - drain < 5.0 )
+    {
+        windows_socket_errors_tick( &session );
+        failed = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), ROCKETNET_COUNTER_RECEIVE_FAILED ) -
+                 rocketnet_counter_value( &before, ROCKETNET_COUNTER_RECEIVE_FAILED );
+        if ( failed == (uint64_t) failures )
+        {
+            break;
+        }
+    }
+
+    const struct rocketnet_counters_t after = *rocketnet_server_transport_counters( session.server );
+    uint64_t rio_after[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, rio_after );
+
+    const uint64_t rio_failed = rio_after[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED] - rio_before[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED];
+    const uint64_t rio_overflow = rio_after[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW] - rio_before[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW];
+    const uint64_t full = rocketnet_counter_value( &after, ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL ) -
+                          rocketnet_counter_value( &before, ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL );
+
+    printf( "windows_server_rio_failed_receives_reach_the_server: failed %llu at the server, %llu at the transport; full %llu at the server, %llu at the transport\n",
+            (unsigned long long) failed, (unsigned long long) rio_failed, (unsigned long long) full, (unsigned long long) rio_overflow );
+    fflush( stdout );
+
+    windows_socket_errors_require( failed == (uint64_t) failures );
+    windows_socket_errors_require( rio_failed == (uint64_t) failures );
+    windows_socket_errors_require( full == rio_overflow );
+    windows_socket_errors_session_finish( &session );
+}
+
+void windows_server_rio_failed_receives_reach_the_server() { windows_server_rio_failed_receives_reach_the_server_case(); }
+#endif // #if ROCKETNET_DEV
+
 #define WINDOWS_SOCKET_ERRORS_CASES( name )                                                                     \
     void name##_portable_ipv4() { windows_socket_errors_transport_t t = { "portable", false }; name( &t ); }   \
     void name##_portable_ipv6() { windows_socket_errors_transport_t t = { "portable", true };  name( &t ); }   \
@@ -844,8 +911,10 @@ void windows_server_counts_oversize_as_prefilter_too_large_iocp() { windows_serv
 void windows_server_counts_oversize_as_prefilter_too_large_rio() { windows_server_counts_oversize_as_prefilter_too_large_rio_case(); }
 void windows_server_counts_runt_as_prefilter_too_short_rio() { windows_server_counts_runt_as_prefilter_too_short_rio_case(); }
 
-void windows_client_drops_oversize_and_garbage_ipv4() { windows_client_drops_oversize_and_garbage( false ); }
-void windows_client_drops_oversize_and_garbage_ipv6() { windows_client_drops_oversize_and_garbage( true ); }
+void windows_client_drops_oversize_and_garbage_ipv4() { windows_client_drops_oversize_and_garbage( false, "portable" ); }
+void windows_client_drops_oversize_and_garbage_ipv6() { windows_client_drops_oversize_and_garbage( true, "portable" ); }
+void windows_client_drops_oversize_and_garbage_iocp_ipv4() { windows_client_drops_oversize_and_garbage( false, "iocp" ); }
+void windows_client_drops_oversize_and_garbage_iocp_ipv6() { windows_client_drops_oversize_and_garbage( true, "iocp" ); }
 
 void windows_per_packet_receive_counts_empty_datagram_ipv4() { windows_per_packet_receive_counts_empty_datagram( false ); }
 void windows_per_packet_receive_counts_empty_datagram_ipv6() { windows_per_packet_receive_counts_empty_datagram( true ); }

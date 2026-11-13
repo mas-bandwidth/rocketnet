@@ -65,6 +65,24 @@
                                   soaked nothing, however clean its counters.
                                   scripts/soak-sim-selftest runs this leg.
 
+    ROCKETNET_SOAK_SIM_FAULT_PAYLOAD=1
+    ROCKETNET_SOAK_SIM_FAULT_CONSERVATION=1
+    ROCKETNET_SOAK_SIM_FAULT_REFUSAL=1
+    ROCKETNET_SOAK_SIM_FAULT_WEDGE=1
+                                  the other oracles' negative controls, one
+                                  each: the first payload the server delivers
+                                  has a byte flipped before it is verified
+                                  (PAYLOAD VERIFY FAILED); the server's
+                                  KEEP_ALIVE_RECEIVED gains one arrival with no
+                                  outcome before the check (CONSERVATION
+                                  FAILED); the server gains one
+                                  KEEP_ALIVE_ZERO_SEQUENCE refusal with its
+                                  arrival, which no fault of the wire explains
+                                  (UNEXPLAINED REFUSAL); client 0 is never
+                                  updated, so it neither progresses nor times
+                                  out (HANG). Each run MUST fail.
+                                  scripts/soak-sim-selftest runs each leg.
+
     The delivery floor: the clients write payloads to the server (the server
     sends none back), so a run fails unless it wrote at least one payload and
     the server verified at least one.
@@ -574,6 +592,17 @@ int main( int argc, char ** argv )
         printf( "soak_sim: delivery fault ARMED -- the server's deliveries are dropped; the delivery floor must go red\n" );
     }
 
+    char oracle_fault_string[256];
+    bool payload_fault = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_FAULT_PAYLOAD", oracle_fault_string, sizeof( oracle_fault_string ) ) && oracle_fault_string[0] == '1';
+    const bool conservation_fault = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_FAULT_CONSERVATION", oracle_fault_string, sizeof( oracle_fault_string ) ) && oracle_fault_string[0] == '1';
+    const bool refusal_fault = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_FAULT_REFUSAL", oracle_fault_string, sizeof( oracle_fault_string ) ) && oracle_fault_string[0] == '1';
+    const bool wedge_fault = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_FAULT_WEDGE", oracle_fault_string, sizeof( oracle_fault_string ) ) && oracle_fault_string[0] == '1';
+    if ( payload_fault || conservation_fault || refusal_fault || wedge_fault )
+    {
+        printf( "soak_sim: oracle fault ARMED --%s%s%s%s; the run must go red\n", payload_fault ? " payload" : "",
+                conservation_fault ? " conservation" : "", refusal_fault ? " refusal" : "", wedge_fault ? " wedge" : "" );
+    }
+
     static struct rocketnet_counters_t client_counters;
     memset( &client_counters, 0, sizeof( client_counters ) );
 
@@ -716,8 +745,12 @@ int main( int argc, char ** argv )
 
         // client drives, wire carries, server answers, wire carries back
 
-            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                          rocketnet_client_protocol_update( &client, time, packet, &packet_bytes ) );
+            packet_bytes = 0;
+            if ( !( wedge_fault && c == 0 ) )
+            {
+                SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                              rocketnet_client_protocol_update( &client, time, packet, &packet_bytes ) );
+            }
 
             if ( packet_bytes > 0 )
             {
@@ -768,6 +801,12 @@ int main( int argc, char ** argv )
 
             if ( delivered_bytes > 0 && !delivery_fault )
             {
+                if ( payload_fault )
+                {
+                    delivered[0] ^= 0xff;
+                    payload_fault = false;
+                }
+
                 if ( verify_payload( delivered, delivered_bytes ) )
                 {
                     payloads_verified++;
@@ -875,7 +914,10 @@ int main( int argc, char ** argv )
     // Found by running the pinned and 24 random seeds with the table empty, and
     // confirmed one fault at a time: loss alone moves only the history
     // overflow, duplication alone moves only the ALREADY_RECEIVED rows, and
-    // jitter alone moves nothing.
+    // jitter alone moves nothing. The cookie reply limit (t12 rule 7) added
+    // CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD: at the pinned seed it reads 1
+    // on this wire, 0 with duplication off (loss and jitter kept), and 4 with
+    // duplication alone, so it is duplication's row, as dst_checks.h has it.
 
     static const soak_explained_refusal_t soak_explained_refusals[] = {
         { ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW, "loss: a lost keep-alive takes its acks with it, so sent packets age out of the history unacknowledged" },
@@ -884,6 +926,7 @@ int main( int argc, char ** argv )
         { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
         { ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
         { ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
+        { ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD, "duplication: the wire delivers a cookieless request twice in one update, the per-update cookie reply limit withholds the copy's reply" },
         { -1, NULL }
     };
 
@@ -894,6 +937,17 @@ int main( int argc, char ** argv )
     };
 
     const soak_end_t soak_ends[2] = { { "server", &server_counters }, { "clients", &client_counters } };
+
+    if ( conservation_fault )
+    {
+        server_counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED]++;
+    }
+
+    if ( refusal_fault )
+    {
+        server_counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED]++;
+        server_counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE]++;
+    }
 
     int conservation_ok = 1;
 

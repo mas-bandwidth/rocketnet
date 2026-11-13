@@ -10,6 +10,7 @@
 
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
@@ -157,7 +158,7 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 struct rocketnet_segment_refused_t
 {
     struct rocketnet_address_t destination[ROCKETNET_SEGMENT_REFUSED_ENTRIES];     // type ROCKETNET_ADDRESS_NONE: empty
-    int destinations;               // refusals that filled an empty entry: distinct refusing destinations, up to the table size
+    int destinations;               // refusals of a destination the table did not hold, up to the threshold: never fewer than the distinct refusing destinations
     bool accepted;                  // a segmented send was accepted since create
 };
 
@@ -179,13 +180,16 @@ static inline bool rocketnet_segment_refused_contains( const struct rocketnet_se
     return entry->type != ROCKETNET_ADDRESS_NONE && rocketnet_address_equal( entry, address );
 }
 
-// remembers a refusing destination. true when segmentation should now turn
-// off for the transport: the threshold of distinct destinations reached with
-// no segmented send ever accepted
+// remembers a refusing destination the table did not hold. true when
+// segmentation should now turn off for the transport: the threshold reached
+// with no segmented send ever accepted. Every such refusal counts, a
+// displaced destination's again included, so two refusers sharing an entry
+// cannot keep the count below the distinct destinations that refused
+// (proofs/tla/RNSegmentRefusal.tla Counted, KernelFallback)
 static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refused_t * refused, const struct rocketnet_address_t * address )
 {
     struct rocketnet_address_t * entry = &refused->destination[rocketnet_segment_refused_entry( address )];
-    if ( entry->type == ROCKETNET_ADDRESS_NONE )
+    if ( refused->destinations < ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
     {
         refused->destinations++;
     }
@@ -199,22 +203,6 @@ static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refus
 
 #define ROCKETNET_SERVER_GSO_DISABLE_SEGMENT                    (1<<0)
 #define ROCKETNET_SERVER_GSO_DISABLE_GRO                        (1<<1)
-
-// counters, readable any time from the main thread; indexes into the array
-// rocketnet_server_gso_counters fills
-
-#define ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT                    0
-#define ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED               1
-#define ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS                  2
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS               3
-#define ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED                   4       // packets not sent: refused for their destination (never resent), or a full socket's tail left after shutdown's bounded retries
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE           5       // segment outside [server min, receive ceiling]
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW       6       // segments of one GRO receive past the staging's room: more than ROCKETNET_GSO_RECV_MAX_SEGMENTS
-#define ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS                      7       // sendmmsg messages that carried a UDP_SEGMENT cmsg
-#define ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES                    8       // receive buffers that arrived GRO-coalesced (more than one segment)
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS                10       // recvmmsg answered -1 with an errno other than EAGAIN; the worker goes back to poll
-#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          11
 
 // bind_address is read for family and port and written back when the port
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6
@@ -238,6 +226,14 @@ int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso );
 
 int rocketnet_server_gso_features( struct rocketnet_server_gso_t * gso );
 
+// The gso transport's counters are rows of the public table: the
+// ROCKETNET_COUNTER_GSO_* rows of sdk/rocketnet_counters.h, contiguous from
+// ROCKETNET_COUNTER_GSO_PACKETS_SENT. Main thread, any time: writes those rows
+// of counters, an array of ROCKETNET_NUM_COUNTERS values indexed by public
+// counter, cumulative for the transport's life; every other value is left as
+// it was.
+#define ROCKETNET_SERVER_GSO_FIRST_COUNTER ROCKETNET_COUNTER_GSO_PACKETS_SENT
+#define ROCKETNET_SERVER_GSO_COUNTER_ROWS  ( ROCKETNET_COUNTER_GSO_GRO_CMSG_FAULTS - ROCKETNET_COUNTER_GSO_PACKETS_SENT + 1 )
 void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_t * counters );
 
 // send packets. the phase contract is the transport's: start, finish and
@@ -304,6 +300,9 @@ bool rocketnet_server_gso_test_send_retry_quit();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();
+// Receives whose UDP_GRO control is truncated reach the GRO_CMSG_FAULTS
+// counter once each, through the drain, the publish and main's fold.
+bool rocketnet_server_gso_test_gro_cmsg_faults();
 
 #if defined( __linux__ )
 struct mmsghdr;

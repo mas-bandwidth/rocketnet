@@ -43,6 +43,23 @@ class CheckReleaseTsan(unittest.TestCase):
         self.assertIn("'tsan (threaded transport) (main)': success", text)
         self.assertIn("VERDICT: PASS", text)
 
+    def test_point_release_tag_is_judged_by_the_per_commit_tier_only(self):
+        api = green_release(FakeApi(), version="v1.1.8")
+        api.tags["v1.1.8"] = SHA
+        api.jobs[run_of(api, "nightly.yml")["id"]][1] = job("tsan (threaded transport) (main)", "failure")
+        code, text = verdict(api, "v1.1.8")
+        self.assertEqual(code, 0, text)
+        self.assertIn("MINOR ONLY nightly.yml 'tsan (threaded transport) (<ref>)'", text)
+        self.assertIn("VERDICT: PASS", text)
+
+    def test_minor_release_tag_is_judged_by_the_nightly_tier(self):
+        api = green_release(FakeApi(), version="v1.2.0")
+        api.tags["v1.2.0"] = SHA
+        api.jobs[run_of(api, "nightly.yml")["id"]][1] = job("tsan (threaded transport) (main)", "failure")
+        code, text = verdict(api, "v1.2.0")
+        self.assertEqual(code, 1)
+        self.assertIn("'tsan (threaded transport) (main)': failure", text)
+
     def test_tag_stage_does_not_ask_for_the_tag_or_notes(self):
         api = green_release(FakeApi())
         del api.files[(f"docs/RELEASE-NOTES-{VERSION}.md", SHA)]
