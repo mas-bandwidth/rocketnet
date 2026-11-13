@@ -113,6 +113,7 @@ struct xdp_host_frame_t
     int override_udp_len = -1;              // >= 0: override UDP header length field
     int override_ip_len = -1;               // >= 0: override the IPv4 total length or IPv6 payload length field
     int pad_bytes = 0;                      // zero bytes after the UDP payload (link-layer padding)
+    uint16_t vlan_tci = 42;                 // the tag control information of an 802.1Q or 802.1ad ethertype: VLAN 42, priority 0
 };
 
 static void xdp_host_put16( std::vector<uint8_t> & out, uint16_t value )
@@ -136,9 +137,9 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
     xdp_host_put16( out, ethertype );
     if ( ethertype == 0x8100 || ethertype == 0x88a8 )
     {
-        // an 802.1Q tag (VLAN 42), then the inner ethertype
+        // an 802.1Q tag (vlan_tci: VLAN 42 unless named), then the inner ethertype
 
-        xdp_host_put16( out, 42 );
+        xdp_host_put16( out, f.vlan_tci );
         xdp_host_put16( out, f.family == 4 ? 0x0800 : 0x86dd );
     }
 
@@ -299,6 +300,7 @@ struct xdp_host_config_t
     uint16_t port = xdp_host_server_port;
     uint8_t epoch = 0;
     bool lookup_fails = false;
+    uint16_t vlan_id = 0;           // the server's 802.1Q VLAN ID, 0 untagged
 };
 
 static void xdp_host_apply_config( const xdp_host_config_t & c )
@@ -313,6 +315,8 @@ static void xdp_host_apply_config( const xdp_host_config_t & c )
     memcpy( &config.public_port, port_bytes, 2 );                       // network order, as stored
     memcpy( config.packet_filter, xdp_host_filter_value, 4 );
     config.filter_epoch = c.epoch;
+    const uint8_t vlan_bytes[2] = { (uint8_t) ( c.vlan_id >> 8 ), (uint8_t) ( c.vlan_id & 0xff ) };
+    memcpy( &config.vlan_id, vlan_bytes, 2 );                          // network order, as stored
     if ( !c.any_ipv6 )
     {
         memcpy( config.public_address_ipv6, xdp_host_server_ipv6, 16 );
@@ -1413,6 +1417,81 @@ static void test_xdp_transport_host_vlan_tagged_passes()
     xdp_host_run_rows( rows );
 }
 
+// A server on 802.1Q VLAN 42 (config vlan_id 42): its tagged frames and the
+// same frames with the tag stripped by the NIC redirect; a frame of another
+// VLAN, an 802.1ad tag and a tag cut by the frame end pass; behind its tag a
+// frame is judged as an untagged one, its drops counted
+
+static void test_xdp_transport_host_vlan_server_takes_its_tag()
+{
+    std::vector<xdp_host_row_t> rows;
+    const int families[2] = { 4, 6 };
+
+    for ( int f = 0; f < 2; f++ )
+    {
+        xdp_host_row_t tagged = xdp_host_row( "VLAN server: its 802.1Q tag", families[f] );
+        tagged.config.vlan_id = 42;
+        tagged.frame.ethertype = 0x8100;
+        rows.push_back( tagged );
+
+        xdp_host_row_t priority = tagged;
+        priority.label = "VLAN server: its tag with priority 7 and DEI set";
+        priority.frame.vlan_tci = 0xF000 | 42;
+        rows.push_back( priority );
+
+        xdp_host_row_t highest = tagged;
+        highest.label = "VLAN server 4094: its tag";
+        highest.config.vlan_id = 4094;
+        highest.frame.vlan_tci = 4094;
+        rows.push_back( highest );
+
+        xdp_host_row_t stripped = xdp_host_row( "VLAN server: the frame with its tag stripped by the NIC", families[f] );
+        stripped.config.vlan_id = 42;
+        rows.push_back( stripped );
+
+        xdp_host_row_t other = tagged;
+        other.label = "VLAN server: a tag of another VLAN";
+        other.frame.vlan_tci = 43;
+        rows.push_back( xdp_host_expect( other, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+
+        xdp_host_row_t high_bits = tagged;
+        high_bits.label = "VLAN server 42: a tag of VLAN 298 (42 + 256): all 12 bits are matched";
+        high_bits.config.vlan_id = 42;
+        high_bits.frame.vlan_tci = 0x0100 | 42;
+        rows.push_back( xdp_host_expect( high_bits, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+
+        xdp_host_row_t ad = tagged;
+        ad.label = "VLAN server: an 802.1ad tag of its VLAN ID";
+        ad.frame.ethertype = 0x88a8;
+        rows.push_back( xdp_host_expect( ad, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+
+        for ( int cut = 14; cut < 18; cut++ )
+        {
+            xdp_host_row_t truncated = tagged;
+            truncated.label = "VLAN server: a tag cut by the frame end at " + std::to_string( cut );
+            truncated.frame.truncate_to = cut;
+            rows.push_back( xdp_host_expect( truncated, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+        }
+
+        xdp_host_row_t epoch = tagged;
+        epoch.label = "VLAN server: behind its tag, a wrong epoch drops counted";
+        epoch.frame.epoch = 1;
+        rows.push_back( xdp_host_expect( epoch, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH ) ) );
+
+        xdp_host_row_t small = tagged;
+        small.label = "VLAN server: behind its tag, a too-small packet drops counted";
+        small.frame.payload_bytes = 1;
+        rows.push_back( xdp_host_expect( small, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+
+        xdp_host_row_t elsewhere = tagged;
+        elsewhere.label = "VLAN server: behind its tag, another port passes";
+        elsewhere.frame.port = (uint16_t) ( xdp_host_server_port + 1 );
+        rows.push_back( xdp_host_expect( elsewhere, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+    }
+
+    xdp_host_run_rows( rows );
+}
+
 // ---------------------------------------------------------------------------
 // drops on the server's port: each counted by its reason
 
@@ -2075,6 +2154,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_first_fragment_drops_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_first_fragment_drops_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_host_icmpv6_passes_uncounted );
 REGISTER_UNIT_TEST( test_xdp_transport_host_vlan_tagged_passes );
+REGISTER_UNIT_TEST( test_xdp_transport_host_vlan_server_takes_its_tag );
 REGISTER_UNIT_TEST( test_xdp_transport_host_too_small_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_too_large_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_epoch_drops );

@@ -65,7 +65,8 @@ template <class Staging>
 static inline void rocketnet_xdp_receive_take( struct xsk_ring_cons * ring, uint32_t receive_index, uint32_t * num_consumed,
                                                const void * umem, uint64_t region_begin, uint64_t region_end, int address_type,
                                                Staging * receive_buffer, uint32_t staging_capacity,
-                                               uint64_t * frame, uint32_t * num_returned, struct rocketnet_xdp_receive_drops_t * drops )
+                                               uint64_t * frame, uint32_t * num_returned, struct rocketnet_xdp_receive_drops_t * drops,
+                                               int vlan_id = 0 )
 {
     rocketnet_assert( receive_buffer->num_packets < staging_capacity );
     (void) staging_capacity;
@@ -107,7 +108,7 @@ static inline void rocketnet_xdp_receive_take( struct xsk_ring_cons * ring, uint
     const uint8_t * payload_data = NULL;
     int payload_bytes = 0;
 
-    if ( rocketnet_xdp_frame_receive( packet_data, (size_t) desc->len, address_type, &from, &payload_data, &payload_bytes, drops ) )
+    if ( rocketnet_xdp_frame_receive_vlan( packet_data, (size_t) desc->len, address_type, vlan_id, &from, &payload_data, &payload_bytes, drops ) )
     {
         const int index = (int) receive_buffer->num_packets;
 
