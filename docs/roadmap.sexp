@@ -286,4 +286,14 @@
    :title "RNSendReserveCalls: a Capacity per send queue"
    :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."
    :date "2026-11-13" :origin "Piece M follow-on, cold reader")
+
+  (item "portable-server-shared-handoff" :group "audit-remaining" :area "sdk"
+   :title "Portable server transport on the shared buffer handoff"
+   :text "PR #1043 (refactor/v1.1.x/server-shared-handoff, extraction E5) moved the portable and gso server transports off their hand-written bank queues onto rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h). Its gso half is overtaken by the rebuilt gso transport (#1103), which rewrites sdk/rocketnet_server_gso_linux.cpp and also changes sdk/rocketnet_driver_builtin.cpp. After the rebuilt gso lands, redo the portable half alone on main (the portable TX and RX commits and the rocketnet_buffer_handoff_started helper), with its gates: rnportabletx, rnportablerx and rnbufferhandoff TLC, the unit mutation cases and the light memory pins."
+   :date "2026-11-13" :origin "Open-PR triage 2026-11-13: #1043 not landed")
+
+  (item "rio-registered-region-red-zones" :group "audit-remaining" :area "tests"
+   :title "ASan red zones between the rio registered region's arrays"
+   :text "In an AddressSanitizer build the rio transport's sized block (rocketnet_rio_sized_layout: slot bytes, retry slices, process arrays, drops, each bank's data, from and packet bytes) carries poisoned red zones between its carves. The registered region laid out by sdk/rocketnet_rio_layout.h (send frames, send addresses, receive slices, receive addresses; one RIORegisterBuffer) does not: its offsets are the layout RNRioLaneLayout models and the trace check binds, so a pad there changes a modelled layout. Add the pads to the layout and its model together, or record why that region stays uncovered."
+   :date "2026-11-13" :origin "#1047 merge with the rebuilt rio")
  ))
