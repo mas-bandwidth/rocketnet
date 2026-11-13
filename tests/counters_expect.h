@@ -183,7 +183,8 @@ do                                                                              
 // RECEIVE_DROPPED_FULL, RECEIVE_FAILED and RECEIVE_DROPPED_STOPPED through
 // iocp_receive_drop_totals. Left in the walk it counted each of those twice,
 // and a stop under traffic moved it, a refusal, for drops RECEIVE_DROPPED_STOPPED
-// classes as expected.
+// classes as expected. The code is the authority here: t18 still names
+// IOCP_RECEIVE_DROPPED for its size drops only, and is owed the same rows.
 
 inline bool rocketnet_counter_aliases_shared_row( int counter )
 {
