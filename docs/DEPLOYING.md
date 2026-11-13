@@ -34,9 +34,13 @@ everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
 An explicit server pin of `portable` selects only portable in either build.
 Unknown names refuse loudly at create. The granted transport is reported by
-the transport name query on each client and server, and the startup log line. Queue-count bounds are per transport, refused and never
-clamped: the public range is 1–1024 (zero selects a transport default),
-while gso and io_uring accept at most 32. XDP also checks its memory and host
+the transport name query on each client and server, and the startup log line. Each transport's network thread count is its own config
+field and environment variable, zero selecting its default, refused and never
+clamped past its limit ([ENVIRONMENT.md](ENVIRONMENT.md#network-threads-per-transport);
+which cores they take is in
+[TRANSPORTS.md](TRANSPORTS.md#server-network-threads-and-their-priority)).
+Only `xdp` needs the machine to match: the NIC's queue count equals
+`num_xdp_threads` (below). XDP also checks its memory and host
 geometry before starting. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the transport list; likewise the Darwin
@@ -66,11 +70,13 @@ send buffers are recycled only after completion, and stop cancels and drains
 outstanding operations. IPv6 binds accept both address families. Windows clients independently select `iocp` or `portable`; a server pin does
 not change the client selection.
 
-The public IOCP adapter runs `num_xdp_queues` completion workers (1 to 32;
-zero or 1 is one), each with its own socket and completion port, and two send
-threads. More than one worker needs a specific local address in
-`bind_ipv4_address` or `bind_ipv6_address`: start refuses the wildcard. Each
-completion worker owns its socket's receive completions. At the default
+The public IOCP adapter runs `num_iocp_completion_workers` completion workers
+(1 to 32; default 2 on a specific bind address, 1 on the wildcard), each with
+its own socket and completion port, and `num_iocp_send_threads` send threads
+(default 2, at most the send lanes). More than one worker needs a specific
+local address in `bind_ipv4_address` or `bind_ipv6_address`: asked for on the
+wildcard, start refuses. Each completion worker owns its socket's receive
+completions. At the default
 `max_clients` of 1000 there are 128 posted receives a worker, 16000 receive
 staging slots across the workers, and 8 send lanes of 4096 frames. Each lane's
 three command banks hold references to that lane's frame pool; they do not
@@ -84,9 +90,18 @@ builds try portable, iocp, then rio. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
-The current implementation uses one UDP socket. Its behavior under the
-intended workload must be measured before considering RSS-sharded sockets or
-another backend for higher throughput.
+
+### To reach 10 Gb/s on Windows set a bind address
+
+The Windows defaults that held 1000 players at 10 Gb/s (6 RIO lanes, or 2
+IOCP completion workers and 2 send threads, on AWS m7i.16xlarge) share the
+port by processor, which Windows allows only on a specific local address. Set
+the network card's address in `bind_ipv4_address` (or `bind_ipv6_address`),
+or `ROCKETNET_SERVER_BIND_IPV4_ADDRESS`. Without it the server binds the
+wildcard, runs one lane or one completion worker, and logs one warning that
+names these settings; a larger count asked for on the wildcard is refused.
+[WINDOWS.md](WINDOWS.md#to-reach-10-gbs-on-windows-set-a-bind-address) has
+the warning's text.
 
 ## Deploying the XDP transport: provision, then verify-and-bind
 
@@ -101,7 +116,32 @@ script's header carries the authoritative
 condition list; the pre-flight checks exactly those conditions, except R8
 (the real-time throttle), which only the script checks.
 
-Cold, on a fresh box, as root:
+`xdp` runs one thread per NIC queue, so the NIC is provisioned to the
+server's thread count before the server starts. In order:
+
+1. Choose the thread count, `num_xdp_threads` or
+   `ROCKETNET_SERVER_NUM_XDP_THREADS`, or take the default, 1 (it held 1000
+   players at 10 Gb/s on an X710 pair, main 59890655d, 2026-11-13).
+2. Provision the NIC with the script, before the server:
+   `sudo scripts/rocketnet-provision eth0 2` for 2 threads. Given no count the
+   script takes `ROCKETNET_SERVER_NUM_XDP_THREADS` from its environment, or
+   the default.
+3. Start the server: thread `q` runs on cpu `num_os_cpus + q`.
+4. If the counts differ the server does not start `xdp`, and says why:
+
+   ```text
+   xdp pre-flight: eth0 has 4 combined queues and the server runs 2 XDP threads (num_xdp_threads; R7): provision the NIC with `sudo scripts/rocketnet-provision eth0 2`, or set num_xdp_threads (ROCKETNET_SERVER_NUM_XDP_THREADS) to 4
+   ```
+
+   `auto` then falls to `gso`; with `xdp` alone start returns
+   `NO_TRANSPORT_FOUND`.
+5. Read the NIC's current count with `ethtool -l eth0` (the `Combined` line
+   under "Current hardware settings").
+
+No other transport needs a machine setting to match its thread count.
+
+Cold, on a fresh box, as root, for the default of one thread (put your count
+after the interface name for more):
 
     # 1. BOOT TIER (once, then reboot): edit GRUB_CMDLINE_LINUX in /etc/default/grub
     #    to carry: nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
@@ -111,7 +151,7 @@ Cold, on a fresh box, as root:
     #    compiles it out on Ubuntu; LINUX.md section 6 has what was measured)
 
     # 2. RUNTIME TIER (idempotent, re-run any time):
-    scripts/rocketnet-provision eth0 7
+    scripts/rocketnet-provision eth0
     #    The interface is the one carrying the public address. On one
     #    802.1Q VLAN device (eth0.300) the script resolves it to the parent
     #    NIC and provisions that (R2), and the server attaches there and tags
@@ -131,7 +171,7 @@ Cold, on a fresh box, as root:
     echo 'kernel.sched_rt_runtime_us = -1' > /etc/sysctl.d/90-rocketnet-xdp.conf
 
     # 3. Check without changing anything (what the library's pre-flight will say):
-    scripts/rocketnet-provision eth0 7 verify
+    scripts/rocketnet-provision eth0 verify
 
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
     #    automatic transport order falls to gso with the reason named where it is not.
@@ -140,9 +180,9 @@ Cold, on a fresh box, as root:
     #    rebuilds the interrupt vectors after the pre-flight has passed, and
     #    with irqaffinity=0 every queue vector lands on cpu 0, away from the
     #    worker that polls it. Once the server is up, as root:
-    scripts/rocketnet-provision eth0 7 repin
+    scripts/rocketnet-provision eth0 repin
     #    It waits (ROCKETNET_REPIN_WAIT_SECONDS, default 60) for the attached
-    #    program, the carrier and exactly 7 queue vectors, pins <if>-TxRx-k
+    #    program, the carrier and one queue vector a thread, pins <if>-TxRx-k
     #    to the k-th isolated cpu (the cpu XDP worker k pins itself to),
     #    moves any other vector of the port off the worker cpus, and reads
     #    them back. It writes only smp_affinity_list, so it runs beside the
@@ -160,7 +200,7 @@ Cold, on a fresh box, as root:
     #    (ixgbe) the attached program also adds interrupt vectors, so verify
     #    may report too few isolated cpus (R4) until the program is unloaded:
     #    unload first, then read R4 again.
-    scripts/rocketnet-provision eth0 7
+    scripts/rocketnet-provision eth0
     #    Each instance also leaves a bpffs pin root named for the instance --
     #    /sys/fs/bpf/rocketnet_xdp_<token>_<pid>_<starttime>_<bootid> -- and
     #    the library never adopts or removes state it did not create this
@@ -187,9 +227,10 @@ Cold, on a fresh box, as root:
     #  removes. CI runs it on every push, so neither the matcher halves nor
     #  the enforcement paths can drift silently.)
 
-This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
-the busy-poll pair — is the 10 Gbps point, as measured on a provisioned 10 GbE
-Linux host; the magnitude belongs to that machine, and the claim attaches to a
+This configuration — isolated cores 1-15, the default one queue and thread,
+per-queue IRQ pinning, the busy-poll pair — held 1000 players at 10 Gb/s on a
+provisioned X710 pair (rows R5-R8, main 59890655d; two queues also passed);
+the magnitude belongs to that machine, and the claim attaches to a
 verified-provisioned box, never to the library alone. The isolated-core mask, the
 queue count and the IRQ pinning scale together with NIC bandwidth: one queue
 wants one isolated core, and higher-bandwidth NICs need more cores (the script

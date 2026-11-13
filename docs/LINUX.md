@@ -172,8 +172,10 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 The public header lists each field's environment overlay; callback and
 context fields, `loopback_hub`, `server_secret_key`, and `config_bytes` have
 none. Deployment controls include
-`ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`
-(`sdk/rocketnet.h`, `sdk/rocketnet_internal.h`).
+each transport's own network thread count (`ROCKETNET_SERVER_NUM_XDP_THREADS`,
+`ROCKETNET_SERVER_NUM_GSO_WORKERS`, `ROCKETNET_SERVER_NUM_IO_URING_WORKERS`;
+[ENVIRONMENT.md](ENVIRONMENT.md#network-threads-per-transport)) and
+`ROCKETNET_SERVER_NUM_OS_CPUS` (`sdk/rocketnet.h`, `sdk/rocketnet_internal.h`).
 
 CI's development-build transport matrix pins each Linux server transport against the portable
 client on four cases, `test_transport_env_pin_is_honoured` among them, which proves
@@ -198,16 +200,20 @@ skipped unavailable name must not count as a successful pin.
 
 `gso` (`sdk/rocketnet_server_gso.h`, `sdk/rocketnet_server_gso_linux.cpp`)
 needs no capability or privilege (`sdk/rocketnet_server_gso.h`). It
-binds an `SO_REUSEPORT` group of `num_xdp_queues` sockets, default 4
-(`sdk/rocketnet_server_gso.h`, `sdk/rocketnet_server_gso_linux.cpp`),
-at most 32: a larger count refuses the rung, never clamps
-(`sdk/rocketnet_server_gso.h`, `sdk/rocketnet_driver_builtin.cpp`).
-Each socket has its own receive worker thread, and the server has one
-transmit worker. Three server-wide send banks hold 4096 slots each, with
-only the current producer bank available to a fill. Adding sockets does not
-increase this fill capacity; sends past it spread across updates as the
-transport's send room reports. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
-(`sdk/rocketnet_server_gso_linux.cpp`).
+binds an `SO_REUSEPORT` group of `num_gso_workers` sockets
+(`ROCKETNET_SERVER_NUM_GSO_WORKERS`), default 1, at most 32: a larger count
+is refused at create, never clamped (`sdk/rocketnet_network_threads.h`).
+**Threads:** one worker thread per socket, and nothing else. Each worker
+does all of its queue's kernel-facing work: it drains its socket's receives
+and sends its queue's staged packets. Worker `q` pins itself to cpu
+`num_os_cpus + q`, so with the default `num_os_cpus` of 1 the workers take
+cpus 1 .. `num_gso_workers` and cpu 0 stays the operating system's; a refused
+pin is warned, counted in `GSO_PIN_REFUSALS` and the worker is confined to the
+cpus from `num_os_cpus` up (`sdk/rocketnet_server_gso_linux.cpp`). Sends are
+per queue as well: a destination hashes to one queue and is staged in that
+queue's three send banks of `ROCKETNET_GSO_SEND_QUEUE_SIZE` slots, so more
+workers add send room (`sdk/rocketnet_server_gso.h`). See
+[staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 **The plain tier.** Create probes `UDP_SEGMENT` and `UDP_GRO` on the bound
 sockets (`sdk/rocketnet_server_gso_linux.cpp`). A kernel that
@@ -233,14 +239,19 @@ The degradation is inside the transport, below the transport list (`BUILDING.md`
 ## 5. io_uring
 
 `io_uring` (`sdk/rocketnet_server_uring.h`, `sdk/rocketnet_server_uring_linux.cpp`)
-uses one ring per server, touched only by the main thread, and no I/O worker
-threads (`sdk/rocketnet_server_uring_linux.cpp`). It binds the same
-`SO_REUSEPORT` group as `gso`: `num_xdp_queues` sockets, default 4, at most
-32 (`sdk/rocketnet_server_uring.h`,
-`sdk/rocketnet_server_uring_linux.cpp`,
-`sdk/rocketnet_driver_builtin.cpp`). All sockets share two phases of 2048 send
-slots (`ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_QUEUE_SIZE`); pending completions keep their phase occupied. More queues do not
-increase that capacity. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
+binds the same `SO_REUSEPORT` group as `gso`: `num_io_uring_workers` sockets
+(`ROCKETNET_SERVER_NUM_IO_URING_WORKERS`), default 2, at most 32, refused
+above that (`sdk/rocketnet_network_threads.h`). **Threads:** one worker
+thread per socket, and nothing else. Each worker owns its own ring and does
+all of its queue's kernel-facing send and receive; the main thread never
+touches a ring. Worker `q` pins itself to cpu `num_os_cpus + q` (cpus 1 ..
+`num_io_uring_workers` by default, cpu 0 left to the operating system) and
+runs `SCHED_RR` at the minimum priority, as the XDP threads do; a refused pin
+is warned, counted in `URING_PIN_REFUSALS` and the worker is confined to the
+cpus from `num_os_cpus` up (`sdk/rocketnet_server_uring.h`,
+`sdk/rocketnet_server_uring_linux.cpp`). A destination hashes to one queue
+and is staged in that queue's send banks, so more workers add send room. See
+[staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
 before sizing a large server.
 
 **Receive.** Each socket has a provided buffer ring of 4096 buffers of 66 KiB
@@ -248,22 +259,24 @@ before sizing a large server.
 receive of up to 64 KiB plus its headers, 264 MiB per queue, allocated at create)
 and one multishot `RECVMSG` over it; the kernel fills ring buffers and
 posts one completion per receive buffer with no syscall per datagram.
-With GRO, that buffer can contain several datagrams; the main thread splits
-and copies them before returning the buffer to the ring
+With GRO, that buffer can contain several datagrams; the queue's worker
+splits them, runs the server's stateless prefilter and banks what passes for
+the main thread before returning the buffer to the ring
 (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`). A multishot
 that ends (for example `ENOBUFS` when the ring ran dry) is counted and armed
 again (`sdk/rocketnet_server_uring_linux.cpp`,
-`sdk/rocketnet_server_uring.h`). The ring has 4096 submission entries and
+`sdk/rocketnet_server_uring.h`). Each queue's ring has 4096 submission entries and
 a completion queue twice that (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`). **Send** submits one
 `SENDMSG` per send run (one segmented `SENDMSG` per run of equal-sized packets to
 one destination when `UDP_SEGMENT` is available, else one per packet), and each
 queue's worker thread reaps those completions on its own, never main;
-`UDP_SEGMENT` and `UDP_GRO` are probed at create as `gso` probes them. Sends still pending when the call returns
-stay in the completion queue for a later call and are counted
-`SEND_DEFERRED`, so a send flush never waits unboundedly
-(`sdk/rocketnet_server_uring_linux.cpp`, `TRANSPORTS.md`).
+`UDP_SEGMENT` and `UDP_GRO` are probed at create as `gso` probes them. A send
+the kernel refuses with `EAGAIN` (the socket full) is retried by the worker
+and counted in `URING_SEND_DEFERRED`; the main thread's flush only hands the
+bank to the worker and never waits on the kernel
+(`sdk/rocketnet_uring_queue_worker.h`, `TRANSPORTS.md`).
 
 **What the host needs.**
 
@@ -334,7 +347,7 @@ refuses by name on any unmet condition (`BUILDING.md`,
 | R4 | each queue IRQ pinned to its own isolated CPU | `:65-74` |
 | R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:75-77` |
 | R6 | SMT off | `:78-81` |
-| R7 | the NIC's combined channel count equals the queue count | `:82-85` |
+| R7 | the NIC's combined channel count equals the server's `num_xdp_threads` | `:82-85` |
 | R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12; checked by the script only (below) | `:86-95` |
 | K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:97-101` |
 
@@ -342,8 +355,35 @@ The script's modes are `provision` (the default), `verify`, `sweep` and
 `selftest` (`scripts/rocketnet-provision:103-127`, parsed at `:135-156`). The
 boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
 `BUILDING.md` walks a fresh box: boot tier, then
-`scripts/rocketnet-provision eth0 7`, then `... verify`, then the server, and
+`scripts/rocketnet-provision eth0`, then `... verify`, then the server, and
 `scripts/rocketnet-provision sweep` after a crash.
+
+**Threads.** `xdp` runs one thread per NIC queue: `num_xdp_threads`
+(`ROCKETNET_SERVER_NUM_XDP_THREADS`), default 1, at most 1024. Thread `q`
+pins itself to cpu `num_os_cpus + q` and spins at `SCHED_RR`, so with the
+default `num_os_cpus` of 1 the threads take cpus 1 .. `num_xdp_threads` and
+cpu 0 stays the operating system's. This is the one transport whose count the
+machine must match: the NIC's combined queue count must equal
+`num_xdp_threads` (R7). Given no count, the script takes
+`ROCKETNET_SERVER_NUM_XDP_THREADS` from its own environment, or the library's
+default of 1 when that is unset, and refuses a count that differs from the
+variable:
+
+```sh
+sudo scripts/rocketnet-provision eth0 2         # num_xdp_threads 2: 2 combined queues, then R3 to R8
+sudo scripts/rocketnet-provision eth0 2 verify
+ethtool -l eth0                                 # "Current hardware settings" shows "Combined: 2"
+```
+
+A server whose NIC has another queue count does not start `xdp`. The
+pre-flight logs
+
+```text
+xdp pre-flight: eth0 has 4 combined queues and the server runs 2 XDP threads (num_xdp_threads; R7): provision the NIC with `sudo scripts/rocketnet-provision eth0 2`, or set num_xdp_threads (ROCKETNET_SERVER_NUM_XDP_THREADS) to 4
+```
+
+then `xdp pre-flight failed`, and `auto` falls to `gso`; with `xdp` alone
+start returns `NO_TRANSPORT_FOUND`.
 
 **The interface MTU.** The wire assumes a 1500-byte link
 (`sdk/rocketnet_wire.h`): the largest frame is 1494 bytes over IPv4 and 1514
@@ -536,12 +576,12 @@ that CPU takes 50 ms in every second from it, and this setting does not
 change that. On every kernel, nothing else belongs on a worker's CPU.
 
 **Place the application's threads to match.** The constants of this layout are
-`NumOsCpus=1`, `NumXdpQueues=2` and `NumXdpCpus=NumXdpQueues`. In the server
+`NumOsCpus=1`, `NumXdpThreads=2` and `NumXdpCpus=NumXdpThreads`. In the server
 config set:
 
 ```c
 server_config.num_os_cpus = 1;
-server_config.num_xdp_queues = 2;
+server_config.num_xdp_threads = 2;
 server_config.transport = "xdp";
 ```
 
@@ -580,8 +620,9 @@ startup and an `xdp` transport label alone do not establish zero-copy.
   with a link-layer address` when the host has not yet talked to its gateway
   (`auto` then falls to `gso`); ping the gateway before create, or set
   `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` ([Environment](ENVIRONMENT.md)).
-- Queues: `num_xdp_queues`, default 7; worker CPUs start at `num_os_cpus`,
-  default 1 (`sdk/rocketnet_driver_builtin.cpp`, `BUILDING.md`).
+- Queues: `num_xdp_threads`, default 1, equal to the NIC's combined queue
+  count (R7); worker CPUs start at `num_os_cpus`, default 1
+  (`sdk/rocketnet_network_threads.h`, `sdk/rocketnet_driver_builtin.cpp`).
 - Memory: each queue's UMEM is 98304 frames of 4096 bytes, 384 MiB:
   65536 send frames plus 32768 receive frames
   (`sdk/rocketnet_constants.h`, `sdk/rocketnet_server_socket_linux.cpp`);

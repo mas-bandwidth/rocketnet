@@ -488,7 +488,7 @@ requirements to each configuration group:
   that makes `8000` the smallest timeout, so `1000` is legal only with an
   initial delay of `250` or less.
 
-### 6. Transports, queues, CPUs, and memory budgets (`transport`, `num_xdp_queues`, `num_os_cpus`, `ROCKETNET_*_MEMORY_BUDGET_BYTES`, `ROCKETNET_XDP_MEMORY_MIB`)
+### 6. Transports, queues, CPUs, and memory budgets (`transport`, `num_xdp_threads`, `num_os_cpus`, `ROCKETNET_*_MEMORY_BUDGET_BYTES`, `ROCKETNET_XDP_MEMORY_MIB`)
 
 - **Transport selection (`transport`)**:
   - Leaving `transport = NULL` or `"auto"` selects the platform transport order (`xdp -> gso -> io_uring -> portable`
@@ -509,7 +509,7 @@ requirements to each configuration group:
     `5,554,840,859` bytes (5.17 GiB) to `1,454,603,366` bytes (1.35 GiB), and
     pinning `transport = "portable"` reduces it to `1,280,303,711` bytes
     (1.19 GiB).
-- **AF_XDP queues, CPU count, and compile-time cap (`num_xdp_queues`, `num_os_cpus`, `ROCKETNET_XDP_MEMORY_MIB`)**:
+- **AF_XDP queues, CPU count, and compile-time cap (`num_xdp_threads`, `num_os_cpus`, `ROCKETNET_XDP_MEMORY_MIB`)**:
   - Preserve the pinned AF_XDP geometry: `ROCKETNET_XDP_FRAME_SIZE = 4096`,
     `ROCKETNET_XDP_SEND_QUEUE_SIZE = 16384`,
     `ROCKETNET_XDP_RECV_QUEUE_SIZE = 32768`,
@@ -525,16 +525,16 @@ requirements to each configuration group:
     queues drain into each update) at no fewer than twice the send queue,
     32768 packets (`ROCKETNET_XDP_MIN_RECEIVE_PACKETS_PER_UPDATE`); every
     other transport keeps the shared 16 packets per client.
-  - `num_xdp_queues` (`0` selects the transport default, public range
-    `1 .. 1024`) selects the planned AF_XDP queue count. `num_os_cpus`
+  - `num_xdp_threads` (`0` selects the default, 1; public range
+    `1 .. 1024`) selects the planned AF_XDP queue count, one thread a queue,
+    and must equal the NIC's combined queue count. `num_os_cpus`
     (`0` selects the transport default, `1 .. 256`) selects the first worker
     CPU: worker `q` runs on `num_os_cpus + q`. Total planned AF_XDP memory is
     checked against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `8192` MiB).
-  - GSO and io_uring also use `num_xdp_queues`, with a maximum of 32, but
-    their send staging is shared: 4096 slots in the active GSO producer bank
-    and 2048 slots in io_uring's send array. Extra receive queues do not
-    multiply these capacities; sends past them, disconnect bursts included,
-    spread across updates as the
+  - GSO and io_uring have their own counts, `num_gso_workers` (default 1)
+    and `num_io_uring_workers` (default 2), each at most 32, and stage sends
+    per queue, so more workers add send room; sends past it, disconnect
+    bursts included, spread across updates as the
     [send room](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
     reports.
 - **Runtime memory budgets (`ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES`, `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`)**:
@@ -786,9 +786,10 @@ directions:
 
 1. **OS and kernel memory outside `rocketnet_allocator_t` (why total host memory can exceed `required_memory`)**:
    - **Worker thread stacks**: Each socket worker thread reserves an OS stack
-     (`8 MiB = 8,388,608` bytes default on Linux x86-64: 2 threads = `16 MiB`
-     for `portable`, 5 threads = `40 MiB` for `gso`, 7 threads = `56 MiB` for
-     default 7-queue `xdp`, 0 threads for `io_uring` and `loopback`).
+     (`8 MiB = 8,388,608` bytes default on Linux x86-64, one per network
+     thread at the defaults: 2 threads = `16 MiB` for `portable`, 1 = `8 MiB`
+     for `gso`, 2 = `16 MiB` for `io_uring`, 1 = `8 MiB` for `xdp`, 0 for
+     `loopback`).
    - **AF_XDP UMEM and kernel rings**: Each AF_XDP queue allocates a 98,304-frame,
      page-aligned `402,653,184`-byte (384 MiB raw) UMEM buffer via `mmap` plus
      kernel RX/TX rings (`786,432` bytes of descriptors per queue;

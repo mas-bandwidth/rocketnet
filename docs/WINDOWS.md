@@ -46,8 +46,8 @@ the SDK into a game's own build.
 | Transport | Endpoint | `auto` rank | What it is |
 | --- | --- | --- | --- |
 | `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
-| `iocp` | server and client | server 40; client 10 | server: `num_xdp_queues` completion workers (one by default) and two send threads; client: one I/O worker on its own completion port |
-| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_xdp_queues`, one by default) one socket, one registered memory region and one I/O worker polling its completion queues |
+| `iocp` | server and client | server 40; client 10 | server: `num_iocp_completion_workers` completion workers (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` send threads (2); client: one I/O worker on its own completion port |
+| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_rio_lanes`: 6 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
 A production server's `auto` is **iocp, then rio, then portable**; a
@@ -66,13 +66,27 @@ iocp transport: 1 completion workers, 2 send threads and 8 send lanes of 4096 on
 
 with `no (WSASendTo per datagram)` or `no (WSARecvFrom per datagram)` in
 place of `yes`. A send offload the stack accepted at create but refuses later
-logs a warning and falls back to one send per datagram. `iocp` runs `num_xdp_queues`
-completion workers (1 to 32, one by default; more than one needs a specific
-bind address) and two send threads.
+logs a warning and falls back to one send per datagram. `iocp` runs
+`num_iocp_completion_workers` completion workers
+(`ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS`, 1 to 32; default 2 on a
+specific bind address, 1 on the wildcard) and `num_iocp_send_threads` send
+threads (`ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS`, default 2, at most the
+send lanes: 8 at 1000 clients, fewer for a smaller server; more is refused
+with `CONFIG_OUT_OF_RANGE`). With more than one worker, worker `w` takes the
+first logical processor of core `w` (cores in Windows' processor order: the
+order the default RSS layout hands receive queues to), its socket bound to
+that processor with `SIO_CPU_AFFINITY`; the send threads take one logical
+processor each on the cores after the workers'.
 
 `rio` loads the Registered I/O function table from Winsock, allocates and
-registers one memory region for every send and receive buffer of each lane (one lane by default; `num_xdp_queues` sets the count), and starts one
-I/O worker for each lane. Its create line names the region's size:
+registers one memory region for every send and receive buffer of each lane,
+and starts one I/O worker for each lane. The lanes are `num_rio_lanes`
+(`ROCKETNET_SERVER_NUM_RIO_LANES`, 1 to 32; default 6 on a specific bind
+address, 1 on the wildcard). With more than one lane, lane `l` takes the
+first logical processor of core `l` from core 0 up, in the same order as
+`iocp`, and its worker the other logical processors of that core; more lanes
+than cores share processors, with a warning. Its create line names the
+region's size:
 
 ```text
 rio transport: port 40000, 1 lane (one socket and I/O worker each), 4096 receive slices and 16384 send frames per phase per lane, <n> registered bytes per lane
@@ -82,8 +96,35 @@ Because `rio` ranks after `iocp`, `auto` reaches it only when `iocp` refuses;
 pin it to run it. How its send phases and receive banks change hands is in
 TRANSPORTS.md, "The RIO server transport".
 
-Every Windows server transport binds the wildcard address on the server's
-port with `SO_EXCLUSIVEADDRUSE`, so a second process cannot share the port. An
+### To reach 10 Gb/s on Windows set a bind address
+
+The defaults that hold 1000 players at 10 Gb/s are 6 RIO lanes, or 2 IOCP
+completion workers with 2 send threads. More than one lane or worker shares
+the port by processor, and Windows allows that only on a specific local
+address, so those defaults need a bind address. Set the network card's address
+in the config, `bind_ipv4_address` (or `bind_ipv6_address`), or in the
+environment:
+
+```bat
+set ROCKETNET_SERVER_BIND_IPV4_ADDRESS=10.0.0.5
+```
+
+Without one, the server binds the wildcard and `rio` and `iocp` run one lane
+or one completion worker, and say so once at warning level:
+
+```text
+rio transport: running 1 lane because the bind address is the wildcard or IPv4-mapped. The default of 6 lanes needs a specific local address: to reach 10 Gb/s set bind_ipv4_address or bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the network card's address. To run 1 lane without this warning, set num_rio_lanes (ROCKETNET_SERVER_NUM_RIO_LANES) to 1
+```
+
+A count above 1 asked for on the wildcard (`num_rio_lanes` or
+`num_iocp_completion_workers`) is refused with `INVALID_ADDRESS`, never run on
+one. No machine setting has to match these counts: the NIC's receive queues
+need not equal the lanes (a flow whose processor has no lane reaches the first
+lane bound).
+
+Without a bind address, every Windows server transport binds the wildcard
+address on the server's port with `SO_EXCLUSIVEADDRUSE`, so a second process
+cannot share the port. An
 IPv6 socket clears `IPV6_V6ONLY`, so a server created with both an IPv4 and an
 IPv6 address on one port serves both families from one socket. Each transport
 asks the OS for the port it was given, so a public address with port 0 works.
@@ -179,8 +220,12 @@ far less of it is ever resident. A host near its commit limit refuses the
 create with `OUT_OF_MEMORY` (or, with a system-managed page file, grows the
 page file first); size the page file, or `max_clients` and the profile, so
 the plan of every server and client in the process fits. Threads are two for
-`portable` and `iocp` and one for `rio`, each with the executable's default
-stack reserve (1 MiB unless the game links with another). Ask for the numbers
+`portable`; for `iocp` the completion workers plus the send threads (4 on a
+bind address by default, 3 on the wildcard); for `rio` one a lane (6 on a bind
+address by default, 1 on the wildcard); each with the executable's default
+stack reserve (1 MiB unless the game links with another). Each RIO lane has
+its own registered region, so more lanes raise the plan: ask for the figure
+of the config you deploy, bind address included. Ask for the numbers
 for a given config before deploying:
 
 - `rocketnet_server_required_memory( &config )` in code, and

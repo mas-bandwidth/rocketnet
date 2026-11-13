@@ -129,8 +129,14 @@ fails is a refused destination and pauses as above.
 **portable** uses per-packet `sendto` / `recvmsg` calls
 (`rocketnet_platform_socket_send_packet` and
 `rocketnet_platform_socket_receive_packet` in the macOS section of
-`sdk/rocketnet_platform.cpp`). Both macOS server transports run one transmit
-worker and one receive worker. The caller copies borrowed, sealed send frames
+`sdk/rocketnet_platform.cpp`). **Server threads.** The `msgx` server runs
+`num_msgx_transmit_workers` transmit workers
+(`ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS`, default 3, 1 to 16, refused
+above that) and one receive worker, a socket for each connected client and
+one shared socket (`sdk/rocketnet_server_msgx.h`); the `portable` server runs
+one transmit worker and one receive worker, and has no count to set. macOS
+gives no thread a core: neither transport pins its threads, and the scheduler
+places them. In the `portable` server the caller copies borrowed, sealed send frames
 into one of three owned TX banks outside the lock; a try-lock publishes bank
 indices to the transmit worker. The receive worker reads datagrams into three
 owned RX banks and publishes them to the caller, which copies their packets and

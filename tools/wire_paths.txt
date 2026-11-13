@@ -83,6 +83,7 @@ sdk/rocketnet_message_object.h	message object layers 7 and 8 (standard/MESSAGES.
 sdk/rocketnet_message_server.cpp	the server message object API over the message layer, which message.cpp encodes
 sdk/rocketnet_network_simulator.cpp	test network simulator: drops and delays datagrams, writes none
 sdk/rocketnet_network_simulator.h	test network simulator: drops and delays datagrams, writes none
+sdk/rocketnet_network_threads.h	each transport's network thread defaults, limits and count helpers
 sdk/rocketnet_packet_batch.h	receive batch view over transport buffers
 sdk/rocketnet_packet_lease.h	process-wide packet tickets
 sdk/rocketnet_pending_frames.h	producer frame reservations

@@ -435,23 +435,26 @@ twice the receive frames it keeps on the ring, and for
 submission, completion and provided buffer rings (`plan.mapped_ring_bytes` in `rocketnet_server_memory_plan_t` counts the provided buffer rings; the submission and completion rings are not counted in either plan), thread guard pages
 and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
-resident pages. Statistics run on the ack path and add no thread. The current
-default Linux worker topology is:
+resident pages. Statistics run on the ack path and add no thread. Each
+transport's count is its own config field
+([ENVIRONMENT.md](ENVIRONMENT.md#network-threads-per-transport)); the default
+server topology, with nothing set, is:
 
-| transport | sockets | I/O workers | total stacks |
+| transport | sockets | I/O threads (total stacks) | set by |
 | --- | --- | --- | --- |
-| portable server | 1 | 2 | 2 |
-| gso | 4 | 5 | 5 |
-| io_uring | 4 | 0 | 0 |
-| xdp | 7 | 7 | 7 |
+| portable server | 1 | 2 | fixed |
+| gso (Linux) | 1 | 1, one per socket | `num_gso_workers` |
+| io_uring (Linux) | 2 | 2, one per socket, each owning its ring | `num_io_uring_workers` |
+| xdp (Linux) | 1 | 1, one per NIC queue | `num_xdp_threads` |
+| iocp (Windows), specific bind address | 2 | 4: 2 completion workers (one socket each) and 2 send threads | `num_iocp_completion_workers`, `num_iocp_send_threads` |
+| iocp (Windows), wildcard bind | 1 | 3: 1 completion worker and 2 send threads | as above |
+| rio (Windows), specific bind address | 6 | 6, one per lane | `num_rio_lanes` |
+| rio (Windows), wildcard bind | 1 | 1 | `num_rio_lanes` |
+| msgx (macOS) | 1 shared, plus 1 per connected client | 4: 3 transmit workers and 1 receive worker | `num_msgx_transmit_workers` |
 
-The default Windows server topology is one socket and three I/O threads for IOCP
-(one completion worker and the two send threads, `ROCKETNET_IOCP_SEND_THREADS`;
-more completion workers with `num_xdp_queues`, each with its own socket), or one
-socket and one I/O worker for RIO. A portable server has the same two I/O
-workers as the Linux row. On macOS, msgx and the portable server also have one receive worker and
-one transmit worker. These server counts do not include client objects; each
-normal client adds its own one background network thread.
+The IOCP send threads are at most the send lanes (8 at 1000 clients, fewer
+for a smaller server). These server counts do not include client objects;
+each normal client adds its own one background network thread.
 
 On Windows the plan is committed at create. Windows charges memory against
 the machine's commit limit (RAM plus the page file) when it is allocated, not
