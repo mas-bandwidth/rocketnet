@@ -1002,6 +1002,10 @@ bool rocketnet_server_rio_available()
 
 static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument );
 
+// the sockets a failed create left open because closesocket refused them with
+// nothing posted
+static std::atomic<uint64_t> rocketnet_rio_create_abandoned_sockets{ 0 };
+
 // proofs/tla/RNRioWorker.tla PassFails on create's inline drain: the wait
 // between two passes. Only one thing is worth waiting for: closesocket
 // succeeded, which cancelled every posted receive, and some of those
@@ -1048,6 +1052,21 @@ static bool rocketnet_rio_create_failed_drain( rocketnet_server_rio_t * rio )
         }
         if ( rio->posted_receives.load( std::memory_order_relaxed ) >= posted && ++stalled > ROCKETNET_RIO_DRAIN_WAITS )
         {
+            // closesocket refused on every pass with nothing posted and no
+            // send outstanding: the kernel owns no request on the region, so
+            // only the socket handle is left behind (abandoned, named and
+            // counted) and the rest of the transport is freed, never leaked
+            // whole
+            if ( rio->socket != INVALID_SOCKET && rio->posted_receives.load( std::memory_order_relaxed ) == 0 &&
+                 rocketnet_rio_outstanding_sends( rio ) == 0 )
+            {
+                const uint64_t abandoned = rocketnet_rio_create_abandoned_sockets.fetch_add( 1, std::memory_order_relaxed ) + 1;
+                rocketnet_error( "rio transport: create failed and closesocket refused %d times with nothing posted; socket %llu is abandoned open, "
+                                 "the rest of the transport is freed (abandoned socket %llu in this process)",
+                                 stalled, (unsigned long long) rio->socket, (unsigned long long) abandoned );
+                rio->socket = INVALID_SOCKET;
+                return rocketnet_server_rio_stopped( rio );
+            }
             return false;
         }
         rocketnet_rio_create_drain_wait( rio );
@@ -2578,6 +2597,49 @@ bool rocketnet_server_rio_test_create_failure_drain( int late_waits, bool refuse
     // a drain that stopped left nothing kernel owned; one that gave up still
     // counts what it could not account for
     const bool valid = *stopped_out == ( rio->socket == INVALID_SOCKET && rio->posted_receives.load() == 0 );
+
+    rio->have_table = false;
+    rocketnet_rio_test_drain_wait = NULL;
+    rocketnet_rio_stop_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
+// create's failure drain when nothing was ever posted (a failure before the
+// receives) and closesocket refuses every time: the kernel owns nothing on
+// the region, so the drain stops after its bounded passes, abandons only the
+// socket handle (counted) and the transport can be freed. Reports whether it
+// stopped, the closesocket calls and the abandoned sockets it added.
+bool rocketnet_server_rio_test_create_failure_unposted( bool * stopped_out, int * closes_out, uint64_t * abandoned_out )
+{
+    rocketnet_server_rio_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+    {
+        return false;
+    }
+    static rocketnet_rio_stop_test_state_t state;
+    memset( &state, 0, sizeof( state ) );
+    state.refuse_close = true;
+
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_stop_test_dequeue,
+        rocketnet_rio_stop_test_receive,
+        rocketnet_rio_stop_test_send,
+        rocketnet_rio_stop_test_close
+    };
+    rocketnet_rio_stop_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+    rocketnet_rio_test_drain_wait = rocketnet_rio_stop_test_drain_wait;
+    rio->have_table = true;
+    rio->socket = (SOCKET) 7;
+    rio->posted_receives.store( 0, std::memory_order_relaxed );
+
+    const uint64_t before = rocketnet_rio_create_abandoned_sockets.load();
+    *stopped_out = rocketnet_rio_create_failed_drain( rio );
+    *closes_out = state.closes;
+    *abandoned_out = rocketnet_rio_create_abandoned_sockets.load() - before;
+    const bool valid = rio->socket == INVALID_SOCKET;
 
     rio->have_table = false;
     rocketnet_rio_test_drain_wait = NULL;
