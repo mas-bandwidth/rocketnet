@@ -17,6 +17,7 @@
 #include "rocketnet_endpoint.h"
 #include "rocketnet_send_budget.h"
 #include "rocketnet_slots.h"
+#include "rocketnet_fill_phase.h"
 
 // layers 7 and 8 of the message layer (standard/MESSAGES.md m11), condensed
 // to what the C API in sdk/rocketnet.h needs: the client and the server message
@@ -94,6 +95,9 @@ struct rn_message_link_t
     // the configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
     int ( *max_payload_bytes )( void * transport );
+    // returns the started frame (context->frame), not the payload: the layer
+    // writes at frame + context->payload_index. The public transport calls
+    // return the payload; the forwarders turn that back into the frame.
     uint8_t * ( *start_packet )( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
     int ( *finish_packet )( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
     void ( *abort_packet )( void * transport, struct rocketnet_packet_context_t * context );
@@ -199,6 +203,19 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
 // message finishes; its bytes already occupy their final position in the frame.
 #define RN_MESSAGE_RECEIPT_SERIALS_MAX 16 // same bound as the endpoint's receipt_serials
 
+// the message open on one connection (proofs/tla/RNMessageOpen.tla): at most
+// one per connection, so N fill threads may each hold one open on a
+// different connection. Written only by that connection's one filler in a
+// fill phase (sdk/rocketnet_fill_phase.h) and by main-thread operations.
+struct rn_message_open_t
+{
+    int pending;                                // 1 while a start is open here, until its finish, abort or a cancel
+    int in_place;                               // the open start: 0 region, 1 whole frame, 2 appended record;
+                                                // -1: an in-place start an update or send_packets closed, whose finish returns 0
+    struct rocketnet_packet_context_t in_place_context;
+    uint8_t * in_place_payload;                 // the frame's payload root
+};
+
 struct rn_message_packet_build_t
 {
     rocketnet_packet_context_t context;
@@ -209,6 +226,7 @@ struct rn_message_packet_build_t
 
 #define RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( X ) \
     X( unreliable_build, rn_message_packet_build_t unreliable_build ) \
+    X( open, rn_message_open_t open ) /* the message open on this connection */ \
     X( hot, rn_message_connection_hot_t * hot ) /* stable parallel-array slot */                                         \
     X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_DISCONNECT_REASON_* of the last connection that ended here */
 
@@ -219,10 +237,36 @@ struct rn_message_connection_t : rn_endpoint_t
 #undef RN_MESSAGE_CONNECTION_LAYOUT_FIELDS_DECLARE
 };
 
+// The messages open across the connections, counted on the line of the
+// thread that opened or closed each (rocketnet_fill_phase_line_of), so a fill
+// thread writes no line another fill thread writes (unless their ids hash to
+// one line): the count is the sum of every line's opens, exact though one
+// line may go below 0 when a message opened on one thread is closed on
+// another. last_open is the connection the line's threads last opened on.
+// Cache-line alignment pads these on MSVC (C4324); the padding is the point.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
+struct alignas( 64 ) rn_message_open_line_t
+{
+    int64_t opens;
+    uint64_t last_open;
+};
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
+
 // ---------------------------------------------------------------
 //                       the object
 // ---------------------------------------------------------------
 
+// The per-thread open lines are cache-line aligned, which pads the object on
+// MSVC (C4324); the padding is the point.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
 struct rn_message_object_t
 {
     void * context;
@@ -241,7 +285,11 @@ struct rn_message_object_t
     double time_offset;                         // the backwards offset, exactly 0.0 until the first step
     double clock_origin;                        // the game's time the transport's 0.0 stands for
     int clock_started;                          // 1 from the first update on
-    int pending_connection;                     // the connection with a start pending, or -1
+    // the messages open across the connections, a line per thread hash: the
+    // one-thread finish and abort that name no connection act on the calling
+    // thread's last open while exactly one is open (rn_message_open_count,
+    // rn_message_open_last)
+    struct rn_message_open_line_t open_lines[ROCKETNET_FILL_PHASE_FILL_LINES];
 
     // the one receive queue, pumped by each receive: the update's deliveries,
     // connection by connection in index order, each connection's in its
@@ -267,14 +315,16 @@ struct rn_message_object_t
     // NULL for one connection: its two entries are on the send pass's stack.
     int32_t * send_writers;
 
-    // the in-place unreliable send (docs/OUTGOING-BUILD.md, proofs/tla/RNOutgoingBuild.tla):
-    // the pending start is written in this transport frame
-    int in_place;                               // pending start: 0 region, 1 whole frame, 2 appended record
-    struct rocketnet_packet_context_t in_place_context;
-    uint8_t * in_place_payload;                 // the frame's payload root
+    // the fill-phase check of the server's transport (sdk/rocketnet_fill_phase.h):
+    // the server object's main-thread operations and fill calls bracket themselves
+    // with it. NULL for the client and the unit suite's bare objects.
+    struct rocketnet_fill_phase_t * fill_phase;
     void * block;
     int owns_block;
 };
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
 
 struct rocketnet_message_client_t
 {
@@ -312,6 +362,11 @@ void rn_message_object_send_packets( struct rn_message_object_t * object );
 
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes );
+
+// the messages open across the connections (the sum of the open lines), and
+// the connection the calling thread last opened a message on
+int64_t rn_message_open_count( const struct rn_message_object_t * object );
+int rn_message_open_last( const struct rn_message_object_t * object );
 
 // the room query: true when rn_message_object_start with these arguments, now,
 // would be given its room; false when it would be dropped or refused, or would

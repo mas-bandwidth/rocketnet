@@ -171,8 +171,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453599 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988746 )
+// Sending from the game threads (the per-client open message, the thread rule
+// check's lines, the message object's per-thread open lines, each region's
+// room_refusals, the per-thread send lines, the per-client wire totals on a
+// line each) reads 1469750687 and 15041546 (studio, AppleClang, Debug, DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702111 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992970 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -253,6 +257,16 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // the client (measured on bench-nyc-4, gcc, Release, ROCKETNET_DEV=ON, before
 // and after: actual=3111676851 to 5610448051). A Linux build without XDP plans
 // a smaller peak and the check is at most there.
+// The protocol send reserve keeps, per send queue, a budget, its claims, the
+// grants staged, the own frames used, the reserve and the largest room seen
+// (six uint64_t by ROCKETNET_SERVER_MAX_SEND_QUEUES, 3072 bytes), one
+// own-frame word a client slot with their count (8008 bytes) and its queue
+// count and test seam, and appends the counter SEND_RESERVE_REFUSED (8 bytes
+// in every counter block). Measured on bench-nyc-4 (gcc, Debug, DEV ON) on
+// the counter union, which reads actual=5610448947 and 15186002:
+// actual=5610460147, 11200 above it with the object's alignment, and
+// actual=15186066, 64 above it (the counter crosses the client object's
+// 64-byte rounding).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -260,11 +274,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400427ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609641451ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400371ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609641395ULL )
 #endif // #if defined( __aarch64__ )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137426 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141650 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

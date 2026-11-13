@@ -3514,6 +3514,14 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
     }
 }
 
+uint64_t rocketnet_platform_thread_id( void )
+{
+    // pthread_t is a pointer on darwin and the BSDs and an integer on glibc:
+    // either way it is nonzero and distinct among live threads
+    const uint64_t id = (uint64_t) (uintptr_t) pthread_self();
+    return id != 0 ? id : 1;
+}
+
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS // #if POSIX
 
 // windows
@@ -4162,6 +4170,13 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
     {
         memset( mutex, 0, sizeof( rocketnet_platform_mutex_t ) );
     }
+}
+
+uint64_t rocketnet_platform_thread_id( void )
+{
+    // thread ids are nonzero and distinct among live threads; the high bit keeps
+    // the value clear of 0 in any case
+    return (uint64_t) GetCurrentThreadId() | ( 1ULL << 63 );
 }
 
 // time

@@ -371,7 +371,7 @@ static bool sequence_burn_send_one( struct sequence_burn_pair_t * pair, int side
     {
         return false;
     }
-    uint8_t * payload = frame + context.payload_index;
+    uint8_t * payload = frame;
     memset( payload, (uint8_t) ( 0xB0 + round ), BURN_SMALL_BYTES );
     payload[0] = (uint8_t) index;
 
@@ -654,7 +654,7 @@ static void test_sequence_burn_server_finish_populates_sequence()
         rocketnet_unit_check( frame != NULL );
         rocketnet_unit_check( context.sequence == 0 );
 
-        memset( frame + context.payload_index, 0xB0, (size_t) sizes[i] );
+        memset( frame, 0xB0, (size_t) sizes[i] );
         rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, sizes[i] ) > 0 );
         rocketnet_unit_check( context.sequence > previous_sequence );
 
@@ -706,7 +706,7 @@ static float sequence_burn_server_uncommitted_loss( int kind )
             }
             else
             {
-                memset( frame + context.payload_index, 0xB0, BURN_SMALL_BYTES );
+                memset( frame, 0xB0, BURN_SMALL_BYTES );
                 rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, 0 ) == 0 );
             }
         }

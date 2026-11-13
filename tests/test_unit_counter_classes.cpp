@@ -337,6 +337,10 @@ static const char * const counters_appended_names[] = {
     "RIO_RECEIVE_TOO_LARGE",
     "RIO_RECEIVE_REPOST_FAILED",
     "RIO_COMMITS",
+    "SEND_RESERVE_REFUSED",
+    "MAIN_THREAD_CALL_OVERLAP",
+    "CLIENT_SEND_TWO_THREADS",
+    "SEND_RESERVE_REFUSED_TAILS_HELD",
 };
 #endif // #if ROCKETNET_DEV
 
@@ -533,6 +537,10 @@ static void test_counters_every_counter_has_a_class()
         { "RIO_RECEIVE_TOO_LARGE", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RIO_RECEIVE_REPOST_FAILED", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RIO_COMMITS", ROCKETNET_COUNTER_CLASS_EXPECTED },
+        { "SEND_RESERVE_REFUSED", ROCKETNET_COUNTER_CLASS_REFUSAL },
+        { "MAIN_THREAD_CALL_OVERLAP", ROCKETNET_COUNTER_CLASS_REFUSAL },
+        { "CLIENT_SEND_TWO_THREADS", ROCKETNET_COUNTER_CLASS_REFUSAL },
+        { "SEND_RESERVE_REFUSED_TAILS_HELD", ROCKETNET_COUNTER_CLASS_REFUSAL },
     };
     for ( size_t row = 0; row < sizeof( counter_classes_by_name ) / sizeof( counter_classes_by_name[0] ); ++row )
     {

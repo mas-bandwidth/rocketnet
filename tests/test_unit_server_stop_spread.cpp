@@ -465,7 +465,7 @@ static void test_server_send_capacity_reports_staged_room()
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
         rocketnet_unit_check( frame );
-        memset( frame + context.payload_index, i, 16 );
+        memset( frame, i, 16 );
         rocketnet_unit_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) > 0 );
     }
 
@@ -474,11 +474,29 @@ static void test_server_send_capacity_reports_staged_room()
     f->used = f->capacity;
     rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 0 );
 
+    // the flush opens the budget: the room less the protocol reserve
+    // (RNSendReserve: handshakes and disconnect seals per update, plus the
+    // one connected slot, never more than half the staging). A staging of 24
+    // is less than twice that, so half of it is kept
+
+    const int formula = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE + ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE + 1;
     rocketnet_server_transport_send_packets( server );
-    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 24 );
+    rocketnet_unit_check( (int) server->send_reserve[0] == 12 );
+    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 12 );
+
+    // a staging of twice the reserve and 24 more: the whole reserve is kept
+
+    f->capacity = 2 * formula + 24;
+    rocketnet_server_transport_send_packets( server );
+    const int reserve = (int) server->send_reserve[0];
+    rocketnet_unit_check( reserve == formula );
+    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == formula + 24 );
+
+    // a transport that does not report its room is unbounded, less the reserve
 
     operations.send_room = NULL;
-    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == INT_MAX );
+    rocketnet_server_transport_send_packets( server );
+    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == INT_MAX - reserve );
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
@@ -504,13 +522,19 @@ static void test_server_refused_starts_counted_by_cause()
     struct rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
     rocketnet_unit_check( frame );
-    memset( frame + context.payload_index, 1, 16 );
+    memset( frame, 1, 16 );
     rocketnet_unit_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) > 0 );
 
     // the staging is full: a full ring
 
     rocketnet_unit_check( !rocketnet_server_transport_start_packet( server, 0, 16, &context ) );
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + 1 );
+
+    // the checks below are of the transport's own refusals: room well past
+    // the protocol reserve, so the budget the flush opens
+    // (RNSendReserve) is not what refuses them
+
+    f->capacity = 1024;
     rocketnet_server_transport_send_packets( server );
 
     // room left, but the transport refuses the destination: not a full ring

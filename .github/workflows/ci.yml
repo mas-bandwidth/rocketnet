@@ -609,6 +609,13 @@ jobs:
           set -euo pipefail
           bash tools/run_functional.sh dev --log functional-auto.log ./bin/functional
 
+      # The wide fill (tests/wide_fill_cases.cpp): fills from several job
+      # threads at once and the fill-phase check's refusals, on the
+      # development library (bin/test_wide_fill exists only there).
+      - name: Run the wide fill cases (job threads)
+        if: matrix.leg == 'functional' && matrix.dev == 'ON'
+        run: ./bin/test_wide_fill
+
       # The pinned pass per commit proves the pin is honoured; the whole
       # suite under the portable pin runs in the nightly tier (nightly.yml),
       # which every case too slow for this budget joins (Glenn 2026-10-29).
@@ -1727,6 +1734,10 @@ jobs:
         run: |
           set -euo pipefail
           bash tools/run_functional.sh dev ./bin/Release/functional.exe
+
+      - name: Run the wide fill cases (job threads)
+        if: matrix.leg == 'c'
+        run: ./bin/Release/test_wide_fill.exe
 
       # THE WINDOWS FUNCTIONAL SUITE IS NIGHTLY (2026-10-24). Per-commit
       # Windows runs the build and the unit suite (test.exe) only; the full
@@ -3081,7 +3092,7 @@ jobs:
       - name: Build the soak and the lifecycle harness
         timeout-minutes: 1
         if: matrix.leg == 'loopback soak'
-        run: cmake --build build --target soak test_lifecycle --parallel 8
+        run: cmake --build build --target soak test_lifecycle test_wide_fill --parallel 8
 
       - name: Start combined unit and functional timing
         if: matrix.leg == 'loopback soak'
@@ -3100,6 +3111,12 @@ jobs:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: setarch "$(uname -m)" -R ./bin/test_lifecycle
+
+      - name: "The wide fill under tsan: job threads filling clients at once"
+        if: matrix.leg == 'loopback soak'
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: setarch "$(uname -m)" -R ./bin/test_wide_fill
 
       - name: Enforce combined unit and functional timing
         env:
