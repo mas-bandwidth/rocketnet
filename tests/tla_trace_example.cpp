@@ -7,13 +7,19 @@
 // the smallest whole layer, to copy. Its code is a bounded claim counter, the
 // model RNTraceExample (proofs/tla/RNTraceExample.tla): a claim takes one of
 // EXAMPLE_LIMIT places or is refused and counted, a drain frees them all.
-// The walk drives the code one call per step and writes one record of every
-// model variable after each; proofs/tla/TraceRNTraceExample.tla checks the
-// trace.
+//
+// The walk calls the code one operation per step and writes one record per
+// step: the operation it called ("claim", "drain"), the model action the
+// code's own result says it took ("Claim" or "Refuse" for a claim, "Drain"),
+// and every model variable after it (tla_step). TraceRNTraceExample.tla
+// allows only that action, and only when the operation can be it, so a claim
+// whose code silently did nothing is rejected even though a Drain from the
+// same state could look alike.
 //
 // A real layer's code lives in sdk/. Its file here includes that .cpp under
-// ROCKETNET_TLA_PLANT with the layer's plant define set, so tla_trace_plant
-// carries the planted code in place of the library's:
+// ROCKETNET_TLA_PLANT with the layer's plant define set, so the layer's own
+// plant binary, tla_trace_plant_<layer>, carries the planted code in place
+// of the library's:
 //
 //   #if defined( ROCKETNET_TLA_PLANT )
 //   #define ROCKETNET_X_PLANT 1
@@ -22,9 +28,10 @@
 //
 // This example's code is in this file, so its plant is here too: under
 // ROCKETNET_TLA_PLANT the claim's check is off by one and grants the place
-// past the limit. The walk prints PLANT-FIRED n, the claims granted at the
-// limit: tools/tla_trace_check.py requires n > 0 from the plant build and,
-// for this layer, n = 0 from the clean one.
+// past the limit. The walk reports (tla_report_t) the planted EFFECT, a claim
+// that leaves more than EXAMPLE_LIMIT places taken, at the record where it
+// happened: the clean code's count must be 0, the plant's must not, and TLC
+// must reject the planted trace at one of those records.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -41,7 +48,7 @@ struct example_counter_t
     int refused;
 };
 
-// RNTraceExample Claim and Refuse
+// RNTraceExample Claim, or Refuse when it returns false
 static bool example_claim( example_counter_t * counter )
 {
 #if defined( ROCKETNET_TLA_PLANT )
@@ -63,12 +70,12 @@ static void example_drain( example_counter_t * counter )
     counter->count = 0;
 }
 
-static tla_record_t example_record( const example_counter_t & counter )
+static tla_record_t example_state( const example_counter_t & counter )
 {
-    tla_record_t record;
-    record.add( "count", tla_int( counter.count ) );
-    record.add( "refused", tla_int( counter.refused ) );
-    return record;
+    tla_record_t state;
+    state.add( "count", tla_int( counter.count ) );
+    state.add( "refused", tla_int( counter.refused ) );
+    return state;
 }
 
 static int trace_example( uint64_t seed, int steps, const char * out )
@@ -76,27 +83,30 @@ static int trace_example( uint64_t seed, int steps, const char * out )
     example_counter_t counter = { 0, 0 };
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
-    int fired = 0;
+    tla_report_t report;
 
-    records.push_back( example_record( counter ) );
+    records.push_back( tla_step( "init", "init", example_state( counter ) ) );
     for ( int step = 0; step < steps; step++ )
     {
         if ( random.below( 4 ) == 0 )
         {
             example_drain( &counter );
+            report.act( "Drain" );
+            records.push_back( tla_step( "drain", "Drain", example_state( counter ) ) );
         }
         else
         {
-            const bool at_limit = counter.count >= EXAMPLE_LIMIT;
-            if ( example_claim( &counter ) && at_limit )
+            const char * act = example_claim( &counter ) ? "Claim" : "Refuse";
+            report.act( act );
+            records.push_back( tla_step( "claim", act, example_state( counter ) ) );
+            if ( counter.count > EXAMPLE_LIMIT )
             {
-                fired++;
+                report.planted( (int) records.size() );
             }
         }
-        records.push_back( example_record( counter ) );
     }
 
-    printf( "PLANT-FIRED %d\n", fired );
+    report.print();
 
 #if defined( ROCKETNET_TLA_PLANT )
     const std::string name = "MCTraceExamplePlantSeed" + tla_int( (int64_t) seed );

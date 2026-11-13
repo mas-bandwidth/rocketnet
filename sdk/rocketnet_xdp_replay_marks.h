@@ -239,7 +239,13 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
 
     if ( !pending )
     {
+        // the trace check's plant (tests/tla_trace_xdp_replay_marks.cpp): the
+        // full test one late, so a new key is written one past the end
+#if defined( ROCKETNET_TLA_PLANT_XDP_REPLAY_MARKS )
+        if ( marks->forget_count > marks->capacity )
+#else  // #if defined( ROCKETNET_TLA_PLANT_XDP_REPLAY_MARKS )
         if ( marks->forget_count >= marks->capacity )
+#endif // #if defined( ROCKETNET_TLA_PLANT_XDP_REPLAY_MARKS )
         {
             marks->refused++;
             return false;

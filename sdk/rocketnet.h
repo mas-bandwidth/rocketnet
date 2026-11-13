@@ -2999,6 +2999,44 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
+/// rocketnet_server_update in three calls, so the game's own jobs apply the
+/// acknowledgements each client's packets carried: update_receive, then
+/// update_client once for each client index on any of the game's threads,
+/// then update_finish. The result is rocketnet_server_update's exactly;
+/// a client nobody calls update_client for is applied by update_finish.
+///
+/// Thread: update_receive and update_finish on the thread that owns the
+/// server. Between them, update_client may run on any number of threads at
+/// once, one call per client index (a second call for the same index finds
+/// nothing to do), and nothing else may be called on the server. The game
+/// joins its jobs (a join or a barrier, not a wall-clock wait) before
+/// update_finish.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param time As rocketnet_server_update's.
+
+ROCKETNET_EXPORT void rocketnet_server_update_receive( struct rocketnet_server_t * server, double time );
+
+/// Applies one client's received acknowledgements. See
+/// rocketnet_server_update_receive.
+///
+/// @param server The server update_receive was called on. NULL counts as API
+/// misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Another index, or a
+/// call outside update_receive .. update_finish, counts as API misuse and
+/// returns 0.
+/// @return The number of acknowledgement blocks applied, 0 when the client
+/// had none.
+
+ROCKETNET_EXPORT int rocketnet_server_update_client( struct rocketnet_server_t * server, int client_index );
+
+/// Finishes the update rocketnet_server_update_receive began. See
+/// rocketnet_server_update_receive.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+
+ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t * server );
+
 /// Sends each client's queued messages in packets under its send budget.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
@@ -3283,6 +3321,40 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// @param server The server. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server );
+
+/// Finishes the message open on client_index.
+/// Uses the same size, return and abort rules as
+/// rocketnet_server_finish_message. Use it when fill threads each hold a
+/// message open on their own clients; rocketnet_server_finish_message,
+/// which names no client, finishes only while one message is open on the
+/// whole server.
+///
+/// Needs a message opened by rocketnet_server_start_message on client_index
+/// of a running server; otherwise it asserts in a debug build and returns 0
+/// in a release build. Thread: a fill call. Between a main-thread call and
+/// the next, any number of threads may make fill calls, each client index
+/// from one thread; see rocketnet_server_t.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot the message was opened on, 0 to
+/// max_clients - 1. Any other value counts as API misuse and returns 0.
+/// @param bytes_written The bytes written into the open message.
+/// @return The message's nonzero receipt serial, or 0 when nothing was
+/// queued.
+
+ROCKETNET_EXPORT uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * server, int client_index, int bytes_written );
+
+/// Cancels the message open on client_index and releases its memory.
+/// Does nothing if no message is open there.
+///
+/// Callable running or stopped. Thread: a fill call, as
+/// rocketnet_server_finish_client_message.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param client_index The slot, 0 to max_clients - 1. Any other value
+/// counts as API misuse and does nothing.
+
+ROCKETNET_EXPORT void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, int client_index );
 
 /// Returns true if rocketnet_server_start_message to client_index with the
 /// same channel, reliability and max_bytes would be given room now.

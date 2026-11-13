@@ -721,14 +721,14 @@ static void test_server_in_place_start_leaves_a_round_for_the_others()
             // exactly one round left: no frame, the region holds the message
 
             check( w.t->started == 0 );
-            check( w.object->in_place != 1 && w.object->in_place != 2 );
+            check( w.object->connections[0].open.in_place != 1 && w.object->connections[0].open.in_place != 2 );
         }
         else
         {
             // one frame more than a round: the packed build opens a frame
 
             check( w.t->started == 1 );
-            check( w.object->in_place == 2 );
+            check( w.object->connections[0].open.in_place == 2 );
         }
         memset( p, 0x33, 100 );
         rocketnet_message_server_finish( w.server, 0, 100 );
@@ -785,7 +785,7 @@ static void test_server_calls_refuse_the_index_past_the_slots()
 
         check( rocketnet_message_server_start( w.server, index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
         check( rocketnet_message_server_start( w.server, index, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 ) == NULL );
-        check( w.object->pending_connection == -1 && w.object->in_place == 0 );
+        check( rn_message_open_count( w.object ) == 0 && w.object->connections[0].open.in_place == 0 );
         check( rocketnet_message_server_finish( w.server, index, 16 ) == 0 );
         rocketnet_message_server_abort( w.server, index );
         check( rocketnet_message_server_send( w.server, index, 0, ROCKETNET_RELIABILITY_RELIABLE, message, 16 ) == 0 );
@@ -853,6 +853,170 @@ static void test_server_calls_refuse_the_index_past_the_slots()
 }
 
 REGISTER_UNIT_TEST( test_server_calls_refuse_the_index_past_the_slots );
+
+// ---- the ack drain takes a run at a time and counts each stale entry --------------------
+//
+// rn_message_object_update hands each run of acked ids with one slot and one
+// connection id to the window in one call. Runs interleave here (slot 0, 1,
+// 0, 1), stale runs sit between them (-1 and max_clients, two and three
+// entries long), and an entry tagged for a slot with no binding: every stale
+// entry is counted once, and every live id is acknowledged, as one admit per
+// id did.
+
+static void test_server_ack_drain_takes_runs_and_counts_each_stale_entry()
+{
+    const int bound[4] = { 1, 1, 1, 0 };
+    cr_world_t w;
+    cr_world_create( &w, 4, bound );
+    check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+
+    uint8_t message[CR_MESSAGE_BYTES];
+    memset( message, 0x3C, sizeof( message ) );
+    for ( int slot = 0; slot < 2; slot++ )
+    {
+        for ( int k = 0; k < 3; k++ )
+        {
+            check( rocketnet_message_server_send( w.server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE, message, (int) sizeof( message ) ) != 0 );
+        }
+    }
+    rocketnet_message_server_send_packets( w.server );
+
+    std::vector<uint64_t> ids[2];
+    for ( size_t k = 0; k < w.t->pending.size(); k++ )
+    {
+        const int slot = w.t->pending_slot[k];
+        check( slot == 0 || slot == 1 );
+        ids[slot].push_back( w.t->pending[k] );
+    }
+    check( ids[0].size() == 3 && ids[1].size() == 3 );
+
+    const uint64_t u0 = w.object->connections[0].ordered.send.U;
+    const uint64_t u1 = w.object->connections[1].ordered.send.U;
+    const uint64_t stale = w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY];
+
+    w.t->pending_slot.assign( { -1, -1, 0, 0, 4, 4, 4, 1, 0, 3, 1, 1 } );
+    w.t->pending.assign( { 1, 2, ids[0][0], ids[0][1], 3, 4, 5, ids[1][0], ids[0][2], 6, ids[1][1], ids[1][2] } );
+
+    w.time += CR_DT;
+    {
+        gaps_assert_scope_t asserts;
+        check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+    }
+
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY] == stale + 6 );
+    check( w.object->connections[0].ordered.send.U == u0 + 3 );
+    check( w.object->connections[1].ordered.send.U == u1 + 3 );
+    for ( int i = 0; i < 3; i++ )
+    {
+        check( ( rocketnet_message_server_client_connected( w.server, i ) != 0 ) == ( bound[i] != 0 ) );
+    }
+
+    cr_world_destroy( &w );
+}
+
+REGISTER_UNIT_TEST( test_server_ack_drain_takes_runs_and_counts_each_stale_entry );
+
+// ---- the drain: the batch's connection ids read once equal the per-entry tag ----------
+//
+// Two worlds take the same sends and the same acked batch. One link tags the
+// batch entry by entry (acked_connection), the other hands the whole array at
+// once (acked_connection_ids); both answer 0 past the tagged count, as the
+// server's link does. A wrong tag inside a run of one slot splits it, and the
+// untagged tail is stale. Every counter and every window's U must match.
+
+static std::vector<uint64_t> g_drain_tags;
+static int g_drain_tag_count = 0;
+
+static uint64_t drain_tag_entry( void *, int k )
+{
+    return k >= 0 && k < g_drain_tag_count ? g_drain_tags[(size_t) k] : 0;
+}
+
+static int drain_tag_ids( void *, const uint64_t ** ids )
+{
+    *ids = g_drain_tags.data();
+    return g_drain_tag_count;
+}
+
+static void drain_tagged_world( cr_world_t * w, const int * bound, bool whole_array, uint64_t * before )
+{
+    cr_world_create( w, 4, bound );
+    check( rocketnet_message_server_update( w->server, w->time ) == ROCKETNET_UPDATE_OK );
+
+    uint8_t message[CR_MESSAGE_BYTES];
+    memset( message, 0x3C, sizeof( message ) );
+    for ( int slot = 0; slot < 2; slot++ )
+    {
+        for ( int k = 0; k < 4; k++ )
+        {
+            check( rocketnet_message_server_send( w->server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE, message, (int) sizeof( message ) ) != 0 );
+        }
+    }
+    rocketnet_message_server_send_packets( w->server );
+
+    std::vector<uint64_t> ids[2];
+    for ( size_t k = 0; k < w->t->pending.size(); k++ )
+    {
+        const int slot = w->t->pending_slot[k];
+        check( slot == 0 || slot == 1 );
+        ids[slot].push_back( w->t->pending[k] );
+    }
+    check( ids[0].size() == 4 && ids[1].size() == 4 );
+
+    const uint64_t c0 = w->object->connections[0].hot->connection_id;
+    const uint64_t c1 = w->object->connections[1].hot->connection_id;
+    check( c0 != 0 && c1 != 0 && c0 != 77 && c1 != 77 );
+
+    w->t->pending_slot.assign( { -1, 0, 0, 1, 0, 1, 1, 4, 0, 1 } );
+    w->t->pending.assign( { 1, ids[0][0], ids[0][1], ids[1][0], ids[0][2], ids[1][1], ids[1][2], 9, ids[0][3], ids[1][3] } );
+    g_drain_tags.assign( { 9, c0, c0, 77, c0, c1, c1, 5, c0, c1 } );
+    g_drain_tag_count = 9;   // the last entry is past the tagged count: tag 0, stale
+
+    before[0] = w->object->connections[0].ordered.send.U;
+    before[1] = w->object->connections[1].ordered.send.U;
+    before[2] = w->object->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY];
+
+    w->object->link.acked_connection = drain_tag_entry;
+    w->object->link.acked_connection_ids = whole_array ? drain_tag_ids : NULL;
+
+    w->time += CR_DT;
+    gaps_assert_scope_t asserts;
+    check( rocketnet_message_server_update( w->server, w->time ) == ROCKETNET_UPDATE_OK );
+}
+
+static void test_server_ack_drain_whole_array_matches_per_entry_tags()
+{
+    const int bound[4] = { 1, 1, 1, 0 };
+    cr_world_t a;
+    cr_world_t b;
+    uint64_t before_a[3];
+    uint64_t before_b[3];
+    drain_tagged_world( &a, bound, false, before_a );
+    drain_tagged_world( &b, bound, true, before_b );
+    check( before_a[0] == before_b[0] && before_a[1] == before_b[1] && before_a[2] == before_b[2] );
+
+    for ( int c = 0; c < ROCKETNET_NUM_COUNTERS; c++ )
+    {
+        check( a.object->counters.values[c] == b.object->counters.values[c] );
+    }
+    for ( int i = 0; i < 3; i++ )
+    {
+        check( a.object->connections[i].ordered.send.U == b.object->connections[i].ordered.send.U );
+    }
+
+    // slot 0's four ids are all tagged c0: U moves by 4; slot 1's first id
+    // carries the wrong tag and its last is untagged, so two are applied.
+    // Stale: -1, slot 1's wrong tag, slot 4, slot 1's untagged tail.
+
+    check( b.object->connections[0].ordered.send.U == before_b[0] + 4 );
+    check( b.object->connections[1].ordered.send.U == before_b[1] );
+    check( b.object->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY] == before_b[2] + 4 );
+
+    cr_world_destroy( &a );
+    cr_world_destroy( &b );
+}
+
+REGISTER_UNIT_TEST( test_server_ack_drain_whole_array_matches_per_entry_tags );
 
 // ---- create: the status written, and the default send budget ---------------------------
 //
@@ -1081,7 +1245,7 @@ static void test_server_abort_on_the_region_path_returns_the_room()
     {
         uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, types[n % 3], 100 );
         check( p != NULL );
-        check( w.object->in_place == 0 );                               // the region path, not a frame
+        check( w.object->connections[0].open.in_place == 0 );                               // the region path, not a frame
         check( region->descriptors_free == descriptors_free - 1 );
         if ( p )
         {
@@ -1091,7 +1255,7 @@ static void test_server_abort_on_the_region_path_returns_the_room()
         rocketnet_message_server_abort( w.server, 0 );
         check( region->descriptors_free == descriptors_free );
         check( cr_store_free_chunks( region ) == chunks_free );
-        check( w.object->pending_connection == -1 );
+        check( rn_message_open_count( w.object ) == 0 );
     }
     check( given == rounds );
     check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == queue_full );
@@ -1122,7 +1286,7 @@ static void test_server_abort_on_the_region_path_returns_the_room()
         for ( int n = 0; n < 3; n++ )
         {
             check( rocketnet_message_server_start( w.server, 0, 0, types[n], 100 ) != NULL );
-            check( w.object->in_place != 0 );
+            check( w.object->connections[0].open.in_place != 0 );
             check( region->descriptors_free == descriptors_free );
             rocketnet_message_server_abort( w.server, 0 );
             check( region->descriptors_free == descriptors_free );
@@ -1239,7 +1403,7 @@ static void test_server_in_place_send_never_overtakes_a_queued_one()
     w.t->capacity = w.t->started + 16;
     uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100 );
     check( p != NULL );
-    check( w.object->in_place == 0 );                                   // queued behind the first
+    check( w.object->connections[0].open.in_place == 0 );                                   // queued behind the first
     if ( p )
     {
         memset( p, 0xB2, 100 );
@@ -1280,7 +1444,7 @@ static void test_server_in_place_keeps_a_packet_for_due_reliable_work()
     const int bytes = 1400;
     uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
     check( p != NULL );
-    check( w.object->in_place != 0 );                                   // the first packet of two
+    check( w.object->connections[0].open.in_place != 0 );                                   // the first packet of two
     if ( p )
     {
         memset( p, 0xD4, (size_t) bytes );
@@ -1290,7 +1454,7 @@ static void test_server_in_place_keeps_a_packet_for_due_reliable_work()
 
     p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
     check( p != NULL );
-    check( w.object->in_place == 0 );                                   // the last packet is the reliable message's
+    check( w.object->connections[0].open.in_place == 0 );                                   // the last packet is the reliable message's
     if ( p )
     {
         memset( p, 0xE5, (size_t) bytes );

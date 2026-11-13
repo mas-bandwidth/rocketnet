@@ -13,6 +13,12 @@
     the IP header (runt IPv4 < 20 bytes or runt IPv6 < 40 bytes) drop
     before port inspection because they cannot name a port.
 
+    A server on an 802.1Q VLAN (config vlan_id nonzero) takes a frame with
+    one tag of its VLAN ID and judges what follows the tag exactly as an
+    untagged frame; a frame with any other tag passes untouched. An untagged
+    frame is judged the same on every server, since a NIC that strips the tag
+    on receive delivers its VLAN's frames untagged.
+
     Both address families take the same checks in the same order: IPv4, and
     IPv6 with UDP directly after the fixed header. RocketNet assumes a
     1500-byte MTU path and never sends a datagram the network must
@@ -161,6 +167,17 @@ struct server_xdp_ipv6_fragment_header_t
     __u8 reserved;
     __be16 offset_flags;
     __be32 identification;
+};
+
+// The IEEE 802.1Q tag after the MACs (ethertype 0x8100): the tag control
+// information (priority 3 bits, DEI 1 bit, VLAN ID 12 bits) and the
+// ethertype of what it carries. The kernel's struct vlan_hdr is not in a uapi
+// header, so it is defined here.
+
+struct server_xdp_vlan_header_t
+{
+    __be16 tci;
+    __be16 encapsulated_proto;
 };
 
 // The longest IPv6 extension header chain the program walks looking for
@@ -465,9 +482,40 @@ int server_xdp_filter( struct xdp_md * ctx )
 
     if ( (__u8 *) eth + sizeof( struct ethhdr ) <= data_end )
     {
-        if ( eth->h_proto == __constant_htons( ETH_P_IP ) ) // IPV4
+        // one 802.1Q tag: a server on a VLAN (config vlan_id, nonzero) takes
+        // a frame tagged with its VLAN ID, and reads the rest of it as an
+        // untagged frame 4 bytes on. A frame tagged with any other VLAN ID,
+        // any tag on an untagged server, a second tag (QinQ) and a tag cut by
+        // the frame end pass untouched, as any other frame for someone else.
+        // An untagged frame is read as before on either server: a NIC that
+        // strips the tag on receive (rx VLAN offload) hands this program the
+        // frame without it
+
+        __be16 h_proto = eth->h_proto;
+        __u8 * l3 = data + sizeof( struct ethhdr );
+
+        if ( h_proto == __constant_htons( ETH_P_8021Q ) )
         {
-            struct iphdr * ip = (struct iphdr *) ( data + sizeof( struct ethhdr ) );
+            struct server_xdp_vlan_header_t * vlan = (struct server_xdp_vlan_header_t *) l3;
+            if ( (__u8 *) vlan + sizeof( struct server_xdp_vlan_header_t ) > data_end )
+            {
+                return XDP_PASS;
+            }
+
+            const struct rocketnet_server_xdp_config_t * config = server_xdp_config();
+            if ( config == NULL || config->vlan_id == 0 ||
+                 ( vlan->tci & __constant_htons( 0x0fff ) ) != config->vlan_id )
+            {
+                return XDP_PASS;
+            }
+
+            h_proto = vlan->encapsulated_proto;
+            l3 = (__u8 *) vlan + sizeof( struct server_xdp_vlan_header_t );
+        }
+
+        if ( h_proto == __constant_htons( ETH_P_IP ) ) // IPV4
+        {
+            struct iphdr * ip = (struct iphdr *) l3;
 
             if ( (__u8 *) ip + sizeof( struct iphdr ) > data_end )
             {
@@ -546,9 +594,9 @@ int server_xdp_filter( struct xdp_md * ctx )
                 }
             }
         }
-        else if ( eth->h_proto == __constant_htons( ETH_P_IPV6 ) ) // IPV6
+        else if ( h_proto == __constant_htons( ETH_P_IPV6 ) ) // IPV6
         {
-            struct ipv6hdr * ip6 = (struct ipv6hdr *) ( data + sizeof( struct ethhdr ) );
+            struct ipv6hdr * ip6 = (struct ipv6hdr *) l3;
 
             if ( (__u8 *) ip6 + sizeof( struct ipv6hdr ) > data_end )
             {
@@ -593,7 +641,7 @@ int server_xdp_filter( struct xdp_md * ctx )
                 // datagram to this server drops; every other fragment is
                 // the kernel's to reassemble
 
-                // the header starts 54 bytes into the frame (the Ethernet
+                // the header starts 54 bytes into the frame (58 behind a tag) (the Ethernet
                 // and fixed IPv6 headers), not a multiple of the struct's
                 // 4-byte alignment, so it is copied through a byte pointer
                 // into a local after the bounds check rather than read

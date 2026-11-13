@@ -508,8 +508,8 @@ int rocketnet_client_transport_payloads( struct rocketnet_client_transport_t * c
  *
  * @param client_transport Client transport; NULL is a counted no-op returning NULL.
  * @param request_bytes Requested capacity in bytes, from 1 through ROCKETNET_MAX_PACKET_PAYLOAD_BYTES.
- * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
- * @return Writable payload pointer, or NULL when reservation fails.
+ * @param context Receives lease metadata, with the payload's capacity in payload_capacity; NULL is a counted no-op returning NULL.
+ * @return Writable payload pointer, 16-aligned, with context->payload_capacity bytes behind it, or NULL when reservation fails.
  */
 uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context );
 
@@ -595,6 +595,13 @@ uint64_t rocketnet_server_transport_send_reserve_for_test( const struct rocketne
 void rocketnet_server_transport_set_keep_alive_acked_for_test( struct rocketnet_server_transport_t * server_transport, int client_index, int acked );
 /** @brief The own frames (RNSendReserve) the open fill phase has not yet given out, for a test. */
 uint64_t rocketnet_server_transport_fill_own_frames_for_test( const struct rocketnet_server_transport_t * server_transport );
+/** @brief The fill's chunked claims, for a unit test (RNSendReserve, the fill lines): a queue's claims; a fill line's tail word [held:32][tail:32] (line -1: the calling thread's); set a line's word; refuse the next reserve chunk claims; the payload ring's counter; the calling thread's ring chunk [end:32][next:32]. */
+uint64_t rocketnet_server_transport_fill_claims_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+uint64_t rocketnet_server_transport_fill_tail_for_test( const struct rocketnet_server_transport_t * server_transport, int line, int queue );
+void rocketnet_server_transport_set_fill_tail_for_test( struct rocketnet_server_transport_t * server_transport, int line, int queue, uint64_t word );
+void rocketnet_server_transport_refuse_fill_chunks_for_test( struct rocketnet_server_transport_t * server_transport, int chunks );
+uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct rocketnet_server_transport_t * server_transport );
+uint64_t rocketnet_server_transport_fill_ring_chunk_for_test( const struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV
 
 // a NULL client_transport is a counted no-op that returns 0
@@ -1037,6 +1044,31 @@ void rocketnet_forbid_xdp_commit( void );
  * @return Nothing. Call on the main thread, outside concurrent packet-fill phases.
  */
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
+
+// update, split so the game's jobs apply the received acks: update_receive,
+// then update_client_acks once per client on any threads, then
+// update_finish. update is the same three calls with no client taken, and
+// gives the same result. Between update_receive and update_finish nothing
+// else runs on the transport.
+
+/** @brief The first part of update: read and process received packets, queuing each client's acks.
+ * @param server_transport [in,out] Created transport; NULL is a counted no-op.
+ * @param time [in] As update's.
+ * @return Nothing. Main thread, outside fill phases; a receive with the last one unfinished finishes it first and counts as misuse.
+ */
+void rocketnet_server_transport_update_receive( struct rocketnet_server_transport_t * server_transport, double time );
+/** @brief Applies one client's queued acks, from any thread, between update_receive and update_finish.
+ * @param server_transport [in,out] The transport update_receive opened.
+ * @param client_index [in] 0 to max_clients - 1. Calls for different clients may run at once; a second call for one client finds nothing.
+ * @return The ack blocks applied. Outside the open phase, or with a bad index: 0 and counted as misuse.
+ */
+int rocketnet_server_transport_update_client_acks( struct rocketnet_server_transport_t * server_transport, int client_index );
+/** @brief The rest of update: every client not yet applied, the acked batch, timeouts, keep-alives and acks.
+ * @param server_transport [in,out] Created transport; NULL is a counted no-op.
+ * @return Nothing. Main thread, after the jobs that called update_client_acks have joined. Without an open receive it does nothing.
+ */
+void rocketnet_server_transport_update_finish( struct rocketnet_server_transport_t * server_transport );
+
 // internal message-layer boundary: opens the shared disconnect allowance before pre-link kicks
 void rocketnet_server_transport_begin_message_update( struct rocketnet_server_transport_t * server_transport );
 
@@ -1111,10 +1143,11 @@ int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * s
  */
 int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
-// the send surface is acquire, write, commit: start_packet hands back a
-// 16-aligned frame; the payload is written at frame + payload_index --
-// itself 16-aligned, capacity a multiple of eight, so any word-based
-// serializer roots there directly -- and finish_packet seals it in place
+// the send surface is acquire, write, commit: start_packet hands back the
+// payload pointer, 16-aligned, with context->payload_capacity bytes behind
+// it, a multiple of eight, so any word-based serializer roots there
+// directly. The wire header in front of the payload is the transport's own
+// and is never the caller's to write. finish_packet seals it in place
 // on the calling thread and stages it. Nothing is copied at any step; the
 // packet is encrypted where it was written. send_packets flushes
 // everything staged.
@@ -1171,9 +1204,9 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
  */
 struct rocketnet_packet_context_t
 {
-    /** @brief Reserved frame, borrowed for the active lease. */
+    /** @brief The transport's own: the whole wire frame of the lease. Write at the pointer start_packet returns, never here. */
     uint8_t * frame;
-    /** @brief Byte offset from frame to the payload start. */
+    /** @brief The transport's own: byte offset from frame to the payload start_packet returns. */
     int payload_index;
     /** @brief Writable payload capacity in bytes. */
     int payload_capacity;
@@ -1185,15 +1218,24 @@ struct rocketnet_packet_context_t
     int client_index;
 };
 
+struct rocketnet_fill_phase_t;
+/**
+ * @brief The transport's fill-phase check (sdk/rocketnet_fill_phase.h), which the message layer above it brackets its own main-thread operations and fill calls with.
+ *
+ * @param server_transport Server transport; NULL returns NULL.
+ * @return The transport's fill phase, valid for the transport's life.
+ */
+struct rocketnet_fill_phase_t * rocketnet_server_transport_fill_phase( struct rocketnet_server_transport_t * server_transport );
+
 // a NULL server_transport or context is a counted no-op that returns NULL
 /**
- * @brief Reserves a send frame for one connected server client.
+ * @brief Reserves a send frame for one connected server client and returns its writable payload.
  *
  * @param server_transport Server transport; NULL is a counted no-op returning NULL.
  * @param client_index Connected client slot index.
  * @param request_bytes Requested capacity in bytes, from 1 through ROCKETNET_MAX_PACKET_PAYLOAD_BYTES.
- * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
- * @return Writable payload pointer, or NULL when slot or reservation is invalid. Fill calls may run concurrently between update and the following flush.
+ * @param context Receives lease metadata, with the payload's capacity in payload_capacity; NULL is a counted no-op returning NULL.
+ * @return Writable payload pointer, 16-aligned, with context->payload_capacity bytes behind it, or NULL when slot or reservation is invalid. Fill calls may run concurrently between update and the following flush.
  */
 uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
 
@@ -1457,6 +1499,8 @@ int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_tra
 // send pass reads before it gives a connection its turn
 /** @brief Sets the send capacity the next server transport create reads, for a unit test. */
 void rocketnet_server_transport_set_create_send_capacity_for_test( int packets );
+/** @brief Makes the next server transport create apply each ack block inline, for a unit test that compares the two applies. */
+void rocketnet_server_transport_set_create_inline_acks_for_test( bool inline_acks );
 /** @brief Returns the transport's payload send capacity. */
 int rocketnet_server_transport_send_capacity( const struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV
@@ -1840,6 +1884,13 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
 
 // ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. a NULL server is a counted no-op that returns ROCKETNET_UPDATE_OK
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time );
+
+// update in three parts, as the server transport's (update_receive,
+// update_client_acks per client from any thread, update_finish, which
+// returns update's result); update is the three with no client taken
+void rocketnet_message_server_update_receive( struct rocketnet_message_server_t * server, double time );
+int rocketnet_message_server_update_client_acks( struct rocketnet_message_server_t * server, int client_index );
+int rocketnet_message_server_update_finish( struct rocketnet_message_server_t * server );
 
 // a NULL server is a counted no-op
 /**

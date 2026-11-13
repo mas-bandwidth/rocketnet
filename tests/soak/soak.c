@@ -739,28 +739,28 @@ static uint64_t soak_rate_send_count( uint64_t owed, uint64_t sent, uint64_t una
 }
 
 // stages one pattern payload through the acquire/commit family, written at
-// frame + payload_index; 1 only when the transport staged it
+// the payload pointer start_packet returns; 1 only when the transport staged it
 static int soak_client_send( struct rocketnet_client_transport_t * client, int payload_size )
 {
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_client_transport_start_packet( client, payload_size, &context );
-    if ( !frame )
+    uint8_t * payload = rocketnet_client_transport_start_packet( client, payload_size, &context );
+    if ( !payload )
     {
         return 0;
     }
-    generate_payload( frame + context.payload_index, payload_size );
+    generate_payload( payload, payload_size );
     return rocketnet_client_transport_finish_packet( client, &context, payload_size ) > 0;
 }
 
 static int soak_server_send( struct rocketnet_server_transport_t * server, int client_index, int payload_size )
 {
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, payload_size, &context );
-    if ( !frame )
+    uint8_t * payload = rocketnet_server_transport_start_packet( server, client_index, payload_size, &context );
+    if ( !payload )
     {
         return 0;
     }
-    generate_payload( frame + context.payload_index, payload_size );
+    generate_payload( payload, payload_size );
     return rocketnet_server_transport_finish_packet( server, &context, payload_size ) > 0;
 }
 

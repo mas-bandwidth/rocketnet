@@ -122,6 +122,7 @@ skip test_xdp_transport_linux_receive_weather_ipv4 rocketnet_test_linux_xdp_weat
 skip test_xdp_transport_linux_receive_weather_ipv6 rocketnet_test_linux_xdp_weather_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_xdp_transport_max_size_both_ways_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_xdp_transport_max_size_both_ways_ipv6 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_no_native_attach_refused rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_xdp_transport_over_mtu_frame_refused_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_xdp_transport_posix_client_create_destroy_1000 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_xdp_transport_posix_connect_disconnect_1000 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
@@ -131,3 +132,8 @@ skip test_xdp_transport_posix_server_create_destroy_1000 rocketnet_test_posix_xd
 skip test_xdp_transport_posix_server_restart_same_port_100 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_xdp_transport_server_io_pin rocketnet_test_server_pin_allows_xdp linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_xdp_transport_serves_both_families rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_other_vid_and_untagged_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_stacked_devices_refused rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_tag_in_data_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_tag_in_data_ipv6 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_xdp_transport_vlan_tag_stripped_ipv4 rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable

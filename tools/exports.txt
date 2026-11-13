@@ -36,6 +36,7 @@ rocketnet_loopback_hub_create
 rocketnet_loopback_hub_destroy
 rocketnet_max_unfragmented_message_bytes
 rocketnet_quiet
+rocketnet_server_abort_client_message
 rocketnet_server_abort_message
 rocketnet_server_can_send_message
 rocketnet_server_client_connected
@@ -50,6 +51,7 @@ rocketnet_server_destroy
 rocketnet_server_disconnect_all_clients
 rocketnet_server_disconnect_client
 rocketnet_server_disconnect_reason
+rocketnet_server_finish_client_message
 rocketnet_server_finish_message
 rocketnet_server_ipv4_address
 rocketnet_server_ipv6_address
@@ -71,6 +73,9 @@ rocketnet_server_stop
 rocketnet_server_stopped
 rocketnet_server_transport_name
 rocketnet_server_update
+rocketnet_server_update_client
+rocketnet_server_update_finish
+rocketnet_server_update_receive
 rocketnet_sleep
 rocketnet_status_name
 rocketnet_term

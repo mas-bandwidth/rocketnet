@@ -43,7 +43,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER
 ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
                          "a send frame holds the 16-byte payload alignment slack and a full receive-ceiling packet" );
 
-#define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
+#define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                32
 
 // The most message packets one connection writes in one update: the top of
 // the message config's packets_per_update range (rocketnet_internal.h).
@@ -71,7 +71,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_XDP_NUM_BUFFERS                                            3
 #define ROCKETNET_XDP_NUM_FRAMES                                         65536
-#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 4 )
+#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 8 )
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_FRAMES                                 ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_RING_SIZE         ( 2 * ROCKETNET_XDP_FILL_FRAMES )
@@ -82,8 +82,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
-                                                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
-                         "an XDP frame holds ethernet, the larger IP header, UDP and a full receive-ceiling packet" );
+                                                         4 + ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
+                         "an XDP frame holds ethernet, one 4-byte 802.1Q tag, the larger IP header, UDP and a full receive-ceiling packet" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE == 4096,
                          "the XDP UMEM frame the transport registers is 4096 bytes" );
 
