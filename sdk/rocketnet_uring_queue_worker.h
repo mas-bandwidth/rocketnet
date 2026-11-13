@@ -166,6 +166,11 @@ struct rocketnet_uring_queue_worker_config_t
     struct rocketnet_uring_queue_worker_kernel_t kernel;
 };
 
+// Cache-line alignment pads this on MSVC (C4324); the padding is the point.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
 struct rocketnet_uring_queue_worker_t
 {
     // create's, read-only after it
@@ -194,6 +199,9 @@ struct rocketnet_uring_queue_worker_t
     struct rocketnet_segment_refused_t refused;     // the destinations that refused a segmented send
     std::atomic<uint64_t> counters[ROCKETNET_URING_WORKER_NUM_COUNTERS];
 };
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
 
 // initializes worker in place (it may be part of a larger allocation). false
 // when a config value is out of range or the platform has no io_uring.

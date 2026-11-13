@@ -1089,6 +1089,8 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
     rocketnet_assert( counters );
 
     memset( counters + ROCKETNET_SERVER_URING_FIRST_COUNTER, 0, ROCKETNET_SERVER_URING_COUNTER_ROWS * sizeof( uint64_t ) );
+    counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS] = (uint64_t) uring->pin_refusals.load( std::memory_order_relaxed );
+    counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] = 0;
 
     for ( int i = 0; i < uring->num_queues; i++ )
     {
@@ -1514,6 +1516,8 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
     if ( counters )
     {
         memset( counters + ROCKETNET_SERVER_URING_FIRST_COUNTER, 0, ROCKETNET_SERVER_URING_COUNTER_ROWS * sizeof( uint64_t ) );
+        counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS] = 0;
+        counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] = 0;
     }
 }
 

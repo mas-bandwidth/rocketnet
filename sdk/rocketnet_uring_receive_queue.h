@@ -129,6 +129,11 @@ struct rocketnet_uring_receive_slot_t
     int packet_bytes;
 };
 
+// Cache-line alignment pads this on MSVC (C4324); the padding is the point.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
 struct rocketnet_uring_receive_queue_t
 {
     // create's, read-only after it
@@ -175,6 +180,9 @@ struct rocketnet_uring_receive_queue_t
 
     alignas( 64 ) uint64_t exposed;         // the end of the slots the last drain exposed
 };
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
 
 // any thread, the worker not running. NULL when a size is outside its range,
 // the buffer ring cannot be registered (the error logged) or the allocation

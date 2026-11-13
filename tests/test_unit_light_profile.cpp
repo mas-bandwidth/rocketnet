@@ -220,8 +220,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter IOCP_PIN_REFUSALS adds 128 to the server (two of its
 // counter blocks cross a 64-byte rounding) and 64 to the client: actual=
 // 1503911803 and 15041738 (the macOS unit job, Debug, DEV ON).
+// The io_uring transport's rows URING_PIN_REFUSALS and
+// URING_RECEIVE_DROPPED_SOCKET add 64 to the client: actual=15041802 (the
+// macOS unit job, Debug, DEV ON).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863227 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993162 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -342,9 +345,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter IOCP_PIN_REFUSALS adds 64 to the server (one 64-byte
 // rounding): actual=5644858567 (hetzner1, gcc, Debug, DEV ON); arm64 the same
 // 64, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810047ULL )
+// The io_uring transport's rows URING_PIN_REFUSALS and
+// URING_RECEIVE_DROPPED_SOCKET add 64 more to the server: actual=5644858631
+// (amd-3, gcc, Debug, DEV ON); arm64 the same 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810111ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809991ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810055ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and

@@ -8437,6 +8437,11 @@ void rocketnet_test_server_gso_receive_overflow_counted()
 #include <pthread.h>
 #include <sched.h>
 
+#include <dirent.h>
+#include <linux/filter.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 #if ROCKETNET_DEV
 #if defined( __GNUC__ ) || defined( __clang__ )
 __attribute__( ( noinline ) )
@@ -9201,11 +9206,15 @@ void rocketnet_test_server_uring_send_overflow()
 // pthread_setaffinity_np succeeded), or, on a machine without the cpus, the
 // refusal path as above.
 
-// the pin refusals, as the accessor counts them
+// the pin refusals, read from the public row the transport writes
+// (ROCKETNET_COUNTER_URING_PIN_REFUSALS), and the same count the accessor gives
 
 static uint64_t rocketnet_test_uring_pin_refusals( struct rocketnet_server_uring_t * uring )
 {
-    return (uint64_t) rocketnet_server_uring_pin_refusals( uring );
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_check( counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS] == (uint64_t) rocketnet_server_uring_pin_refusals( uring ) );
+    return counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS];
 }
 
 static bool rocketnet_test_uring_wait_pins( struct rocketnet_server_uring_t * uring, int queues )
@@ -9387,17 +9396,93 @@ void rocketnet_test_server_uring_receive_left_at_stop_counted()
     rocketnet_server_uring_destroy( uring );
 }
 
+// this process's UDP sockets bound to port (the server's queue sockets), from
+// /proc/self/fd
+
+static int rocketnet_test_uring_port_sockets( uint16_t port, int * fds, int capacity )
+{
+    DIR * dir = opendir( "/proc/self/fd" );
+    rocketnet_check( dir );
+    int count = 0;
+    struct dirent * entry;
+    while ( ( entry = readdir( dir ) ) != NULL && count < capacity )
+    {
+        if ( entry->d_name[0] < '0' || entry->d_name[0] > '9' )
+        {
+            continue;
+        }
+        const int fd = (int) strtol( entry->d_name, NULL, 10 );
+        if ( fd == dirfd( dir ) )
+        {
+            continue;
+        }
+        int type = 0;
+        socklen_t type_bytes = sizeof( type );
+        if ( getsockopt( fd, SOL_SOCKET, SO_TYPE, &type, &type_bytes ) != 0 || type != SOCK_DGRAM )
+        {
+            continue;
+        }
+        struct sockaddr_storage name;
+        memset( &name, 0, sizeof( name ) );
+        socklen_t name_bytes = sizeof( name );
+        if ( getsockname( fd, (struct sockaddr *) &name, &name_bytes ) != 0 )
+        {
+            continue;
+        }
+        uint16_t bound = 0;
+        if ( name.ss_family == AF_INET )
+        {
+            struct sockaddr_in inet;
+            memcpy( &inet, &name, sizeof( inet ) );
+            bound = ntohs( inet.sin_port );
+        }
+        else if ( name.ss_family == AF_INET6 )
+        {
+            struct sockaddr_in6 inet6;
+            memcpy( &inet6, &name, sizeof( inet6 ) );
+            bound = ntohs( inet6.sin6_port );
+        }
+        if ( bound == port )
+        {
+            fds[count++] = fd;
+        }
+    }
+    closedir( dir );
+    return count;
+}
+
+// the kernel's own drop count of the sockets (SO_MEMINFO, SK_MEMINFO_DROPS)
+
+static uint64_t rocketnet_test_uring_socket_drops( const int * fds, int count )
+{
+    uint64_t drops = 0;
+    for ( int i = 0; i < count; i++ )
+    {
+        uint32_t meminfo[SK_MEMINFO_VARS];
+        memset( meminfo, 0, sizeof( meminfo ) );
+        socklen_t meminfo_bytes = sizeof( meminfo );
+        rocketnet_check( getsockopt( fds[i], SOL_SOCKET, SO_MEMINFO, meminfo, &meminfo_bytes ) == 0 );
+        drops += meminfo[SK_MEMINFO_DROPS];
+    }
+    return drops;
+}
+
 // the transport's rows reach the SERVER's public counters
 // (rocketnet_server_transport_counters copies them from the transport): a
 // server on io_uring with the OS keeping more cpus than the machine has, so
-// every worker's pin is refused (URING_PIN_REFUSALS, exactly one a queue), and
+// every worker's pin is refused (URING_PIN_REFUSALS, exactly one a queue);
 // datagrams that pass the prefilter, banked and never taken by main, counted
-// RECEIVE_DROPPED_STOPPED once the transport stops
+// RECEIVE_DROPPED_STOPPED once the transport stops; and datagrams the kernel
+// dropped at a queue socket (a socket filter that drops everything, attached
+// by the test for a burst and then removed: the kernel counts each in the
+// socket's drops, and the next datagram's SO_RXQ_OVFL carries the count),
+// URING_RECEIVE_DROPPED_SOCKET
 
 void rocketnet_test_server_uring_rows_reach_the_server()
 {
     const int queues = 2;
     const int datagrams = 8;
+    const int filtered = 5;
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -9408,6 +9493,20 @@ void rocketnet_test_server_uring_rows_reach_the_server()
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &config );
     rocketnet_check( server );
+
+    // every worker asks to pin and is refused: the row reads one a queue
+    uint64_t refusals = 0;
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        refusals = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_URING_PIN_REFUSALS );
+        if ( refusals >= (uint64_t) queues )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( refusals == (uint64_t) queues );
 
     // datagrams that pass the prefilter (a connection request's size and
     // header) are banked by the workers; the server takes none of them
@@ -9441,6 +9540,59 @@ void rocketnet_test_server_uring_rows_reach_the_server()
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_check( received == (uint64_t) datagrams );
+    rocketnet_check( rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET ) == 0 );
+
+    // the kernel drops a burst at the queue sockets: a filter that keeps
+    // nothing, on every queue socket, until the kernel has counted the whole
+    // burst in the sockets' own drops; then removed
+    int fds[ROCKETNET_URING_MAX_QUEUES];
+    const int num_fds = rocketnet_test_uring_port_sockets( server_address.port, fds, ROCKETNET_URING_MAX_QUEUES );
+    rocketnet_check( num_fds == queues );
+    const uint64_t drops_before = rocketnet_test_uring_socket_drops( fds, num_fds );
+
+    struct sock_filter keep_nothing = BPF_STMT( BPF_RET | BPF_K, 0 );
+    struct sock_fprog program;
+    memset( &program, 0, sizeof( program ) );
+    program.len = 1;
+    program.filter = &keep_nothing;
+    for ( int i = 0; i < num_fds; i++ )
+    {
+        rocketnet_check( setsockopt( fds[i], SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof( program ) ) == 0 );
+    }
+    for ( int i = 0; i < filtered; i++ )
+    {
+        rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, (int) sizeof( packet ) );
+    }
+    const double drop_start = rocketnet_platform_time();
+    while ( rocketnet_test_uring_socket_drops( fds, num_fds ) - drops_before < (uint64_t) filtered && rocketnet_platform_time() - drop_start < 5.0 )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_test_uring_socket_drops( fds, num_fds ) - drops_before == (uint64_t) filtered );
+    for ( int i = 0; i < num_fds; i++ )
+    {
+        int unused = 0;
+        rocketnet_check( setsockopt( fds[i], SOL_SOCKET, SO_DETACH_FILTER, &unused, sizeof( unused ) ) == 0 );
+    }
+
+    // the next datagram (the same source, so the same queue socket) carries
+    // the socket's drop count; the transport counts what is new in it
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, (int) sizeof( packet ) );
+    uint64_t dropped_socket = 0;
+    const double socket_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - socket_start < 5.0 )
+    {
+        const struct rocketnet_counters_t * now = rocketnet_server_transport_counters( server );
+        received = rocketnet_counter_value( now, ROCKETNET_COUNTER_URING_PACKETS_RECEIVED );
+        dropped_socket = rocketnet_counter_value( now, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET );
+        if ( received >= (uint64_t) datagrams + 1 && dropped_socket >= (uint64_t) filtered )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == (uint64_t) datagrams + 1 );
+    rocketnet_check( dropped_socket == (uint64_t) filtered );
 
     rocketnet_platform_socket_destroy( client_socket );
 
@@ -9453,7 +9605,9 @@ void rocketnet_test_server_uring_rows_reach_the_server()
     }
 
     const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
-    rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED ) == (uint64_t) datagrams );
+    rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED ) == (uint64_t) datagrams + 1 );
+    rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_URING_PIN_REFUSALS ) == (uint64_t) queues );
+    rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET ) == (uint64_t) filtered );
     rn_native_server_transport_stop_and_destroy( server );
 }
 
