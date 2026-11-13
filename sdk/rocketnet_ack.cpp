@@ -426,7 +426,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
                    "the record rings are one span, before the rtt history" );
 
     memset( (void *) endpoint, 0, offsetof( rocketnet_ack_endpoint_t, sent ) );
-    memset( &endpoint->block_memo, 0, sizeof( endpoint->block_memo ) );     // whole, so two endpoints with one history compare equal byte for byte
+    memset( (void *) &endpoint->block_memo, 0, sizeof( endpoint->block_memo ) );     // whole, so two endpoints with one history compare equal byte for byte
 
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
     {
@@ -1607,11 +1607,12 @@ static inline void rn_ack_prefetch_unacked( const struct rocketnet_ack_endpoint_
 
         const uint32_t first = w * 64 + (uint32_t) rocketnet_ack_ctz64( word );
         const uint32_t last = w * 64 + 63 - (uint32_t) rocketnet_platform_clz64( word );
-        const uintptr_t low = (uintptr_t) &endpoint->sent[first] & ~(uintptr_t) 63;
-        const uintptr_t high = (uintptr_t) &endpoint->sent[last];
-        for ( uintptr_t line = low; line <= high && lines < ROCKETNET_ACK_PREFETCH_LINES; line += 64 )
+        const char * const first_byte = (const char *) &endpoint->sent[first];
+        const char * const low = first_byte - ( (uintptr_t) first_byte & (uintptr_t) 63 );
+        const char * const high = (const char *) &endpoint->sent[last];
+        for ( const char * line = low; line <= high && lines < ROCKETNET_ACK_PREFETCH_LINES; line += 64 )
         {
-            rocketnet_ack_stats_prefetch( (const void *) line );
+            rocketnet_ack_stats_prefetch( line );
             lines++;
         }
 
@@ -2483,7 +2484,7 @@ static int rocketnet_server_acks_apply_queued( struct rocketnet_server_acks_t * 
     uint64_t * segment = acks->segments + (size_t) client_index * ROCKETNET_SENT_PACKET_BUFFER_SIZE;
 
     int applied = 0;
-    struct rocketnet_ack_block_t block;
+    struct rocketnet_ack_block_t block = {};            // whole once: the ranges past an entry's count are never garbage
     for ( int e = client->head; e >= 0; e = acks->pending[e].next )
     {
         struct rocketnet_server_ack_pending_t * entry = &acks->pending[e];
@@ -2491,11 +2492,12 @@ static int rocketnet_server_acks_apply_queued( struct rocketnet_server_acks_t * 
         block.largest = entry->largest;
         block.first_range_length = entry->first_range_length;
         block.num_ranges = entry->num_ranges;
-        const uint16_t * ranges = acks->ranges + 2 * entry->range_offset;
+        const uint16_t * ranges = acks->ranges + (size_t) 2 * (size_t) entry->range_offset;
         for ( int r = 0; r < entry->num_ranges; r++ )
         {
-            block.range_gap[r] = ranges[2 * r];
-            block.range_length[r] = ranges[2 * r + 1];
+            const size_t k = (size_t) 2 * (size_t) r;
+            block.range_gap[r] = ranges[k];
+            block.range_length[r] = ranges[k + 1];
         }
 
         const int before = client->ids;
@@ -2644,11 +2646,12 @@ void rocketnet_server_acks_receive_block( struct rocketnet_server_acks_t * acks,
     entry->ids_offset = 0;
     entry->ids_count = 0;
 
-    uint16_t * ranges = acks->ranges + 2 * acks->num_ranges;
+    uint16_t * ranges = acks->ranges + (size_t) 2 * (size_t) acks->num_ranges;
     for ( int r = 0; r < block->num_ranges; r++ )
     {
-        ranges[2 * r] = block->range_gap[r];
-        ranges[2 * r + 1] = block->range_length[r];
+        const size_t k = (size_t) 2 * (size_t) r;
+        ranges[k] = block->range_gap[r];
+        ranges[k + 1] = block->range_length[r];
     }
     acks->num_ranges += block->num_ranges;
 
@@ -2753,6 +2756,7 @@ void rocketnet_server_acks_close( struct rocketnet_server_acks_t * acks, uint64_
     acks->phase = ROCKETNET_SERVER_ACKS_CLOSED;
 }
 
+#if ROCKETNET_DEV
 // The trace check's seam (tests/tla_trace_ack_apply.cpp): one client's part
 // of the deferred apply, read by value. Main thread, with no taker running.
 void rocketnet_server_acks_client_for_test( const struct rocketnet_server_acks_t * acks, int client_index, int * head, int * tail, int * claim, int * ids )
@@ -2764,6 +2768,7 @@ void rocketnet_server_acks_client_for_test( const struct rocketnet_server_acks_t
     *claim = (int) client->claim.load( std::memory_order_relaxed );
     *ids = client->ids;
 }
+#endif // #if ROCKETNET_DEV
 
 // The trace check's seam: lowers the deferred apply's queue to pending
 // entries and its range store to ranges ranges, so a walk fills them. It
