@@ -234,6 +234,27 @@ is a warning naming the limit to raise. On Linux, for 1000 clients:
 sudo sysctl -w net.core.rmem_max=25000000
 ```
 
+The GSO transport also asks past the limit itself. When a queue socket's
+grant is short it asks once more with `SO_RCVBUFFORCE` (and `SO_SNDBUFFORCE`
+for the send buffer, which asks for 1,000,000 bytes), which the kernel takes
+from a process with `CAP_NET_ADMIN` and refuses from any other. The server
+then logs one line per buffer at start with what it asked for, what it got
+and, when the grant is still short, why the force option did not raise it
+and the sysctl and value to set, for example:
+
+```
+gso transport: socket receive buffer asked 25000000 bytes, got 4194304 (SO_RCVBUFFORCE refused: the process lacks CAP_NET_ADMIN); the kernel drops datagrams that arrive past the grant between updates: set sysctl net.core.rmem_max=25000000
+```
+
+A short grant is not fatal: the server runs, and the kernel counts what it
+drops in the host's UDP `RcvbufErrors`. For a GSO server at 1000 clients the
+operator sets both limits, and keeps them across reboots in a file under
+`/etc/sysctl.d/`:
+
+```
+sudo sysctl -w net.core.rmem_max=25000000 net.core.wmem_max=1000000
+```
+
 A grant below one update's inbound traffic drops packets in the kernel
 before the server sees them; at 1000 clients sending 256 kbps each, one 10 Hz
 update carries 3.2 MB of payload, a 20 Hz update 1.6 MB and a 30 Hz update
