@@ -90,9 +90,10 @@ title's. The example backends take it as `PUT /servers/{serverID}`, with no
 authentication, and say so.
 
 **The client holds no long-lived signing or server secret key.** It holds a
-connect token, an opaque base64 string
-of at most `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, which it passes to
-`rocketnet_client_connect`. The token carries the two token keys for that one
+connect token, an opaque string of exactly 1024 base64 characters
+followed by a NUL (`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, 1025, is the
+buffer size with the NUL), which it passes to `rocketnet_client_connect`.
+Connect refuses a string of any other length. The token carries the two token keys for that one
 connection, which the backend draws fresh for each token; they are not
 long-lived and they identify nothing outside that connection. Fetch a token
 just before connecting: a token expires. 30 seconds is the recommended
@@ -220,9 +221,10 @@ What the code supports today:
   each server again with the new public key (stop, poll
   `rocketnet_server_stopped`, destroy, create, start). Once a server has the
   new key, a token signed by the old key fails the signature check and the
-  server ignores the connection request
-  (`ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY`, in
-  `sdk/rocketnet_counters.h`).
+  server ignores the connection request. The check runs after the cookie
+  exchange, so with the default token lifetime and timeout that client ends
+  in `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT`; at the `DEBUG` log
+  level the server logs `server ignored connection request. signature did not verify`.
 - **Server keys.** A server object keeps its keypair across stop and start,
   and wipes its copy at destroy. With the default all-zero `server_secret_key`,
   each new object generates a new key; register its public key with the backend
@@ -230,8 +232,10 @@ What the code supports today:
   across object replacements. To rotate a supplied key, create the replacement
   with a new secret (or use the generated-key default), then update registration.
   A token naming and sealed to the old key is refused at the server public-key
-  check by a server using the new key, which ignores the request
-  (`ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY`).
+  check by a server using the new key, which ignores the request before the
+  cookie exchange: with the default token lifetime and timeout that client
+  ends in `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT`, and at the `DEBUG` log
+  level the server logs `server ignored connection request. token is sealed to a different server key`.
   Short token lifetimes bound how long a token for a replaced key is out.
 
 What it does not support: a server cannot accept two backend public keys at
