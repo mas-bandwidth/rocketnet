@@ -177,8 +177,12 @@ cleanup()
         on_shell "$server_host" "pkill -f '$tool server' 2>/dev/null; true" || true
     fi
     on_shell "$client_host" "pkill -f '$client_tool clients' 2>/dev/null; sudo pkill -f '$client_tool hostile' 2>/dev/null; true" || true
-    if [ "$netem_on" = 1 ] && [ "$server_os" = linux ]; then
-        on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
+    # a Windows server carries no netem, but its client does: the client's is
+    # removed whatever the server is, or it impairs every later cell
+    if [ "$netem_on" = 1 ]; then
+        if [ "$server_os" = linux ]; then
+            on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
+        fi
         on_shell "$client_host" "sudo -n tc qdisc del dev $client_dev root 2>/dev/null; true" || true
     fi
 }
@@ -201,6 +205,13 @@ on "$server_host" rm -rf "$run_dir"
 on "$server_host" mkdir -p "$run_dir"
 on "$client_host" rm -rf "$client_run_dir"
 on "$client_host" mkdir -p "$client_run_dir"
+
+if [ -z "$netem" ] && on_shell "$client_host" "tc qdisc show dev $client_dev | grep -q netem"; then
+    # a netem left on the client by a cell that did not clean up would impair
+    # this one unnamed: refuse rather than measure through it
+    echo "harden_pair: refused: a netem qdisc is already on $client_host $client_dev (tc qdisc del dev $client_dev root)" >&2
+    exit 1
+fi
 
 if [ -n "$netem" ]; then
     # only the cell's UDP is impaired: a prio root whose fourth band holds the
