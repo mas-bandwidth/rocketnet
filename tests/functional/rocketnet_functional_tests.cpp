@@ -616,6 +616,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
 
     double wait = 5.0;
     int resend_next = TOTAL;
+    bool resend_started = false;
     start = rocketnet_platform_time();
     for ( ;; )
     {
@@ -629,6 +630,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
             printf( "%s received %d of %d payloads\n", name, received, TOTAL );
             rocketnet_check( rocketnet_loss_gate_resend( &gate, TOTAL - received ) );
             resend_next = 0;
+            resend_started = true;
         }
 
         if ( resend_next < TOTAL )
@@ -739,7 +741,21 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
                                                         ROCKETNET_COUNTER_SEND_RING_FULL );
     printf( "%s start_refusals=%d send_ring_full=%llu\n", name, start_refusals, (unsigned long long) ring_full );
     rocketnet_check( ring_full >= (uint64_t) start_refusals );
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
+
+    // A resend means the kernel counted receive drops: the server fell behind
+    // reading its socket, so it fell behind acking too, and the client's send
+    // history was overwritten before an ACK came (SEND_HISTORY_OVERFLOW 694
+    // beside 815 kernel drops in CI 43354859354). That counter is explained
+    // only then; a run with no resend still holds it to zero.
+
+    if ( resend_started )
+    {
+        ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL, ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW );
+    }
+    else
+    {
+        ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
+    }
 
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
