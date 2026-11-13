@@ -1,84 +1,97 @@
 ------------------------ MODULE TraceRNMsgxSendRuns ------------------------
 (***************************************************************************)
-(* The trace check of RNMsgxSendRuns (README-TraceCheck.md): the records   *)
-(* tests/tla_trace_msgx_send_runs.cpp's seeded random walk writes over the *)
-(* real sdk/rocketnet_msgx_send_runs.h, with a fake table and fake         *)
-(* connected and shared sends, are a behaviour of the spec.  TraceLog is   *)
-(* that record sequence, one record of every model variable after each     *)
-(* model step and nothing else: a record with a field more or less never   *)
-(* equals VarsRec, so an under-logged harness fails red, never green.      *)
+(* The trace check of RNMsgxSendRuns (layer msgxsendruns), a copy of       *)
+(* TraceRNTraceExample.tla (README-TraceCheck.md).  TraceLog is the record *)
+(* sequence tests/tla_trace_msgx_send_runs.cpp writes over the real        *)
+(* sdk/rocketnet_msgx_send_runs.h with a fake table and fake connected and *)
+(* shared sends: one record per step, with the operation the walk called   *)
+(* (op: "sort"; "step", one call of rocketnet_msgx_send_runs_step;         *)
+(* "check", the worker's give-up check after a kept call; "retire" and     *)
+(* "quit", the environment), its arguments (the prefix a partial send      *)
+(* took, the slot retired), the action the call's answer names (act: the  *)
+(* fakes' answer, the give-up check's result, or the step's out-state     *)
+(* where no fake was called) and every model variable after it (state).    *)
+(* The cfg's Bank is the bank the walk staged, so Init is that one bank,   *)
+(* and OpenGenAt the fake table.  Record 1 is "init".                      *)
 (*                                                                         *)
-(* Each record after the first is one step: the sort, one call of          *)
-(* rocketnet_msgx_send_runs_step, the worker's check after a kept call     *)
-(* (give up, or resume), or the environment's Quit or Retire.  The record  *)
-(* carries the fakes' answers in what they did (the packets that left and  *)
-(* how), so every branch the record does not take is rejected at it.       *)
-(*                                                                         *)
-(* TraceInit takes the bank from record 1 and checks it against Init's    *)
-(* rules (BankOK, the claim, the packet domain), the rest of Init fixed,  *)
-(* so a bank the fill threads cannot stage is rejected; Init's own        *)
-(* enumeration of every bank is not needed for one trace.  At the last    *)
-(* record the trace stutters (TraceDone).                                  *)
+(* A copy changes only EXTENDS, VarsRec, OpActs, Act and the row's reach   *)
+(* predicates; tools/tla_trace_check.py compares the rest with the         *)
+(* template.                                                               *)
 (***************************************************************************)
 EXTENDS RNMsgxSendRuns, Sequences
 
-CONSTANTS TraceLog
+CONSTANT TraceLog
 
-\* the trace as a value: TLC evaluates a constant definition once, where a
-\* substituted constant (TraceLog <- Log) is evaluated again at each use
+\* the log as a definition of no arguments, which TLC evaluates once when
+\* it starts; every formula below reads Trace, never TraceLog. Read through
+\* the substituted constant, TLC rebuilds the whole log at each access, and a
+\* 3200-record trace takes 68 s instead of 3 s (bench-nyc-6, 2026-11-12)
 Trace == TraceLog
+
+\* checked once, when TLC starts
+ASSUME /\ Len(TraceLog) >= 2
+       /\ \A n \in DOMAIN TraceLog : DOMAIN TraceLog[n] = {"op", "act", "args", "state"}
 
 VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable by the field name the harness writes
-VarsRec ==
-    [count |-> count, client |-> client, slot |-> slot, gen |-> gen, phase |-> phase, live |-> live,
-     tOpen |-> tOpen, tGen |-> tGen, order |-> order, pc |-> pc, cursor |-> cursor, hd |-> hd,
-     scan |-> scan, run |-> run, attempts |-> attempts, left |-> left, lastC |-> lastC, lastS |-> lastS,
-     bad |-> bad, quit |-> quit, retries |-> retries, stalls |-> stalls, retires |-> retires]
+VarsRec == [count |-> count, client |-> client, slot |-> slot, gen |-> gen, phase |-> phase,
+            live |-> live, tOpen |-> tOpen, tGen |-> tGen, order |-> order, pc |-> pc,
+            cursor |-> cursor, hd |-> hd, scan |-> scan, run |-> run, attempts |-> attempts,
+            left |-> left, lastC |-> lastC, lastS |-> lastS, bad |-> bad, quit |-> quit,
+            retries |-> retries, stalls |-> stalls, retires |-> retires]
 
-\* Init's packet domain over a bank already given: what
-\* \E pk \in [0..(count - 1) -> Packets] admits
-BankDomain ==
-    /\ \A i \in Index :
-        IF i < count
-        THEN /\ client[i] \in Clients
-             /\ << slot[i], gen[i] >> \in Stamps
-             /\ phase[i] \in Phases
-             /\ live[i] \in BOOLEAN
-        ELSE /\ client[i] = 0
-             /\ slot[i] = Shared
-             /\ gen[i] = 0
-             /\ phase[i] = 0
-             /\ live[i] = FALSE
+\* the actions each operation of the code can be
+OpActs == [sort |-> {"Sort"},
+           step |-> {"HeadDone", "HeadSkip", "HeadShared", "HeadDropped", "HeadKept", "HeadRun",
+                     "SendAll", "SendPartial", "SendFull", "SendRefused", "SendDead", "SendError",
+                     "DeadDone", "DeadSkip", "DeadShared", "DeadDropped", "DeadKept", "Done"},
+           check |-> {"GiveUp", "Resume"},
+           retire |-> {"Retire"},
+           quit |-> {"Quit"}]
 
-\* the bank of record 1 is one Init admits
-InitBank ==
-    /\ count \in {Min(c, Size) : c \in Claims}
-    /\ DOMAIN client = Index /\ DOMAIN slot = Index /\ DOMAIN gen = Index
-    /\ DOMAIN phase = Index /\ DOMAIN live = Index
-    /\ BankDomain
-    /\ BankOK
+\* the action a record names, with the record's arguments; a name this CASE
+\* lacks stops TLC with an error
+Act(a, x) == CASE a = "Sort" -> Sort
+               [] a = "HeadDone" -> HeadDone
+               [] a = "HeadSkip" -> HeadSkip
+               [] a = "HeadShared" -> HeadShared
+               [] a = "HeadDropped" -> HeadDropped
+               [] a = "HeadKept" -> HeadKept
+               [] a = "HeadRun" -> HeadRun
+               [] a = "SendAll" -> SendAll
+               [] a = "SendPartial" -> SendPartial(x[1])
+               [] a = "SendFull" -> SendFull
+               [] a = "SendRefused" -> SendRefused
+               [] a = "SendDead" -> SendDead
+               [] a = "SendError" -> SendError
+               [] a = "DeadDone" -> DeadDone
+               [] a = "DeadSkip" -> DeadSkip
+               [] a = "DeadShared" -> DeadShared
+               [] a = "DeadDropped" -> DeadDropped
+               [] a = "DeadKept" -> DeadKept
+               [] a = "GiveUp" -> GiveUp
+               [] a = "Resume" -> Resume
+               [] a = "Done" -> Done
+               [] a = "Quit" -> Quit
+               [] a = "Retire" -> Retire(x[1])
 
-\* a bank Init does not admit is a rejected trace, never an empty one (no
-\* initial state would pass green)
 TraceInit ==
-    /\ count = Trace[1].count
-    /\ client = Trace[1].client
-    /\ slot = Trace[1].slot
-    /\ gen = Trace[1].gen
-    /\ phase = Trace[1].phase
-    /\ live = Trace[1].live
-    /\ InitRest
+    /\ Init
     /\ ti = 1
-    /\ rejected = (~InitBank \/ VarsRec # Trace[1])
+    /\ rejected = (Trace[1].op # "init" \/ Trace[1].act # "init" \/ Trace[1].args # <<>>
+                   \/ VarsRec # Trace[1].state)
 
 TraceStep ==
     /\ ~rejected
     /\ ti < Len(Trace)
-    /\ Next
-    /\ VarsRec' = Trace[ti + 1]
+    /\ LET r == Trace[ti + 1]
+       IN /\ r.op \in DOMAIN OpActs
+          /\ r.act \in OpActs[r.op]
+          /\ Act(r.act, r.args)
+          /\ Next
+          /\ VarsRec' = r.state
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 
@@ -95,7 +108,7 @@ TraceDone ==
 
 TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, rejected>>
 
-\* every record of the trace is a model step from the one before
+\* every record of the trace is the model step it names, from the one before
 TraceConsistent == ~rejected
 
 =============================================================================

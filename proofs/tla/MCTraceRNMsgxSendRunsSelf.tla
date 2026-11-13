@@ -9,11 +9,15 @@
 (* (MCTraceRNMsgxSendRunsSelf.cfg); the same record with the slot-only     *)
 (* sort (packet 1, key 0, before packet 0) must be rejected at the sort    *)
 (* record (MCTraceRNMsgxSendRunsSelfBrokenSlotOnly.cfg, TraceConsistent).  *)
-(* Every record carries every variable and nothing else.                   *)
+(* Every record is [op, act, args, state] and its state carries every      *)
+(* variable and nothing else.  The cfgs give the bank as Bank: packet 0 is *)
+(* BankCode 11001 (client 1, slot 0, generation 0, phase 0, live) and      *)
+(* packet 1 110011 (client 1, the shared socket, phase 1, live); slot 0 is *)
+(* open at generation 0 (OpenGenAt = {0}).                                 *)
 (***************************************************************************)
 EXTENDS TraceRNMsgxSendRuns, TLC
 
-MCOpenGen(s) == 0
+Rec(o, a, x, s) == [op |-> o, act |-> a, args |-> x, state |-> s]
 
 F2(x, y) == [i \in 0..1 |-> IF i = 0 THEN x ELSE y]
 NoS == [x \in {1} \X ({<< -1, 0 >>} \cup ({0} \X {0, 1})) |-> -1]
@@ -31,20 +35,26 @@ S2 == [S1 EXCEPT !.order = F2(0, 1), !.pc = "head"]
 \* Retire(0)
 S3 == [S2 EXCEPT !.tOpen = [s \in 0..0 |-> FALSE], !.retires = 1]
 
-\* LoopTop: packet 0 resolves to no socket and leaves on the shared socket
+\* HeadShared: packet 0 resolves to no socket and leaves on the shared socket
 S4 == [S3 EXCEPT !.cursor = 1, !.left = F2(1, 0), !.lastC = [c \in {1} |-> 0],
                  !.lastS = [NoS EXCEPT ![1, << 0, 0 >>] = 0]]
 
-\* LoopTop: packet 1, the shared socket's
+\* HeadShared: packet 1, the shared socket's
 S5 == [S4 EXCEPT !.cursor = 2, !.left = F2(1, 1), !.lastC = [c \in {1} |-> 1],
                  !.lastS = [NoS EXCEPT ![1, << 0, 0 >>] = 0, ![1, << -1, 0 >>] = 1]]
 
-\* LoopTop: the bank done
+\* HeadDone: the bank done
 S6 == [S5 EXCEPT !.pc = "done"]
 
-GoodLog == << S1, S2, S3, S4, S5, S6 >>
+GoodLog == << Rec("init", "init", << >>, S1),
+              Rec("sort", "Sort", << >>, S2),
+              Rec("retire", "Retire", << 0 >>, S3),
+              Rec("step", "HeadShared", << >>, S4),
+              Rec("step", "HeadShared", << >>, S5),
+              Rec("step", "HeadDone", << >>, S6) >>
 
 \* the slot-only sort: packet 1 (the shared socket's key 0) first
-BadLog == << S1, [S2 EXCEPT !.order = F2(1, 0)] >>
+BadLog == << Rec("init", "init", << >>, S1),
+             Rec("sort", "Sort", << >>, [S2 EXCEPT !.order = F2(1, 0)]) >>
 
 =============================================================================

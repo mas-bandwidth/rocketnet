@@ -86,6 +86,10 @@ LAYERS = {
     "msgxsendruns": {
         "modules": ["RNMsgxSendRuns.tla", "TraceRNMsgxSendRuns.tla"],
         "untraced": {},
+        # one bank of 18 to 24 packets leaves in about 60 steps; the rest of
+        # a 400-step walk would be Done records, each paid for by the
+        # template's ASSUME
+        "steps": 150,
     },
 }
 

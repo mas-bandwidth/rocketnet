@@ -17,10 +17,18 @@ the stamp a fill thread gave it (table slot, `-1` the shared socket, and the
 slot's generation), the fill phase it was staged in (`info.phase`, main's
 update count, which only `rocketnet_server_msgx_commit` advances), and
 whether it is live (`packet_bytes > 0`; an aborted or never finished packet
-is not). Every slot is open at `OpenGen(s)` when the send starts (slot 0 at
-generation 1, slot 1 at 0), so a stamp at the other generation is stale;
-`Retire` closes a slot while the worker sends. A slot's socket is connected
-to the client stamped at its open generation.
+is not). Every slot is open at `OpenGen(s)` when the send starts, given as
+the set `OpenGenAt` of `s * GenSpan + g` (a cfg carries a set, not a
+function; the instances' `{1, 2}` is slot 0 at generation 1, slot 1 at 0),
+so a stamp at the other generation is stale; `Retire` closes a slot while
+the worker sends. A slot's socket is connected to the client stamped at its
+open generation.
+
+`Bank = {}` (every model config) makes `Init` every bank `BankOK` admits. A
+trace gives its one bank as `Bank`, the set of `BankCode(i, packet)` (one
+decimal digit per field below the index), so its `Init` is that bank; a
+`Bank` that is not `count` packets of the domain, or that `BankOK` refuses,
+has no initial state and the trace is red.
 
 `BankOK` is what the fill threads can stage:
 - fill phases rise in staged order: a fill of the next phase runs after
@@ -56,37 +64,44 @@ generation break in the run builder keeps it true for any input.
 
 ## Actions and the code they mirror
 
-Each action is one call: the sort, one `rocketnet_msgx_send_runs_step`, or
-the worker's check after a kept call.
+Each action is one call and one outcome of it: the sort, one
+`rocketnet_msgx_send_runs_step` by what it met or what the fake answered, or
+the worker's check after a kept call by its result.
 
 - **`Sort`**: `rocketnet_msgx_send_runs_sort`. The bank is cut into runs of
   one fill phase in staged order (`RangeEnd`), and each run is sorted by
   `rocketnet_msgx_send_runs_sort_range`'s three loops over `bucket[]`
   (capacity + 2 entries) as recursive operators: count by key, prefix sums,
   place `order[lo + bucket[key]++] = i`.
-- **`LoopTop`**: the step at `HEAD`: the bank done; an aborted head skipped; a
-  head that resolves to no socket sent alone on the shared socket (sent,
-  dropped, or full: kept); or the run built (`Build`: the head's slot and
-  generation, aborted packets skipped, at most `Batch` live ones).
+- **`HeadDone`**, **`HeadSkip`**, **`HeadShared`**, **`HeadDropped`**,
+  **`HeadKept`**, **`HeadRun`**: the step at `HEAD`: the bank done; an
+  aborted head skipped; a head that resolves to no socket sent alone on the
+  shared socket (sent, dropped, or full: kept); or the run built (`Build`:
+  the head's slot and generation, aborted packets skipped, at most `Batch`
+  live ones).
 - **`SendAll`**, **`SendPartial`**, **`SendFull`**, **`SendRefused`**,
   **`SendDead`**, **`SendError`**: the step at `SEND`, the connected send's
-  answers. A partial send walks the cursor past exactly that many live
-  packets (`Advance`); nothing taken and full keep the run; a refusal goes
+  answers. A partial send of `k` (`SendPartial(k)`, `k` the answer) walks
+  the cursor past exactly that many live packets (`Advance`); nothing taken
+  and full keep the run; a refusal goes
   again once and a second is an error; dead reports the run's stamp and
   starts the resend loop; any other error drops the run, counted.
-- **`Dead`**: the step at `DEAD`, one packet of the dead run on the shared
-  socket.
-- **`Kept`**: `rocketnet_server_msgx_worker` after a false return
-  (`rocketnet_msgx_send_runs_give_up`, `shutdown && ++retries > limit`):
-  past `RetriesAfterQuit` retries after quit every live packet from the
-  cursor is dropped, counted (`rocketnet_msgx_send_runs_owed`); otherwise
+- **`DeadDone`**, **`DeadSkip`**, **`DeadShared`**, **`DeadDropped`**,
+  **`DeadKept`**: the step at `DEAD`, one packet of the dead run on the
+  shared socket: the run done, an aborted packet skipped, sent, dropped, or
+  full and kept.
+- **`GiveUp`**, **`Resume`**: `rocketnet_server_msgx_worker` after a false
+  return (`rocketnet_msgx_send_runs_give_up`, `shutdown && ++retries >
+  limit`): past `RetriesAfterQuit` retries after quit every live packet from
+  the cursor is dropped, counted (`rocketnet_msgx_send_runs_owed`); otherwise
   the next call resumes at the same cursor (`rocketnet_msgx_send_runs_resume`).
   The retry count rises on every check after quit, the last one too, as the
   code's `++` does.
+- **`Done`**: the bank done or given up; the step takes no step.
 
 Environment: `Quit` (main sets shutdown) and `Retire(s)` (main retires a
-slot). The worker reads shutdown only in `Kept` and the table only at a
-resolve in `LoopTop`, so each is taken just before that read; any other
+slot). The worker reads shutdown only in `GiveUp` and `Resume` and the table
+only at a resolve at `HEAD`, so each is taken just before that read; any other
 placement reaches the same reads. A run already resolved still reaches its
 peer: the table's quarantine keeps that socket open and connected until the
 pass ends (RNMsgxSocketTable `NoCrossClient`). The step at `SEND` uses the
@@ -171,25 +186,31 @@ passes it).
 
 `tests/tla_trace_msgx_send_runs.cpp` (layer `msgxsendruns`,
 [README-TraceCheck](README-TraceCheck.md)) binds the header to this model.
-Its seeded walk stages one bank of up to four packets over two fill phases,
+Its seeded walk stages one bank of 18 to 24 packets (a claim one past the
+size is clamped) over three fill phases, three slots and three clients,
 sorts it with the real sort, and calls the real
 `rocketnet_msgx_send_runs_step` one model step at a time over a fake table
 and fake sends that answer at random (all, a prefix, nothing, full, refused,
 dead, error; sent, dropped, full), with the worker's real give-up check and
 resume after a kept call, and the environment's `Retire` and `Quit` between
-steps. Each record is every variable of this model: the bank, the table, the
-code's order array and send state, and the history the fakes saw. A packet is
-counted dropped when the cursor passes it live and no fake took it, and the
-code's dropped counter must agree after every step, or the record is
-poisoned and the trace fails. `TraceRNMsgxSendRuns.tla` checks the trace as a
-behaviour of `Next`; its `TraceInit` takes the bank from the first record and
-rejects one `BankOK` does not admit.
+steps. Once the bank is done or given up the worker's step takes no step,
+and the walk records those calls (`Done`) to the trace's length. Each record
+is the call, the action its answer names (the fake's answer, the give-up
+check's result, or the step's out-state where no fake was called), the
+action's arguments (a partial send's prefix, the slot retired) and every
+variable of this model: the bank, the table, the code's order array and send
+state, and the history the fakes saw. A packet is counted dropped when the
+cursor passes it live and no fake took it, and the code's dropped counter
+must agree after every step, or the record is poisoned and the trace fails.
+The cfg gives the walk's bank as `Bank` and its table as `OpenGenAt`.
 
 The plant (`ROCKETNET_MSGX_SEND_RUNS_PLANT`, the same change as mutation 10)
-is the slot-only sort. Every walk's bank has a connected packet in phase 0
-and a shared packet in phase 1, so the planted sort differs from the model's
-on every seed and its trace is rejected at the sort record; the condition is
-a property of the input (`quiet` False).
+is the slot-only sort, in `rocketnet_msgx_send_runs_same_phase`
+(`sdk/rocketnet_msgx_send_runs.cpp`), which the plant build compiles in place
+of the library's. Every walk's bank has a connected packet first in phase 0
+and a shared packet last in the last phase, so the planted sort returns an
+order out of phase order on every seed: that is the sort record, `PLANT-AT`,
+and TLC rejects the trace there.
 
 `MCTraceRNMsgxSendRunsSelf.tla` holds the controls: a hand-written trace of
 the restamped client (sort by phase, the slot retired, both packets on the

@@ -868,7 +868,7 @@ static void rocketnet_server_msgx_worker( rocketnet_platform_thread_t *, void * 
                 break;
             }
             worker->full.store( true, std::memory_order_release );
-            // RNMsgxSendRuns Kept: past the retries after quit, what is still
+            // RNMsgxSendRuns GiveUp: past the retries after quit, what is still
             // owed is dropped, counted
             if ( rocketnet_msgx_send_runs_give_up( worker->shutdown.load( std::memory_order_acquire ), &retries_after_quit, ROCKETNET_MSGX_SEND_RETRIES_AFTER_QUIT ) )
             {

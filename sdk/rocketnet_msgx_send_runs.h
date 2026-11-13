@@ -83,13 +83,17 @@
 //  9 an aborted packet inside a run is sent
 // 10 the sort ignores the fill phase (the slot alone), as before the phase
 // ROCKETNET_MSGX_SEND_RUNS_PLANT is the trace check's plant
-// (proofs/tla/README-TraceCheck.md), the same change as mutation 10: the
-// traces of tests/tla_trace_msgx_send_runs.cpp must then fail
+// (proofs/tla/README-TraceCheck.md), the same change as mutation 10, in
+// rocketnet_msgx_send_runs_same_phase (sdk/rocketnet_msgx_send_runs.cpp):
+// the traces of tests/tla_trace_msgx_send_runs.cpp must then fail
 // TraceConsistent. Never defined outside the plant build.
 
-#if defined( ROCKETNET_MSGX_SEND_RUNS_PLANT ) || ( defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 10 )
+#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 10
 #define ROCKETNET_MSGX_SEND_RUNS_PHASE_BLIND 1
 #endif
+
+// two packets of the bank are in one fill phase (sdk/rocketnet_msgx_send_runs.cpp)
+bool rocketnet_msgx_send_runs_same_phase( uint32_t phase, uint32_t other );
 
 struct rocketnet_msgx_send_runs_io_t
 {
@@ -194,7 +198,7 @@ inline void rocketnet_msgx_send_runs_sort( const Info * info, int count, int cap
     {
         int hi = lo + 1;
 #if !defined( ROCKETNET_MSGX_SEND_RUNS_PHASE_BLIND )
-        while ( hi < count && info[hi].phase == info[lo].phase )
+        while ( hi < count && rocketnet_msgx_send_runs_same_phase( info[hi].phase, info[lo].phase ) )
         {
             hi++;
         }
@@ -254,11 +258,13 @@ inline bool rocketnet_msgx_send_runs_shared( const Info * info, int packet, bool
 }
 
 // One step of the send (one action of proofs/tla/RNMsgxSendRuns.tla): at
-// HEAD the loop's top (LoopTop: done, an aborted packet skipped, a packet
-// whose stamp resolves to no socket sent alone on the shared socket, or the
-// run built), at SEND one connected send and what its answer does (SendAll,
+// HEAD the loop's top (HeadDone; HeadSkip, an aborted packet skipped;
+// HeadShared, HeadDropped or HeadKept, a packet whose stamp resolves to no
+// socket sent alone on the shared socket, by its answer; HeadRun, the run
+// built), at SEND one connected send and what its answer does (SendAll,
 // SendPartial, SendFull, SendRefused, SendDead, SendError), at DEAD one
-// packet of the dead run's resend (Dead). KEPT and DONE take no step.
+// packet of the dead run's resend (DeadDone, DeadSkip, DeadShared,
+// DeadDropped, DeadKept). KEPT and DONE take no step (Done).
 // The caller is inside one table pass for every step of one call.
 template <typename Info>
 inline void rocketnet_msgx_send_runs_step( const Info * info, const int * order, int count, int batch, struct rocketnet_msgx_send_runs_state_t * state,
@@ -420,8 +426,8 @@ inline void rocketnet_msgx_send_runs_step( const Info * info, const int * order,
     }
 }
 
-// A kept send goes on from its cursor at HEAD (RNMsgxSendRuns Kept, the
-// branch that does not give up)
+// A kept send goes on from its cursor at HEAD (proofs/tla/RNMsgxSendRuns.tla
+// Resume, the check that does not give up)
 inline void rocketnet_msgx_send_runs_resume( struct rocketnet_msgx_send_runs_state_t * state )
 {
     if ( state->pc == ROCKETNET_MSGX_SEND_RUNS_KEPT )
@@ -445,9 +451,10 @@ inline bool rocketnet_msgx_send_runs_send( const Info * info, const int * order,
     return state->pc == ROCKETNET_MSGX_SEND_RUNS_DONE;
 }
 
-// The worker after a kept call (RNMsgxSendRuns Kept): past limit retries
-// after quit it gives up, true, and the caller drops what is still owed
-// (rocketnet_msgx_send_runs_owed from the cursor), counted.
+// The worker after a kept call (proofs/tla/RNMsgxSendRuns.tla GiveUp and
+// Resume): past limit retries after quit it gives up, true, and the caller
+// drops what is still owed (rocketnet_msgx_send_runs_owed from the cursor),
+// counted.
 inline bool rocketnet_msgx_send_runs_give_up( bool shutdown, int * retries_after_quit, int limit )
 {
     return shutdown && ++( *retries_after_quit ) > limit;

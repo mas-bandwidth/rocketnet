@@ -6,32 +6,38 @@
 // The msgxsendruns layer of the TLA+ trace check
 // (proofs/tla/README-TraceCheck.md): the macOS transmit worker's send path
 // over one taken bank, sdk/rocketnet_msgx_send_runs.h, and its model
-// proofs/tla/RNMsgxSendRuns.tla. A seeded random walk stages one bank over
-// two fill phases, sorts it with the real sort, and drives the real
-// rocketnet_msgx_send_runs_step one model step at a time over a fake table
-// (slot 0 open at generation 1, slot 1 at generation 0, as the model's
-// instances), a fake connected send and a fake shared send that answer at
-// random, and the worker's real give-up check and resume after a kept call.
-// Between steps it may retire a slot (at HEAD) or set shutdown (at KEPT), as
-// the model's environment does. After every step it writes one record of
-// every model variable: the bank, the table, the code's order array and send
-// state, and the history the fakes saw (each packet's departures, each
-// client's last packet sent, and the order and cross-client flags).
-// TraceRNMsgxSendRuns.tla checks the trace. No socket, no clock, no thread.
+// proofs/tla/RNMsgxSendRuns.tla. A seeded random walk stages one bank of up
+// to SR_SIZE packets over SR_PHASES fill phases, sorts it with the real sort,
+// and drives the real rocketnet_msgx_send_runs_step one model step at a time
+// over a fake table (each slot open at the generation OpenGenAt gives), a
+// fake connected send and a fake shared send that answer at random, and the
+// worker's real give-up check and resume after a kept call. Between steps it
+// may retire a slot (at HEAD) or set shutdown (at KEPT), as the model's
+// environment does. Once the bank is done or given up, the worker's step
+// takes no step, and the walk records that call (Done) until the trace has
+// its steps + 1 records.
+//
+// Each record is tla_step( op, act, args, state ): op the call ("sort",
+// "step", "check" after a kept call, "retire" and "quit" for the
+// environment), act the model action the call's answer names (the fakes'
+// answer to it, the give-up check's result, or the step's out-state where no
+// fake was called), args the action's parameters (the prefix a partial send
+// took, the slot retired) and state every model variable: the bank, the
+// table, the code's order array and send state, and the history the fakes
+// saw (each packet's departures, each client's last packet sent, and the
+// order and cross-client flags). TraceRNMsgxSendRuns.tla checks the trace.
+// The bank is the walk's input: the cfg gives it as Bank, so Init is that one
+// bank. No socket, no clock, no thread.
 //
 // A packet is counted dropped when the cursor passes it live and it never
 // reached a fake; the code's own dropped counter must agree after every
 // step, or the record is poisoned (left + 100) and the trace fails.
 //
-// The header is a header of inline functions, and the transport includes it
-// too, so this file compiles its own copy inside a namespace. Under
-// ROCKETNET_TLA_PLANT that copy has ROCKETNET_MSGX_SEND_RUNS_PLANT, the sort
-// that ignores the fill phase (the order before the fix): its trace must
-// fail TraceConsistent at the sort. Every bank has a connected packet in
-// phase 0 and a shared one in phase 1, so the two sorts differ on every
-// seed; the walk prints PLANT-FIRED n, the pairs a slot-only sort puts out
-// of phase order, a property of the input that the clean walk meets too
-// (quiet False).
+// The plant (ROCKETNET_MSGX_SEND_RUNS_PLANT, the sort that ignores the fill
+// phase) is in sdk/rocketnet_msgx_send_runs.cpp. Every bank has a connected
+// packet first in phase 0 and a shared one last in the last phase, so the
+// planted sort puts a later phase first on every seed: the sort's record is
+// PLANT-AT, where the order the code returned is out of phase order.
 
 #include <inttypes.h>
 #include <stdint.h>
@@ -40,29 +46,27 @@
 #include <string>
 #include <vector>
 
+#include "../sdk/rocketnet_msgx_send_runs.h"
 #include "tla_trace_record.h"
 
 #if defined( ROCKETNET_TLA_PLANT )
 #define ROCKETNET_MSGX_SEND_RUNS_PLANT 1
+#include "../sdk/rocketnet_msgx_send_runs.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 
-namespace tla_trace_msgx_send_runs_code
-{
-#include "../sdk/rocketnet_msgx_send_runs.h"
-}
-
-using namespace tla_trace_msgx_send_runs_code;
-
-// the instance: RNMsgxSendRuns with Size 4, two slots, generations 0 and 1,
-// clients 1 and 2, fill phases 0 and 1
-#define SR_SIZE 4
-#define SR_CAP 2
-#define SR_CLIENTS 2
-#define SR_STAMPS 5             // the shared socket's, then (slot, generation)
-#define SR_MAX_STALLS 4
-#define SR_MAX_RETIRES 2
+// the instance: RNMsgxSendRuns with a bank of up to 24, three slots,
+// generations 0 and 1, three clients, three fill phases
+#define SR_SIZE 24
+#define SR_CAP 3
+#define SR_GENS 2
+#define SR_CLIENTS 3
+#define SR_PHASES 3
+#define SR_STAMPS ( 1 + SR_CAP * SR_GENS ) // the shared socket's, then (slot, generation)
+#define SR_MAX_STALLS 64
+#define SR_MAX_RETIRES 1
 #define SR_RETRIES_AFTER_QUIT 1
 #define SR_SHARED -1
+#define SR_NONE -1000                      // no fake answered
 
 struct sr_info_t
 {
@@ -79,6 +83,7 @@ struct sr_walk_t
 
     // the bank, sorted, and the send's state
     sr_info_t info[SR_SIZE];
+    int claimed;
     int count;
     int bucket[SR_CAP + 2];
     int order[SR_SIZE];
@@ -93,6 +98,10 @@ struct sr_walk_t
     bool open[SR_CAP];
     uint32_t table_generation[SR_CAP];
 
+    // the fakes' answers to the last call
+    int sent_answer;
+    int shared_answer;
+
     // the history (RNMsgxSendRuns left, lastC, lastS, bad)
     int left[SR_SIZE];
     int last_client[SR_CLIENTS + 1];
@@ -103,21 +112,27 @@ struct sr_walk_t
     bool bad_dead;
     bool poisoned;
 
-    // the environment and the bounds
+    // the environment and the bounds: main sets shutdown only on even
+    // seeds, so odd seeds send their bank to the end; the first run whose
+    // range holds an aborted packet is answered dead, so a dead run skips
+    // one (DeadSkip)
+    bool may_quit;
+    bool dead_skip_sent;
     bool quit;
     int retries;
     int stalls;
     int retires;
 };
 
-static int sr_stamp_index( int slot, uint32_t generation )
+// the generation each slot is open at when the send starts
+static uint32_t sr_open_generation( int slot )
 {
-    return slot < 0 ? 0 : 1 + slot * 2 + (int) generation;
+    return slot == 1 ? 0 : 1;
 }
 
-static int sr_key( const sr_info_t * info )
+static int sr_stamp_index( int slot, uint32_t generation )
 {
-    return info->table_slot >= 0 && info->table_slot < SR_CAP ? info->table_slot + 1 : 0;
+    return slot < 0 ? 0 : 1 + slot * SR_GENS + (int) generation;
 }
 
 // the client the slot's socket is connected to: the one stamped at the
@@ -167,54 +182,69 @@ static int sr_send( void * user, int fd, const int * packets, int num_packets )
 {
     sr_walk_t * walk = (sr_walk_t *) user;
     const int slot = fd - 100;
-    const int pick = walk->random.below( 10 );
+    const int pick = walk->random.below( 12 );
     int answer = num_packets;
-    if ( pick == 4 && num_packets >= 2 && sr_may_stall( walk ) )
+    bool aborted_inside = false;
+    for ( int p = walk->state.cursor; p < walk->state.scan; p++ )
+    {
+        aborted_inside = aborted_inside || walk->info[walk->order[p]].packet_bytes <= 0;
+    }
+    if ( ( pick == 3 || pick == 4 || pick == 5 ) && num_packets >= 2 && sr_may_stall( walk ) )
     {
         answer = 1 + walk->random.below( num_packets - 1 );
     }
-    else if ( pick == 5 && sr_may_stall( walk ) )
+    else if ( pick == 6 && sr_may_stall( walk ) )
     {
         answer = ROCKETNET_MSGX_SEND_FULL;
     }
-    else if ( pick == 6 && sr_may_stall( walk ) )
+    else if ( pick == 7 && sr_may_stall( walk ) )
     {
         answer = 0;
     }
-    else if ( pick == 7 )
+    else if ( pick == 8 || pick == 2 )
     {
         answer = ROCKETNET_MSGX_SEND_REFUSED;
     }
-    else if ( pick == 8 )
+    else if ( pick == 1 || pick == 9 || pick == 10 )
     {
         answer = ROCKETNET_MSGX_SEND_DEAD;
     }
-    else if ( pick == 9 )
+    else if ( pick == 11 )
     {
         answer = ROCKETNET_MSGX_SEND_ERROR;
+    }
+    if ( aborted_inside && !walk->dead_skip_sent )
+    {
+        answer = ROCKETNET_MSGX_SEND_DEAD;
+        walk->dead_skip_sent = true;
     }
     const int peer = sr_peer( walk, slot );
     for ( int n = 0; n < answer; n++ )
     {
         sr_send_one( walk, packets[n], peer );
     }
+    walk->sent_answer = answer;
     return answer;
 }
 
 static int sr_send_shared( void * user, int packet )
 {
     sr_walk_t * walk = (sr_walk_t *) user;
-    const int pick = walk->random.below( 8 );
-    if ( pick == 6 )
+    const int pick = walk->random.below( 6 );
+    if ( pick == 4 )
     {
-        return ROCKETNET_MSGX_SHARED_DROPPED;
+        walk->shared_answer = ROCKETNET_MSGX_SHARED_DROPPED;
     }
-    if ( pick == 7 && sr_may_stall( walk ) )
+    else if ( pick == 5 && sr_may_stall( walk ) )
     {
-        return ROCKETNET_MSGX_SHARED_FULL;
+        walk->shared_answer = ROCKETNET_MSGX_SHARED_FULL;
     }
-    sr_send_one( walk, packet, SR_SHARED );
-    return ROCKETNET_MSGX_SHARED_SENT;
+    else
+    {
+        sr_send_one( walk, packet, SR_SHARED );
+        walk->shared_answer = ROCKETNET_MSGX_SHARED_SENT;
+    }
+    return walk->shared_answer;
 }
 
 static void sr_report_dead( void * user, int table_slot, uint32_t generation )
@@ -256,34 +286,49 @@ static void sr_stage( sr_walk_t * walk, int i, int c, int st, uint32_t phase )
 {
     sr_info_t * info = &walk->info[i];
     info->client = c;
-    info->table_slot = st == 0 ? SR_SHARED : ( st - 1 ) / 2;
-    info->generation = st == 0 ? 0 : (uint32_t) ( ( st - 1 ) % 2 );
+    info->table_slot = st == 0 ? SR_SHARED : ( st - 1 ) / SR_GENS;
+    info->generation = st == 0 ? 0 : (uint32_t) ( ( st - 1 ) % SR_GENS );
     info->phase = phase;
-    info->packet_bytes = walk->random.below( 5 ) == 0 ? 0 : 100;
+    info->packet_bytes = walk->random.below( 4 ) == 0 ? 0 : 100;
 }
 
-// the bank: num_packets claimed 2..5 (clamped at the size), packets
-// [0, split) in fill phase 0 and [split, count) in phase 1, one stamp per
-// client per phase; packet 0 on a connected stamp and the last packet on
-// the shared socket, so a slot-only sort differs from the phase sort
-static int sr_make_bank( sr_walk_t * walk )
+// the bank: num_packets claimed 18..SR_SIZE + 1 (clamped at the size), in
+// SR_PHASES fill phases cut at rising points, one stamp per client per
+// phase, most often the client's home slot (slot c - 1 at its open
+// generation, so most runs resolve), else any stamp the owners allow;
+// packet 0 on a connected stamp and the last packet on the shared socket,
+// so a slot-only sort differs from the phase sort
+static void sr_make_bank( sr_walk_t * walk )
 {
-    const int claimed = 2 + walk->random.below( 4 );
-    walk->count = claimed > SR_SIZE ? SR_SIZE : claimed;
-    const int split = 1 + walk->random.below( walk->count - 1 );
+    walk->claimed = 18 + walk->random.below( SR_SIZE - 18 + 2 );
+    walk->count = walk->claimed > SR_SIZE ? SR_SIZE : walk->claimed;
+    int cut[SR_PHASES];
+    cut[0] = 0;
+    for ( int p = 1; p < SR_PHASES; p++ )
+    {
+        cut[p] = cut[p - 1] + 1 + walk->random.below( walk->count / SR_PHASES );
+    }
 
     int owner[SR_STAMPS];
     memset( owner, 0, sizeof( owner ) );
-    int stamp[2][SR_CLIENTS + 1];
+    for ( int c = 1; c <= SR_CLIENTS; c++ )
+    {
+        owner[sr_stamp_index( c - 1, sr_open_generation( c - 1 ) )] = c;
+    }
+    int stamp[SR_PHASES][SR_CLIENTS + 1];
     const int first = 1 + walk->random.below( SR_CLIENTS );
     const int last = 1 + walk->random.below( SR_CLIENTS );
-    for ( int phase = 0; phase < 2; phase++ )
+    for ( int phase = 0; phase < SR_PHASES; phase++ )
     {
         for ( int c = 1; c <= SR_CLIENTS; c++ )
         {
-            if ( phase == 1 && c == last )
+            if ( phase == SR_PHASES - 1 && c == last )
             {
                 stamp[phase][c] = 0;
+            }
+            else if ( walk->random.below( 4 ) != 0 )
+            {
+                stamp[phase][c] = sr_stamp_index( c - 1, sr_open_generation( c - 1 ) );
             }
             else
             {
@@ -293,7 +338,14 @@ static int sr_make_bank( sr_walk_t * walk )
     }
     for ( int i = 0; i < walk->count; i++ )
     {
-        const uint32_t phase = i < split ? 0 : 1;
+        int phase = 0;
+        for ( int p = 1; p < SR_PHASES; p++ )
+        {
+            if ( i >= cut[p] )
+            {
+                phase = p;
+            }
+        }
         int c = 1 + walk->random.below( SR_CLIENTS );
         if ( i == 0 )
         {
@@ -302,8 +354,9 @@ static int sr_make_bank( sr_walk_t * walk )
         if ( i == walk->count - 1 )
         {
             c = last;
+            phase = SR_PHASES - 1;
         }
-        sr_stage( walk, i, c, stamp[phase][c], phase );
+        sr_stage( walk, i, c, stamp[phase][c], (uint32_t) phase );
     }
     for ( int i = walk->count; i < SR_SIZE; i++ )
     {
@@ -313,21 +366,6 @@ static int sr_make_bank( sr_walk_t * walk )
         walk->info[i].phase = 0;
         walk->info[i].packet_bytes = 0;
     }
-
-    // the plant's condition: pairs in staged order of a later phase that a
-    // slot-only sort puts first
-    int pairs = 0;
-    for ( int i = 0; i < walk->count; i++ )
-    {
-        for ( int j = i + 1; j < walk->count; j++ )
-        {
-            if ( walk->info[i].phase < walk->info[j].phase && sr_key( &walk->info[i] ) > sr_key( &walk->info[j] ) )
-            {
-                pairs++;
-            }
-        }
-    }
-    return pairs;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +390,7 @@ static std::string sr_stamp_text( int st )
     {
         return "<<-1, 0>>";
     }
-    return "<<" + tla_int( ( st - 1 ) / 2 ) + ", " + tla_int( ( st - 1 ) % 2 ) + ">>";
+    return "<<" + tla_int( ( st - 1 ) / SR_GENS ) + ", " + tla_int( ( st - 1 ) % SR_GENS ) + ">>";
 }
 
 static const char * sr_pc_name( const sr_walk_t * walk )
@@ -410,12 +448,11 @@ static tla_record_t sr_record( const sr_walk_t * walk )
         table_generation[s] = (int) walk->table_generation[s];
     }
 
-    std::string run = "<<";
+    std::vector<std::string> run;
     for ( int n = 0; n < walk->state.run; n++ )
     {
-        run += ( n > 0 ? ", " : "" ) + tla_int( walk->state.run_packets[n] );
+        run.push_back( tla_int( walk->state.run_packets[n] ) );
     }
-    run += ">>";
 
     std::vector<std::string> client_keys;
     std::vector<std::string> last_client;
@@ -446,7 +483,7 @@ static tla_record_t sr_record( const sr_walk_t * walk )
     record.add( "cursor", tla_int( walk->state.cursor ) );
     record.add( "hd", tla_int( walk->state.head ) );
     record.add( "scan", tla_int( walk->state.scan ) );
-    record.add( "run", run );
+    record.add( "run", tla_sequence( run ) );
     record.add( "attempts", tla_int( walk->state.attempts ) );
     record.add( "left", sr_function( SR_SIZE, left ) );
     record.add( "lastC", tla_function( client_keys, last_client ) );
@@ -482,16 +519,109 @@ static void sr_attribute_drops( sr_walk_t * walk, int from, int to, uint64_t dro
     }
 }
 
+// the action of a shared send by its answer, at HEAD or in the dead run
+static const char * sr_shared_act( int answer, const char * sent, const char * dropped, const char * kept )
+{
+    if ( answer == ROCKETNET_MSGX_SHARED_SENT )
+    {
+        return sent;
+    }
+    return answer == ROCKETNET_MSGX_SHARED_DROPPED ? dropped : kept;
+}
+
+// the action a connected send's answer names (RNMsgxSendRuns SendAll ..
+// SendError)
+static const char * sr_send_act( int answer, int run )
+{
+    if ( answer >= run )
+    {
+        return "SendAll";
+    }
+    if ( answer > 0 )
+    {
+        return "SendPartial";
+    }
+    if ( answer == 0 || answer == ROCKETNET_MSGX_SEND_FULL )
+    {
+        return "SendFull";
+    }
+    if ( answer == ROCKETNET_MSGX_SEND_REFUSED )
+    {
+        return "SendRefused";
+    }
+    return answer == ROCKETNET_MSGX_SEND_DEAD ? "SendDead" : "SendError";
+}
+
+// one call of rocketnet_msgx_send_runs_step and the action its answer names
+static const char * sr_step( sr_walk_t * walk, int batch, std::string * args )
+{
+    const int pc = walk->state.pc;
+    const int run = walk->state.run;
+    const int cursor_before = walk->state.cursor;
+    const uint64_t dropped_before = walk->counters.dropped;
+    walk->sent_answer = SR_NONE;
+    walk->shared_answer = SR_NONE;
+    rocketnet_msgx_send_runs_step( walk->info, walk->order, walk->count, batch, &walk->state, &walk->io, &walk->counters );
+    if ( walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_KEPT && pc != ROCKETNET_MSGX_SEND_RUNS_KEPT )
+    {
+        walk->stalls++;
+    }
+    sr_attribute_drops( walk, cursor_before, walk->state.cursor, dropped_before );
+    *args = "<<>>";
+    if ( walk->gave_up || pc == ROCKETNET_MSGX_SEND_RUNS_DONE || pc == ROCKETNET_MSGX_SEND_RUNS_KEPT )
+    {
+        // KEPT and DONE take no step
+        return "Done";
+    }
+    if ( pc == ROCKETNET_MSGX_SEND_RUNS_HEAD )
+    {
+        if ( walk->shared_answer != SR_NONE )
+        {
+            return sr_shared_act( walk->shared_answer, "HeadShared", "HeadDropped", "HeadKept" );
+        }
+        if ( walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_DONE )
+        {
+            return "HeadDone";
+        }
+        return walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_SEND ? "HeadRun" : "HeadSkip";
+    }
+    if ( pc == ROCKETNET_MSGX_SEND_RUNS_SEND )
+    {
+        const char * act = sr_send_act( walk->sent_answer, run );
+        if ( strcmp( act, "SendPartial" ) == 0 )
+        {
+            *args = tla_sequence( { tla_int( walk->sent_answer ) } );
+        }
+        return act;
+    }
+    // DEAD
+    if ( walk->shared_answer != SR_NONE )
+    {
+        return sr_shared_act( walk->shared_answer, "DeadShared", "DeadDropped", "DeadKept" );
+    }
+    return walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_HEAD ? "DeadDone" : "DeadSkip";
+}
+
+// the record of one call: the step, its act and the state after it
+static void sr_push( std::vector<tla_record_t> & records, tla_report_t & report, const sr_walk_t * walk, const char * op, const char * act,
+                     const std::string & args )
+{
+    records.push_back( tla_step( op, act, args, sr_record( walk ) ) );
+    report.act( act );
+}
+
 static int trace_msgx_send_runs( uint64_t seed, int steps, const char * out )
 {
     sr_walk_t * walk = new sr_walk_t();
     memset( walk, 0, sizeof( *walk ) );
     walk->random.state = seed;
+    walk->may_quit = seed % 2 == 0;
     const int batch = 2 + walk->random.below( 2 );
-    walk->open[0] = true;
-    walk->open[1] = true;
-    walk->table_generation[0] = 1;
-    walk->table_generation[1] = 0;
+    for ( int s = 0; s < SR_CAP; s++ )
+    {
+        walk->open[s] = true;
+        walk->table_generation[s] = sr_open_generation( s );
+    }
     for ( int c = 0; c <= SR_CLIENTS; c++ )
     {
         walk->last_client[c] = -1;
@@ -507,23 +637,30 @@ static int trace_msgx_send_runs( uint64_t seed, int steps, const char * out )
     walk->io.report_dead = sr_report_dead;
     rocketnet_msgx_send_runs_start( &walk->state, walk->run_packets );
 
-    const int fired = sr_make_bank( walk );
+    sr_make_bank( walk );
 
+    tla_report_t report;
     std::vector<tla_record_t> records;
-    records.push_back( sr_record( walk ) );
+    records.push_back( tla_step( "init", "init", "<<>>", sr_record( walk ) ) );
 
-    // Sort
+    // Sort: the order the code returns. Out of phase order is the plant's
+    // effect, which the clean sort never returns
     rocketnet_msgx_send_runs_sort( walk->info, walk->count, SR_CAP, walk->bucket, walk->order );
     walk->sorted = true;
-    records.push_back( sr_record( walk ) );
-
-    for ( int n = 0; n < steps; n++ )
+    sr_push( records, report, walk, "sort", "Sort", "<<>>" );
+    for ( int q = 0; q + 1 < walk->count; q++ )
     {
-        if ( walk->gave_up || walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_DONE )
+        if ( walk->info[walk->order[q]].phase > walk->info[walk->order[q + 1]].phase )
         {
+            report.planted( (int) records.size() );
             break;
         }
-        if ( walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_HEAD && walk->retires < SR_MAX_RETIRES && walk->random.below( 6 ) == 0 )
+    }
+
+    while ( (int) records.size() < steps + 1 )
+    {
+        const bool done = walk->gave_up || walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_DONE;
+        if ( !done && walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_HEAD && walk->retires < SR_MAX_RETIRES && walk->random.below( 16 ) == 0 )
         {
             // Retire(s): main retires an open slot while the worker sends
             const int s = walk->random.below( SR_CAP );
@@ -531,63 +668,70 @@ static int trace_msgx_send_runs( uint64_t seed, int steps, const char * out )
             {
                 walk->open[s] = false;
                 walk->retires++;
-                records.push_back( sr_record( walk ) );
+                sr_push( records, report, walk, "retire", "Retire", tla_sequence( { tla_int( s ) } ) );
                 continue;
             }
         }
-        if ( walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_KEPT )
+        if ( !done && walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_KEPT )
         {
-            if ( !walk->quit && walk->random.below( 3 ) == 0 )
+            if ( walk->may_quit && !walk->quit && walk->random.below( 4 ) == 0 )
             {
                 // Quit: main sets shutdown
                 walk->quit = true;
-                records.push_back( sr_record( walk ) );
+                sr_push( records, report, walk, "quit", "Quit", "<<>>" );
                 continue;
             }
-            // Kept: the worker's check after a kept call
+            // the worker's check after a kept call: give up, or resume
             if ( rocketnet_msgx_send_runs_give_up( walk->quit, &walk->retries, SR_RETRIES_AFTER_QUIT ) )
             {
                 const uint64_t dropped_before = walk->counters.dropped;
                 walk->counters.dropped += (uint64_t) rocketnet_msgx_send_runs_owed( walk->info, walk->order, walk->count, walk->state.cursor );
                 sr_attribute_drops( walk, walk->state.cursor, walk->count, dropped_before );
                 walk->gave_up = true;
+                sr_push( records, report, walk, "check", "GiveUp", "<<>>" );
             }
             else
             {
                 rocketnet_msgx_send_runs_resume( &walk->state );
+                sr_push( records, report, walk, "check", "Resume", "<<>>" );
             }
-            records.push_back( sr_record( walk ) );
             continue;
         }
 
-        // one step of the send
-        const int cursor_before = walk->state.cursor;
-        const uint64_t dropped_before = walk->counters.dropped;
-        rocketnet_msgx_send_runs_step( walk->info, walk->order, walk->count, batch, &walk->state, &walk->io, &walk->counters );
-        if ( walk->state.pc == ROCKETNET_MSGX_SEND_RUNS_KEPT )
-        {
-            walk->stalls++;
-        }
-        sr_attribute_drops( walk, cursor_before, walk->state.cursor, dropped_before );
-        records.push_back( sr_record( walk ) );
+        // one step of the send (at KEPT after a give-up, or DONE, no step)
+        std::string args;
+        const char * act = sr_step( walk, batch, &args );
+        sr_push( records, report, walk, "step", act, args );
     }
 
-    printf( "PLANT-FIRED %d\n", fired );
+    report.print();
 
-    const std::string definitions = "MCTOpenGen(s) == IF s = 0 THEN 1 ELSE 0\n";
-    char constants[1024];
+    // the bank, as RNMsgxSendRuns BankCode: one decimal digit per field
+    // below the index
+    std::string bank = "{";
+    for ( int i = 0; i < walk->count; i++ )
+    {
+        const sr_info_t * info = &walk->info[i];
+        const int64_t code = (int64_t) i * 100000 + info->client * 10000 + ( info->table_slot + 1 ) * 1000 + (int64_t) info->generation * 100 +
+                             (int64_t) info->phase * 10 + ( info->packet_bytes > 0 ? 1 : 0 );
+        bank += ( i > 0 ? ", " : "" ) + tla_int( code );
+    }
+    bank += "}";
+    std::string open_gen_at = "{";
+    for ( int s = 0; s < SR_CAP; s++ )
+    {
+        open_gen_at += ( s > 0 ? ", " : "" ) + tla_int( (int64_t) s * SR_GENS + sr_open_generation( s ) );
+    }
+    open_gen_at += "}";
+
+    char constants[4096];
     snprintf( constants, sizeof( constants ),
-              "    Size = %d\n    Batch = %d\n    Cap = %d\n    Gens = {0, 1}\n    Clients = {1, 2}\n    Phases = {0, 1}\n"
-              "    Claims = {2, 3, 4, 5}\n    MultiStamp = TRUE\n    MaxStalls = %d\n    MaxRetires = %d\n    RetriesAfterQuit = %d\n"
+              "    Size = %d\n    Batch = %d\n    Cap = %d\n    Gens = {0, 1}\n    Clients = {1, 2, 3}\n    Phases = {0, 1, 2}\n"
+              "    Claims = {%d}\n    MultiStamp = TRUE\n    MaxStalls = %d\n    MaxRetires = %d\n    RetriesAfterQuit = %d\n"
               "    PhaseSort = TRUE\n    StableSort = TRUE\n    GenBreak = TRUE\n    PartialSkipsAborted = TRUE\n    DeadResends = TRUE\n"
-              "    OpenGen <- MCTOpenGen\n",
-              SR_SIZE, batch, SR_CAP, SR_MAX_STALLS, SR_MAX_RETIRES, SR_RETRIES_AFTER_QUIT );
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceMsgxSendRunsPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceMsgxSendRunsSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-    const bool written = tla_write_trace( out, name, "TraceRNMsgxSendRuns", definitions, constants, records );
+              "    OpenGenAt = %s\n    Bank = %s\n",
+              SR_SIZE, batch, SR_CAP, walk->claimed, SR_MAX_STALLS, SR_MAX_RETIRES, SR_RETRIES_AFTER_QUIT, open_gen_at.c_str(), bank.c_str() );
+    const bool written = tla_write_trace( out, "MCTraceMsgxSendRuns", seed, "TraceRNMsgxSendRuns", "", constants, records );
     delete walk;
     return written ? 0 : 1;
 }

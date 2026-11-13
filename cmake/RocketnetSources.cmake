@@ -39,6 +39,7 @@ set(ROCKETNET_SDK_SOURCES_COMMON
     sdk/rocketnet_message.cpp
     sdk/rocketnet_message_client.cpp
     sdk/rocketnet_message_server.cpp
+    sdk/rocketnet_msgx_send_runs.cpp
     sdk/rocketnet_endpoint.cpp
     sdk/rocketnet_slots.cpp
     sdk/rocketnet_channel.cpp
