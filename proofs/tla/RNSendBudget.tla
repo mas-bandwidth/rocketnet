@@ -390,7 +390,11 @@ ReliableNeverDropped ==
 \* the one size UnrelSize, so once the head does not fit, Drop repeats until
 \* the class is empty: the update's remaining unreliable items all go, as the
 \* code's rn_endpoint_unreliable_drop_all drops every unreliable message still
-\* queued once one unreliable packet is refused
+\* queued once one packed unreliable packet is refused. That is the packed
+\* path only. The code's whole-payload UNRELIABLE_SEQUENCED path
+\* (rn_endpoint_plan_large_sequenced) drops only its refused head and goes
+\* on, so a smaller later packet may fit; one size cannot express that, and
+\* this model does not cover it
 UnreliableDroppedOnlyOverBudget == ~dropBad
 
 \* retransmits and ordered progress, then new reliable, then unreliable

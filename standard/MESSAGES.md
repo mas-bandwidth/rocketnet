@@ -3075,22 +3075,50 @@ packet always fits an idle bucket and a stalled update releases at most 100 ms
 of budget at once. An update at or before the last refill time MUST NOT add
 tokens and MUST NOT move the refill time backwards.
 
-Within one update the sender MUST fill its packets in this order: retransmits
-and ordered progress first, then new reliable records, then unreliable
-records. A packet MUST NOT carry both reliable and unreliable records. The
-budget MUST admit or refuse each packet whole, at the class of its first
-record. Before the packet is sealed, the sender MUST charge the most wire
-bytes its payload can take with the largest acknowledgement block that fits
-beside it; once the packet is sealed, the sender MUST return the difference
-between that charge and the sealed packet's wire bytes to the bucket, up to
-its depth. A reliable packet that does not fit MUST wait whole for a later
-update, and none of its records may be dropped. When an unreliable packet
-does not fit, it and every unreliable record still queued in that update
-MUST be dropped, each message counted as MESSAGE_UNRELIABLE_OVER_BUDGET.
-Once a packet does not fit, a later packet in that update MUST NOT spend
-the bucket. A packet offered after a lower-priority class in the same update
-MUST be counted as an order refusal; a reliable one waits rather than
-spending bytes promised to the earlier class.
+The sender writes its queued messages in send passes. A send pass starts at
+an update, or at a send_packets call, when no pass is open, and ends when it
+can write nothing more. At its start the bucket refills, which adds nothing
+at an unchanged time, and the class order and the reliable wait below start
+over.
+
+Within one send pass the sender MUST fill its packets in this order:
+retransmits and ordered progress first, then new reliable records, then
+unreliable records. A packet MUST NOT carry both reliable and unreliable
+records. The budget MUST admit or refuse each packet whole, at the class of
+its first record. Before the packet is sealed, the sender MUST charge the
+most wire bytes its payload can take with the largest acknowledgement block
+that fits beside it; once the packet is sealed, the sender MUST return the
+difference between that charge and the sealed packet's wire bytes to the
+bucket, up to its depth. A refusal is one of three kinds, and each counts every message it drops as
+MESSAGE_UNRELIABLE_OVER_BUDGET:
+
+1. A reliable packet that does not fit MUST wait whole for a later send
+   pass, and none of its records may be dropped. Every unreliable message
+   still queued MUST be dropped, and the pass ends.
+2. A packed unreliable packet, records written back to back, that does not
+   fit MUST be dropped with every unreliable message still queued, and the
+   pass ends.
+3. An UNRELIABLE_SEQUENCED message whose one record and form byte fill a
+   whole payload travels in a packet of its own. When that packet does not
+   fit, that message alone MUST be dropped. It takes nothing from the
+   update's `packets_per_update` allowance, and the pass goes on with the
+   next queued unreliable message, whose packet MAY spend what the bucket
+   still holds.
+
+After a refusal of kind 1 or 2, a later packet in that pass MUST NOT spend
+the bucket. A later pass, at a send_packets call in the same update or at a
+later update, MAY spend what the bucket then holds. A packet
+offered after a lower-priority class in the same pass MUST be counted as an
+order refusal; a reliable one waits rather than spending bytes promised to
+the earlier class.
+
+A fitting unreliable message written in place
+([m2 Payload forms and sender size rules](#m2)) is not offered in a send pass. The sender MUST
+write it in place only when no reliable packet waits and the bucket, refilled
+to the current time, holds the most wire bytes the grown payload can take,
+plus one maximum packet while reliable work is due; an earlier refused
+unreliable packet does not stop it. A message this check does not admit is
+queued and offered in a send pass.
 
 The sender MUST decide that the budget refuses a packet before it takes a
 transport frame for the packet, so a refused packet takes no frame of the
@@ -3126,13 +3154,14 @@ depth. The budget change is visible when the setter returns success.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
-| Open | a reliable packet is offered | it fits and no reliable packet waits | spend its bytes | Open |
-| Open | a reliable packet is offered | it does not fit, or a reliable packet waits | keep it whole for a later update | Waiting |
-| Open | an unreliable packet is offered | it fits and no reliable packet waits | spend its bytes | Open |
-| Open | an unreliable packet is offered | it does not fit, or a reliable packet waits | drop it and every unreliable record still queued in the update, and count each message | Open |
-| Waiting | any packet is offered | | an unreliable packet is dropped with every unreliable record still queued in the update, each message counted; a reliable packet waits | Waiting |
-| Waiting | the update ends | | | Open |
-| Any | a packet is offered after a lower-priority class | | count the order refusal; a reliable packet waits | Waiting |
+| Open | a reliable packet is offered | it fits | spend its bytes | Open |
+| Open | a reliable packet is offered | it does not fit | keep it whole for a later pass; drop every unreliable message still queued, count each, and end the pass | Waiting |
+| Open | an unreliable packet is offered | it fits | spend its bytes | Open |
+| Open | a packed unreliable packet is offered | it does not fit | drop it and every unreliable message still queued, count each, and end the pass | Waiting |
+| Open | a whole-payload UNRELIABLE_SEQUENCED message is offered | its packet does not fit | drop that message alone and count it | Open |
+| Waiting | any packet is offered in the same pass | | spend nothing: a reliable packet waits, an unreliable message is dropped and counted | Waiting |
+| Waiting | a new send pass starts | | refill; the class order and the reliable wait start over | Open |
+| Any | a packet is offered after a lower-priority class in the same pass | | count the order refusal; a reliable packet waits | Waiting |
 
 <a id="m9.5"></a>
 ### m9.5. Vectors
@@ -3151,7 +3180,7 @@ last four are the long path's resend counts.
 ```vector m9.budget-trace
 clock: 1000.0
 rate: the client default
-trace: a reliable 1452-byte packet, seven unreliable 1452-byte packets, then one more unreliable packet; no time passes, a reliable 1452-byte packet waits and an unreliable 100-byte packet is dropped; 100 ms of refill, a reliable 1452-byte packet; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte packet; the budget is set to 2147483647 (no send budget), then one 13000-byte unreliable sequenced message is offered, promoted to reliable sequenced and its first packet written
+trace: a reliable 1452-byte packet, seven unreliable 1452-byte packets, then one more unreliable packet; a new send pass at the same time, a reliable 1452-byte packet waits and an unreliable 100-byte packet is dropped; 100 ms of refill, a reliable 1452-byte packet; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte packet; the budget is set to 2147483647 (no send budget), then one 13000-byte unreliable sequenced message is offered, promoted to reliable sequenced and its first packet written
 00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
 00 01 01 01
 ```
