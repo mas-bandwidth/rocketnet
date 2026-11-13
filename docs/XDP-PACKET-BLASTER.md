@@ -114,7 +114,7 @@ attaches no program, and transmits nothing:
 
 Targets are limited to RFC 1918 IPv4 or IPv6 ULA source and server addresses.
 Duration is 1–600 seconds, clients 1–1000, offered rate 1–20,000,000 packets/s,
-and application payload 1–1200 bytes. The plan prints the deterministic offer
+and application payload 1 to `RN_BLASTER_MAX_PAYLOAD_BYTES` (1411) bytes. The plan prints the deterministic offer
 count, fixed memory geometry, and all non-secret inputs before `--execute` can
 attach. Tokens, keys, and packet bodies are never logged; decoded tokens are
 wiped when planning or execution ends. Execution allows at most 30 seconds for
@@ -193,10 +193,13 @@ example `1-6` or `1-3,7`) names exactly one distinct CPU per thread.
 
 Replies must come back to the thread that owns the client. With N above 1 the
 tool reads the port's Toeplitz key and indirection table (ETHTOOL_GRSSH), and
-refuses unless the UDP/IPv4 hash covers both addresses and both ports
-(`ethtool -N <if> rx-flow-hash udp4 sdfn`). It then gives each client a source
+refuses unless the UDP hash of the source's family covers both addresses and both
+ports (`ethtool -N <if> rx-flow-hash udp4 sdfn`, or `udp6` for an IPv6 ULA
+source). It then gives each client a source
 port whose reply (server address and port to client address and port) hashes
-to its owner's queue. `RESULT` carries `rx_wrong_thread`, which must be 0: any reply steered to the
+to its owner's queue. The plan prints only the first source port
+(`source_ports=P-rss_assigned`): the ports used run past the client count.
+`RESULT` carries `rx_wrong_thread`, which must be 0: any reply steered to the
 wrong thread fails the run.
 Every `RESULT_THREAD` line shows one thread; `RESULT_RATE` shows the submitted
 rate and the Gb/s on the wire.

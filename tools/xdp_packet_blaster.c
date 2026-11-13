@@ -12,6 +12,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_client_protocol.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_endpoint.h"
@@ -28,6 +29,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cctype>
 #include <cinttypes>
 #include <climits>
 #include <cstdio>
@@ -59,7 +61,11 @@
 #include <unistd.h>
 #endif
 
-#define RN_BLASTER_TOKEN_BYTES 768u
+#define RN_BLASTER_TOKEN_BYTES ROCKETNET_CONNECT_TOKEN_BYTES
+/* A packet carrying one unreliable record: prefilter, sequence and minimum ack
+ * block before the payload, the AEAD tag after it (33), then the record's three
+ * header bytes and one trailing form byte (4). */
+#define RN_BLASTER_PACKET_OVERHEAD_BYTES ( ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_PACKET_TAG_BYTES + 4u )
 #define RN_BLASTER_MAX_FILE_BYTES ( 2u * 1024u * 1024u )
 #define RN_BLASTER_UMEM_FRAMES 4096u
 #define RN_BLASTER_TX_RING_SIZE 2048u
@@ -76,7 +82,7 @@ static_assert( RN_BLASTER_MAX_PAYLOAD_BYTES == ROCKETNET_MAX_UNRELIABLE_MESSAGE_
                "the largest payload is the largest message sent as one unreliable record, never promoted" );
 static_assert( RN_BLASTER_MAX_PAYLOAD_BYTES + 4u <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
                "one record of the largest body fits one packet payload" );
-static_assert( 37u + RN_BLASTER_MAX_PAYLOAD_BYTES <= ROCKETNET_SEND_BUDGET, "the largest packet stays inside the send budget" );
+static_assert( RN_BLASTER_PACKET_OVERHEAD_BYTES + RN_BLASTER_MAX_PAYLOAD_BYTES <= ROCKETNET_SEND_BUDGET, "the largest packet stays inside the send budget" );
 static_assert( RN_BLASTER_FILL_RING_SIZE >= 2u * RN_BLASTER_RX_FRAMES,
                "the fill ring retains a slot past the kernel's cached batch" );
 
@@ -140,6 +146,12 @@ static bool rn_blaster_parse_u64( const char * text_value, uint64_t * value )
     {
         return false;
     }
+    // decimal or 0x hex only: strtoull would take leading space, a sign ("-1"
+    // is UINT64_MAX) and a leading 0 as octal
+    if ( text_value[0] < '0' || text_value[0] > '9' || ( text_value[0] == '0' && text_value[1] >= '0' && text_value[1] <= '9' ) )
+    {
+        return false;
+    }
     char * end = NULL;
     errno = 0;
     const unsigned long long parsed = strtoull( text_value, &end, 0 );
@@ -160,6 +172,11 @@ static bool rn_blaster_parse_filter( const std::string & text_value, uint8_t fil
     for ( size_t i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; ++i )
     {
         const char pair[3] = { text_value[2u * i], text_value[2u * i + 1u], '\0' };
+        // two hex digits: strtoul would take "+f" or " f" as 15
+        if ( !isxdigit( (unsigned char) pair[0] ) || !isxdigit( (unsigned char) pair[1] ) )
+        {
+            return false;
+        }
         char * end = NULL;
         errno = 0;
         const unsigned long byte = strtoul( pair, &end, 16 );
@@ -193,10 +210,15 @@ static bool rn_blaster_read_file( const std::string & path, std::string * conten
     {
         return false;
     }
+    // the file may hold secrets (the token file): reserved once at the bound so
+    // no append reallocates and frees an unwiped buffer, wiped on every path,
+    // and handed over by swap rather than copied
     std::string data;
     rn_blaster_string_wiper_t data_wiper = { &data };
     (void) data_wiper;
+    data.reserve( RN_BLASTER_MAX_FILE_BYTES );
     std::array<char, 4096> block;
+    bool too_large = false;
     while ( true )
     {
         const size_t count = fread( block.data(), 1, block.size(), file );
@@ -204,8 +226,8 @@ static bool rn_blaster_read_file( const std::string & path, std::string * conten
         {
             if ( data.size() > RN_BLASTER_MAX_FILE_BYTES - count )
             {
-                fclose( file );
-                return false;
+                too_large = true;
+                break;
             }
             data.append( block.data(), count );
         }
@@ -214,12 +236,15 @@ static bool rn_blaster_read_file( const std::string & path, std::string * conten
             break;
         }
     }
+    sodium_memzero( block.data(), block.size() );
+    // a short read is the end of the file only when it is not an error
+    const bool read_error = ferror( file ) != 0;
     const int close_result = fclose( file );
-    if ( close_result != 0 || data.empty() )
+    if ( too_large || read_error || close_result != 0 || data.empty() )
     {
         return false;
     }
-    *contents = data;
+    contents->swap( data );
     return true;
 }
 
@@ -416,8 +441,8 @@ static bool rn_blaster_case_contract( const rn_blaster_case_t & item )
                    accepted && item.argument == 128u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_RESERVED_TYPE:
             return strcmp( item.name, "reserved-packet-type" ) == 0 &&
-                   strcmp( item.source, "sdk/rocketnet_wire.h:reserved-types-10-through-255" ) == 0 &&
-                   accepted && item.argument == 10u && item.expected_delta == 1u && fresh_recovery;
+                   strcmp( item.source, "sdk/rocketnet_wire.h:reserved-types-9-through-255" ) == 0 &&
+                   accepted && item.argument == ROCKETNET_FIRST_RESERVED_PACKET_TYPE && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_REPLAY:
             return strcmp( item.name, "session-replay" ) == 0 &&
                    strcmp( item.source, "tests/fuzz/corpus/prefilter_payload" ) == 0 &&
@@ -513,13 +538,7 @@ static bool rn_blaster_manifest_load( const std::string & path, struct rn_blaste
             return false;
         }
         operation_bits |= operation_bit;
-        if ( strncmp( item.source, "sdk/rocketnet_wire.h", 20 ) != 0 &&
-             strncmp( item.source, "tests/pcapng/regress/", 21 ) != 0 &&
-             strncmp( item.source, "tests/fuzz/corpus/", 12 ) != 0 )
-        {
-            *error = "manifest source is not an approved existing schema or corpus";
-            return false;
-        }
+        // each case's source is pinned to one exact string by rn_blaster_case_contract
         for ( uint32_t i = 0; i < manifest->count; ++i )
         {
             if ( strcmp( manifest->cases[i].name, item.name ) == 0 )
@@ -546,6 +565,8 @@ static bool rn_blaster_tokens_load( const std::string & path, uint32_t wanted, s
     rn_blaster_tokens_wipe( tokens );
     tokens->reserve( wanted );
     std::string data;
+    rn_blaster_string_wiper_t data_wiper = { &data };
+    (void) data_wiper;
     if ( !rn_blaster_read_file( path, &data ) )
     {
         *error = "cannot read token file";
@@ -666,7 +687,7 @@ static bool rn_blaster_tokens_name_server( const std::vector<rn_blaster_token_t>
 static void rn_blaster_usage( const char * program )
 {
     fprintf( stderr,
-             "usage: %s [--dry-run|--execute] --interface IFACE --queue N --xdp-mode native|skb\n"
+             "usage: %s [--dry-run|--execute] --interface IFACE --queue 0 --xdp-mode native|skb\n"
              "  --source IP:PORT --server PRIVATE_IP:PORT --source-mac XX:.. --next-hop-mac XX:..\n"
              "  --packet-filter 8hex --token-file FILE --manifest FILE --clients N --duration 1..600\n"
              "  --rate-pps N --payload-bytes 1..%u --source-port 1024.. --seed N\n"
@@ -777,8 +798,14 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
         else if ( strcmp( arg, "--payload-bytes" ) == 0 && rn_blaster_parse_u32( value, 1, RN_BLASTER_MAX_PAYLOAD_BYTES, &options->plan.payload_bytes ) )
         {
         }
-        else if ( strcmp( arg, "--queue" ) == 0 && rn_blaster_parse_u32( value, 0, 65535, &options->plan.queue ) )
+        else if ( strcmp( arg, "--queue" ) == 0 )
         {
+            // one thread runs on queue 0 under one-queue RSS; --threads N takes queues 0..N-1
+            if ( !rn_blaster_parse_u32( value, 0, 0, &options->plan.queue ) )
+            {
+                *error = "--queue must be 0 (--threads N uses queues 0 to N-1)";
+                return false;
+            }
         }
         else if ( strcmp( arg, "--threads" ) == 0 && rn_blaster_parse_u32( value, 1, RN_BLASTER_MAX_THREADS, &options->plan.threads ) )
         {
@@ -840,7 +867,12 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
     }
     if ( options->self_test )
     {
-        return argc == 2;
+        if ( argc != 2 )
+        {
+            *error = "--self-test takes no other argument";
+            return false;
+        }
+        return true;
     }
     /* Address parsing happens in main after every explicit text field exists.
        Validate all address-independent bounds here, then validate the real
@@ -940,7 +972,7 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
     }
     /* 33 bytes before a transport payload, then the message record's three
      * header bytes, body, and one trailing form byte. */
-    const uint32_t nominal_wire = 37u + options.plan.payload_bytes;
+    const uint32_t nominal_wire = RN_BLASTER_PACKET_OVERHEAD_BYTES + options.plan.payload_bytes;
     const uint32_t frame = rn_blaster_ethernet_frame_bytes( options.plan.address_family, nominal_wire );
     const uint32_t wire_slot = rn_blaster_physical_wire_bytes( frame );
     rocketnet_message_config_t message_config;
@@ -952,9 +984,19 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
             options.interface_name.c_str(), options.plan.queue, options.xdp_mode.c_str(), rn_blaster_bind_name( options.plan.bind ),
             RN_BLASTER_FRAME_BYTES, RN_BLASTER_UMEM_FRAMES, RN_BLASTER_TX_RING_SIZE, RN_BLASTER_RX_RING_SIZE,
             RN_BLASTER_FILL_RING_SIZE, RN_BLASTER_COMPLETION_RING_SIZE );
-    printf( "PLAN source=%s source_ports=%u-%u server=%s target_policy=private_owned_bench\n",
-            options.source_text.c_str(), (unsigned) options.plan.source_port,
-            (unsigned) ( options.plan.source_port + options.plan.clients - 1u ), options.server_text.c_str() );
+    if ( options.plan.threads > 1 )
+    {
+        // execute skips every port whose reply hashes to no thread's queue or a
+        // full thread, so the ports run past the client count: only the first is known
+        printf( "PLAN source=%s source_ports=%u-rss_assigned server=%s target_policy=private_owned_bench\n",
+                options.source_text.c_str(), (unsigned) options.plan.source_port, options.server_text.c_str() );
+    }
+    else
+    {
+        printf( "PLAN source=%s source_ports=%u-%u server=%s target_policy=private_owned_bench\n",
+                options.source_text.c_str(), (unsigned) options.plan.source_port,
+                (unsigned) ( options.plan.source_port + options.plan.clients - 1u ), options.server_text.c_str() );
+    }
     printf( "PLAN mode=%s direction=%s clients=%u duration_seconds=%u rate_pps=%u payload_bytes=%u seed=%" PRIu64 "\n",
             rn_blaster_mode_name( options.plan.mode ), rn_blaster_direction_name( options.plan.direction ), options.plan.clients,
             options.plan.duration_seconds, options.plan.rate_pps, options.plan.payload_bytes, options.plan.seed );
@@ -1239,7 +1281,11 @@ static int rn_blaster_self_test()
             RN_BLASTER_CHECK( rn_blaster_toeplitz( key, sizeof( key ), input, 8u ) == vector.addresses_hash );
             RN_BLASTER_CHECK( rn_blaster_toeplitz( key, sizeof( key ), input, input_bytes ) == vector.ports_hash );
         }
+        // a set input bit, so the refusal of a short key is what returns 0 (an
+        // all-zero input hashes to 0 under any key)
         uint8_t short_input[36] = {};
+        short_input[0] = 0x80u;
+        RN_BLASTER_CHECK( rn_blaster_toeplitz( key, 16u, short_input, 12u ) != 0u );
         RN_BLASTER_CHECK( rn_blaster_toeplitz( key, 15u, short_input, 12u ) == 0u );
         RN_BLASTER_CHECK( rn_blaster_rss_input( 6, short_input, 1, short_input, 2, short_input ) == 36u );
 
@@ -1449,7 +1495,8 @@ int main( int argc, char ** argv )
     }
     if ( options.plan.mode == RN_BLASTER_MODE_ROBUSTNESS && source.type != ROCKETNET_ADDRESS_IPV4 )
     {
-        fprintf( stderr, "xdp_packet_blaster: robustness mode is IPv4-only so the exact 1453-byte case stays within MTU 1500\n" );
+        fprintf( stderr, "xdp_packet_blaster: robustness mode is IPv4-only so the exact %d-byte case stays within MTU 1500\n",
+                 ROCKETNET_RECEIVE_CEILING + 1 );
         return 2;
     }
     if ( !rocketnet_xdp_parse_mac_address( options.source_mac_text.c_str(), source_mac ) ||
@@ -2171,10 +2218,7 @@ static void rn_blaster_fill_returned( rn_blaster_xsk_t * xsk )
         *xsk_ring_prod__fill_addr( &xsk->fill, index + i ) = xsk->pending_fill.back();
         xsk->pending_fill.pop_back();
     }
-    if ( reserved > 0 )
-    {
-        xsk_ring_prod__submit( &xsk->fill, reserved );
-    }
+    xsk_ring_prod__submit( &xsk->fill, reserved );
 }
 
 /* Receive for one thread. port_owner names the thread that owns each client
@@ -2881,7 +2925,8 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         if ( !rn_blaster_rss_hashes_ports( options.interface_name, source.type ) )
         {
             fprintf( stderr, "xdp_packet_blaster: --threads above 1 needs the interface's UDP RSS hash to include both ports"
-                             " (ethtool -N IFACE rx-flow-hash udp4 sdfn)\n" );
+                             " (ethtool -N IFACE rx-flow-hash %s sdfn)\n",
+                     source.type == ROCKETNET_ADDRESS_IPV6 ? "udp6" : "udp4" );
             return 2;
         }
         if ( !rn_blaster_rss_read( options.interface_name, &rss_key, &rss_indirection, &rss_error ) )
@@ -2924,6 +2969,8 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
     {
         rn_blaster_worker_t & worker = workers[t];
         worker = rn_blaster_worker_t();
+        // the limit is untouched until a socket opens: nothing to restore yet
+        worker.xsk.rlimit_restored = true;
         worker.index = t;
         worker.queue = threads == 1 ? options.plan.queue : t;
         worker.cpu = options.cpus.empty() ? -1 : (int) options.cpus[t];
@@ -3056,7 +3103,8 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
             " secrets=protocol-reset xdp_program=%s queue=closed umem=freed rlimit=%s"
             " process=%s settings=unchanged\n",
             disconnect_results.submitted, disconnect_results.backpressure, disconnect_results.ownership_errors,
-            clean ? "absent" : "present", rlimit_restored ? "restored" : "restore-failed", threads == 1 ? "single" : "threads" );
+            !workers[0].xsk.owns_attach ? "not-attached" : ( clean ? "absent" : "present" ),
+            rlimit_restored ? "restored" : "restore-failed", threads == 1 ? "single" : "threads" );
     const bool downstream_observed = ( options.plan.direction & RN_BLASTER_DIRECTION_SERVER_TO_CLIENT ) == 0 ||
                                      results.received_application > 0;
     const bool upstream_observed = ( options.plan.direction & RN_BLASTER_DIRECTION_CLIENT_TO_SERVER ) == 0 ||

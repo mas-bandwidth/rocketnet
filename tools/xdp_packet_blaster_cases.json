@@ -88,9 +88,9 @@
     },
     {
       "name": "reserved-packet-type",
-      "source": "sdk/rocketnet_wire.h:reserved-types-10-through-255",
+      "source": "sdk/rocketnet_wire.h:reserved-types-9-through-255",
       "operation": "reserved_type",
-      "argument": 10,
+      "argument": 9,
       "expected_delta": 1,
       "expected_stage_xdp": "xdp-type-filter",
       "expected_counter_xdp": "XDP_KERNEL_DROPPED_INVALID_TYPE",

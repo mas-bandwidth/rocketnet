@@ -198,7 +198,27 @@ def main() -> int:
 
         wrong_queue = list(args)
         wrong_queue[wrong_queue.index("--queue") + 1] = "7"
-        run(wrong_queue, 2)
+        refused = run(wrong_queue, 2)
+        assert "--queue must be 0" in refused.stderr, refused.stderr
+
+        # --self-test with anything else names why it is refused
+        refused = run([binary, "--self-test", "--dry-run"], 2)
+        assert "--self-test takes no other argument" in refused.stderr, refused.stderr
+
+        # the packet filter is exactly 8 hex digits; the seed is decimal or 0x hex
+        for bad_filter in ("+f+f+f+f", " fffffff", "b75901-0", "b759010g"):
+            candidate = list(args)
+            candidate[candidate.index("--packet-filter") + 1] = bad_filter
+            run(candidate, 2)
+        for bad_seed in ("-1", " 5", "010", "+5", "0x"):
+            candidate = list(args)
+            candidate[candidate.index("--seed") + 1] = bad_seed
+            refused = run(candidate, 2)
+            assert "unknown or invalid argument: --seed" in refused.stderr, refused.stderr
+        for good_seed in ("0", "10", "0x10"):
+            candidate = list(args)
+            candidate[candidate.index("--seed") + 1] = good_seed
+            run(candidate, 0)
 
         assert "PLAN threads=1 cpus=unpinned queues=0-0 reply_steering=one_queue" in first.stdout
         assert "rss=externally_provisioned_one_queue" in first.stdout
@@ -221,6 +241,9 @@ def main() -> int:
         result = run(wide, 0)
         assert "PLAN threads=4 cpus=1-3,7 queues=0-3 reply_steering=source_port_rss_hash" in result.stdout
         assert "rss=nic_toeplitz_read_at_execute" in result.stdout
+        # execute assigns ports by the reply's RSS hash, so only the first is known
+        assert "source_ports=42000-rss_assigned" in result.stdout
+        assert "source_ports=42000-42000" in first.stdout
         assert "throughput_offers_per_enabled_direction=20" in result.stdout
 
         def refused_wide(changes: dict[str, str], extra: tuple[str, ...], message: str) -> None:
@@ -287,6 +310,16 @@ def main() -> int:
         bad_argument = json.loads(json.dumps(manifest))
         next(case for case in bad_argument["cases"] if case["operation"] == "wrong_filter")["argument"] = 1
         refused_manifest("argument.json", bad_argument, "noncanonical argument, sequence state, or oracle")
+
+        # the reserved-type case sends the first reserved type (sdk/rocketnet_wire.h: 9) and cites it
+        reserved = next(case for case in cases if case["operation"] == "reserved_type")
+        assert reserved["argument"] == 9
+        assert reserved["source"] == "sdk/rocketnet_wire.h:reserved-types-9-through-255"
+        stale_reserved = json.loads(json.dumps(manifest))
+        stale = next(case for case in stale_reserved["cases"] if case["operation"] == "reserved_type")
+        stale["argument"] = 10
+        stale["source"] = "sdk/rocketnet_wire.h:reserved-types-10-through-255"
+        refused_manifest("reserved-stale.json", stale_reserved, "noncanonical argument, sequence state, or oracle")
 
         bad_oracle = json.loads(json.dumps(manifest))
         next(case for case in bad_oracle["cases"] if case["operation"] == "replay")["expected_counter_xdp"] = "XDP_KERNEL_DROPPED_REPLAYED"
