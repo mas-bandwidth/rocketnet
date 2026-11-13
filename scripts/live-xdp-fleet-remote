@@ -26,9 +26,12 @@
 set -u
 
 REPO_URL="https://github.com/mas-bandwidth/rocketnet.git"
-HOME_DIR="${HOME:-/root}"
-BASE="$HOME_DIR/rocketnet-live"
-SELF=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/$( basename "${BASH_SOURCE[0]}" )
+# The run's tree is the directory this copied script lives in
+# (~user/rocketnet-live), never one built from $HOME: the root steps run under
+# sudo, whose env_reset makes HOME root's, and they must find the tree the
+# ordinary user built and the heartbeat the orchestrator touches.
+BASE=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+SELF=$BASE/$( basename "${BASH_SOURCE[0]}" )
 
 fail()
 {
@@ -184,8 +187,10 @@ cmd_arm()
     require_root "arm"
     [ -n "$nic" ] && [ "$nic" != "-" ] || fail "arm: no nic"
 
-    mkdir -p "$BASE" || fail "arm: cannot create $BASE"
-    : > "$BASE/heartbeat"
+    # the ordinary user touches the heartbeat over ssh, so it is the user's
+    # file (the owner of $BASE), never one root created and the user cannot touch
+    : > "$BASE/heartbeat" || fail "arm: cannot create $BASE/heartbeat"
+    chown "$( stat -c %u:%g "$BASE" )" "$BASE/heartbeat" || fail "arm: cannot give $BASE/heartbeat to the owner of $BASE"
 
     # the timer command needs no file on the machine, so a missing script
     # can never turn it into a no-op
