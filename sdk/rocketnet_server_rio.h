@@ -214,6 +214,7 @@ enum rocketnet_server_rio_test_fault_t
 // the fault seams act on lane 0; hold and handed act on every lane
 // lanes every RIO server in this process has made, so a test reads the lanes a
 // server it made through any path really has
+#define ROCKETNET_SERVER_RIO_TEST_LANES_MADE 1
 uint64_t rocketnet_server_rio_test_lanes_made();
 // RIO transports this process has created whole (every lane made)
 uint64_t rocketnet_server_rio_test_transports_made();
