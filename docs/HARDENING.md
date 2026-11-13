@@ -106,9 +106,9 @@ The historical blaster qualification plan covered the non-portable server transp
 correctness and security testing, but is not expected to meet the 1,000-player
 performance target. Profile support or a successful tool build is not a passed
 load test. That plan's record does not itself establish 10 Gb/s or
-1,000-player qualification. The measured 1,000-player rows for each server
-transport, with the machines, workloads and commits they qualify, are in
-[PERFORMANCE.md](PERFORMANCE.md). These limits do not create new deliverable
+1,000-player qualification. The measured 1,000-player rows for `xdp`, `gso`,
+`io_uring`, `iocp` and `rio`, with the machines, workloads, development
+builds and commits they qualify, are in [PERFORMANCE.md](PERFORMANCE.md). These limits do not create new deliverable
 scope.
 
 Recorded load, soak, and dataplane runs establish the following specific results

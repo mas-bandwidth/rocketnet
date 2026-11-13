@@ -199,9 +199,9 @@ delivery pass does not establish latency or throughput. Model checks establish
 the named invariants for their modeled inputs and bounds.
 
 The 100-microsecond main-call target at 1000 clients is not established.
-[PERFORMANCE.md](PERFORMANCE.md) records 1,000-player rows for each measured
-server transport; each row qualifies only the machines, workload and commit
-it names. Its Linux rows ran over a 10 GbE link between two machines, and its
+[PERFORMANCE.md](PERFORMANCE.md) records 1,000-player rows for the `xdp`,
+`gso`, `io_uring`, `iocp` and `rio` server transports; each row qualifies
+only the machines, workload, development build and commit it names. Its Linux rows ran over a 10 GbE link between two machines, and its
 Windows IOCP and RIO rows on cloud machines. The available XDP run records do
 not establish zero-copy line-rate performance, and the Windows cells of the
 [LAN proof record](runs/lan-1000-proof.md) remain unmade. These are limits on

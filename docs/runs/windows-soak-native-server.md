@@ -1,7 +1,7 @@
 # Windows soak, native server transports
 
 The iocp and rio server cells of `soak-windows` (`.github/workflows/nightly-soak.yml`)
-each ran once for 1800 seconds on the fleet's Windows bench, at one head, one
+each ran once for 1800 seconds on one Windows bench, at one head, one
 after the other inside one exclusive hold of the bench, as same-host loopback
 runs (correctness only; no NIC is exercised). Both cells PASSED
 `--assert-flat`, and the verdict is LAND.

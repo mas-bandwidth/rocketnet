@@ -93,7 +93,7 @@ Create log (sdk/rocketnet_server_socket_linux.cpp:1760 and :1898-1903):
 | XDP bench enp9s0f0, ixgbe 6.2.5 out-of-tree, queue 0 zero-copy bind | refused, EOPNOTSUPP ("Operation not supported"); bound copy |
 | XDP bench enp9s0f0, ixgbe 6.2.5 out-of-tree, queue 1 zero-copy bind | refused, EOPNOTSUPP ("Operation not supported"); bound copy |
 | XDP bench negotiated mode | copy mode on all queues |
-| production game server machine (out-of-tree i40e) | not tried: held for the game server |
+| a second machine with an out-of-tree i40e NIC | not tried: the machine was in other use |
 | load_split plan-server / plan-client-shard | not made |
 | load_split series 10/100/250/500/1000, zero copy | not made: no zero-copy server |
 
@@ -101,8 +101,8 @@ Create log (sdk/rocketnet_server_socket_linux.cpp:1760 and :1898-1903):
 
 Which machine qualifies zero copy:
 
-1. the production game server machine's out-of-tree i40e, the NIC zero copy is known to bind on, today
-   held for the game server; or
+1. the second machine's out-of-tree i40e, the NIC zero copy is known to bind on, then in
+   other use; or
 2. a driver on the XDP bench that negotiates zero copy (the X540's ixgbe with
    xdp_features carrying xsk-zerocopy, for example the in-tree ixgbe of a
    newer kernel or a fixed out-of-tree release), plus a dedicated cabled port

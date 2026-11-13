@@ -85,7 +85,7 @@ run: a slow stretch inside one second moves that second's p99 alone. The reconci
 
 With the three flags set, every number a row prints leads with what rocketnet takes from the main thread (`main_rn_ms`). The main thread's wait to join the task at the top of a frame is not in it: it is in `join_ms` and counted in `late`. `rn_core_ms` counts the update's range jobs once, in the threads that run them, and the main thread's own serial calls only. `harden_threads:` names the modes (`send_mode`, `update_mode`, `net_mode`) and prints the task's send and update milliseconds (`task_send_ms`, `task_update_ms`), the serial part that is left. The flags move to the target layout one step at a time: each changes where one piece of rocketnet's work runs and uses only the public API (`sdk/rocketnet.h`).
 
-`scripts/space-frame-row` runs one such row on the XDP transport in the layout the game runs (all three flags set), over two
+`scripts/space-frame-row` runs one such row on the XDP transport in the target layout (all three flags set), over two
 machines, and can profile the server with perf (`--profile`).
 
 The players' input message defaults to 256 bytes (`--input-bytes`, about 100 to 200 kbps a player). It was 64 bytes

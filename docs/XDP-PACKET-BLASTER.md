@@ -58,8 +58,11 @@ its type's received counter between the two). As
 and `rio` also make a size pass before the prefilter: a datagram shorter than
 the smallest packet a server receives or longer than the receive ceiling is
 dropped there, counted in `PREFILTER_TOO_SHORT` or `PREFILTER_TOO_LARGE` and
-not in `PACKETS_RECEIVED`. On `gso` and `msgx` the same datagram is counted
-in `PACKETS_RECEIVED` and then the size counter.
+not in `PACKETS_RECEIVED`. `gso` makes the same size pass but counts its
+drops in `PACKETS_RECEIVED` and then the size counter. `msgx` makes no
+separate size pass: a datagram over the ceiling is counted in
+`PACKETS_RECEIVED` and then `PREFILTER_TOO_LARGE`, and a short one as the
+prefilter counts it.
 `server-ingress-size-filter` is therefore the published counter-family stage,
 not a claim that one shared function executed.
 Replay and authenticated-open refusals remain shared payload-stage oracles for
