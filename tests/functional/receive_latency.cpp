@@ -284,21 +284,21 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
         receive_latency_check( slot[c] >= 0, name, "client has no slot" );
     }
 
-    // a client row measures only the client transport it names: a platform
-    // or build without it grants another
+    // a client row measures the client transport it names, and is registered
+    // only where that transport ships and no pin excludes it: a client
+    // granted any other transport fails the row, so a leg meant to measure it
+    // never passes having measured something else
     if ( row->direction == RECEIVE_LATENCY_CLIENT )
     {
-        const char * granted = rocketnet_client_transport_name( clients[0] );
-        if ( !granted || strcmp( granted, row->client_transport ) != 0 )
+        for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
         {
-            printf( "receive latency %s: client granted %s, not %s: nothing to measure\n", name, granted ? granted : "none", row->client_transport );
-            fflush( stdout );
-            for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+            const char * granted = rocketnet_client_transport_name( clients[c] );
+            if ( !granted || strcmp( granted, row->client_transport ) != 0 )
             {
-                rn_cli_client_stop_and_destroy( clients[c], rocketnet_time() );
+                printf( "receive latency %s: client %d granted %s, not %s\n", name, c, granted ? granted : "none", row->client_transport );
+                fflush( stdout );
+                receive_latency_check( false, name, "the client was granted another transport than the row measures" );
             }
-            rn_cli_server_stop_and_destroy( server );
-            return;
         }
     }
 
