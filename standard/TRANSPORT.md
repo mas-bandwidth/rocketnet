@@ -92,8 +92,8 @@ restates them.
    update, in whole seconds. The token epoch is a unix time the application
    MAY configure; when it does not, the endpoint takes it from one reading of
    the wall clock, less the update time at that reading, once at a server's
-   first update and once at each client connect. That reading is the only
-   clock an endpoint reads for itself.
+   first update after each start and once at each client connect. That
+   reading is the only clock reading a protocol decision derives from.
 7. Cryptographic primitives are those of libsodium, named by function, with
    the sizes of [t3 Constants and registries](#t3):
    `crypto_sign` (Ed25519), `crypto_box_seal` (X25519 sealed box),
@@ -241,8 +241,9 @@ field's default.
 
 The server max_clients limit is not a protocol value. An implementation fixes
 it when it is built, at most 32768, and refuses at create a max_clients above
-it (rule 5). The reference implementation's default build fixes `1000`, and
-it accepts a built limit from 512 to 32768.
+it (rule 5). The server max_clients default is `1000`, or the limit when the
+limit is smaller. The reference implementation's default build fixes `1000`,
+and it accepts a built limit from 512 to 32768.
 
 The server's X25519 keypair is fixed at create. When `server_secret_key` is
 all zero, the server MUST generate a fresh keypair. Otherwise it MUST copy
@@ -2084,17 +2085,20 @@ a row marked server or client applies only at that end.
    list, only the datagrams below, each counted in the kernel counter named
    and in no counter of this list. A datagram that passes them and finds no
    socket to take it is dropped and counted in `XDP_KERNEL_DROPPED_NO_SOCKET`,
-   a failure of the transport rather than a check.
+   a failure of the transport rather than a check. A frame too short to hold
+   its IPv4 or IPv6 header is dropped there with no count, whatever its port.
    1. A datagram shorter than the smallest packet a server receives, or whose
       UDP length is below the UDP header: `XDP_KERNEL_DROPPED_TOO_SMALL`.
    2. A datagram longer than the receive ceiling, or whose UDP length exceeds
-      its IP datagram or its frame: `XDP_KERNEL_DROPPED_TOO_LARGE`.
+      the length its IP header leaves for it or its frame (a malformed IP
+      length leaves none): `XDP_KERNEL_DROPPED_TOO_LARGE`.
    3. A filter epoch other than the server's: `XDP_KERNEL_DROPPED_WRONG_EPOCH`.
    4. A filter value other than the server's: `XDP_KERNEL_DROPPED_WRONG_FILTER`.
    5. A packet type a server does not receive, or a size that is not that
       type's wire size (exactly the size for the connection request and
       response; from the type's minimum to the receive ceiling for the session
-      types), which rules 3, 4 and 6 refuse: `XDP_KERNEL_DROPPED_INVALID_TYPE`.
+      types), which rules 3, 4 and 6 and [t12 Handshake: server](#t12) rule 2
+      refuse: `XDP_KERNEL_DROPPED_INVALID_TYPE`.
    6. A session packet whose sequence is the receiver's replay window depth or
       more behind the highest sequence the server has accepted from its source
       address and port, which [t14 Replay protection](#t14) refuses:
@@ -2471,9 +2475,11 @@ These are the states of the connection layer. An application interface MAY
 report further negative states for ends that the layers above decide, and
 none of them is on the wire. The reference implementation reports server
 disconnected (-8) where this table moves to disconnected (0) on a received
-disconnect, and reliable timed out (-9), protocol violation (-10),
-configuration mismatch (-11), message memory exhausted (-12) and message not
-received (-13) for the ends of RN-2 and of its own interface.
+disconnect; reliable timed out (-9), configuration mismatch (-11), message
+memory exhausted (-12) and message not received (-13) for the ends of RN-2
+and of its own interface; and protocol violation (-10) both for those ends
+and where the integrity limit of [t9 Packet protection](#t9) rule 8 ends the
+connection.
 
 <a id="t11.1"></a>
 ### t11.1. Cookie processing
@@ -2717,7 +2723,7 @@ The claim is checked, without being recorded, before the signature; the first re
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
-13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, MUST ignore, without denying, one whose only free slots were freed in the update that processes it, counting `CONNECTION_RESPONSE_NO_SLOTS` ([t13.4 Slot reset](#t13.4)), and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
+13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, MUST ignore, without denying, one whose free slots are all still held under [t13.4 Slot reset](#t13.4), counting `CONNECTION_RESPONSE_NO_SLOTS`, the counter a denial uses, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive. A held slot counts as free for rule 11 and for the denial of this rule.
 14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 
 An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
@@ -2748,7 +2754,13 @@ connection salt, with an expire timestamp of its token clock plus the cookie
 lifetime. It verifies a returned cookie by computing the MAC over the same
 input with the returned expire timestamp, under its current cookie key and
 then, inside the period of [t17 Timing and defaults](#t17) item 7, under its
-previous cookie key, and MUST compare the MACs in constant time.
+previous cookie key, and MUST compare the MACs in constant time. A server
+checks a returned cookie in this order: a cookie field of all zero bytes is no
+cookie, counted `CONNECTION_REQUEST_NO_COOKIE`, and no MAC is computed for it;
+then a MAC that matches under neither key is forged, counted
+`CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY`, whatever its expire timestamp;
+then an expire timestamp at or below the token clock is expired, counted
+`CONNECTION_REQUEST_COOKIE_EXPIRED`.
 
 | Name | Size | Type | Meaning |
 |---|---|---|---|
@@ -2791,7 +2803,7 @@ list is ignored in that state.
 | mapping | request | salt and token differ from the mapping's, token bound to no address, all checks pass | release the mapping's claim, replace the mapping, derive keys, send challenge | mapping |
 | mapping | response | mapping has no connected slot, source or client id already connected | ignore, count | mapping |
 | mapping | response | no free slot | send connection denied | mapping |
-| mapping | response | the only free slots were freed in this update | ignore, count | mapping |
+| mapping | response | every free slot still held under the slot reset rule | ignore, count | mapping |
 | mapping | response | free slot | bind token, assign slot, send keep-alive | connected |
 | mapping | handshake deadline reached | never refreshed | remove mapping, count | no mapping |
 | mapping | idle deadline reached | no matching request inside the deadline | remove mapping, count | no mapping |
@@ -3617,7 +3629,10 @@ input: the timing defaults above, in the order stated, each as a little-endian u
    request is refused. It MUST NOT merge two reasons into one counter, rename a
    reason, or coin a synonym for a condition the registry below already names.
    A reason for one packet type and the same reason for another packet type are
-   distinct counters, not one shared counter.
+   distinct counters, not one shared counter. The reasons that
+   [t6.4 Verification and refusal order](#t6.4) and
+   [t12 Handshake: server](#t12) rule 13 name as sharing a counter are the
+   exceptions of this revision.
 3. An endpoint MUST increment the outcome counter the observed condition
    names, and no other outcome counter for that packet. Storage MAY be per
    execution context and summed at readout; a counter MUST be monotonic and
@@ -4173,9 +4188,9 @@ backend, and it MUST NOT be load-bearing in production. A server still
 generates its own keypair, and a development token still needs a nonzero
 protocol id.
 
-The development keys of this revision are printed here. They are compiled
-into a development build only, and a build without the development flag
-refuses them (rule 2).
+The development keys of this revision are printed here. Their secret halves
+are compiled into a development build only, and a build without the
+development flag refuses the keys (rule 2).
 
 * The development backend signing key is the Ed25519 key expanded from the
   seed `75 29 02 15 e1 ff 4d f2 09 92 57 8a 22 3c 7c d4 63 b9 a2 7c f8 3a a7 1c 7a 16 93 1c 01 9b 7c 30`.
@@ -4304,9 +4319,9 @@ A Linux server may place the prefilter and an early replay check in an XDP
 program so that traffic the connection layer would refuse is dropped before
 it is queued to userspace. The kernel path makes the drops that
 [t10 Receive processing](#t10) rule 2 lists, each under its own kernel
-counter. Apart from the fragments and IP options below, and a datagram it has
-no socket to hand to (`XDP_KERNEL_DROPPED_NO_SOCKET`), it drops only what the
-full sequence refuses, and the userspace path still performs the checks on
+counter. Apart from the fragments and IP options below, the runt frames and
+malformed lengths that rule names, and a datagram it has no socket to hand to
+(`XDP_KERNEL_DROPPED_NO_SOCKET`), it drops only what the full sequence refuses, and the userspace path still performs the checks on
 what survives. Traffic the kernel
 does not see is not counted there, so the transport imports the kernel
 counters beside its own. See [t10 Receive processing](#t10) and

@@ -3117,7 +3117,7 @@ WIDE   |      channel, little-endian   |
 
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---:|---:|---|---|---|
-| channel, narrow | 0 | 1 | u8 | channel number | any u8 channel number |
+| channel, narrow | 0 | 1 | u8 | channel number | 0 to 255, below the channel count |
 | channel, wide | 0 | 2 | u16 | channel number | 256 to 65535, below the channel count |
 
 | Name | Value | Units | Meaning |

@@ -708,12 +708,12 @@ enum rocketnet_client_state_t
     ROCKETNET_CLIENT_STATE_CONNECTED = 4
 };
 
-/// Counter names in this header written in capitals, such as
-/// MESSAGE_NOT_RECEIVED or SEND_RESERVE_REFUSED, are the SDK's internal
-/// counters, the registry of the standard's error handling section. No call
-/// in this header reads them: an application sees their effect through the
-/// stats structs below, the client state and the disconnect reason.
-///
+// Counter names in this header written in capitals, such as
+// MESSAGE_NOT_RECEIVED or SEND_RESERVE_REFUSED, are the SDK's internal
+// counters, the registry of the standard's error handling section. No call
+// in this header reads them: an application sees their effect through the
+// stats structs below, the client state and the disconnect reason.
+
 /// rocketnet_client_stats fills this struct.
 /// Packet, byte, payload, resend, duplicate, receipt and budget counts are
 /// the connection that is held. They start at 0 when that connection starts,

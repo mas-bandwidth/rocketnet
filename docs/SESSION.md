@@ -24,9 +24,10 @@ a later connect supplies a fresh token, which names the server address. To
 reconnect after `rocketnet_client_disconnect`, poll `rocketnet_client_disconnected`
 (stepping `rocketnet_client_update` on step-driven clients) until it returns
 `true`, then call `rocketnet_client_connect`. From a negative terminal client
-state, call `rocketnet_client_connect` directly: `rocketnet_client_disconnected`
-stays `false` in a negative state until a disconnect or the next connect, so
-polling it first never ends. While the previous attempt's worker is still
+state, call `rocketnet_client_connect` directly: after a connect that returned
+`ROCKETNET_STATUS_OK`, `rocketnet_client_disconnected` stays `false` through any
+negative state until a disconnect or the next connect, so polling it first
+never ends. While the previous attempt's worker is still
 stopping, `rocketnet_client_connect` refuses with
 `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` and keeps the state; then poll
 `rocketnet_client_disconnected` until it returns `true` and connect again.

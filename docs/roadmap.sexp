@@ -520,4 +520,9 @@
    :title "Refuse at the sender a promotion the receiver's enabled mask refuses"
    :text "A sender promotes an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to the twin's wire code (2 or 4), but checks only the chosen reliability against the enabled mask; both ends share the mask, and the receiver refuses the promoted record as MESSAGE_TYPE_NOT_ENABLED. MESSAGES.md m2.1 now states the constraint. A later release chooses one: a counted refusal at the sender, or config validation that an enabled unreliable reliability brings its twin's code."
    :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-114")
+
+  (item "go-backend-protocol-id-parse" :group "review-v1-2" :area "rocketnet"
+   :title "The Go and C# example backends parse the protocol id differently"
+   :text "examples/backend/go/main.go (about 344-350) parses the protocol id with base auto-detect, so 010 is octal 8 there, while the C# backend parses it as decimal 10; make both parse one way and say which in the examples' docs."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-119")
  ))
