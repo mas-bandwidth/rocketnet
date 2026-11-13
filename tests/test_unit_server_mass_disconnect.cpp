@@ -836,3 +836,93 @@ static void test_server_disconnect_full_queue_never_bypasses_budget()
 }
 
 REGISTER_UNIT_TEST( test_server_disconnect_full_queue_never_bypasses_budget );
+
+// SCRATCH DIAGNOSTIC (FIX-VERIFY-D, never committed): the prelink kicks case
+// kicks clients[0..12] and then checks slots 0..12. Each run here connects
+// the population as that case does and reports: the cookie reply source
+// bitmap's size, how many first-leg requests were counted past one per client
+// (CONNECTION_REQUEST_NO_COOKIE beyond MASS_DISCONNECT_CLIENTS: a request the
+// per-update cookie reply limit dropped unanswered is sent again), how many
+// clients do not hold slot == their index, and whether the case's check would
+// fail (slots 0..12 not exactly the slots of clients 0..12).
+static void test_diag_md_slots()
+{
+#if ROCKETNET_DEV
+    mass_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
+    msan_scale_allocator_scope_t scale_allocator;
+    rocketnet_quiet( 1 );
+    const char * env = getenv( "DIAG_RUNS" );
+    const int runs = env ? atoi( env ) : 100;
+    printf( "DIAGMD bitmap bits %d for %d clients\n", 64 * rocketnet_server_cookie_reply_source_words( MASS_DISCONNECT_CLIENTS ), MASS_DISCONNECT_CLIENTS );
+    int would_fail = 0, with_excess = 0, with_permuted = 0, excess_no_permuted = 0, permuted_no_excess = 0;
+    for ( int r = 0; r < runs; r++ )
+    {
+        static mass_disconnect_population_t population;
+        memset( &population, 0, sizeof( population ) );
+        mass_disconnect_connect_all( &population );
+        const uint64_t * counters = mass_disconnect_server_counters( population.server );
+        const long long excess = (long long) counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] - MASS_DISCONNECT_CLIENTS;
+        int permuted = 0;
+        bool low[13] = { false };
+        bool fail = false;
+        for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
+        {
+            const int slot = (int) rocketnet_client_index( population.clients[i] );
+            permuted += slot != i ? 1 : 0;
+            if ( i < 13 )
+            {
+                if ( slot >= 0 && slot < 13 )
+                {
+                    low[slot] = true;
+                }
+                else
+                {
+                    fail = true;
+                }
+            }
+        }
+        for ( int j = 0; j < 13; j++ )
+        {
+            fail = fail || !low[j];
+        }
+        would_fail += fail ? 1 : 0;
+        with_excess += excess > 0 ? 1 : 0;
+        with_permuted += permuted > 0 ? 1 : 0;
+        excess_no_permuted += ( excess > 0 && permuted == 0 ) ? 1 : 0;
+        permuted_no_excess += ( excess == 0 && permuted > 0 ) ? 1 : 0;
+        if ( fail || r < 3 )
+        {
+            printf( "DIAGMD run %d excess_no_cookie %lld permuted %d would_fail %d late:", r, excess, permuted, fail ? 1 : 0 );
+            int shown = 0;
+            for ( int i = 0; i < MASS_DISCONNECT_CLIENTS && shown < 8; i++ )
+            {
+                const int slot = (int) rocketnet_client_index( population.clients[i] );
+                if ( slot != i && ( i == 0 || (int) rocketnet_client_index( population.clients[i - 1] ) == i - 1 ) )
+                {
+                    printf( " client %d->slot %d", i, slot );
+                    shown++;
+                }
+            }
+            printf( "\n" );
+        }
+        mass_disconnect_destroy_all( &population );
+    }
+    printf( "DIAGMDSUM runs=%d would_fail=%d with_excess=%d with_permuted=%d excess_without_permutation=%d permutation_without_excess=%d\n", runs, would_fail, with_excess, with_permuted, excess_no_permuted, permuted_no_excess );
+}
+
+REGISTER_UNIT_TEST( test_diag_md_slots );
+
+// SCRATCH: the case itself, with the hash keys (the cookie reply source key
+// among them) seeded from DIAG_SEED. In a fresh process the loopback hub
+// hands out the same ports every time, so a seed fixes which client
+// addresses share a bit of the cookie reply bitmap.
+static void test_diag_md_seeded()
+{
+    const char * env = getenv( "DIAG_SEED" );
+    rocketnet_dev_set_hash_key_seed( env ? (uint64_t) strtoull( env, NULL, 10 ) : 0 );
+    test_server_disconnect_prelink_kicks_share_update_allowance();
+    rocketnet_dev_set_hash_key_seed( 0 );
+}
+
+REGISTER_UNIT_TEST( test_diag_md_seeded );
