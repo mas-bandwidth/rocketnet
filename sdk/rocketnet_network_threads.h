@@ -69,9 +69,13 @@
 #define ROCKETNET_IOCP_MAX_SEND_THREADS                                 16
 
 // macOS msgx transmit workers (sendmsg_x); one receive worker beside them is
-// fixed. 3: mini-m5 rows m41, m43-m45 (transport f63f4993f); 2 failed the peak
-// with a game load (m46, 50.5 fps). Under re-measure 2026-11-13: 3 failed the
-// peak with a game load on mini-m5 and held 660k packets/s on the studio.
+// fixed. 3: measured from main 5366e4f13 on 2026-11-13, players on a Linux
+// machine over 10 GbE: with mini-m5 (M5 Pro) as the server, 3 transmit
+// workers send all 900k packets/s at peak with 1000 players whole; with the
+// studio (M3 Ultra) as the server the rate tops out at 694k at 2 transmit
+// workers and falls as workers are added (678k at 1, 660k at 3, 492k at 6),
+// each worker near 100% in the kernel's send path. Rows under "# macOS" in
+// the 2026-11-13 re-measure of main.
 #define ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS                          3
 #define ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS                             16
 
