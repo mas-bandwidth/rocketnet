@@ -3303,8 +3303,13 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
     {
         char knob[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
         int first = 0, count = 0;
-        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_SEND_CPUS", knob, sizeof( knob ) ) > 0 && sscanf( knob, "%d,%d", &first, &count ) == 2 &&
-             first >= 0 && count >= 1 && first + count <= 64 )
+        char * comma = NULL;
+        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_SEND_CPUS", knob, sizeof( knob ) ) > 0 )
+        {
+            first = (int) strtol( knob, &comma, 10 );
+            count = comma && *comma == ',' ? (int) strtol( comma + 1, NULL, 10 ) : 0;
+        }
+        if ( first >= 0 && count >= 1 && first + count <= 64 )
         {
             int l = 0;
             while ( l < iocp->num_lanes && iocp->lanes[l] != lane )
