@@ -418,8 +418,8 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
                 rocketnet_assert( out_data[i] == ROCKETNET_OPEN_POISON_BYTE || out_data[i] == 0 );
             }
         }
-#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )                          \
-        // no caller reads a refused open's output (rocketnet_protocol.h): one \
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
+        // no caller reads a refused open's output (rocketnet_protocol.h): one
         // that did would carry the poison
         memset( out_data, ROCKETNET_OPEN_POISON_BYTE, (size_t) plaintext_bytes );
 #endif // #if ROCKETNET_DEV
