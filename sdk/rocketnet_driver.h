@@ -13,6 +13,13 @@
 // transport writes only min(reported bytes, supplied capacity/stride) bytes.
 // Truncated UDP datagrams retain their length for prefilter size accounting;
 // consumers must reject sizes beyond the wire ceiling before parsing bytes.
+// The built-in loopback transport is the exception: it queues only datagrams
+// of at most ROCKETNET_RECEIVE_CEILING bytes, and a receive whose capacity or
+// stride is smaller than the queued datagram drops it whole and counts it in
+// the endpoint's dropped count (read in a development build by
+// rocketnet_loopback_endpoint_dropped), so it never reports a truncated
+// length. proofs/tla/LoopbackQueue.tla Drop models the drop; the model's
+// dropped count is the send side's full-queue drops only.
 // Negative lengths and lengths beyond the non-jumbogram UDP envelope are faults.
 #define ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES 65535
 
