@@ -1016,7 +1016,7 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
             // rocketnet_coalesce_split writes only positive lengths
 
             const int length = lengths[i];
-            if ( length <= ROCKETNET_RECEIVE_CEILING && buffer->num_packets < buffer->capacity )
+            if ( length >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES && length <= ROCKETNET_RECEIVE_CEILING && buffer->num_packets < buffer->capacity )
             {
                 const int index = buffer->num_packets++;
                 buffer->from[index] = from;
@@ -1027,7 +1027,13 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
             else
             {
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
-                if ( length > ROCKETNET_RECEIVE_CEILING )
+                if ( length < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+                {
+                    // shorter than any server-bound packet: never takes a
+                    // bank slot (as gso, io_uring, RIO and XDP)
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+                }
+                else if ( length > ROCKETNET_RECEIVE_CEILING )
                 {
                     iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
                 }
@@ -1220,7 +1226,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
                     rocketnet_iocp_publish_uro( iocp, buffer, op, success, receive_error, bytes );
                 }
             }
-            else if ( running && success && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING &&
+            else if ( running && success && bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES && bytes <= ROCKETNET_RECEIVE_CEILING &&
                       buffer->num_packets < buffer->capacity &&
                       rocketnet_iocp_address_read( &op->address, op->address_bytes, iocp->ipv6, &from ) )
             {
@@ -1233,8 +1239,10 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
             else if ( running )
             {
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
-                if ( success && bytes == 0 )
+                if ( success && bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
                 {
+                    // shorter than any server-bound packet: never takes a
+                    // bank slot (as gso, io_uring, RIO and XDP)
                     iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
                 }
                 else if ( receive_error == WSAEMSGSIZE || ( success && bytes > ROCKETNET_RECEIVE_CEILING ) )
