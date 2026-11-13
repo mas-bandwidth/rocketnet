@@ -504,7 +504,8 @@ done
 teardown_status=0
 teardown || teardown_status=1
 teardown_allowed=0
-trap - EXIT INT TERM HUP
+trap - INT TERM HUP
+trap cleanup EXIT
 [ "$teardown_status" -eq 0 ] || \
     fail "teardown did not finish on $server_ssh: the server may still run or XDP may still be attached to $server_nic"
 
