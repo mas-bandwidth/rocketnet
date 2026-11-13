@@ -299,6 +299,7 @@ static int rocketnet_unit_worker( const char * name )
 
     rocketnet_channels_prepare_log( name );
 
+    const uint64_t checks_before = rocketnet_test_checks_run().load();
     int result = rocketnet_channels_run_named( name );
     if ( result == 2 )
     {
@@ -307,6 +308,17 @@ static int rocketnet_unit_worker( const char * name )
     if ( result == 2 )
     {
         result = rocketnet_unit_run_named( name );
+    }
+
+    // a case that returned having run no check verified nothing: its body is
+    // compiled out on this platform or it returned before its checks
+    // (tests/check_count.h). An unknown name (2) is reported as such.
+
+    if ( result == 0 && rocketnet_test_checks_run().load() == checks_before )
+    {
+        printf( "check failed: %s returned without running a single check\n", name );
+        fflush( stdout );
+        result = 1;
     }
     if ( step_driven_case && rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) != 0 )
     {
@@ -356,8 +368,13 @@ int main( int argc, char ** argv )
 
     if ( argc == 2 && argv[1][0] != '-' )
     {
+        // the same no-dialog and debug-CRT routing suite_main sets, so a heap
+        // overrun reported at its free fails this path too
+#if defined( _WIN32 )
+        suite_no_dialogs();
+#endif // #if defined( _WIN32 )
         const char * resolved = rocketnet_channels_test_resolve( argv[1] );
-        result = rocketnet_unit_worker( resolved ? resolved : argv[1] );
+        result = suite_run_case( rocketnet_unit_worker, resolved ? resolved : argv[1] );
     }
     else
     {

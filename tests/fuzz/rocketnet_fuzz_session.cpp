@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The scripted session target: yojimbo's fuzz_connection_structured, on a
+// The scripted session target, on a
 // real message server and a real message client over the loopback transport.
 // The input is a script of operations -- send a message (fuzz picks the side,
 // channel and size), tick, drop, duplicate, hold back, reorder, corrupt,

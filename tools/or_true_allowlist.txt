@@ -16,5 +16,5 @@ scripts/live-xdp-fleet-remote	systemctl stop rn-live-watchdog.service 2>/dev/nul
 scripts/live-xdp-fleet-remote	systemctl stop rn-live-deadman.timer 2>/dev/null || true	teardown: the unit exists only on a host where a run started it; absent is the expected state
 scripts/live-xdp-fleet-remote	systemctl stop rn-live-deadman.service 2>/dev/null || true	teardown: the unit exists only on a host where a run started it; absent is the expected state
 scripts/live-xdp-fleet-remote	systemctl reset-failed rn-live-deadman.service 2>/dev/null || true	teardown: clears a failed dead-man record if one exists; none is the expected state
-tools/fuzz_ndebug.sh	wait -n || true	reaps one finished target to free a slot; each target's verdict is read from its log below (libFuzzer's Done line and the crash directory)
+tools/fuzz_ndebug.sh	wait "${pids[0]}" 2>/dev/null || true	reaps the oldest target to free a slot (bash 3.2 has no wait -n); each target's verdict is read from its log below (libFuzzer's Done line and the crash directory)
 tools/fuzz_ndebug.sh	wait "$pid" 2>/dev/null || true	reaps the remaining targets; each target's verdict is read from its log below (libFuzzer's Done line and the crash directory)
