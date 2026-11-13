@@ -5651,6 +5651,59 @@ void rocketnet_test_server_rio_send_full()
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 }
 
+// An address the socket cannot carry is refused before the slot reserve: with
+// one slot left, an IPv6 destination on the IPv4 socket counts RIO_SEND_FAILED
+// once and takes no slot, so the next routable start still gets the last slot
+// and only the start after it is a full staging (RIO_SEND_FULL). Before, the
+// refused start took the last slot, and the server read the staging as full
+// and counted SEND_RING_FULL for it as well as SEND_FAILED.
+void rocketnet_test_server_rio_unroutable_takes_no_slot()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( rio );
+
+    rocketnet_address_t destination;
+    rocketnet_check( rocketnet_address_parse( &destination, "127.0.0.1:9" ) );
+    rocketnet_address_t unroutable;
+    rocketnet_check( rocketnet_address_parse( &unroutable, "[::1]:9" ) );
+
+    const int slots = rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( slots > 1 );
+
+    uint8_t * frame = NULL;
+    uint64_t packet_id = 0;
+
+    for ( int i = 0; i < slots - 1; ++i )
+    {
+        frame = rocketnet_server_rio_start_packet( rio, &destination, &packet_id );
+        rocketnet_check( frame );
+        rocketnet_server_rio_abort_packet( rio, packet_id, frame );
+    }
+
+    rocketnet_check( rocketnet_server_rio_send_room( rio ) == 1 );
+    rocketnet_check( rocketnet_server_rio_start_packet( rio, &unroutable, &packet_id ) == NULL );
+    rocketnet_check( rocketnet_server_rio_send_room( rio ) == 1 );
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_check( counters[ROCKETNET_COUNTER_RIO_SEND_FAILED] == 1 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_RIO_SEND_FULL] == 0 );
+
+    frame = rocketnet_server_rio_start_packet( rio, &destination, &packet_id );
+    rocketnet_check( frame );
+    rocketnet_server_rio_abort_packet( rio, packet_id, frame );
+
+    rocketnet_check( rocketnet_server_rio_start_packet( rio, &destination, &packet_id ) == NULL );
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_check( counters[ROCKETNET_COUNTER_RIO_SEND_FAILED] == 1 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_RIO_SEND_FULL] == 1 );
+
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+}
+
 // the iocp transport's USO/URO tier against a plain UDP client on loopback: the
 // client sends tagged packets in, the transport must surface each byte-exact from
 // the client's address; the transport then sends replies, deliberately in
@@ -15492,6 +15545,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_rio_transport_server_wire_ipv6", rocketnet_test_server_rio_wire_ipv6, NULL },
     { "test_rio_transport_server_wire_dual_stack", rocketnet_test_server_rio_wire_dual_stack, NULL },
     { "test_rio_transport_server_send_full", rocketnet_test_server_rio_send_full, NULL },
+    { "test_rio_transport_server_unroutable_takes_no_slot", rocketnet_test_server_rio_unroutable_takes_no_slot, NULL },
     { "test_iocp_transport_server_uso_uro_probe", rocketnet_test_server_iocp_uso_uro_probe, NULL },
     { "test_iocp_transport_server_uso_wire", rocketnet_test_server_iocp_uso_wire, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

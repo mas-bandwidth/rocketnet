@@ -3870,6 +3870,10 @@ void rocketnet_client_delivery_capture( struct rocketnet_client_t * client, stru
         rocketnet_message_client_delivery_capture( client->connection, capture );
     }
 }
+#endif // #if ROCKETNET_DEV
+
+// the counter block readers are the same in every build: counters are ABI
+// (tests/counter_contract.inc), and so are the ways to read them
 
 const struct rocketnet_counters_t * rocketnet_server_transport_counter_block( struct rocketnet_server_t * server )
 {
@@ -3896,7 +3900,6 @@ const struct rocketnet_counters_t * rocketnet_client_message_counter_block( stru
     struct rocketnet_message_client_t * connection = client ? client->connection : NULL;
     return connection ? rocketnet_message_client_counters( connection ) : NULL;
 }
-#endif // #if ROCKETNET_DEV
 
 // rocketnet_conditions_t is size-revisioned: fill a full copy, then hand the
 // caller the bytes its build knows; a caller built against a later, larger

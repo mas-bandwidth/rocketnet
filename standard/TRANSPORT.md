@@ -3833,6 +3833,23 @@ the send queue or the send store counts `MESSAGE_SEND_QUEUE_FULL` or
 `MESSAGE_SEND_STORE_FULL`, and the connection goes on
 ([RN-2 m1.7 Send refusal](MESSAGES.md#m1.7)).
 
+The shared rows and a transport's own rows (`GSO_`, `URING_`, `IOCP_`, `RIO_`)
+count some of the same events, by design: the shared row is the transport-blind
+total, the transport row says where it happened. A sum over every refusal row of
+a block is therefore not a count of distinct dropped datagrams or refused
+frames. These rows alias, one event moving each named row once:
+
+| Shared row | Transport rows counting the same events |
+|---|---|
+| `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_DROPPED` (its size drops) and `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
+| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW`; `URING_RECEIVE_DROPPED_OVERFLOW`; `RIO_RECEIVE_DROPPED_OVERFLOW` |
+| `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `URING_RECEIVE_DROPPED_SOURCE` and `URING_RECEIVE_DROPPED_NO_BUFFER`; `RIO_RECEIVE_FAILED` |
+| `SEND_FAILED` | `GSO_SEND_DROPPED`; `URING_SEND_DROPPED`; `IOCP_SEND_FAILED`; `RIO_SEND_FAILED` |
+| `SEND_RING_FULL` | `RIO_SEND_FULL` |
+
+To count distinct events, sum the shared rows and leave the aliasing transport
+rows out; the transport rows not named here alias no shared row.
+
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
 (`0` refusal, `1` expected, `2` path loss, `3` arrival), and the family index

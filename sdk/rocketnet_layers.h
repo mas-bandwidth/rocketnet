@@ -1929,10 +1929,8 @@ const char * rocketnet_counter_name( int counter );
 // an index outside the counter list. Allocation-free; callable before init
 int rocketnet_counter_class( int counter );
 
-#if ROCKETNET_DEV
 // "refusal", "expected", "path_loss" or "arrival"; NULL for a value that is not a class
 const char * rocketnet_counter_class_name( int counter_class );
-#endif // #if ROCKETNET_DEV
 
 // 1 when every counter family balances: for each RECEIVED counter, its value
 // equals the sum of the outcomes that name it as their family. Otherwise 0,
@@ -2025,13 +2023,6 @@ void rocketnet_server_delivery_capture( struct rocketnet_server_t * server, int 
 // the client's current connection
 void rocketnet_client_delivery_capture( struct rocketnet_client_t * client, struct rocketnet_delivery_capture_t * capture );
 
-// the transport and message counter blocks behind a public server or client,
-// NULL when it holds none. Read through rocketnet_counter_value
-const struct rocketnet_counters_t * rocketnet_server_transport_counter_block( struct rocketnet_server_t * server );
-const struct rocketnet_counters_t * rocketnet_server_message_counter_block( struct rocketnet_server_t * server );
-const struct rocketnet_counters_t * rocketnet_client_transport_counter_block( struct rocketnet_client_t * client );
-const struct rocketnet_counters_t * rocketnet_client_message_counter_block( struct rocketnet_client_t * client );
-
 // the layers' halves of the reads above: the transports fill the connection,
 // sequence and receive fields, the message objects the reliable and budget
 // fields. Each writes only its own fields
@@ -2041,6 +2032,14 @@ void rocketnet_message_server_delivery_capture( struct rocketnet_message_server_
 void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture );
 
 #endif // #if ROCKETNET_DEV
+
+// the transport and message counter blocks behind a public server or client,
+// NULL when it holds none. Read through rocketnet_counter_value. In every
+// build: counters are ABI, and so are their readers
+const struct rocketnet_counters_t * rocketnet_server_transport_counter_block( struct rocketnet_server_t * server );
+const struct rocketnet_counters_t * rocketnet_server_message_counter_block( struct rocketnet_server_t * server );
+const struct rocketnet_counters_t * rocketnet_client_transport_counter_block( struct rocketnet_client_t * client );
+const struct rocketnet_counters_t * rocketnet_client_message_counter_block( struct rocketnet_client_t * client );
 
 // the reported round-trip time of the client's connection (RN-1 t15.5), in
 // seconds: the minimum first-ack sample, 0 while it has none. The message

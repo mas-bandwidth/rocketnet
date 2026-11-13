@@ -14,6 +14,13 @@
 // recomputes it, so a released row cannot change even when the header and this
 // list change together. The release adds its line (docs/RELEASING.md).
 //
+// Rows alias by design: the shared rows (PREFILTER_TOO_SHORT and _TOO_LARGE,
+// RECEIVE_DROPPED_FULL 224, RECEIVE_FAILED 226, SEND_FAILED, SEND_RING_FULL)
+// and the transport rows 227-278 that say where (GSO_RECEIVE_DROPPED_SIZE,
+// _OVERFLOW, _SOURCE, GSO_SEND_DROPPED and their URING_, IOCP_ and RIO_
+// counterparts) count the same events, so a sum over every refusal row is not
+// a count of distinct drops. standard/TRANSPORT.md t18 lists each alias.
+//
 // RELEASED v1.1.8 220 sha256:47c0a89fc3cf262770f2ff49a3f745e84f961f4689ab324307521fc3205a8068
 // RELEASED v1.1.9 224 sha256:4367680d93cf6075372cf1c79fb1ed77f1589cbf9c03b962ece8a73e6e031cde
 

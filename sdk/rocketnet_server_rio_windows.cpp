@@ -1417,12 +1417,20 @@ bool rocketnet_server_rio_send_idle( rocketnet_server_rio_t * rio )
 
 // proofs/tla/RNRioWorker.tla Stage, first half: a fill thread takes a slot of the
 // open fill phase.
-// proofs/tla/RNRioSendSlotLayout.tla Reserve: one fetch_add per call, refused or not; a counter that wraps
-// within reach hands out a staged slot again (MCRNRioSendSlotLayoutBrokenIntWrap.cfg).
+// proofs/tla/RNRioSendSlotLayout.tla Reserve: one fetch_add per call that reaches the reserve, refused or
+// not; a counter that wraps within reach hands out a staged slot again (MCRNRioSendSlotLayoutBrokenIntWrap.cfg).
+// An address this socket cannot carry is refused before the reserve, as on iocp: it takes no slot, so it is
+// counted once, SEND_FAILED, and never also as a full staging when it would have taken the last slot.
 uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( rio->stopping.load( std::memory_order_acquire ) )
     {
+        return NULL;
+    }
+    SOCKADDR_INET address;
+    if ( !rocketnet_rio_address_write( to, rio->ipv6, &address ) )
+    {
+        rocketnet_rio_count( rio, ROCKETNET_COUNTER_RIO_SEND_FAILED );
         return NULL;
     }
     const int phase = rio->fill.load( std::memory_order_relaxed );
@@ -1435,11 +1443,7 @@ uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const
 
     const int index = phase * rio->send_queue_size + (int) slot;
     rio->slot_bytes[index] = 0;
-    if ( !rocketnet_rio_address_write( to, rio->ipv6, rocketnet_rio_send_address( rio, index ) ) )
-    {
-        rocketnet_rio_count( rio, ROCKETNET_COUNTER_RIO_SEND_FAILED );
-        return NULL;                            // the slot stays at zero bytes and is never posted
-    }
+    *rocketnet_rio_send_address( rio, index ) = address;
 
     *packet_id = (uint64_t) index;
 
