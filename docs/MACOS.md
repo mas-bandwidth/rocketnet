@@ -93,8 +93,12 @@ bounded RX/TX banks and the per-packet fallback. These definitions are in
 `portable` is the fallback server transport, not a production one: on a Mac
 `msgx` is the production server transport.
 
-**msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
-(`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").
+**The msgx client's pump** is the darwin batch pump over `sendmsg_x` and
+`recvmsg_x` (`sdk/rocketnet_platform.cpp`, the block that opens "The darwin
+batch pump"). Among the SDK's transports only the `msgx` client uses it, so
+this pump, its pause and its per-packet fallback below are client behaviour:
+the `msgx` server does not use it, and its own send rules are under "The msgx
+server's sends" below.
 The two symbols are resolved with `dlsym` at platform init, with no link-time
 reference, so their absence is never a load failure. At socket create a
 non-blocking socket with both symbols becomes an `msgx` candidate; create reads
@@ -122,12 +126,32 @@ paused while another batches. `rocketnet_platform_socket_pump` reports the live
 pump, so a paused socket reads as `portable`.
 
 One refusal is final instead of a pause: `EINVAL` from `sendmsg_x` on an
-unconnected socket (a server's) whose per-packet replay then sends every
+unconnected socket (one made directly through the platform layer; a client's
+socket is connected, so no SDK transport reaches this) whose per-packet replay
+then sends every
 message of the chunk. That is a kernel that takes no destination per message
 (older macOS releases), so for the rest of the process unconnected sockets
 send per packet, receives stay batched, one warning says so, and the chunk
 counts no send failure, since nothing was dropped. A refusal whose replay also
 fails is a refused destination and pauses as above.
+
+**The msgx server's sends** have no pause and no per-packet fallback
+(`rocketnet_server_msgx_run_send` in `sdk/rocketnet_server_msgx_apple.cpp`;
+`sdk/rocketnet_msgx_send_runs.h`). A transmit worker sends a client's packets
+on that client's connected socket, up to 64 per `sendmsg_x`
+(`ROCKETNET_MSGX_SEND_BATCH`), and the errno decides what happens to them. A
+full socket (`EAGAIN`, `EWOULDBLOCK`,
+`ENOBUFS`, `EINTR`), or a send that takes only some, keeps the packets not
+taken, and the worker waits up to 1 ms (`ROCKETNET_MSGX_SEND_RETRY_SECONDS`)
+and tries them again. A refusal (`ECONNREFUSED`, `EHOSTUNREACH`,
+`ENETUNREACH`, `EHOSTDOWN`, `ENETDOWN`) sends them once more, and a second
+refusal drops them. A disconnected socket (`ENOTCONN`, `EPIPE`,
+`EDESTADDRREQ`) sends them one at a time through the shared socket. Any other
+error drops them. A packet with no client socket goes alone through the
+shared socket, where a full socket keeps it and any other error drops it.
+When the server stops, the workers retry what is still kept at most 100 times
+(`ROCKETNET_MSGX_SEND_RETRIES_AFTER_QUIT`), then drop it. When the transport closes it logs the dropped count
+(`msgx transport stats:`).
 
 **portable** uses per-packet `sendto` / `recvmsg` calls
 (`rocketnet_platform_socket_send_packet` and
@@ -139,10 +163,11 @@ above that) and one receive worker, a socket for each connected client and
 one shared socket (`sdk/rocketnet_server_msgx.h`); the `portable` server runs
 one transmit worker and one receive worker, and has no count to set. macOS
 gives no thread a core: neither transport pins its threads, and the scheduler
-places them. More transmit workers are not more throughput on every Mac: each
-worker spends most of its time in the kernel's send path, and on some Macs
-more workers send less. rocketnet publishes no macOS throughput figures yet
-([PERFORMANCE.md](PERFORMANCE.md)); measure yours.
+places them. More transmit workers are not always more throughput: under a
+heavy send load a worker can spend most of its time in the kernel's send
+path, and then more workers may not send more. The performance report has no
+macOS measurement record yet ([PERFORMANCE.md](PERFORMANCE.md)); measure
+your workload.
 
 In the `portable` server the caller copies borrowed, sealed send frames
 into one of three owned TX banks outside the lock; a try-lock publishes bank
@@ -180,7 +205,7 @@ on macOS call `rocketnet_platform_socket_send_packets` and
 `rocketnet_platform_socket_receive_packets`, the pump seam above, so a `msgx`
 client batches on its I/O thread and never on the game thread. Client `auto`
 on macOS is `msgx` (client rank 10, above portable's 30). A runtime refusal
-pauses that client's pump exactly as on a server socket: the batch in flight
+pauses that client's pump as described above: the batch in flight
 finishes per packet and nothing is lost. The unit cases in
 `tests/test_unit_client_msgx.cpp` pin the shared table, its I/O callbacks and
 the client ranking without a socket; the functional cases
@@ -217,9 +242,11 @@ exits 1. The functional
 case `test_transport_env_pin_is_honoured` fails under such a pin for the same reason.
 
 Pinning `msgx` requires the batch symbols on the host: without them the create
-refuses instead of falling to `portable`. The first real batch call then
-decides the live pump; if the kernel refuses it there, the pinned transport
-pauses `msgx` and runs `portable` rather than failing after create. Pinning
+refuses instead of falling to `portable`. On a client, the first real batch
+call then decides the live pump; if the kernel refuses it there, the pinned
+client pauses `msgx` and sends per packet rather than failing after create. A
+`msgx` server has no such fallback: its send errors follow "The msgx server's
+sends" above. Pinning
 `portable` skips the batch decision entirely, so a fixed-port bind never has a
 queued datagram read before the caller does
 (`rocketnet_platform_socket_create_with_pump`).
@@ -257,13 +284,15 @@ netstat -s -p udp      # datagram output
 ps -M -p <server pid>  # CPU per thread
 ```
 
-A growing drop or flow-control count means the interface queue fills: look
-at the receiving side first, since a receiver that cannot keep up sends
-Ethernet pause frames. A queue length of 0 with the transmit workers near
-fully busy in system time means the kernel's send path is the limit, and more
-transmit workers do not help. `sample <server pid> 10 -file out.txt` (no
-privilege) records each thread's user stacks; a transmit worker's time is
-under `sendmsg_x`.
+These are clues, not a diagnosis. A growing drop or flow-control count may
+indicate that the interface queue fills: check the receiving side too, since
+a receiver that cannot keep up sends Ethernet pause frames. A queue length of
+0 with the transmit workers near fully busy in system time may indicate that
+the kernel's send path is the limit, and then more transmit workers may not
+help. `sample <server pid> 10 -file out.txt` (no privilege) samples each
+thread's user stacks; a busy transmit worker's samples are mostly under
+`sendmsg_x`. Read these over the same interval, then compare throughput and
+latency across worker counts under the same workload before you choose one.
 
 ## The client's threads, QoS and App Nap
 
@@ -360,8 +389,8 @@ one unit of the call's read budget (`max_packets` for a batch, 64 for the
 single-packet call), kept or skipped, so a call returns after a bounded number
 of reads whatever the socket holds. A datagram longer than the caller's slot
 keeps its true length so the transport drops it as oversize
-(`rocketnet_platform_socket_receive_packet`). The msgx pump applies the
-weather and pause rules above to the same errnos.
+(`rocketnet_platform_socket_receive_packet`). The msgx client's pump applies
+the weather and pause rules above to the same errnos.
 
 `test_platform_batch_pump_refused_destination` is the run: a batch with a
 refused destination in the middle delivers every other packet
@@ -386,12 +415,13 @@ The two server transports differ (`sdk/rocketnet_driver_builtin.cpp`,
 - **portable** keeps one UDP socket for all of its clients, so the descriptor
   limit does not limit how many clients it accepts.
 - **msgx** opens a socket per connected client beside its shared socket: its
-  plan is `1 + max_clients` sockets. When the server opens it, it needs a
+  plan is `1 + max_clients` sockets. `rocketnet_server_create` opens no
+  transport; `rocketnet_server_start` opens `msgx`, and that needs a
   descriptor limit of
   `max_clients` + 256 (`ROCKETNET_MSGX_DESCRIPTOR_SLACK`,
   `sdk/rocketnet_server_msgx.h`): 1256 at the default `max_clients` of 1000.
-  If the soft limit is lower, create raises the process's soft limit to that
-  figure and logs `msgx transport: descriptor limit raised from <old> to
+  If the soft limit is lower, `rocketnet_server_start` raises the process's
+  soft limit to that figure and logs `msgx transport: descriptor limit raised from <old> to
   <new> for a socket per client`. The raise is for the whole process and
   stays after the server is destroyed. If the hard limit is lower, or the raise
   fails, `msgx` refuses with a log line that starts `msgx transport refused:`.
