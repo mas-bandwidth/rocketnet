@@ -46,8 +46,9 @@
 (* posted; the rest wait for a later pass.                                 *)
 (*                                                                         *)
 (* The frames go onto the fill ring in the order the code writes them: the *)
-(* first fill in frame order, a flush in the pending return's order.  The  *)
-(* model does not fix that order (Orders): no rule here depends on it.     *)
+(* first fill in frame order (Init's FrameOrder: a frame is its number in  *)
+(* the UMEM), a flush in the pending return's order, which the model does  *)
+(* not fix (Orders): no rule here depends on it.                           *)
 (*                                                                         *)
 (* A driver or kernel defect can post a descriptor naming a frame outside  *)
 (* the receive region (a send frame, SendFrame here): KernelMisdeliver,    *)
@@ -91,6 +92,7 @@ CONSTANTS
     FillSize      \* the fill ring's entries (ROCKETNET_XDP_FILL_RING_SIZE)
 
 ASSUME /\ Frames # {}
+       /\ Frames \subseteq Nat \ {0}
        /\ RingSize \in Nat \ {0}
        /\ StageCap \in Nat \ {0}
        /\ PendCap \in Nat \ {0}
@@ -111,9 +113,9 @@ PeekStagingRoom == TRUE
 RefusedRefilled == FALSE
 
 (* The frame a defective descriptor names: one the model does not own for  *)
-(* receive (a send-region frame).  An untyped model value Frames holds is  *)
-(* never equal to it.                                                      *)
-SendFrame == "send frame"
+(* receive (a send-region frame).  Frames are their numbers in the UMEM    *)
+(* and frame 0 is the send region's first, so no receive frame equals it.  *)
+SendFrame == 0
 
 AllFrames == Frames \cup {SendFrame}
 
@@ -142,6 +144,9 @@ Min(a, b) == IF a <= b THEN a ELSE b
 (* The frames of a set in each order: the flush writes them in one.        *)
 Orders(S) == {s \in [1..Cardinality(S) -> S] : Range(s) = S}
 
+(* The frames in frame order: the server's first fill.                     *)
+FrameOrder == CHOOSE s \in Orders(Frames) : \A i \in 1..Len(s) - 1 : s[i] < s[i + 1]
+
 (* The fill ring's frames the kernel has not taken.                        *)
 Fill == {fq[i] : i \in kused + 1..Len(fq)}
 
@@ -165,7 +170,7 @@ TypeOK ==
     /\ defect \in BOOLEAN
 
 Init ==
-    /\ fq \in Orders(Frames)
+    /\ fq = FrameOrder
     /\ kcache = 0
     /\ kused = 0
     /\ ring = <<>>

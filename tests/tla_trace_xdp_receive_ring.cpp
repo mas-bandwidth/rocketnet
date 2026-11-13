@@ -14,8 +14,8 @@
 // into the next frame of its fill batch, as a step of its own.
 //
 // The UMEM is six frames: frames 0 and 1 are the send region, frames 2 to 5
-// the receive region, named "f2" to "f5" in the records; a descriptor naming
-// a send frame is "send frame", the model's SendFrame. Each packet the
+// the receive region, named by their numbers 2 to 5 in the records; a
+// descriptor outside the receive region is 0, the model's SendFrame. Each packet the
 // kernel posts is an IPv4 UDP frame the codec takes, so the code stages one
 // packet for every receive frame it reads, as the model does.
 //
@@ -32,7 +32,9 @@
 // and write no record (the model: "a peek of zero is no step", "a
 // reservation of zero is this step not yet taken").
 //
-// The plant (ROCKETNET_XDP_RECEIVE_RING_PLANT in the header) is the
+// The plant (ROCKETNET_XDP_RECEIVE_RING_PLANT in
+// sdk/rocketnet_xdp_receive_pass.h, reached through the socket source the
+// plant build includes) is the
 // reversed witness MCRNXdpReceiveRingBrokenPeekPastStaging: the peek asks
 // for the pending return's room alone. Its effect is a peek that returns
 // more descriptors than the staging buffer has room for; the walk reports it
@@ -41,15 +43,16 @@
 // Release build, as CI's trace check does. No socket, no kernel object, no
 // clock.
 
-#if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_XDP_RECEIVE_RING_PLANT 1
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <string>
 #include <vector>
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_XDP_RECEIVE_RING_PLANT 1
+#include "../sdk/rocketnet_server_socket_linux.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include "tla_trace_record.h"
 
@@ -123,26 +126,22 @@ namespace
         rocketnet_address_t server;
     };
 
-    // a frame the worker holds or hands to the fill ring: only a receive
-    // frame's own address is that frame; an address inside a frame (a
-    // descriptor's, not masked back to its frame) is named as itself, which
-    // no model value matches
+    // a frame the worker holds or hands to the fill ring, by its number in
+    // the UMEM: only a receive frame's own address is that frame. An address
+    // outside the receive region is 0, the model's SendFrame; an address
+    // inside a frame (a descriptor's, not masked back to its frame) is a
+    // negative number below -2, which no model value matches
     std::string ring_frame_name( uint64_t addr )
     {
         if ( addr < RING_REGION_BEGIN || addr >= RING_REGION_END )
         {
-            return tla_string( "send frame" );
+            return tla_int( 0 );
         }
-        char name[32];
         if ( addr % ROCKETNET_XDP_FRAME_SIZE != 0 )
         {
-            snprintf( name, sizeof( name ), "unmasked %d", (int) addr );
+            return tla_int( -2 - (int64_t) addr );
         }
-        else
-        {
-            snprintf( name, sizeof( name ), "f%d", (int) ( addr / ROCKETNET_XDP_FRAME_SIZE ) );
-        }
-        return tla_string( name );
+        return tla_int( (int64_t) ( addr / ROCKETNET_XDP_FRAME_SIZE ) );
     }
 
     // a descriptor on the RX ring names the frame that holds its address
@@ -150,13 +149,13 @@ namespace
     {
         if ( addr < RING_REGION_BEGIN || addr >= RING_REGION_END )
         {
-            return tla_string( "send frame" );
+            return tla_int( 0 );
         }
         return ring_frame_name( addr - addr % ROCKETNET_XDP_FRAME_SIZE );
     }
 
     // the frames the worker holds, a set in the model: a frame held twice
-    // adds a member no model value matches
+    // adds -1, a member no model value matches
     void ring_hold( std::vector<std::string> & pending, uint64_t addr )
     {
         const std::string name = ring_frame_name( addr );
@@ -164,7 +163,7 @@ namespace
         {
             if ( pending[i] == name )
             {
-                pending.push_back( tla_string( "held twice" ) );
+                pending.push_back( tla_int( -1 ) );
                 return;
             }
         }
@@ -467,12 +466,12 @@ static int trace_xdp_receive_ring( uint64_t seed, int steps, const char * out )
     {
         frames.push_back( ring_frame_name( RING_REGION_BEGIN + (uint64_t) i * ROCKETNET_XDP_FRAME_SIZE ) );
     }
-    const std::string definitions = "TraceFrames == " + ring_set( frames ) + "\n";
 
     char constants[256];
-    snprintf( constants, sizeof( constants ), "    Frames <- TraceFrames\n    RingSize = %d\n    StageCap = %d\n    PendCap = %d\n    FillSize = %d\n",
+    snprintf( constants, sizeof( constants ), "    RingSize = %d\n    StageCap = %d\n    PendCap = %d\n    FillSize = %d\n",
               (int) RING_RX_SIZE, (int) RING_STAGE_CAPACITY, (int) RING_FRAMES, (int) w.fill_size );
-    return tla_write_trace( out, "MCTraceXdpReceiveRing", seed, "TraceRNXdpReceiveRing", definitions, constants, records ) ? 0 : 1;
+    const std::string frame_constants = "    Frames = " + ring_set( frames ) + "\n" + constants;
+    return tla_write_trace( out, "MCTraceXdpReceiveRing", seed, "TraceRNXdpReceiveRing", "", frame_constants, records ) ? 0 : 1;
 }
 
 #else // #if defined( __linux__ ) && ROCKETNET_XDP
