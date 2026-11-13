@@ -251,6 +251,33 @@ class Release(unittest.TestCase):
         code, text = run_release(api, version="v1.1.8")
         self.assertEqual(code, 1, text)
 
+    def test_point_release_is_light_a_red_full_job_is_printed_and_does_not_gate(self):
+        # owner, 2026-11-13: point releases have light tests only; a FULL job's red is shown, never hidden
+        api = green_release(FakeApi(), version="v1.1.10")
+        run = ci_run(api)
+        api.jobs[run["id"]].append(job("macos / Release / functional", "failure"))
+        run["conclusion"] = "failure"
+        code, text = run_release(api, version="v1.1.10")
+        self.assertEqual(code, 0, text)
+        self.assertIn("FULL NOT GREEN (does not gate; record it for the next point release): "
+                      "macos / Release / functional: failure", text)
+        self.assertIn("light: judged job by job by its jobs gate", text)
+        api.jobs[run["id"]][0] = job("linux / Debug / unit", "failure")
+        code, text = run_release(api, version="v1.1.10")
+        self.assertEqual(code, 1, text)
+        self.assertIn("RED: linux / Debug / unit: failure", text)
+
+    def test_full_jobs_gate_minor_releases_pre_releases_and_point_releases_before_the_rule(self):
+        for version in ("v1.2.0", "v1.1.10-rc1", "v1.1.9"):
+            api = green_release(FakeApi(), version=version)
+            run = ci_run(api)
+            api.jobs[run["id"]].append(job("macos / Release / functional", "failure"))
+            run["conclusion"] = "failure"
+            code, text = run_release(api, version=version)
+            self.assertEqual(code, 1, version + "\n" + text)
+            self.assertIn("RED: macos / Release / functional: failure", text)
+            self.assertNotIn("FULL NOT GREEN", text)
+
     def test_which_versions_are_point_releases(self):
         for version in ("v1.1.8", "v1.1.9", "v2.0.1"):
             self.assertTrue(rg.is_point_release(version), version)
