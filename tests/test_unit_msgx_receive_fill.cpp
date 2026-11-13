@@ -305,6 +305,62 @@ static void test_rocketnet_msgx_receive_fill_handoff()
     rocketnet_unit_check( hand.ready == 2 && hand.worker == 1 && hand.free == ROCKETNET_MSGX_RECEIVE_NO_BANK );
 }
 
+// the worker's exit after main stopped (rocketnet_server_msgx_receive_worker's
+// tail): the bank it fills and a ready bank main has not claimed are counted
+// stopped
+static uint64_t receive_fill_test_exit( struct receive_fill_test_t * test )
+{
+    uint64_t left = (uint64_t) test->bank_count[test->hand.worker];
+    test->bank_count[test->hand.worker] = 0;
+    if ( test->hand.ready != ROCKETNET_MSGX_RECEIVE_NO_BANK )
+    {
+        left += (uint64_t) test->bank_count[test->hand.ready];
+        test->bank_count[test->hand.ready] = 0;
+    }
+    return left;
+}
+
+// R69: after main stops, an update claims nothing. A bank ready at the stop,
+// or published by a round that was under way, stays the worker's and is
+// counted stopped at its exit; claimed, main would hold a tail that no later
+// update reads and no exit counts
+static void test_rocketnet_msgx_receive_fill_stop()
+{
+    for ( int published_after = 0; published_after < 2; published_after++ )
+    {
+        struct receive_fill_test_t * test = receive_fill_test_create( 1, 8 );
+        receive_fill_test_arrive( test, 0, 3, 64 );
+        if ( !published_after )
+        {
+            rocketnet_unit_check( !receive_fill_test_round( test, 4, 8 ) );
+            rocketnet_unit_check( test->hand.ready != ROCKETNET_MSGX_RECEIVE_NO_BANK );
+        }
+
+        // main stops: its own bank is empty, nothing of its tail to count
+        rocketnet_unit_check( test->bank_count[test->hand.main] == 0 );
+        rocketnet_msgx_receive_stop( &test->hand );
+
+        if ( published_after )
+        {
+            rocketnet_unit_check( !receive_fill_test_round( test, 4, 8 ) );
+            rocketnet_unit_check( test->hand.ready != ROCKETNET_MSGX_RECEIVE_NO_BANK );
+        }
+
+        // the updates main runs until the worker has exited claim nothing
+        const int ready = test->hand.ready;
+        rocketnet_unit_check( !receive_fill_test_claim( test ) );
+        rocketnet_unit_check( !receive_fill_test_claim( test ) );
+        rocketnet_unit_check( test->hand.ready == ready && test->bank_count[ready] == 3 );
+
+        const uint64_t stopped = receive_fill_test_exit( test );
+        rocketnet_unit_check( stopped == 3 );
+        rocketnet_unit_check( test->consumed == 0 );
+        rocketnet_unit_check( receive_fill_test_in_banks( test ) == 0 );
+        rocketnet_unit_check( test->arrived == receive_fill_test_in_kernel( test ) + test->consumed + stopped + test->kernel_dropped );
+        delete test;
+    }
+}
+
 // a bank of 40 and a batch of 32 over a socket of 100: the second read asks
 // for 8, the full bank is handed over, the next bank fills to 40, main has
 // not taken the last, and the drain holds with 20 left in the socket
@@ -539,6 +595,7 @@ static void test_rocketnet_msgx_receive_fill_walk()
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_want );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_error_kinds );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_handoff );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_stop );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_hold );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather_bounded );

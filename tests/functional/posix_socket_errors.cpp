@@ -2399,6 +2399,51 @@ void rocketnet_test_posix_msgx_dual_stack_client_sockets_open()
     rocketnet_server_msgx_destroy( msgx );
 }
 
+// A finish the transport refuses loses that packet, and is counted into
+// SEND_FAILED as the gso transport counts its own
+// (rocketnet_server_gso_send_finish_refused): a pointer that names no slot of
+// the producer bank, and a finish after stop (R69, Emma's C-16 item 2). Read
+// by value through rocketnet_server_msgx_send_failures, which the server
+// folds into SEND_FAILED. No datagram is sent.
+void rocketnet_test_posix_msgx_finish_refused_counted()
+{
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
+    memset( packet_filter, 0x5a, sizeof( packet_filter ) );
+    int status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_msgx_t * msgx = rocketnet_server_msgx_create( NULL, &bind_address, 2, 8, packet_filter, &status );
+    posix_check( msgx != NULL );
+    rocketnet_address_t to;
+    posix_check( rocketnet_address_parse( &to, "127.0.0.1:40003" ) );
+    posix_check( rocketnet_server_msgx_send_failures( msgx ) == 0 );
+
+    // a pointer between two slots: refused, the slot keeps nothing, counted
+    uint64_t packet_id = 0;
+    uint8_t * packet = rocketnet_server_msgx_start_packet( msgx, &to, &packet_id );
+    posix_check( packet != NULL );
+    rocketnet_server_msgx_finish_packet( msgx, packet_id, packet + 1, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    posix_check( rocketnet_server_msgx_send_failures( msgx ) == 1 );
+    rocketnet_server_msgx_abort_packet( msgx, packet_id, packet );
+    posix_check( rocketnet_server_msgx_send_failures( msgx ) == 1 );
+
+    // a packet started before stop and finished after it: refused, counted
+    packet = rocketnet_server_msgx_start_packet( msgx, &to, &packet_id );
+    posix_check( packet != NULL );
+    rocketnet_server_msgx_stop( msgx );
+    rocketnet_server_msgx_finish_packet( msgx, packet_id, packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    posix_check( rocketnet_server_msgx_send_failures( msgx ) == 2 );
+
+    const double stop_deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_msgx_stopped( msgx ) && rocketnet_platform_time() < stop_deadline )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+    posix_check( rocketnet_server_msgx_stopped( msgx ) );
+    posix_check( rocketnet_server_msgx_send_failures( msgx ) == 2 );
+    rocketnet_server_msgx_destroy( msgx );
+}
+
 // The shared socket's receive buffer at the most clients (review E4b, found
 // in review by Emma): the request (rocketnet_server_receive_buffer_request,
 // 25,000,000 at 1000 clients) is past Darwin's limit, which refuses an

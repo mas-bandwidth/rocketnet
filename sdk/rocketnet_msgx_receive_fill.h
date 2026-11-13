@@ -45,6 +45,7 @@ struct rocketnet_msgx_receive_banks_t
     int ready;                      // published, waiting for main, or NO_BANK
     int main;                       // main's view
     int free;                       // nobody's, or NO_BANK
+    bool stopped;                   // main stopped: it claims nothing more (main's alone)
 };
 
 // worker 0, main 1, free 2, none ready
@@ -54,6 +55,17 @@ inline void rocketnet_msgx_receive_banks_init( struct rocketnet_msgx_receive_ban
     banks->main = 1;
     banks->free = 2;
     banks->ready = ROCKETNET_MSGX_RECEIVE_NO_BANK;
+    banks->stopped = false;
+}
+
+// MainStop, main's, at rocketnet_server_msgx_stop: the tail of main's own
+// bank is counted stopped by the caller, and from here main claims nothing.
+// A bank ready now or published later stays the worker's to count at its
+// exit (RNMsgxReceiveFill Exit), so every datagram read is counted once.
+// Only main reads or writes the flag: no lock
+inline void rocketnet_msgx_receive_stop( struct rocketnet_msgx_receive_banks_t * banks )
+{
+    banks->stopped = true;
 }
 
 // RxPublish, under the receive mutex: the worker's bank becomes ready and the
