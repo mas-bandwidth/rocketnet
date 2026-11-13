@@ -76,7 +76,9 @@ do                                                                              
 do                                                                                                              \
 {                                                                                                               \
     rocketnet_counters_assert_conserved( rocketnet_server_transport_counters( server ) );                       \
-    rocketnet_counters_assert_clean( rocketnet_server_transport_counters( server ) );                           \
+    /* a datagram that reached a transport's receive bank after the last update, as a stopping server never */ \
+    /* reads it, is counted by name (ROCKETNET_RECEIVE_DROP_STOPPED): the client's disconnect burst is one */ \
+    rocketnet_counters_assert_clean_except( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED ); \
     rn_native_server_transport_stop_and_destroy( server );                                                               \
 } while(0)
 
