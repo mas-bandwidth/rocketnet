@@ -183,9 +183,12 @@ client receives its token from the backend.
 `rocketnet_create_connect_token` draws the two token keys fresh for each
 token, seals the private block to the server key, signs the signed connect
 data with the backend key, and wipes its copy of the private fields.
-`rocketnet_create_dev_connect_token` writes the same token with the published
-development keys. A backend in another language writes the token format in
-[STANDARD.md](STANDARD.md), as the two example backends below do.
+`rocketnet_create_dev_connect_token` writes the same token, signed with the
+published development backend secret key; it takes every other input from
+the caller: the server addresses, the server public key, the times, the
+client id, the protocol id and the user data. A backend in another language
+writes the token format in [STANDARD.md](STANDARD.md), as the two example
+backends below do.
 
 [examples/backend](../examples/backend/README.md) has two backends that implement the same
 token format: Go ([go/main.go](../examples/backend/go/main.go),

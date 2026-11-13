@@ -138,12 +138,15 @@ status code and the accompanying `ERROR` log line:
        (a) server is running (`rocketnet_server_running(server) == true`) and
        reachable at the address and UDP port named in the token; (b) the
        token's address for the family the client sends on is exactly, port
-       included, the address given to `rocketnet_server_create` for that
-       family (or its environment override): those are the advertised
-       addresses tokens are checked against, not bind addresses. A server
-       created at `0.0.0.0` or at a private address refuses a token that names
-       its public or NAT address, so create the server with the address
-       clients send to and mint tokens for that same address; (c)
+       included, the server's advertised address for that family: the address
+       given to `rocketnet_server_create` (or its environment override), with
+       port `0` replaced by the port the server was given at start. Read it
+       after `rocketnet_server_start` with `rocketnet_server_ipv4_address` /
+       `rocketnet_server_ipv6_address` and mint tokens for that string; these
+       are the addresses tokens are checked against, not bind addresses. A
+       server created at `0.0.0.0` or at a private address refuses a token
+       that names its public or NAT address, so create the server with the
+       address clients send to; (c)
        `packet_filter` bytes match on client and server (a mismatch causes the
        server prefilter to drop incoming packets silently); (d) `protocol_id`
        in the token matches `server_config.protocol_id`; (e) the server public
@@ -152,11 +155,13 @@ status code and the accompanying `ERROR` log line:
        seconds ahead, by the server's token clock: the server checks both
        with its own clock, whatever the client's says.
      - `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`): the client
-       received a cookie, so everything above passed, and its connection
-       requests went unanswered. Check that the server's `backend_public_key`
-       matches the backend key that signed the token: the signature is checked
-       only after the cookie, and a token it refuses is ignored silently. Then
-       check the causes below.
+       accepted a cookie and its connection requests went unanswered. The
+       client cannot check a cookie's authenticity, so this proves nothing on
+       its own; but in a normal exchange the cookie came from the server,
+       which sends one only after every check above has passed. Check that
+       the server's `backend_public_key` matches the backend key that signed
+       the token: the signature is checked only after the cookie, and a token
+       it refuses is ignored silently. Then check the causes below.
      - `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`) or
        `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`): check
        `s.handshakes_dropped_over_budget` in `rocketnet_server_stats_t` (which
