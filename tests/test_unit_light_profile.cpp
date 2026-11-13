@@ -185,8 +185,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
 // (8 bytes a counter block across a 64-byte rounding): the probe's actual=
 // lines are 1469750751 and 15041610 (studio, AppleClang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702175 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993034 )
+// The update in three calls: every server keeps the per-client store its
+// received ack blocks wait in (sdk/rocketnet_ack.h, the deferred apply: a
+// segment of acked ids a client, the pending entries and their ranges) and
+// each ack endpoint the last block it applied in full; the client gains one
+// 64-byte rounding. The probe's actual= lines are 1503911163 and 15041674
+// (studio, AppleClang, Debug, DEV=ON): 34160412 and 64 above.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862587 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993098 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's

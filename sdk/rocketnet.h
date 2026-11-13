@@ -2993,8 +2993,8 @@ ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * serve
 /// one thread, and needs nothing below.
 ///
 /// These three calls are rocketnet_server_update split up, for a game that
-/// wants its game threads to apply the acknowledgements each client's
-/// packets carried: rocketnet_server_update_receive on the main thread, then
+/// wants its game threads to apply the acknowledgements received from each
+/// client: rocketnet_server_update_receive on the main thread, then
 /// rocketnet_server_update_client once for each client index on the game
 /// threads, then rocketnet_server_update_finish on the main thread. The
 /// result is rocketnet_server_update's exactly; a client nobody calls

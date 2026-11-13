@@ -79,6 +79,8 @@ here, and on a row that matches no site. Its syntactic limits still apply.
 | tests/test_unit_channel_dispatch.cpp | schedule_walk | queue_next | Glenn 2026-10-28: index links in the window (the test reads the channel FIFO) |
 | tests/test_channels.cpp | rn_soak_queue_append | queue_next | Glenn 2026-10-28: index links in the window (the soak's copy of the channel FIFO) |
 | sdk/rocketnet_allocator.cpp | rn_span_link | span_next | Glenn 2026-10-28: index links in the window |
+| sdk/rocketnet_ack.cpp | rocketnet_server_acks_apply_queued | next | Glenn 2026-10-28: index links in a fixed, bounded array (each client's received ack blocks chained by entry index through the one pending array, `rocketnet_server_ack_pending_t`; no pointers, no allocation) |
+| sdk/rocketnet_ack.cpp | rocketnet_server_acks_receive_block | next | Glenn 2026-10-28: index links in a fixed, bounded array (the append at a client's tail in the same pending array) |
 
 The audit sees a link written as `x.field = head` and a walk `d = ...field`; it does not see every write through an indexed tail (`descriptors[tail].queue_next = d`), so `rn_span_unlink` and the resend FIFO helpers are recorded here by hand, not enforced. `rn_channel_queue_append` and the soak's `rn_soak_queue_append` (tests/test_channels.cpp) were recorded the same way while their tail store sat in an unbraced `if` body, which the audit does not split from its condition; with every body braced the audit sees both, and they have rows above.
 
