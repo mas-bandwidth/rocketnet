@@ -447,13 +447,30 @@ def moving_clause(clause):
     return True
 
 
+def wrapped(text):
+    """Whether text is one parenthesis: its first ( closes at its last character
+    (`( a ) && ( b )` starts and ends with one, but is not wrapped)."""
+    if not (text.startswith("(") and text.endswith(")")):
+        return False
+    depth = 0
+    for i, c in enumerate(text):
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i == len(text) - 1
+    return False
+
+
 def clauses(span):
     """A check's clauses: its text split at &&, || and commas outside any inner
-    parenthesis or bracket (the span's own outer parenthesis aside), so
-    `value( c, X ) == 1` is one clause."""
+    parenthesis or bracket, so `value( c, X ) == 1` is one clause. A clause
+    that is one parenthesis is split again inside it, so
+    `( X == 0 ) && ( other == 2 )` is the clauses `X == 0` and `other == 2`."""
     text = span.strip()
-    if text.startswith("(") and text.endswith(")"):
-        text = text[1:-1]
+    while wrapped(text):
+        text = text[1:-1].strip()
     parts, depth, start, i = [], 0, 0, 0
     while i < len(text):
         c = text[i]
@@ -471,7 +488,9 @@ def clauses(span):
             start = i + 1
         i += 1
     parts.append(text[start:])
-    return parts
+    if len(parts) == 1:
+        return parts
+    return [clause for part in parts for clause in clauses(part)]
 
 
 def moving_words(spans):
@@ -712,7 +731,7 @@ def self_test():
              + "bool seam_ok( const c_t * c ) { bool valid = true; valid &= c->values[ROCKETNET_COUNTER_BETA] == 1; return valid; }\n"),
         {}, False)
     # the forms that hold whatever the counter is, or only when it never
-    # moved: none observes it (FG-G5, roadmap counter-observed-loose-paths)
+    # moved: none observes it (FG-G5)
     beta_read = "uint64_t beta = c->values[ROCKETNET_COUNTER_BETA];\n    check( beta == 2 );"
     for form in ("check( c->values[ROCKETNET_COUNTER_BETA] >= 0 );",
                  "check( c->values[ROCKETNET_COUNTER_BETA] == 0u );",
@@ -727,8 +746,13 @@ def self_test():
         tree(test_text=both.replace("check( beta == 2 );", "check( beta == 0 );")), {}, True)
     run("read into a name a check reads only as >= 0",
         tree(test_text=both.replace("check( beta == 2 );", "check( beta >= 0 );")), {}, True)
+    run("checked only as never moved, in parentheses beside another clause",
+        tree(test_text=both.replace(beta_read, "check( ( c->values[ROCKETNET_COUNTER_BETA] == 0 ) && ( other == 2 ) );")),
+        {}, True)
     run("still observed: a move checked beside a zero",
         tree(test_text=both.replace("check( beta == 2 );", "check( beta == 2 && other == 0 );")), {}, False)
+    run("still observed: a move in parentheses beside a zero",
+        tree(test_text=both.replace("check( beta == 2 );", "check( ( beta == 2 ) && ( other == 0 ) );")), {}, False)
     run("still observed: nonzero by truth value", tree(test_text=both.replace("check( beta == 2 );", "check( beta );")), {}, False)
     run("still observed: compared with a value before", tree(test_text=both.replace("check( beta == 2 );",
                                                                                      "check( beta == before + 1 );")), {}, False)
