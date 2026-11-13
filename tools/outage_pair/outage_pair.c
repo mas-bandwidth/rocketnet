@@ -6,7 +6,8 @@
     by scripts/outage-pair-real across two network namespaces whose path it
     darkens with netem. Public API only.
 
-        outage_pair server ADDRESS survive|timeout
+        outage_pair server ADDRESS survive SEND_SECONDS
+        outage_pair server ADDRESS timeout
         outage_pair client ADDRESS SERVER_KEY_HEX survive SEND_SECONDS
         outage_pair client ADDRESS SERVER_KEY_HEX timeout
 
@@ -30,7 +31,14 @@
     is CONNECTION_TIMED_OUT; any other end fails.
 
     Every side prints one "outage_pair <side> PASS ..." or "... FAIL ..."
-    line and exits 0 on PASS, 1 on FAIL. Each run is bounded in wall time.
+    line and exits 0 on PASS, 1 on FAIL. Each run is bounded in wall time:
+    the client at SEND_SECONDS + 60 s after it connects, the server at that
+    plus one connection timeout, both from the same SEND_SECONDS (0 for a
+    timeout run). A start or connect refusal prints its own status.
+
+    Unreliable messages are counted and printed, never judged: the contract
+    lets an outage lose them, and the header promises only the reliable
+    stream.
 
     This is a functional test program, not an example. It is built beside
     client and server under ROCKETNET_BUILD_EXAMPLES.
@@ -58,6 +66,14 @@
 #define OUTAGE_PAIR_FRAME_SECONDS ( 1.0 / 60.0 )
 #define OUTAGE_PAIR_CONNECT_SECONDS 30.0
 #define OUTAGE_PAIR_FINISH_SECONDS 60.0
+
+// One bound for both sides, from the one SEND_SECONDS both are given: the
+// client fails when its run outlasts it; the server allows one connection
+// timeout more, the longest it can take to see the client's end.
+static double outage_pair_run_bound( double send_seconds )
+{
+    return send_seconds + OUTAGE_PAIR_FINISH_SECONDS;
+}
 
 #define OUTAGE_PAIR_KIND_RELIABLE 1
 #define OUTAGE_PAIR_KIND_UNRELIABLE 2
@@ -264,7 +280,7 @@ static int server_send( struct rocketnet_server_t * server, enum rocketnet_relia
     return rocketnet_server_finish_message( server, OUTAGE_PAIR_MESSAGE_BYTES ) != 0;
 }
 
-static int run_server( const char * address, int expect_timeout )
+static int run_server( const char * address, int expect_timeout, double send_seconds )
 {
     struct rocketnet_server_config_t config;
 
@@ -278,15 +294,17 @@ static int run_server( const char * address, int expect_timeout )
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &create_status );
-    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
-    {
-        rn_cli_server_stop_and_destroy( server );
-        server = NULL;
-    }
-
     if ( !server )
     {
         printf( "outage_pair server FAIL create: %s\n", rocketnet_status_name( create_status ) );
+        return 1;
+    }
+
+    const enum rocketnet_status_t start_status = rocketnet_server_start( server );
+    if ( start_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "outage_pair server FAIL start: %s\n", rocketnet_status_name( start_status ) );
+        rn_cli_server_stop_and_destroy( server );
         return 1;
     }
 
@@ -413,7 +431,7 @@ static int run_server( const char * address, int expect_timeout )
             break;
         }
 
-        if ( connected && now - connected_at > OUTAGE_PAIR_FINISH_SECONDS + 120.0 )
+        if ( connected && now - connected_at > outage_pair_run_bound( send_seconds ) + OUTAGE_PAIR_TIMEOUT_SECONDS )
         {
             failure = "the run did not finish";
             break;
@@ -554,15 +572,17 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
-    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
-    {
-        rn_cli_client_stop_and_destroy( client, 1000.0 );
-        client = NULL;
-    }
-
     if ( !client )
     {
         printf( "outage_pair client FAIL create: %s\n", rocketnet_status_name( create_status ) );
+        return 1;
+    }
+
+    const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, connect_token );
+    if ( connect_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "outage_pair client FAIL connect: %s\n", rocketnet_status_name( connect_status ) );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
         return 1;
     }
 
@@ -687,7 +707,7 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
             break;
         }
 
-        if ( connected && now - connected_at > send_seconds + OUTAGE_PAIR_FINISH_SECONDS )
+        if ( connected && now - connected_at > outage_pair_run_bound( send_seconds ) )
         {
             failure = "the run did not finish";
             break;
@@ -754,7 +774,8 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
 
 static int usage( void )
 {
-    printf( "usage: outage_pair server ADDRESS survive|timeout\n" );
+    printf( "usage: outage_pair server ADDRESS survive SEND_SECONDS\n" );
+    printf( "       outage_pair server ADDRESS timeout\n" );
     printf( "       outage_pair client ADDRESS SERVER_KEY_HEX survive SEND_SECONDS\n" );
     printf( "       outage_pair client ADDRESS SERVER_KEY_HEX timeout\n" );
     return 2;
@@ -778,15 +799,19 @@ int main( int argc, char ** argv )
         return usage();
     }
 
+    // both sides of a survive run take the same SEND_SECONDS, so their run
+    // bounds come from one number (outage_pair_run_bound)
+
     double send_seconds = 0.0;
-    if ( is_client && survive )
+    if ( survive )
     {
-        if ( argc < 6 )
+        const int at = is_server ? 4 : 5;
+        if ( argc <= at )
         {
             return usage();
         }
 
-        send_seconds = atof( argv[5] );
+        send_seconds = atof( argv[at] );
         if ( send_seconds <= 0.0 )
         {
             return usage();
@@ -799,7 +824,7 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    const int result = is_server ? run_server( argv[2], expect_timeout ) : run_client( argv[2], argv[3], expect_timeout, send_seconds );
+    const int result = is_server ? run_server( argv[2], expect_timeout, send_seconds ) : run_client( argv[2], argv[3], expect_timeout, send_seconds );
 
     rocketnet_term();
 
