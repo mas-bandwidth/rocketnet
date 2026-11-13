@@ -150,6 +150,8 @@ static void queue_range( void * data, int begin, int end )
 
     for ( int i = begin; f->send && i < end; i++ )
     {
+        // game thread start: no can_send_message preflight (that call is a main
+        // thread call); a start with no room returns NULL and is skipped below
         uint8_t * p = rocketnet_server_start_message( f->server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES );
         if ( p )
         {

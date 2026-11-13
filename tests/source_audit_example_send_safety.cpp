@@ -113,6 +113,7 @@ static const manifest_row_t manifest[] = {
     { "examples/stats.c", "c" },
     { "examples/transports.c", "c" },
     { "examples/shutdown.h", "c" },
+    { "examples/thread.h", "c" },
     { "examples/dev_keys.h", "c" },
     { "examples/backend/check_token.cpp", "c" },
     { "examples/backend/README.md", "md" },
@@ -235,6 +236,17 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
             if ( contains( lines[j], preflight.c_str() ) )
             {
                 has_preflight = true;
+            }
+        }
+        // a start made from a game thread has no preflight: rocketnet_server_can_send_message is a main thread call, and a start with no room returns NULL, which the example checks. The example says so in a comment of this exact form above the start
+        if ( !has_preflight && side == "server" )
+        {
+            for ( size_t j = i > 16 ? i - 16 : 0; j < i; j++ )
+            {
+                if ( contains( lines[j], "game thread start: no can_send_message preflight" ) )
+                {
+                    has_preflight = true;
+                }
             }
         }
         // a negated preflight guard (`if ( !can_send ) goto/return`) just above also counts
