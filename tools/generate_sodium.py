@@ -487,18 +487,20 @@ int _crypto_stream_salsa20_pick_best_implementation(void);
     source = replace_counted(source, '#undef __STDC_WANT_LIB_EXT1__\n', '', 1, 'sodium.c')
     for path in manifest['sources']:
         names = manifest['renames'].get(path, [])
-        # a rename is a #define over the file's text: one whose identifier
-        # the file no longer has would rename nothing, so it is refused
-        for name in names:
-            if not re.search(r'\b' + re.escape(name) + r'\b', files[path]):
-                raise SystemExit(f"rename does not occur in {path}: {name}")
         tag = re.sub(r'\W', '_', path)
         disabled = manifest.get('disabled_features', {}).get(path, [])
-        source += ''.join(f'#pragma push_macro("{name}")\n#undef {name}\n' for name in disabled)
         local_macros.clear()
+        unit = expand(path)
+        # a rename is a #define over the unit's text (the file and the headers
+        # it includes): one whose identifier the unit no longer has would
+        # rename nothing, so it is refused
+        for name in names:
+            if not re.search(r'\b' + re.escape(name) + r'\b', unit):
+                raise SystemExit(f"rename does not occur in {path} or its includes: {name}")
+        source += ''.join(f'#pragma push_macro("{name}")\n#undef {name}\n' for name in disabled)
         source += '\n' + ''.join(f'#define {name} rn_{tag}_{name}\n' for name in names)
         source += '#if defined(__GNUC__) && !defined(__clang__)\n#pragma GCC push_options\n#endif\n'
-        source += expand(path)
+        source += unit
         source += '\n#if defined(__GNUC__) && !defined(__clang__)\n#pragma GCC pop_options\n#endif\n'
         # A C file's local macros must not leak into the next translation
         # unit. Header guards and public constants keep their usual lifetime.
