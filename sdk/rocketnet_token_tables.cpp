@@ -357,7 +357,13 @@ static void rn_token_slot_insert( struct rocketnet_token_table_t * table,
         }
     }
 
+    // precondition: next_ticket starts at 1 and never wraps, so no live slot
+    // is ever given ticket 0, which means unoccupied. A wrap needs 2^64
+    // inserts into one table (about 584 years at 1e9 inserts a second), so
+    // it is asserted, not handled (proofs/tla/RNIndexRing.tla and
+    // RNIndexRingArray.tla bound tickets at MaxTicket and rely on it)
     table->ticket[slot] = table->next_ticket++;
+    rocketnet_assert( table->next_ticket != 0 );
 
     // at most capacity entries in twice that many cells: an empty cell exists
     const bool indexed = rn_token_index_insert( table, slot );
