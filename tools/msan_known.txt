@@ -1,8 +1,10 @@
 # tools/msan_known.txt: the known MemorySanitizer findings for the portable
-# unit suite. A finding is the top frame of one MemorySanitizer warning, in
-# the form the gate prints: function and source location, with a binary-only
-# frame written as `(bin/test)` and a C++ library frame written under
-# `include/c++/`. A warning whose top frame is absent here fails
+# unit suite. A finding is the first frame of one MemorySanitizer warning's
+# stack that has a source location (an interceptor such as bcmp has none, so
+# it never names one), in the form the gate prints: function and source
+# location, with a C++ library frame written under `include/c++/`, or the
+# top frame, written `(bin/test)` when binary-only, for a stack with no
+# source location at all. A warning whose finding is absent here fails
 # `bash tools/run_msan.sh`. The gate passes when the run is clean or every
 # finding is listed.
 #
