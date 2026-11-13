@@ -7345,10 +7345,11 @@ static void rocketnet_test_server_gso_wire_exchange( const char * test_name, con
     }
 
     // a runt and an oversize packet die at the transport's size pass -- one
-    // shorter than a prefilter header, one above the receive ceiling, the
-    // pair covering both bounds of the check that guards the staging memcpy
-    // -- counted, never surfaced (a datagram that holds a prefilter header
-    // but is shorter than a packet goes on to the prefilter, RN-1 t10 rule 2)
+    // shorter than a prefilter header, one above the receive ceiling (the
+    // bound that guards the staging memcpy), the pair covering both bounds
+    // of the size pass -- counted, never surfaced (with no filter set, a
+    // datagram that holds a prefilter header but is shorter than a packet is
+    // surfaced for main's prefilter to judge, RN-1 t10 rule 2)
 
     const uint64_t dropped_before = counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE];
     uint8_t runt[ROCKETNET_PREFILTER_BYTES - 1];
