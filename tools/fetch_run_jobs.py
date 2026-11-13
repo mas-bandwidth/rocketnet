@@ -111,10 +111,8 @@ def server_wait(error, wall):
         except ValueError:
             return SECONDARY_WAIT
     if headers.get("X-RateLimit-Remaining") == "0":
-        try:
-            return max(0, int(headers.get("X-RateLimit-Reset")) - wall())
-        except (TypeError, ValueError):
-            return SECONDARY_WAIT
+        reset = str(headers.get("X-RateLimit-Reset") or "").strip()
+        return max(0, int(reset) - wall()) if reset.isdigit() else SECONDARY_WAIT
     if error.code == 429:
         return SECONDARY_WAIT
     return None
