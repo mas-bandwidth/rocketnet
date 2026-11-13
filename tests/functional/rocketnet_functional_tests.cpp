@@ -13889,6 +13889,9 @@ extern void rocketnet_test_receive_latency_server_io_uring();
 extern void rocketnet_test_receive_latency_client_gso();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_receive_latency_client_portable();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_receive_latency_client_iocp();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 extern void rocketnet_test_receive_latency_client_msgx();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -16097,6 +16100,7 @@ static bool rocketnet_test_a_transport_pin_is_set_and_not_xdp() { return rocketn
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
+static bool rocketnet_test_client_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", "iocp" ); }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 static bool rocketnet_test_server_pin_allows_gso() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "gso" ); }
@@ -16338,6 +16342,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_receive_latency_client_gso", rocketnet_test_receive_latency_client_gso, rocketnet_test_client_pin_allows_gso },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_receive_latency_client_portable", rocketnet_test_receive_latency_client_portable, rocketnet_test_client_pin_allows_portable },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_receive_latency_client_iocp", rocketnet_test_receive_latency_client_iocp, rocketnet_test_client_pin_allows_iocp },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_receive_latency_client_msgx", rocketnet_test_receive_latency_client_msgx, rocketnet_test_client_pin_allows_msgx },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -16935,6 +16942,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_server_pin_allows_gso";
     }
+    if ( predicate == rocketnet_test_client_pin_allows_gso )
+    {
+        return "rocketnet_test_client_pin_allows_gso";
+    }
     if ( predicate == rocketnet_test_server_pin_allows_xdp )
     {
         return "rocketnet_test_server_pin_allows_xdp";
@@ -16962,6 +16973,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_client_pin_allows_auto";
     }
+    if ( predicate == rocketnet_test_client_pin_allows_portable )
+    {
+        return "rocketnet_test_client_pin_allows_portable";
+    }
     if ( predicate == rocketnet_test_a_transport_pin_is_set )
     {
         return "rocketnet_test_a_transport_pin_is_set";
@@ -16987,11 +17002,19 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_server_pin_allows_rio";
     }
+    if ( predicate == rocketnet_test_client_pin_allows_iocp )
+    {
+        return "rocketnet_test_client_pin_allows_iocp";
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     if ( predicate == rocketnet_test_server_pin_allows_msgx )
     {
         return "rocketnet_test_server_pin_allows_msgx";
+    }
+    if ( predicate == rocketnet_test_client_pin_allows_msgx )
+    {
+        return "rocketnet_test_client_pin_allows_msgx";
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     return "runs_here";

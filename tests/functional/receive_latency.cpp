@@ -95,6 +95,7 @@ static const struct receive_latency_row_t receive_latency_rows[] = {
     { "client_portable", "portable", "portable", RECEIVE_LATENCY_CLIENT },
     { "client_gso", "portable", "gso", RECEIVE_LATENCY_CLIENT },
     { "client_msgx", "portable", "msgx", RECEIVE_LATENCY_CLIENT },
+    { "client_iocp", "iocp", "iocp", RECEIVE_LATENCY_CLIENT },
 };
 
 // the phase of each send in the frame
@@ -467,9 +468,11 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
         worst = wait > worst ? wait : worst;
     }
 
+    // wait is in updates; reported in milliseconds at the rate run, updates after
+    const double mean = total > lost ? sum / ( total - lost ) : 0.0;
     char line[256];
-    snprintf( line, sizeof( line ), "receive latency %s: %d messages, %d late, %d lost, wait in updates mean %.3f max %.3f\n", name, total, late, lost,
-              total > lost ? sum / ( total - lost ) : 0.0, worst );
+    snprintf( line, sizeof( line ), "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n",
+              name, total, late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
     printf( "%s", line );
     fflush( stdout );
 
@@ -493,7 +496,9 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     rn_cli_server_stop_and_destroy( server );
 
     receive_latency_check( lost == 0, name, "a message never arrived" );
-    receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, "more messages than the bound waited an extra update" );
+    char too_late[128];
+    snprintf( too_late, sizeof( too_late ), "more messages than the bound waited an extra %.1f ms at %.0f Hz (one update)", 1000.0 / rate, rate );
+    receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, too_late );
     receive_latency_check( client_thread_opens == 0, name, "the clients' update opened session packets the I/O thread passed raw" );
 }
 
@@ -515,6 +520,7 @@ void rocketnet_test_receive_latency_server_io_uring();
 void rocketnet_test_receive_latency_client_portable();
 void rocketnet_test_receive_latency_client_gso();
 void rocketnet_test_receive_latency_client_msgx();
+void rocketnet_test_receive_latency_client_iocp();
 
 void rocketnet_test_receive_latency_server_gso()
 {
@@ -539,4 +545,9 @@ void rocketnet_test_receive_latency_client_gso()
 void rocketnet_test_receive_latency_client_msgx()
 {
     receive_latency_run_named( "client_msgx" );
+}
+
+void rocketnet_test_receive_latency_client_iocp()
+{
+    receive_latency_run_named( "client_iocp" );
 }
