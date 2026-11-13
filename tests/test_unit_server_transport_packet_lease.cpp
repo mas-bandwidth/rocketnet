@@ -413,3 +413,64 @@ static void test_packet_lease_retired_rewritten_entry()
     check( !leases.retired( changed ) );
 }
 REGISTER_UNIT_TEST( test_packet_lease_retired_rewritten_entry );
+
+// mutation gap: me rocketnet_packet_lease.h:245 slot + 2
+// mutation gap: me rocketnet_packet_lease.h:245 & ( Capacity - 0 )
+//
+// retired() probes from the frame's home one slot at a time, wrapping at the
+// table's end, as insert placed the lease. For every home of an eight-entry
+// table, two frames share it: the second lease lands one past the home (at
+// slot 0 for the last home), and after a reset both are found retired. A probe
+// that steps two slots never visits the displaced lease; one masked with
+// Capacity goes to slot 0 from every home but the last, and from the last reads
+// entries[Capacity], past the table (inside the struct, so no sanitizer sees
+// it): either way the displaced lease reads as never leased.
+static void test_packet_lease_retired_finds_a_displaced_lease_at_every_home()
+{
+    typedef rocketnet_packet_leases_t<8> leases_t;
+    static uint8_t frames[64 * 64];
+
+    for ( size_t home = 0; home < 8; ++home )
+    {
+        int found[2] = { -1, -1 };
+        int count = 0;
+        for ( int i = 16; i < (int) sizeof( frames ) && count < 2; i += 16 )
+        {
+            if ( leases_t::hash( frames + i ) == home )
+            {
+                found[count++] = i;
+            }
+        }
+        check( count == 2 );
+
+        leases_t leases{};
+        rocketnet_packet_context_t first{}, second{};
+        first.frame = frames + found[0];
+        first.packet_id = 77;
+        first.sequence = 100;
+        first.payload_capacity = 64;
+        second.frame = frames + found[1];
+        second.packet_id = 78;
+        second.sequence = 101;
+        second.payload_capacity = 32;
+
+        check( leases.insert( first ) );
+        check( leases.insert( second ) );
+
+        const size_t displaced = ( home + 1 ) & 7;
+        check( leases.entries[home].frame.load() == first.frame );
+        check( leases.entries[displaced].frame.load() == second.frame );
+
+        leases.reset();
+
+        check( leases.retired( first ) );
+        const bool displaced_found = leases.retired( second );
+        if ( !displaced_found )
+        {
+            printf( "fault: retired() missed the lease displaced from home %d to slot %d: its probe does not step one slot at a time within the table\n",
+                    (int) home, (int) displaced );
+        }
+        check( displaced_found );
+    }
+}
+REGISTER_UNIT_TEST( test_packet_lease_retired_finds_a_displaced_lease_at_every_home );

@@ -757,6 +757,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # swap in a fake staged transport with a fixed staging.
     set(ROCKETNET_UNIT_TRANSPORT_STOP_SPREAD_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_server_stop_spread.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_STOP_SPREAD_SOURCE}")
+    # Included by the same translation unit: the st-ring mutation-gap cases.
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_gaps_st_ring_transport.cpp")
     # The RIO fake-kernel overflow fixture is development instrumentation, not
     # a production-behavior unit case. A DEV=0 suite keeps every real unit case
     # and does not compile or link this seam.
