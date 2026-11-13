@@ -222,6 +222,8 @@ static uint8_t g_received[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
 static void max_payload_seal_and_deliver( struct max_payload_pair_t * pair, int payload_bytes )
 {
     uint8_t * wire_start = g_frame + ROCKETNET_FRAME_WIRE_OFFSET;
+    static uint8_t sent[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    memcpy( sent, g_frame + ROCKETNET_FRAME_PAYLOAD_OFFSET, (size_t) payload_bytes );
     uint64_t sequence = 0;
     check( rocketnet_client_protocol_start_payload( &pair->client, &sequence ) );
 
@@ -231,16 +233,15 @@ static void max_payload_seal_and_deliver( struct max_payload_pair_t * pair, int 
     check( wire_bytes <= ROCKETNET_SEND_BUDGET );
     check( wire_start[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
 
-    // the sealed copy is decrypted in place by the receive path; keep the
-    // plaintext to compare against
+    // the sealed copy is decrypted in place by the receive path; the
+    // plaintext kept in sent above is what the far side must open
 
-    static uint8_t sent[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     int received_bytes = 0;
     static uint8_t wire_copy[ROCKETNET_RECEIVE_CEILING];
     memcpy( wire_copy, wire_start, (size_t) wire_bytes );
     check( max_payload_to_server( pair, wire_copy, wire_bytes, g_received, &received_bytes ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
     check( received_bytes == payload_bytes );
-    (void) sent;
+    check( memcmp( g_received, sent, (size_t) payload_bytes ) == 0 );
 }
 
 // ---------------------------------------------------------------------------
@@ -754,6 +755,7 @@ static void test_seal_payload_frame_refuses_sizes_outside_one_to_max()
     struct rocketnet_ack_endpoint_t * endpoint_before = (struct rocketnet_ack_endpoint_t *) malloc( sizeof( struct rocketnet_ack_endpoint_t ) );
     struct rocketnet_counters_t * counters_before = (struct rocketnet_counters_t *) malloc( sizeof( struct rocketnet_counters_t ) );
     check( client_before && server_before && mapping_before && endpoint_before && counters_before );
+    static uint8_t frame_before[ROCKETNET_FRAME_STRIDE];
 
     for ( int i = 0; i < num_cases; i++ )
     {
@@ -769,6 +771,7 @@ static void test_seal_payload_frame_refuses_sizes_outside_one_to_max()
         }
         memset( g_frame, 0xEE, sizeof( g_frame ) );
         max_payload_fill( g_frame + ROCKETNET_FRAME_PAYLOAD_OFFSET, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 31 );
+        memcpy( frame_before, g_frame, sizeof( g_frame ) );
         memcpy( client_before, &pair->client, sizeof( pair->client ) );
         memcpy( counters_before, &pair->client_counters, sizeof( pair->client_counters ) );
 
@@ -776,10 +779,7 @@ static void test_seal_payload_frame_refuses_sizes_outside_one_to_max()
                                                              refused_sizes[i], pair->time ) == 0 );
         check( max_payload_same_bytes( client_before, &pair->client, sizeof( pair->client ) ) );
         check( max_payload_same_bytes( counters_before, &pair->client_counters, sizeof( pair->client_counters ) ) );
-        for ( int j = 0; j < ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET; j++ )
-        {
-            check( wire_start[j] == 0xEE );
-        }
+        check( memcmp( frame_before, g_frame, sizeof( g_frame ) ) == 0 );
 
         // server to client
 
@@ -791,6 +791,7 @@ static void test_seal_payload_frame_refuses_sizes_outside_one_to_max()
         }
         memset( g_frame, 0xEE, sizeof( g_frame ) );
         max_payload_fill( g_frame + ROCKETNET_FRAME_PAYLOAD_OFFSET, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 37 );
+        memcpy( frame_before, g_frame, sizeof( g_frame ) );
         memcpy( server_before, &pair->server, sizeof( pair->server ) );
         memcpy( mapping_before, mapping, sizeof( *mapping ) );
         memcpy( endpoint_before, endpoint, sizeof( *endpoint ) );
@@ -802,10 +803,7 @@ static void test_seal_payload_frame_refuses_sizes_outside_one_to_max()
         check( max_payload_same_bytes( mapping_before, mapping, sizeof( *mapping ) ) );
         check( max_payload_same_bytes( endpoint_before, endpoint, sizeof( *endpoint ) ) );
         check( max_payload_same_bytes( counters_before, &pair->server_counters, sizeof( pair->server_counters ) ) );
-        for ( int j = 0; j < ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET; j++ )
-        {
-            check( wire_start[j] == 0xEE );
-        }
+        check( memcmp( frame_before, g_frame, sizeof( g_frame ) ) == 0 );
     }
 
     // the maximum seals and opens whole on the far side
