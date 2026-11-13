@@ -636,6 +636,26 @@ if(ROCKETNET_BUILD_TESTS)
     target_link_libraries(test_sodium PRIVATE rocketnet)
     rocketnet_use_sodium(test_sodium)
     rocketnet_warning_floor(test_sodium)
+    # The vendored pair's runtime dispatch: the picks are the best the CPU
+    # runs, and every implementation it contains agrees with the reference.
+    # It compiles sodium.c into itself (tests/sodium_dispatch_seam.c) and links
+    # no library, so the bundled pair only.
+    if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
+        add_executable(test_sodium_dispatch tests/test_sodium_dispatch.cpp tests/sodium_dispatch_seam.c)
+        rocketnet_use_sodium(test_sodium_dispatch)
+        rocketnet_warning_floor(test_sodium_dispatch)
+        # Secret tracking (sodium/ARM64-CONSTANT-TIME.md): the pair with
+        # ROCKETNET_SODIUM_SECRET_TRACKING, run under valgrind memcheck by the
+        # nightly row; built wherever the valgrind headers are.
+        include(CheckIncludeFile)
+        check_include_file("valgrind/memcheck.h" ROCKETNET_HAVE_VALGRIND_MEMCHECK_H)
+        if(ROCKETNET_HAVE_VALGRIND_MEMCHECK_H)
+            add_executable(test_sodium_secrets tests/test_sodium_secrets.c tests/sodium_dispatch_seam.c)
+            target_compile_definitions(test_sodium_secrets PRIVATE ROCKETNET_SODIUM_SECRET_TRACKING=1)
+            rocketnet_use_sodium(test_sodium_secrets)
+            rocketnet_warning_floor(test_sodium_secrets)
+        endif()
+    endif()
     # Isolated parity oracle only: never installed or linked into the SDK.
     add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)
     set_target_properties(rocketnet_sodium_oracle PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
@@ -974,6 +994,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         COMMENT "Embedding the unit test fixtures"
         VERBATIM)
     target_sources(test PRIVATE "${ROCKETNET_TEST_FIXTURES_SOURCE}")
+    # test_sodium_dispatch runs the Wycheproof AEAD vectors under every
+    # implementation set, from the same embedded copy.
+    if(TARGET test_sodium_dispatch)
+        target_sources(test_sodium_dispatch PRIVATE "${ROCKETNET_TEST_FIXTURES_SOURCE}")
+    endif()
     # The one writer of standard/vectors/connect_token_v1.json: ./bin/connect_token_vectors
     # <path> mints the vectors from the generator the unit case checks
     # (tools/connect_token_vectors/main.cpp) and writes only the path given.

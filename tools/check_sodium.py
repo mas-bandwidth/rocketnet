@@ -52,6 +52,14 @@ def main():
         api.append(functions)
     print('vendor:', api[0]['sodium_version_string']().decode(),
           'reference:', api[1]['sodium_version_string']().decode())
+    # the vendor's selection report (sodium/README.md, "AEAD dispatch and AArch64")
+    report = []
+    for name in ['aead_chacha20poly1305_ietf', 'chacha20', 'poly1305']:
+        fn = getattr(libraries[0], f'rocketnet_sodium_sodium_runtime_{name}_implementation')
+        fn.argtypes = []
+        fn.restype = c.c_char_p
+        report.append(f'{name}={fn().decode()}')
+    print('vendor picks:', ' '.join(report))
 
     def call(side, name, *values):
         return api[side][name](*values)
@@ -85,7 +93,8 @@ def main():
         assert pairs[0] == pairs[1], family + ' keypair'
         keypairs[family] = pairs[0]
 
-    for length in [0, 1, 15, 16, 31, 32, 63, 64, 65, 127, 128, 129, 255, 1024, 4096]:
+    for length in [0, 1, 15, 16, 31, 32, 63, 64, 65, 127, 128, 129, 191, 192, 193, 255, 256, 257,
+                   511, 512, 513, 1024, 1200, 1400, 4096]:
         message = bytes((i * 37 + 11) % 256 for i in range(length))
         same('crypto_hash_sha512', 64, message, length)
         same('crypto_shorthash', 8, message, length, seed[:16])
@@ -109,8 +118,15 @@ def main():
                 assert call(side, 'crypto_aead_chacha20poly1305_ietf_decrypt', plain, c.byref(written),
                             None, encrypted, len(encrypted), associated, len(associated), nonce, seed) == 0
                 assert written.value == length and plain.raw[:length] == message
-                assert call(side, 'crypto_aead_chacha20poly1305_ietf_decrypt', plain, c.byref(written),
+                # a forgery writes no plaintext: the reference (and the
+                # vendor's composed AEAD) zero the output, the vendor's one
+                # pass leaves it as it was (sodium/local/dispatch.h.in)
+                poisoned = c.create_string_buffer(b'\xa5' * max(1, length), max(1, length))
+                assert call(side, 'crypto_aead_chacha20poly1305_ietf_decrypt', poisoned, c.byref(written),
                             None, corrupt, len(corrupt), associated, len(associated), nonce, seed) == -1
+                left = poisoned.raw[:length]
+                allowed = [bytes(length)] + ([b'\xa5' * length] if side == 0 else [])
+                assert written.value == 0 and left in allowed
         # Sealed boxes intentionally use fresh ephemeral keys. Compare by
         # opening each side's ciphertext on the other implementation.
         pk, sk = keypairs['box']

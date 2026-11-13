@@ -119,6 +119,18 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
 // into out_session_nonce (which those types require), and opens. Returns the
 // opened data length, or -1 on refusal. Refusal reasons are deliberately not
 // distinguished here; the reading order counts them at its own steps.
+//
+// out_data is defined only when the call returns the length. The AEAD checks
+// the tag before it writes any plaintext (sodium/local/dispatch.h.in): on a
+// refusal out_data holds zeros or what it held before, never plaintext.
+// out_data and the sealed bytes are exactly in place or apart, never partly
+// overlapping (asserted in debug builds). A DEV build with the bundled pair
+// poisons an apart out_data before the open and checks a refusal left only
+// poison or zeros; every DEV build then fills a refused open's bytes with
+// ROCKETNET_OPEN_POISON_BYTE, so a caller that read them would carry a
+// pattern the tests look for.
+
+#define ROCKETNET_OPEN_POISON_BYTE 0xDB
 
 int rocketnet_open_sealed_packet( uint8_t * out_data,
                                   uint8_t * out_session_nonce,

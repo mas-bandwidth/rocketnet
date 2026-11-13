@@ -418,6 +418,51 @@ message-read-reachability: proof_message_read.c
 xdp-free-list-reachability: proof_xdp_free_list.c
 	$(call run_reachability,xdp-free-list,5,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_xdp_free_list.c,,xdp-free-list reachability control)
 
+# The AArch64 Poly1305 limb arithmetic (sodium/local/mul64.h.in, included by
+# the harness; ARM64-CONSTANT-TIME.md beside it):
+#   poly1305-mul64     proved: proof_poly1305_mul64.c, unwind 17, every
+#                      input, no bound. harness_step: a block step never
+#                      wraps (every h0, h1, h2 <= 4, block, hibit, clamped
+#                      r) and leaves h2 <= 4. harness_finish: the tag is
+#                      ((h mod p) + pad) mod 2^128 for every h with h2 <= 4;
+#                      it drops --unsigned-overflow-check because the tag
+#                      wraps mod 2^128 by definition and its assertions state
+#                      the wrapped value.
+#   poly1305-mul64-congruence  the step's congruence mod p as an equality of
+#                      256-bit products; on no list (INVENTORY.md has the
+#                      measurement).
+CBMC_MUL64_FINISH_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
+                          --div-by-zero-check --unwinding-assertions
+CBMC_MUL64_TIMEOUT ?= 1800
+
+.PHONY: poly1305-mul64 poly1305-mul64-reachability poly1305-mul64-congruence
+
+all: poly1305-mul64
+
+controls: poly1305-mul64-reachability
+
+poly1305-mul64: proof_poly1305_mul64.c ../../sodium/local/mul64.h.in
+	@echo "poly1305-mul64 bound none: every accumulator with h2 <= 4, every block, every clamped r"
+	$(CBMC) $(CBMC_FLAGS) --unwind 17 --function harness_step proof_poly1305_mul64.c
+	$(CBMC) $(CBMC_MUL64_FINISH_FLAGS) --unwind 17 --function harness_finish proof_poly1305_mul64.c
+
+poly1305-mul64-reachability: proof_poly1305_mul64.c ../../sodium/local/mul64.h.in
+	$(call run_reachability,poly1305-mul64-step,17,-DREACHABILITY_CONTROL=1 --function harness_step proof_poly1305_mul64.c,,poly1305-mul64-step reachability control)
+	@work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
+	status=0; \
+	$(CBMC) $(CBMC_MUL64_FINISH_FLAGS) --unwind 17 -DREACHABILITY_CONTROL=1 --function harness_finish proof_poly1305_mul64.c > "$$work/out.log" 2>&1 || status=$$?; \
+	cat "$$work/out.log"; \
+	failures=$$(grep -c ': FAILURE$$' "$$work/out.log" || true); \
+	if [ $$status -eq 10 ] && [ $$failures -eq 1 ] && grep -q 'poly1305-mul64-finish reachability control' "$$work/out.log"; then \
+	  echo "poly1305-mul64-finish-reachability EXPECTED FAILURE"; \
+	else \
+	  echo "poly1305-mul64-finish-reachability HOLD: expected exactly one named failure (exit=$$status failures=$$failures)"; exit 1; \
+	fi
+
+poly1305-mul64-congruence: proof_poly1305_mul64.c ../../sodium/local/mul64.h.in
+	$(CURDIR)/run_with_timeout.sh $(CBMC_MUL64_TIMEOUT) $(CBMC) --unwinding-assertions --unwind 17 \
+	    -DCONGRUENCE=1 --function harness_congruence proof_poly1305_mul64.c
+
 clean:
 	rm -f *.goto *.output
 

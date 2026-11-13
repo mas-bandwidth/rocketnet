@@ -1,0 +1,121 @@
+
+/* ===== rocketnet sodium/local/dispatch.c.in ===== */
+/* The AEAD dispatch, the forced fallback and the selection report
+ * (sodium/README.md, "AEAD dispatch and AArch64"). Appended to the generated
+ * source by tools/generate_sodium.py, after every implementation, so it
+ * reads the pick pointers of the ChaCha20 and Poly1305 sections. */
+
+struct crypto_aead_chacha20poly1305_ietf_implementation
+    crypto_aead_chacha20poly1305_ietf_composed_implementation = {
+        SODIUM_C99(.name =) "composed",
+        SODIUM_C99(.encrypt_detached =) _ietf_encrypt_detached_composed,
+        SODIUM_C99(.decrypt_detached =) _ietf_decrypt_detached_composed
+    };
+
+static const crypto_aead_chacha20poly1305_ietf_implementation *implementation__aead =
+    &crypto_aead_chacha20poly1305_ietf_composed_implementation;
+
+int
+sodium_runtime_forced_portable(void)
+{
+#if defined(ROCKETNET_SODIUM_PORTABLE) && ROCKETNET_SODIUM_PORTABLE
+    return 1;
+#elif defined(_MSC_VER)
+    size_t bytes = 0;
+
+    return getenv_s(&bytes, NULL, 0, "ROCKETNET_SODIUM_PORTABLE") == 0 && bytes > 0;
+#else
+    return getenv("ROCKETNET_SODIUM_PORTABLE") != NULL;
+#endif
+}
+
+int
+_crypto_aead_chacha20poly1305_ietf_pick_best_implementation(void)
+{
+    implementation__aead = &crypto_aead_chacha20poly1305_ietf_composed_implementation;
+    if (sodium_runtime_forced_portable()) {
+        return 0;
+    }
+#if defined(SODIUM_ROCKETNET_ARM64)
+    if (sodium_runtime_has_neon()) {
+        implementation__aead = &crypto_aead_chacha20poly1305_ietf_neon_fused_implementation;
+        return 0;
+    }
+#endif
+    return 0;
+}
+
+int
+crypto_aead_chacha20poly1305_ietf_encrypt_detached(unsigned char *c,
+                                                   unsigned char *mac,
+                                                   unsigned long long *maclen_p,
+                                                   const unsigned char *m,
+                                                   unsigned long long mlen,
+                                                   const unsigned char *ad,
+                                                   unsigned long long adlen,
+                                                   const unsigned char *nsec,
+                                                   const unsigned char *npub,
+                                                   const unsigned char *k)
+{
+    return implementation__aead->encrypt_detached(c, mac, maclen_p, m, mlen,
+                                                  ad, adlen, nsec, npub, k);
+}
+
+int
+crypto_aead_chacha20poly1305_ietf_decrypt_detached(unsigned char *m,
+                                                   unsigned char *nsec,
+                                                   const unsigned char *c,
+                                                   unsigned long long clen,
+                                                   const unsigned char *mac,
+                                                   const unsigned char *ad,
+                                                   unsigned long long adlen,
+                                                   const unsigned char *npub,
+                                                   const unsigned char *k)
+{
+    return implementation__aead->decrypt_detached(m, nsec, c, clen, mac,
+                                                  ad, adlen, npub, k);
+}
+
+const char *
+sodium_runtime_chacha20_implementation(void)
+{
+#if defined(SODIUM_ROCKETNET_ARM64)
+    if (implementation__cc20 == &crypto_stream_chacha20_neon_implementation) {
+        return "neon";
+    }
+#endif
+#if defined(HAVE_AVX2INTRIN_H) && defined(HAVE_EMMINTRIN_H) && \
+    defined(HAVE_TMMINTRIN_H) && defined(HAVE_SMMINTRIN_H)
+    if (implementation__cc20 == &crypto_stream_chacha20_dolbeau_avx2_implementation) {
+        return "avx2";
+    }
+#endif
+#if defined(HAVE_EMMINTRIN_H) && defined(HAVE_TMMINTRIN_H)
+    if (implementation__cc20 == &crypto_stream_chacha20_dolbeau_ssse3_implementation) {
+        return "ssse3";
+    }
+#endif
+    return "ref";
+}
+
+const char *
+sodium_runtime_poly1305_implementation(void)
+{
+#if defined(SODIUM_ROCKETNET_ARM64)
+    if (implementation__poly == &crypto_onetimeauth_poly1305_mul64_implementation) {
+        return "mul64";
+    }
+#endif
+#if defined(HAVE_TI_MODE) && defined(HAVE_EMMINTRIN_H)
+    if (implementation__poly == &crypto_onetimeauth_poly1305_sse2_implementation) {
+        return "sse2";
+    }
+#endif
+    return "donna";
+}
+
+const char *
+sodium_runtime_aead_chacha20poly1305_ietf_implementation(void)
+{
+    return implementation__aead->name;
+}

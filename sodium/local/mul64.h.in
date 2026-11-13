@@ -1,0 +1,76 @@
+
+/* ===== rocketnet sodium/local/mul64.h.in ===== */
+/* Poly1305 (RFC 8439 2.5) with 64-bit limbs: the block step and the final
+ * reduction, shared by the mul64 Poly1305 and the one-pass AEAD in
+ * local/arm64.c.in, which follows it in the generated source. Kept apart, with
+ * no vector code, so proofs/cbmc/proof_poly1305_mul64.c includes this file
+ * itself. The including file supplies uint128_t, load64_le and store64_le. */
+
+#if defined(SODIUM_ROCKETNET_ARM64)
+
+/* h = (h + m + hibit * 2^128) * r mod 2^130 - 5, partly reduced.
+ * In: h2 <= 4. The sum's top limb is at most 4 + 1 + 1 = 6.
+ * r1 has its low two bits clear, so h1 * r1 * 2^128 = h1 * (r1 / 4) * 2^130
+ * = 5 * (r1 / 4) * h1 = s1 * h1 (mod p), and likewise h2 * r1 * 2^192 =
+ * s1 * h2 * 2^64. Out: h2 <= 4, so h < 2^130 + 2^128 < 2p.
+ * The bounds are proved for every input by proofs/cbmc/proof_poly1305_mul64.c. */
+#define RN_POLY_STEP(h0, h1, h2, r0, r1, s1, m, hibit)                               \
+    do {                                                                             \
+        uint128_t      t_;                                                           \
+        uint128_t      d0_;                                                          \
+        uint128_t      d1_;                                                          \
+        uint64_t       d2_;                                                          \
+        uint64_t       c_;                                                           \
+                                                                                     \
+        t_ = (uint128_t) (h0) + load64_le(m);                                        \
+        h0 = (uint64_t) t_;                                                          \
+        t_ = (uint128_t) (h1) + load64_le((m) + 8) + (uint64_t) (t_ >> 64);          \
+        h1 = (uint64_t) t_;                                                          \
+        h2 += (uint64_t) (t_ >> 64) + (hibit);                                       \
+        d0_ = (uint128_t) (h0) * (r0) + (uint128_t) (h1) * (s1);                     \
+        d1_ = (uint128_t) (h0) * (r1) + (uint128_t) (h1) * (r0) +                    \
+              (uint128_t) ((h2) * (s1));                                             \
+        d2_ = (h2) * (r0);                                                           \
+        h0 = (uint64_t) d0_;                                                         \
+        d1_ += (uint64_t) (d0_ >> 64);                                               \
+        h1 = (uint64_t) d1_;                                                         \
+        d2_ += (uint64_t) (d1_ >> 64);                                               \
+        /* fold bits 130 and up: c * 2^130 = 5c (mod p) */                           \
+        h2 = d2_ & 3;                                                                \
+        c_ = (d2_ & ~(uint64_t) 3) + (d2_ >> 2);                                     \
+        t_ = (uint128_t) (h0) + c_;                                                  \
+        h0 = (uint64_t) t_;                                                          \
+        t_ = (uint128_t) (h1) + (uint64_t) (t_ >> 64);                               \
+        h1 = (uint64_t) t_;                                                          \
+        h2 += (uint64_t) (t_ >> 64);                                                 \
+    } while (0)
+
+/* Final reduction and tag: h < 2p, so p is subtracted once when h >= p by
+ * computing g = h + 5 and keeping g when it reaches 2^130 (a mask, no
+ * branch); then the pad is added mod 2^128. */
+static void
+rn_mul64_finish(uint64_t h0, uint64_t h1, uint64_t h2, uint64_t pad0,
+                uint64_t pad1, unsigned char out[16])
+{
+    uint128_t      t;
+    uint64_t       g0;
+    uint64_t       g1;
+    uint64_t       g2;
+    uint64_t       mask;
+
+    t = (uint128_t) h0 + 5;
+    g0 = (uint64_t) t;
+    t = (uint128_t) h1 + (uint64_t) (t >> 64);
+    g1 = (uint64_t) t;
+    g2 = h2 + (uint64_t) (t >> 64);
+    mask = (uint64_t) 0 - (g2 >> 2);
+    h0 = (h0 & ~mask) | (g0 & mask);
+    h1 = (h1 & ~mask) | (g1 & mask);
+    t = (uint128_t) h0 + pad0;
+    h0 = (uint64_t) t;
+    h1 = h1 + pad1 + (uint64_t) (t >> 64);
+    store64_le(out, h0);
+    store64_le(out + 8, h1);
+}
+
+#endif /* SODIUM_ROCKETNET_ARM64 */

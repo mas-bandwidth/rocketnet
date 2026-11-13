@@ -57,6 +57,18 @@
 #                           an AddressSanitizer build: the matrix runs each
 #                           cell once, and a one-in-fifty flake needs fifty.
 #
+#   sodium AEAD sweep and   bin/test_sodium_dispatch --sweep-full and --diff
+#   differential            10000000 on macOS arm64 and Linux x64: every
+#                           length, associated data length and alignment, and
+#                           ten million random cases, per implementation set,
+#                           against the portable reference. Minutes per set,
+#                           over the per-commit budget; per commit runs a
+#                           subset.
+#
+#   linux-arm64 / sodium    bin/test_sodium_secrets under valgrind memcheck
+#   secret tracking         (sodium/ARM64-CONSTANT-TIME.md); waits on a Linux
+#                           arm64 runner (ROCKETNET_LINUX_ARM64_RUNNER).
+#
 #   macos / transport       every cell of ci.yml's macOS transport family
 #   cells x50               matrix fifty times in a row on the fleet's
 #                           Apple-silicon runner, for the same reason.
@@ -516,6 +528,91 @@ jobs:
   # test_transport_dual_stack_ipv4_client), with the matrix's pins and pass
   # rule. One CELL line per case; a failure is reported with its first log,
   # never retried. docs/runs/macos-transport-cells-50x.md records a run.
+
+  # THE SODIUM AEAD SWEEP AND DIFFERENTIAL (sodium/README.md, "AEAD dispatch
+  # and AArch64"). bin/test_sodium_dispatch --sweep-full: every message
+  # length 0-2000, every associated data length 0-64, every alignment 0-15 of
+  # the message and of the associated data, in place and out of place,
+  # 66,593,280 cases per implementation set against the portable reference;
+  # per commit the same test runs a subset. --diff 10000000 <seed>: ten
+  # million random cases per set (keys, nonces, lengths, alignments, in place
+  # or not), each also forged and refused; the seed is the run number, printed,
+  # so a red night replays. On the arm64 runner the sets include the NEON
+  # ChaCha20, the mul64 Poly1305 and the one-pass AEAD; on x64 the SSSE3,
+  # AVX2 and SSE2 ones.
+
+  sodium-aead-sweep:
+    name: ${{ matrix.os }} / sodium AEAD sweep and differential
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        os: [macos-arm64, linux-x64]
+        include:
+          - { os: macos-arm64, runner: '["self-hosted","macOS","ARM64","fleet"]' }
+          - { os: linux-x64, runner: '["self-hosted","Linux","X64","fleet"]' }
+    concurrency:
+      group: nightly-sodium-aead-sweep-${{ matrix.os }}-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Build the dispatch test (Release)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target test_sodium_dispatch --parallel
+
+      - name: Every length, associated data length and alignment
+        run: ./bin/test_sodium_dispatch --sweep-full
+
+      - name: Ten million random cases per set
+        run: ./bin/test_sodium_dispatch --diff 10000000 "${{ github.run_number }}"
+
+  # SECRET TRACKING ON LINUX ARM64 (sodium/ARM64-CONSTANT-TIME.md, "By tool"):
+  # bin/test_sodium_secrets under valgrind memcheck, every implementation set
+  # the CPU runs, the secrets marked undefined, so a branch or memory index on
+  # a secret fails the job. valgrind does not run on macOS arm64, so this needs
+  # a Linux arm64 runner (Graviton): the fleet has none today. The job runs
+  # once the repository variable ROCKETNET_LINUX_ARM64_RUNNER is 1, which is
+  # set when that runner is registered with these labels.
+
+  sodium-secrets-linux-arm64:
+    name: linux-arm64 / sodium secret tracking
+    if: vars.ROCKETNET_LINUX_ARM64_RUNNER == '1'
+    runs-on: [self-hosted, Linux, ARM64, fleet]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-sodium-secrets-linux-arm64-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Build the secret-tracking test (gcc, then clang)
+        run: |
+          valgrind --version
+          cmake -B build-gcc -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/bin-gcc"
+          cmake --build build-gcc --target test_sodium_secrets --parallel
+          cmake -B build-clang -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/bin-clang"
+          cmake --build build-clang --target test_sodium_secrets --parallel
+
+      - name: Secrets never decide a branch or an address
+        run: |
+          valgrind --error-exitcode=1 --track-origins=yes ./bin-gcc/test_sodium_secrets
+          valgrind --error-exitcode=1 --track-origins=yes ./bin-clang/test_sodium_secrets
 
   macos-transport-cells-repeat:
     name: macos / transport cells x50

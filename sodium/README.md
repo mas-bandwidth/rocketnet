@@ -86,6 +86,70 @@ None changes cryptographic arithmetic; `test_sodium` and the oracle check
 below cover the result. Upstream's own `#pragma GCC diagnostic ignored
 "-Wlong-long"` lines in its public headers are kept as written.
 
+## CPU feature detection
+
+ChaCha20 (AVX2, SSSE3, reference) and BLAKE2b (AVX2, SSE4.1, SSSE3,
+reference) pick their implementation at `sodium_init` from the CPU features
+the baseline's `_sodium_runtime_intel_cpu_features` detects, unchanged from
+upstream. AVX, and AVX2 with it, counts only when XCR0 shows the OS saves
+SSE and YMM state, and the pair reads XCR0 only where upstream does without
+a configure step (`_xgetbv` on MSVC, or `HAVE_AVX_ASM`, which this pair
+leaves off): on GCC and Clang x86 AVX2 is compiled in and not chosen.
+`bin/test_sodium_dispatch` expects exactly that (`sodium_dispatch_built("cpu",
+"avx2")` in `tests/sodium_dispatch_seam.c` mirrors the XCR0 read).
+
+## AEAD dispatch and AArch64
+
+Three in-repo inputs, written for this bundle from RFC 8439 and pinned by
+SHA-256 under `local_sha256` in `manifest.json`, join the generated pair
+(`LOCAL_HEADER` and `LOCAL_SOURCES` in `tools/generate_sodium.py`):
+
+- `local/dispatch.h.in`, appended to `sodium.h`: the ChaCha20-Poly1305 IETF
+  AEAD as one implementation struct beside the ChaCha20 and Poly1305 ones
+  (`crypto_aead_chacha20poly1305_ietf_implementation`: a name and the two
+  public detached functions), the forced fallback and the selection report.
+- `local/arm64.c.in`: on AArch64 little endian with 128-bit integers (GCC
+  and Clang, outside Windows: Windows on ARM64, MSVC or clang-cl, keeps the
+  portable code until a CI leg runs it), ChaCha20 with Advanced SIMD (`neon`:
+  four blocks per vector set, eight in flight past 256 bytes, a scalar block
+  for a tail of 64 bytes or less), Poly1305 with 64-bit limbs (`mul64`, its
+  limb step and final reduction in `local/mul64.h.in`, proved by
+  `proofs/cbmc/proof_poly1305_mul64.c`), and the AEAD (`neon-fused`: seal in
+  one pass, each four-block ChaCha20 step absorbing up to 16 Poly1305 blocks
+  on the integer multiplier between its double rounds; open checks the tag
+  first and decrypts only on success).
+- `local/dispatch.c.in`: the `composed` AEAD (the pinned IETF bodies, which
+  `DISPATCH_ADAPTATIONS` renames static, ChaCha20 then Poly1305 through the
+  primitive pointers), the AEAD pick, the public detached functions that call
+  through the pick, the forced fallback and the report.
+
+`DISPATCH_ADAPTATIONS` also sets `has_neon` on AArch64 (Advanced SIMD is in
+the base architecture; the baseline set it on 32-bit ARM only), and puts the
+forced fallback and then the AArch64 choice at the head of the ChaCha20 and
+Poly1305 picks; the x86 order after them is unchanged. `sodium_init` runs the
+AEAD pick after the ChaCha20 one. An x86 one pass (a fused AVX2 step) would
+be one more struct and one more line in the AEAD pick.
+
+Selection report: `sodium_runtime_chacha20_implementation()` (`ref`,
+`ssse3`, `avx2`, `neon`), `sodium_runtime_poly1305_implementation()`
+(`donna`, `sse2`, `mul64`) and
+`sodium_runtime_aead_chacha20poly1305_ietf_implementation()` (`composed`,
+`neon-fused`). `rocketnet_init` logs the three at info level ("crypto is
+chacha20poly1305 neon-fused, chacha20 neon, poly1305 mul64").
+
+Forced fallback: the ChaCha20, Poly1305 and AEAD picks keep `ref`, `donna`
+and `composed` when the build defines `ROCKETNET_SODIUM_PORTABLE` nonzero, or
+when the environment has `ROCKETNET_SODIUM_PORTABLE` set as `sodium_init`
+runs (`rocketnet_init` runs it). BLAKE2b's pick is not affected.
+
+Open's output: no implementation writes plaintext before the tag checks. A
+refused open leaves the output zeroed (`composed`, as upstream) or as it was
+(`neon-fused`); it is defined only on success (`local/dispatch.h.in`). Input
+and output are exactly in place or apart; partial overlap is unsupported.
+The constant-time review of the AArch64 code is `ARM64-CONSTANT-TIME.md`.
+The wire format is unchanged: every implementation produces the same bytes,
+which `bin/test_sodium_dispatch` checks.
+
 ## MemorySanitizer
 
 Two baseline writes reach memory through calls MemorySanitizer cannot see:

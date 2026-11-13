@@ -7,6 +7,12 @@
     "sodium.c": "b2bf049faccbcf18725c6805cdafe409f332604477e17e4224df152ee3eb0dd5",
     "sodium.h": "393663bfe1905a262c2828dd41a79136cf9024477433466c66586a48bd0e6876"
   },
+  "local_sha256": {
+    "local/dispatch.h.in": "9c31a13a4419d273a8f1862cde5a58168708e5500f4084469b46469909022ff3",
+    "local/mul64.h.in": "544c805cd959ca42fec5de91415643bd6d3659e2315f6e08331c47d0ebd99787",
+    "local/arm64.c.in": "ae72a83d0bd9dc2fbad4df0d7e6399b181d4cb3119179c316e5f87c084641f67",
+    "local/dispatch.c.in": "0cbef4ff2600477f1ba407b77b43c00038855d9bcbc08131d491c4139b27242e"
+  },
   "public_headers": [
     "crypto_box.h",
     "crypto_generichash.h",
