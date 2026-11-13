@@ -26,8 +26,11 @@
 //
 // - addresses and a route metric from a slot it locks for the life of its
 //   process (/run/rocketnet-xdp-net.<slot>.lock): 10.79.<slot>.0/24 and
-//   2001:db8:79:<slot>::/64, metric 4242 + slot. The near end is .1, the far
-//   end .2, and .3 is a second gateway for a case that moves its route.
+//   2001:db8:79:<slot + 1>::/64, metric 4242 + slot. The near end is .1, the far
+//   end .2, and .3 is a second gateway for a case that moves its route. The
+//   IPv6 group is one above the slot, never 0: a zero group prints compressed
+//   (2001:db8:79::1), and a case that finds its own address in tcpdump's text
+//   would miss it.
 //
 // A slot's lock file names the namespace and veth its holder made. A process
 // that died without its exit handlers (a signal, a sanitizer halt) leaves its
@@ -222,8 +225,8 @@ inline bool rocketnet_xdp_test_net_take( const char * case_name, struct rocketne
     snprintf( net->near4, sizeof( net->near4 ), "10.79.%d.1", net->slot );
     snprintf( net->far4, sizeof( net->far4 ), "10.79.%d.2", net->slot );
     snprintf( net->third4, sizeof( net->third4 ), "10.79.%d.3", net->slot );
-    snprintf( net->near6, sizeof( net->near6 ), "2001:db8:79:%x::1", (unsigned) net->slot );
-    snprintf( net->far6, sizeof( net->far6 ), "2001:db8:79:%x::2", (unsigned) net->slot );
+    snprintf( net->near6, sizeof( net->near6 ), "2001:db8:79:%x::1", (unsigned) ( net->slot + 1 ) );
+    snprintf( net->far6, sizeof( net->far6 ), "2001:db8:79:%x::2", (unsigned) ( net->slot + 1 ) );
 
     // the two locks stay open until the process exits
 
