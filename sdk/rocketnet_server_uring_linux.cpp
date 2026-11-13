@@ -165,46 +165,6 @@ struct rocketnet_server_uring_t
 
 // ---------------------------------------------------------------------------
 
-// address -> sockaddr at the boundary, the gso transport's rule: ports and
-// address words are network order in the sockaddr and host order in
-// rocketnet_address_t, and an ipv4 destination on a dual stack socket is sent
-// v4-mapped. the receive direction is rocketnet_uring_sockaddr_to_address.
-
-static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_address_t * input, bool socket_ipv6, struct sockaddr_storage * out )
-{
-    rocketnet_address_t to = *input;
-
-    if ( socket_ipv6 )
-    {
-        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
-        {
-            rocketnet_address_convert_ipv4_to_ipv6( &to );
-        }
-
-        struct sockaddr_in6 * addr = (struct sockaddr_in6 *) out;
-        memset( addr, 0, sizeof( struct sockaddr_in6 ) );
-        addr->sin6_family = AF_INET6;
-
-        for ( int i = 0; i < 8; i++ )
-        {
-            ( (uint16_t *) &addr->sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
-        }
-
-        addr->sin6_port = rocketnet_platform_htons( to.port );
-        return sizeof( struct sockaddr_in6 );
-    }
-    else
-    {
-        if ( to.type != ROCKETNET_ADDRESS_IPV4 )
-        {
-            return 0;
-        }
-
-        rocketnet_platform_address_to_sockaddr_in( &to, (struct sockaddr_in *) out );
-        return sizeof( struct sockaddr_in );
-    }
-}
-
 // ---------------------------------------------------------------------------
 
 bool rocketnet_server_uring_available()

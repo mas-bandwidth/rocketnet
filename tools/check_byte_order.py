@@ -77,8 +77,6 @@ ALLOWED = [
      "the kernel's sockaddr_in6 holds network-order groups; the endian-aware helper converts each"),
     ("sdk/rocketnet_server_gso_linux.cpp", "rocketnet_platform_ntohs( ( (const uint16_t *) &addr->sin6_addr )[i] )",
      "the kernel's sockaddr_in6 holds network-order groups; the endian-aware helper converts each"),
-    ("sdk/rocketnet_server_uring_linux.cpp", "( (uint16_t *) &addr->sin6_addr )[i] = rocketnet_platform_htons(",
-     "the kernel's sockaddr_in6 holds network-order groups; the endian-aware helper converts each"),
     ("sdk/rocketnet_uring_codec.h", "ntohs( ( (const uint16_t *) &addr->sin6_addr )[i] )",
      "the kernel's sockaddr_in6 holds network-order groups; libc's ntohs converts each"),
     ("sdk/rocketnet_uring_codec.h", "( (uint16_t *) &out->sin6_addr )[i] = htons(",
