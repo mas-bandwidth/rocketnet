@@ -2744,11 +2744,12 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if ( strcmp( transport, "iocp" ) == 0 )
     {
-        // the completion workers (iocp_workers), each with its own socket, plus one send worker
+        // the completion workers (iocp_workers), each with its own socket,
+        // and no other thread: each worker posts its own send lanes
 
         const int workers = iocp_workers( config->num_xdp_queues );
         plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( workers, config->max_clients );
-        plan.worker_threads = workers + 1;
+        plan.worker_threads = workers;
         plan.sockets = workers;
     }
     else if ( strcmp( transport, "rio" ) == 0 )
