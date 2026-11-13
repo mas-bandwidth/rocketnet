@@ -434,7 +434,63 @@ static void test_server_stop_finishes_past_a_jammed_queue()
     sq_teardown( &rig );
 }
 
+// The same stop before any update: the io's queue count is read when the io
+// is swapped in (and when a real one opens at create), not first at the
+// update's opening of the budget, so a stop before the first update judges
+// room per queue too: the bursts of the queues with room are sealed whole
+// and the jammed queue's burst is abandoned.
+static void test_server_stop_before_any_update_finishes_past_a_jammed_queue()
+{
+    struct sq_rig_t rig;
+    sq_setup( &rig, false );
+
+    sq_set_rooms( 0, SQ_ROOM, SQ_ROOM );
+    const uint64_t ring_full = rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    for ( int c = 0; c < SQ_CLIENTS; c++ )
+    {
+        rocketnet_server_transport_disconnect_client_shutdown( rig.transport, c );
+    }
+    rocketnet_server_transport_stop( rig.transport );
+    bool stopped = false;
+    for ( int step = 0; step < 4 * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS && !stopped; step++ )
+    {
+        stopped = rocketnet_server_transport_stopped( rig.transport );
+    }
+    check( stopped );
+    check( sq.finished[0] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[1] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[3] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[2] == 0 );
+    check( rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL] > ring_full );
+
+    sq_set_rooms( SQ_ROOM, SQ_ROOM, SQ_ROOM );
+    sq_teardown( &rig );
+}
+
+// The first update's maintenance sweep, before any opening of the budget,
+// with queue 0 full: the clients of the other queues are sent their
+// keep-alives in that update, and nothing is started on the full queue.
+static void test_server_first_update_sweep_serves_past_a_full_queue()
+{
+    struct sq_rig_t rig;
+    sq_setup( &rig, false );
+
+    sq_set_rooms( 0, SQ_ROOM, SQ_ROOM );
+    rig.time += 1.0;
+    rocketnet_message_server_update( rig.server, rig.time );
+    check( sq.finished[0] > 0 );
+    check( sq.finished[1] > 0 );
+    check( sq.finished[3] > 0 );
+    check( sq.finished[2] == 0 );
+    check( sq.refused[0] == 0 );
+
+    sq_set_rooms( SQ_ROOM, SQ_ROOM, SQ_ROOM );
+    sq_teardown( &rig );
+}
+
 REGISTER_UNIT_TEST( test_server_stop_finishes_past_a_jammed_queue );
+REGISTER_UNIT_TEST( test_server_stop_before_any_update_finishes_past_a_jammed_queue );
+REGISTER_UNIT_TEST( test_server_first_update_sweep_serves_past_a_full_queue );
 REGISTER_UNIT_TEST( test_server_send_pass_continues_past_a_full_queue );
 REGISTER_UNIT_TEST( test_server_send_pass_rotates_past_a_full_queue );
 REGISTER_UNIT_TEST( test_server_sweep_serves_clients_past_a_full_queue );
