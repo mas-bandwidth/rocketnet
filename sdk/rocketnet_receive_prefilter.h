@@ -29,9 +29,10 @@
 // main-thread state: any number of workers may call it at once.
 //
 // A datagram it accepts still runs the whole ladder on main, which repeats
-// these checks; the worker's checks are a strict prefix of main's, so an
-// accepted datagram is never refused here and accepted there for the same
-// reason, and a refused one is counted exactly as main would have counted it
+// these checks; the worker's checks are a strict prefix of main's, so a
+// datagram refused here is one main would refuse on the same rung, one
+// accepted here is never refused by those rungs on main, and a refused one
+// is counted exactly as main would have counted it
 // (rocketnet_receive_drop_counters; the unit test
 // test_unit_receive_prefilter checks the two against each other).
 //
