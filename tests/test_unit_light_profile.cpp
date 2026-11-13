@@ -334,9 +334,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809983ULL )
+// The appended counter IOCP_PIN_REFUSALS adds 64 to the server (one 64-byte
+// rounding): actual=5644858567 (hetzner1, gcc, Debug, DEV ON); arm64 the same
+// 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810047ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809927ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809991ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
