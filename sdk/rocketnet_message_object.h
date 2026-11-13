@@ -121,6 +121,9 @@ struct rn_message_link_t
     // NULL (the client's link, the unit suite's fakes): no transport-side
     // cap. The server's link reads it so a rotation advances only over
     // clients that had a chance to send.
+    // With several send queues it is an upper bound: it reads the fewest free
+    // slots of any queue (or the one room of a transport with more queues
+    // than the reserve keeps), so a queue with more room can take more.
     int ( *send_capacity_available )( void * transport );
 
     // connected clients whose next send round must remain available

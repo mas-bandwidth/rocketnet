@@ -2497,11 +2497,27 @@ static void xdp_begin_shutdown( void * transport )
     rocketnet_server_socket_begin_shutdown( (rocketnet_server_socket_t *) transport );
 }
 
+static int xdp_send_queues( void * transport )
+{
+    return rocketnet_server_socket_send_queues( (rocketnet_server_socket_t *) transport );
+}
+
+static int xdp_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_socket_send_queue_of( (rocketnet_server_socket_t *) transport, to );
+}
+
+static int xdp_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_socket_send_room_queue( (rocketnet_server_socket_t *) transport, queue );
+}
+
 static const rocketnet_server_transport_io_operations_t xdp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS | ROCKETNET_TRANSPORT_REFLUSHES,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle, xdp_begin_shutdown, NULL, NULL, NULL, NULL
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle, xdp_begin_shutdown, NULL,
+    xdp_send_queues, xdp_send_queue_of, xdp_send_room_queue
 };
 #else
 static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
