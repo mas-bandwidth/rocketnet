@@ -37,9 +37,9 @@ CONSTANTS
     TxHolders,      \* transmit worker holder ids
     RxHolder,       \* the receive worker's holder id
     IS,             \* index entries: ROCKETNET_MSGX_TABLE_INDEX_SIZE
-    Home(_),        \* an address's index home: hash & (IS - 1)
+    HomeAt,         \* the index homes: a * IS + h for address a homed on entry h = hash & (IS - 1)
     CoolEntries,    \* ROCKETNET_MSGX_TABLE_COOLDOWN_ENTRIES
-    CoolOf(_),      \* an address's cooldown entry: hash % CoolEntries
+    CoolAt,         \* the cooldown entries: a * CoolEntries + e for address a on entry e = hash % CoolEntries
     Cooldown,       \* ROCKETNET_MSGX_TABLE_DEAD_COOLDOWN_UPDATES
     Budget,         \* opens_per_update
     GenWrap,        \* the generation counter wraps modulo this (2^32 in the code)
@@ -53,10 +53,19 @@ CONSTANTS
     SnapshotFirst,      \* FALSE: the retire stores the word before it snapshots the passes
     RefusedOpenFree     \* TRUE: a refused open takes no slot and is counted
 
+\* every address has exactly one home and one cooldown entry (a cfg carries a
+\* set of integers, not a function)
+ASSUME /\ \A a \in Addrs : Cardinality({x \in HomeAt : x \div IS = a}) = 1
+       /\ \A a \in Addrs : Cardinality({x \in CoolAt : x \div CoolEntries = a}) = 1
+
 Holders == TxHolders \cup {RxHolder}
 Slots == 0..(Cap - 1)
 Fds == 0..(NFd - 1)
 Entries == 0..(IS - 1)
+
+\* an address's index home and cooldown entry
+Home(a) == (CHOOSE x \in HomeAt : x \div IS = a) % IS
+CoolOf(a) == (CHOOSE x \in CoolAt : x \div CoolEntries = a) % CoolEntries
 
 FREE == 0
 OPEN == 1
@@ -90,7 +99,7 @@ VARIABLES
     freeSlots, numFree,     \* free_slots[], num_free: a stack
     retired, numRetired,    \* retired[], num_retired: oldest first, compacted by the sweep
     numOpen,
-    index,          \* index[entry]: slot, or -1
+    index,          \* index[entry]: the slot, for each entry in use (an empty entry, -1 in the code, is outside the domain)
     coolAddr, coolUntil,    \* cooldown_address[], cooldown_until[]
     counters,
     update, opensLeft,
@@ -122,20 +131,29 @@ vars == <<slotv, tabv, mainv, kernv, holdv, ghostv>>
 -----------------------------------------------------------------------------
 (* The index: open addressing, linear probing, backward-shift delete.      *)
 
+\* The code's index holds -1 in an empty entry; here an entry in use is in the
+\* domain and an empty one is not, so a record of the table names the entries
+\* in use and no more.  Every step below is the code's arithmetic on the entry
+\* numbers.
+
 RECURSIVE LookupFrom(_, _, _, _, _)
 LookupFrom(ix, ad, a, e, n) ==
-    IF n = IS \/ ix[e] < 0 THEN -1
+    IF n = IS \/ e \notin DOMAIN ix THEN -1
     ELSE IF ad[ix[e]] = a THEN ix[e]
     ELSE LookupFrom(ix, ad, a, (e + 1) % IS, n + 1)
 
 \* rocketnet_msgx_socket_table_lookup
 Lookup(a) == LookupFrom(index, addr, a, Home(a), 0)
 
+IxSet(ix, e, v) == [x \in DOMAIN ix \cup {e} |-> IF x = e THEN v ELSE ix[x]]
+
+IxDel(ix, e) == [x \in DOMAIN ix \ {e} |-> ix[x]]
+
 RECURSIVE EmptyFrom(_, _)
-EmptyFrom(ix, e) == IF ix[e] < 0 THEN e ELSE EmptyFrom(ix, (e + 1) % IS)
+EmptyFrom(ix, e) == IF e \notin DOMAIN ix THEN e ELSE EmptyFrom(ix, (e + 1) % IS)
 
 \* rocketnet_msgx_socket_table_index_insert, the slot's address being a
-IxInsert(ix, slot, a) == [ix EXCEPT ![EmptyFrom(ix, Home(a))] = slot]
+IxInsert(ix, slot, a) == IxSet(ix, EmptyFrom(ix, Home(a)), slot)
 
 RECURSIVE SlotFrom(_, _, _)
 SlotFrom(ix, slot, e) == IF ix[e] = slot THEN e ELSE SlotFrom(ix, slot, (e + 1) % IS)
@@ -143,14 +161,14 @@ SlotFrom(ix, slot, e) == IF ix[e] = slot THEN e ELSE SlotFrom(ix, slot, (e + 1) 
 \* the shift loop: hole is the entry to fill, entry the last one examined
 RECURSIVE Shift(_, _, _, _)
 Shift(ix, ad, hole, entry) ==
-    LET next == (entry + 1) % IS
-        moving == ix[next]
-    IN IF moving < 0 THEN [ix EXCEPT ![hole] = -1]
-       ELSE LET home == Home(ad[moving])
-                inRange == IF hole <= next THEN home > hole /\ home <= next
-                                           ELSE home > hole \/ home <= next
-            IN IF inRange THEN Shift(ix, ad, hole, next)
-               ELSE Shift([ix EXCEPT ![hole] = moving], ad, next, next)
+    LET next == (entry + 1) % IS IN
+    IF next \notin DOMAIN ix THEN IxDel(ix, hole)
+    ELSE LET moving == ix[next]
+             home == Home(ad[moving])
+             inRange == IF hole <= next THEN home > hole /\ home <= next
+                                        ELSE home > hole \/ home <= next
+         IN IF inRange THEN Shift(ix, ad, hole, next)
+            ELSE Shift(IxSet(ix, hole, moving), ad, next, next)
 
 \* rocketnet_msgx_socket_table_index_remove
 IxRemove(ix, ad, slot) ==
@@ -165,8 +183,8 @@ Resolve(s, g) ==
     ELSE IF GenCheck /\ word[s][1] # g THEN -1
     ELSE word[s][2] - 1
 
-\* rocketnet_msgx_socket_table_quiescent
-Quiescent(s) == \A h \in Holders : ~(snap[s][h] % 2 = 1 /\ pass[h] = snap[s][h])
+\* rocketnet_msgx_socket_table_quiescent, over a record of main's state
+Quiescent(R, s) == \A h \in Holders : ~(R.snap[s][h] % 2 = 1 /\ pass[h] = R.snap[s][h])
 
 Odd(n) == n % 2 = 1
 
@@ -205,7 +223,7 @@ Init ==
     /\ retired = [i \in Slots |-> 0]
     /\ numRetired = 0
     /\ numOpen = 0
-    /\ index = [e \in Entries |-> -1]
+    /\ index = [e \in {} |-> 0]
     /\ coolAddr = [e \in 0..(CoolEntries - 1) |-> 0]
     /\ coolUntil = [e \in 0..(CoolEntries - 1) |-> 0]
     /\ counters = [c \in Counters |-> 0]
@@ -290,149 +308,195 @@ Mark(a) ==
                     /\ UNCHANGED <<deadRep, gen, snap, deadReports, freeSlots, retired, numRetired,
                                    coolAddr, coolUntil, update, mainv, holdv, crossed, onClosed>>
 
+\* Main's steps inside a call, as functions of a record of the state main's
+\* steps read and write (the holders' passes and the update number, which no
+\* main step of a call changes, are read from the state).  Each fine-grained
+\* action below applies one of these once; ForgetCall and SweepCall apply
+\* them in the code's order with no holder step between, which is what a
+\* trace sees: the walk looks at the table between calls.
+
+MainV == [word |-> word, deadRep |-> deadRep, state |-> state, fd |-> fd, gen |-> gen, addr |-> addr,
+          snap |-> snap, deadReports |-> deadReports, freeSlots |-> freeSlots, numFree |-> numFree,
+          retired |-> retired, numRetired |-> numRetired, numOpen |-> numOpen, index |-> index,
+          coolAddr |-> coolAddr, coolUntil |-> coolUntil, counters |-> counters, kfd |-> kfd,
+          kdead |-> kdead, poller |-> poller, mpc |-> mpc, ms |-> ms, mi |-> mi, mk |-> mk]
+
+\* the primed state is the record N, every variable of MainV
+Apply(N) ==
+    /\ word' = N.word /\ deadRep' = N.deadRep /\ state' = N.state /\ fd' = N.fd /\ gen' = N.gen
+    /\ addr' = N.addr /\ snap' = N.snap /\ deadReports' = N.deadReports /\ freeSlots' = N.freeSlots
+    /\ numFree' = N.numFree /\ retired' = N.retired /\ numRetired' = N.numRetired /\ numOpen' = N.numOpen
+    /\ index' = N.index /\ coolAddr' = N.coolAddr /\ coolUntil' = N.coolUntil /\ counters' = N.counters
+    /\ kfd' = N.kfd /\ kdead' = N.kdead /\ poller' = N.poller
+    /\ mpc' = N.mpc /\ ms' = N.ms /\ mi' = N.mi /\ mk' = N.mk
+
 \* the first step of a retire: the address leaves the index, the generation
 \* advances, and (in the code's order) the word loses its descriptor; or,
 \* broken, the passes are snapshotted first
-RetireFirst(s, next) ==
-    LET ng == (gen[s] + 1) % GenWrap IN
-    /\ index' = IxRemove(index, addr, s)
-    /\ gen' = [gen EXCEPT ![s] = ng]
-    /\ IF ~SnapshotFirst
-          THEN /\ word' = [word EXCEPT ![s] = <<ng, 0>>]
-               /\ mpc' = next[1]
-               /\ UNCHANGED snap
-          ELSE /\ snap' = [snap EXCEPT ![s] = pass]
-               /\ mpc' = next[2]
-               /\ UNCHANGED word
-    /\ ms' = s
+RetireFirstF(R, s, next) ==
+    LET ng == (R.gen[s] + 1) % GenWrap
+        r1 == [R EXCEPT !.index = IxRemove(R.index, R.addr, s),
+                        !.gen = [R.gen EXCEPT ![s] = ng],
+                        !.ms = s]
+    IN IF ~SnapshotFirst
+          THEN [r1 EXCEPT !.word = [R.word EXCEPT ![s] = <<ng, 0>>], !.mpc = next[1]]
+          ELSE [r1 EXCEPT !.snap = [R.snap EXCEPT ![s] = pass], !.mpc = next[2]]
 
 \* the end of a retire: the slot joins the quarantine (or, broken, closes now)
-Finish(s, c) ==
-    /\ numOpen' = numOpen - 1
-    /\ IF Quarantine THEN
-            /\ state' = [state EXCEPT ![s] = RETIRED]
-            /\ retired' = [retired EXCEPT ![numRetired] = s]
-            /\ numRetired' = numRetired + 1
-            /\ counters' = [counters EXCEPT ![c] = @ + 1]
-            /\ UNCHANGED <<fd, freeSlots, numFree, kfd, kdead>>
-       ELSE
-            /\ state' = [state EXCEPT ![s] = FREE]
-            /\ fd' = [fd EXCEPT ![s] = -1]
-            /\ freeSlots' = [freeSlots EXCEPT ![numFree] = s]
-            /\ numFree' = numFree + 1
-            /\ kfd' = KClose(kfd, fd[s])
-            /\ kdead' = KUndead(kdead, fd[s])
-            /\ counters' = [counters EXCEPT ![c] = @ + 1, ![C_CLOSED] = @ + 1]
-            /\ UNCHANGED <<retired, numRetired>>
+FinishF(R, s, c) ==
+    LET r1 == [R EXCEPT !.numOpen = R.numOpen - 1] IN
+    IF Quarantine
+       THEN [r1 EXCEPT !.state = [R.state EXCEPT ![s] = RETIRED],
+                       !.retired = [R.retired EXCEPT ![R.numRetired] = s],
+                       !.numRetired = R.numRetired + 1,
+                       !.counters = [R.counters EXCEPT ![c] = @ + 1]]
+       ELSE [r1 EXCEPT !.state = [R.state EXCEPT ![s] = FREE],
+                       !.fd = [R.fd EXCEPT ![s] = -1],
+                       !.freeSlots = [R.freeSlots EXCEPT ![R.numFree] = s],
+                       !.numFree = R.numFree + 1,
+                       !.kfd = KClose(R.kfd, R.fd[s]),
+                       !.kdead = KUndead(R.kdead, R.fd[s]),
+                       !.counters = [R.counters EXCEPT ![c] = @ + 1, ![C_CLOSED] = @ + 1]]
 
 \* where the dead-report loop goes after slot s
-NextDead(s) ==
-    IF s + 1 < Cap THEN mpc' = "sdead" /\ ms' = s + 1 /\ UNCHANGED <<mi, mk>>
-    ELSE IF numRetired' > 0 THEN mpc' = "sclose" /\ ms' = 0 /\ mi' = 0 /\ mk' = 0
-    ELSE mpc' = "idle" /\ ms' = 0 /\ mi' = 0 /\ mk' = 0
-
+NextDeadF(R, s) ==
+    IF s + 1 < Cap THEN [R EXCEPT !.mpc = "sdead", !.ms = s + 1]
+    ELSE IF R.numRetired > 0 THEN [R EXCEPT !.mpc = "sclose", !.ms = 0, !.mi = 0, !.mk = 0]
+    ELSE [R EXCEPT !.mpc = "idle", !.ms = 0, !.mi = 0, !.mk = 0]
 
 \* rocketnet_msgx_socket_table_forget: the lookup and the retire's first step
+ForgetF(R, a) ==
+    LET s == LookupFrom(R.index, R.addr, a, Home(a), 0) IN
+    IF s < 0 THEN R ELSE RetireFirstF(R, s, <<"fsnap", "fword">>)
+
+\* the retire's second step: the passes snapshotted after the word store,
+\* then the slot in quarantine; on the forget path the caller deregisters
+\* next, on the sweep's path its dead-report loop goes on
+RetireF(R) ==
+    LET s == R.ms
+        f == FinishF([R EXCEPT !.snap = [R.snap EXCEPT ![s] = pass]], s,
+                     IF R.mpc = "fsnap" THEN C_RETIRED_FORGET ELSE C_RETIRED_DEAD)
+    IN IF R.mpc = "fsnap" THEN [f EXCEPT !.mpc = "fdereg"] ELSE NextDeadF(f, s)
+
+\* broken (SnapshotFirst): the word store after the snapshot
+RetireWordLateF(R) ==
+    LET s == R.ms
+        f == FinishF([R EXCEPT !.word = [R.word EXCEPT ![s] = <<R.gen[s], 0>>]], s,
+                     IF R.mpc = "fword" THEN C_RETIRED_FORGET ELSE C_RETIRED_DEAD)
+    IN IF R.mpc = "fword" THEN [f EXCEPT !.mpc = "fdereg"] ELSE NextDeadF(f, s)
+
+\* the caller deregisters the retired descriptor (forget's retired_fd) from
+\* its receive poller
+DeregF(R) == [R EXCEPT !.poller = {e \in R.poller : e[2] # R.ms}, !.mpc = "idle", !.ms = 0]
+
+\* rocketnet_msgx_socket_table_sweep: the dead-report count is taken; with
+\* none, the close loop; with nothing retired either, nothing changes
+SweepBeginF(R) ==
+    IF R.deadReports > 0 THEN [R EXCEPT !.deadReports = 0, !.mpc = "sdead", !.ms = 0]
+    ELSE IF R.numRetired > 0 THEN [R EXCEPT !.mpc = "sclose"]
+    ELSE R
+
+\* the dead-report loop at slot ms: the report is taken; one about the
+\* slot's open generation cools the address down, the caller's retire hook
+\* deregisters the descriptor, and the retire's first step runs
+RetireDeadF(R) ==
+    LET s == R.ms
+        r == R.deadRep[s]
+        taken == [R EXCEPT !.deadRep = [R.deadRep EXCEPT ![s] = 0]]
+    IN IF r = 0 \/ R.state[s] # OPEN \/ r - 1 # R.gen[s]
+          THEN NextDeadF(taken, s)
+          ELSE RetireFirstF([taken EXCEPT
+                   !.coolAddr = [R.coolAddr EXCEPT ![CoolOf(R.addr[s])] = R.addr[s]],
+                   !.coolUntil = [R.coolUntil EXCEPT ![CoolOf(R.addr[s])] = update + Cooldown],
+                   !.poller = {e \in R.poller : e[2] # s}], s, <<"ssnap", "sword">>)
+
+\* the close loop at retired[mi]: closed and freed once quiescent, else kept
+\* at retired[mk]; after the last entry num_retired is the kept count
+CloseF(R) ==
+    LET s == R.retired[R.mi]
+        q == Quiescent(R, s)
+        nk == IF q THEN R.mk ELSE R.mk + 1
+        c == IF q
+                THEN [R EXCEPT !.kfd = KClose(R.kfd, R.fd[s]),
+                               !.kdead = KUndead(R.kdead, R.fd[s]),
+                               !.fd = [R.fd EXCEPT ![s] = -1],
+                               !.state = [R.state EXCEPT ![s] = FREE],
+                               !.freeSlots = [R.freeSlots EXCEPT ![R.numFree] = s],
+                               !.numFree = R.numFree + 1,
+                               !.counters = [R.counters EXCEPT ![C_CLOSED] = @ + 1]]
+                ELSE [R EXCEPT !.retired = [R.retired EXCEPT ![R.mk] = s]]
+    IN IF R.mi + 1 = R.numRetired
+          THEN [c EXCEPT !.mpc = "idle", !.numRetired = nk, !.mi = 0, !.mk = 0]
+          ELSE [c EXCEPT !.mi = R.mi + 1, !.mk = nk]
+
+\* main's next step inside a call
+MainStepF(R) ==
+    CASE R.mpc \in {"fsnap", "ssnap"} -> RetireF(R)
+      [] R.mpc \in {"fword", "sword"} -> RetireWordLateF(R)
+      [] R.mpc = "fdereg" -> DeregF(R)
+      [] R.mpc = "sdead" -> RetireDeadF(R)
+      [] R.mpc = "sclose" -> CloseF(R)
+
+\* a call run to its end: main's steps in order until it is idle
+RECURSIVE RunF(_)
+RunF(R) == IF R.mpc = "idle" THEN R ELSE RunF(MainStepF(R))
+
+\* the fine-grained actions: each one step of a call, holders free to run
+\* between them
+
 Forget(a) ==
     /\ Idle
-    /\ IF Lookup(a) < 0 THEN UNCHANGED vars
-       ELSE /\ RetireFirst(Lookup(a), <<"fsnap", "fword">>)
-            /\ UNCHANGED <<deadRep, state, fd, addr, deadReports, freeSlots, numFree, retired, numRetired,
-                           numOpen, coolAddr, coolUntil, counters, update, opensLeft, mi, mk,
-                           kernv, holdv, ghostv>>
+    /\ Apply(ForgetF(MainV, a))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
 
-\* RNMsgxSocketTable Retire: the retire's second step, the passes
-\* snapshotted after the word store, then the slot in quarantine; on the
-\* forget path the caller deregisters next, on the sweep's path its
-\* dead-report loop goes on
+\* RNMsgxSocketTable Retire
 Retire ==
     /\ mpc \in {"fsnap", "ssnap"}
-    /\ snap' = [snap EXCEPT ![ms] = pass]
-    /\ Finish(ms, IF mpc = "fsnap" THEN C_RETIRED_FORGET ELSE C_RETIRED_DEAD)
-    /\ UNCHANGED <<word, deadRep, gen, addr, deadReports, index, coolAddr, coolUntil, update, opensLeft,
-                   poller, holdv, ghostv>>
-    /\ IF mpc = "fsnap" THEN mpc' = "fdereg" /\ UNCHANGED <<ms, mi, mk>> ELSE NextDead(ms)
+    /\ Apply(RetireF(MainV))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
 
 \* broken (SnapshotFirst): the word store after the snapshot
 RetireWordLate ==
     /\ SnapshotFirst
     /\ mpc \in {"fword", "sword"}
-    /\ word' = [word EXCEPT ![ms] = <<gen[ms], 0>>]
-    /\ Finish(ms, IF mpc = "fword" THEN C_RETIRED_FORGET ELSE C_RETIRED_DEAD)
-    /\ UNCHANGED <<snap, deadRep, gen, addr, deadReports, index, coolAddr, coolUntil, update, opensLeft,
-                   poller, holdv, ghostv>>
-    /\ IF mpc = "fword" THEN mpc' = "fdereg" /\ UNCHANGED <<ms, mi, mk>> ELSE NextDead(ms)
+    /\ Apply(RetireWordLateF(MainV))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
 
-\* the caller deregisters the retired descriptor (forget's retired_fd) from
-\* its receive poller
 ForgetDereg ==
     /\ mpc = "fdereg"
-    /\ poller' = {e \in poller : e[2] # ms}
-    /\ mpc' = "idle"
-    /\ ms' = 0
-    /\ UNCHANGED <<slotv, tabv, mi, mk, kfd, kdead, holdv, ghostv>>
+    /\ Apply(DeregF(MainV))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
 
-\* rocketnet_msgx_socket_table_sweep: the dead-report count is taken; with
-\* none, the close loop; with nothing retired either, nothing changes
 SweepBegin ==
     /\ Idle
-    /\ IF deadReports > 0 THEN
-            /\ deadReports' = 0
-            /\ mpc' = "sdead"
-            /\ ms' = 0
-            /\ UNCHANGED <<slotv, freeSlots, numFree, retired, numRetired, numOpen, index, coolAddr,
-                           coolUntil, counters, update, opensLeft, mi, mk, kernv, holdv, ghostv>>
-       ELSE IF numRetired > 0 THEN
-            /\ mpc' = "sclose"
-            /\ UNCHANGED <<slotv, tabv, ms, mi, mk, kernv, holdv, ghostv>>
-       ELSE UNCHANGED vars
+    /\ Apply(SweepBeginF(MainV))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
 
-\* the dead-report loop at slot ms: the report is taken; one about the
-\* slot's open generation cools the address down, the caller's retire hook
-\* deregisters the descriptor, and the retire's first step runs
 RetireDead ==
     /\ mpc = "sdead"
-    /\ LET s == ms
-           r == deadRep[ms]
-       IN
-       /\ deadRep' = [deadRep EXCEPT ![s] = 0]
-       /\ IF r = 0 \/ state[s] # OPEN \/ r - 1 # gen[s] THEN
-               /\ UNCHANGED <<word, state, fd, gen, addr, snap, tabv, kernv, holdv, ghostv>>
-               /\ NextDead(s)
-          ELSE
-               /\ coolAddr' = [coolAddr EXCEPT ![CoolOf(addr[s])] = addr[s]]
-               /\ coolUntil' = [coolUntil EXCEPT ![CoolOf(addr[s])] = update + Cooldown]
-               /\ poller' = {e \in poller : e[2] # s}
-               /\ RetireFirst(s, <<"ssnap", "sword">>)
-               /\ UNCHANGED <<state, fd, addr, deadReports, freeSlots, numFree, retired, numRetired,
-                              numOpen, counters, update, opensLeft, mi, mk, kfd, kdead, holdv, ghostv>>
+    /\ Apply(RetireDeadF(MainV))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
 
-\* the close loop at retired[mi]: closed and freed once quiescent, else kept
-\* at retired[mk]; after the last entry num_retired is the kept count
 Close ==
     /\ mpc = "sclose"
     /\ mi < numRetired
-    /\ LET s == retired[mi]
-           q == Quiescent(s)
-           nk == IF q THEN mk ELSE mk + 1
-       IN
-       /\ IF q THEN
-               /\ kfd' = KClose(kfd, fd[s])
-               /\ kdead' = KUndead(kdead, fd[s])
-               /\ fd' = [fd EXCEPT ![s] = -1]
-               /\ state' = [state EXCEPT ![s] = FREE]
-               /\ freeSlots' = [freeSlots EXCEPT ![numFree] = s]
-               /\ numFree' = numFree + 1
-               /\ counters' = [counters EXCEPT ![C_CLOSED] = @ + 1]
-               /\ UNCHANGED retired
-          ELSE
-               /\ retired' = [retired EXCEPT ![mk] = s]
-               /\ UNCHANGED <<kfd, kdead, fd, state, freeSlots, numFree, counters>>
-       /\ IF mi + 1 = numRetired
-             THEN mpc' = "idle" /\ numRetired' = nk /\ mi' = 0 /\ mk' = 0
-             ELSE mpc' = "sclose" /\ mi' = mi + 1 /\ mk' = nk /\ UNCHANGED numRetired
-    /\ UNCHANGED <<word, deadRep, gen, addr, snap, deadReports, numOpen, index, coolAddr, coolUntil,
-                   update, opensLeft, ms, poller, holdv, ghostv>>
+    /\ Apply(CloseF(MainV))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
+
+\* the call-level actions: a whole call by main with no holder step inside
+\* it, the same steps as above in the code's order.  A trace sees the table
+\* between calls, so a call is one record.  Every behaviour with one is a
+\* behaviour of the fine-grained actions in which no holder runs in the call.
+
+ForgetCall(a) ==
+    /\ Idle
+    /\ Apply(RunF(ForgetF(MainV, a)))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
+
+SweepCall ==
+    /\ Idle
+    /\ Apply(RunF(SweepBeginF(MainV)))
+    /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
 
 -----------------------------------------------------------------------------
 (* Fill threads, between main's calls (the fill phase).                     *)
@@ -576,10 +640,15 @@ Disconnect(f) ==
 MainCont == Retire \/ RetireWordLate \/ ForgetDereg \/ RetireDead \/ Close
 
 Next ==
-    \/ \E a \in Addrs : Mark(a) \/ Forget(a)
+    \/ \E a \in Addrs : Mark(a) \/ Forget(a) \/ ForgetCall(a)
     \/ BeginUpdate
     \/ SweepBegin
-    \/ MainCont
+    \/ SweepCall
+    \/ Retire
+    \/ RetireWordLate
+    \/ ForgetDereg
+    \/ RetireDead
+    \/ Close
     \/ \E a \in Addrs, h \in TxHolders : Stamp(a, h)
     \/ \E h \in Holders : HolderBegin(h) \/ HolderEnd(h) \/ ReportDead(h)
     \/ \E h \in TxHolders : TxSend(h) \/ \E i \in 1..Len(pkts) : TxResolve(h, i)
@@ -616,7 +685,7 @@ TypeOK ==
     /\ freeSlots \in [Slots -> Slots] /\ numFree \in 0..Cap
     /\ retired \in [Slots -> Slots] /\ numRetired \in 0..Cap
     /\ numOpen \in 0..Cap
-    /\ index \in [Entries -> -1..(Cap - 1)]
+    /\ DOMAIN index \subseteq Entries /\ \A e \in DOMAIN index : index[e] \in Slots
     /\ coolAddr \in [0..(CoolEntries - 1) -> {0} \cup Addrs]
     /\ counters \in [Counters -> Nat]
     /\ mpc \in {"idle", "fsnap", "fword", "fdereg", "sdead", "ssnap", "sword", "sclose"}
@@ -666,8 +735,8 @@ IndexMatchesOpen ==
           LET s == Lookup(a) IN
           /\ s >= 0 => state[s] = OPEN /\ addr[s] = a
           /\ \A t \in Slots : state[t] = OPEN /\ addr[t] = a => s = t
-    /\ {index[e] : e \in {x \in Entries : index[x] >= 0}} = {s \in Slots : state[s] = OPEN}
-    /\ Cardinality({x \in Entries : index[x] >= 0}) = numOpen
+    /\ {index[e] : e \in DOMAIN index} = {s \in Slots : state[s] = OPEN}
+    /\ Cardinality(DOMAIN index) = numOpen
 
 \* between main's calls the word of an open slot is its generation and
 \* descriptor, and of any other slot its generation and no descriptor
