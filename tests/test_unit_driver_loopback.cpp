@@ -2138,3 +2138,4 @@ REGISTER_UNIT_TEST( test_iocp_post_receive_retries_push_a_stalled_pop_refuses );
 
 #include "test_unit_driver_results_checked.cpp"
 #include "test_unit_server_stop_spread.cpp"
+#include "test_unit_gaps_st_ring_transport.cpp"
