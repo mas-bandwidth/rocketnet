@@ -303,12 +303,12 @@ echo "  XDP SAFETY 1: sdk/xdp/server_xdp.c returns XDP_PASS for every packet tha
 echo "  preflight (read-only, before anything is attached): ssh $server_ssh $remote_path preflight $commit $server_nic $server_queues $server_address"
 echo "  root check: ssh $server_ssh sudo -n true   (a failure stops the run with not-done; no password is ever supplied)"
 echo "  XDP SAFETY 2: arm the dead-man timer before load: ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path arm $server_nic"
+echo "  heartbeat: ssh $server_ssh touch ~/rocketnet-live/heartbeat   (every 5 s from the arm until teardown)"
 echo "  XDP SAFETY 4: the preflight records ethtool -i $server_nic and refuses the in-tree i40e (version equals uname -r) on a kernel older than 7.0.0-43"
 echo "  start:   ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path start server $commit $server_label $server_address $seed $min_each 1000 1000 60 $server_queues $server_results $server_status"
 echo "  command: $server_command"
 echo "  XDP SAFETY 3: within 10 s of the load, a fresh ssh connection (no control master) proves ssh still works: ssh -o ControlMaster=no -o BatchMode=yes $server_ssh true"
 echo "  listen:  ssh $server_ssh grep -q '^listening' $server_status"
-echo "  heartbeat: ssh $server_ssh touch ~/rocketnet-live/heartbeat   (every 5 s until teardown)"
 echo "  stop:    ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path stop server $server_label"
 echo "  XDP SAFETY 5: teardown detaches and records the link: ssh $server_ssh sudo -n $remote_path restore $commit $server_nic"
 echo "  command: ip link set dev $server_nic xdp off; ip link set dev $server_nic xdpgeneric off; ip -d link show dev $server_nic; xdp-loader status; rocketnet-provision sweep"
@@ -428,12 +428,26 @@ done < "$tmp/sorted.tsv"
 ssh_run "$server_ssh" sudo -n true || fail "sudo -n true failed on $server_ssh; stop with not-done (RULINGS (c))"
 ssh_run "$server_ssh" "$remote_path" preflight "$commit" "$server_nic" "$server_queues" "$server_address" || fail "server pre-flight refused"
 ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" arm "$server_nic" || fail "cannot arm the dead-man timer"
+
+# the heartbeat loop the watchdog reads (section 9, step 3), from the arm on:
+# arm touched the heartbeat once and the watchdog fires 30 s after the last
+# touch, so the loop must not wait on the load, the listen line or the
+# clients (proofs/tla/RNLiveFleetRun.tla, HeartbeatFromArm). teardown stops it.
+( while [ ! -f "$tmp/stop-heartbeat" ]; do
+      ssh -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" touch "~/rocketnet-live/heartbeat" >/dev/null 2>&1
+      sleep 5
+  done ) &
+heartbeat_pid=$!
+
 ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" start server "$commit" "$server_label" "$server_address" "$seed" "$min_each" 1000 1000 60 "$server_queues" "$server_results" "$server_status" || fail "cannot start the server"
 
 # the fresh ssh connection within 10 s of the load
 if ! ssh -o BatchMode=yes -o ControlMaster=no -o ConnectTimeout=10 "$server_ssh" true; then
+    # no teardown over a path that just failed; with the heartbeat stopped
+    # the watchdog detaches inside 30 s, the dead-man timer at 15 minutes
+    stop_heartbeat
     teardown_allowed=0
-    fail "ssh check failed after the load; the dead-man timer detaches the program"
+    fail "ssh check failed after the load; the watchdog and the dead-man timer detach the program"
 fi
 
 for _ in $( seq 1 30 ); do
@@ -448,13 +462,6 @@ while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
     ssh_run "$ssh_name" "$remote_path" start client "$commit" "$label" "$server_address" "$window_seconds" "$cycles" "$stagger" "$seed" "$each" 1000 60 "$results" || fail "cannot start client $label"
     started_clients=1
 done < "$tmp/sorted.tsv"
-
-# the heartbeat loop the watchdog reads (section 9, step 3)
-( while [ ! -f "$tmp/stop-heartbeat" ]; do
-      ssh -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" touch "~/rocketnet-live/heartbeat" >/dev/null 2>&1
-      sleep 5
-  done ) &
-heartbeat_pid=$!
 
 # 6. watch every 30 s until every client is done; a fail line ends the run.
 while :; do
