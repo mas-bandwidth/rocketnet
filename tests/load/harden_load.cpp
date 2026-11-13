@@ -1498,7 +1498,8 @@ static void harden_profile_run( harden_profile_t * p )
             sym_from_addr = NULL;
         }
     }
-    auto name_of = [&]( uint64_t address ) -> std::string {
+    auto name_of = [&]( uint64_t address ) -> std::string
+    {
         if ( sym_from_addr && address )
         {
             harden_profile_symbol_t symbol;
@@ -1516,7 +1517,8 @@ static void harden_profile_run( harden_profile_t * p )
         return std::string( hex );
     };
 
-    std::sort( threads.begin(), threads.end(), []( const harden_profile_thread_t & a, const harden_profile_thread_t & b ) { return a.cpu_end - a.cpu_start > b.cpu_end - b.cpu_start; } );
+    std::sort( threads.begin(), threads.end(), []( const harden_profile_thread_t & a, const harden_profile_thread_t & b )
+               { return a.cpu_end - a.cpu_start > b.cpu_end - b.cpu_start; } );
     fprintf( f, "harden_profile: window_seconds=%.2f main_samples=%zu threads=%zu symbols=%s\n", window, samples.size(), threads.size(), sym_from_addr ? "dbghelp" : "none" );
     for ( const harden_profile_thread_t & t : threads )
     {
@@ -1543,7 +1545,8 @@ static void harden_profile_run( harden_profile_t * p )
             i = j;
         }
     }
-    std::sort( counts.begin(), counts.end(), []( const std::pair<std::string, int> & a, const std::pair<std::string, int> & b ) { return a.second > b.second; } );
+    std::sort( counts.begin(), counts.end(), []( const std::pair<std::string, int> & a, const std::pair<std::string, int> & b )
+               { return a.second > b.second; } );
     for ( size_t i = 0; i < counts.size() && i < 60; i++ )
     {
         fprintf( f, "harden_profile_main: %6.2f%% %s\n", samples.empty() ? 0.0 : 100.0 * counts[i].second / (double) samples.size(), counts[i].first.c_str() );
