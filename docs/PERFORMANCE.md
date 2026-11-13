@@ -53,6 +53,8 @@ network threads, client affinity, and server scheduling priority are pending.
 
 ## Results
 
+### No simulated game-thread work
+
 Delivery is the percentage of unreliable messages delivered out of delivered
 plus lost, reported separately in each direction by `harden_load reconcile`.
 It is not the percentage of players that connected. The rows below report
@@ -93,8 +95,8 @@ dedicated network threads and do not describe the whole frame's duration.
 
 The io_uring average-load ratio is calculated from the reported rounded means:
 0.147 / 1.81. The other ratios were supplied with their measurement rows.
-For XDP, the p99 column is the mean of the per-second p99s in the steady
-window, not a p99 computed over all frames in that window.
+For the XDP rows above, the p99 column is the mean of the per-second p99s
+in the steady window, not a p99 computed over all frames in that window.
 
 | Rows | Build | Steady window | Simulated game work |
 | --- | --- | --- | --- |
@@ -113,19 +115,69 @@ socket receive buffer and the OS granted 4 MB, limited by `net.core.rmem_max`.
 There was no reported loss at this load; check the requested and granted
 values in the transport log when configuring another machine.
 
-Rows with game threads half busy with game work are pending for every transport:
-the test's simulated world update was serial, corrected in `4fc1ae05b`.
 Raw result logs are pending;
 the timing percentiles are reported values, not recomputed here. Confirmation
 of the io_uring, GSO, and IOCP percentile aggregation is pending. Different machines, builds, and
 sampling windows make these workload results unsuitable for ranking transports
 against one another.
 
+### Game threads half busy with game work
+
+These rows use `--game-load 0.5 --world-ms 10 --space-split top`. The game
+jobs request work equal to half a 60 Hz frame per game thread, while the main
+thread performs 10 ms of simulated world work. The job scheduler distributes
+that work across the pool; these settings do not prove identical utilization
+on every thread. The builds below correct the earlier serial world-work
+stand-in: game jobs run alongside the main thread's world work.
+
+The network task operates on the preceding world state while the next world
+update runs. This adds state-to-send delay: approximately one frame in the
+ordering, measured around 10 ms here. The latency figures below measure the
+time from the world state to the test's send call, not network transit time
+or a separately measured increase over a baseline. Input age is measured
+from the server's network update completing until the main thread takes its
+inputs for the world update.
+
+Hardware, pool size, and thread placement match each transport's rows above.
+All six rows report 1000 players and 100% delivery in both directions.
+
+| Transport | Load | Server packets/s | Frames/s | Main average | Main p99 | Main max | Game threads min / mean / max | Main / mean game thread |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| XDP | Peak | 900,000 | 60.4 | 0.424 | 0.620 | 0.696 | 2.68 / 3.12 / 4.05 | ≈0.14 (derived) |
+| XDP | Average | 480,000 | 60.6 | 0.384 | 0.490 | 0.626 | 0.97 / 1.70 / 4.63 | ≈0.23 (derived) |
+| io_uring | Peak | 900,318 | 60.40 | 0.158 | 0.205 | 0.286 | 2.37 / 2.76 / 3.36 | 0.057 |
+| io_uring | Average | 480,316 | 60.64 | 0.154 | 0.168 | 0.234 | 1.35 / 1.64 / 2.03 | 0.094 |
+| GSO | Peak | 900,000 | 60.6 | 0.25 | 0.30 | 0.33 | 2.46 / 2.72 / 3.12 | 0.09 |
+| GSO | Average | 480,000 | 60.5 | 0.24 | 0.30 | 0.32 | 1.14 / 1.47 / 2.0 | 0.165 |
+
+Network times remain milliseconds per frame. The two XDP ratios are derived
+from the reported rounded means: 0.424 / 3.12 and 0.384 / 1.70. The other
+ratios were supplied with the rows. Percentile aggregation for these loaded
+rows is awaiting confirmation.
+
+The tool's `leftover_core_ms` field is excluded: these builds omit the game
+threads' network work from that calculation, overstating the time available.
+
+| Rows | Build | Steady window |
+| --- | --- | --- |
+| XDP peak / average | [186a4f364](https://github.com/mas-bandwidth/rocketnet/commit/186a4f3646632119d64633e9e9404cd93e61c4ee), measurement branch | t=25–55 s |
+| io_uring peak / average | [c154d7971](https://github.com/mas-bandwidth/rocketnet/commit/c154d7971ab3e6e57c12c4e2012fe9442d7534bb), `tests/v1.2/goal-uring` | t=25–75 s |
+| GSO peak / average | [aad649f62](https://github.com/mas-bandwidth/rocketnet/commit/aad649f624690c21ec34a8eba07da6903f3b4ef3), `tests/v1.2/goal-gso` | Pending confirmation |
+
+| Transport | Load | State-to-send latency mean / max (ms) | Input age mean / max (ms) | Main join wait mean (ms) | World update mean (ms) |
+| --- | --- | --- | --- | ---: | ---: |
+| XDP | Peak | 10.1 / 13.5 | 4.7 / 8.0 | 0.003 | 11.84 |
+| XDP | Average | 10.5 / 15.5 | 6.2 / 8.1 | 0.003 | 10.44 |
+| io_uring | Peak | 9.9 / Pending | 5.2 / Pending | Pending | Pending |
+| io_uring | Average | 9.1 / Pending | 6.8 / Pending | Pending | Pending |
+
+The XDP loaded rows reported no frame overruns. In GSO's loaded peak row,
+the world update took 11.4 ms and the frame's network task finished in
+11.2 ms; these operations overlap. Its reported state-to-send delay was
+about 10 ms; exact per-row latency and input-age summaries are pending.
+
 | Measurement still pending | Status |
 | --- | --- |
-| XDP with game threads half busy with game work | Pending |
-| io_uring with game threads half busy with game work | Pending |
-| GSO with game threads half busy with game work | Pending |
 | RIO peak and average | Pending |
 | IOCP peak main-thread mean, sampling window, and fewer-network-thread measurements | Pending |
 | IOCP with game threads half busy with game work | Pending |
@@ -266,6 +318,13 @@ Reconcile both logs on the Linux machine as above. These arguments retain
 the default 60 Hz and 60-second duration; the shared stop-time settings used
 by the original launcher are pending.
 
+To repeat a row with game threads half busy, build its loaded-row commit
+from the table above. Retain that transport's machine layout, payload,
+client arguments, and peak/average load selection. In the server command,
+replace `--game-load 0` with `--game-load 0.5`, set `--world-ms 10`, and
+add `--space-split top` if absent. Use these settings only with the listed
+loaded-row builds; the earlier builds have a different world-work stand-in.
+
 ### Command flags
 
 | Flag | Meaning |
@@ -287,7 +346,7 @@ by the original launcher are pending.
 | `--pin-first-cpu` | Pin the main thread to this CPU and successive game threads to successive CPUs: 3 for Linux rows, 6 for IOCP. |
 | `--net-first-cpu 1` | Have the load test pin GSO network threads starting at CPU 1 in this build. |
 | `--world-ms` | Main-thread simulated world work in milliseconds; 0 disables it, 10 requests 10 ms. |
-| `--game-load 0` | Disable simulated game jobs. |
+| `--game-load` | 0 disables simulated game jobs; 0.5 requests half a frame of game work per game thread. |
 | `--space-send wide` | Let the client-range jobs write their clients' messages directly. |
 | `--space-update split` | Run per-client network updates as jobs over client ranges. |
 | `--space-net task` | Run network update and send work in the scheduled network task. |
@@ -319,7 +378,11 @@ affinity was granted.
 | `harden_players connects` | Successful connection count; read with stable/unplanned ends and error counts. |
 | `harden_players` delivery percentages | Unreliable delivered / (delivered + lost), separately for each direction, after draining. |
 | `harden_threads main_net_ms` | Mean elapsed main-thread network work per frame in that reporting interval. |
-| `harden_frame main_rn_ms p99/max` | Per-interval main-thread network-time p99 and maximum. XDP's table averages the per-second p99 values. |
+| `harden_frame main_rn_ms p99/max` | Per-interval main-thread network-time p99 and maximum. XDP's rows without game work average the per-second p99 values. |
+| `harden_frame latency_ms avg/max` | Time from the world state used for a frame's packets to its send call; not wire latency. |
+| `harden_frame input_age_ms avg/max` | Time from the network update completing to the main thread taking its inputs for the world update. |
+| `harden_frame join_ms avg/max` | Time the main thread waits for the network task to finish. |
+| `harden_frame world_ms avg/max` | Elapsed world-update time, including waiting for its game jobs; may exceed the nominal 10 ms. |
 | `harden_threads game_net_ms min/mean/max` | Minimum, mean, and maximum across game threads of each thread's network work per frame. |
 | `harden_threads ratio` | `main_net_ms` / mean `game_net_ms`. |
 | `harden_thread_net_ms` | Per-thread network work; index 0 is the main thread's contribution to jobs. |
