@@ -149,7 +149,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `clientconnection` | Client connection state machine, safety/liveness cases and explicit timeout debt. |
 | `replaywindow` | Control, mid-scale bench control and a reversed witness for every safety rule: `WindowIsTruth`, `GenuineIsAccepted`, `AckReportsOnlyReceived`, `NoOpenBeforeConnect`, `NoAdvanceBeforeConnect`, `AckReportsOnlyProcessed`, `ReceivedIsRefused`, `BelowFloorIsRefused` and `HighestIsReceived` |
 | `rnsendstore` | One store class, abstractly (README-RNSendStore.md). |
-| `rnsendstorelayout` | The send store and the descriptor free stack at the code's layout, three chunks and four descriptors (README-RNSendStoreLayout.md). |
+| `rnsendstorelayout` | The send store with its chunk free stack and the descriptor free stack at the code's layout, three chunks and four descriptors (README-RNSendStoreLayout.md). |
 | `rnupdateclock` | The update clock of the client transport, the server transport and the message object (README-RNUpdateClock.md). |
 | `rncreateunwind` | Who owns a transport whose create fails after its worker started: the unwind waits, frees, or hands it to a retained slot (README-RNCreateUnwind.md). |
 | `rnclienttransportorder` | The client transport order at create with the family fallback (README-RNClientTransportOrder.md). |

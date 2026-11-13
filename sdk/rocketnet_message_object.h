@@ -436,9 +436,9 @@ int rn_message_open_last( const struct rn_message_object_t * object );
 
 // the room query: true when rn_message_object_start with these arguments, now,
 // would be given its room; false when it would be dropped or refused, or would
-// find no room and end the connection (R5). Pure and allocation-free; the
-// store lookup scans the chosen class's chunks from its cursor
-// (rn_send_store_find).
+// find no room and end the connection (R5). Pure, allocation-free and O(1);
+// the store lookup reads the free stack top of the chosen class or its next
+// fresh chunk (rn_send_store_find).
 bool rn_message_object_send_room( const struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );

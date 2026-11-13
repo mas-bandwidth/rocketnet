@@ -172,6 +172,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 16-byte mutex leaves that offset at 0 mod 64 before the table (Linux 32,
 // macOS 56) and at 8 after it, so the fill phase moves by 17472: computed
 // from the Linux layout, not measured on Windows.
+// The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
+// bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
+// computed from the Linux reading, not measured on Windows.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527583711 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
 #elif defined( __APPLE__ )
@@ -261,6 +264,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // identifiers, their reasons and a count) adds 17408 to the server across its
 // 64-byte rounding (derived from the Linux reading): not yet in the figure
 // below, which stays the measured one until a macOS build reads the merged tree.
+// The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
+// bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
+// computed from the Linux reading, not measured on macOS.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1659570675 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
@@ -394,6 +400,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 6: 1024 token identifiers, their reasons and a count) adds 17408 to the
 // server across its 64-byte rounding: actual=2142743602 (amd-2, gcc,
 // Release, DEV ON). arm64 the same, computed.
+// The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
+// bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
+// actual=2147358194 and 15195026 (bench-xdp-9, gcc, Debug, DEV ON); arm64
+// the same, computed.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141695034ULL )
 #else // #if defined( __aarch64__ )
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141695026ULL )
@@ -403,7 +413,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // nothing to the server: actual=15190354 (hetzner1, gcc, Debug, DEV ON).
 // The appended counter IOCP_PIN_REFUSALS adds 64 more to the client (one more
 // 64-byte rounding): actual=15190418 (hetzner1, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141842 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146450 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

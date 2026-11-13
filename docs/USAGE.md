@@ -332,9 +332,10 @@ returned pointer.
 A `false` answer can mean full message memory, a disconnected endpoint, an
 open reservation, or invalid arguments. It may also be pessimistic for a small
 unreliable message that can write directly into a transport frame. For valid
-arguments, the query changes no state, counts nothing and allocates nothing; a
-message that needs a send store chunk scans that size class for a free one, so
-its worst case grows with the chunks in the class. It does not
+arguments, the query changes no state, counts nothing and allocates nothing,
+and takes constant time: a message that needs a send store chunk is answered
+from the free stack of that size class or its next unused chunk, however many
+chunks are held. It does not
 promise wire budget, packet capacity, or immediate transmission. Calling start
 when message storage is full is refused and counted and never ends the
 connection; other causes of `false` follow their own refusal rules.

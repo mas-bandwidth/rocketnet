@@ -4444,7 +4444,8 @@ uses the larger configured budget. An unlimited budget (`ROCKETNET_SEND_KBPS_UNL
 
 The descriptor pool adds `ceil(R / 128)` entries. The 128-, 512-, and 1152-byte
 fixed pools add `ceil(R / 128)`, `ceil(R / 512)`, and `ceil(R / 1024)` chunks,
-respectively, including each chunk's four-byte link and alignment. The send-span
+respectively, including each chunk's four bytes of metadata, its four-byte free-stack
+entry and alignment. The send-span
 arena adds R plus up to 15 padding bytes per 1153 payload bytes, rounded to 64.
 Receive-ring and reliable-window wire parameters do not change. This extends the
 base headroom formula and default sizes above; runtime sizing reports

@@ -330,10 +330,11 @@ universal preset suitable for every game:
   ring, a 4 MiB (`4,194,304`-byte) send buffer, a 1,024-message reliable window, 1,024
   packets in flight, 256 packets and 1,024 unreliable messages per update,
   a 1,000-kbps client send budget, and a 10,000-kbps server per-client send
-  budget. The server budget produces an `18,878,016`-byte (18.00 MiB) message
-  region per connection and a `23,527,047,915`-byte
-  (21.91 GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
-  `max_clients = 1000`. A game with small messages, fewer channels, or smaller
+  budget. The server budget produces a `19,043,456`-byte (18.16 MiB) message
+  region per connection and a `23,692,511,915`-byte
+  (22.07 GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
+  `max_clients = 1000` (v1.1.0's `23,527,047,915` plus the send store's free
+  stack, see [Platform, build, and allocator assumptions](#platform-build-and-allocator-assumptions)). A game with small messages, fewer channels, or smaller
   match sizes pays for unused per-client arena space if it leaves every field
   at `0` (default).
 - **`rocketnet_client_light_config` / `rocketnet_server_light_config`** is
@@ -466,7 +467,7 @@ requirements to each configuration group:
      `message_resend_delay_max_ms` (2 seconds by default).
      Lowering the server budget from `10000` kbps (`default`) to `256` kbps
      (`light`) together with the light buffer geometry reduces its
-     `connection_bytes` from `18,878,016` bytes (18.00 MiB) to `963,136`
+     `connection_bytes` from `19,043,456` bytes (18.16 MiB) to `967,744`
      bytes (0.92 MiB). (When calling the internal layer helper
      `rocketnet_message_connection_bytes` or `rocketnet_message_connection_sizing`
      directly, set both `client_send_kbps` and `server_send_kbps` on
@@ -572,6 +573,20 @@ settings are also what the `bin/load` commands in
 [Commands to regenerate](#commands-to-regenerate-planner-and-transport-figures)
 print from a `make ROCKETNET_DEV=ON` build. The same queries on v1.0.0
 reproduce every cell of its tables exactly.
+
+After v1.1.0 the send store keeps a free stack, one `uint32_t` a store chunk
+beside its metadata word (the fix for a send-store scan a receiver could
+steer, finding W2-86), so `S` and every figure built on it grow, by the same
+amount in both libraries and on every transport. Read with the same queries
+(Linux x86-64, 2026-11-13): `S_eff` is `12,279,808` (`default` server),
+`5,055,808` (`default` client), `348,224` (`light`) and `869,440`
+(`arena-64`), so `connection_bytes` is `19,043,456` (+165,440), `7,993,408`
+(+68,800), `967,744` (+4,608) and `1,491,072` (+11,584). A client's
+`required_memory` grows by its profile's figure; a server's by 165,464
+(`default`), 4,632 (`light`) or 11,608 (`arena-64`) bytes a client slot at
+1000 slots (165,464,000, 4,632,000 and 11,608,000 bytes), and by 165,440,
+4,608 and 11,584 at one slot. The cells of Tables 1 to 3 are v1.1.0's and do
+not include it.
 These are source-specific plans, not measured process
 memory or a performance qualification. The build used the default constants:
 
