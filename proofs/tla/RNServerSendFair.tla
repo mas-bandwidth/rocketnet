@@ -82,6 +82,23 @@
 (* behind slots already served this flush; each fails FairService.        *)
 (* FairService is owed per queue: ceil(|Conn on q| / Kq) flushes, to the   *)
 (* slots of a queue with a capacity.                                       *)
+(*                                                                         *)
+(* Live room: the code reads the capacity live at each visit               *)
+(* (rocketnet_server_transport_send_capacity_available): in-place frames   *)
+(* started between flushes have spent some of the ring's (they start only  *)
+(* while more than send_connected_count is left, rn_message_object_start), *)
+(* a staged transport's send room is whatever its in-flight sends left,    *)
+(* and that room can grow within the flush as sends complete.  room is the *)
+(* first queue's capacity this flush: BeginFlush picks it in RoomMin..K    *)
+(* and Grow adds one unit, once, inside the flush.  RoomMin = K (the       *)
+(* default) is the fixed capacity; MCRNServerSendFairLive.cfg overrides it *)
+(* with 0.  FairService's window is ceil(|Conn on q| / Kq) flushes that    *)
+(* had the full capacity: a flush with less room serves fewer slots and    *)
+(* does not count (CountsAllFlushes FALSE); the cursor it leaves is still  *)
+(* the walk's, so it never sends a waiting slot back.  The reversed        *)
+(* witness MCRNServerSendFairBrokenFixedWindow.cfg counts every flush and  *)
+(* fails FairService: the fixed-capacity window is not owed under a live   *)
+(* room.                                                                   *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -116,18 +133,26 @@ Slots == 0..(N - 1)
 Entries == 0..(2 * N - 1)
 Healthy == Conn \ (Dark \cup Short)
 
-\* the send queue a slot stages on, and each queue's capacity a flush
+\* the send queue a slot stages on, and each queue's full capacity a flush
 QOf(s) == IF s \in Q1 THEN 1 ELSE 0
-Cap(q) == IF q = 1 THEN K1 ELSE K
+Full(q) == IF q = 1 THEN K1 ELSE K
 ConnOn(q) == {s \in Conn : QOf(s) = q}
 
+\* the least room the first queue may have at a flush (K: a fixed capacity;
+\* overridden in MCRNServerSendFairLive.cfg)
+RoomMin == K
+
+\* TRUE: FairService counts every flush, the fixed-capacity window
+\* (overridden in the witness MCRNServerSendFairBrokenFixedWindow.cfg)
+CountsAllFlushes == FALSE
+
 \* each queue's fairness window: ceil(|Conn on q| / Kq); one queue: ceil(|Conn| / K)
-WindowOn(q) == (Cardinality(ConnOn(q)) + Cap(q) - 1) \div Cap(q)
+WindowOn(q) == (Cardinality(ConnOn(q)) + Full(q) - 1) \div Full(q)
 Window == IF Q1 = {} \/ K1 = 0 THEN WindowOn(0)
           ELSE IF WindowOn(0) > WindowOn(1) THEN WindowOn(0) ELSE WindowOn(1)
 
 \* the slots FairService is owed to: every connected slot of a queue with a capacity
-Owed == {s \in Conn : Cap(QOf(s)) > 0}
+Owed == {s \in Conn : Full(QOf(s)) > 0}
 
 VARIABLES \* the code's state
           pc,        \* "between" flushes, "first" round, "later" rounds
@@ -143,6 +168,8 @@ VARIABLES \* the code's state
           usedB,     \* units of the second queue's capacity charged this flush
           held,      \* the cursor before the first slot held after the flush's first frame, -1 for none
           ended,     \* the slots whose pass ended this flush (wrote nothing in a visit)
+          room,      \* the first queue's capacity this flush, read live
+          grown,     \* the room grew inside this flush
           \* the slots' state (the environment's, per flush)
           work,      \* frames a healthy slot has left; 1 while a short slot's packet is due
           uAge,      \* a dark slot's flushes since U's last send, saturating at Delay
@@ -160,11 +187,14 @@ VARIABLES \* the code's state
           wasted,    \* units charged this flush to aborted frames
           harmed     \* a healthy slot ended a flush with work left while a unit went to an aborted frame
 
-vars == <<pc, snc, start, off, prev, w, count, k, kept, used, usedB, held, ended, work, uAge, pays,
-          visits, wrotePrev, wroteNow, lastPos, ok, started, wrote, writable, waiting,
-          wasted, harmed>>
+vars == <<pc, snc, start, off, prev, w, count, k, kept, used, usedB, held, ended, room, grown,
+          work, uAge, pays, visits, wrotePrev, wroteNow, lastPos, ok, started, wrote, writable,
+          waiting, wasted, harmed>>
 
 Min(a, b) == IF a < b THEN a ELSE b
+
+\* each queue's capacity as a visit reads it now
+Cap(q) == IF q = 1 THEN K1 ELSE room
 
 \* U is past its delay: the walk resends it (the one number the hold allows)
 UDue(s) == uAge[s] >= Delay
@@ -218,6 +248,7 @@ Init ==
     /\ count = 0 /\ k = 0 /\ kept = 0 /\ used = 0
     /\ usedB = 0 /\ held = -1
     /\ ended = {}
+    /\ room = K /\ grown = FALSE
     /\ work = [s \in Slots |-> 0]
     /\ uAge = [s \in Slots |-> IF s \in Dark THEN Delay - 1 ELSE 0]
     /\ pays = [s \in Slots |-> FALSE]
@@ -253,6 +284,7 @@ BeginFlush ==
     /\ count' = 0 /\ used' = 0
     /\ usedB' = 0 /\ held' = -1
     /\ ended' = {}
+    /\ room' \in RoomMin..K /\ grown' = FALSE
     /\ visits' = 0 /\ wrotePrev' = {} /\ wroteNow' = {} /\ lastPos' = -1
     /\ started' = [s \in Slots |-> 0]
     /\ wrote' = [s \in Slots |-> 0]
@@ -260,13 +292,17 @@ BeginFlush ==
     /\ UNCHANGED <<snc, k, kept, ok, waiting, harmed>>
 
 \* The flush ends (a capacity cut, or a round with no writer): the transport
-\* sends and its count resets.
+\* sends and its count resets.  A slot left waiting counts the flush only
+\* when its queue had the full capacity (CountsAllFlushes: every flush).
+Counts(s) == CountsAllFlushes \/ QOf(s) = 1 \/ room = K
 EndFlush(sncNext, okNext, wr, wk, ws) ==
     /\ pc' = "between"
     /\ snc' = sncNext
     /\ ok' = okNext
     /\ waiting' = [s \in Slots |->
-          IF writable[s] /\ wr[s] = 0 THEN Min(waiting[s] + 1, Window) ELSE 0]
+          IF writable[s] /\ wr[s] = 0
+          THEN IF Counts(s) THEN Min(waiting[s] + 1, Window) ELSE waiting[s]
+          ELSE 0]
     /\ harmed' = (harmed \/ (ws > 0 /\ \E s \in Healthy : wk[s] > 0))
 
 \* rn_message_connection_write for slot i, with capacity available: its
@@ -294,6 +330,7 @@ WriteEffects(i) ==
 \* one offset of the first round
 FirstVisit ==
     /\ pc = "first"
+    /\ UNCHANGED <<room, grown>>
     /\ LET i == (start + off) % N
            isLast == off + 1 = N
        IN
@@ -376,6 +413,7 @@ FirstVisit ==
 \* one entry of a later round: the writer list, compacted in place
 LaterVisit ==
     /\ pc = "later"
+    /\ UNCHANGED <<room, grown>>
     /\ LET idx == IF Mode = "reorder" THEN count - 1 - k ELSE k
            i == w[2 * idx]
            stored == w[2 * idx + 1]
@@ -439,7 +477,17 @@ LaterVisit ==
                        /\ UNCHANGED <<pc, count, wrotePrev, waiting, harmed>>
                /\ UNCHANGED <<start, off, prev, pays, writable, held>>
 
-Next == BeginFlush \/ FirstVisit \/ LaterVisit
+\* the transport's room grows inside the flush (a staged send completes, its
+\* slot retired): the next capacity test reads one more unit, once a flush
+Grow ==
+    /\ pc \in {"first", "later"}
+    /\ room < K /\ ~grown
+    /\ room' = room + 1 /\ grown' = TRUE
+    /\ UNCHANGED <<pc, snc, start, off, prev, w, count, k, kept, used, usedB, held, ended,
+                   work, uAge, pays, visits, wrotePrev, wroteNow, lastPos, ok, started, wrote,
+                   writable, waiting, wasted, harmed>>
+
+Next == BeginFlush \/ FirstVisit \/ LaterVisit \/ Grow
 
 Spec == Init /\ [][Next]_vars
 
@@ -454,6 +502,7 @@ TypeOK ==
     /\ used \in 0..K /\ usedB \in 0..K1
     /\ held \in -1..(N - 1)
     /\ ended \subseteq Conn
+    /\ room \in 0..K /\ grown \in BOOLEAN
     /\ work \in [Slots -> 0..WorkMax]
     /\ uAge \in [Slots -> 0..Delay]
     /\ waiting \in [Slots -> 0..Window]
@@ -461,8 +510,8 @@ TypeOK ==
 
 \* every slot with writable work at the start of a flush has a frame
 \* written within ceil(|Conn on its queue| / its queue's capacity) flushes
-\* (one queue: ceil(|Conn| / K)); a slot of a queue with no capacity is
-\* owed nothing
+\* that had the queue's full capacity (one queue: ceil(|Conn| / K)); a
+\* slot of a queue with no capacity is owed nothing
 FairService == \A s \in Owed : waiting[s] < WindowOn(QOf(s))
 
 \* every unit of the shared capacity charged went to a written frame

@@ -18,11 +18,18 @@
 (*                                     UncappedNeverDropsOrWaits           *)
 (*   MCRNSendBudgetBrokenNoRefund.cfg   RefundOnFail                       *)
 (*                                     FailedSendCostsNothing              *)
+(*   MCRNSendBudgetBrokenFreshOnChange.cfg  KeepTokens <- BrokenKeep       *)
+(*                                     NeverOverspend                      *)
+(* The rates and depths above are at kbps 1; SetKbps moves the kbps        *)
+(* between 1 and MaxKbps = 2 (rate and depth doubled at 2).                *)
 (***************************************************************************)
 EXTENDS RNSendBudget
 
 \* the reversal MCRNSendBudgetBrokenUncapped.cfg substitutes for UncapHonoured
 BrokenUncap == FALSE
+
+\* the reversal MCRNSendBudgetBrokenFreshOnChange.cfg substitutes for KeepTokens
+BrokenKeep == FALSE
 
 \* every safety invariant at once, for a run that wants one name
 SafetyInvariants ==

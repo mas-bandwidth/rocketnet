@@ -9,8 +9,13 @@
 (* capped at the bucket's depth (the larger of one maximum packet and      *)
 (* 100 ms of budget), and every packet written spends its wire bytes.      *)
 (*                                                                         *)
-(* Time is in ticks; Rate is the refill per tick, W ticks are one window   *)
-(* (one second), so the budget per window is Budget = Rate * W.  Bytes are *)
+(* Time is in ticks; Rate is the refill per tick at one unit of kbps, W     *)
+(* ticks are one window (one second), so the budget per window at kbps k   *)
+(* is k * Rate * W, and the bucket's depth is k * Depth.  The connection's *)
+(* kbps is a variable: SetKbps between two positive values changes the     *)
+(* rate and the depth and caps the tokens at the new depth, keeping them   *)
+(* otherwise (rocketnet_send_budget_set_kbps: refill at the old rate, then *)
+(* the new kbps, bytes_per_second and depth, tokens capped).  Bytes are    *)
 (* abstract units.  A tick is one update: it refills the bucket and, when  *)
 (* the packet writer runs (run = TRUE), opens a send phase in which the    *)
 (* writer offers queued items class by class:                              *)
@@ -34,8 +39,19 @@
 (* An uncapped connection (SetKbps with a value of 0 or lower) holds no    *)
 (* bucket: every item is sent, nothing is dropped or waits by the budget,  *)
 (* and NeverOverspend no longer claims anything about it. A positive value *)
-(* caps it again, a fresh full bucket; a value above MaxKbps is refused    *)
-(* and changes nothing.                                                    *)
+(* caps it again, a fresh full bucket at that kbps (rocketnet_send_budget_ *)
+(* init); a value above MaxKbps is refused and changes nothing.            *)
+(* KeepTokens FALSE (the witness MCRNSendBudgetBrokenFreshOnChange.cfg)    *)
+(* refills the bucket whole at every change between positive values, and   *)
+(* fails NeverOverspend.                                                   *)
+(*                                                                         *)
+(* The send phase is the write pass.  ClassOrder is the write pass's: an   *)
+(* in-place unreliable send of the fill phase (rn_message_object_start)    *)
+(* is admitted against the same bucket before the pass and is not in this  *)
+(* model; what keeps it from taking the bytes due reliable work needs is   *)
+(* rn_endpoint_in_place_affordable, which admits it only while no reliable *)
+(* item waits and the tokens cover its bytes plus one maximum packet while *)
+(* ordered work is due (rn_endpoint_ordered_due).                          *)
 (*                                                                         *)
 (* Two constants flip the guarding rules, one per reversed witness:        *)
 (*   CheckBudget = FALSE   spend without the check: an item is sent        *)
@@ -92,7 +108,14 @@ MaxKbps == 2
 \* uncapped connection that still consults the bucket) and no other cfg
 \* needs a new line.
 UncapHonoured == TRUE
-Budget == Rate * W
+\* TRUE: a change between positive values keeps the tokens, capped at the
+\* new depth (the code). A definition so the reversed witness
+\* MCRNSendBudgetBrokenFreshOnChange.cfg can replace it with FALSE (a fresh
+\* full bucket at every change).
+KeepTokens == TRUE
+\* the refill per tick and the depth at kbps k
+RateOf(k) == k * Rate
+DepthOf(k) == k * Depth
 DropCap == 2
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
@@ -120,11 +143,14 @@ VARIABLES
     uncapped,   \* TRUE: this connection's budget does not apply
     uncapBad,   \* ghost: an uncapped connection dropped or waited by the budget
     fails,      \* sends the transport refused at finish so far
-    failBad     \* ghost: a failed send left tokens or cur other than before it
+    failBad,    \* ghost: a failed send left tokens or cur other than before it
+    kbps,       \* the connection's budget, 1..MaxKbps (kept while uncapped)
+    khist,      \* ghost: the most kbps in force in each of the previous W - 1 ticks
+    kcur        \* ghost: the most kbps in force in the current tick
 
 vars == << tokens, hist, cur, phase, rtx, rel, unrel, nextRel, inflight,
            acked, losses, drops, orderBad, dropBad, uncapped, uncapBad,
-           fails, failBad >>
+           fails, failBad, kbps, khist, kcur >>
 
 Classes == << "rtx", "rel", "unrel" >>
 Order == IF ReliableFirst THEN << "rtx", "rel", "unrel" >>
@@ -156,7 +182,9 @@ Fits(c) == Bypass \/ ~CheckBudget \/ SizeOf(c) <= tokens
 HigherQueued(c) == \E i, j \in 1..3 : Classes[i] = c /\ j < i /\ Queued(Classes[j])
 
 TypeOK ==
-    /\ tokens \in 0..Depth
+    /\ tokens \in 0..DepthOf(kbps)
+    /\ kbps \in 1..MaxKbps /\ kcur \in 1..MaxKbps
+    /\ khist \in Seq(1..MaxKbps) /\ Len(khist) = W - 1
     /\ hist \in Seq(Nat) /\ Len(hist) = W - 1
     /\ cur \in Nat
     /\ phase \in {"idle", "send"}
@@ -170,7 +198,9 @@ TypeOK ==
     /\ fails \in 0..MaxFail /\ failBad \in BOOLEAN
 
 Init ==
-    /\ tokens = Depth
+    /\ kbps = 1 /\ kcur = 1
+    /\ khist = [i \in 1..(W - 1) |-> 1]
+    /\ tokens = DepthOf(1)
     /\ hist = [i \in 1..(W - 1) |-> 0]
     /\ cur = 0
     /\ phase = "idle"
@@ -183,16 +213,20 @@ Init ==
     /\ fails = 0 /\ failBad = FALSE
 
 (***************************************************************************)
-(* Tick(run): one update.  refill(now): tokens += Rate, capped at Depth.   *)
-(* The window slides by one tick.  With run, the writer runs: unreliable   *)
-(* items for this update and at most one new reliable item arrive, and the *)
-(* send phase opens.  Without run the update stalls: time passes only.     *)
+(* Tick(run): one update.  refill(now): tokens += the rate at the kbps in  *)
+(* force, capped at its depth.  The window slides by one tick.  With run,  *)
+(* the writer runs: unreliable items for this update and at most one new   *)
+(* reliable item arrive, and the send phase opens.  Without run the update *)
+(* stalls: time passes only.                                               *)
 (***************************************************************************)
 Tick(run) ==
     /\ phase = "idle"
-    /\ tokens' = Min(Depth, tokens + Rate)
+    /\ tokens' = Min(DepthOf(kbps), tokens + RateOf(kbps))
     /\ hist' = Append(Tail(hist), cur)
     /\ cur' = 0
+    /\ khist' = Append(Tail(khist), kcur)
+    /\ kcur' = kbps
+    /\ UNCHANGED kbps
     /\ IF run
          THEN /\ phase' = "send"
               /\ \E k \in 0..UPerTick : unrel' = k
@@ -229,7 +263,7 @@ Send ==
                     /\ unrel' = unrel - 1
                     /\ UNCHANGED << rtx, rel, inflight >>
     /\ UNCHANGED << hist, phase, nextRel, acked, losses, drops, dropBad,
-                    uncapped, uncapBad, fails, failBad >>
+                    uncapped, uncapBad, fails, failBad, kbps, khist, kcur >>
 
 (***************************************************************************)
 (* SendFailed: the head of the next class is admitted and charged as Send  *)
@@ -267,7 +301,7 @@ SendFailed ==
                     /\ UNCHANGED << rtx, rel >>
     /\ fails' = fails + 1
     /\ UNCHANGED << hist, phase, nextRel, inflight, acked, losses, drops,
-                    dropBad, uncapped, uncapBad >>
+                    dropBad, uncapped, uncapBad, kbps, khist, kcur >>
 
 (***************************************************************************)
 (* Drop: the next class is unreliable and its head does not fit: dropped   *)
@@ -284,7 +318,7 @@ Drop ==
     /\ dropBad' = (dropBad \/ UnrelSize <= AvailUnrel)
     /\ uncapBad' = (uncapBad \/ uncapped)
     /\ UNCHANGED << tokens, hist, cur, phase, rtx, rel, nextRel, inflight,
-                    acked, losses, orderBad, uncapped, fails, failBad >>
+                    acked, losses, orderBad, uncapped, fails, failBad, kbps, khist, kcur >>
 
 (***************************************************************************)
 (* EndUpdate: nothing more can be sent: every queue is empty, or the next  *)
@@ -301,7 +335,7 @@ EndUpdate ==
     /\ dropBad' = (dropBad \/ (unrel > 0 /\ UnrelSize <= AvailUnrel))
     /\ uncapBad' = (uncapBad \/ (uncapped /\ AnyQueued))
     /\ UNCHANGED << tokens, hist, cur, rtx, rel, nextRel, inflight, acked,
-                    losses, orderBad, uncapped, fails, failBad >>
+                    losses, orderBad, uncapped, fails, failBad, kbps, khist, kcur >>
 
 (***************************************************************************)
 (* Ack(r): the transport acks the packet that carried r (R1).              *)
@@ -313,7 +347,7 @@ Ack(r) ==
     /\ acked' = acked \cup {r}
     /\ UNCHANGED << tokens, hist, cur, phase, rtx, rel, unrel, nextRel,
                     losses, drops, orderBad, dropBad, uncapped, uncapBad,
-                    fails, failBad >>
+                    fails, failBad, kbps, khist, kcur >>
 
 Lose(r) ==
     /\ r \in inflight
@@ -323,25 +357,30 @@ Lose(r) ==
     /\ losses' = losses + 1
     /\ UNCHANGED << tokens, hist, cur, phase, rel, unrel, nextRel, acked,
                     drops, orderBad, dropBad, uncapped, uncapBad, fails,
-                    failBad >>
+                    failBad, kbps, khist, kcur >>
 
 (* SetKbps(k): the runtime override. 0 or lower uncaps, a positive value up  *)
-(* to MaxKbps caps (a fresh bucket when it was uncapped), above the maximum  *)
-(* is refused and changes nothing. In the code this is                         *)
-(* rn_endpoint_set_send_kbps.                                                 *)
+(* to MaxKbps caps: a fresh full bucket at k when it was uncapped            *)
+(* (rocketnet_send_budget_init), otherwise the new rate and depth with the   *)
+(* tokens capped at the new depth (rocketnet_send_budget_set_kbps; its       *)
+(* refill at the old rate first adds nothing here, where time moves only at  *)
+(* Tick); above the maximum is refused and changes nothing. In the code this *)
+(* is rn_endpoint_set_send_kbps.                                             *)
 SetKbps(k) ==
     /\ k \in 0..(MaxKbps + 1)
     /\ \/ /\ k = 0
           /\ uncapped' = TRUE
           /\ hist' = [i \in 1..(W - 1) |-> 0]
           /\ cur' = 0
-          /\ UNCHANGED << tokens >>
+          /\ UNCHANGED << tokens, kbps, khist, kcur >>
        \/ /\ k >= 1 /\ k <= MaxKbps
           /\ uncapped' = FALSE
-          /\ tokens' = IF uncapped THEN Depth ELSE tokens
-          /\ UNCHANGED << hist, cur >>
+          /\ kbps' = k
+          /\ kcur' = Max(kcur, k)
+          /\ tokens' = IF uncapped \/ ~KeepTokens THEN DepthOf(k) ELSE Min(tokens, DepthOf(k))
+          /\ UNCHANGED << hist, cur, khist >>
        \/ /\ k > MaxKbps
-          /\ UNCHANGED << tokens, hist, cur, uncapped >>
+          /\ UNCHANGED << tokens, hist, cur, uncapped, kbps, khist, kcur >>
     /\ UNCHANGED << phase, rtx, rel, unrel, nextRel, inflight, acked,
                     losses, drops, orderBad, dropBad, uncapBad, fails,
                     failBad >>
@@ -371,10 +410,17 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 (* Properties.                                                             *)
 (***************************************************************************)
 
+\* the most kbps in force in the window's W ticks
+KMax == LET ks == Range(khist) \cup {kcur} IN CHOOSE m \in ks : \A n \in ks : n <= m
+
 \* bytes sent in any window of W consecutive ticks: at most the budget plus
-\* the bucket depth. An uncapped connection holds no bucket, so it claims
-\* nothing here.
-NeverOverspend == uncapped \/ SeqSum(hist) + cur <= Budget + Depth
+\* the bucket depth, each tick at the most kbps in force in it and the
+\* depth at the most in the window (at one kbps throughout, Rate * W +
+\* Depth). An uncapped connection holds no bucket, so it claims nothing
+\* here.
+RECURSIVE RateSum(_)
+RateSum(s) == IF s = <<>> THEN 0 ELSE RateOf(Head(s)) + RateSum(Tail(s))
+NeverOverspend == uncapped \/ SeqSum(hist) + cur <= RateSum(khist) + RateOf(kcur) + DepthOf(KMax)
 
 \* an uncapped connection never drops or waits by the budget: nothing is
 \* dropped and no send phase ends with work queued
@@ -397,7 +443,14 @@ ReliableNeverDropped ==
 \* this model does not cover it
 UnreliableDroppedOnlyOverBudget == ~dropBad
 
-\* retransmits and ordered progress, then new reliable, then unreliable
+\* retransmits and ordered progress, then new reliable, then unreliable,
+\* within one write pass (the send phase).  Not across the update: the fill
+\* phase's in-place unreliable sends are admitted before the write pass and
+\* rn_endpoint_begin_update resets the pass's rank (rank_reached); there
+\* reliable work is kept first only by rn_endpoint_in_place_affordable's
+\* reserve (no in-place send while a reliable item waits, and one maximum
+\* packet left over while ordered work is due), which this model does not
+\* carry
 ClassOrder == ~orderBad
 
 \* a send the transport refused at finish costs the bucket nothing: tokens
