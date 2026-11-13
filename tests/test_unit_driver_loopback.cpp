@@ -2135,7 +2135,7 @@ static void test_iocp_post_receive_retries_push_a_stalled_pop_refuses()
 REGISTER_UNIT_TEST( test_iocp_post_receive_retries_push_a_stalled_pop_refuses );
 
 bool rocketnet_server_iocp_test_stop_post_race( int mode, int * exit_at_admitted_out, int * posted_out, int * state_out,
-                                                 int * pending_out, int * exit_after_out );
+                                                int * pending_out, int * exit_after_out );
 
 // A01 of the v12 review: worker B, retrying a receive endpoint 0 owns, is
 // admitted to post it; stop is published and endpoint 0's worker runs its

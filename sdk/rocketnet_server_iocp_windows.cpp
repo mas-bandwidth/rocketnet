@@ -1188,6 +1188,8 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     // PostStart the stop check and the new generation, PostAccepted an
     // accepted post and PostRefused a refused one, whose push onto
     // retry_receives is PushClaim and PushPublish.
+    // proofs/tla/RNIocpEndpoints.tla PostCount, PostCheck, PostAccept and
+    // PostRefuse are the same steps, any worker posting any endpoint's receive.
     // Only a completion worker or the creating thread posts a receive; no
     // publication mutex is held. Any worker may post a receive another
     // endpoint owns (from retry_receives), and only the owner cancels it.
@@ -1224,19 +1226,20 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
 
     int result;
     int error = 0;
+    bool accepted_without_socket = false;
 #if ROCKETNET_DEV
     if ( rocketnet_iocp_test_post_admitted )
     {
         rocketnet_iocp_test_post_admitted( iocp, rocketnet_iocp_test_post_admitted_context );
     }
-    if ( rocketnet_iocp_test_accept_posts )
+    accepted_without_socket = rocketnet_iocp_test_accept_posts;
+#endif // #if ROCKETNET_DEV
+    if ( accepted_without_socket )
     {
         result = SOCKET_ERROR;
         error = WSA_IO_PENDING;
     }
-    else
-#endif // #if ROCKETNET_DEV
-    if ( ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST, &error ) )
+    else if ( ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST, &error ) )
     {
         result = SOCKET_ERROR;
     }
@@ -4135,7 +4138,7 @@ static void rocketnet_iocp_stop_race_test_admitted( rocketnet_server_iocp_t * io
 // the post returned true, the receive's state and pending after the post,
 // and whether the owner may exit once the cancelled receive has completed.
 bool rocketnet_server_iocp_test_stop_post_race( int mode, int * exit_at_admitted_out, int * posted_out, int * state_out,
-                                                 int * pending_out, int * exit_after_out )
+                                                int * pending_out, int * exit_after_out )
 {
     if ( mode < 0 || mode > 2 || !exit_at_admitted_out || !posted_out || !state_out || !pending_out || !exit_after_out )
     {
