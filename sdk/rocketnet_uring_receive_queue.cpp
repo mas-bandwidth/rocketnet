@@ -9,6 +9,8 @@
 #include "rocketnet_internal.h"
 
 #include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <inttypes.h>
 #include <new>
 #include <string.h>
