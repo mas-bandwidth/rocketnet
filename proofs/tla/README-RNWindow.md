@@ -232,7 +232,7 @@ Committed cases:
 | `MCRNWindowBrokenHalfRange.cfg` | every invariant | 176 | 107 | 8 | 1 s | fail as expected: `WireNumberReconstructs` |
 | `MCRNWindowBrokenHoldOrdered.cfg` | every invariant | 1,431 | 741 | 19 | 2 s | fail as expected: `OrderedDeliveredInOrder` |
 | `MCRNWindowBrokenDropDuplicates.cfg` | every invariant | 173 | 105 | 8 | 1 s | fail as expected: `DeliveredOnce` |
-| `MCRNWindowSafetyTwo.cfg` (numbers 0..4, `"arbitrary"`, `MaxPerPacket = 2`, revision 1.1; tlacheck, 2026-11-13) | every invariant | 4,597,613 | 1,198,503 | - | 36 s | pass |
+| `MCRNWindowSafetyTwo.cfg` (numbers 0..4, `"arbitrary"`, `MaxPerPacket = 2`, revision 1.1; tlacheck, 2026-11-13) | every invariant | 4,597,613 | 1,198,503 | - | 34 s | pass |
 
 Bench runs (each is `MCRNWindow.cfg` with the changes named):
 

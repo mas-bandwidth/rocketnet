@@ -99,7 +99,30 @@ reuse the slots of 0 and 1), `D = 2`, `GenMax = 6`.
    keeps a stale ack off the later number.
 6. **`MCRNResendGenerationsReachWrap.cfg`** (`GenMax = 2`): violates
    `NoGenerationReuse`: one descriptor writes two numbers at one
-   generation, so case 5 reaches the wrap. TRACE-PENDING
+   generation, so case 5 reaches the wrap. Trace, 8 states: descriptor 1
+   writes number 0 at generation 1, it is sent and acked; descriptor 1 writes
+   number 1 at generation 2, sent and acked; descriptor 1 writes number 2 at
+   generation 1 again (2 is `GenMax`, so the next is 1), the name number 0
+   had. Checked by hand against `rn_region_send_alloc`: `generation ==
+   UINT32_MAX ? 1 : generation + 1` does the same at the code's maximum.
+7. **`MCRNResendGenerationsBrokenSlotOnlyWrap.cfg`** (`GenMax = 2`,
+   `CheckNumber = FALSE`): violates `AckedOnlyDelivered`, the stale ack of
+   case 3 marking the later number acked, under the wrap. Under a reused name
+   `NamedGenerationOnly` can match the freed fragment to the earlier write,
+   so this case checks the property no reused name can satisfy: case 5 would
+   catch a missing number comparison.
+
+Measured by `tlacheck run` on aws-mut-3, 2026-11-13:
+
+| Case | Expected | Exit | Generated | Distinct | Seconds |
+|---|---|---:|---:|---:|---:|
+| `MCRNResendGenerationsWrap.cfg` | pass | 0 | 221821 | 31501 | 1.7 |
+| `MCRNResendGenerationsReachWrap.cfg` | `NoGenerationReuse` | 12 | 239 | 116 | 0.7 |
+| `MCRNResendGenerationsBrokenSlotOnlyWrap.cfg` | `AckedOnlyDelivered` | 12 | 4322 | 1418 | 0.8 |
+
+The wrap case has the main case's counts: the generation is a function of
+each descriptor's take count, which the state already carries, so wrapping
+renames states without merging any.
 
 `test_resend_stale_ack_leaves_the_later_generation`
 (`tests/test_unit_resend_generations.cpp`) replays case 3's state against the

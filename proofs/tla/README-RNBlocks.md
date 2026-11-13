@@ -105,11 +105,51 @@ Invariants:
 record of 2 units (number 0, offset 0) and a block of 5 units, three fragments of
 2, 2 and 1 units (numbers 1..3, offsets 2, 4, 6, ordering index 1). The link is
 `"arbitrary"` with duplication and reordering, capacity 2, no delay.
+`MCRNBlocksWrap.cfg` starts `ring_next` at 5 (`RingStart <- MCRingStartLate`):
+the single takes units 5..6, the block's span of 5 would cross 8 from 7, so it
+is padded to 8 and its offsets wrap to 0, 2, 4. Its state graph is the base
+case's shifted, hence the same counts.
 
-| Case | Result | States (distinct) |
-|---|---|---|
-| `MCRNBlocks.cfg` | every invariant holds | 11478 generated, 2421 distinct, depth 17 |
-| `MCRNBlocksBrokenPlaceByArrival.cfg` | `DeliveredEqualsSent` violated, exit 12 | 11447 generated, 2997 distinct |
+Measured by `tlacheck run` on aws-mut-3, 2026-11-13 (revision 1.1):
+
+| Case | Result | Generated | Distinct | Seconds |
+|---|---|---:|---:|---:|
+| `MCRNBlocks.cfg` (now with `SpanInsideRing`, `NeverRefused`) | every invariant holds | 11478 | 2421 | 3.4 |
+| `MCRNBlocksWrap.cfg` | every invariant holds | 11478 | 2421 | 3.4 |
+| `MCRNBlocksForged.cfg` | every invariant but `NeverRefused` holds | 66823 | 14703 | 10.2 |
+| `MCRNBlocksBrokenPlaceByArrival.cfg` | `DeliveredEqualsSent` violated, exit 12 | 11447 | 2997 | 4.7 |
+| `MCRNBlocksBrokenNoPad.cfg` | `SpanInsideRing` violated, exit 12 | 3 | 3 | 0.9 |
+| `MCRNBlocksBrokenNoAnchorCheck.cfg` | `NoPartialDelivery` violated, exit 12 | 19344 | 5922 | 6.3 |
+| `MCRNBlocksForgedRefused.cfg` | `NeverRefused` violated, exit 12 | 750 | 431 | 1.5 |
+
+## Revision 1.1: padding, the wrap, and the anchor refusal
+
+Before this revision every case started the ring at 0, so `Pos`'s padding
+branch and the wrap of offsets past `B` were never reached, and the receiver
+took every chunk with no check against its anchor. The traces of the new
+witnesses, read by hand against the code:
+
+- `MCRNBlocksBrokenNoPad.cfg`, 3 states: the single is numbered at 5..6, then
+  the block at 7 with no padding, its span 7 + 5 = 12 past `B = 8`. In the
+  code `rn_window_send_position` returns `ring_next + remaining` when the span
+  exceeds the room left, so the block starts at 8; and a block placed at 7
+  would fail the receiver's span check (`span_end > ring_bytes`, MESSAGE_BAD_RING).
+- `MCRNBlocksForgedRefused.cfg`, 7 states: both messages numbered, number 1
+  (fragment 0, count 3) sent and a copy of another fragment claiming another
+  count forged; number 1 opens the anchor (count 3, base 2), and the forged
+  chunk's count disagrees: refused, the connection ends. In the code
+  `rn_channels_block_collect` finds the held entry and `anchor->block_count
+  != count` counts MESSAGE_BAD_BLOCK.
+- `MCRNBlocksBrokenNoAnchorCheck.cfg`, 11 states: number 0 is received; number
+  1 (fragment 0, count 3) opens the anchor at count 3; a forged copy of number
+  2 (fragment 1) claiming count 2 arrives next, the chunks in reach its count,
+  and the block completes with count 2; both messages are delivered, the
+  block with two of its three fragments. In the code without the agreement
+  test the same order passes `anchor->block_have < count` (2 < 2 is false),
+  the final chunk `first_number + count - 1` is live, and
+  `rn_channels_block_settle` delivers two chunks. (The other order, the forged
+  chunk first, is held in the code, since the correct chunk's count is 3;
+  the model completes on the arriving chunk's count, as the code does.)
 
 Two scratch invariants (not committed) confirmed the passing run is not vacuous:
 `Len(log) < 2` is violated (both messages are delivered) and "fragment 2 received

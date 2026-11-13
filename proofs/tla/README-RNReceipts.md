@@ -317,11 +317,11 @@ was written stays on the deadline arm.
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNReceipts.cfg` (now with `DropOnlyOffWire`) | pass | 0 | 68940 | 24304 | 6.893 |
-| `MCRNReceiptsMid.cfg` (the same) | pass | 0 | 3605460 | 793675 | 13.883 |
-| `MCRNReceiptsTimeoutOff.cfg` (the same) | pass | 0 | 247734 | 68960 | 2.163 |
-| `MCRNReceiptsOptedIn.cfg` (the same) | pass | 0 | 267438 | 84860 | 2.429 |
-| `MCRNReceiptsBrokenDropAfterWrite.cfg` | `DropOnlyOffWire` | 12 | 87 | 40 | 0.764 |
+| `MCRNReceipts.cfg` (now with `DropOnlyOffWire`) | pass | 0 | 68940 | 24304 | 6.489 |
+| `MCRNReceiptsMid.cfg` (the same) | pass | 0 | 3605460 | 793675 | 13.208 |
+| `MCRNReceiptsTimeoutOff.cfg` (the same) | pass | 0 | 247734 | 68960 | 2.180 |
+| `MCRNReceiptsOptedIn.cfg` (the same) | pass | 0 | 267438 | 84860 | 2.314 |
+| `MCRNReceiptsBrokenDropAfterWrite.cfg` | `DropOnlyOffWire` | 12 | 87 | 40 | 0.723 |
 
 Witness trace for `MCRNReceiptsBrokenDropAfterWrite.cfg`, read by hand:
 serials 1 and 2 are issued (`Send` twice), one packet carries serial 2's

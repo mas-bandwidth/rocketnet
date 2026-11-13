@@ -486,7 +486,9 @@ back-off cases (`TimeoutFloor <- TimeoutFloorFine`). At 500 ms it never
 binds; `MCRNResendTimingBelowTimeoutFloor.cfg` (100 ms tick, `Timeout = 8`,
 800 ms, with `MinAttempts × RtoInitial = 8`) is a configuration the rule
 without the floor accepts and the code refuses, and it violates
-`ConfigAccepted` in the initial state.
+`TypedConfigAccepted` (`TypeOK /\ ConfigAccepted`) in the initial state.
+TLC evaluates a constant-level invariant once before the search and reports
+a false one as an error, not a counterexample; read in a state it is one.
 
 The message update applies the update's received ids
 (`rn_endpoint_on_acked_ids`, `sdk/rocketnet_message_server.cpp`) before
@@ -499,12 +501,26 @@ CheckBeforeAcksOn`).
 
 | Property | Meaning |
 |---|---|
-| `DeadlineUpdateTakesAcks` | at the start of the update a record's deadline falls in, before any call, the record (sent, unacked, not silenced) can still be acknowledged |
+| `DeadlineUpdateTakesAcks` | at the start of the update a record's deadline falls in, before any call, when it is the only record at or past its deadline, the record (sent, unacked, not silenced) can still be acknowledged and that step leaves the connection up |
+
+The property restates the order of the update's steps, which is all the code
+fixes; it adds no timing claim.
+
+Measured by `tlacheck run` on aws-mut-3, 2026-11-13:
 
 | Case | Property | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNResendTiming.cfg`, `MCRNResendTimingPaced.cfg` (now with `DeadlineUpdateTakesAcks`) | every invariant | 0 | RT-MAIN | RT-PACED | RT-S |
-| `MCRNResendTimingBrokenCheckBeforeAcks.cfg` | `DeadlineUpdateTakesAcks` | 12 | RT-CBA | RT-CBA-D | RT-CBA-S |
-| `MCRNResendTimingBelowTimeoutFloor.cfg` | `ConfigAccepted` | 12 | RT-FL | RT-FL-D | RT-FL-S |
+| `MCRNResendTiming.cfg` (now with `DeadlineUpdateTakesAcks`) | every invariant | 0 | 100040 | 29878 | 2.4 |
+| `MCRNResendTimingPaced.cfg` (the same) | every invariant | 0 | 35516 | 13904 | 1.7 |
+| `MCRNResendTimingBrokenCheckBeforeAcks.cfg` | `DeadlineUpdateTakesAcks` | 12 | 83836 | 25735 | 2.2 |
+| `MCRNResendTimingBelowTimeoutFloor.cfg` | `TypedConfigAccepted` | 12 | 1 | 1 | 0.8 |
 
-TRACE-CBA
+Witness trace for `MCRNResendTimingBrokenCheckBeforeAcks.cfg`, 42 states,
+read by hand: the small record and the chunk are sent at 0 and resent up to
+four times each, the second small record is acked; the small record is acked
+at 19; at 20, the chunk's deadline (first send 0 plus `Timeout = 20`), the
+update begins with the chunk sent four times and unacked, and with the check
+first no ack can be taken in that update. In the code the update's acks
+(`rn_endpoint_on_acked_ids`) come before `rn_endpoint_tick`, so an ack of
+the chunk in that update is applied and the timeout check finds nothing
+unacked.

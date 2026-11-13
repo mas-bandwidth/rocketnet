@@ -54,33 +54,36 @@ Line 158, `rnwindow`, replace the second cell with:
   `AcksLand` comment and README text ("ASSUMPTION the code does not keep")
   change in the same commit.
 - RNBlocks' held-index refusal (an insert past W entries,
-  `rn_channels_block_collect` near channel.cpp:891-895) is RNHeldOwnership's
-  `Hold`; RNBlocks never fills the index.
+  sdk/rocketnet_channel.cpp (rn_channels_block_collect), the first
+  rn_held_insert) is RNHeldOwnership's `Hold`; RNBlocks never fills the
+  index.
 - RNResendTiming's `DeadlineUpdateTakesAcks` and RNReceipts' drop arm touch
-  the same update order (acks applied before `rn_endpoint_tick`,
-  message_server.cpp near 1308 and 1347).
+  the same update order (acks applied before `rn_endpoint_tick`, in
+  sdk/rocketnet_message_server.cpp (rn_message_object_update_end)).
 
 ## Comment-only re-citations for package C
 
-Line numbers are at the M3 head (base 4f2960e5 plus the sent-map merge).
+Each place is named by file and function (this folder's checker refuses
+line numbers); the line in brackets is where it sits at the M3 head, base
+4f2960e5 plus the sent-map merge.
 
-- `sdk/rocketnet_window_ack.cpp:840`, above `rn_window_ack_commit_receipt_packet`, add:
+- sdk/rocketnet_window_ack.cpp (rn_window_ack_commit_receipt_packet) [line 840], above the function, add:
   `// proofs/tla/RNRttFilter.tla Send (the receipt branch: a packet with no reliable number, ref_count 0, stamps no first send)`
-- `sdk/rocketnet_window_ack.cpp:1106`, extend the comment to:
+- sdk/rocketnet_window_ack.cpp (rn_window_ack_on_acks) [line 1106], extend the silence-test comment to:
   `// (proofs/tla/RNRttFilter.tla Ack, EndsSilence; Ack(0), AckOfNothing: an ack batch whose ids match no live entry still runs this test and moves last_ack)`
-- `sdk/rocketnet_window_ack.cpp:964-966`, extend the sampling comment with:
+- sdk/rocketnet_window_ack.cpp (rn_window_ack_on_ack) [lines 964 to 966], extend the sampling comment with:
   `// a receipt-only packet (ref_count == 0) is sampled too: RNRttFilter.tla AckPacket, MCRNRttFilterReceiptOnlyPoisons.cfg`
-- `sdk/rocketnet_endpoint.cpp` at each off-wire LOSS (`rn_endpoint_in_place_finish`, `rn_endpoint_unreliable_drop_all`, `rn_endpoint_in_place_failed`, and the `RN_ENDPOINT_PACKET_UNRELIABLE` arm of `rn_endpoint_packet_failed`), and `sdk/rocketnet_message_server.cpp` at `rn_message_flush_unreliable`, add:
+- sdk/rocketnet_endpoint.cpp at each off-wire LOSS (rn_endpoint_in_place_finish, rn_endpoint_unreliable_drop_all, rn_endpoint_in_place_failed, and the RN_ENDPOINT_PACKET_UNRELIABLE arm of rn_endpoint_packet_failed), and sdk/rocketnet_message_server.cpp (rn_message_flush_unreliable), add:
   `// proofs/tla/RNReceipts.tla SweepLoss, the drop arm: LOSS at once for a type-5 message none of whose parts reached the wire (DropOnlyOffWire)`
-- `sdk/rocketnet_config.cpp:330-335` (the 1000 ms timeout floor), add:
+- sdk/rocketnet_config.cpp (rocketnet_message_validate_config_internal) [lines 330 to 335], at the 1000 ms timeout floor, add:
   `// proofs/tla/RNResendTiming.tla ConfigAccepted (TimeoutFloor)`
-- `sdk/rocketnet_message_server.cpp:1308` (on_acked_ids before rn_endpoint_tick), add:
+- sdk/rocketnet_message_server.cpp (rn_message_object_update_end) [line 1308], at the rn_endpoint_on_acked_ids call that comes before rn_endpoint_tick, add:
   `// acks before the timeout check: proofs/tla/RNResendTiming.tla AcksOpen, DeadlineUpdateTakesAcks`
-- `sdk/rocketnet_window_send.cpp:46` (`rn_window_send_position`), extend:
+- sdk/rocketnet_window_send.cpp (rn_window_send_position) [line 46], extend its comment to:
   `// standard/MESSAGES.md m5.1 boundary padding; proofs/tla/RNRing.tla Pos, PlaceSingle and PlaceBlock; proofs/tla/RNBlocks.tla Pos (SpanInsideRing)`
-- `sdk/rocketnet_channel.cpp:966`, replace "RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)" with:
+- sdk/rocketnet_channel.cpp (rn_channels_dispatch_chunk) [line 966], in the comment above the function, replace "RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)" with:
   `RNBlocks!Receive (the anchor by (channel, ordering), the refusal of a chunk that disagrees with it, the copy to ring + index * F)`
-- `sdk/rocketnet_channel.cpp:913` (the anchor agreement test), add:
+- sdk/rocketnet_channel.cpp (rn_channels_block_collect) [line 913], at the anchor agreement test, add:
   `// proofs/tla/RNBlocks.tla Receive, Refused (MCRNBlocksBrokenNoAnchorCheck.cfg without it)`
-- `sdk/rocketnet_window_receive.cpp` above `rn_window_receive_accept`, extend its citation with:
+- sdk/rocketnet_window_receive.cpp (rn_window_receive_accept), extend its citation with:
   `// record by record: proofs/tla/RNWindow.tla OpenPacket, AcceptFrom and AcceptOne`
