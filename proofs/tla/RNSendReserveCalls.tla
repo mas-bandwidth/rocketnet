@@ -203,7 +203,7 @@ StartRefused(c) ==
     /\ UNCHANGED <<free, claims, tail, started, ownUsed, own, ownLeft>>
 
 \* finish_packet: the frame is the transport's; the reserve's words stay
-Finish == UNCHANGED <<free, budget, claims, started, ownUsed, own, ownLeft, refused, starved>>
+Finish == UNCHANGED <<free, budget, claims, tail, started, ownUsed, own, ownLeft, refused, starved>>
 
 \* abort_packet: the frame's claim is not given back (the frame left the
 \* room when it was staged)
@@ -216,7 +216,7 @@ Abort ==
 \* would be raised now, leaves
 Capacity(n) ==
     /\ n = Min(free, ownLeft + tail + (IF Raised > claims THEN Raised - claims ELSE 0))
-    /\ UNCHANGED <<free, budget, claims, started, ownUsed, own, ownLeft, refused, starved>>
+    /\ UNCHANGED <<free, budget, claims, tail, started, ownUsed, own, ownLeft, refused, starved>>
 
 \* the transport retires n staged frames (asynchronous sends complete)
 Retire(n) ==
