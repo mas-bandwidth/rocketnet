@@ -66,7 +66,9 @@ reads. A layer's review reads the Trace module and the layer file whole.
 
 The trace is checked against `TraceConsistent` only. The spec's own invariants are
 checked by the spec's model, at the model's sizes, not on the trace at the code's
-sizes.
+sizes. Enforcing this, the copy of library code and the per-source configuration are
+roadmap items `trace-spec-invariants`, `trace-library-copy` and
+`trace-config-per-source` in `docs/roadmap.sexp`.
 
 ## Sizes
 
