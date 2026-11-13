@@ -384,6 +384,38 @@ class CheckerFixture(unittest.TestCase):
         self.assertEqual(code, 1, report)
         self.assertIn("is not a registered unit case of sdk/rocketnet_tests.cpp", report)
 
+    def test_code_anchor_left_only_in_a_comment_fails(self):
+        # a deleted function whose name survives in a comment or a string is
+        # not an anchor (Argon F13)
+        row = list(self.ROW_FLOOR)
+        row[3] = "sdk/code.cpp:fixture_deleted_check"
+        root = self.build([row])
+        with open(os.path.join(root, "sdk", "code.cpp"), "a") as handle:
+            handle.write("// fixture_deleted_check was removed\n/* fixture_deleted_check */\n"
+                         "static const char * note = \"fixture_deleted_check\";\n")
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 1, report)
+        self.assertIn("code anchor 'sdk/code.cpp:fixture_deleted_check' does not resolve", report)
+
+    def test_bare_path_code_anchor_fails(self):
+        row = list(self.ROW_FLOOR)
+        row[3] = "sdk/code.cpp"
+        code, report = check_witnesses.run(self.build([row]))
+        self.assertEqual(code, 1, report)
+        self.assertIn("code anchor 'sdk/code.cpp' does not resolve", report)
+
+    def test_tla_invariant_left_only_in_a_comment_fails(self):
+        for kept in ("(* RemovedInvariant == TRUE *)\n", "\\* RemovedInvariant == TRUE\n",
+                     "(* outer (* nested *)\nRemovedInvariant == TRUE *)\n"):
+            for cell in ("RemovedInvariant", "proofs/tla/Fixture.tla:RemovedInvariant"):
+                row = ["t1", "a receiver MUST drop a packet below its floor", cell, "-", "-", "none"]
+                root = self.build([row])
+                with open(os.path.join(root, "proofs", "tla", "Fixture.tla"), "w") as handle:
+                    handle.write("---- MODULE Fixture ----\n" + kept + "BelowFloorIsRefused == TRUE\n====\n")
+                code, report = check_witnesses.run(root)
+                self.assertEqual(code, 1, (kept, cell, report))
+                self.assertIn("RemovedInvariant", report)
+
     def test_tier_counts_are_printed(self):
         code, report = check_witnesses.run(self.build([self.ROW_FLOOR, self.ROW_BUDGET]))
         self.assertEqual(code, 0, report)

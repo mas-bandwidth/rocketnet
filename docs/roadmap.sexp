@@ -506,10 +506,51 @@
    :text "In sdk/rocketnet_api.cpp (about 3642-3689) and sdk/rocketnet_fill_phase.cpp (about 203-210) the hand-over runs its main thread check only when another thread owns the client. When the owner is the caller or nobody, rn_server_pending_slot scans every connection's plain open.pending while other threads write theirs. rocketnet.h says one thread at a time, and nothing refuses a call that breaks it. Refuse and count it, as the other thread rules are."
    :date "2026-11-13" :origin "Review before v1.2.0, threading reader, finding R3")
 
-  (item "counter-observed-loose-paths" :group "review-v1-2" :area "tools"
-   :title "check_counter_observed.py accepts tests that assert nothing about a counter's value"
-   :text "This gate enforces that a counter row lands only with a test that reads it by value, and it accepts empty assertions. tools/check_counter_observed.py (about 426-434) excludes only a clause ending == 0, so check( v[X] >= 0 ), check( v[X] == 0u ), check( !v[X] ) and check( v[X] == v[X] ) count as observed; it accepts T name = v[X]; when any check anywhere in the file reads an identifier of that name (about 465-475); and the return path matches a function of the same name in any file (about 510-513). Run on a scratch tree, it reported 5 of 5 counters observed with five empty assertions; its 26 self-test cases have none of these forms. On the real tree 238 of 301 rows are observed by a value check and 53 more only through the loose paths. Close the three paths, add the forms as self-test cases, and give the 53 rows real value checks."
-   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding C4 (run)")
+  (item "client-acked-batch-full-test" :group "review-v1-2" :area "tests"
+   :title "A test that fills the client's delivery batch and reads CLIENT_ACKED_BATCH_FULL by value"
+   :text "Every test reads ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL only as == 0 (tests/test_unit_sequence_burn.cpp, sdk/rocketnet_tests.cpp, tests/functional/server_receive_low_tick.cpp). check_counter_observed.py counted it observed through a name a check read only as == 0; with that path closed it is listed in OWED. The server's twin, ACKED_BATCH_FULL, has a unit case (tests/test_unit_client_receive_counters.cpp, the batch that holds two). The client's batch is fixed at ROCKETNET_SENT_PACKET_BUFFER_SIZE (rocketnet_client_protocol.cpp, the ack block's process call), so the case needs a seam that shrinks it, or more acks in one update than the batch holds; then drop the OWED row."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-G5 (R108)")
+
+  (item "counter-observed-scoped-paths" :group "review-v1-2" :area "tools"
+   :title "check_counter_observed holds its indirect paths to the clauses that can show a move"
+   :text "tools/check_counter_observed.py now credits a direct check only through a clause that can show the counter moved, but three indirect paths still read looser text: a name assigned from a counter is matched against checks anywhere in the file, not in the assigning function's scope; a table row's field is matched against the unfiltered check text; and a returned or folded predicate is credited without the movement filter. A zero-only check through any of the three still counts as observing the counter. Scope the assignment path to its function and pass the other two through the same clause filter, each with a self-test case."
+   :date "2026-11-13" :origin "Review before v1.2.0, gates review of 1b98c9bb6 (Astra P3, R108)")
+
+  (item "tla-records-reverify-changed-rows" :group "review-v1-2" :area "proofs"
+   :title "The nightly re-run re-verifies every RUNS.tsv row changed since it was last verified"
+   :text "A hand edit to proofs/tla/RUNS.tsv (MCLink generated/distinct set to 1/1, shown on the bench) still passes tools/check_tla_records.py: the record carries nothing a hand edit cannot fake without re-running TLC. The guard today is the nightly re-run comparer, which checks a third of the cases each night, so a false record is caught within about three nights. Make the nightly selection always include every row changed since that row's last verified re-run, so a changed record is re-run the next night. A point release re-runs nothing (the light point-release rule, 2026-11-13)."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R105)")
+
+  (item "ruleset-apply-reconcile-light-landing" :group "review-v1-2" :area "ci"
+   :title "When .github/rulesets/main.json is applied, reconcile its required names with light landing"
+   :text "The live ruleset on main carries only deletion and non_fast_forward; the committed .github/rulesets/main.json is deliberately not applied until the first outside pull request (owner, 2026-11-12). It requires the FULL job names, which tools/land.py by default prints but does not hold (light landing, 2026-11-13). Before applying it, make the required names the per-commit names light landing holds, or applying it blocks every light landing."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R102)")
+
+  (item "release-tag-push-ruleset" :group "review-v1-2" :area "ci"
+   :title "A tag ruleset so a v* tag is made only by the release tooling"
+   :text "Nothing stops a v* tag being pushed by hand around tools/release.py and its gates. A tag ruleset that limits v* creation to the release path closes it."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R110)")
+
+  (item "wire-paths-tie-to-wire-version" :group "review-v1-2" :area "ci"
+   :title "Classify the 17 pending wire paths and tie a wire change to ROCKETNET_WIRE_VERSION"
+   :text "tools/wire_paths.txt lists 17 files as classification pending since 2026-11-12. Classify them, then make a change to a wire path that leaves ROCKETNET_WIRE_VERSION unchanged need a reviewed reason."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R103)")
+
+
+  (item "ack-apply-walk-many-ids" :group "review-v1-2" :area "proofs"
+   :title "The ack-apply trace walk sends blocks that apply many ids"
+   :text "tests/tla_trace_ack_apply.cpp makes every block acknowledge one new sequence with its ranges over sequences already acknowledged, so each apply gives exactly one id; a defect in the apply of a block that acknowledges several new sequences at once (the common case on a lossy link) is never walked. Let the walk draw blocks whose ranges cover unacknowledged sequences, within the batch, and extend RNAckApplyPhase's Receive to carry the id count."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-A5 (R115)")
+
+  (item "client-connection-integrity-limit" :group "review-v1-2" :area "proofs"
+   :title "ClientConnection.tla models the AEAD integrity limit"
+   :text "sdk/rocketnet_client_protocol.cpp rocketnet_client_integrity_failure disconnects the client after ROCKETNET_INTEGRITY_LIMIT failed opens (TRANSPORT.md t14); proofs/tla/ClientConnection.tla has no action for it. Add the action, with the limit as a small constant, and a reversed witness that never disconnects."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-A6 (R115)")
+
+  (item "message-open-model" :group "review-v1-2" :area "proofs"
+   :title "A model of the open message per connection and the object's count of open starts"
+   :text "sdk/rocketnet_message_object.h (the open-message fields), sdk/rocketnet_message_server.cpp (rn_message_open_line_index and the one-start-pending refusal in the start path) and tests/wide_fill_cases.cpp cited proofs/tla/RNMessageOpen.tla, which was never written; the citations now say there is no model. The state: at most one open start per connection, fill threads opening and closing on different connections at once, the object's count of open starts and its last index as atomics, a reset's cancel (RNSlots ResetCancel). A model would carry the count's arithmetic at capacity 3 with a reversed witness (a second start on one connection admitted) and a trace walk of the wide fill."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-A4 (R111)")
 
   (item "msgx-refused-batch-prefix" :group "review-v1-2" :area "sdk"
    :title "msgx may resend a batch whose first packets the kernel already sent"
