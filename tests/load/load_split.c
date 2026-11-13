@@ -612,10 +612,34 @@ static int split_proof_offer( struct split_proof_t * proof, struct rocketnet_ser
     return small && fragmented;
 }
 
+/* The reliability mode a receiver reports for a stream's mode: a receipt mode
+ * arrives without its receipt flag (sdk/rocketnet.h, rocketnet_message_batch_t;
+ * the proof's small unreliable messages stay within the unreliable limit, so
+ * none arrives promoted to its reliable twin). */
+static uint32_t split_proof_received_mode( uint32_t mode )
+{
+    if ( mode == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
+    {
+        return ROCKETNET_RELIABILITY_UNRELIABLE;
+    }
+    if ( mode == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
+    {
+        return ROCKETNET_RELIABILITY_RELIABLE;
+    }
+    if ( mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT )
+    {
+        return ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
+    }
+    return mode;
+}
+
 /* Reads, verifies and records one received proof payload from client
- * (server end) or for client (client end). */
+ * (server end) or for client (client end). channel and reliability are what
+ * the receive batch reported for it: they must be the stream's own, as the
+ * ordinary mode checks its channel, or a mislabelled delivery would pass. */
 static void split_proof_receive( struct split_result_t * result, struct split_proof_t * proof, uint32_t client,
-                                 uint32_t direction, uint64_t run_id, const uint8_t * data, int bytes )
+                                 uint32_t direction, uint64_t run_id, const uint8_t * data, int bytes,
+                                 int channel, enum rocketnet_reliability_t reliability )
 {
     struct split_verify_payload_t payload = { 0 };
     const enum split_verify_read_t read = bytes < 0 ? SPLIT_VERIFY_READ_SHORT : split_verify_read_payload( data, (uint32_t) bytes, run_id, &payload );
@@ -634,6 +658,17 @@ static void split_proof_receive( struct split_result_t * result, struct split_pr
     if ( payload.client != client || payload.direction != direction )
     {
         result->identity_errors++;
+        return;
+    }
+
+    /* the batch's channel: the stream's send channel for an ordered or
+       sequenced mode, 0 for the others (the SDK reports no ordering channel
+       there, as the ordinary mode's check says) */
+    const int ordering = split_verify_mode_is_ordered( payload.mode ) || split_verify_mode_is_sequenced( payload.mode );
+    const int expected_channel = ordering ? SPLIT_PROOF_FIRST_CHANNEL + (int) ( payload.mode * SPLIT_VERIFY_NUM_SIZE_CLASSES + payload.size_class ) : 0;
+    if ( channel != expected_channel || (uint32_t) reliability != split_proof_received_mode( payload.mode ) )
+    {
+        result->payload_errors++;
         return;
     }
 
@@ -873,7 +908,7 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
             }
 
             split_proof_receive( result, clients[id - 1].proof, (uint32_t) ( id - 1 ), SPLIT_VERIFY_CLIENT_TO_SERVER,
-                                 run_id, batch->data[j], batch->bytes[j] );
+                                 run_id, batch->data[j], batch->bytes[j], batch->channel[j], batch->reliability[j] );
             continue;
         }
 
@@ -1028,7 +1063,7 @@ static void split_client_startup_batch( struct split_result_t * result, struct s
         if ( split_proof_load && magic == SPLIT_VERIFY_MAGIC && client->proof )
         {
             split_proof_receive( result, client->proof, global, SPLIT_VERIFY_SERVER_TO_CLIENT, run_id,
-                                 batch->data[j], batch->bytes[j] );
+                                 batch->data[j], batch->bytes[j], batch->channel[j], batch->reliability[j] );
             continue;
         }
 
@@ -1110,7 +1145,7 @@ static void split_client_runtime_batch( struct split_result_t * result, struct s
         if ( split_proof_load && magic == SPLIT_VERIFY_MAGIC && client->proof )
         {
             split_proof_receive( result, client->proof, global, SPLIT_VERIFY_SERVER_TO_CLIENT, run_id,
-                                 batch->data[j], batch->bytes[j] );
+                                 batch->data[j], batch->bytes[j], batch->channel[j], batch->reliability[j] );
             continue;
         }
 
