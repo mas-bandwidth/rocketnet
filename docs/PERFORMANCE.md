@@ -34,7 +34,7 @@ enkiTS for these jobs; RocketNet does not create the game threads.
 | io_uring | AWS c6in.8xlarge, 32 vCPUs, x86, Linux 7.0 | AWS c7gn.8xlarge, 32 vCPUs, arm64; same placement, private network | Two network threads on CPUs 1–2; main thread on CPU 3; 28 game threads on CPUs 4–31, real-time priority |
 | GSO | AWS c8gn.8xlarge, Graviton4, arm64, 32 vCPUs; Ubuntu 26.04, GCC 15.2 | AWS c6gn.16xlarge, 64 vCPUs; same placement, private network | Two network threads on CPUs 1–2, or one on CPU 1 in the scaling run; main thread on CPU 3; 28 game threads on CPUs 4–31; no real-time priority |
 | IOCP | AWS m7i.16xlarge, 64 vCPUs, Windows Server 2025; MSVC Release | AWS c8gn.8xlarge, 32 vCPUs, Linux; private network | OS on CPUs 0–1; NIC receive steering on CPUs 2 and 4; two receive threads on CPUs 3 and 5; main thread on CPU 6; 57 game threads on CPUs 7–63; eight unpinned send threads |
-| RIO | AWS m7i.16xlarge, Windows Server 2025 | Pending | Eight network lanes in the passing peak row; CPU placement and game pool pending |
+| RIO | AWS m7i.16xlarge, Windows Server 2025 | Pending | Six network lanes in the smallest passing count measured; CPU placement and game pool pending |
 | macOS | Owned Macs; exact models pending | Pending | Pending |
 
 For io_uring, CPU 0 also handles NIC interrupts. The library pins each network
@@ -77,6 +77,7 @@ It is not the percentage of players that connected. The rows below report
 | IOCP | Peak | 900,300 | 60.63 | 100% | 99.999% |
 | IOCP | Average | 480,300 | 60.80 | 100% | 99.968% |
 | RIO, eight lanes | Peak | 900,000 | 60.6 | 100% | 100% |
+| RIO, six lanes | Peak | 900,000 | 60.6 | 100% | 100% |
 
 IOCP's average row lost 1,487 of approximately 4.58 million client inputs;
 server-to-client delivery had no reported loss. Its peak row also had a small
@@ -100,6 +101,7 @@ dedicated network threads and do not describe the whole frame's duration.
 | IOCP | Peak | Pending | 0.178 | 0.274 | 2.97 / 3.11 / 6.35 | 0.05 |
 | IOCP | Average | 0.148 | 0.175 | 0.272 | 1.58 / 1.71 / 5.12 | 0.087 |
 | RIO, eight lanes | Peak | 0.46 | 0.57 | 0.79 | 3.1 / 3.3 / 5.4 | 0.14 |
+| RIO, six lanes | Peak | 0.46 | 0.67 | 1.18 | 2.95 / 3.14 / 6.4 | 0.15 |
 
 The io_uring average-load ratio is calculated from the reported rounded means:
 0.147 / 1.81. The other ratios were supplied with their measurement rows.
@@ -112,7 +114,7 @@ in the steady window, not a p99 computed over all frames in that window.
 | io_uring peak / average | [6db162421](https://github.com/mas-bandwidth/rocketnet/commit/6db1624212079133de226fe08cb8111bd70e352d), `tests/v1.2/goal-uring`, both machines | t=25–75 s, after joining and warm-up | `--world-ms 0 --game-load 0` |
 | GSO peak / average | [d9110a19f](https://github.com/mas-bandwidth/rocketnet/commit/d9110a19fedf098a15068ce9a4cb9106f4ee603d), `tests/v1.2/goal-gso` | t=30–60 s | `--world-ms 10 --game-load 0` |
 | IOCP peak / average | [110416b4c](https://github.com/mas-bandwidth/rocketnet/commit/110416b4cec7670c97d43c752b25d454b3b90725), `tests/v1.2/goal-iocp-nofold` | Pending | `--world-ms 0 --game-load 0` |
-| RIO peak, eight lanes | Pending; earlier frame order | Pending | No game work reported; exact world-work setting pending |
+| RIO peak, six and eight lanes | Pending; earlier frame order | Pending | No game work reported; exact world-work setting pending |
 
 The io_uring rows use the earlier frame order with no simulated game work.
 GSO starts its network task before the world update with `--space-split top`.
@@ -238,7 +240,7 @@ separately.
 | GSO | 1 | Peak with game threads half busy; 100% delivery both ways |
 | XDP | 1 | Peak with game threads half busy; 100% delivery both ways; no late frames |
 | io_uring | 2 | Loaded peak: one thread misses the target, two pass |
-| RIO | 8 | Peak without game work; four lanes miss target; five through seven pending |
+| RIO | 6 | Peak without game work; five lanes miss target, six pass once; repeat pending |
 | IOCP | 10 | Peak without game work, with small input loss; fewer-thread runs pending; loaded peak not yet passing |
 
 The one-thread XDP peak run used `f46d820ba`, 1000 players, game threads half
@@ -285,15 +287,20 @@ RIO's lane sweep used the earlier frame order without game work:
 | --- | ---: | ---: | ---: | ---: | --- |
 | 2 | 222,000 | 16.4 | Pending | 86.5% | Missed |
 | 4 | 629,000 | 44.7 | 100% | 100% | Missed |
+| 5 | 532,000 | 37.4 | Pending | 99.99% | Missed |
+| 6 | 900,000 | 60.6 | 100% | 100% | Reached once; repeat pending |
 | 8 | 900,000 | 60.6 | 100% | 100% | Reached |
 
-The observed aggregate rates improve with more lanes; a fixed per-lane
-capacity is not established by these rows. Exact RIO commands, build, client
-machine, and loaded rows remain pending.
+There is one run at each listed count. Six lanes is the smallest passing
+count measured, and that row is being repeated once. The five-lane run
+reported a lower packet rate and frame rate than the four-lane run; no
+explanation is established. A fixed per-lane capacity is not established by
+these rows. Exact RIO commands, build, client machine, and six-lane average
+and loaded rows remain pending.
 
 | Measurement still pending | Status |
 | --- | --- |
-| RIO exact peak reproduction details, average and loaded rows, and five-to-seven-lane measurements | Pending |
+| RIO six-lane peak repeat, exact reproduction details, average and loaded rows | Pending |
 | IOCP peak main-thread mean, sampling window, and fewer-network-thread measurements | Pending |
 | IOCP loaded peak | Not yet passing; corrected rerun pending |
 | IOCP loaded reproduction details | Pending |
