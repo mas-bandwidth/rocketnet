@@ -1503,6 +1503,52 @@ static void test_gaps_r2_st_both_families_advertise_their_own_address()
     rn_test_server_transport_stop_and_destroy( server );
 }
 
+static char g_r2_st_granted_line[512];
+static void r2_st_capture_granted( void *, rocketnet_log_level_t, const char * message, size_t length )
+{
+    if ( length > 0 && strstr( message, "ladder granted" ) != NULL )
+    {
+        const size_t n = length < sizeof( g_r2_st_granted_line ) - 1 ? length : sizeof( g_r2_st_granted_line ) - 1;
+        memcpy( g_r2_st_granted_line, message, n );
+        g_r2_st_granted_line[n] = '\0';
+    }
+}
+
+// A candidate the operator's memory budget refused is named once in the
+// ladder's summary however many times the list repeats it: "xdp,xdp,loopback"
+// under a budget only loopback's plan fits grants loopback "after refusals:
+// xdp".
+// mutation gap: hunt 2/5048 (budget-refused name: if ( !refused_seen ) negated)
+// mutation gap: hunt 2/5049 (budget-refused name: refused_seen = true deleted)
+static void test_gaps_r2_st_ladder_names_a_budget_refusal_once()
+{
+    rocketnet_server_transport_config_t config;
+    r2_st_create_config( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "xdp,xdp,loopback" );
+
+    rocketnet_server_memory_plan_t loopback_plan;
+    rocketnet_server_memory_plan_t xdp_plan;
+    rocketnet_unit_check( rocketnet_server_transport_memory_plan( &config, "loopback", loopback_plan ) );
+    rocketnet_unit_check( rocketnet_server_transport_memory_plan( &config, "xdp", xdp_plan ) );
+    rocketnet_unit_check( xdp_plan.total_bytes > loopback_plan.total_bytes );
+
+    const rocketnet_log_level_t saved = rocketnet_log_level_current();
+    g_r2_st_granted_line[0] = '\0';
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( r2_st_capture_granted, NULL );
+    int status = -1;
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:40000", &config, loopback_plan.total_bytes, &status );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
+
+    rocketnet_unit_check( server );
+    st_ring_expect( strstr( g_r2_st_granted_line, "after refusals: xdp" ) != NULL, "the ladder's summary did not name the budget-refused candidate" );
+    st_ring_expect( strstr( g_r2_st_granted_line, "xdp, xdp" ) == NULL, "the ladder's summary named a budget-refused candidate once per repeat in the list" );
+
+    rn_test_server_transport_stop_and_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2_st_ladder_names_a_budget_refusal_once );
 REGISTER_UNIT_TEST( test_gaps_r2_st_payload_reads_refuse_null_outs );
 REGISTER_UNIT_TEST( test_gaps_r2_st_packet_calls_refuse_null_arguments );
 REGISTER_UNIT_TEST( test_gaps_r2_st_reads_refuse_null_arguments );
