@@ -13,7 +13,7 @@
 #include "rocketnet.h"                          // ROCKETNET_MAX_CLIENTS
 
 #ifndef ROCKETNET_XDP_MEMORY_MIB
-#define ROCKETNET_XDP_MEMORY_MIB 4096
+#define ROCKETNET_XDP_MEMORY_MIB 8192
 #endif // #ifndef ROCKETNET_XDP_MEMORY_MIB
 
 // Component budgets are explicit build choices; they do not estimate available

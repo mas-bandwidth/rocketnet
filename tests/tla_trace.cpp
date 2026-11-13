@@ -17,10 +17,10 @@
 //
 // Each layer is one file, tests/tla_trace_<layer>.cpp, that registers its
 // walk with TLA_TRACE_LAYER (tests/tla_trace_record.h); this file only
-// dispatches. The plant build (tla_trace_plant) is the same files compiled
-// with ROCKETNET_TLA_PLANT: each layer's file then compiles its own code with
-// that layer's plant, the walk is the same, and its trace must fail
-// TraceConsistent.
+// dispatches. Each layer has a plant build, tla_trace_plant_<layer>: this
+// file and that layer alone, compiled with ROCKETNET_TLA_PLANT, so the layer
+// compiles its own code with its plant; the walk is the same, and its trace
+// must fail TraceConsistent.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -143,7 +143,7 @@ int main( int argc, char ** argv )
         if ( strcmp( layer, table.layer[j].name ) == 0 )
         {
             print_config();
-            return table.layer[j].walk( seed, steps, out );
+            return table.layer[j].walk( seed, steps, out ) == 0 ? 0 : 1;
         }
     }
 

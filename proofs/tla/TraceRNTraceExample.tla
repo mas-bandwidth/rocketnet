@@ -18,7 +18,7 @@
 (*                                                                         *)
 (* A copy changes only EXTENDS, VarsRec, OpActs, Act and the row's reach   *)
 (* predicates; tools/tla_trace_check.py compares the rest with this text   *)
-(* and checks the shapes of those four.                                    *)
+(* and checks the shapes of those.                                         *)
 (*                                                                         *)
 (* When no step matches, TraceReject sets rejected, so TraceConsistent     *)
 (* fails; the behaviour TLC prints ends at ti, the last record that        *)

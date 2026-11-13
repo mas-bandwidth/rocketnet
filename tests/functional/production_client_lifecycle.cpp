@@ -10,6 +10,8 @@
 #include "../../sdk/rocketnet.h"
 #include "../../sdk/rocketnet_base64.h"
 #include "../../sdk/rocketnet_connect_token.h"
+#include "../../sdk/rocketnet_counters.h"
+#include "../../sdk/rocketnet_layers.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -193,6 +195,25 @@ int main()
     }
     production_lifecycle_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     production_lifecycle_check( rocketnet_server_client_connected( server, 0 ) );
+
+    // counters are ABI and so are their readers: the four counter block
+    // readers and the class names exist in the production library, and the
+    // connected pair has counted what crossed it
+
+    production_lifecycle_check( rocketnet_server_transport_counter_block( server ) != NULL );
+    production_lifecycle_check( rocketnet_server_message_counter_block( server ) != NULL );
+    production_lifecycle_check( rocketnet_client_transport_counter_block( client ) != NULL );
+    production_lifecycle_check( rocketnet_client_message_counter_block( client ) != NULL );
+    production_lifecycle_check( rocketnet_counter_value( rocketnet_server_transport_counter_block( server ), ROCKETNET_COUNTER_PACKETS_RECEIVED ) > 0 );
+    production_lifecycle_check( rocketnet_counter_value( rocketnet_client_transport_counter_block( client ), ROCKETNET_COUNTER_PACKETS_RECEIVED ) > 0 );
+    production_lifecycle_check( rocketnet_server_transport_counter_block( NULL ) == NULL );
+    production_lifecycle_check( rocketnet_client_message_counter_block( NULL ) == NULL );
+    production_lifecycle_check( strcmp( rocketnet_counter_class_name( ROCKETNET_COUNTER_CLASS_REFUSAL ), "refusal" ) == 0 );
+    production_lifecycle_check( strcmp( rocketnet_counter_class_name( ROCKETNET_COUNTER_CLASS_EXPECTED ), "expected" ) == 0 );
+    production_lifecycle_check( strcmp( rocketnet_counter_class_name( ROCKETNET_COUNTER_CLASS_PATH_LOSS ), "path_loss" ) == 0 );
+    production_lifecycle_check( strcmp( rocketnet_counter_class_name( ROCKETNET_COUNTER_CLASS_ARRIVAL ), "arrival" ) == 0 );
+    production_lifecycle_check( rocketnet_counter_class_name( ROCKETNET_NUM_COUNTER_CLASSES ) == NULL );
+
     production_lifecycle_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
     production_lifecycle_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     production_lifecycle_check( rocketnet_client_set_send_kbps( client, 3000 ) == ROCKETNET_STATUS_OK );
