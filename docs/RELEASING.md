@@ -180,6 +180,11 @@ makes the same checks required on `main` itself.
    configure refuses a mismatch. Leave the development branch at `dev` and
    `255.255.255`. Check the export list and consumers for public API changes.
    Write the release notes as `docs/RELEASE-NOTES-<version>.md` (below).
+   Freeze the counter ids the release ships: add the line
+   `python3 tools/check_counter_contract.py --released v<version>` prints to
+   `tests/counter_contract.inc`, beside the earlier releases' lines. The lint
+   check refuses a shipping version without its line, and any later change to
+   a frozen row.
 2. Run `python3 tools/check_release_doc.py`. It exits 0 when this document
    names every version site that `release-check.yml`'s `version-consistency`
    job reads, and exits 1 naming any site this document omits.
