@@ -1674,9 +1674,12 @@ static void harden_space_write_players( platform_task_args_t * args )
                 uint8_t * r = rocketnet_server_start_message( space->server, (uint64_t) item.slot, HARDEN_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.reliable_bytes );
                 if ( r )
                 {
-                    harden_write_message( r, o.reliable_bytes, HARDEN_KIND_RELIABLE, item.client_id, item.connection, slot.next[HARDEN_KIND_RELIABLE]++ );
+                    // the sequence is taken only by a message that was sent:
+                    // the reliable stream's sequences stay contiguous from 0
+                    harden_write_message( r, o.reliable_bytes, HARDEN_KIND_RELIABLE, item.client_id, item.connection, slot.next[HARDEN_KIND_RELIABLE] );
                     if ( rocketnet_server_finish_client_message( space->server, item.slot, o.reliable_bytes ) != 0 )
                     {
+                        slot.next[HARDEN_KIND_RELIABLE]++;
                         messages++;
                     }
                 }
@@ -3042,6 +3045,10 @@ static int harden_server_main( const harden_options_t & o )
     harden_print_term( role, "messages_resent", (int64_t) stats.messages_resent );
     harden_print_term( role, "messages_dropped_over_budget", (int64_t) stats.messages_dropped_over_budget );
     harden_print_term( role, "messages_written", (int64_t) total_messages );
+    // the reliable and big streams the run wrote: the reconcile holds the
+    // players to delivering some of each kind the server wrote
+    harden_print_term( role, "reliable_every", (int64_t) o.reliable_every );
+    harden_print_term( role, "big_every", (int64_t) o.big_every );
     harden_print_term( role, "start_refused", (int64_t) total_start_refused );
     harden_print_term( role, "frames", (int64_t) total_frames );
     harden_print_term( role, "overruns", (int64_t) total_overruns );
@@ -3080,6 +3087,7 @@ static int harden_server_main( const harden_options_t & o )
     }
     harden_print_term( role, "in_errors", (int64_t) verify.errors );
     harden_print_term( role, "in_reliable_gaps", (int64_t) verify.reliable_gaps );
+    harden_print_term( role, "in_old_connection", (int64_t) verify.old_connection );
     harden_print_term( role, "in_back", (int64_t) verify.back );
     harden_print_term( role, "in_duplicates", (int64_t) verify.duplicates );
     harden_print_term( role, "in_wrong_owner", (int64_t) verify.wrong_owner );
@@ -3108,6 +3116,13 @@ static int harden_server_main( const harden_options_t & o )
         printf( "harden_resources: library_bytes start=%" PRId64 " end=%" PRId64 " peak=%" PRId64 " judged=1 flat=%d\n", library_start, library_end, library_peak,
                 library_flat ? 1 : 0 );
         flat = flat && library_flat;
+    }
+    else if ( resources_started )
+    {
+        // measured from the post-warmup sample, and the end read failed: the
+        // flatness has no evidence, which fails, never reads as unmeasured
+        flat = false;
+        printf( "harden_resources: end read failed (the post-warmup sample was taken): not flat\n" );
     }
     else
     {
@@ -3632,6 +3647,7 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
     totals->verify.errors += verify.errors;
     totals->verify.wrong_owner += verify.wrong_owner;
     totals->verify.reliable_gaps += verify.reliable_gaps;
+    totals->verify.old_connection += verify.old_connection;
     totals->verify.back += verify.back;
     totals->verify.duplicates += verify.duplicates;
     for ( int k = 0; k < HARDEN_CLIENT_SLOTS; k++ )
@@ -3763,6 +3779,7 @@ static int harden_clients_main( const harden_options_t & o )
     }
     harden_print_term( role, "errors", (int64_t) v.errors );
     harden_print_term( role, "reliable_gaps", (int64_t) v.reliable_gaps );
+    harden_print_term( role, "old_connection", (int64_t) v.old_connection );
     harden_print_term( role, "back", (int64_t) v.back );
     harden_print_term( role, "duplicates", (int64_t) v.duplicates );
     harden_print_term( role, "wrong_owner", (int64_t) v.wrong_owner );
@@ -4570,7 +4587,19 @@ static int harden_reconcile_main( const harden_options_t & o )
     const double down_percent = down_delivered + down_lost > 0 ? 100.0 * (double) down_delivered / (double) ( down_delivered + down_lost ) : 0.0;
     const double up_percent = up_delivered + up_lost > 0 ? 100.0 * (double) up_delivered / (double) ( up_delivered + up_lost ) : 0.0;
     const bool delivery_ok = down_percent >= o.min_delivery && up_percent >= o.min_delivery;
-    const bool players_ok = t.get( "clients.errors" ) == 0 && t.get( "server.in_errors" ) == 0 && t.get( "clients.stable_ends" ) == 0 && t.get( "clients.connects" ) > 0 && delivery_ok;
+    // the reliable and big streams: each kind the server wrote must reach the
+    // players. A gap, a step back, a first message past 0 or an old
+    // connection's message is an error in the streams (clients.errors); a
+    // run in which none arrived at all has no stream to show one
+    const bool reliable_ok = t.get( "server.reliable_every" ) <= 0 || t.get( "clients.delivered_kind1" ) > 0;
+    const bool big_ok = t.get( "server.big_every" ) <= 0 || t.get( "clients.delivered_kind2" ) > 0;
+    if ( !reliable_ok || !big_ok )
+    {
+        printf( "harden_players: the server wrote reliable (every %" PRId64 " ticks) and big (every %" PRId64 " ticks) messages and the players were delivered reliable=%" PRId64 " big=%" PRId64 "\n",
+                t.get( "server.reliable_every" ), t.get( "server.big_every" ), t.get( "clients.delivered_kind1" ), t.get( "clients.delivered_kind2" ) );
+    }
+    const bool players_ok = t.get( "clients.errors" ) == 0 && t.get( "server.in_errors" ) == 0 && t.get( "clients.stable_ends" ) == 0 && t.get( "clients.connects" ) > 0 && delivery_ok &&
+                            reliable_ok && big_ok;
     printf( "harden_players: connects=%" PRId64 " stable_ends=%" PRId64 " unplanned_ends=%" PRId64 " client_errors=%" PRId64 " server_in_errors=%" PRId64
             " s2c_unreliable_delivered=%" PRId64 " lost=%" PRId64 " reordered=%" PRId64 " (%.4f%%) c2s_unreliable_delivered=%" PRId64 " lost=%" PRId64 " reordered=%" PRId64
             " (%.4f%%) bound=%.3f%% reliable_delivered=%" PRId64 " big_delivered=%" PRId64 " verdict=%s\n",

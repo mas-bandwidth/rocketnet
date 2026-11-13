@@ -427,6 +427,22 @@ if ! grep -h "harden_verdict" "$out"/*.log | tee -a "$out/reconcile.txt"; then
     echo "harden-pair: no role printed a verdict" | tee -a "$out/reconcile.txt"
     status=1
 fi
+# and each role started here is judged by its own verdict: its PASS line in
+# its own log and no FAIL (the reconcile judges the chains and the players,
+# not a server's flatness or conservation, and the roles' exit statuses stay
+# on their machines)
+roles="server:server.log clients:clients.log"
+if [ "$hostile" = "1" ]; then
+    roles="$roles hostile:hostile.log"
+fi
+for pair in $roles; do
+    role=${pair%%:*}
+    log="$out/${pair#*:}"
+    if ! grep -q "^harden_verdict: role=$role verdict=PASS" "$log" || grep -q "^harden_verdict: .*verdict=FAIL" "$log"; then
+        echo "harden-pair: role $role did not print a PASS verdict alone" | tee -a "$out/reconcile.txt"
+        status=1
+    fi
+done
 if [ "$server_os" = windows ]; then
     # the cell's own share of each allowance: a nonzero bw_out is packets
     # the instance shed after send, an unnamed s2c gap's likely home

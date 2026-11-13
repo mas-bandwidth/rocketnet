@@ -118,7 +118,9 @@ main took, so a handoff_gap other than 0 names a datagram one side counted and t
 Each step is also printed beside the equation: send_gap, path_gap, receive_gap and wire_gap. The kernel counts an skb,
 so a GSO send of N datagrams counts as one, and UDP GRO does the same on receive. A qdisc drop of a GSO skb names one
 datagram for several, and so does a GSO skb that arrives whole (veth, UDP_GRO) at a closed port or a full socket.
-While any of those drops, a gap of up to the send_gap passes, printed as `gso_slack`. A
+While any of those drops, a gap of up to 63 datagrams per named drop (a GSO skb carries at most 64), and never more
+than the send_gap, passes, printed as `gso_slack`. A sender whose kernel counted none of the library's sends (an XDP
+server, which sends below the kernel's UDP, or an OS with no kernel counters) batched nothing there and has no slack. A
 duplicate row passes a gap of zero or below.
 
 Only Linux exposes the kernel, qdisc and device counters those step lines read. On a server (or players) running
@@ -131,7 +133,11 @@ library gap may be that far below zero). A `--profile` row prints the process's 
 since the profiler's symbol load opens handles inside the run.
 
 **The players.** Players must deliver unreliable messages at or above `--min-delivery`, with no errors and no
-unplanned ends among the stable clients.
+unplanned ends among the stable clients. Each reliable kind the server wrote (`--reliable-every`, `--big-every`) must
+reach the players at least once. On a reliable ordered stream a gap, a step back, or a connection's first message past
+sequence 0 is an error, and on every stream a message of the same client's earlier connection is an error
+(`old_connection`), never a new stream. The tail of a reliable stream (its last messages before the cut) is not
+reconciled against the sender.
 
 **The frame.** The frame is an aim, reported and not judged: the cell's verdict is the chains and the players.
 Work is what rocketnet takes from the main thread in one frame. In the blocking shape it is the frame from its start to
@@ -144,7 +150,12 @@ p99 is held to `--frame-p99-us`, 5000 by default, and printed with its max as `a
 summed over the jobs, because the game needs those cores too.
 
 **The server.** The library must conserve its counters, and fds, threads and library bytes must stay flat from the
-post-warmup sample to the end.
+post-warmup sample to the end. A run that took the post-warmup sample and could not read the end sample fails; only a
+run that ended inside `--warm-seconds` prints `harden_resources: none`.
+
+**Every role's verdict.** `scripts/harden-pair` exits 0 only when the reconcile passes and every role it started
+printed its own `harden_verdict: ... verdict=PASS` and no FAIL: a server that failed only on flatness or conservation
+fails the cell, and so does a role that never printed a verdict.
 
 Host-wide kernel counters include traffic that is not the cell's. Run cells on hosts that carry nothing else.
 
