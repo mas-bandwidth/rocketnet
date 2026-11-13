@@ -61,7 +61,12 @@ nondeterministic, covering both payload and ack orderings.
 The safety specification permits arbitrary connection churn, application
 requests, deferred notification subsets and invalid update calls (an update
 with views held takes them back and continues, as the code does);
-configurations ignore terminal deadlock. `NoOwnEntryDropped` is a local consistency invariant,
+configurations ignore terminal deadlock. The two larger controls
+(`MCRNSlotsTwoSlots.cfg`, `MCRNSlotsExhaustion.cfg`) override `Misuse` to
+FALSE (`MCNoMisuse`): with the continued update after the misuse their state
+spaces ran past the 110-second budget (`MCRNSlotsExhaustion.cfg` timed out at
+95 s of a shard), so their application releases before every update.
+`MCRNSlots.cfg` explores the misuse. `NoOwnEntryDropped` is a local consistency invariant,
 not a separately declared mutation witness. Safety
 never assumes fairness. The live specification keeps a connection stable,
 submits the next message after previous views are released, publishes deferred

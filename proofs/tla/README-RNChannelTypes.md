@@ -222,7 +222,7 @@ input, each branch and returned record is unchanged. This forces eager value
 binding in TLC and avoids repeatedly expanding nested record updates. It
 changes no transition, scheduling rule, loss action, bound or fairness.
 
-All eight healthy scenarios and five reversed witnesses complete with the
+All eight healthy scenarios and the reversed witnesses below complete with the
 pinned runner and JAR from `README.md`, on Linux with a 110-second budget
 per shard. Positive cases use two workers; witnesses use one. They retain
 all seven programs, the same arbitrary arrival and ACK timing, original
@@ -243,7 +243,16 @@ exact generated/distinct counts after the evaluation change.
 | `MCRNChannelTypesHold.cfg` | 102358 | 21795 | 5.164 | pass - |
 | `MCRNChannelTypesUnordered.cfg` | 253601 | 52469 | 6.569 | pass - |
 | `MCRNChannelTypesChannels.cfg` | 99178 | 20995 | 4.774 | pass - |
-| `MCRNChannelTypesBlocks.cfg` | 29805 | 9096 | 1.323 | pass - |
+| `MCRNChannelTypesBlocks.cfg` | 31046 | 9594 | 2.266 | pass - |
+| `MCRNChannelBrokenInTurnStaleSilent.cfg` | 49 | 32 | 0.762 | invariant SequencedArrivedAccounted |
+| `MCRNChannelBrokenNoPromotion.cfg` | 3 | 3 | 0.847 | invariant PromotedNeverUnreliable |
+| `MCRNChannelBrokenPromoteSequencedToReliable.cfg` | 3 | 3 | 0.754 | invariant PromotedIsTwin |
+
+The rows from `MCRNChannelTypesBlocks.cfg` down were measured on 2026-11-13
+(aws-mut-3, a shared bench, so the seconds are loaded) after the receive side
+stopped ending the connection and began refusing an oversize or full future
+record before comparing it with the hold: the blocks scenario reaches a few
+more states. The other rows keep their counts.
 
 Earlier failed measurements remain in the job evidence and historical ledger;
 they are not passing results. The rows below were measured with the blocks
@@ -393,8 +402,11 @@ not an ack exchange observed on a link.
 
 | Case | Expected | Exit | Generated | Distinct | Seconds (2 workers, bench-xdp-9) |
 |---|---|---:|---:|---:|---:|
-| `MCRNChannelTypesRefused.cfg` | pass | 0 | 88553 | 24565 | 3.6 |
-| `MCRNChannelBrokenReleaseBeforeRefuse.cfg` | `SupersederKept` | 12 | 150 | 92 | 0.8 |
+| `MCRNChannelTypesRefused.cfg` | pass | 0 | 114613 | 28825 | 2.8 |
+| `MCRNChannelBrokenReleaseBeforeRefuse.cfg` | `SupersederKept` | 12 | 162 | 92 | 0.8 |
+
+(Remeasured 2026-11-13 on aws-mut-3 after the oversize refusal and the drain's
+`Du` refusal joined the model; 88553 / 24565 and 150 / 92 before.)
 
 ReleaseBeforeRefuse's trace, checked by hand: the first fragment of the
 in-turn code-4 block (message 1, ordering 0, sequencing 0) arrives and is in

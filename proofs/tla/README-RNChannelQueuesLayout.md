@@ -89,6 +89,15 @@ and `ready_prev[ready_head] = 0`: channel 0 links to itself, and the walk in
 `rn_ordered_write` would number channel 0 forever while no other channel ever
 gets a turn.
 
+**RejoinEmpty.** TLC's trace: descriptor 0 is queued on channel 0, which
+joins the ready list; it is numbered, the pop leaves channel 0's FIFO empty,
+and the mutant rejoins channel 0 without the `queue_head != NONE` test
+(`rn_ordered_write`, after `rn_channel_queue_pop`): channel 0 is ready with
+nothing queued, and the next walk reads its head as a message
+(`rn_endpoint_ready_message`). `ReadyNonEmpty` fails at state 3. Before this
+case `ReadyNonEmpty` was declared in the control with no witness and no
+record (MM041).
+
 ## Records
 
 See `RUNS.tsv` (group `rnchannelqueueslayout`).
