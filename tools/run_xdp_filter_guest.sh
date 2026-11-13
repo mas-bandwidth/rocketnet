@@ -3,9 +3,10 @@
 # Licensed under the GNU Affero General Public License v3.0
 #
 # Runs ./bin/test_xdp_filter -v against the built server_xdp.o inside a
-# virtme-ng (vng) guest of the host's matching kernel, requiring all 18
-# registered BPF_PROG_TEST_RUN and guest-only XDP cases to print "ok" with
-# zero skips and the exact final line "test_xdp_filter: 18 cases passed".
+# virtme-ng (vng) guest of the host's matching kernel, requiring every
+# registered BPF_PROG_TEST_RUN and guest-only XDP case (REQUIRED_CASES below)
+# to print "ok" with zero skips and the exact final line
+# "test_xdp_filter: N cases passed", N the number of REQUIRED_CASES.
 #
 #   bash tools/run_xdp_filter_guest.sh [options]
 #
@@ -67,7 +68,7 @@ REQUIRED_CASES=(
     "xsk_bind_falls_back_to_copy"
 )
 EXPECTED_CASE_COUNT=${#REQUIRED_CASES[@]}
-EXPECTED_SUMMARY="test_xdp_filter: 18 cases passed"
+EXPECTED_SUMMARY="test_xdp_filter: ${EXPECTED_CASE_COUNT} cases passed"
 
 usage()
 {
@@ -403,7 +404,7 @@ fi
 
 validate_guest_log "$GUEST_LOG" "$GUEST_EXIT"
 
-# Check guest and host cleanup invariants
+# Check guest cleanup invariants
 guest_leftover_ifaces=$(sed -n 's/^guest_test_interfaces: //p' "$ARTIFACT_DIR/cleanup.txt" | tr -d '[:space:]')
 guest_leftover_netns=$(sed -n 's/^guest_netns: //p' "$ARTIFACT_DIR/cleanup.txt" | tr -d '[:space:]')
 guest_leftover_xdp=$(sed -n 's/^guest_xdp_links: //p' "$ARTIFACT_DIR/cleanup.txt" | tr -d '[:space:]')
@@ -414,12 +415,10 @@ if [ -n "$guest_leftover_ifaces" ] || [ -n "$guest_leftover_netns" ] || [ -n "$g
     fail_qualification "leftover guest state after test_xdp_filter (ifaces='$guest_leftover_ifaces' netns='$guest_leftover_netns' xdp='$guest_leftover_xdp' pins='$guest_leftover_pins' procs='$guest_leftover_procs')"
 fi
 
-host_after_block=$(awk '/^=== host_after ===/{flag=1; next} flag{print}' "$ARTIFACT_DIR/cleanup.txt")
-host_leftover_ifaces=$(printf '%s\n' "$host_after_block" | sed -n 's/^test_interfaces: //p' | tr -d '[:space:]')
-host_leftover_procs=$(printf '%s\n' "$host_after_block" | sed -n 's/^processes: //p' | tr -d '[:space:]')
-if [ -n "$host_leftover_ifaces" ] || [ -n "$host_leftover_procs" ]; then
-    fail_qualification "leftover host state after guest run (ifaces='$host_leftover_ifaces' procs='$host_leftover_procs')"
-fi
+# The host snapshots (host_before, host_after in cleanup.txt) are evidence
+# only, never a gate: every case runs in the guest's own kernel, processes
+# and namespaces, so nothing this run starts can appear on the host, and a
+# host interface or a bin/server there is other work on a shared runner.
 
 {
     echo "PASS: $EXPECTED_SUMMARY"
