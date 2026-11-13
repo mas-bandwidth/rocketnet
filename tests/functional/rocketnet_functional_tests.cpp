@@ -288,8 +288,17 @@ void rocketnet_test_transport_disconnect_delivery()
     rocketnet_check( rocketnet_client_transport_state( client ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
 
+    // CONNECTION_RESPONSE_NO_MAPPING is this scenario on a slow host, not a
+    // fault: the client retransmits its response on the tick until it hears
+    // the server (TRANSPORT.md t17), so when a stall delays the answer to the
+    // first past one send interval, a second response is still in flight when
+    // the client connects. The test then disconnects at once, the mapping goes
+    // with the slot, and that duplicate arrives to no mapping. A duplicate
+    // that beats the disconnect reads ALREADY_CONNECTED, which is expected;
+    // this one only lost the race to the disconnect. Seen once on macOS CI.
+
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING );
 }
 
 void rocketnet_test_transport_reconnect_churn()
