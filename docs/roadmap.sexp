@@ -406,11 +406,6 @@
    :text "space-frame-row passes --transport xdp fixed, so the gso and io_uring re-measures called scripts/harden-pair with the same server arguments by hand. Take the transport (and its queue count) as an argument so every Linux transport's row is one command."
    :date "2026-11-13" :origin "gso and io_uring re-measures on main")
 
-  (item "release-notes-v1-1-49" :group "after-v1-1-landing" :area "docs"
-   :title "v1.1.49 release notes name only io_uring"
-   :text "docs/RELEASE-NOTES-v1.1.49.md describes the io_uring piece (#1104) only, but four other pull requests ride in the same release: #1106 (the trace check reruns a plant that printed no behaviour), #1107 (load test reconcile names stray no-port drops), #1047 (ASan red zones between carved arrays) and #1109 (reconcile lint fix). Add a line for each before the release is cut, or in the next one's notes."
-   :date "2026-11-13" :origin "Release cutter record, v1.1.49 at 6d1139871")
-
   (item "performance-doc-main-rows" :group "after-v1-1-landing" :area "docs"
    :title "docs/PERFORMANCE.md: rows from the re-measure on main"
    :text "Update the performance document's rows from the re-measure on main (XDP 59890655d, gso 3218cf5f6, io_uring 3afea2aed, and RIO, IOCP and macOS as their rows on main come in), with the minimum network threads each transport needs for the peak row. Done by the document's author."

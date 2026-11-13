@@ -12,7 +12,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
 - [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (5)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
-- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (9)
+- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (8)
 - [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (16)
 
 ## Audit items not yet fixed
@@ -462,12 +462,6 @@ From: Network threads per transport survey on main 5488a5443
 space-frame-row passes --transport xdp fixed, so the gso and io_uring re-measures called scripts/harden-pair with the same server arguments by hand. Take the transport (and its queue count) as an argument so every Linux transport's row is one command.
 
 From: gso and io_uring re-measures on main
-
-### v1.1.49 release notes name only io_uring
-
-docs/RELEASE-NOTES-v1.1.49.md describes the io_uring piece (#1104) only, but four other pull requests ride in the same release: #1106 (the trace check reruns a plant that printed no behaviour), #1107 (load test reconcile names stray no-port drops), #1047 (ASan red zones between carved arrays) and #1109 (reconcile lint fix). Add a line for each before the release is cut, or in the next one's notes.
-
-From: Release cutter record, v1.1.49 at 6d1139871
 
 ### docs/PERFORMANCE.md: rows from the re-measure on main
 
