@@ -448,7 +448,7 @@ server topology, with nothing set, is:
 | xdp (Linux) | 1 | 1, one per NIC queue | `num_xdp_threads` |
 | iocp (Windows), specific bind address | 2 | 4: 2 completion workers (one socket each) and 2 send threads | `num_iocp_completion_workers`, `num_iocp_send_threads` |
 | iocp (Windows), wildcard bind | 1 | 3: 1 completion worker and 2 send threads | as above |
-| rio (Windows), specific bind address | 6 | 6, one per lane | `num_rio_lanes` |
+| rio (Windows), specific bind address | 5 | 5, one per lane | `num_rio_lanes` |
 | rio (Windows), wildcard bind | 1 | 1 | `num_rio_lanes` |
 | msgx (macOS) | 1 shared, plus 1 per connected client | 4: 3 transmit workers and 1 receive worker | `num_msgx_transmit_workers` |
 

@@ -109,7 +109,7 @@ machine.
 | `gso` | `num_gso_workers` (1), one per socket | worker `q` on cpu `num_os_cpus + q`, never cpu 0 | none |
 | `io_uring` | `num_io_uring_workers` (2), one per socket and ring | worker `q` on cpu `num_os_cpus + q`, never cpu 0 | none |
 | `iocp` | `num_iocp_completion_workers` (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` (2) | worker `w` on the first processor of core `w`, the send threads on the cores after | none; a bind address for more than one worker ([WINDOWS.md](WINDOWS.md#to-reach-10-gbs-on-windows-set-a-bind-address)) |
-| `rio` | `num_rio_lanes` (6 on a bind address, 1 on the wildcard), one worker a lane | lane `l` on core `l` from core 0 | none; a bind address for more than one lane |
+| `rio` | `num_rio_lanes` (5 on a bind address, 1 on the wildcard), one worker a lane | lane `l` on core `l` from core 0 | none; a bind address for more than one lane |
 | `msgx` | `num_msgx_transmit_workers` (3) and one receive worker | where macOS puts them | none |
 | `portable` | 2, fixed | where the OS puts them | none |
 

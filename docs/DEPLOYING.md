@@ -93,7 +93,7 @@ line-rate performance; that requires measurements on suitable Windows hardware.
 
 ### To reach 10 Gb/s on Windows set a bind address
 
-The Windows defaults that held 1000 players at 10 Gb/s (6 RIO lanes, or 2
+The Windows defaults that held 1000 players at 10 Gb/s (5 RIO lanes, or 2
 IOCP completion workers and 2 send threads, on AWS m7i.16xlarge) share the
 port by processor, which Windows allows only on a specific local address. Set
 the network card's address in `bind_ipv4_address` (or `bind_ipv6_address`),

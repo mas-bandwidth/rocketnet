@@ -44,11 +44,15 @@
 #define ROCKETNET_IO_URING_DEFAULT_WORKERS                               2
 #define ROCKETNET_IO_URING_MAX_WORKERS                                  32
 
-// RIO lanes, a socket, a registered region and an I/O worker each. 6: AWS
-// m7i.16xlarge rows g13-g17 (goal-rio 27ede60b2); 5 lanes failed (g08, 532k
-// packets a second at 37 fps). More than one lane needs a specific bind
-// address: with the wildcard and nothing asked, RIO runs one lane and says so.
-#define ROCKETNET_RIO_DEFAULT_LANES                                      6
+// RIO lanes, a socket, a registered region and an I/O worker each. 5:
+// measured from main 3218cf5f6 on 2026-11-13, AWS m7i.16xlarge server and
+// c8gn.8xlarge players in one zone and subnet: all four rows (peak and
+// average, each with and without a game load) pass at 5 lanes and at 6; 4
+// lanes fails the peak row on rate (545k of 900k packets/s). Rows R1-R9 under
+// "# RIO" in the 2026-11-13 re-measure of main. More than one lane needs a
+// specific bind address: with the wildcard and nothing asked, RIO runs one
+// lane and says so.
+#define ROCKETNET_RIO_DEFAULT_LANES                                      5
 #define ROCKETNET_RIO_MAX_LANES                                         32
 
 // IOCP completion workers (a socket and completion port each) and send

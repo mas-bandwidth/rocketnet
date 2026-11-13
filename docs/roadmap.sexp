@@ -396,11 +396,6 @@
    :text "The split server update (update_receive, update_client, update_finish) landed as an opt-in; rocketnet runs no job system of its own. If a measured row shows the game's own job system cannot spread the update well enough through the public calls, add box3d-style task callbacks to the server config, off by default (see how box3d and fixed3d do it), and not before."
    :date "2026-11-13" :origin "Owner rulings on piece I, 2026-11-13 (V12-ON-MAIN)")
 
-  (item "windows-threads-wildcard-bind" :group "after-v1-1-landing" :area "rocketnet"
-   :title "Windows: RIO and IOCP reach their measured thread counts only with a specific bind address"
-   :text "RIO with more than one lane and IOCP with more than one completion worker refuse the wildcard bind, so a server bound to the wildcard runs one RIO lane or one IOCP completion worker. The peak row needs 6 RIO lanes and 2 IOCP completion workers with 2 send threads (AWS m7i.16xlarge rows, 2026-11-13). Either make the measured count the default when the server binds a specific address and say plainly that the wildcard runs one, or lift the wildcard refusal."
-   :date "2026-11-13" :origin "Network threads per transport survey on main 5488a5443")
-
   (item "space-frame-row-transports" :group "after-v1-1-landing" :area "scripts"
    :title "scripts/space-frame-row runs XDP only"
    :text "space-frame-row passes --transport xdp fixed, so the gso and io_uring re-measures called scripts/harden-pair with the same server arguments by hand. Take the transport (and its queue count) as an argument so every Linux transport's row is one command."
