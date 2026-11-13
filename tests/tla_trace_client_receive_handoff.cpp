@@ -265,15 +265,17 @@ static int trace_client_receive_handoff( uint64_t seed, int steps, const char * 
     client_receive_handoff_state_t state = client_receive_handoff_read( io );
     records.push_back( tla_step( "init", "init", "<<>>", client_receive_handoff_record( state, walk ) ) );
 
+    // one record a step: a pass that reads writes two (bank, end_pass), so
+    // with one record left the walk makes a pass that reads nothing or a call
     int failed = 0;
-    for ( int step = 0; step < steps && !failed; step++ )
+    while ( (int) records.size() < steps + 1 && !failed )
     {
+        const int step = (int) records.size() - 1;
         state = client_receive_handoff_read( io );
 
-        // one pass or one call a step
         const uint32_t room = (uint32_t) ROCKETNET_NUM_CLIENT_PACKETS - state.count[state.worker];
         int kind = random.below( 10 );
-        if ( kind < 3 && room == 0 )
+        if ( kind < 3 && ( room == 0 || step == steps - 1 ) )
         {
             kind = 3;
         }
