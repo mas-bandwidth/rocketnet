@@ -1309,8 +1309,9 @@ jobs:
   # tools/land.py, tools/release_gates.py) is this job: the Linux Debug unit
   # leg runs as two shard rows above, and this row is green only when both
   # shards are. needs: build-and-test only orders it after the matrix; it
-  # reads the two shards' own conclusions from the run's job list, so another
-  # leg's result never decides it. No checkout.
+  # reads the two shards' own conclusions from the run's job list
+  # (tools/check_debug_unit_shards.py), so another leg's result never decides
+  # it. Sparse checkout of that one script.
   debug-unit:
     name: linux / Debug / unit
     needs: build-and-test
@@ -1320,31 +1321,23 @@ jobs:
     permissions:
       actions: read
     steps:
+      # Only the checker script is fetched, not the tree.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          sparse-checkout: tools/check_debug_unit_shards.py
+          sparse-checkout-cone-mode: false
+
       - name: Both Linux Debug unit shards succeeded
         env:
           GH_TOKEN: ${{ github.token }}
+          DEBUG_UNIT_JOBS: debug-unit-jobs.json
         run: |
-          python3 - <<'PY'
-          import json, os, sys, urllib.request
-          try:
-              url = "https://api.github.com/repos/%s/actions/runs/%s/attempts/%s/jobs?per_page=100" % (
-                  os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
-              request = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
-              jobs = json.load(urllib.request.urlopen(request, timeout=20))["jobs"]
-          except Exception as error:
-              print("DEBUG-UNIT-SHARDS=FAIL no verdict: %s" % error)
-              sys.exit(1)
-          bad = 0
-          for shard in ("0/2", "1/2"):
-              name = "linux / Debug / unit (%s)" % shard
-              found = [j["conclusion"] for j in jobs if j["name"] == name]
-              print("%s: %s" % (name, found or "missing"))
-              if found != ["success"]:
-                  bad = 1
-          if bad:
-              print("DEBUG-UNIT-SHARDS=FAIL a shard did not succeed")
-          sys.exit(bad)
-          PY
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$DEBUG_UNIT_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$DEBUG_UNIT_JOBS"
 
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every
@@ -3824,6 +3817,7 @@ jobs:
           list="$RUNNER_TEMP/checker-selftests.txt"
           cat > "$list" <<'SUITES'
           python3 tools/check_client_frame_time.py --self-test
+          python3 tools/check_debug_unit_shards.py --self-test
           python3 tools/test_check_dll_consumer.py -v
           python3 tools/test_check_driver_extension.py -v
           python3 tools/test_check_examples.py -v
