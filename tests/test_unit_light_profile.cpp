@@ -122,7 +122,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452223 )
+// The server config's two bind addresses add 512 bytes to the server and nothing to the
+// client (measured on the Windows unit job: actual=1469501311).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452735 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14340460 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
