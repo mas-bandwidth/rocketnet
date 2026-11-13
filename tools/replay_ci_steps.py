@@ -80,7 +80,13 @@ replay at SHA from a clean tree and which have none (RED, OVER CAP, NOT
 CLEAN, or NONE). A result matches a row when its job is the row's, every
 matrix value of the row (runs-on's included) and every one the job reads is
 the same in the result (empty when the row has none), its other --set
-values are the coverage's own, and it ran on the OS the row's runs-on names.
+values are the coverage's own, it ran on the OS the row's runs-on names (read
+from the labels: linux, ubuntu, macos, windows; labels that name none are not
+checked), and its workflow file is byte for byte the WORKFLOW given here (git
+blob id). A replay is recorded as clean only when the tree was clean and
+WORKFLOW was the checkout's own file as committed at HEAD, so run --coverage
+in a checkout of SHA. Result files are read as written: a file made by hand
+is believed.
 A green replay that went over the cap under --allow-over-cap counts as
 GREEN and says so with its seconds. Exit 0 only when every row listed is
 GREEN and no listed job is one a replay cannot cover: name with --job the
@@ -759,6 +765,31 @@ def minutes(text, context, default):
         raise ReplayError("timeout-minutes %r reads %r, not a number" % (text, value))
 
 
+def git_blob(path):
+    """The git blob id of the file at path as it is on disk, or None."""
+    try:
+        done = subprocess.run(["git", "hash-object", path], capture_output=True, text=True)
+    except OSError:
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def workflow_at_head(path):
+    """The blob id of WORKFLOW as committed at HEAD here, or None when it is not a tracked file of this checkout."""
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    except OSError:
+        return None
+    if top.returncode != 0:
+        return None
+    relative = os.path.relpath(os.path.realpath(path), os.path.realpath(top.stdout.strip()))
+    if relative.startswith(".."):
+        return None
+    done = subprocess.run(["git", "rev-parse", "HEAD:%s" % relative.replace(os.sep, "/")], capture_output=True,
+                          text=True)
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
 def git_state():
     """The commit at HEAD here and whether the tree is clean (untracked files count), or (None, False)."""
     try:
@@ -769,6 +800,14 @@ def git_state():
     if head.returncode != 0 or status.returncode != 0:
         return None, False
     return head.stdout.strip(), status.stdout.strip() == ""
+
+
+def checkout_state(workflow):
+    """(commit, clean, workflow blob): clean only when the tree is clean and WORKFLOW is this checkout's own
+    file as committed at HEAD, so a result's commit is the commit whose workflow and steps ran."""
+    commit, clean = git_state()
+    blob = git_blob(workflow)
+    return commit, clean and blob is not None and blob == workflow_at_head(workflow), blob
 
 
 def read_env_file(path):
@@ -795,12 +834,19 @@ def read_env_file(path):
 
 
 def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout, allow_over_cap=False, result=None,
-           clock=time.monotonic, state=git_state):
+           clock=time.monotonic, state=checkout_state):
     parsed = parse(open(workflow).read(), job_key)
     workflow_env, job_env, steps = parsed["workflow_env"], parsed["job_env"], parsed["steps"]
     context = Context(sets)
     # the commit and whether the tree is clean, read before any step writes to it
-    commit, clean = state() if result is not None and not list_only else (None, False)
+    commit, clean, blob = state(workflow) if result is not None and not list_only else (None, False, None)
+    if result is not None and not list_only:
+        # a result that cannot be written is found now, not after the steps have run
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(result)), exist_ok=True)
+            open(result, "w").close()
+        except OSError as error:
+            raise ReplayError("--result %s cannot be written: %s" % (result, error))
     job_cap = minutes(parsed["job"]["timeout"], context, 360)
     total = 0.0
     over = []
@@ -903,14 +949,15 @@ def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout, allow
                  ": OVER CAP" if total > job_cap else (": a step OVER CAP" if over else ", within the cap")))
     if result is not None:
         with open(result, "w") as handle:
-            json.dump({"workflow": os.path.basename(workflow), "job": job_key, "sets": sets, "commit": commit,
+            json.dump({"workflow": os.path.basename(workflow), "workflow_blob": blob, "job": job_key, "sets": sets,
+                       "commit": commit,
                        "clean": clean, "host": platform.node(), "runner_os": Context({}).lookup("runner.os"),
                        "green": green, "seconds": round(total, 1),
                        "cap_seconds": job_cap, "over_cap": over, "allow_over_cap": allow_over_cap,
                        "exit": status, "steps": timings}, handle, indent=1, sort_keys=True)
             handle.write("\n")
-        out.write("replay: result in %s (commit %s, tree %s at the start)\n"
-                  % (result, commit or "unknown", "clean" if clean else "NOT CLEAN"))
+        out.write("replay: result in %s (commit %s, tree and workflow %s at the start)\n"
+                  % (result, commit or "unknown", "clean" if clean else "NOT CLEAN or not this checkout's"))
     return status
 
 
@@ -1026,8 +1073,11 @@ def context_sets(sets):
     return out
 
 
-def matches(row, result, workflow, commit, sets):
+def matches(row, result, workflow, commit, sets, blob):
     if result.get("job") != row["job"] or result.get("workflow") != os.path.basename(workflow):
+        return False
+    # the replay ran this very workflow file (the one the rows come from), committed at its commit
+    if blob is None or result.get("workflow_blob") != blob:
         return False
     if not result.get("commit") or not commit or not result["commit"].startswith(commit):
         return False
@@ -1050,9 +1100,12 @@ def coverage(workflow, jobs, sets, commit, paths, out=sys.stdout):
         raise ReplayError("--commit wants at least seven hex digits of the commit, got %r" % commit)
     rows, summaries, skipped = workflow_rows(workflow, jobs, sets)
     results = read_results(paths)
+    blob = git_blob(workflow)
+    if blob is None:
+        raise ReplayError("git hash-object %s failed: coverage cannot tie results to this workflow" % workflow)
     counts = {"GREEN": 0, "RED": 0, "OVER CAP": 0, "NOT CLEAN": 0, "NONE": 0}
     for row in rows:
-        found = [result for result in results if matches(row, result, workflow, commit, sets)]
+        found = [result for result in results if matches(row, result, workflow, commit, sets, blob)]
         verdict, detail = "NONE", "no replay result at %s" % commit
         for result in found:
             if not result.get("clean"):
@@ -1430,9 +1483,11 @@ def self_test():
             results = os.path.join(directory, "results")
             os.makedirs(results)
             sha = "abc1234" + "0" * 33
+            rows_blob = git_blob(rows_path)
 
             def result(name, job, values, **fields):
-                data = {"workflow": "rows.yml", "job": job, "commit": sha, "clean": True, "green": True,
+                data = {"workflow": "rows.yml", "workflow_blob": rows_blob, "job": job, "commit": sha,
+                        "clean": True, "green": True,
                         "runner_os": "Linux", "seconds": 10.0, "cap_seconds": 120.0, "over_cap": [],
                         "allow_over_cap": False,
                         "sets": dict(("matrix.%s" % key, value) for key, value in values.items())}
@@ -1483,7 +1538,8 @@ def self_test():
             for row in workflow_rows(rows_path, ["blocks"], {})[0]:
                 sets = dict(item.split("=", 1) for item in row["sets"])
                 replay(rows_path, "blocks", sets, os.path.join(directory, "logs-" + row["values"]["leg"]), out=Sink(),
-                       result=os.path.join(ran, row["values"]["leg"] + ".json"), state=lambda: (sha, True))
+                       result=os.path.join(ran, row["values"]["leg"] + ".json"),
+                       state=lambda workflow: (sha, True, git_blob(workflow)))
             sink = Sink()
             status = coverage(rows_path, ["blocks"], {}, sha, [ran], out=sink)
             checks.append(("coverage: replay --result files cover their rows",
@@ -1492,6 +1548,47 @@ def self_test():
             status = coverage(rows_path, ["blocks"], {}, "def5678", [ran], out=sink)
             checks.append(("coverage: another commit's replays cover nothing",
                            status == 1 and "2 with no replay" in sink.text))
+            # a replay of an edited copy of the workflow covers nothing, whatever checkout it ran in
+            edited_dir = os.path.join(directory, "edited")
+            os.makedirs(edited_dir)
+            edited = os.path.join(edited_dir, "rows.yml")
+            with open(edited, "w") as handle:
+                handle.write(ROWS.replace("      - run: echo ${{ matrix.shard }}", "      - run: echo edited"))
+            edited_results = os.path.join(directory, "edited-results")
+            os.makedirs(edited_results)
+            for row in workflow_rows(edited, ["blocks"], {})[0]:
+                sets = dict(item.split("=", 1) for item in row["sets"])
+                replay(edited, "blocks", sets, os.path.join(directory, "logs-e-" + row["values"]["leg"]), out=Sink(),
+                       result=os.path.join(edited_results, row["values"]["leg"] + ".json"),
+                       state=lambda workflow: (sha, True, git_blob(workflow)))
+            sink = Sink()
+            status = coverage(rows_path, ["blocks"], {}, sha, [edited_results], out=sink)
+            checks.append(("coverage: a replay of an edited workflow covers nothing",
+                           status == 1 and "2 with no replay" in sink.text))
+
+            # clean means the tree is clean and WORKFLOW is the checkout's own file as committed
+            repo = os.path.join(directory, "repo")
+            os.makedirs(os.path.join(repo, "wf"))
+            committed = os.path.join(repo, "wf", "rows.yml")
+            with open(committed, "w") as handle:
+                handle.write(ROWS)
+            git = ["git", "-C", repo, "-c", "user.name=replay", "-c", "user.email=replay@invalid"]
+            subprocess.run(git[:3] + ["init", "-q"], check=True)
+            subprocess.run(git + ["add", "wf/rows.yml"], check=True)
+            subprocess.run(git + ["commit", "-q", "-m", "fixture"], check=True)
+            os.chdir(repo)
+            clean_here = checkout_state(committed)[1]
+            outside = checkout_state(rows_path)[1]
+            with open(committed, "a") as handle:
+                handle.write("# edited\n")
+            edited_here = checkout_state(committed)[1]
+            os.chdir(directory)
+            checks += [
+                ("clean: the checkout's own committed workflow is clean", clean_here is True),
+                ("clean: a workflow outside the checkout is not", outside is False),
+                ("clean: an edited workflow is not", edited_here is False),
+            ]
+
             sink = Sink()
             status = coverage(rows_path, ["blocks", "summary"], {}, sha, [ran], out=sink)
             checks.append(("coverage: a job with needs: listed keeps the exit 1",
