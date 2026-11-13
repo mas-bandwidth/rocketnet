@@ -1272,7 +1272,9 @@ void rocketnet_server_msgx_receive_packets( struct rocketnet_server_msgx_t * msg
     // proofs/tla/RNMsgxReceiveFill.tla Call (RNReceiveHandoff.tla Call):
     // main reads the worker's bank in place up to its committed count, after
     // the unread tail of the bank the worker left, so a datagram committed
-    // before this call took the mutex is returned by it
+    // before this call took the mutex is returned by it when the call began
+    // with no backlog from a cut call and its capacity does not cut it
+    // (DeliveredByNextCall)
     struct rocketnet_msgx_receive_call_io_t io;
     io.user = msgx;
     io.try_lock = rocketnet_server_msgx_call_try_lock;
