@@ -309,15 +309,13 @@ int rocketnet_client_gso_gro_segment_bytes( const struct msghdr * header, int me
 }
 
 // the receive errors that are weather, as the platform's receive reads them:
-// skip and keep draining, a bounded number of times per call
+// skip and keep draining while the call's read budget lasts
 
 static bool rocketnet_client_gso_receive_weather( int error )
 {
     return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
            error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
 }
-
-#define ROCKETNET_CLIENT_GSO_RECEIVE_WEATHER_RETRIES 8
 
 // proofs/tla/RNClientGroCarry.tla Deliver: copies the held message's segments
 // into the slots from total, in order, while the call has room, and returns
@@ -354,8 +352,15 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
     rocketnet_assert( packet_bytes );
     rocketnet_assert( max_packets > 0 );
 
-    int weather = 0;
-    int skipped = 0;
+    // proofs/tla/RNClientGroCarry.tla ReadBudget: one read budget per call, as
+    // the platform's receive has it (docs/TRANSPORT-INTERNALS.md). Every read
+    // of the socket spends one unit of max_packets: a message kept, a
+    // zero-length, truncated or refused-source datagram skipped (Skip), a
+    // weather errno skipped (Skip). A spent budget ends the call and the next
+    // call carries on, so neither a repeating errno nor a stream of chaff
+    // holds the drain.
+
+    int reads_remaining = max_packets;
 
     // proofs/tla/RNClientGroCarry.tla Deliver: the segments the last call had
     // no room for come first, and the socket is not read while any is held:
@@ -363,7 +368,7 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
 
     int total = rocketnet_client_gso_receive_deliver( gso, from, packet_data, packet_stride, packet_bytes, max_packets, 0 );
 
-    while ( total < max_packets )
+    while ( total < max_packets && reads_remaining > 0 )
     {
         // proofs/tla/RNClientGroCarry.tla Read: a message can hold up to the
         // kernel's segment count: past the first slot, one is read only while
@@ -390,11 +395,12 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         const int result = gso->syscalls->recvmmsg( gso->syscall_context, gso->socket, &gso->receive_message, 1 );
 
         gso->receive_syscalls++;
+        reads_remaining--;
 
         if ( result < 0 )
         {
             const int error = errno;
-            if ( rocketnet_client_gso_receive_weather( error ) && weather++ < ROCKETNET_CLIENT_GSO_RECEIVE_WEATHER_RETRIES )
+            if ( rocketnet_client_gso_receive_weather( error ) )
             {
                 continue;
             }
@@ -412,16 +418,13 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         }
 
         // a zero-length datagram or a source the socket does not speak is not
-        // delivered, as the platform's batch receive has it; a stream of them
-        // holds the drain no longer than a batch of packets would
+        // delivered, as the platform's batch receive has it; each spent its
+        // read, so a stream of them holds the drain no longer than a batch of
+        // packets would
 
         const int message_bytes = (int) gso->receive_message.msg_len;
         if ( message_bytes <= 0 )
         {
-            if ( ++skipped >= max_packets )
-            {
-                return total;
-            }
             continue;
         }
 
@@ -431,20 +434,12 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
 
         if ( header->msg_flags & MSG_TRUNC )
         {
-            if ( ++skipped >= max_packets )
-            {
-                return total;
-            }
             continue;
         }
 
         rocketnet_address_t source;
         if ( !gso->syscalls->read_address( gso->syscall_context, &gso->receive_name, &source ) )
         {
-            if ( ++skipped >= max_packets )
-            {
-                return total;
-            }
             continue;
         }
 
