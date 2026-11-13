@@ -21,7 +21,8 @@
 
 // The tree is found through ROCKETNET_SOURCE_DIR (CMakeLists.txt), never
 // through __FILE__: CI's compiler cache hands the compiler paths relative to
-// the build directory (.github/actions/ccache), so __FILE__ is relative there.
+// the compiler's working directory, the build directory (CCACHE_BASEDIR in
+// .github/actions/ccache), so __FILE__ is relative there.
 #ifndef ROCKETNET_SOURCE_DIR
 #error "corpus_consistency.cpp needs ROCKETNET_SOURCE_DIR (CMakeLists.txt sets it)"
 #endif

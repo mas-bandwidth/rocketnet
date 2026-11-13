@@ -233,14 +233,15 @@ jobs:
         os: [linux, macos]
         build_type: [Debug, Release]
         leg: [unit, functional, checks, builds]
-        # The per-commit tier runs eleven of the twenty rows: eight Linux rows
-        # (the Release unit leg is two shard rows below, the second carrying
-        # the builds leg's steps; the two transport_matrix rows are include
-        # rows below) and three macOS rows (macOS Release
-        # functional_production is the include row below). The nightly tier
-        # runs all. Both tiers exclude the plain Linux Release unit row: its
-        # two shard rows replace it; likewise the Linux Debug unit, both Linux
-        # functional and the macOS Debug unit rows.
+        # Of the twenty original rows the per-commit tier keeps two (Linux
+        # Release checks, macOS Release functional); every other per-commit
+        # job is an include row below: the shard rows of the Linux unit,
+        # functional and transport_matrix legs and of the macOS Debug unit
+        # leg, the Linux Release source_checks row and macOS Release
+        # functional_production. The nightly tier runs every original row
+        # except the plain Linux Release and Debug unit, both Linux
+        # functional and the macOS Debug unit rows, which both tiers exclude:
+        # their shard rows replace them.
         exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"unit"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
@@ -553,11 +554,15 @@ jobs:
 
       # The once-per-leg checks below run in every unsharded unit row and, in
       # a sharded leg, in the shard row whose field names them: first (the
-      # sodium checks, the shard partition, the registered case list, the
-      # whole-suite environment check), purity, audit (the development source
-      # audit), counters (counter-observed). ambient_shard: each shard row
-      # runs the environment check over its own shard of the suite (Linux and
-      # macOS Debug), so the shards together run it once over the whole suite.
+      # sodium checks, the shard partition, the registered case list, and the
+      # whole-suite environment check where the leg has no ambient_shard
+      # rows: Linux Release), purity, audit (the development source audit),
+      # counters (counter-observed). ambient_shard: each shard row runs the
+      # environment check over its own shard of the suite (Linux and macOS
+      # Debug), so the shards together check every case once; what a
+      # whole-suite run in one process adds, a case leaking ambient state
+      # into a case of another shard, is still run per commit by the Linux
+      # Release unit leg's whole-suite check.
       # Linux Release: first and purity in 0/2. Linux Debug: first 0/4, audit
       # 1/4, counters 2/4, purity 3/4. macOS Debug: first and purity 0/2,
       # counters 1/2.
@@ -1441,7 +1446,7 @@ jobs:
   # tools/land.py, tools/release_gates.py) is this job: the Linux Debug unit
   # leg runs as four shard rows above, and this row is green only when all
   # four are. needs: build-and-test only orders it after the matrix; it
-  # reads the three shards' own conclusions from the run's job list
+  # reads the four shards' own conclusions from the run's job list
   # (tools/check_debug_unit_shards.py), so another leg's result never decides
   # it. An ordinary checkout, for the script.
   debug-unit:
@@ -4759,6 +4764,11 @@ jobs:
           output="$(python3 tools/check_fuzz_coverage.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^check_fuzz_coverage self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
+          # check_fuzz_mutants.py --shard (fuzz smoke's mutants legs): bad specs
+          # refused, the shards cover the mutant table once each
+          output="$(python3 tools/check_fuzz_mutants.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^check_fuzz_mutants self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
 
       # scripts/transport-cells-repeat drives nightly.yml's fifty-times cells:
       # a case list of blanks, a skipped io_uring cell and a failing case must

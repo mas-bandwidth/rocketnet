@@ -508,6 +508,33 @@ def assert_name_set(printed, registered, always, label, exec_names=None):
                  % (label, len(printed), len(registered), "; ".join(parts)))
 
 
+def parse_unit_shard(args):
+    """(shard, args without it): --shard I/N as (I, N), or None when absent."""
+    if "--shard" not in args:
+        return None, args
+    at = args.index("--shard")
+    m = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", args[at + 1]) if at + 1 < len(args) else None
+    if not m or int(m.group(1)) >= int(m.group(2)):
+        sys.exit("check_test_environment.py: --shard is I/N with 0 <= I < N")
+    return (int(m.group(1)), int(m.group(2))), args[:at] + args[at + 2:]
+
+
+def in_unit_shard(name, shard):
+    """Whether the unit case NAME runs in SHARD (I, N); every case when SHARD is None."""
+    return shard is None or shard_of(name, shard[1]) == shard[0]
+
+
+def strip_unit_shard_line(lines, shard, label):
+    """A shard run prints exactly one "shard I/N: k of m cases" line (suite_keep_shard),
+    for this shard: hold it to that and drop it; a whole run passes LINES through."""
+    if shard is None:
+        return lines
+    found = [(int(m.group(1)), int(m.group(2))) for m in (SHARD_LINE_RE.fullmatch(line) for line in lines) if m]
+    if found != [shard]:
+        sys.exit("%s: expected one 'shard %d/%d: <k> of <m> cases' line, found %r" % (label, shard[0], shard[1], found))
+    return [line for line in lines if not SHARD_LINE_RE.fullmatch(line)]
+
+
 def run_binary(binary, env, timeout, extra=()):
     try:
         result = subprocess.run([str(binary)] + list(extra), env=env, text=True,
@@ -541,14 +568,7 @@ def main():
     # --shard I/N (the unit suite only): run the suite's shard I of N under the
     # ambient overrides and hold its output to the registered names of that
     # shard (suite_shard_of); shards 0 to N-1 together are the whole check
-    unit_shard = None
-    if "--shard" in args:
-        at = args.index("--shard")
-        m = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", args[at + 1]) if at + 1 < len(args) else None
-        if not m or int(m.group(1)) >= int(m.group(2)):
-            sys.exit("check_test_environment.py: --shard is I/N with 0 <= I < N")
-        unit_shard = (int(m.group(1)), int(m.group(2)))
-        args = args[:at] + args[at + 2:]
+    unit_shard, args = parse_unit_shard(args)
     binary = Path(args[0] if args else "bin/test").resolve()
     functional = "functional" in binary.name
 
@@ -597,21 +617,14 @@ def main():
     result = run_binary(binary, env, timeout=180, extra=extra)
     if result.returncode:
         sys.exit("%s failed with ambient config overrides: %s" % (label, result.returncode))
-    lines = result.stdout.splitlines()
-    if unit_shard is not None:
-        # a shard run prints one "shard I/N: k of m cases" line first (suite_keep_shard)
-        shard_lines = [line for line in lines if SHARD_LINE_RE.fullmatch(line)]
-        found = [(int(SHARD_LINE_RE.fullmatch(line).group(1)), int(SHARD_LINE_RE.fullmatch(line).group(2))) for line in shard_lines]
-        if found != [unit_shard]:
-            sys.exit("%s: expected one 'shard %d/%d: <k> of <m> cases' line, found %r" % (label, unit_shard[0], unit_shard[1], found))
-        lines = [line for line in lines if not SHARD_LINE_RE.fullmatch(line)]
+    lines = strip_unit_shard_line(result.stdout.splitlines(), unit_shard, label)
     names = check_shape(lines, label, once=True)
-    in_shard = (lambda name: True) if unit_shard is None else (lambda name: shard_of(name, unit_shard[1]) == unit_shard[0])
-    if not production and in_shard("test_suite_environment") and "test_suite_environment" not in names:
+    if not production and in_unit_shard("test_suite_environment", unit_shard) and "test_suite_environment" not in names:
         sys.exit("%s did not execute its environment restoration test" % label)
 
     reg_all, reg_always = registered_unit_names(production)
-    assert_name_set(set(names), {n for n in reg_all if in_shard(n)}, {n for n in reg_always if in_shard(n)}, label)
+    assert_name_set(set(names), {n for n in reg_all if in_unit_shard(n, unit_shard)},
+                    {n for n in reg_always if in_unit_shard(n, unit_shard)}, label)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@
 #
 #   python3 tools/check_fuzz_mutants.py [--build build-fuzz] [--only ID[,ID] | --shard I/N] [--jobs N]
 #   python3 tools/check_fuzz_mutants.py --list
+#   python3 tools/check_fuzz_mutants.py --self-test   (--shard's verdicts; no build needed)
 #   python3 tools/check_fuzz_mutants.py --find-inputs ID --seconds S --out DIR
 #       (by hand: fuzz the mutant's session harness from its corpus for S
 #       seconds; every input that kills the mutant and replays clean on the
@@ -370,7 +371,10 @@ def main():
     # --shard I/N: judge the mutants at positions I, I+N, I+2N, ... of the table
     # (ci.yml's fuzz smoke mutants legs); shards 0 to N-1 together are the table
     parser.add_argument("--shard", default="")
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
     if args.list:
         for m in MUTANTS:
             print("%-24s %-36s %s%s" % (m["id"], m["file"], m["what"], " (EQUIVALENT)" if m.get("equivalent") else (" (UNCOVERED)" if m.get("uncovered") else "")))
@@ -382,15 +386,51 @@ def main():
         return find_inputs(build, args.find_inputs, args.seconds, args.out)
     only = [x for x in args.only.split(",") if x]
     if args.shard:
-        parts = args.shard.split("/")
-        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit() or int(parts[0]) >= int(parts[1]):
-            fail("--shard is I/N with 0 <= I < N: %s" % args.shard)
         if only:
             fail("--shard and --only do not combine")
-        index, shards = int(parts[0]), int(parts[1])
-        only = [m["id"] for position, m in enumerate(MUTANTS) if position % shards == index]
-        print("shard %d/%d: %d of %d mutants" % (index, shards, len(only), len(MUTANTS)))
+        only = shard_ids(args.shard, MUTANTS)
+        if only is None:
+            fail("--shard is I/N with 0 <= I < N: %s" % args.shard)
+        print("shard %s: %d of %d mutants" % (args.shard, len(only), len(MUTANTS)))
     return run_all(build, only, args.jobs)
+
+
+def shard_ids(spec, mutants):
+    """The ids of the mutants at table positions I, I+N, I+2N, ... for spec "I/N"; None for a bad spec."""
+    parts = spec.split("/")
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit() or int(parts[0]) >= int(parts[1]):
+        return None
+    index, shards = int(parts[0]), int(parts[1])
+    return [m["id"] for position, m in enumerate(mutants) if position % shards == index]
+
+
+def self_test():
+    """--shard's verdicts: bad specs are refused; shards 0..N-1 are disjoint, cover the
+    table and are never empty for the N ci.yml uses (an empty shard judges nothing)."""
+    cases, failed = 0, 0
+
+    def check(ok, what):
+        nonlocal cases, failed
+        cases += 1
+        if not ok:
+            failed += 1
+            print("check_fuzz_mutants self-test: FAILED " + what)
+
+    for bad in ("", "1", "2/2", "3/2", "a/2", "1/b", "1/0", "-1/2", "0/2/3"):
+        check(shard_ids(bad, MUTANTS) is None, "a bad --shard %r was accepted" % bad)
+    ids = [m["id"] for m in MUTANTS]
+    check(len(set(ids)) == len(ids), "mutant ids are not unique")
+    for shards in (1, 2, 3, 4):
+        parts = [shard_ids("%d/%d" % (index, shards), MUTANTS) for index in range(shards)]
+        joined = [i for part in parts for i in part]
+        check(sorted(joined) == sorted(ids), "shards 0..%d/%d do not cover the table once each" % (shards - 1, shards))
+        if shards == 2:
+            check(all(parts), "a 2-way shard is empty")
+    fake = [{"id": "m%d" % n} for n in range(5)]
+    check(shard_ids("1/2", fake) == ["m1", "m3"], "1/2 of five did not take positions 1 and 3")
+    check(shard_ids("0/2", fake) == ["m0", "m2", "m4"], "0/2 of five did not take positions 0, 2 and 4")
+    print("check_fuzz_mutants self-test: %d cases, %d failed" % (cases, failed))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
