@@ -78,16 +78,16 @@ static void test_send_errnos_counted_by_call()
     // that record whole and drops the second; one byte less keeps none. No
     // partial word is left either way.
 
-    char small[sizeof( "sendmsg_x EAGAIN=1000" )];
-    memset( small, 'x', sizeof( small ) );
-    rocketnet_unit_check( rocketnet_platform_send_errnos_format( &errnos, small, sizeof( small ) ) == 1 );
-    rocketnet_unit_check( strcmp( small, "sendmsg_x EAGAIN=1000" ) == 0 );
+    char small_buffer[sizeof( "sendmsg_x EAGAIN=1000" )];
+    memset( small_buffer, 'x', sizeof( small_buffer ) );
+    rocketnet_unit_check( rocketnet_platform_send_errnos_format( &errnos, small_buffer, sizeof( small_buffer ) ) == 1 );
+    rocketnet_unit_check( strcmp( small_buffer, "sendmsg_x EAGAIN=1000" ) == 0 );
 
-    memset( small, 'x', sizeof( small ) );
-    rocketnet_unit_check( rocketnet_platform_send_errnos_format( &errnos, small, sizeof( small ) - 1 ) == 0 );
-    rocketnet_unit_check( small[0] == '\0' );
+    memset( small_buffer, 'x', sizeof( small_buffer ) );
+    rocketnet_unit_check( rocketnet_platform_send_errnos_format( &errnos, small_buffer, sizeof( small_buffer ) - 1 ) == 0 );
+    rocketnet_unit_check( small_buffer[0] == '\0' );
 
-    rocketnet_unit_check( rocketnet_platform_send_errnos_format( &errnos, small, 0 ) == 0 );
+    rocketnet_unit_check( rocketnet_platform_send_errnos_format( &errnos, small_buffer, 0 ) == 0 );
 }
 
 REGISTER_UNIT_TEST( test_send_errnos_counted_by_call );
