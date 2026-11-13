@@ -276,4 +276,9 @@
    :title "Start order of one client's packets when its sending thread changes between flushes"
    :text "On a transport that buffers payloads in the server's ring, a thread's unused chunk slots stay on its line until the flush. If one thread sends to a client, a checked main thread call that is not send_packets follows, and another thread then sends to the same client, the second thread's packets may sit in lower slots and leave first. rocketnet.h states it. Returning every line's chunk at each checked main thread call would keep start order; it costs a walk of the 64 lines a call."
    :date "2026-11-13" :origin "Piece G, cold reader finding 2 (second case)")
+
+  (item "rio-destroy-stuck-lane" :group "audit-remaining" :area "rocketnet"
+   :title "rio destroy: free the stopped lanes when one lane is stuck"
+   :text "rocketnet_server_rio_destroy returns before destroying any lane when one lane never reports stopped (a completion queue reported corrupt, or a send the kernel never completes). The lanes that did stop stay allocated until process exit. Measured as intended for this piece: the leak is bounded and named. Fix: destroy every lane that reports stopped and leak only the stuck one, as the create rollback already does (rocketnet_server_rio_create_leaks), with a unit case that holds one lane's sends."
+   :date "2026-11-13" :origin "Piece N (rio rebuilt), cold read")
  ))

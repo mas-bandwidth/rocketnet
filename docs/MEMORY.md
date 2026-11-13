@@ -286,7 +286,7 @@ a larger server does not make every transport buffer larger.
 | client slots, loopback endpoints | one per client (endpoints: plus the server) | 1000, 1001 | 10000, 10001 |
 | per-update receive budget, payload batch, io_uring receive bank | 16 packets per client | 16000 | 160000 |
 | portable send batch | one per client | 1000 | 10000 |
-| server-wide send staging (IOCP send frames, RIO send phase) | two packets per client, rounded up to a power of two | 2048 | 32768 |
+| server-wide send staging (IOCP send frames; the RIO send phase is this with a floor of 16384 per lane) | two packets per client, rounded up to a power of two | 2048 | 32768 |
 | IOCP receive staging per worker, RIO posted receives | twice the send staging | 4096 | 65536 |
 | XDP kernel replay map (set at load) and userspace replay marks | one entry per client, rounded up to a multiple of 1024 | 1024 | 10240 |
 | XDP reply MAC table | four slots per client, rounded up to a power of two | 4096 | 65536 |

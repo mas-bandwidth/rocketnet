@@ -70,6 +70,10 @@ TESTS = ROOT / "tests"
 #                   a layout layer must show (wrapped, full, empty after a
 #                   wrap). Each costs one more TLC run per seed until hit.
 #   steps           (optional) the walk's length for this layer (400).
+#   header_only     (optional, true) the layer's code is a header-only library file:
+#                   its plant define is set in the plant block and tested by a
+#                   directive of the sdk header the layer includes whole; without
+#                   this key a layer must include an sdk .cpp under the plant block.
 #   self_contained  (the example only) why the code under test lives in the
 #                   layer's own file instead of sdk/.
 LAYERS = {
@@ -119,12 +123,18 @@ LAYERS = {
         # (the last three): a seed set must hold both kinds
         "reach": ["SealedAtFinish", "RefusedAtFinish", "NothingForWalk", "RingOpen", "RingQueued", "WalkCarried"],
     },
+    "rio-lane": {
+        "modules": ["RNRioLaneLayout.tla", "TraceRNRioLaneLayout.tla"],
+        "untraced": {},
+        "reach": ["BothLanesStaged"],
+        "header_only": True,
+    },
 }
 
 STEPS = 400
 # the shortest walk a row may ask for
 MIN_STEPS = 100
-ROW_KEYS = {"modules", "untraced", "ghost", "reach", "steps", "self_contained"}
+ROW_KEYS = {"modules", "untraced", "ghost", "reach", "steps", "self_contained", "header_only"}
 # the rows whose code may live in the layer's own file
 SELF_CONTAINED = {"example"}
 WALK_TIMEOUT = 120
@@ -392,7 +402,7 @@ def source_failures(layer, plant_binary):
     # define only to open that block, at the top level, and the block holds only the plant
     # defines and the sdk includes. A walk that branched on the plant could plant its own records.
     code = c_tokens(path.read_text())
-    stack, included = [], []
+    stack, included, headers = [], [], []
     for line in code.split("\n"):
         directive = DIRECTIVE.match(line)
         in_block = stack == [PLANT_BLOCK]
@@ -418,11 +428,19 @@ def source_failures(layer, plant_binary):
                 if stack != [PLANT_BLOCK]:
                     failures.append(f"{path.name} includes sdk/{m.group(1)} outside a top-level #if defined( ROCKETNET_TLA_PLANT )")
                 included.append(m.group(1))
-    if not included:
+            # a library header the layer includes whole (a header-only layout): its plant define
+            # is set in the plant block above and tested by a directive of the header itself
+            h = re.match(r'"\.\./sdk/([^"]+\.h)"', rest)
+            if h and stack == [] and layer.get("header_only"):
+                headers.append(h.group(1))
+    if layer.get("header_only") and not headers:
+        failures.append(f"{path.name} is a header_only layer and includes no sdk header: the plant must be in the library's code")
+        return failures
+    if not layer.get("header_only") and not included:
         failures.append(f"{path.name} includes no sdk .cpp under ROCKETNET_TLA_PLANT: the plant must be in the library's code")
         return failures
     sdk_code = ""
-    for f in included:
+    for f in included + headers:
         if not (ROOT / "sdk" / f).exists():
             failures.append(f"{path.name} includes sdk/{f}, which does not exist")
         else:
