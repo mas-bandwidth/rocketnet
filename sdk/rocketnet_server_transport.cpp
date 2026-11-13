@@ -2053,8 +2053,10 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 // A due packet leaves only while the transport reports send room; the rest
 // stay held for the next update's drain, so none is refused and lost
 // (proofs/tla/ServerStopSpread.tla Room).  A busy simulator lock leaves the
-// held packets for the next drain.  This path does not wait, except for the
-// stop's one window flush, which must not leave packets outside the slots.
+// held packets for the next drain.  This path takes no lock that waits,
+// except the stop's one window flush, which must not leave packets outside
+// the slots; the stop's drain also asks the transport's send_idle, which on
+// io_uring acquires a queue mutex (below).
 //
 // The stop's drain (shutdown) judges room by each packet's own send queue,
 // as the stop step judges a burst's (proofs/tla/RNServerLinkStop.tla DrainOne): it
@@ -2103,10 +2105,14 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
                                                                           cutoff_time, &from, &to, packet );
 
         // the stop's judgement of a packet whose queue has no room is made
-        // under the simulator's lock, so a packet held back goes back into
-        // the slot it came from before any other send can take it (the
-        // transport's room and idle reads take no lock the simulator's
-        // holders take)
+        // under the simulator's lock, so the capacity its receive freed is
+        // still free when a packet held back is put back: no other send can
+        // take it meanwhile. The simulator may give it a different slot (an
+        // earlier hole), which can change which held packet the next step
+        // takes first, not what happens to any of them. The transport's room
+        // and idle reads take no lock the simulator's holders take, though
+        // io_uring's send_idle acquires its queue's mutex and may wait on it
+        // (as it did before this drain called it)
         if ( packet_bytes > 0 && shutdown &&
              rocketnet_server_transport_queue_room( transport, rocketnet_server_transport_send_queue_of( transport, &to ) ) <= 0 )
         {

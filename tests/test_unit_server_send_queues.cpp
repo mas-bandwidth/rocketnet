@@ -58,6 +58,8 @@ static struct
     bool used[SQ_FRAMES];
     uint16_t to[SQ_FRAMES];                 // the port each frame was started to
     uint64_t finished[SQ_CLIENTS];          // frames handed back finished, per client
+    uint64_t aborted[SQ_CLIENTS];           // frames handed back unsent, per client: with the
+                                            // link simulator on, one per datagram it took
     uint64_t refused[SQ_QUEUES];            // starts refused for a full queue
     bool busy;                              // send_idle answers false: a send still in flight
 } sq;
@@ -109,6 +111,11 @@ static void sq_abort( void *, uint64_t id, uint8_t * )
 {
     if ( id >= 1 && id <= SQ_FRAMES )
     {
+        const int client = sq.to[id - 1] - 1000;
+        if ( client >= 0 && client < SQ_CLIENTS )
+        {
+            sq.aborted[client]++;
+        }
         sq.used[id - 1] = false;
     }
 }
@@ -502,7 +509,13 @@ static void test_server_stop_finishes_with_held_link_packets_past_a_jammed_queue
     sq_setup( &rig, true );
 
     // every client is sent keep-alives that the simulator holds for a second
+    // (no loss, no duplicates: each datagram it takes is one copy, and one
+    // aborted staging frame)
     check( rocketnet_server_transport_network_simulator( rig.transport, 1000, 0, 0, 0 ) );
+    uint64_t taken_before[SQ_CLIENTS];
+    uint64_t sent_before[SQ_CLIENTS];
+    memcpy( taken_before, sq.aborted, sizeof( taken_before ) );
+    memcpy( sent_before, sq.finished, sizeof( sent_before ) );
     for ( int i = 0; i < 30; i++ )
     {
         sq_tick( &rig );
@@ -511,6 +524,8 @@ static void test_server_stop_finishes_with_held_link_packets_past_a_jammed_queue
     sq_set_rooms( 0, SQ_ROOM, SQ_ROOM );
     uint64_t before[SQ_CLIENTS];
     memcpy( before, sq.finished, sizeof( before ) );
+    const uint64_t held2 = sq.aborted[2] - taken_before[2];
+    check( held2 > 0 );
     const uint64_t ring_full = rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
     for ( int c = 0; c < SQ_CLIENTS; c++ )
     {
@@ -528,8 +543,20 @@ static void test_server_stop_finishes_with_held_link_packets_past_a_jammed_queue
     check( sq.finished[3] - before[3] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     check( sq.finished[2] == before[2] );
     check( sq.refused[0] == 0 );
-    // the jammed queue's burst and at least one held keep-alive
-    check( rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL] - ring_full >= 2 );
+
+    // every copy the simulator took for a client on a queue with room went
+    // out exactly once (its keep-alives and its burst); client 2's held
+    // copies were each discarded and counted, with its abandoned burst
+    for ( int c = 0; c < SQ_CLIENTS; c++ )
+    {
+        if ( c != 2 )
+        {
+            check( sq.finished[c] - sent_before[c] == sq.aborted[c] - taken_before[c] );
+        }
+    }
+    check( sq.finished[2] == sent_before[2] );
+    check( sq.aborted[2] - taken_before[2] == held2 );
+    check( rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL] - ring_full >= held2 + 1 );
 
     sq_set_rooms( SQ_ROOM, SQ_ROOM, SQ_ROOM );
     sq_teardown( &rig );
@@ -545,6 +572,10 @@ static void test_server_stop_holds_link_packets_while_room_can_return()
     sq_setup( &rig, true );
 
     check( rocketnet_server_transport_network_simulator( rig.transport, 1000, 0, 0, 0 ) );
+    uint64_t taken_before[SQ_CLIENTS];
+    uint64_t sent_before[SQ_CLIENTS];
+    memcpy( taken_before, sq.aborted, sizeof( taken_before ) );
+    memcpy( sent_before, sq.finished, sizeof( sent_before ) );
     for ( int i = 0; i < 30; i++ )
     {
         sq_tick( &rig );
@@ -575,12 +606,13 @@ static void test_server_stop_holds_link_packets_while_room_can_return()
     }
     check( stopped );
 
-    // every client's burst and its held keep-alives went out: a held packet
-    // of queue 0 discarded while the send was in flight would leave client 2
-    // its burst alone
+    // every copy the simulator took went out exactly once, client 2's held
+    // ones included: one discarded while the send was in flight, or put
+    // back twice, would break the count
     for ( int c = 0; c < SQ_CLIENTS; c++ )
     {
         check( sq.finished[c] - before[c] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+        check( sq.finished[c] - sent_before[c] == sq.aborted[c] - taken_before[c] );
     }
 
     sq_teardown( &rig );
