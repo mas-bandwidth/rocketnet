@@ -515,4 +515,9 @@
    :title "Own frames are bounded by the smallest reserve of any send queue"
    :text "The own frames handed out when the budgets open (fill_own_frames_left) are server-wide and capped by the smallest queue reserve (RNSendReserveCalls Open: OwnCap of the least reserve). With uneven queues, a queue whose reserve is cut by a small room seen caps the own frames of clients on every queue. Make own frames per queue, with the model's Open changed alongside."
    :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix")
+
+  (item "send-capacity-any-queue-per-queue" :group "review-v1-2" :area "sdk"
+   :title "The any-queue capacity can be above 0 while no queue has both room and budget"
+   :text "rocketnet_server_transport_send_capacity_to( -1 ) answers the room summed over the queues, within the whole budget left. With room on one queue and budget only on another, it is above 0 while no start can be granted, so the send pass holds every connection to the end instead of cutting: bounded (one walk, two capacity reads a connection), never a hang. Answer it per queue (the sum of each queue's room within its own budget, and the own frames), with RNSendReserveCalls CapacityAll and RNServerSendFair's cut changed alongside."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix, cold read")
  ))

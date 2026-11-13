@@ -1581,14 +1581,17 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 // below 0 asks whether any queue may still take a frame: every queue's room
 // summed (io_send_room_total), and no more than the whole budget left. One
 // queue, or a transport that buffers in the server's ring, has one capacity
-// for every client: send_capacity_available.
+// for every client: send_capacity_available, and 0 below 0.
 // proofs/tla/RNSendReserveCalls.tla CapacityTo and CapacityAll;
 // proofs/tla/RNServerSendFair.tla, the queues.
 int rocketnet_server_transport_send_capacity_to( const rocketnet_server_transport_t * server_transport, int client_index )
 {
     if ( !server_transport || !rocketnet_server_transport_staged( server_transport ) || server_transport->send_queues <= 1 )
     {
-        return rocketnet_server_transport_send_capacity_available( server_transport );
+        // one capacity: a client's answer is it, and no other queue may
+        // take a frame its own cannot, so the send pass cuts exactly as
+        // before queues (never holds on a second read that raced a retire)
+        return client_index < 0 ? 0 : rocketnet_server_transport_send_capacity_available( server_transport );
     }
     if ( client_index < 0 )
     {
@@ -3896,10 +3899,19 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
     // (ServerStopSpread.tla AbandonNoRoom): with nothing in flight a full queue
     // frees none, so each waiting burst bound for one is abandoned and
     // counted, complete, and leaves once it reaches the head; the bursts for
-    // queues with room stay and are sealed by the drains.
+    // queues with room stay and are sealed by the drains. send_idle is asked
+    // only once a waiting burst's queue has no room (the first read), as with
+    // one queue.
     if ( server_transport->send_queues > 1 )
     {
-        if ( server_transport->disconnect_burst_count > 0 && rocketnet_server_transport_io_send_idle( server_transport ) )
+        bool waits_on_full_queue = false;
+        for ( int k = 0; k < server_transport->disconnect_burst_count && !waits_on_full_queue; k++ )
+        {
+            const struct rocketnet_server_disconnect_burst_t * burst = &server_transport->disconnect_bursts[( server_transport->disconnect_burst_head + k ) % server_transport->disconnect_burst_capacity];
+            waits_on_full_queue = burst->sealed < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS &&
+                                  rocketnet_server_transport_queue_room( server_transport, rocketnet_server_transport_send_queue_of( server_transport, &burst->to ) ) <= 0;
+        }
+        if ( waits_on_full_queue && rocketnet_server_transport_io_send_idle( server_transport ) )
         {
             for ( int k = 0; k < server_transport->disconnect_burst_count; k++ )
             {

@@ -306,10 +306,10 @@ CapacityTo(c, n) ==
        /\ IF n = 0 /\ CanStage(c) THEN hidden' = TRUE ELSE UNCHANGED hidden
        /\ UNCHANGED <<free, budget, claims, tail, started, ownUsed, own, ownLeft, reserve, seen, refused, starved>>
 
-\* send_capacity_to(-1) gave n: with one queue, Capacity; else the room
-\* summed over the queues, and no more than the whole budget left
+\* send_capacity_to(-1) gave n: with one queue 0 (no other queue to take a
+\* frame); else the room summed over the queues, within the whole budget left
 CapacityAll(n) ==
-    /\ n = IF NQ = 1 THEN Min(MinOf(free, Queues), BudgetLeft) ELSE Min(SumOf(free, Queues), BudgetLeft)
+    /\ n = IF NQ = 1 THEN 0 ELSE Min(SumOf(free, Queues), BudgetLeft)
     /\ UNCHANGED <<free, budget, claims, tail, started, ownUsed, own, ownLeft, reserve, seen, refused, starved, hidden>>
 
 \* the transport retires n staged frames of queue q (asynchronous sends complete)

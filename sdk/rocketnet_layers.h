@@ -1561,7 +1561,8 @@ int rocketnet_server_transport_send_capacity_available( const struct rocketnet_s
  * with several send queues, its own queue's room and budget, so a full queue
  * answers 0 for its own clients only; a client_index below 0 asks whether any
  * queue may still take one (every queue's room summed). With one queue, or a
- * buffered transport, it is rocketnet_server_transport_send_capacity_available.
+ * buffered transport, it is rocketnet_server_transport_send_capacity_available
+ * for a client, and 0 below 0 (no other queue to take a frame).
  */
 int rocketnet_server_transport_send_capacity_to( const struct rocketnet_server_transport_t * server_transport, int client_index );
 

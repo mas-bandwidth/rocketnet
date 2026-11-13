@@ -80,7 +80,7 @@ Two modules:
 | `Finish`, `Abort` | `finish_packet`, `abort_packet` | none: the reserve's words stay; an aborted frame's claim is not given back |
 | `Capacity(n)` | `send_capacity_available` returned `n` | none: a read of the room, the budget as it would be raised, the claims and the own frames left |
 | `CapacityTo(c, n)` | `send_capacity_to(c)` returned `n`: the client's own queue's room and budget left, with its own frame | none: a read |
-| `CapacityAll(n)` | `send_capacity_to(-1)` returned `n`: the room summed over the queues, within the whole budget left | none: a read |
+| `CapacityAll(n)` | `send_capacity_to(-1)` returned `n`: the room summed over the queues, within the whole budget left (0 with one queue) | none: a read |
 | `Retire(q, n)` | the transport frees `n` frames of queue `q` | `Retire`, `n` times |
 
 Every word but the own frames is per send queue (`NQ` queues, client `c` on
