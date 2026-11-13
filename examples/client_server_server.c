@@ -9,12 +9,13 @@
     for this server, connects, and sends one reliable-ordered message. The
     server echoes it and exits after its first client disconnects.
 
-    The server runs a game server's 60 Hz frame. The main thread does a bit
-    of networking at the start of the frame, then the second half of the
-    network update is split off to run on another thread in parallel with
-    the main thread, and joined at the start of the next frame. A frame's
-    echoes go on the wire at the start of the next frame: one frame of added
-    send latency, 16.67 ms on average.
+    The server runs a 60 Hz frame. By default (--game-threads 1) every server
+    call is made on the main thread, one thread at a time. With
+    --game-threads N it runs the way a game server runs it: the main thread
+    reads what the last update left and does the world update, then the
+    second half of the network update (queue the echoes, send, update in
+    three calls) is split off to run on another thread in parallel with the
+    main thread, and joined at the start of the next frame.
 
     Run the server first, then the client. See docs/examples/client_server.md.
 */
@@ -32,6 +33,7 @@
 #define KEY_FILE "client_server.keys"
 
 #define FRAME_DT        ( 1.0 / 60.0 )
+#define MAX_CLIENTS     1
 #define MAX_ECHOES      64          // messages echoed in one frame
 #define MAX_ECHO_BYTES  256         // a longer message is printed, not echoed
 
@@ -43,46 +45,117 @@
 struct echo_frame_t
 {
     struct rocketnet_server_t * server;
+    int game_threads;   // 1: every call on the main thread; more: the second half is split off
+    int max_clients;
+    double now;         // the game clock for this frame's update
     int num_messages;
     int client_index[MAX_ECHOES];
     int bytes[MAX_ECHOES];
     uint8_t data[MAX_ECHOES][MAX_ECHO_BYTES];
-    int echoed;     // written by the other thread, read by the main thread after the join
+    int echoed[MAX_ECHOES];     // written by the thread that queued the message, read by the main thread after the join
 };
 
-// The second half of the network update, split off from the main thread:
-// queue this frame's echoes. From the split until the join, this thread is
-// the server's only user.
+// Queue the echoes for the clients in [begin, end). One thread queues a
+// client's messages, so each game thread takes a range of clients. A start
+// with no room returns NULL and the echo is skipped.
 
-static void queue_echoes( void * data )
+static void queue_range( void * data, int begin, int end )
 {
     struct echo_frame_t * frame = (struct echo_frame_t *) data;
 
     for ( int i = 0; i < frame->num_messages; i++ )
     {
-        // echo: skip this message when there is no room
-
-        if ( rocketnet_server_can_send_message( frame->server, frame->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, frame->bytes[i] ) )
+        const int client = frame->client_index[i];
+        if ( client < begin || client >= end )
         {
-            uint8_t * p = rocketnet_server_start_message( frame->server, (uint64_t) frame->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, frame->bytes[i] );
-            if ( p )
-            {
-                memcpy( p, frame->data[i], (size_t) frame->bytes[i] );
-                frame->echoed |= rocketnet_server_finish_message( frame->server, frame->bytes[i] ) != 0;
-            }
+            continue;
+        }
+
+        uint8_t * p = rocketnet_server_start_message( frame->server, (uint64_t) client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, frame->bytes[i] );
+        if ( p )
+        {
+            memcpy( p, frame->data[i], (size_t) frame->bytes[i] );
+
+            // game threads finish by client index; one thread may use the plain call
+            const uint32_t serial = frame->game_threads > 1 ? rocketnet_server_finish_client_message( frame->server, client, frame->bytes[i] ) : rocketnet_server_finish_message( frame->server, frame->bytes[i] );
+            frame->echoed[i] = serial != 0;
         }
     }
+}
+
+// Apply the acknowledgements of the clients in [begin, end).
+
+static void update_range( void * data, int begin, int end )
+{
+    struct echo_frame_t * frame = (struct echo_frame_t *) data;
+
+    for ( int i = begin; i < end; i++ )
+    {
+        (void) rocketnet_server_update_client( frame->server, i );
+    }
+}
+
+// The second half of the network update: queue this frame's echoes, send,
+// then update. With one game thread it runs on the main thread. With more
+// it is split off to run on another thread in parallel with the main
+// thread, which does not touch the server until the join; the calls the
+// game threads make are joined before the thread's next call.
+
+static void network_half( void * data )
+{
+    struct echo_frame_t * frame = (struct echo_frame_t *) data;
+
+    rn_cli_run_ranges( frame->game_threads, frame->max_clients, queue_range, frame );
+    rocketnet_server_send_packets( frame->server );
+
+    if ( frame->game_threads > 1 )
+    {
+        rocketnet_server_update_receive( frame->server, frame->now );
+        rn_cli_run_ranges( frame->game_threads, frame->max_clients, update_range, frame );
+        rocketnet_server_update_finish( frame->server );
+    }
+    else
+    {
+        rocketnet_server_update( frame->server, frame->now );
+    }
+}
+
+static int any_echoed( const struct echo_frame_t * frame )
+{
+    for ( int i = 0; i < frame->num_messages; i++ )
+    {
+        if ( frame->echoed[i] )
+        {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 int main( int argc, char ** argv )
 {
     const char * port = getenv( "ROCKETNET_EXAMPLE_PORT" );
 
+    int game_threads = 1;
+
     for ( int i = 1; i + 1 < argc; i++ )
     {
         if ( strcmp( argv[i], "--port" ) == 0 )
         {
             port = argv[i + 1];
+        }
+        else if ( strcmp( argv[i], "--game-threads" ) == 0 )
+        {
+            char * count_end = NULL;
+            const long count = strtol( argv[i + 1], &count_end, 10 );
+            if ( argv[i + 1][0] < '0' || argv[i + 1][0] > '9' || *count_end != '\0' || count < 1 || count > RN_CLI_MAX_GAME_THREADS )
+            {
+                printf( "FAIL: --game-threads takes 1 .. %d, not \"%s\"\n", RN_CLI_MAX_GAME_THREADS, argv[i + 1] );
+                return 1;
+            }
+
+            game_threads = (int) count;
         }
     }
 
@@ -129,7 +202,7 @@ int main( int argc, char ** argv )
 
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
-    config.max_clients = 1;
+    config.max_clients = MAX_CLIENTS;
     config.transport = "portable";
 
     enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
@@ -220,21 +293,21 @@ int main( int argc, char ** argv )
         rn_cli_thread_join( &network );
         if ( split_off )
         {
-            echoed |= split_off->echoed;
+            echoed |= any_echoed( split_off );
             split_off = NULL;
         }
 
-        // 2. a bit of networking on the main thread: put last frame's echoes
-        // on the wire, take in what arrived, and copy each message into this
-        // frame's state, so nothing reads the batch after the next update
-
-        rocketnet_server_send_packets( server );
-        rocketnet_server_update( server, 1000.0 + rocketnet_time() - start );
+        // 2. a bit of networking on the main thread: take in the messages the
+        // last update left, and copy each into this frame's state, so nothing
+        // reads the batch after the next update
 
         struct echo_frame_t * frame = &frames[frame_number % 2];
         frame->server = server;
+        frame->game_threads = game_threads;
+        frame->max_clients = MAX_CLIENTS;
+        frame->now = 1000.0 + rocketnet_time() - start;
         frame->num_messages = 0;
-        frame->echoed = 0;
+        memset( frame->echoed, 0, sizeof( frame->echoed ) );
 
         // one queue across every client, each message naming its sender
 
@@ -267,17 +340,26 @@ int main( int argc, char ** argv )
             break;
         }
 
-        // 4. split off the second half of the network update: another thread
-        // queues this frame's echoes in parallel with the main thread, which
-        // must not touch the server until the join at the start of the next frame
+        // 4. the second half of the network update. By default it runs here,
+        // on the main thread. With game threads it is split off: another
+        // thread queues this frame's echoes, sends and updates in parallel
+        // with the main thread, which must not touch the server until the
+        // join at the start of the next frame
 
-        if ( !rn_cli_thread_start( &network, queue_echoes, frame ) )
+        if ( game_threads == 1 )
+        {
+            network_half( frame );
+            echoed |= any_echoed( frame );
+        }
+        else if ( !rn_cli_thread_start( &network, network_half, frame ) )
         {
             thread_failed = 1;
             break;
         }
-
-        split_off = frame;
+        else
+        {
+            split_off = frame;
+        }
 
         // 5. the main thread waits for the frame edge; a game's main thread
         // goes on with the rest of its frame here
@@ -294,7 +376,7 @@ int main( int argc, char ** argv )
     rn_cli_thread_join( &network );
     if ( split_off )
     {
-        echoed |= split_off->echoed;
+        echoed |= any_echoed( split_off );
     }
 
     if ( thread_failed )
