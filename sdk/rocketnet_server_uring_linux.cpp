@@ -1421,7 +1421,7 @@ bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * 
 
 uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter )
 {
-    return uring->counters[counter];
+    return uring->counters[counter - ROCKETNET_SERVER_URING_FIRST_COUNTER];
 }
 
 void rocketnet_server_uring_test_send_slot( struct rocketnet_server_uring_t * uring, int slot, uint16_t * port, int * run_packets )

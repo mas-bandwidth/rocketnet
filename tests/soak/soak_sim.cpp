@@ -923,6 +923,7 @@ int main( int argc, char ** argv )
         { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
         { ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
         { ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
+        { ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD, "duplication: a cookieless request arrives twice in the update its first copy was answered in, and the per-update cookie reply limit withholds the copy (t12 rule 7)" },
         { -1, NULL }
     };
 
