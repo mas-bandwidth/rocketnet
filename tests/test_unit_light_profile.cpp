@@ -408,9 +408,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
 // actual=2147358194 and 15195026 (bench-xdp-9, gcc, Debug, DEV ON); arm64
 // the same, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141695034ULL )
+// Together (integration/v1.1.55: the refused-token table and the send
+// store's free stack on v1.1.54): actual=2147375602 and 15195026
+// (aws-mut-3, gcc, Debug and Release, DEV ON); arm64 8 more, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146327034ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141695026ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146327026ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
