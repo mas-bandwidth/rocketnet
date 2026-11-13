@@ -35,17 +35,13 @@ int rocketnet_unit_run_named( const char * name );
 
 int rocketnet_channels_test_count();
 const char * rocketnet_channels_test_name( int index );
+const char * rocketnet_channels_test_skipped_by( int index );
 const char * rocketnet_channels_test_resolve( const char * name );
 int rocketnet_channels_run_named( const char * name );
 void rocketnet_channels_prepare( const char * name, void * ( **malloc_function )( void * context, size_t bytes ), void ( **free_function )( void * context, void * p ) );
 void rocketnet_channels_prepare_log( const char * name );
 
-static int rocketnet_suite_test_count()
-{
-    return rocketnet_unit_test_count() + rocketnet_channels_test_count() + rocketnet_unit_tests_count();
-}
-
-static const char * rocketnet_suite_test_name( int index )
+static const char * rocketnet_suite_registered_name( int index )
 {
     const int units = rocketnet_unit_test_count();
     if ( index < units )
@@ -61,6 +57,52 @@ static const char * rocketnet_suite_test_name( int index )
     }
 
     return rocketnet_unit_tests_name( cindex - channels );
+}
+
+// The cases the suite runs, in registration order, less the cases this build
+// cannot run (UNIT_TEST_SKIPPED_UNLESS, tests/test_unit_registry.h, and
+// rocketnet_channels_test_skipped_by, tests/test_channels.cpp):
+// each of those is noted, and the run prints SKIPPED <case>: <condition> and
+// the skipped count, as the functional suite does for its predicates.
+
+static const std::vector<const char *> & rocketnet_suite_cases()
+{
+    static std::vector<const char *> cases;
+    static bool collected = false;
+    if ( !collected )
+    {
+        collected = true;
+        const int units = rocketnet_unit_test_count();
+        const int built_in = units + rocketnet_channels_test_count();
+        const int total = built_in + rocketnet_unit_tests_count();
+        for ( int i = 0; i < total; i++ )
+        {
+            const char * skipped_by = i < units      ? NULL
+                                      : i < built_in ? rocketnet_channels_test_skipped_by( i - units )
+                                                     : rocketnet_unit_file_registry()->tests[i - built_in].skipped_by;
+            if ( skipped_by )
+            {
+                suite_note_skipped( rocketnet_suite_registered_name( i ), skipped_by );
+            }
+            else
+            {
+                cases.push_back( rocketnet_suite_registered_name( i ) );
+            }
+        }
+    }
+
+    return cases;
+}
+
+static int rocketnet_suite_test_count()
+{
+    return (int) rocketnet_suite_cases().size();
+}
+
+static const char * rocketnet_suite_test_name( int index )
+{
+    const std::vector<const char *> & cases = rocketnet_suite_cases();
+    return index >= 0 && index < (int) cases.size() ? cases[(size_t) index] : NULL;
 }
 
 // The unit nightly tier (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1,

@@ -121,13 +121,42 @@ static void rocketnet_server_address_match_mint_request( uint8_t * request, uint
                                                token.signed_connect_data, token.signature );
 }
 
-// IPv4 loopback and v4-mapped IPv6 both name the loopback the dual-stack
-// server serves; a foreign IPv4 names an address it does not.
+static void rocketnet_server_address_match_refused( struct rocketnet_server_address_match_server_t * test, const uint8_t * request, bool refused );
+
+// A dual-stack server created at the IPv6 wildcard advertises the IPv4
+// wildcard, not the loopback: a token naming 127.0.0.1, or the v4-mapped
+// ::ffff:127.0.0.1, is refused, and one naming 0.0.0.0, the address it
+// advertises, is accepted (t12 rule 6). Created naming 127.0.0.1 beside the
+// IPv6 wildcard, the same server advertises the loopback: the IPv4 loopback
+// and its v4-mapped form are accepted, and a foreign IPv4 is refused.
+
+void test_rocketnet_test_server_address_match_wildcard_refuses_loopback()
+{
+    struct rocketnet_server_address_match_server_t test;
+    rocketnet_server_address_match_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+
+    const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
+    rocketnet_server_address_match_refused( &test, request, true );
+
+    const uint8_t mapped_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0x00, 0x7F, 0x01, 0x00, 0x40, 0x9c };
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV6, NULL, mapped_ipv6 );
+    rocketnet_server_address_match_refused( &test, request, true );
+
+    const uint8_t wildcard_ipv4[6] = { 0, 0, 0, 0, 0x40, 0x9c };
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, wildcard_ipv4, NULL );
+    rocketnet_server_address_match_refused( &test, request, false );
+
+    rocketnet_server_address_match_server_teardown( &test );
+}
 
 void test_rocketnet_test_server_address_match_v4_mapped()
 {
     struct rocketnet_server_address_match_server_t test;
     rocketnet_server_address_match_server_setup( &test );
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "127.0.0.1:40000" ) );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -166,6 +195,43 @@ void test_rocketnet_test_server_address_match_v4_mapped()
                                                                                 request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
                                                                                 response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[addr_counter] == before_foreign + 1 );
+
+    rocketnet_server_address_match_server_teardown( &test );
+}
+
+// A server that names both families with the IPv6 wildcard beside a named
+// IPv4 address ("[::]:40000" and "10.0.0.5:40000") advertises those two and
+// is not dual-stack: a token naming the IPv4 loopback is refused, and one
+// naming the named IPv4 address is accepted.
+
+void test_rocketnet_test_server_address_match_named_ipv4_beside_wildcard()
+{
+    struct rocketnet_server_address_match_server_t test;
+    rocketnet_server_address_match_server_setup( &test );
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "10.0.0.5:40000" ) );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
+
+    const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
+
+    const uint64_t before = test.counters.values[addr_counter];
+    rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( test.counters.values[addr_counter] == before + 1 );
+
+    const uint8_t named_ipv4[6] = { 10, 0, 0, 5, 0x40, 0x9c };
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, named_ipv4, NULL );
+
+    const uint64_t before_named = test.counters.values[addr_counter];
+    rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                                response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( test.counters.values[addr_counter] == before_named );
 
     rocketnet_server_address_match_server_teardown( &test );
 }
@@ -344,9 +410,8 @@ void test_rocketnet_test_server_address_match_v4_mapped_arrival()
 // Near misses. Over IPv4, a token naming only an IPv6 address that is not
 // v4-mapped is refused even when its low four bytes and port spell this
 // server's IPv4 address ([2001:db8::7f00:1]:40000 beside 127.0.0.1:40000).
-// On a dual-stack server the IPv4 loopback is exactly 127.0.0.1 at the
-// server's port: 127.5.0.1, 127.0.5.1, 127.0.0.2 and 127.0.0.1:40001 are
-// refused, 127.0.0.1:40000 accepted.
+// A dual-stack server advertises the IPv4 wildcard: 127.5.0.1, 127.0.5.1,
+// 127.0.0.2, 127.0.0.1:40001 and 127.0.0.1:40000 are all refused.
 
 void test_rocketnet_test_server_address_match_near_misses_refused()
 {
@@ -382,7 +447,7 @@ void test_rocketnet_test_server_address_match_near_misses_refused()
 
     const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
     rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
-    rocketnet_server_address_match_refused( &test, request, false );
+    rocketnet_server_address_match_refused( &test, request, true );
 
     rocketnet_server_address_match_server_teardown( &test );
 }
@@ -402,6 +467,7 @@ void test_rocketnet_test_server_address_match_timeout_cap()
     {
         struct rocketnet_server_address_match_server_t test;
         rocketnet_server_address_match_server_setup( &test );
+        rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "127.0.0.1:40000" ) );
         test.server.max_timeout_seconds = caps[i];
 
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
@@ -427,9 +493,11 @@ void test_rocketnet_test_server_address_match_timeout_cap()
     }
 }
 
+REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_wildcard_refuses_loopback );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_timeout_cap );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_near_misses_refused );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped_arrival );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_two_address_token );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_family_mismatch_refused );
+REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_named_ipv4_beside_wildcard );

@@ -17,6 +17,7 @@ tools/check_byte_order.py	python3 tools/check_byte_order.py --self-test	python3 
 tools/check_cbmc_bounds.py	python3 tools/check_cbmc_bounds.py --self-test	python3 tools/check_cbmc_bounds.py --proofs {empty}	cbmc.yml	cbmc	Check the stated proof bounds against the SDK
 tools/check_checkers.py	python3 tools/check_checkers.py --self-test	python3 tools/check_checkers.py --root {empty} --no-run	ci.yml	lint	Every checker is registered, its self-test runs, zero inputs are red
 tools/check_ci_budget.py	python3 tools/check_ci_budget.py --self-test	python3 tools/check_ci_budget.py {emptyfile}	ci.yml	lint	Every per-commit job is bounded to two minutes
+tools/check_client_frame_time.py	python3 tools/check_client_frame_time.py --self-test	python3 tools/check_client_frame_time.py --bin {emptyfile}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_client_server_words.py	python3 tools/test_check_client_server_words.py	python3 tools/check_client_server_words.py --root {empty}	ci.yml	lint	Check client/server words
 tools/check_continue_on_error.py	python3 tools/check_continue_on_error.py --self-test	python3 tools/check_continue_on_error.py --root {empty}	ci.yml	lint	No continue-on-error hides a result
 tools/check_dll_consumer.py	python3 tools/test_check_dll_consumer.py -v	python3 tools/check_dll_consumer.py --build {empty}	ci.yml	lint	Self-tests of the registered checkers
@@ -88,3 +89,10 @@ tools/check_wire_paths.py	python3 tools/check_wire_paths.py --self-test	python3 
 tools/bigendian/run_byte_cases.sh	bash tools/bigendian/test_run_byte_cases.sh	cd {empty} && mkdir tests && touch tests/test_unit_standard_a.cpp tests/test_unit_connect_token_vectors.cpp tests/test_unit_xdp_filter_host.cpp && bash "$OLDPWD/tools/bigendian/run_byte_cases.sh" /usr/bin/true	ci.yml	lint	Test and count the big-endian byte cases
 tools/format/check_format.sh	sh tools/format/test_check_format.sh	cd {empty} && git init -q && CLANG_FORMAT=true sh "$OLDPWD/tools/format/check_format.sh"	ci.yml	lint	Test the format checker
 tools/check_run_shell.py	python3 tools/check_run_shell.py --self-test	python3 tools/check_run_shell.py --root {empty}	ci.yml	lint	Every run step stops on its first failure
+tools/check_run_matrix.py	python3 tools/check_run_matrix.py --self-test	python3 tools/check_run_matrix.py --root {empty}	ci.yml	lint	Every verification cell is declared and wired to the job that runs it
+tools/check_counter_observed.py	python3 tools/check_counter_observed.py --self-test	python3 tools/check_counter_observed.py --root {empty} --build {empty} --platform linux	ci.yml	build-and-test	Every counter is observed by a test
+tools/check_fuzz_seeds.sh	sh tools/check_fuzz_seeds.sh --self-test	sh tools/check_fuzz_seeds.sh --root {empty} --bin {empty} rocketnet_fuzz	ci.yml	build-and-test	Run the fuzz seed generators
+tools/check_independent_steps.py	python3 tools/check_independent_steps.py --self-test	python3 tools/check_independent_steps.py --root {empty}	ci.yml	lint	Every lint check runs on its own verdict
+tools/check_tla_views.py	python3 tools/check_tla_views.py --self-test	python3 tools/check_tla_views.py --root {empty}	ci.yml	lint	Every TLC view is used where its justification holds
+tools/check_workflow_shape.py	python3 tools/check_workflow_shape.py --self-test	python3 tools/check_workflow_shape.py --root {empty}	ci.yml	lint	Every workflow is in the shape the workflow checkers read
+tools/check_workflow_yaml.py	python3 tools/check_workflow_yaml.py --self-test	python3 tools/check_workflow_yaml.py --root {empty}	ci.yml	lint	Every workflow file parses as strict YAML and has a workflow's shape

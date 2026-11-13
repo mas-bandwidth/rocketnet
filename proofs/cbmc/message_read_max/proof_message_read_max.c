@@ -57,6 +57,16 @@ int nondet_int( void );
 unsigned int nondet_uint( void );
 #endif // #ifndef __CPROVER__
 
+/* the reachability control: built with -DREACHABILITY_CONTROL, each harness
+   ends in an assertion that must fail, so a harness whose assumptions became
+   unsatisfiable (and so proves anything) goes red. proof.mk runs it beside
+   every proof. */
+#if defined( REACHABILITY_CONTROL )
+#define PROOF_REACHED( harness ) __CPROVER_assert( 0, harness " reachability control" )
+#else
+#define PROOF_REACHED( harness ) ( (void) 0 )
+#endif // #if defined( REACHABILITY_CONTROL )
+
 #ifndef PAYLOAD_BOUND
 #define PAYLOAD_BOUND 24
 #endif // #ifndef PAYLOAD_BOUND
@@ -157,6 +167,8 @@ void harness_message_reader( void )
         yielded++;
         __CPROVER_assert( yielded <= bytes, "reader advances through the payload" );
     }
+
+    PROOF_REACHED( "harness_message_reader" );
 }
 
 void harness_message_reader_single_max( void )
@@ -197,6 +209,8 @@ void harness_message_reader_single_max( void )
                       "single-message record slice is readable within the payload object" );
     __CPROVER_assert( rocketnet_message_reader_next( &reader, &record ) == 0,
                       "single-message payload yields at most one record" );
+
+    PROOF_REACHED( "harness_message_reader_single_max" );
 }
 
 void harness_message_read_config_body( void )
@@ -228,6 +242,8 @@ void harness_message_read_config_body( void )
                               "version 1 reserved tail is zero" );
         }
     }
+
+    PROOF_REACHED( "harness_message_read_config_body" );
 }
 
 int main( void )

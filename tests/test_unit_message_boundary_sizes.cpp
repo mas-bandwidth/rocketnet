@@ -248,7 +248,7 @@ static int g_boundary_reliable_timeout_ms = 0;
 static void boundary_config( rocketnet_message_config_t * c, int max_message_bytes )
 {
     rocketnet_message_default_config( c );
-    c->num_channels = 4;
+    c->num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     c->reliable_messages_in_flight = 64;
     c->receive_message_buffer_bytes = 65536;
     c->max_message_bytes = max_message_bytes;
@@ -487,6 +487,7 @@ static void test_message_boundary_sizes_every_mode_every_channel()
     }
 }
 REGISTER_UNIT_TEST( test_message_boundary_sizes_every_mode_every_channel );
+UNIT_TEST_SKIPPED_UNLESS( test_message_boundary_sizes_every_mode_every_channel, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 
 // A code 1 message whose single record fills the packet payload exactly (1405
 // bytes on a channel below 256: a 1416-byte RECORDS payload) is written whole
@@ -628,3 +629,4 @@ static void test_message_boundary_cases_opted_in()
 }
 
 REGISTER_UNIT_TEST( test_message_boundary_cases_opted_in );
+UNIT_TEST_SKIPPED_UNLESS( test_message_boundary_cases_opted_in, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2

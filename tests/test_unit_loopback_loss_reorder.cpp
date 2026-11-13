@@ -273,8 +273,8 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // The fixed traces: every eliciting packet gets a standalone ACK on the next
 // update, and simulator latency adds two connected steps (24 without it, 26
 // with it). The hashes cover every counter of the registry in index order.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xb5e293d9f9886527 ), UINT64_C( 0x9f8c8641bf5a96c5 ), 24 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x413d3c77f2865567 ), UINT64_C( 0x9f8c8641bf5a96c5 ), 26 };
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xdec91756b87eb8a7 ), UINT64_C( 0xba95ba6b9da53945 ), 24 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xdc2fdcbe0a04c8e7 ), UINT64_C( 0xba95ba6b9da53945 ), 26 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
@@ -525,7 +525,7 @@ static void loopback_transport_reliable_ordered_survives_loss_and_reorder_leg( i
 
     struct rocketnet_message_config_t message_config;
     rocketnet_message_default_config( &message_config );
-    message_config.num_channels = 4;
+    message_config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     message_config.reliable_messages_in_flight = 64;
     message_config.receive_message_buffer_bytes = 65536;
     message_config.max_message_bytes = 16384;

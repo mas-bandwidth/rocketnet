@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.1.7 of v1.1.7;
+# CMake's VERSION holds numbers only, so it is the 1.1.8 of v1.1.8;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.1.7 LANGUAGES C CXX)
+project(rocketnet VERSION 1.1.8 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -257,6 +257,10 @@ endif()
 function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_link_libraries(${target} PRIVATE RocketNet::Sodium)
+        # every source of the target then takes the system <sodium.h> and its
+        # unprefixed names (the vendored header prefixes them for the bundled
+        # build): the test, tool and fuzz sources test this macro
+        target_compile_definitions(${target} PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
     else()
         # Only this build owns the privately prefixed RNG state in sodium.c.
         # The lifecycle source must never close an application's system sodium.
@@ -387,6 +391,18 @@ endif()
 function(rocketnet_warning_floor target)
 endfunction()
 
+# The suites' stack. A case keeps internal objects on its stack: the client
+# protocol is 1.4 MB at ROCKETNET_HISTORY_PACKETS=32768, and some 150 test
+# frames hold one or more. MSVC links an executable with a 1 MB stack, where
+# Linux and macOS start the main thread on 8 MB, so the suites link with the
+# same 8 MB on Windows. The library's own frames stay small (none over 64 KB
+# at that history), so nothing outside the suites is given more.
+function(rocketnet_suite_stack target)
+    if(MSVC)
+        target_link_options(${target} PRIVATE /STACK:8388608)
+    endif()
+endfunction()
+
 # The public include directory: rocketnet.h alone, copied from sdk/ at
 # configure time (an edit to sdk/rocketnet.h reconfigures). A parent project's
 # add_subdirectory(rocketnet) and RocketNet::rocketnet hand it this directory
@@ -401,7 +417,7 @@ if(ROCKETNET_BUILD_SHARED)
     add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 endif()
 # The development library: the same source compiled with ROCKETNET_DEV=1,
-# so the dev flow (examples, functional suite, soak, serialize) keeps the
+# so the dev flow (examples, functional suite, soak) keeps the
 # development token minting and accepts the published development keys that the
 # production library refuses. Never installed: it is a build-tree dev aid.
 if(ROCKETNET_BUILD_DEV_LIBRARIES)
@@ -654,6 +670,7 @@ void rocketnet_unit_prepare() {}
 int rocketnet_unit_run_named( const char * name ) { fprintf( stderr, \"unknown unit test %s\\n\", name ); return 2; }
 int rocketnet_channels_test_count() { return 0; }
 const char * rocketnet_channels_test_name( int index ) { (void)index; return 0; }
+const char * rocketnet_channels_test_skipped_by( int index ) { (void)index; return 0; }
 const char * rocketnet_channels_test_resolve( const char * name ) { return name; }
 int rocketnet_channels_run_named( const char * name ) { (void)name; return 2; }
 void rocketnet_channels_prepare( const char * name, void * (**malloc_function)( void * context, size_t bytes ), void (**free_function)( void * context, void * p ) ) { (void)name; (void)malloc_function; (void)free_function; }
@@ -804,27 +821,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
     endif()
-    # The counter audit (test_unit_counter_classes.cpp) reads source files: the
-    # tests that must name every counter, and the sdk files that count them.
-    # Both lists reach it as compile definitions, relative to the source
-    # directory, so the audit never walks a directory itself.
-    file( GLOB ROCKETNET_COUNTER_TEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp" )
-    if(NOT ROCKETNET_DEV)
-        list(REMOVE_ITEM ROCKETNET_COUNTER_TEST_SOURCES
-            "tests/test_unit_connection_internal_error_counters.cpp")
-    endif()
-    list( APPEND ROCKETNET_COUNTER_TEST_SOURCES "sdk/rocketnet_tests.cpp" )
-    file( GLOB ROCKETNET_COUNTER_SDK_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.inc" )
-    list( REMOVE_ITEM ROCKETNET_COUNTER_SDK_SOURCES "sdk/rocketnet_tests.cpp"
-        "sdk/rocketnet_counters.h" "sdk/rocketnet_counters.cpp" )
-    string( REPLACE ";" "|" ROCKETNET_COUNTER_TEST_SOURCES_LIST "${ROCKETNET_COUNTER_TEST_SOURCES}" )
-    string( REPLACE ";" "|" ROCKETNET_COUNTER_SDK_SOURCES_LIST "${ROCKETNET_COUNTER_SDK_SOURCES}" )
+    # The counter ladder audit (source_audit_counter_classes.cpp) reads the sdk
+    # files it names, relative to the source directory. Which counters a test
+    # observes is tools/check_counter_observed.py, from the build's own file set.
     set_property( SOURCE tests/source_audit_counter_classes.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
-        "ROCKETNET_COUNTER_TEST_SOURCES=\"${ROCKETNET_COUNTER_TEST_SOURCES_LIST}\""
-        "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     # The source-audit binary runs the repository text audits that used to be
     # unit cases: they read source, header and doc files through
     # ROCKETNET_SOURCE_DIR. It is a static gate: it reads files only, opens no
@@ -863,14 +864,22 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_platform_text.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    # The empty-body audit reads every functional source, whatever binary or
+    # platform builds it: the glob, not a hand list, so a new file is read.
+    file( GLOB ROCKETNET_FUNCTIONAL_AUDIT_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.inc" )
+    string( REPLACE ";" "|" ROCKETNET_FUNCTIONAL_AUDIT_LIST "${ROCKETNET_FUNCTIONAL_AUDIT_SOURCES}" )
     set_property( SOURCE tests/source_audit_functional_integrity.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+        "ROCKETNET_FUNCTIONAL_SOURCES=\"${ROCKETNET_FUNCTIONAL_AUDIT_LIST}\"" )
     target_compile_features(source_audit PRIVATE cxx_std_11)
     rocketnet_warning_floor(source_audit)
     target_link_libraries(source_audit PRIVATE rocketnet_test_support Threads::Threads)
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     rocketnet_warning_floor(test)
+    rocketnet_suite_stack(test)
     # The promotion case exercises the WIDE channel header (an index of 256 or
     # more) on channel 300, past the default build's cap, so this binary
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
@@ -890,6 +899,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_compile_options(test_wide PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
     rocketnet_use_sodium(test_wide)
     rocketnet_warning_floor(test_wide)
+    rocketnet_suite_stack(test_wide)
     target_link_libraries(test_wide PRIVATE Threads::Threads)
     # The SDK sources link their platform libraries, as the library targets do.
     if(APPLE)
@@ -948,9 +958,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_DEV)
         target_link_options(test PRIVATE "-Wl,--wrap=rocketnet_platform_time")
     endif()
-    if(ROCKETNET_USE_SYSTEM_SODIUM)
-        target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
-    endif()
     # The key-wipe witness compiles the SDK key schedule, including <sodium.h>.
     # Give it the same selected sodium headers as the library on every OS.
     rocketnet_use_sodium(test)
@@ -981,9 +988,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_link_libraries(connect_token_vectors PRIVATE rocketnet_dev)
     target_compile_features(connect_token_vectors PRIVATE cxx_std_11)
     rocketnet_use_sodium(connect_token_vectors)
-    if(ROCKETNET_USE_SYSTEM_SODIUM)
-        target_compile_definitions(connect_token_vectors PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
-    endif()
     rocketnet_warning_floor(connect_token_vectors)
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
     # which includes <sodium.h>: the vendored header, as the transport's own
@@ -1171,6 +1175,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
+    rocketnet_suite_stack(functional)
     add_dependencies(functional rocketnet_shared rocketnet_shared_dev)
     target_compile_definitions(functional PRIVATE
         "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\""
@@ -1253,6 +1258,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # and the Linux send-error cases
     # test_gso_client_transport_wire_ipv4, test_gso_client_transport_wire_ipv6,
     # test_gso_client_transport_wire_plain, test_gso_client_transport_wire_gro,
+    # test_gso_client_transport_wire_gro_simulated,
     # test_gso_shutdown_send_interruptions, test_gso_transport_held_receive_view,
     # test_gso_transport_linux_sendmmsg_errors, test_gso_transport_linux_recvmmsg_errors,
     # test_io_uring_transport_linux_receive_cqe_errors,
@@ -1305,6 +1311,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
         rocketnet_use_sodium(functional_production)
         rocketnet_warning_floor(functional_production)
+        rocketnet_suite_stack(functional_production)
         target_compile_features(functional_production PRIVATE cxx_std_11)
         if(MSVC)
             target_compile_options(functional_production PRIVATE "/FI${ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER}")
@@ -1323,6 +1330,9 @@ if(ROCKETNET_BUILD_TOOLS)
     target_link_libraries(test_load_census PRIVATE Threads::Threads)
     rocketnet_warning_floor(test_load_census)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
+    # The server transport hardening load (docs/HARDEN_LOAD.md): a bench tool.
+    add_executable(harden_load tests/load/harden_load.cpp)
+    target_compile_features(harden_load PRIVATE cxx_std_11)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
     add_executable(dst tests/dst.cpp)
@@ -1382,7 +1392,15 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost request_lookup_cost)
+    # One client's per-frame cost on the game thread against a real server
+    # (benchmarks/client_frame_time.md). It links the library a game ships,
+    # rocketnet (configure with ROCKETNET_DEV=OFF to measure production), and
+    # its hooks file defines the mutex and wake calls the library makes, so
+    # the library's references bind to the counting versions.
+    add_executable(client_frame_time benchmarks/client_frame_time.cpp benchmarks/client_frame_time_hooks.c)
+    target_link_libraries(client_frame_time PRIVATE rocketnet Threads::Threads ${CMAKE_DL_LIBS})
+    target_compile_features(client_frame_time PRIVATE cxx_std_11)
+    foreach(tool soak load load_split harden_load soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost request_lookup_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(instruction_count PRIVATE rocketnet_dev)
@@ -1421,7 +1439,6 @@ if(ROCKETNET_BUILD_TOOLS)
         target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEV=1)
         target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)
         target_include_directories(fuzz_replay_${harness} PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/sodium"
             "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         rocketnet_use_sodium(fuzz_replay_${harness})
@@ -1441,7 +1458,7 @@ if(TARGET rocketnet_shared)
     list(APPEND rocketnet_install_targets rocketnet_shared)
 endif()
 # Internal harnesses use repository-relative tests/helper includes.
-foreach(harness client server soak load load_split soak_sim test_load_census)
+foreach(harness client server soak load load_split harden_load soak_sim test_load_census)
     if(TARGET ${harness})
         target_include_directories(${harness} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     endif()
@@ -1465,8 +1482,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.1.7; the label
-# v1.1.7 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.1.8; the label
+# v1.1.8 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
@@ -1540,3 +1557,42 @@ function(rocketnet_check_fp_floor)
     message(STATUS "Floating-point floor (${family}) on all ${checked} compiled targets")
 endfunction()
 rocketnet_check_fp_floor()
+
+# The source audit's public-API cast check (source_audit_client_counter_access.cpp)
+# reads every C/C++ source the build compiles into a program: every executable
+# but the white-box suites, which test the internals on purpose (the unit and
+# functional suites, the test_* programs, the source audit, the deterministic
+# simulation and the fuzz replays). No list of directories: a new tool,
+# example or benchmark is read the day it is added (VERIFY-3 W16). Read at the
+# end, once every target is defined.
+if(TARGET source_audit)
+    get_property( ROCKETNET_AUDIT_TARGETS DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY BUILDSYSTEM_TARGETS )
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt" AND ROCKETNET_BUILD_EXAMPLES)
+        get_property( ROCKETNET_AUDIT_EXAMPLE_TARGETS DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/examples" PROPERTY BUILDSYSTEM_TARGETS )
+        list( APPEND ROCKETNET_AUDIT_TARGETS ${ROCKETNET_AUDIT_EXAMPLE_TARGETS} )
+    endif()
+    set( ROCKETNET_PUBLIC_PROGRAM_SOURCES "" )
+    foreach( audit_target IN LISTS ROCKETNET_AUDIT_TARGETS )
+        get_target_property( audit_type ${audit_target} TYPE )
+        if(NOT audit_type STREQUAL "EXECUTABLE" OR audit_target MATCHES "^(test|test_.*|functional|source_audit|dst|fuzz_.*)$")
+            continue()
+        endif()
+        get_target_property( audit_dir ${audit_target} SOURCE_DIR )
+        get_target_property( audit_sources ${audit_target} SOURCES )
+        foreach( audit_source IN LISTS audit_sources )
+            if(NOT audit_source MATCHES "\\.(c|cpp)$")
+                continue()
+            endif()
+            get_filename_component( audit_path "${audit_source}" ABSOLUTE BASE_DIR "${audit_dir}" )
+            file( RELATIVE_PATH audit_relative "${CMAKE_CURRENT_SOURCE_DIR}" "${audit_path}" )
+            if(NOT audit_relative MATCHES "^(sdk/|\\.\\./)")
+                list( APPEND ROCKETNET_PUBLIC_PROGRAM_SOURCES "${audit_relative}" )
+            endif()
+        endforeach()
+    endforeach()
+    list( REMOVE_DUPLICATES ROCKETNET_PUBLIC_PROGRAM_SOURCES )
+    list( SORT ROCKETNET_PUBLIC_PROGRAM_SOURCES )
+    string( REPLACE ";" "|" ROCKETNET_PUBLIC_PROGRAM_SOURCES_LIST "${ROCKETNET_PUBLIC_PROGRAM_SOURCES}" )
+    set_property( SOURCE tests/source_audit_client_counter_access.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_PUBLIC_PROGRAM_SOURCES=\"${ROCKETNET_PUBLIC_PROGRAM_SOURCES_LIST}\"" )
+endif()

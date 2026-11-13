@@ -1446,13 +1446,13 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_check( rocketnet_server_transport_packet_payload( server, &changed, &checked_capacity ) == NULL );
 
         auto aborted = changed;
-        rocketnet_server_transport_abort_packet( server, &aborted );
-        rocketnet_check( aborted.frame == NULL );
         rocketnet_test_shape_asserts = 0;
         rocketnet_assert_function( rocketnet_test_shape_assert_hook );
+        rocketnet_server_transport_abort_packet( server, &aborted );
+        rocketnet_check( aborted.frame == NULL );
         rocketnet_check( rocketnet_server_transport_finish_packet( server, &changed, 1 ) == 0 );
         rocketnet_functional_restore_assert_function();
-        rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+        rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 2 : 0 ) );
     }
 
     rocketnet_check( rocketnet_server_transport_packet_payload( server, &context, &checked_capacity ) == frame + context.payload_index );
@@ -1895,7 +1895,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( false );
 
-    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_test_captured_log_reset();
 
     const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
 
@@ -1908,7 +1908,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( client );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "client socket is ipv4 because ipv6 is unavailable on this host" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "client socket is ipv4 because ipv6 is unavailable on this host" ) != NULL );
 
     // the same connect and payload exchange as the udp loopback, over IPv4
     // while the host reports no IPv6 stack
@@ -2027,7 +2027,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     int create_status = ROCKETNET_STATUS_OK;
 
-    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_test_captured_log_reset();
     rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
@@ -2038,7 +2038,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     rocketnet_check( refused == NULL );
     rocketnet_check( create_status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "ipv6 is unavailable on this host" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "ipv6 is unavailable on this host" ) != NULL );
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
     rocketnet_test_env_restore( &client_pin_guard );
@@ -3930,8 +3930,9 @@ void rocketnet_test_transport_ipv6_loopback()
 void rocketnet_test_transport_dual_stack_ipv4_client()
 {
     // a server bound to the IPv6 wildcard is dual-stack: it serves IPv4 as
-    // well, so a connect token naming its IPv4 loopback is accepted and the
-    // handshake completes over the v4-mapped path, on every transport
+    // well, so a connect token naming the IPv4 loopback it advertises is
+    // accepted and the handshake completes over the v4-mapped path, on every
+    // transport
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -3939,6 +3940,12 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     // the hub is read only when a pin names loopback, as the CI transport
     // matrix's loopback cell does
     server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    // the server advertises the IPv4 loopback the token names beside the
+    // IPv6 wildcard: an IPv6-wildcard server alone advertises the IPv4
+    // wildcard, and a token for 127.0.0.1 names an address it does not
+    // (t12 rule 6)
+    snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", "127.0.0.1" );
 
     // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 client
 
@@ -5897,7 +5904,7 @@ void rocketnet_test_server_port_zero_transport()
         config.max_clients = 1;
         snprintf( config.transport, sizeof( config.transport ), "%s", name );
 
-        rocketnet_test_captured_log[0] = '\0';
+        rocketnet_test_captured_log_reset();
 
         const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
 
@@ -5910,7 +5917,7 @@ void rocketnet_test_server_port_zero_transport()
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "cannot discover the port it was granted and hand it back" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "cannot discover the port it was granted and hand it back" ) != NULL );
 
         // and at a level that shows warns, the RUNG's own refusal names
         // the rule and the transport together -- matched as one phrase, since
@@ -5920,7 +5927,7 @@ void rocketnet_test_server_port_zero_transport()
         char expected_rung_refusal[128];
         snprintf( expected_rung_refusal, sizeof( expected_rung_refusal ), "server transport %s refused: a port-zero public address", name );
 
-        rocketnet_test_captured_log[0] = '\0';
+        rocketnet_test_captured_log_reset();
         rocketnet_log_function( rocketnet_test_capture_log, NULL );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
@@ -5930,7 +5937,7 @@ void rocketnet_test_server_port_zero_transport()
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, expected_rung_refusal ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), expected_rung_refusal ) != NULL );
 
         // SCOPE, the other half of correct: the rule is about port ZERO
         // and nothing else. the same pin with a real port never meets it
@@ -5941,7 +5948,7 @@ void rocketnet_test_server_port_zero_transport()
         // it is what keeps the BARRIER exercised, since the rule
         // short-circuits the port-zero pins that would otherwise reach it.
 
-        rocketnet_test_captured_log[0] = '\0';
+        rocketnet_test_captured_log_reset();
         rocketnet_log_function( rocketnet_test_capture_log, NULL );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
@@ -5951,15 +5958,15 @@ void rocketnet_test_server_port_zero_transport()
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "port-zero public address" ) == NULL );
 #if ROCKETNET_XDP
-        rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "forbids committing an XDP data plane" ) != NULL );
 #else
         // a build with XDP compiled out (no BPF-capable clang, libbpf or
         // AF_XDP provider at configure) is supported: the rung refuses
         // cleanly at its own create and never reaches the commit barrier
 
-        rocketnet_check( strstr( rocketnet_test_captured_log, "XDP is compiled out of this build" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "XDP is compiled out of this build" ) != NULL );
 #endif // #if ROCKETNET_XDP
 
         // and the rung refusal is a RUNG refusal, not a create refusal:
@@ -6046,7 +6053,7 @@ void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroy
 
 static enum rocketnet_log_level_t rocketnet_test_xdp_capture_begin()
 {
-    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_test_captured_log_reset();
 
     const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
 
@@ -6098,8 +6105,8 @@ static void rocketnet_test_xdp_ladder_port_zero( const struct rocketnet_server_t
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "a port-zero public address asks the kernel for an ephemeral port" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "a port-zero public address asks the kernel for an ephemeral port" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "server transport ladder granted gso after refusals: xdp" ) != NULL );
     rocketnet_test_xdp_server_destroy( server );
 }
 #endif // #if ROCKETNET_XDP
@@ -6156,9 +6163,9 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_server_socket_forbid_commit();
 
     rocketnet_check( server == NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight: development control selects unavailable" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight: development control selects unavailable" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
 
     // FORCED AVAILABLE: the direct pre-flight says yes, while the barrier
     // stays installed, so the production pin is refused by the barrier
@@ -6173,8 +6180,8 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_test_xdp_capture_end( saved_level );
 
     rocketnet_check( server == NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "forbids committing an XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
 
     rocketnet_server_socket_clear_preflight_test_result();
 #endif // ROCKETNET_DEV
@@ -6198,8 +6205,8 @@ void rocketnet_test_server_transport_io_pin_xdp()
         rocketnet_test_xdp_capture_end( natural_saved_level );
 
         rocketnet_check( natural_server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
     }
     else
     {
@@ -6220,11 +6227,11 @@ void rocketnet_test_server_transport_io_pin_xdp()
         // there the barrier's refusal is the one named; the pre-flight's own
         // answer is checked directly below
 #if ROCKETNET_DEV
-        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
 #else
-        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
 #endif // #if ROCKETNET_DEV
-        rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
     }
 
 #if ROCKETNET_DEV
@@ -6237,12 +6244,43 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_test_xdp_capture_end( saved_level );
 
     rocketnet_check( server == NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "XDP is compiled out of this build" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "XDP is compiled out of this build" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
 #endif // #if ROCKETNET_XDP
 
     rocketnet_test_env_restore( &transport_guard );
 }
+
+#if ROCKETNET_XDP && ROCKETNET_DEV
+
+// a server's public address is global: create refuses a link-local address
+// of either family by name, before its pre-flight (forced unavailable here,
+// so nothing is attached whatever the address)
+
+void rocketnet_test_xdp_create_refuses_link_local()
+{
+    static const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0 };
+    const char * const link_local[] = { "169.254.10.20:40000", "[fe80::1]:40000" };
+
+    rocketnet_server_socket_set_preflight_test_result( 0 );
+    rocketnet_server_socket_allow_commit();
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
+        struct rocketnet_server_socket_t * server_socket = rocketnet_server_socket_create( NULL, link_local[i], packet_filter, 1 );
+        rocketnet_test_xdp_capture_end( saved_level );
+
+        rocketnet_check( server_socket == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "link-local" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "development control selects unavailable" ) == NULL );
+    }
+
+    rocketnet_server_socket_forbid_commit();
+    rocketnet_server_socket_clear_preflight_test_result();
+}
+
+#endif // #if ROCKETNET_XDP && ROCKETNET_DEV
 
 void rocketnet_test_server_transport_io_ladder_fall()
 {
@@ -6293,8 +6331,8 @@ void rocketnet_test_server_transport_io_ladder_fall()
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "server transport ladder granted gso after refusals: xdp" ) != NULL );
     rocketnet_test_xdp_server_destroy( server );
 
     // FORCED AVAILABLE: the direct answer is yes, the barrier stays
@@ -6311,8 +6349,8 @@ void rocketnet_test_server_transport_io_ladder_fall()
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "forbids committing an XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "server transport ladder granted gso after refusals: xdp" ) != NULL );
     rocketnet_test_xdp_server_destroy( server );
 
     rocketnet_server_socket_clear_preflight_test_result();
@@ -6357,11 +6395,11 @@ void rocketnet_test_server_transport_io_ladder_fall()
         // there the barrier's refusal is the one named; the pre-flight's own
         // answer is checked directly below
 #if ROCKETNET_DEV
-        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
 #else
-        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
 #endif // #if ROCKETNET_DEV
-        rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "server transport ladder granted gso after refusals: xdp" ) != NULL );
         rocketnet_test_xdp_server_destroy( natural_server );
     }
 
@@ -7236,7 +7274,12 @@ static void gso_exchange_print_counters( const char * side, const struct rocketn
     }
 }
 
-static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable" )
+// simulated_latency_ms > 0 turns the link simulator on at both ends: the
+// client then has no I/O thread and its update reads the socket one datagram
+// at a time (the transport's single receive), the path a GRO socket must
+// still split
+static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable",
+                                                     int simulated_latency_ms = 0 )
 {
     const bool exchange_ipv6 = server_host[0] == '[';
     uint64_t udp_before[GSO_EXCHANGE_UDP_FIELDS];
@@ -7249,6 +7292,7 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    server_config.simulated_latency_ms = simulated_latency_ms;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", server_transport );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
@@ -7264,6 +7308,7 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "gso" );
+    client_config.simulated_latency_ms = simulated_latency_ms;
 
     rocketnet_client_gso_test_disable_segment.store( !segment );
     rocketnet_client_gso_test_disable_gro.store( !segment );
@@ -7274,7 +7319,7 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
     rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), "gso" ) == 0 );
-    rocketnet_check( rocketnet_client_transport_client_io( client ) != NULL );
+    rocketnet_check( ( rocketnet_client_transport_client_io( client ) != NULL ) == ( simulated_latency_ms == 0 ) );
 
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
@@ -7401,7 +7446,9 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             client_received++;
         }
 
-        rocketnet_platform_sleep( 0.001 );
+        // with the simulator on, a pass every 10 ms keeps the packets it
+        // holds for the latency inside the client's 512 simulator slots
+        rocketnet_platform_sleep( simulated_latency_ms > 0 ? 0.01 : 0.001 );
     }
 
     printf( "gso_client_wire_exchange segment=%d server=%s: server received %d of %d, client received %d of %d (sent %d, %d) in %.3f s\n",
@@ -7445,11 +7492,13 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
 
     const uint64_t segment_messages = rocketnet_client_gso_test_segment_messages_sent.load() - segment_messages_before;
 
-    if ( segment )
+    // with the simulator on the client's held packets leave one send each,
+    // so only the server's sends are segmented then
+    if ( segment && simulated_latency_ms == 0 )
     {
         rocketnet_check( segment_messages > 0 );
     }
-    else
+    if ( !segment )
     {
         rocketnet_check( segment_messages == 0 );
     }
@@ -7503,6 +7552,17 @@ void rocketnet_test_gso_client_wire_gro()
     // as UDP_SEGMENT runs: the client receives them coalesced and splits them
 
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true, "gso" );
+}
+
+void rocketnet_test_gso_client_wire_gro_simulated()
+{
+    // the same exchange, gso at both ends, with the link simulator on at both
+    // ends: the client reads through the transport's single receive, which
+    // must split a GRO-coalesced message as the batch receive does. Every
+    // payload arrives once, whole, and no refusal counter moves (no
+    // PREFILTER_TOO_LARGE, no PAYLOAD or ACK that did not open).
+
+    rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true, "gso", 30 );
 }
 #endif // production excludes gso client wire cases that read SEND_ERROR hooks
 
@@ -8967,7 +9027,8 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     // the request left and after the server answered; the answer then lands in
     // the same pass, reply_seen equals request_opened, and the strictly-later
     // check at the bottom goes red. The transport-side rule this pins is the
-    // client buffer swap (sdk/rocketnet_client_transport.cpp:490, 563).
+    // client buffer swap (sdk/rocketnet_client_transport.cpp (rocketnet_client_legacy_publish),
+    // and rocketnet_client_update_expose_legacy_receive).
 
     const int rounds = 200;
 
@@ -10136,21 +10197,48 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/vfs.h>
 #include <string>
 #include <vector>
 
-#define ROCKETNET_XDP_VETH_NETNS        "rnxdpfam"
-#define ROCKETNET_XDP_VETH_NEAR         "rnxdpfam0"
-#define ROCKETNET_XDP_VETH_FAR          "rnxdpfam1"
+#include "xdp_test_net.h"
+
+// The namespace, the pair's names, its addresses and the gateway routes are
+// one per kernel and the suite runs cases in parallel, so each case takes its
+// own (tests/functional/xdp_test_net.h); the server binds the same port on
+// each case's own near address.
 #define ROCKETNET_XDP_VETH_PORT         40411
 #define ROCKETNET_XDP_VETH_COUNT        20
 
+static struct rocketnet_xdp_test_net_t rocketnet_xdp_veth_net;
 static pid_t rocketnet_xdp_veth_capture_pid = -1;
 static struct rocketnet_server_transport_t * rocketnet_xdp_veth_server = NULL;
 static bool rocketnet_xdp_veth_made = false;
 static char rocketnet_xdp_veth_pcap[64] = "";
 static int rocketnet_xdp_veth_mtu = 1500;     // both ends; a case may lower it before rocketnet_xdp_veth_start
+
+// 802.1Q: a case sets rocketnet_xdp_veth_vlan before rocketnet_xdp_veth_start
+// to put both addresses on VLAN devices of that ID, one on each end of the
+// pair (the server's on <tag>v, whose parent, the near end, the xdp transport
+// attaches to; the client's on <tag>w). The VLAN devices are named from the
+// case network's tag, not "<end>.<ID>": the tag carries the pid, and with a
+// 7-digit pid "<end>.4094" would pass IFNAMSIZ's 15 characters. rocketnet_xdp_veth_vlan_tag_in_data picks how the
+// client's frames reach the server: true, the far end's tx VLAN offload is
+// off and the tag is in the frame's bytes, as a NIC without rx VLAN offload
+// delivers it; false, the offload is on, the tag travels beside the frame and
+// the program sees it untagged, as ixgbe and i40e deliver it by default.
+// The capture then takes only frames tagged with the ID. Teardown resets
+// both.
+
+static int rocketnet_xdp_veth_vlan = 0;
+static bool rocketnet_xdp_veth_vlan_tag_in_data = true;
+
+// a VLAN device of the case's network: <tag><suffix>, at most 11 characters
+static void rocketnet_xdp_veth_vlan_device( char suffix, char * name, size_t name_bytes )
+{
+    snprintf( name, name_bytes, "%.12s%c", rocketnet_xdp_veth_net.tag, suffix );
+}
 
 static void rocketnet_xdp_veth_teardown()
 {
@@ -10171,7 +10259,9 @@ static void rocketnet_xdp_veth_teardown()
     {
         // deleting the namespace takes the far end, and with it the pair
 
-        if ( system( "ip netns del " ROCKETNET_XDP_VETH_NETNS " 2>/dev/null; ip link del " ROCKETNET_XDP_VETH_NEAR " 2>/dev/null" ) != 0 )
+        char command[256];
+        snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", rocketnet_xdp_veth_net.netns, rocketnet_xdp_veth_net.near_name );
+        if ( system( command ) != 0 )
         {
             // already gone
         }
@@ -10186,6 +10276,9 @@ static void rocketnet_xdp_veth_teardown()
     }
 
     rocketnet_server_socket_forbid_commit();
+
+    rocketnet_xdp_veth_vlan = 0;
+    rocketnet_xdp_veth_vlan_tag_in_data = true;
 }
 
 static void rocketnet_xdp_veth_run( const char * command )
@@ -10262,6 +10355,20 @@ bool rocketnet_test_xdp_veth_runs_here()
 
 static bool rocketnet_xdp_veth_capture_present = false;
 
+// the case's own names, addresses and metric; a case that cannot take them
+// (its names held by another live case, or every slot taken) fails, naming why
+static void rocketnet_xdp_veth_take_net( const char * case_name )
+{
+    char reason[512];
+    if ( !rocketnet_xdp_test_net_take( case_name, &rocketnet_xdp_veth_net, reason, sizeof( reason ) ) )
+    {
+        printf( "%s\n", reason );
+        fflush( stdout );
+        const bool test_network_taken = false;
+        rocketnet_check( test_network_taken );
+    }
+}
+
 // set by the both-families case: both ends carry both families' addresses,
 // and the server's second_public_address names the other family
 static bool rocketnet_xdp_veth_both = false;
@@ -10272,8 +10379,11 @@ void rocketnet_functional_require_xdp_case( const char * fixture );
 
 struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
 {
-    rocketnet_functional_require_xdp_case( ROCKETNET_XDP_VETH_NETNS );
+    rocketnet_xdp_veth_take_net( case_name );
+    rocketnet_functional_require_xdp_case( rocketnet_xdp_veth_net.netns );
     atexit( rocketnet_xdp_veth_teardown );
+
+    const struct rocketnet_xdp_test_net_t & net = rocketnet_xdp_veth_net;
 
     // the boot tier the xdp pre-flight verifies; a guest boots with an empty
     // bpffs mount point
@@ -10284,7 +10394,9 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
         rocketnet_xdp_veth_run( "mount -t bpf bpf /sys/fs/bpf" );
     }
 
-    if ( system( "ip netns del " ROCKETNET_XDP_VETH_NETNS " 2>/dev/null; ip link del " ROCKETNET_XDP_VETH_NEAR " 2>/dev/null" ) != 0 )
+    char command[1024];
+    snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", net.netns, net.near_name );
+    if ( system( command ) != 0 )
     {
         // nothing left from an earlier run
     }
@@ -10296,7 +10408,8 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
     // case starts at once.
 
     rocketnet_xdp_veth_made = true;
-    rocketnet_xdp_veth_run( "ip netns add " ROCKETNET_XDP_VETH_NETNS );
+    snprintf( command, sizeof( command ), "ip netns add %s", net.netns );
+    rocketnet_xdp_veth_run( command );
 
     int veth_queues = 1;
 
@@ -10307,35 +10420,83 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
             veth_queues = atoi( text );
         }
     }
+
+    snprintf( command, sizeof( command ), "ip link add %s mtu %d numtxqueues %d numrxqueues %d type veth peer name %s mtu %d numtxqueues %d numrxqueues %d", net.near_name,
+              rocketnet_xdp_veth_mtu, veth_queues, veth_queues, net.far_name, rocketnet_xdp_veth_mtu, veth_queues, veth_queues );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "ip link set %s netns %s", net.far_name, net.netns );
+    rocketnet_xdp_veth_run( command );
+
+    // the devices that carry the addresses: the pair's ends, or a VLAN
+    // device on each
+
+    const char * near_device = net.near_name;
+    const char * far_device = net.far_name;
+    char near_vlan_device[16];
+    char far_vlan_device[16];
+    if ( rocketnet_xdp_veth_vlan != 0 )
     {
-        char command[256];
-        snprintf( command, sizeof( command ), "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu %d numtxqueues %d numrxqueues %d type veth peer name " ROCKETNET_XDP_VETH_FAR " mtu %d numtxqueues %d numrxqueues %d", rocketnet_xdp_veth_mtu, veth_queues, veth_queues, rocketnet_xdp_veth_mtu, veth_queues, veth_queues );
+        rocketnet_xdp_veth_vlan_device( 'v', near_vlan_device, sizeof( near_vlan_device ) );
+        rocketnet_xdp_veth_vlan_device( 'w', far_vlan_device, sizeof( far_vlan_device ) );
+        near_device = near_vlan_device;
+        far_device = far_vlan_device;
+
+        snprintf( command, sizeof( command ), "ip link add link %s name %s type vlan id %d", net.near_name, near_device, rocketnet_xdp_veth_vlan );
         rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s link add link %s name %s type vlan id %d", net.netns, net.far_name, far_device, rocketnet_xdp_veth_vlan );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip netns exec %s ethtool -K %s txvlan %s >/dev/null", net.netns, net.far_name, rocketnet_xdp_veth_vlan_tag_in_data ? "off" : "on" );
+        rocketnet_xdp_veth_run( command );
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: addresses on 802.1Q VLAN %d (%s, %s); the client's tag %s", case_name, rocketnet_xdp_veth_vlan, near_device, far_device,
+                          rocketnet_xdp_veth_vlan_tag_in_data ? "is in the frame data" : "travels beside the frame (tx VLAN offload on)" );
     }
-    rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_VETH_FAR " netns " ROCKETNET_XDP_VETH_NETNS );
+
+    // the family under test, or both families for the both-families case.
+    // The sysctl paths use slashes, which hold any device name.
 
     if ( ipv6 || rocketnet_xdp_veth_both )
     {
-        rocketnet_xdp_veth_run( "sysctl -qw net.ipv6.conf." ROCKETNET_XDP_VETH_NEAR ".addr_gen_mode=1" );
-        rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_NETNS " sysctl -qw net.ipv6.conf." ROCKETNET_XDP_VETH_FAR ".addr_gen_mode=1" );
-        rocketnet_xdp_veth_run( "ip addr add 2001:db8:77::1/64 dev " ROCKETNET_XDP_VETH_NEAR " nodad" );
-        rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr add 2001:db8:77::2/64 dev " ROCKETNET_XDP_VETH_FAR " nodad" );
+        snprintf( command, sizeof( command ), "sysctl -qw net/ipv6/conf/%s/addr_gen_mode=1", near_device );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip netns exec %s sysctl -qw net/ipv6/conf/%s/addr_gen_mode=1", net.netns, far_device );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip addr add %s/64 dev %s nodad", net.near6, near_device );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s addr add %s/64 dev %s nodad", net.netns, net.far6, far_device );
+        rocketnet_xdp_veth_run( command );
     }
     if ( !ipv6 || rocketnet_xdp_veth_both )
     {
-        rocketnet_xdp_veth_run( "ip addr add 10.77.2.1/24 dev " ROCKETNET_XDP_VETH_NEAR );
-        rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr add 10.77.2.2/24 dev " ROCKETNET_XDP_VETH_FAR );
+        snprintf( command, sizeof( command ), "ip addr add %s/24 dev %s", net.near4, near_device );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s addr add %s/24 dev %s", net.netns, net.far4, far_device );
+        rocketnet_xdp_veth_run( command );
     }
 
-    rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_VETH_NEAR " up" );
+    snprintf( command, sizeof( command ), "ip link set %s up", net.near_name );
+    rocketnet_xdp_veth_run( command );
+    if ( rocketnet_xdp_veth_vlan != 0 )
+    {
+        snprintf( command, sizeof( command ), "ip link set %s up", near_device );
+        rocketnet_xdp_veth_run( command );
+    }
 
     // the busy-poll pair the pre-flight verifies (R5), as a provisioned
     // interface carries it
 
-    rocketnet_xdp_veth_run( "echo 2 > /sys/class/net/" ROCKETNET_XDP_VETH_NEAR "/napi_defer_hard_irqs" );
-    rocketnet_xdp_veth_run( "echo 200000 > /sys/class/net/" ROCKETNET_XDP_VETH_NEAR "/gro_flush_timeout" );
-    rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " link set lo up" );
-    rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " link set " ROCKETNET_XDP_VETH_FAR " up" );
+    snprintf( command, sizeof( command ), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs", net.near_name );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "echo 200000 > /sys/class/net/%s/gro_flush_timeout", net.near_name );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set lo up", net.netns );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set %s up", net.netns, net.far_name );
+    rocketnet_xdp_veth_run( command );
+    if ( rocketnet_xdp_veth_vlan != 0 )
+    {
+        snprintf( command, sizeof( command ), "ip -n %s link set %s up", net.netns, far_device );
+        rocketnet_xdp_veth_run( command );
+    }
 
     // the client's checksums are filled in software, so the capture on the
     // far end judges both directions' checksums rather than reading a
@@ -10343,10 +10504,16 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
 
     if ( system( "command -v ethtool >/dev/null 2>&1" ) == 0 )
     {
-        rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_NETNS " ethtool -K " ROCKETNET_XDP_VETH_FAR " tx off >/dev/null" );
+        snprintf( command, sizeof( command ), "ip netns exec %s ethtool -K %s tx off >/dev/null", net.netns, net.far_name );
+        rocketnet_xdp_veth_run( command );
+        if ( rocketnet_xdp_veth_vlan != 0 )
+        {
+            snprintf( command, sizeof( command ), "ip netns exec %s ethtool -K %s tx off >/dev/null", net.netns, far_device );
+            rocketnet_xdp_veth_run( command );
+        }
     }
 
-    const char * server_host = ipv6 ? "2001:db8:77::1" : "10.77.2.1";
+    const char * server_host = ipv6 ? net.near6 : net.near4;
 
     if ( ipv6 )
     {
@@ -10381,15 +10548,26 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
                 dup2( null_fd, 2 );
             }
 
-            char filter[64];
-            snprintf( filter, sizeof( filter ), "udp port %d", ROCKETNET_XDP_VETH_PORT );
+            // on a VLAN, the port's frames tagged or not (a filter after
+            // "vlan" reads past a tag, one before it does not): the case
+            // reads each frame's tag back and requires the VLAN's on every one
+
+            char filter[96];
+            if ( rocketnet_xdp_veth_vlan != 0 )
+            {
+                snprintf( filter, sizeof( filter ), "udp port %d or (vlan and udp port %d)", ROCKETNET_XDP_VETH_PORT, ROCKETNET_XDP_VETH_PORT );
+            }
+            else
+            {
+                snprintf( filter, sizeof( filter ), "udp port %d", ROCKETNET_XDP_VETH_PORT );
+            }
 
             // --immediate-mode: each packet reaches the file as it arrives.
             // Without it, libpcap's TPACKET_V3 ring holds packets in a block
             // until the block's timeout retires it, and the packets of a block
             // not yet retired when SIGINT stops tcpdump never reach the file.
 
-            execlp( "ip", "ip", "netns", "exec", ROCKETNET_XDP_VETH_NETNS, "tcpdump", "--immediate-mode", "-i", ROCKETNET_XDP_VETH_FAR, "-n", "-U", "-s", "0", "-w", rocketnet_xdp_veth_pcap, filter, (char *) NULL );
+            execlp( "ip", "ip", "netns", "exec", net.netns, "tcpdump", "--immediate-mode", "-i", net.far_name, "-n", "-U", "-s", "0", "-w", rocketnet_xdp_veth_pcap, filter, (char *) NULL );
             _exit( 127 );
         }
 
@@ -10452,7 +10630,14 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
     if ( rocketnet_xdp_veth_both )
     {
         // the other family's address on the same interface and port
-        snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), ipv6 ? "10.77.2.1:%d" : "[2001:db8:77::1]:%d", ROCKETNET_XDP_VETH_PORT );
+        if ( ipv6 )
+        {
+            snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s:%d", net.near4, ROCKETNET_XDP_VETH_PORT );
+        }
+        else
+        {
+            snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "[%s]:%d", net.near6, ROCKETNET_XDP_VETH_PORT );
+        }
     }
 
     // the create at info level, so every pre-flight line is in the output
@@ -10496,7 +10681,19 @@ void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroy
 
 const char * rocketnet_xdp_veth_netns_path()
 {
-    return "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS;
+    return rocketnet_xdp_veth_net.netns_path;
+}
+
+// the case's near (server) or far (client) host, bare: 10.79.<slot>.1 or
+// 2001:db8:79:<slot + 1>::2
+const char * rocketnet_xdp_veth_host( bool ipv6, bool far )
+{
+    if ( ipv6 )
+    {
+        return far ? rocketnet_xdp_veth_net.far6 : rocketnet_xdp_veth_net.near6;
+    }
+
+    return far ? rocketnet_xdp_veth_net.far4 : rocketnet_xdp_veth_net.near4;
 }
 
 void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
@@ -10504,8 +10701,9 @@ void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
     // setns does not switch the mounted sysfs, so the far end's address file
     // is not visible that way. ip netns exec mounts a sysfs for that namespace.
 
-    const std::vector<std::string> lines = rocketnet_xdp_veth_lines(
-        "ip netns exec " ROCKETNET_XDP_VETH_NETNS " cat /sys/class/net/" ROCKETNET_XDP_VETH_FAR "/address" );
+    char command[256];
+    snprintf( command, sizeof( command ), "ip netns exec %s cat /sys/class/net/%s/address", rocketnet_xdp_veth_net.netns, rocketnet_xdp_veth_net.far_name );
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
     rocketnet_check( lines.size() == 1 );
 
     unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
@@ -10532,7 +10730,7 @@ static struct rocketnet_client_transport_t * rocketnet_xdp_veth_client( const ch
     snprintf( client_config.transport, sizeof( client_config.transport ), "portable" );
 
     const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
-    const int far_ns = open( "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS, O_RDONLY );
+    const int far_ns = open( rocketnet_xdp_veth_net.netns_path, O_RDONLY );
     rocketnet_check( self_ns >= 0 && far_ns >= 0 );
     rocketnet_check( setns( far_ns, CLONE_NEWNET ) == 0 );
 
@@ -10551,7 +10749,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( ipv6, case_name, server_address, sizeof( server_address ) );
     struct rocketnet_client_transport_t * client = rocketnet_xdp_veth_client( server_address );
     const bool capture_tool_present = rocketnet_xdp_veth_capture_present;
-    const char * server_host = ipv6 ? "2001:db8:77::1" : "10.77.2.1";
+    const char * server_host = rocketnet_xdp_veth_host( ipv6, false );
 
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 )
@@ -10582,11 +10780,11 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     // a send the server refuses for want of staging is counted in
     // ROCKETNET_COUNTER_SEND_RING_FULL and never reaches the wire: the xdp
     // transport has ROCKETNET_XDP_NUM_BUFFERS staging generations
-    // (sdk/rocketnet_constants.h:49), each flush publishes one
-    // (sdk/rocketnet_server_socket_linux.cpp:2379), and while its send
+    // (sdk/rocketnet_constants.h (ROCKETNET_XDP_NUM_BUFFERS)), each flush publishes one
+    // (sdk/rocketnet_server_socket_linux.cpp), and while its send
     // thread has retired neither, a start is refused
-    // (sdk/rocketnet_server_socket_linux.cpp:2246) and counted
-    // (sdk/rocketnet_server_transport.cpp:2369). This loop flushes every
+    // (sdk/rocketnet_server_socket_linux.cpp) and counted
+    // (sdk/rocketnet_server_transport.cpp). This loop flushes every
     // iteration, so a send thread that falls two flushes behind refuses the
     // next send. A send counts as taken when the counter did not move, and
     // a refused send is sent again, so a send dropped without a count fails
@@ -10722,13 +10920,17 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
 
     if ( capture_tool_present )
     {
+        // on a VLAN, -e prints each frame's tag ("vlan ID, p 0")
+
+        const int vlan = rocketnet_xdp_veth_vlan;
         char command[256];
-        snprintf( command, sizeof( command ), "tcpdump -vv -n -r %s 2>/dev/null", rocketnet_xdp_veth_pcap );
+        snprintf( command, sizeof( command ), "tcpdump -vv -n %s -r %s 2>/dev/null", vlan != 0 ? "-e" : "", rocketnet_xdp_veth_pcap );
 
         const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
-        char from_server[96], to_server_text[96];
+        char from_server[96], to_server_text[96], vlan_text[32];
         snprintf( from_server, sizeof( from_server ), " %s.%d > ", server_host, ROCKETNET_XDP_VETH_PORT );
         snprintf( to_server_text, sizeof( to_server_text ), " > %s.%d: ", server_host, ROCKETNET_XDP_VETH_PORT );
+        snprintf( vlan_text, sizeof( vlan_text ), ": vlan %d, ", vlan );
 
         const std::string * server_to_client = NULL;
         const std::string * client_to_server = NULL;
@@ -10736,12 +10938,14 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         int server_sent = 0;
         int bad_checksums = 0;
         int server_checksums_ok = 0;
+        int untagged_from_server = 0, untagged_to_server = 0;
         size_t largest_from_server = 0, largest_to_server = 0;
 
         for ( const std::string & line : lines )
         {
             const size_t length_at = line.rfind( "length " );
             const size_t length = length_at == std::string::npos ? 0 : (size_t) atoi( line.c_str() + length_at + 7 );
+            const bool tagged = vlan != 0 && line.find( vlan_text ) != std::string::npos;
 
             if ( line.find( "bad udp cksum" ) != std::string::npos )
             {
@@ -10751,6 +10955,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
             if ( line.find( from_server ) != std::string::npos )
             {
                 server_sent++;
+                untagged_from_server += vlan != 0 && !tagged ? 1 : 0;
 
                 if ( line.find( "udp sum ok" ) != std::string::npos )
                 {
@@ -10766,6 +10971,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
             else if ( line.find( to_server_text ) != std::string::npos )
             {
                 client_sent++;
+                untagged_to_server += vlan != 0 && !tagged ? 1 : 0;
 
                 if ( length >= largest_to_server )
                 {
@@ -10778,9 +10984,23 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: capture: client sent %d datagrams to the server, the server sent %d, largest UDP payload %d to the server and %d from it", case_name, client_sent, server_sent, (int) largest_to_server, (int) largest_from_server );
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: client to server: %s", case_name, client_to_server ? client_to_server->c_str() : "(none captured)" );
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server to client: %s", case_name, server_to_client ? server_to_client->c_str() : "(none captured)" );
+        if ( vlan != 0 )
+        {
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: capture: %d of the server's frames and %d of the client's carried no tag of VLAN %d", case_name, untagged_from_server, untagged_to_server, vlan );
+        }
         rocketnet_check( client_to_server && server_to_client );
         rocketnet_check( bad_checksums == 0 );
+        if ( redirected != (uint64_t) client_sent || untagged_from_server != 0 || untagged_to_server != 0 )
+        {
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: the filter redirected %llu datagrams and the capture holds %d from the client; every captured line:", case_name, (unsigned long long) redirected, client_sent );
+            for ( const std::string & line : lines )
+            {
+                rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s:   %s", case_name, line.c_str() );
+            }
+        }
         rocketnet_check( redirected == (uint64_t) client_sent );
+        rocketnet_check( untagged_from_server == 0 );
+        rocketnet_check( untagged_to_server == 0 );
 
         if ( ipv6 )
         {
@@ -10886,24 +11106,30 @@ static void rocketnet_xdp_keep_alive_before_first_payloads( bool ipv6, const cha
 // refresh still follows the gateway, not that it never blocks (the unit case
 // test_xdp_transport_gateway_netlink_refresh_never_blocks shows that). The
 // longest server update across the changes is printed, not checked. The
-// route takes a metric of its own, so it adds to a default route the host
-// may have rather than replacing it, and both go with the pair.
+// route takes a metric of its own (the case's slot's, so two cases in one
+// kernel never hold the same default route), so it adds to a default route
+// the host may have rather than replacing it, and both go with the pair.
 
 static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
 {
     char server_address[128];
     struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
+    const struct rocketnet_xdp_test_net_t & net = rocketnet_xdp_veth_net;
 
-    static const char * const changes[3][2] = {
-        { "ip route add default via 10.77.2.2 dev " ROCKETNET_XDP_VETH_NEAR " metric 4242 && ip neigh replace 10.77.2.2 lladdr 02:00:00:00:77:a1 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent",
-          "ipv4 gateway ethernet address is now 02.00.00.00.77.a1" },
-        { "ip neigh replace 10.77.2.2 lladdr 02:00:00:00:77:a2 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent",
-          "ipv4 gateway ethernet address changed from 02.00.00.00.77.a1 to 02.00.00.00.77.a2" },
-        { "ip neigh replace 10.77.2.3 lladdr 02:00:00:00:77:a3 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent && ip route replace default via 10.77.2.3 dev " ROCKETNET_XDP_VETH_NEAR " metric 4242",
-          "ipv4 gateway ethernet address changed from 02.00.00.00.77.a2 to 02.00.00.00.77.a3" },
+    char commands[3][1024];
+    snprintf( commands[0], sizeof( commands[0] ), "ip route add default via %s dev %s metric %d && ip neigh replace %s lladdr 02:00:00:00:77:a1 dev %s nud permanent",
+              net.far4, net.near_name, net.metric, net.far4, net.near_name );
+    snprintf( commands[1], sizeof( commands[1] ), "ip neigh replace %s lladdr 02:00:00:00:77:a2 dev %s nud permanent", net.far4, net.near_name );
+    snprintf( commands[2], sizeof( commands[2] ), "ip neigh replace %s lladdr 02:00:00:00:77:a3 dev %s nud permanent && ip route replace default via %s dev %s metric %d",
+              net.third4, net.near_name, net.third4, net.near_name, net.metric );
+
+    const char * const changes[3][2] = {
+        { commands[0], "ipv4 gateway ethernet address is now 02.00.00.00.77.a1" },
+        { commands[1], "ipv4 gateway ethernet address changed from 02.00.00.00.77.a1 to 02.00.00.00.77.a2" },
+        { commands[2], "ipv4 gateway ethernet address changed from 02.00.00.00.77.a2 to 02.00.00.00.77.a3" },
     };
 
-    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_test_captured_log_reset();
     const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
     rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
@@ -10923,7 +11149,7 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
             const double took = rocketnet_platform_time() - before;
             longest = took > longest ? took : longest;
             updates++;
-            taken[change] = strstr( rocketnet_test_captured_log, changes[change][1] ) != NULL;
+            taken[change] = strstr( rocketnet_test_captured_log_read(), changes[change][1] ) != NULL;
             rocketnet_platform_sleep( 0.001 );
         }
     }
@@ -10958,7 +11184,9 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
 
 static uint64_t rocketnet_xdp_veth_near_tx_dropped()
 {
-    FILE * file = fopen( "/sys/class/net/" ROCKETNET_XDP_VETH_NEAR "/statistics/tx_dropped", "r" );
+    char path[96];
+    snprintf( path, sizeof( path ), "/sys/class/net/%s/statistics/tx_dropped", rocketnet_xdp_veth_net.near_name );
+    FILE * file = fopen( path, "r" );
     rocketnet_check( file );
     unsigned long long value = 0;
     rocketnet_check( fscanf( file, "%llu", &value ) == 1 );
@@ -11077,9 +11305,10 @@ static void rocketnet_xdp_serves_both_families( const char * case_name )
     rocketnet_xdp_veth_both = true;
     struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
     rocketnet_xdp_veth_both = false;
+    const struct rocketnet_xdp_test_net_t & net = rocketnet_xdp_veth_net;
 
     char server_address_ipv6[128];
-    snprintf( server_address_ipv6, sizeof( server_address_ipv6 ), "[2001:db8:77::1]:%d", ROCKETNET_XDP_VETH_PORT );
+    snprintf( server_address_ipv6, sizeof( server_address_ipv6 ), "[%s]:%d", net.near6, ROCKETNET_XDP_VETH_PORT );
 
     struct rocketnet_client_transport_t * clients[2];
     clients[0] = rocketnet_xdp_veth_client( server_address );
@@ -11208,27 +11437,34 @@ static void rocketnet_xdp_serves_both_families( const char * case_name )
     struct rocketnet_server_transport_config_t refusal_config;
     rocketnet_server_transport_dev_config( &refusal_config );
 
-    char ipv4_address[64];
-    snprintf( ipv4_address, sizeof( ipv4_address ), "10.77.2.1:%d", ROCKETNET_XDP_VETH_PORT );
-    char link_local[64];
+    char ipv4_address[256];
+    snprintf( ipv4_address, sizeof( ipv4_address ), "%s:%d", net.near4, ROCKETNET_XDP_VETH_PORT );
+    char link_local[256];
     snprintf( link_local, sizeof( link_local ), "[fe80::77]:%d", ROCKETNET_XDP_VETH_PORT );
-    char other_interface[64];
-    snprintf( other_interface, sizeof( other_interface ), "[2001:db8:78::1]:%d", ROCKETNET_XDP_VETH_PORT );
-    char wrong_port[64];
-    snprintf( wrong_port, sizeof( wrong_port ), "[2001:db8:77::1]:%d", ROCKETNET_XDP_VETH_PORT + 1 );
-    char same_family[64];
-    snprintf( same_family, sizeof( same_family ), "10.77.2.2:%d", ROCKETNET_XDP_VETH_PORT );
+    // the lo address is the case's own, from its slot, as lo is shared by
+    // every case in the kernel (tests/functional/xdp_test_net.h)
+    char lo_address[64];
+    snprintf( lo_address, sizeof( lo_address ), "2001:db8:78:%x::1", (unsigned) ( net.slot + 1 ) );
+    char other_interface[256];
+    snprintf( other_interface, sizeof( other_interface ), "[%s]:%d", lo_address, ROCKETNET_XDP_VETH_PORT );
+    char wrong_port[256];
+    snprintf( wrong_port, sizeof( wrong_port ), "[%s]:%d", net.near6, ROCKETNET_XDP_VETH_PORT + 1 );
+    char same_family[256];
+    snprintf( same_family, sizeof( same_family ), "%s:%d", net.far4, ROCKETNET_XDP_VETH_PORT );
 
     // port 0: a second address that does not parse reads as port 0, so only
     // the parse check refuses it with INVALID_ADDRESS here
-    char ipv4_port_zero[64];
-    snprintf( ipv4_port_zero, sizeof( ipv4_port_zero ), "10.77.2.1:0" );
+    char ipv4_port_zero[256];
+    snprintf( ipv4_port_zero, sizeof( ipv4_port_zero ), "%s:0", net.near4 );
 
     // the families on two interfaces: the IPv6 address on lo. the link-local
     // address is on the near end, so only the link-local checks refuse it
     // (an address on no interface the later lookup would refuse anyway)
-    rocketnet_xdp_veth_run( "ip addr add 2001:db8:78::1/128 dev lo nodad" );
-    rocketnet_xdp_veth_run( "ip addr add fe80::77/64 dev " ROCKETNET_XDP_VETH_NEAR " nodad" );
+    char command[1024];
+    snprintf( command, sizeof( command ), "ip addr replace %s/128 dev lo nodad", lo_address );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "ip addr add fe80::77/64 dev %s nodad", net.near_name );
+    rocketnet_xdp_veth_run( command );
 
     struct refusal_t
     {
@@ -11263,7 +11499,8 @@ static void rocketnet_xdp_serves_both_families( const char * case_name )
         rocketnet_check( status == refusals[i].status );
     }
 
-    rocketnet_xdp_veth_run( "ip addr del 2001:db8:78::1/128 dev lo" );
+    snprintf( command, sizeof( command ), "ip addr del %s/128 dev lo", lo_address );
+    rocketnet_xdp_veth_run( command );
 
     rocketnet_xdp_veth_teardown();
     rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: both families served, %d refusals refused", case_name, (int) ( sizeof( refusals ) / sizeof( refusals[0] ) ) );
@@ -11302,6 +11539,506 @@ void rocketnet_test_xdp_max_size_both_ways_ipv4()
 void rocketnet_test_xdp_max_size_both_ways_ipv6()
 {
     rocketnet_xdp_max_size_both_ways( true, "test_xdp_transport_max_size_both_ways_ipv6" );
+}
+
+// NATIVE ATTACH ONLY: a device whose driver has no native XDP (a dummy
+// device here) refuses the xdp transport by name; generic (skb) mode is
+// never used. A pin on xdp refuses the create; "auto" logs the refusal and
+// falls to the next transport. Root in a guest, as the veth cases.
+
+#define ROCKETNET_XDP_DUMMY_DEVICE "rnxdpdum0"
+
+static void rocketnet_xdp_dummy_teardown()
+{
+    if ( system( "ip link del " ROCKETNET_XDP_DUMMY_DEVICE " 2>/dev/null" ) != 0 )
+    {
+        // already gone
+    }
+
+    rocketnet_server_socket_forbid_commit();
+}
+
+// the transport create on address with the log captured at warn level;
+// returns the server, NULL when refused
+static struct rocketnet_server_transport_t * rocketnet_xdp_link_create( const char * transport, const char * address )
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 4;
+    config.num_xdp_queues = 1;
+    config.num_os_cpus = 1;
+    snprintf( config.transport, sizeof( config.transport ), "%s", transport );
+
+    rocketnet_test_captured_log[0] = '\0';
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, address, &config );
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
+
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "transport \"%s\" on %s: %s\n%s", transport, address,
+                      server ? rocketnet_server_transport_io_name( server ) : "refused", rocketnet_test_captured_log );
+
+    return server;
+}
+
+static void rocketnet_xdp_mount_bpffs()
+{
+    struct statfs bpffs;
+    if ( statfs( "/sys/fs/bpf", &bpffs ) != 0 || (uint64_t) bpffs.f_type != (uint64_t) 0xcafe4a11 )
+    {
+        rocketnet_xdp_veth_run( "mount -t bpf bpf /sys/fs/bpf" );
+    }
+}
+
+void rocketnet_test_xdp_no_native_attach_refused()
+{
+    atexit( rocketnet_xdp_dummy_teardown );
+    rocketnet_xdp_mount_bpffs();
+
+    if ( system( "ip link del " ROCKETNET_XDP_DUMMY_DEVICE " 2>/dev/null" ) != 0 )
+    {
+        // nothing left from an earlier run
+    }
+
+    rocketnet_xdp_veth_run( "ip link add " ROCKETNET_XDP_DUMMY_DEVICE " type dummy" );
+    rocketnet_xdp_veth_run( "ip addr add 10.77.9.1/24 dev " ROCKETNET_XDP_DUMMY_DEVICE );
+    rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_DUMMY_DEVICE " up" );
+    rocketnet_xdp_veth_run( "echo 2 > /sys/class/net/" ROCKETNET_XDP_DUMMY_DEVICE "/napi_defer_hard_irqs" );
+    rocketnet_xdp_veth_run( "echo 200000 > /sys/class/net/" ROCKETNET_XDP_DUMMY_DEVICE "/gro_flush_timeout" );
+
+#if ROCKETNET_DEV
+    rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
+
+    // the pin: refused, by name
+
+    struct rocketnet_server_transport_t * pinned = rocketnet_xdp_link_create( "xdp", "10.77.9.1:40412" );
+    const bool pinned_named = strstr( rocketnet_test_captured_log, "could not attach in native mode to " ROCKETNET_XDP_DUMMY_DEVICE ) != NULL;
+    if ( pinned )
+    {
+        rn_native_server_transport_stop_and_destroy( pinned );
+    }
+    rocketnet_check( pinned == NULL );
+    rocketnet_check( pinned_named );
+
+    // auto: the refusal is logged and the next transport is granted
+
+    struct rocketnet_server_transport_t * automatic = rocketnet_xdp_link_create( "auto", "10.77.9.1:40412" );
+    const bool auto_named = strstr( rocketnet_test_captured_log, "could not attach in native mode to " ROCKETNET_XDP_DUMMY_DEVICE ) != NULL &&
+                            strstr( rocketnet_test_captured_log, "server transport xdp refused. trying the next candidate" ) != NULL;
+    const bool auto_fell = automatic != NULL && strcmp( rocketnet_server_transport_io_name( automatic ), "xdp" ) != 0;
+    if ( automatic )
+    {
+        rn_native_server_transport_stop_and_destroy( automatic );
+    }
+    rocketnet_check( auto_fell );
+    rocketnet_check( auto_named );
+
+    rocketnet_xdp_dummy_teardown();
+}
+
+// 802.1Q: the server's address on a VLAN device of the near end of the pair.
+// The transport attaches to the near end, takes the client's frames tagged
+// (in the data, or stripped by tx VLAN offload on the far end) and tags every
+// frame it sends; the capture on the far end takes only frames tagged with
+// the VLAN ID. The max-size exchange both ways, as the untagged cases: the
+// largest datagram of each family in a frame 4 bytes longer than untagged.
+
+void rocketnet_test_xdp_vlan_tag_in_data_ipv4()
+{
+    rocketnet_xdp_veth_vlan = 77;
+    rocketnet_xdp_veth_vlan_tag_in_data = true;
+    rocketnet_xdp_max_size_both_ways( false, "test_xdp_transport_vlan_tag_in_data_ipv4" );
+}
+
+void rocketnet_test_xdp_vlan_tag_in_data_ipv6()
+{
+    rocketnet_xdp_veth_vlan = 77;
+    rocketnet_xdp_veth_vlan_tag_in_data = true;
+    rocketnet_xdp_max_size_both_ways( true, "test_xdp_transport_vlan_tag_in_data_ipv6" );
+}
+
+void rocketnet_test_xdp_vlan_tag_stripped_ipv4()
+{
+    rocketnet_xdp_veth_vlan = 4094;
+    rocketnet_xdp_veth_vlan_tag_in_data = false;
+    rocketnet_xdp_max_size_both_ways( false, "test_xdp_transport_vlan_tag_stripped_ipv4" );
+}
+
+// A capture on the near end, in this namespace: an AF_PACKET tap sees a frame
+// only after the XDP program passed it to the kernel stack, never one it
+// redirected. Returns the tcpdump pid once the pcap header is written.
+
+static pid_t rocketnet_xdp_veth_capture_near( const char * case_name, const char * filter, char * path, size_t path_bytes )
+{
+    snprintf( path, path_bytes, "/tmp/rocketnet_xdp_near_XXXXXX" );
+    const int fd = mkstemp( path );
+    rocketnet_check( fd >= 0 );
+    close( fd );
+
+    const pid_t pid = fork();
+    rocketnet_check( pid >= 0 );
+    if ( pid == 0 )
+    {
+        const int null_fd = open( "/dev/null", O_WRONLY );
+        if ( null_fd >= 0 )
+        {
+            dup2( null_fd, 1 );
+            dup2( null_fd, 2 );
+        }
+        execlp( "tcpdump", "tcpdump", "--immediate-mode", "-i", rocketnet_xdp_veth_net.near_name, "-n", "-U", "-s", "0", "-w", path, filter, (char *) NULL );
+        _exit( 127 );
+    }
+
+    bool ready = false;
+    const double wait_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - wait_start < 10.0 )
+    {
+        struct stat pcap_stat;
+        if ( stat( path, &pcap_stat ) == 0 && pcap_stat.st_size >= 24 )
+        {
+            ready = true;
+            break;
+        }
+        if ( waitpid( pid, NULL, WNOHANG ) == pid )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.01 );
+    }
+
+    if ( !ready )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: the near-end capture never became ready", case_name );
+    }
+    rocketnet_check( ready );
+    return pid;
+}
+
+// the lines of a pcap read back with each frame's tag, that contain every one
+// of the given texts
+static int rocketnet_xdp_veth_count_lines( const char * path, const char * text, const char * also )
+{
+    char command[256];
+    snprintf( command, sizeof( command ), "tcpdump -n -e -r %s 2>/dev/null", path );
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
+    int count = 0;
+    for ( const std::string & line : lines )
+    {
+        if ( line.find( text ) != std::string::npos && ( also == NULL || line.find( also ) != std::string::npos ) )
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+// OTHER VID AND UNTAGGED. The server's address is on VLAN 77 of the near end.
+// The client's address moves, on the far end, between three devices, and
+// each phase sends ROCKETNET_XDP_VETH_COUNT payloads with its own byte:
+//
+//   1. on the VLAN 77 device: the server's own VLAN. All are delivered.
+//   2. on a VLAN 78 device: another VLAN. The program passes each frame to
+//      the kernel stack: the near-end capture, which sees only frames the
+//      program passed, has every one. The redirected counter does not move,
+//      and the server delivers none.
+//   3. on the bare far end: untagged. The program redirects each frame to the
+//      server, which delivers it. This is the design, not a gap. A NIC with
+//      rx-vlan-offload on strips the tag before XDP runs, so a frame of the
+//      server's own VLAN reaches the program untagged and cannot be told from
+//      a frame sent with no tag (docs/LINUX.md, "A VLAN": the transport
+//      "takes only frames tagged with that VLAN ID (and untagged frames, which
+//      is how a NIC with rx-vlan-offload on delivers them)").
+//
+// The far-end capture shows each phase's frames on the wire as tagged 77,
+// tagged 78 and untagged. A static neighbor entry takes the place of ARP,
+// because nothing answers on VLAN 78 or untagged.
+
+static void rocketnet_xdp_vlan_other_vid_and_untagged( const char * case_name )
+{
+    rocketnet_xdp_veth_vlan = 77;
+    rocketnet_xdp_veth_vlan_tag_in_data = true;
+    char server_address[128];
+    struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
+    struct rocketnet_client_transport_t * client = rocketnet_xdp_veth_client( server_address );
+    rocketnet_check( rocketnet_xdp_veth_capture_present );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    const struct rocketnet_xdp_test_net_t & net = rocketnet_xdp_veth_net;
+    char far_device_77[32];
+    char far_device_78[32];
+    rocketnet_xdp_veth_vlan_device( 'w', far_device_77, sizeof( far_device_77 ) );
+    rocketnet_xdp_veth_vlan_device( 'y', far_device_78, sizeof( far_device_78 ) );
+
+    uint8_t near_mac[6];
+    {
+        char command[1024];
+        snprintf( command, sizeof( command ), "cat /sys/class/net/%s/address", net.near_name );
+        const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
+        rocketnet_check( lines.size() == 1 );
+        unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
+        rocketnet_check( sscanf( lines[0].c_str(), "%x:%x:%x:%x:%x:%x", &octet[0], &octet[1], &octet[2], &octet[3], &octet[4], &octet[5] ) == 6 );
+        for ( int i = 0; i < 6; i++ )
+        {
+            near_mac[i] = (uint8_t) octet[i];
+        }
+    }
+    char near_mac_text[32];
+    snprintf( near_mac_text, sizeof( near_mac_text ), "%02x:%02x:%02x:%02x:%02x:%02x", near_mac[0], near_mac[1], near_mac[2], near_mac[3], near_mac[4], near_mac[5] );
+
+    char near_pcap[64];
+    const pid_t near_capture = rocketnet_xdp_veth_capture_near( case_name, "vlan 78 and udp dst port 40411", near_pcap, sizeof( near_pcap ) );
+
+    const int count = ROCKETNET_XDP_VETH_COUNT;
+    const uint8_t phase_byte[3] = { 0xa7, 0xb8, 0xc0 };
+    int delivered[3] = { 0, 0, 0 };
+    uint64_t redirected_delta[3] = { 0, 0, 0 };
+
+    for ( int phase = 0; phase < 3; phase++ )
+    {
+        char command[1024];
+        if ( phase == 1 )
+        {
+            snprintf( command, sizeof( command ), "ip -n %s addr del %s/24 dev %s", net.netns, net.far4, far_device_77 );
+            rocketnet_xdp_veth_run( command );
+            snprintf( command, sizeof( command ), "ip -n %s link add link %s name %s type vlan id 78", net.netns, net.far_name, far_device_78 );
+            rocketnet_xdp_veth_run( command );
+            snprintf( command, sizeof( command ), "ip netns exec %s ethtool -K %s tx off >/dev/null", net.netns, far_device_78 );
+            rocketnet_xdp_veth_run( command );
+            snprintf( command, sizeof( command ), "ip -n %s link set %s up", net.netns, far_device_78 );
+            rocketnet_xdp_veth_run( command );
+            snprintf( command, sizeof( command ), "ip -n %s addr add %s/24 dev %s", net.netns, net.far4, far_device_78 );
+            rocketnet_xdp_veth_run( command );
+            snprintf( command, sizeof( command ), "ip -n %s neigh replace %s lladdr %s dev %s nud permanent", net.netns, net.near4, near_mac_text, far_device_78 );
+            rocketnet_xdp_veth_run( command );
+        }
+        else if ( phase == 2 )
+        {
+            snprintf( command, sizeof( command ), "ip -n %s addr del %s/24 dev %s", net.netns, net.far4, far_device_78 );
+            rocketnet_xdp_veth_run( command );
+            snprintf( command, sizeof( command ), "ip -n %s addr add %s/24 dev %s", net.netns, net.far4, net.far_name );
+            rocketnet_xdp_veth_run( command );
+            snprintf( command, sizeof( command ), "ip -n %s neigh replace %s lladdr %s dev %s nud permanent", net.netns, net.near4, near_mac_text, net.far_name );
+            rocketnet_xdp_veth_run( command );
+        }
+
+        uint8_t payload_out[100];
+        memset( payload_out, phase_byte[phase], sizeof( payload_out ) );
+        const uint64_t redirected_before = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED );
+
+        // a send every 10 ms, then 0.5 s for the last to land: every frame of
+        // the phase is judged before the next phase moves the address
+
+        int sent = 0;
+        start = rocketnet_platform_time();
+        double last_send = 0.0;
+        while ( rocketnet_platform_time() - start < 3.0 )
+        {
+            const double now = rocketnet_platform_time();
+            if ( sent < count && now - last_send >= 0.01 )
+            {
+                rocketnet_client_transport_send_packet( client, payload_out, (int) sizeof( payload_out ) );
+                sent++;
+                last_send = now;
+            }
+            rocketnet_client_transport_update( client, now );
+            rocketnet_server_transport_update( server, now );
+            rocketnet_server_transport_send_packets( server );
+
+            const int num_payloads = rocketnet_server_transport_num_payloads( server );
+            for ( int i = 0; i < num_payloads; i++ )
+            {
+                int payload_client_index, payload_bytes;
+                uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+                for ( int p = 0; p < 3; p++ )
+                {
+                    delivered[p] += payload_bytes == (int) sizeof( payload_out ) && payload[0] == phase_byte[p] ? 1 : 0;
+                }
+            }
+
+            static uint8_t packet[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
+            while ( rocketnet_client_transport_receive_packet( client, packet, (int) sizeof( packet ) ) > 0 )
+            {
+            }
+
+            if ( sent == count && now - last_send > 0.5 )
+            {
+                break;
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+        rocketnet_check( sent == count );
+
+        redirected_delta[phase] = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED ) - redirected_before;
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: phase %d (%s): sent %d, server delivered %d, xdp redirected moved by %llu", case_name, phase + 1,
+                          phase == 0 ? "VLAN 77, the server's" : ( phase == 1 ? "VLAN 78, another" : "untagged" ), sent, delivered[phase], (unsigned long long) redirected_delta[phase] );
+    }
+
+    kill( near_capture, SIGINT );
+    waitpid( near_capture, NULL, 0 );
+    if ( rocketnet_xdp_veth_capture_pid > 0 )
+    {
+        rocketnet_platform_sleep( 0.25 );
+        kill( rocketnet_xdp_veth_capture_pid, SIGINT );
+        waitpid( rocketnet_xdp_veth_capture_pid, NULL, 0 );
+        rocketnet_xdp_veth_capture_pid = -1;
+    }
+
+    // the wire, from the far end: the frames to the server, by tag; and the
+    // near end's kernel stack, which sees only frames the program passed
+
+    char to_server[64];
+    snprintf( to_server, sizeof( to_server ), " > %.15s.%d: ", net.near4, ROCKETNET_XDP_VETH_PORT );
+    const int far_77 = rocketnet_xdp_veth_count_lines( rocketnet_xdp_veth_pcap, to_server, ": vlan 77, " );
+    const int far_78 = rocketnet_xdp_veth_count_lines( rocketnet_xdp_veth_pcap, to_server, ": vlan 78, " );
+    const int far_all = rocketnet_xdp_veth_count_lines( rocketnet_xdp_veth_pcap, to_server, NULL );
+    const int far_untagged = far_all - far_77 - far_78;
+    const int near_78 = rocketnet_xdp_veth_count_lines( near_pcap, to_server, ": vlan 78, " );
+    unlink( near_pcap );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: far end saw to the server %d tagged 77, %d tagged 78, %d untagged; the near end's kernel stack saw %d tagged 78", case_name, far_77, far_78, far_untagged, near_78 );
+
+    rocketnet_check( delivered[0] == count );
+    rocketnet_check( redirected_delta[0] >= (uint64_t) count );
+
+    rocketnet_check( delivered[1] == 0 );
+    rocketnet_check( redirected_delta[1] == 0 );
+    rocketnet_check( far_78 >= count );
+    rocketnet_check( near_78 >= count );
+
+    rocketnet_check( delivered[2] == count );
+    rocketnet_check( redirected_delta[2] >= (uint64_t) count );
+    rocketnet_check( far_untagged >= count );
+
+    rn_native_client_transport_stop_and_destroy( client );
+    rocketnet_xdp_veth_teardown();
+}
+
+void rocketnet_test_xdp_vlan_other_vid_and_untagged_ipv4()
+{
+    rocketnet_xdp_vlan_other_vid_and_untagged( "test_xdp_transport_vlan_other_vid_and_untagged_ipv4" );
+}
+
+// the stacked devices the transport refuses by name: QinQ, an 802.1ad VLAN,
+// a VLAN on a device that is neither a NIC nor veth, and the address on a
+// bond, a bridge or a macvlan. Each pin on xdp is refused with the reason;
+// each "auto" logs it and is granted the next transport.
+
+#define ROCKETNET_XDP_STACK_LOWER "rnxdpstk0"
+#define ROCKETNET_XDP_STACK_FAR  "rnxdpstk1"
+#define ROCKETNET_XDP_STACK_DUMMY "rnxdpstkd"
+
+static void rocketnet_xdp_stack_delete_links()
+{
+    if ( system( "ip link del " ROCKETNET_XDP_STACK_LOWER " 2>/dev/null; ip link del " ROCKETNET_XDP_STACK_DUMMY " 2>/dev/null; "
+                 "ip link del rnxdpbond 2>/dev/null; ip link del rnxdpbr 2>/dev/null" ) != 0 )
+    {
+        // already gone
+    }
+}
+
+// the end of the case: the links go and committing is forbidden again. Not
+// the start: a production build has no allow, so a forbid there would refuse
+// every create at its top, before the by-name refusal the case asserts
+
+static void rocketnet_xdp_stack_teardown()
+{
+    rocketnet_xdp_stack_delete_links();
+    rocketnet_server_socket_forbid_commit();
+}
+
+static void rocketnet_xdp_stack_refused( const char * address, const char * device, const char * reason )
+{
+    char wanted[128];
+    snprintf( wanted, sizeof( wanted ), "xdp transport refused: the public address is on %s", device );
+
+    struct rocketnet_server_transport_t * pinned = rocketnet_xdp_link_create( "xdp", address );
+    const bool pinned_named = strstr( rocketnet_test_captured_log, wanted ) != NULL && strstr( rocketnet_test_captured_log, reason ) != NULL;
+    if ( pinned )
+    {
+        rn_native_server_transport_stop_and_destroy( pinned );
+    }
+    if ( pinned || !pinned_named )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "FAILED: %s on %s: want refused, naming \"%s\" and \"%s\"", address, device, wanted, reason );
+    }
+    rocketnet_check( pinned == NULL );
+    rocketnet_check( pinned_named );
+
+    struct rocketnet_server_transport_t * automatic = rocketnet_xdp_link_create( "auto", address );
+    const bool auto_named = strstr( rocketnet_test_captured_log, wanted ) != NULL &&
+                            strstr( rocketnet_test_captured_log, "server transport xdp refused. trying the next candidate" ) != NULL;
+    const bool auto_fell = automatic != NULL && strcmp( rocketnet_server_transport_io_name( automatic ), "xdp" ) != 0;
+    if ( automatic )
+    {
+        rn_native_server_transport_stop_and_destroy( automatic );
+    }
+    rocketnet_check( auto_fell );
+    rocketnet_check( auto_named );
+}
+
+void rocketnet_test_xdp_vlan_stacked_devices_refused()
+{
+    atexit( rocketnet_xdp_stack_teardown );
+    rocketnet_xdp_mount_bpffs();
+    rocketnet_xdp_stack_delete_links();
+
+    rocketnet_xdp_veth_run( "ip link add " ROCKETNET_XDP_STACK_LOWER " type veth peer name " ROCKETNET_XDP_STACK_FAR );
+    rocketnet_xdp_veth_run( "ip link add " ROCKETNET_XDP_STACK_DUMMY " type dummy" );
+    rocketnet_xdp_veth_run( "ip link add link " ROCKETNET_XDP_STACK_LOWER " name rnxdpq.10 type vlan id 10" );
+    rocketnet_xdp_veth_run( "ip link add link rnxdpq.10 name rnxdpq.10.20 type vlan id 20" );
+    rocketnet_xdp_veth_run( "ip link add link " ROCKETNET_XDP_STACK_LOWER " name rnxdpad.30 type vlan proto 802.1ad id 30" );
+    rocketnet_xdp_veth_run( "ip link add link " ROCKETNET_XDP_STACK_DUMMY " name rnxdpdv.40 type vlan id 40" );
+    rocketnet_xdp_veth_run( "ip link add rnxdpbond type bond" );
+    rocketnet_xdp_veth_run( "ip link add rnxdpbr type bridge" );
+    rocketnet_xdp_veth_run( "ip link add link " ROCKETNET_XDP_STACK_LOWER " name rnxdpmv type macvlan mode bridge" );
+
+    rocketnet_xdp_veth_run( "ip addr add 10.77.11.1/24 dev rnxdpq.10.20" );
+    rocketnet_xdp_veth_run( "ip addr add 10.77.12.1/24 dev rnxdpad.30" );
+    rocketnet_xdp_veth_run( "ip addr add 10.77.13.1/24 dev rnxdpdv.40" );
+    rocketnet_xdp_veth_run( "ip addr add 10.77.14.1/24 dev rnxdpbond" );
+    rocketnet_xdp_veth_run( "ip addr add 10.77.15.1/24 dev rnxdpbr" );
+    rocketnet_xdp_veth_run( "ip addr add 10.77.16.1/24 dev rnxdpmv" );
+
+    const char * up[] = { ROCKETNET_XDP_STACK_LOWER, ROCKETNET_XDP_STACK_FAR, ROCKETNET_XDP_STACK_DUMMY, "rnxdpq.10", "rnxdpq.10.20",
+                          "rnxdpad.30", "rnxdpdv.40", "rnxdpbond", "rnxdpbr", "rnxdpmv" };
+    for ( size_t i = 0; i < sizeof( up ) / sizeof( up[0] ); i++ )
+    {
+        char command[128];
+        snprintf( command, sizeof( command ), "ip link set %s up", up[i] );
+        rocketnet_xdp_veth_run( command );
+    }
+
+#if ROCKETNET_DEV
+    rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
+
+    rocketnet_xdp_stack_refused( "10.77.11.1:40413", "rnxdpq.10.20", "QinQ" );
+    rocketnet_xdp_stack_refused( "10.77.12.1:40413", "rnxdpad.30", "802.1ad" );
+    rocketnet_xdp_stack_refused( "10.77.13.1:40413", "rnxdpdv.40", "stacked or virtual device" );
+    rocketnet_xdp_stack_refused( "10.77.14.1:40413", "rnxdpbond", "kind bond" );
+    rocketnet_xdp_stack_refused( "10.77.15.1:40413", "rnxdpbr", "kind bridge" );
+    rocketnet_xdp_stack_refused( "10.77.16.1:40413", "rnxdpmv", "kind macvlan" );
+
+    rocketnet_xdp_stack_teardown();
 }
 
 // the three hard-killed kinds on the xdp server cell. They live in the static
@@ -11440,34 +12177,34 @@ static bool wire_totals_drain( struct rocketnet_client_transport_t * client, str
     return false;
 }
 
-// The drain for an exchange over real UDP sockets, where the kernel may drop
-// a loopback datagram under machine load. Both counters are charged at the
-// hand-off, so a dropped datagram leaves the receiver behind the sender by a
-// constant count for good while both sides keep counting: that is loss, and
-// the caller may run its exchange once more. A receiver that stops counting
-// or falls further behind is a stall, and a receiver ahead of its sender is a
-// double count: both fail at once.
+// The drain for an exchange over real UDP sockets. Both counters are charged
+// at the hand-off to and from the kernel, so with nothing lost the totals
+// match within a few pumps. A receiver ahead of its sender is a double count
+// and fails at once. Totals that do not match within WIRE_DRAIN_SETTLE_PUMPS
+// never will: a datagram is gone. On a loaded Mac the kernel loses loopback
+// datagrams after a successful send, before recvmsg, with no UDP counter
+// moving (studio, 2026-11-12, six functional_production suites at once: the
+// sender's syscall count equalled packets_sent and recvmsg's count equalled
+// packets_received, and the deficit never closed). That ends this attempt;
+// the case decides whether to try again.
+
+#define WIRE_DRAIN_SETTLE_PUMPS 1000
 
 enum wire_drain_result_t
 {
     WIRE_DRAIN_EQUAL,
-    WIRE_DRAIN_CONSTANT_LOSS,
-    WIRE_DRAIN_FAILED
+    WIRE_DRAIN_LOST,
+    WIRE_DRAIN_DOUBLE_COUNT
 };
 
 static wire_drain_result_t wire_totals_drain_judged( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
                                                      double * time, const char * what )
 {
-    const int pumps = 5000;
-    const int window = 1000;
-
-    wire_totals_t c, s, c_window, s_window;
+    wire_totals_t c, s;
     memset( &c, 0, sizeof( c ) );
     memset( &s, 0, sizeof( s ) );
-    memset( &c_window, 0, sizeof( c_window ) );
-    memset( &s_window, 0, sizeof( s_window ) );
 
-    for ( int i = 0; i < pumps; i++ )
+    for ( int i = 0; i < WIRE_DRAIN_SETTLE_PUMPS; i++ )
     {
         wire_totals_pump( client, server, time, 1 );
 
@@ -11478,40 +12215,20 @@ static wire_drain_result_t wire_totals_drain_judged( struct rocketnet_client_tra
         {
             wire_totals_print( what, &c, &s );
             printf( "%s: a receiver counted more packets than its sender sent (a double count)\n", what );
-            return WIRE_DRAIN_FAILED;
+            return WIRE_DRAIN_DOUBLE_COUNT;
         }
 
         if ( s.packets_sent == c.packets_received && c.packets_sent == s.packets_received )
         {
             return WIRE_DRAIN_EQUAL;
         }
-
-        if ( i == pumps - window )
-        {
-            c_window = c;
-            s_window = s;
-        }
     }
-
-    const uint64_t up = c.packets_sent - s.packets_received;
-    const uint64_t down = s.packets_sent - c.packets_received;
-    const uint64_t up_before = c_window.packets_sent - s_window.packets_received;
-    const uint64_t down_before = s_window.packets_sent - c_window.packets_received;
-    const bool both_counting = c.packets_received > c_window.packets_received && s.packets_received > s_window.packets_received;
 
     wire_totals_print( what, &c, &s );
-    printf( "%s: after %d pumps the server is %llu packets behind the client and the client %llu behind the server (%llu and %llu %d pumps earlier)\n",
-            what, pumps, (unsigned long long) up, (unsigned long long) down,
-            (unsigned long long) up_before, (unsigned long long) down_before, window );
-
-    if ( up == up_before && down == down_before && both_counting )
-    {
-        printf( "%s: a constant deficit while both sides keep counting: datagrams lost on loopback\n", what );
-        return WIRE_DRAIN_CONSTANT_LOSS;
-    }
-
-    printf( "%s: the deficit moved or a receiver stopped counting: not loss\n", what );
-    return WIRE_DRAIN_FAILED;
+    printf( "%s: after %d pumps the server is %llu packets behind the client and the client %llu behind the server\n", what,
+            WIRE_DRAIN_SETTLE_PUMPS, (unsigned long long) ( c.packets_sent - s.packets_received ),
+            (unsigned long long) ( s.packets_sent - c.packets_received ) );
+    return WIRE_DRAIN_LOST;
 }
 
 // the drain for a later connection: the server's lifetime totals are larger
@@ -11811,12 +12528,23 @@ static bool wire_bytes_per_family_exchange( const char * public_address, const c
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, time );
     rocketnet_check( client != NULL );
-    rocketnet_check( wire_totals_connect( client, server, &time ) );
 
-    const wire_drain_result_t settled = wire_totals_drain_judged( client, server, &time, "wire_bytes_per_family baseline" );
-    rocketnet_check( settled != WIRE_DRAIN_FAILED );
+    // a handshake that never completes ends the attempt as loss does: under
+    // the machine's loss every handshake packet can be lost in turn. The
+    // case's deadline still fails a client that never connects.
 
-    const bool exchanged = settled == WIRE_DRAIN_EQUAL && wire_bytes_per_family_measure( client, server, &time, ip_udp_header_bytes );
+    bool exchanged = false;
+    if ( !wire_totals_connect( client, server, &time ) )
+    {
+        printf( "wire_bytes_per_family %s: the client did not connect within 5000 pumps\n", public_address );
+    }
+    else
+    {
+        const wire_drain_result_t settled = wire_totals_drain_judged( client, server, &time, "wire_bytes_per_family baseline" );
+        rocketnet_check( settled != WIRE_DRAIN_DOUBLE_COUNT );
+
+        exchanged = settled == WIRE_DRAIN_EQUAL && wire_bytes_per_family_measure( client, server, &time, ip_udp_header_bytes );
+    }
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
@@ -11830,7 +12558,8 @@ static bool wire_bytes_per_family_exchange( const char * public_address, const c
 }
 
 // N packets each way from a settled baseline, every counter delta exact.
-// false only when a loopback datagram was lost (a constant deficit).
+// false when the totals did not settle (a datagram was lost) or a keep-alive
+// crossed the measured window.
 
 static bool wire_bytes_per_family_measure( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
                                            double * time_in, int ip_udp_header_bytes )
@@ -11843,6 +12572,8 @@ static bool wire_bytes_per_family_measure( struct rocketnet_client_transport_t *
 
     const uint64_t client_ack_before = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED];
     const uint64_t server_ack_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_ACK_RECEIVED];
+    const uint64_t client_keep_alive_before = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED];
+    const uint64_t server_keep_alive_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED];
     const int payload_count = 4;
     const int payload_bytes = 64;
     uint8_t payload[64];
@@ -11883,9 +12614,24 @@ static bool wire_bytes_per_family_measure( struct rocketnet_client_transport_t *
 
     const wire_drain_result_t drained = wire_totals_drain_judged( client, server, &time, "wire_bytes_per_family exchange" );
     *time_in = time;
-    rocketnet_check( drained != WIRE_DRAIN_FAILED );
-    if ( drained == WIRE_DRAIN_CONSTANT_LOSS )
+    rocketnet_check( drained != WIRE_DRAIN_DOUBLE_COUNT );
+    if ( drained == WIRE_DRAIN_LOST )
     {
+        return false;
+    }
+
+    // the window must carry only the payloads and their acknowledgments. A
+    // drain that took longer than the keep-alive interval (a loaded machine
+    // starving the client's receive thread) lets a keep-alive cross it, whose
+    // size the test does not know: that window measures nothing exact, so
+    // the case tries again.
+
+    const uint64_t client_keep_alives = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] - client_keep_alive_before;
+    const uint64_t server_keep_alives = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] - server_keep_alive_before;
+    if ( client_keep_alives != 0 || server_keep_alives != 0 )
+    {
+        printf( "wire_bytes_per_family exchange: %llu keep-alives reached the server and %llu the client inside the measured window\n",
+                (unsigned long long) server_keep_alives, (unsigned long long) client_keep_alives );
         return false;
     }
 
@@ -11914,20 +12660,33 @@ static bool wire_bytes_per_family_measure( struct rocketnet_client_transport_t *
     return true;
 }
 
-// One lost loopback datagram is the machine, not the library: run the whole
-// exchange once more on a fresh server, client and sockets. A second loss, a
-// moving deficit, a stalled or double-counting receiver, and every exact
-// counter check still fail.
+// A lost loopback datagram is the machine, not the library, and on a Mac no
+// counter says so: run the whole exchange again on a fresh server, client and
+// sockets until one exchange settles cleanly, for at most half the case's
+// target time (the other half is the other family's). An exchange that never
+// settles in that time, a double count, and every exact counter check of a
+// clean window still fail.
 
 static void wire_bytes_per_family( const char * public_address, const char * connect_host, uint64_t client_id, int ip_udp_header_bytes )
 {
-    if ( wire_bytes_per_family_exchange( public_address, connect_host, client_id, ip_udp_header_bytes ) )
-    {
-        return;
-    }
+    const double deadline = rocketnet_platform_time() + ROCKETNET_FUNCTIONAL_CASE_TARGET_SECONDS * ROCKETNET_FUNCTIONAL_TIME_SCALE / 2.0;
 
-    printf( "wire_bytes_per_family %s: a loopback datagram was lost; running the exchange once more on fresh sockets\n", public_address );
-    rocketnet_check( wire_bytes_per_family_exchange( public_address, connect_host, client_id, ip_udp_header_bytes ) );
+    for ( int attempt = 1;; attempt++ )
+    {
+        if ( wire_bytes_per_family_exchange( public_address, connect_host, client_id, ip_udp_header_bytes ) )
+        {
+            if ( attempt > 1 )
+            {
+                printf( "wire_bytes_per_family %s: attempt %d settled\n", public_address, attempt );
+            }
+            return;
+        }
+
+        const bool expired = rocketnet_platform_time() >= deadline;
+        printf( "wire_bytes_per_family %s: attempt %d did not settle cleanly; %s\n", public_address, attempt,
+                expired ? "the case's deadline has passed" : "running the exchange again on fresh sockets" );
+        rocketnet_check( !expired );
+    }
 }
 
 void test_transport_wire_bytes_per_family()
@@ -12087,6 +12846,8 @@ extern void windows_server_counts_oversize_as_prefilter_too_large_rio();
 extern void windows_server_counts_runt_as_prefilter_too_short_rio();
 extern void windows_client_drops_oversize_and_garbage_ipv4();
 extern void windows_client_drops_oversize_and_garbage_ipv6();
+extern void windows_client_drops_oversize_and_garbage_iocp_ipv4();
+extern void windows_client_drops_oversize_and_garbage_iocp_ipv6();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv6();
 // Windows lifecycle stress: 1000 cycles per case with handles, threads and
@@ -12297,6 +13058,22 @@ static struct rocketnet_client_t * rocketnet_test_oom_sweep_client( rocketnet_te
     struct rocketnet_client_t * client = rocketnet_client_create( state, &config, &status );
     rocketnet_check( client );
     return client;
+}
+
+// rocketnet_time keeps the origin of the first init across term and init:
+// it never goes backwards (rocketnet.h: monotonic elapsed seconds). Real
+// clock, so functional.
+
+void rocketnet_test_time_keeps_its_origin_across_reinit()
+{
+    while ( rocketnet_time() < 0.02 )
+    {
+    }
+
+    const double before = rocketnet_time();
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_time() >= before );
 }
 
 static void rocketnet_test_oom_sweep( const char * server_transport, const char * client_transport )
@@ -13599,6 +14376,13 @@ static void msgx_client_pair_create( struct msgx_client_pair_t * pair, const cha
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", server_transport );
     rocketnet_loss_gate_begin( &pair->gate, "msgx client wire" );
+    // a server created at the IPv6 wildcard advertises the IPv4 wildcard;
+    // an IPv4 token names an address the server advertises only when the
+    // server is created naming it too (t12 rule 6)
+    if ( server_bind[0] == '[' && token_host[0] != '[' )
+    {
+        snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", token_host );
+    }
     pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( pair->server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), server_transport ) == 0 );
@@ -14003,6 +14787,13 @@ static void iocp_client_pair_create( struct iocp_client_pair_t * pair, const cha
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
+    // a server created at the IPv6 wildcard advertises the IPv4 wildcard;
+    // an IPv4 token names an address the server advertises only when the
+    // server is created naming it too (t12 rule 6)
+    if ( server_bind[0] == '[' && token_host[0] != '[' )
+    {
+        snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", token_host );
+    }
     pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( pair->server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), "portable" ) == 0 );
@@ -14216,6 +15007,9 @@ static bool rocketnet_test_a_transport_pin_is_set() { return !rocketnet_test_ser
 // registers on the hub, so the case is taken out of the suite under a pin
 static bool rocketnet_test_no_transport_pin_is_set() { return !rocketnet_test_a_transport_pin_is_set(); }
 
+// a case that needs a second cpu this process may run on (destroy_early_keep.cpp)
+static bool rocketnet_test_two_usable_cpus() { return suite_usable_cpus() >= 2; }
+
 // these cases create their server on port 0 (the port-zero law: the kernel
 // grants the port), and xdp refuses that create because it cannot discover a
 // kernel-granted port, so a whole-suite server pin of xdp takes them out of
@@ -14395,7 +15189,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_client_destroy_early_threaded_frees", test_client_destroy_early_threaded_frees, NULL },
     { "test_server_destroy_early_threaded_frees", test_server_destroy_early_threaded_frees, NULL },
-    { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
+    { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, rocketnet_test_two_usable_cpus },
     { "test_server_destroy_early_threaded_keeps_then_frees", test_server_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
     { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
@@ -14435,6 +15229,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
     { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
+    { "test_time_keeps_its_origin_across_reinit", rocketnet_test_time_keeps_its_origin_across_reinit, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, rocketnet_test_server_pin_allows_gso },
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
@@ -14582,6 +15377,12 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_xdp_transport_gateway_change_while_serving", rocketnet_test_xdp_gateway_change_while_serving, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_over_mtu_frame_refused_ipv4", rocketnet_test_xdp_over_mtu_refused_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_serves_both_families", rocketnet_test_xdp_serves_both_families, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_no_native_attach_refused", rocketnet_test_xdp_no_native_attach_refused, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_vlan_tag_in_data_ipv4", rocketnet_test_xdp_vlan_tag_in_data_ipv4, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_vlan_tag_in_data_ipv6", rocketnet_test_xdp_vlan_tag_in_data_ipv6, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_vlan_tag_stripped_ipv4", rocketnet_test_xdp_vlan_tag_stripped_ipv4, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_vlan_other_vid_and_untagged_ipv4", rocketnet_test_xdp_vlan_other_vid_and_untagged_ipv4, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_vlan_stacked_devices_refused", rocketnet_test_xdp_vlan_stacked_devices_refused, rocketnet_test_xdp_veth_runs_here },
 #if ROCKETNET_DEV
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
@@ -14632,6 +15433,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_gso_transport_server_io_pin", rocketnet_test_server_transport_io_pin_gso, rocketnet_test_server_pin_allows_gso },
     { "test_io_uring_transport_server_io_pin", rocketnet_test_server_transport_io_pin_io_uring, rocketnet_test_server_pin_allows_io_uring },
     { "test_xdp_transport_server_io_pin", rocketnet_test_server_transport_io_pin_xdp, rocketnet_test_server_pin_allows_xdp },
+#if ROCKETNET_XDP && ROCKETNET_DEV
+    { "test_xdp_transport_create_refuses_link_local", rocketnet_test_xdp_create_refuses_link_local, NULL },
+#endif // #if ROCKETNET_XDP && ROCKETNET_DEV
     { "test_server_transport_io_ladder_fall", rocketnet_test_server_transport_io_ladder_fall, rocketnet_test_server_pin_allows_gso },
     { "test_gso_transport_server_probe", rocketnet_test_server_gso_probe, NULL },
     { "test_gso_transport_server_wire_ipv4", rocketnet_test_server_gso_wire_ipv4, NULL },
@@ -14643,6 +15447,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_gso_client_transport_wire_ipv6", rocketnet_test_gso_client_wire_ipv6, NULL },
     { "test_gso_client_transport_wire_plain", rocketnet_test_gso_client_wire_plain, NULL },
     { "test_gso_client_transport_wire_gro", rocketnet_test_gso_client_wire_gro, NULL },
+    { "test_gso_client_transport_wire_gro_simulated", rocketnet_test_gso_client_wire_gro_simulated, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
 #if ROCKETNET_DEV
@@ -14753,6 +15558,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_windows_server_counts_runt_as_prefilter_too_short_rio", windows_server_counts_runt_as_prefilter_too_short_rio, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6, NULL },
+    { "test_windows_client_drops_oversize_and_garbage_iocp_ipv4", windows_client_drops_oversize_and_garbage_iocp_ipv4, NULL },
+    { "test_windows_client_drops_oversize_and_garbage_iocp_ipv6", windows_client_drops_oversize_and_garbage_iocp_ipv6, NULL },
     { "test_windows_per_packet_receive_counts_empty_datagram_ipv4", windows_per_packet_receive_counts_empty_datagram_ipv4, NULL },
     { "test_windows_per_packet_receive_counts_empty_datagram_ipv6", windows_per_packet_receive_counts_empty_datagram_ipv6, NULL },
     { "test_windows_lifecycle_ledger", rocketnet_test_windows_lifecycle_ledger, NULL },
@@ -14950,6 +15757,10 @@ static int rocketnet_functional_here[rocketnet_functional_num_tests];
 // the name a SKIPPED line prints for a row's runs_here predicate
 static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
 {
+    if ( predicate == rocketnet_test_two_usable_cpus )
+    {
+        return "rocketnet_test_two_usable_cpus";
+    }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if ( predicate == rocketnet_server_uring_available )
     {

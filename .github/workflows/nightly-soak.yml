@@ -244,7 +244,7 @@ jobs:
           [ "$xdp_status" = 0 ] || { echo "LOAD cell=xdp $line"; xdp_err; echo "LOAD cell=xdp FAIL load in the guest exited $xdp_status"; exit 1; }
           check_cell xdp xdp "$line" || { xdp_err; exit 1; }
 
-      - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (18 cases, 0 skipped)
+      - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (19 cases, 0 skipped)
         if: runner.os == 'Linux'
         run: bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest
 
@@ -650,8 +650,10 @@ jobs:
       # library bytes by --assert-flat (private bytes are printed, not
       # asserted: tests/soak/soak.c), which also fails a run the impairment
       # leaves no drops or refused duplicates in. The server transport is
-      # pinned and the granted name and the applied link settings are checked
-      # from the run's own lines.
+      # pinned, and so is the client: Windows's own client transport, iocp, so
+      # the platform client runs under the simulator too (the portable cell
+      # above is the portable-client control). The granted names and the
+      # applied link settings are checked from the run's own lines.
       - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and library bytes)
         shell: bash
         run: |
@@ -665,7 +667,7 @@ jobs:
           resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1; }
           for transport in iocp rio; do
             log="build/soak-windows/${transport}.log"
-            if env ROCKETNET_SERVER_TRANSPORT="$transport" ROCKETNET_CLIENT_TRANSPORT=portable \
+            if env ROCKETNET_SERVER_TRANSPORT="$transport" ROCKETNET_CLIENT_TRANSPORT=iocp \
                 ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
                 ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
                 ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
@@ -681,14 +683,15 @@ jobs:
             lf="$log.lf"
             tr -d '\r' < "$log" > "$lf"
             server=$(summary "$lf" server_transport_io)
+            client=$(summary "$lf" client_transport_io)
             link_ok=1
             for end in server client; do
               grep -qx "soak link simulator: $end $want_link" "$lf" || link_ok=0
             done
-            if [ "$status" -eq 0 ] && [ "$server" = "$transport" ] && [ "$link_ok" = 1 ]; then
-              echo "SOAK cell=$transport PASS server=$server seconds=$seconds verified=$(summary "$lf" verified) handles=$(resources "$lf" handles) threads=$(resources "$lf" threads) private_bytes=$(resources "$lf" private_bytes) link=impaired missing=$(summary "$lf" client_to_server_missing)/$(summary "$lf" server_to_client_missing) duplicates_refused=$(summary "$lf" duplicates_refused_at_server)/$(summary "$lf" duplicates_refused_at_client) log=$log"
+            if [ "$status" -eq 0 ] && [ "$server" = "$transport" ] && [ "$client" = iocp ] && [ "$link_ok" = 1 ]; then
+              echo "SOAK cell=$transport PASS server=$server client=$client seconds=$seconds verified=$(summary "$lf" verified) handles=$(resources "$lf" handles) threads=$(resources "$lf" threads) private_bytes=$(resources "$lf" private_bytes) link=impaired missing=$(summary "$lf" client_to_server_missing)/$(summary "$lf" server_to_client_missing) duplicates_refused=$(summary "$lf" duplicates_refused_at_server)/$(summary "$lf" duplicates_refused_at_client) log=$log"
             else
-              echo "SOAK cell=$transport FAIL exit=$status server=${server:-none} link_as_asked=$link_ok log=$log"
+              echo "SOAK cell=$transport FAIL exit=$status server=${server:-none} client=${client:-none} link_as_asked=$link_ok log=$log"
               failures=$((failures + 1))
             fi
           done

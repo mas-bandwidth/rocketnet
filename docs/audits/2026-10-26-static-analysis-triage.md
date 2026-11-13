@@ -290,6 +290,23 @@ them, and the baseline does not grow.
   `(size_t) ( segments * ROCKETNET_URING_TEST_PAYLOAD_BYTES )`, with
   segments asserted 1 to 64 and a 100-byte payload. Dispositioned.
 
+## Shared Linux socket open (2026-11-12)
+
+The gso and io_uring transports' copies of the reuseport socket open moved
+into one function, `rocketnet_server_udp_open` in
+`rocketnet_server_udp_linux.cpp`. Each finding was read at its site; the code
+is the same calls, and the baseline shrinks.
+
+- `concurrency-mt-unsafe` (`strerror` in the open's error lines): 9 baselined
+  in each copy, 18 in all, are now 9 in the shared file. The log text gained the
+  transport name as a `%s` argument, so the flagged lines and their keys
+  changed; the 9 new keys are baselined in place of the 18.
+- `dangerousTypeCast` `69049200f5209448` and `b2e0abadbf37f64e`: the bind and
+  getsockname casts of a `sockaddr_storage` to `struct sockaddr *`, the sockets
+  API idiom, as dispositioned in each copy before (`5ebfad7efe1ccabd`,
+  `e068beb08c2933b9`, `4ada7137400cc0db`, `b24b6243b2aaa5ad`, now stale and
+  deleted). Dispositioned.
+
 ## Build and unit gates
 
 Strict warnings and warnings-as-errors are enabled by default. Four complete

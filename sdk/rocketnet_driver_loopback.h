@@ -90,7 +90,8 @@ void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, ui
 
 // Ephemeral range seam; test library only. A port 0 bind is given a port in
 // port .. 65535, so a small hub can hold the whole range. Set it before the
-// hub is created; 0 restores the full range from 49152.
+// hub is created; 0 restores the hub's own range: from 49152, or lower for a
+// hub of more than 16383 clients, so the range holds every endpoint.
 void rocketnet_loopback_test_first_port( uint16_t port );
 #endif // #if ROCKETNET_DEV
 

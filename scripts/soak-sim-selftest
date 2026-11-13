@@ -35,6 +35,13 @@
 #   8  delivery floor   -- with every server delivery dropped, the run MUST fail
 #                          with NO DELIVERY: a soak that verified no payload
 #                          soaked nothing (and the clean run must report both).
+#   9  oracle faults    -- one negative control per remaining oracle, each run
+#                          at the pinned seed and each required to fail naming
+#                          its own oracle and no other: a flipped payload byte
+#                          (PAYLOAD VERIFY FAILED), an arrival with no outcome
+#                          (CONSERVATION FAILED), a refusal no wire fault
+#                          explains (UNEXPLAINED REFUSAL), and a client never
+#                          updated (HANG, the watchdog).
 #   Legs 1 and 7 also require each run to pass: two failures can agree.
 
 set -u
@@ -194,6 +201,26 @@ fi
 if ! grep -q '^soak_sim delivery: [1-9][0-9]* payloads written, [1-9][0-9]* verified at the server' "$WORK/det_a.txt"; then
     fail "the clean run did not report payloads written and verified at the server"
 fi
+
+# ---------------------------------------------------------------------------
+# 9. the other oracles' negative controls: each fault must fail its own oracle
+
+ORACLES='PAYLOAD VERIFY FAILED|CONSERVATION FAILED|UNEXPLAINED REFUSAL|^HANG:'
+for leg in PAYLOAD:'PAYLOAD VERIFY FAILED' CONSERVATION:'CONSERVATION FAILED' REFUSAL:'UNEXPLAINED REFUSAL' WEDGE:'^HANG:'; do
+    name=${leg%%:*}
+    oracle=${leg#*:}
+    env "ROCKETNET_SOAK_SIM_FAULT_$name=1" ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/oracle_$name.txt" 2>&1
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        fail "ROCKETNET_SOAK_SIM_FAULT_$name=1 exited 0 -- that oracle is decoration"
+    elif ! grep -q -E "$oracle" "$WORK/oracle_$name.txt"; then
+        fail "ROCKETNET_SOAK_SIM_FAULT_$name=1 exited $status but never printed $oracle"
+    elif [ "$( grep -E "$ORACLES" "$WORK/oracle_$name.txt" | grep -c -v -E "$oracle" )" -ne 0 ]; then
+        fail "ROCKETNET_SOAK_SIM_FAULT_$name=1 also failed another oracle: $( grep -E "$ORACLES" "$WORK/oracle_$name.txt" | grep -v -E "$oracle" | head -1 )"
+    else
+        echo "leg 9  $name fault: red, exit $status, $( grep -m1 -E "$oracle" "$WORK/oracle_$name.txt" | cut -c1-80 )"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 

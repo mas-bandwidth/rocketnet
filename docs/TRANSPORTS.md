@@ -9,7 +9,8 @@ takes `auto`, the platform's order below, and the first transport that starts
 wins. Read the result with `rocketnet_server_transport_name` or
 `rocketnet_client_transport_name`. The ranks are the registry's
 (`sdk/rocketnet_drivers.inc`); a lower rank is tried first, "pin only" means
-`auto` never picks it and only a name selects it, and "-" means that endpoint
+`auto` never picks it and only a list of that one name selects it (in a
+longer list it is skipped), and "-" means that endpoint
 does not have the transport.
 
 | Transport | Platform | Server rank | Client rank | What it needs from the host |

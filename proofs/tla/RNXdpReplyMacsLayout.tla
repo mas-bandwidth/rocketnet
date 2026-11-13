@@ -17,8 +17,9 @@
 (*   Find(a, s)  rocketnet_xdp_reply_macs_find_state: the first slot of    *)
 (*               state s holding a, stopping at the first EMPTY slot       *)
 (*   Learn       rocketnet_xdp_reply_macs_learn: the address's LIVE entry, *)
-(*               else its ANSWERED one, else the first slot of the window  *)
-(*               not LIVE, else the LIVE entry learned longest ago         *)
+(*               else its ANSWERED one, else the first EMPTY slot of the   *)
+(*               window, else the ANSWERED entry of the window answered    *)
+(*               longest ago, else the LIVE entry learned longest ago      *)
 (*   Answer      rocketnet_xdp_reply_mac with a usable answered MAC and no *)
 (*               learned entry: rocketnet_xdp_reply_macs_answer, the       *)
 (*               address's ANSWERED entry, else the first EMPTY slot of    *)
@@ -43,6 +44,9 @@
 (*                     treated as empty                                    *)
 (*   EvictOldest       learn evicts the LIVE entry learned last, not first *)
 (*   InsertWindowExact learn's insert probes P + 1 slots, the lookups P    *)
+(*   LearnTakesEmptyFirst  learn takes the first slot of the window that   *)
+(*                     is not LIVE, another address's ANSWERED entry       *)
+(*                     before an EMPTY slot further on (the code before)   *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -54,10 +58,11 @@ CONSTANTS
     SkipOtherEntries,   \* find_state goes on past a slot that is not EMPTY and not a match
     EvictOldest,        \* learn's eviction takes the smallest learned stamp
     InsertWindowExact,  \* learn's insert loop probes P slots, as the lookups do
+    LearnTakesEmptyFirst, \* learn's insert takes an EMPTY slot before another address's ANSWERED entry
     NOADDR              \* the address field of a never-used slot (a model value)
 
 ASSUME N \in Nat \ {0} /\ P \in 1..N
-ASSUME \A f \in {SkipOtherEntries, EvictOldest, InsertWindowExact} : f \in BOOLEAN
+ASSUME \A f \in {SkipOtherEntries, EvictOldest, InsertWindowExact, LearnTakesEmptyFirst} : f \in BOOLEAN
 
 Slots == 0..(N - 1)
 EMPTY == "empty"
@@ -101,11 +106,18 @@ Lookup(a) ==
 
 LearnWindow == IF InsertWindowExact THEN P ELSE P + 1
 
-\* learn's insert: the first slot of the window that is not LIVE, else the
-\* oldest LIVE one (the window is then all LIVE)
+\* learn's insert: the first EMPTY slot of the window, else the oldest
+\* ANSWERED one, else the oldest LIVE one (the window is then all LIVE);
+\* ~LearnTakesEmptyFirst is the code before, the first slot not LIVE
 LearnFree(a) == { i \in 0..(LearnWindow - 1) : st[Probe(a, i)] # LIVE }
+LearnEmpty(a) == { i \in 0..(LearnWindow - 1) : st[Probe(a, i)] = EMPTY }
+LearnOld(a) == { Probe(a, i) : i \in 0..(LearnWindow - 1) } \cap { x \in Slots : st[x] = ANSWERED }
 LearnSlot(a) ==
-    IF LearnFree(a) # {}
+    IF LearnTakesEmptyFirst /\ LearnEmpty(a) # {}
+    THEN Probe(a, CHOOSE i \in LearnEmpty(a) : \A j \in LearnEmpty(a) : i <= j)
+    ELSE IF LearnTakesEmptyFirst /\ LearnOld(a) # {}
+    THEN CHOOSE x \in LearnOld(a) : \A y \in LearnOld(a) : stamp[x] <= stamp[y]
+    ELSE IF ~LearnTakesEmptyFirst /\ LearnFree(a) # {}
     THEN Probe(a, CHOOSE i \in LearnFree(a) : \A j \in LearnFree(a) : i <= j)
     ELSE LET W == { Probe(a, i) : i \in 0..(LearnWindow - 1) }
          IN IF EvictOldest
@@ -156,7 +168,9 @@ Learn(a, m) ==
           /\ abs' = IF found THEN [ abs EXCEPT ![a] = Entry(LIVE, m) ]
                     ELSE Displace(x, a, Entry(LIVE, m))
           /\ badEviction' = (badEviction \/
-                              (evicts /\ \E y \in W : st[y] = LIVE /\ stamp[y] < stamp[x]))
+                              (evicts /\ \E y \in W : st[y] = LIVE /\ stamp[y] < stamp[x]) \/
+                              (~found /\ st[x] = ANSWERED /\
+                               \E y \in W : st[y] = EMPTY \/ (st[y] = ANSWERED /\ stamp[y] < stamp[x])))
     /\ UNCHANGED home
 
 \* rocketnet_xdp_reply_mac with a usable answered MAC and no gateway: a
@@ -237,7 +251,8 @@ NoEntryPastEmpty ==
                               /\ \A j \in 0..(i - 1) : st[Probe(addr[x], j)] # EMPTY
 
 \* an eviction takes only the entry of its kind longest unrenewed in the
-\* window, and an answer never displaces a learned entry
+\* window, a learn takes another address's answered entry only when its
+\* window has no EMPTY slot, and an answer never displaces a learned entry
 EvictOnlyOldest == ~badEviction
 
 =============================================================================

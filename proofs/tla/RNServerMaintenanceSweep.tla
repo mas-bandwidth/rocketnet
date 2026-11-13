@@ -14,11 +14,16 @@
 (* link-layer destination (ROCKETNET_TRANSPORT_PACKET_UNREACHABLE, xdp    *)
 (* with no MAC for the address) is per-address and does not clear on the *)
 (* next update: the sweep moves past that slot and serves the rest.       *)
+(* So does a start the transport refuses with room left for any other     *)
+(* reason (an address its socket cannot carry, rocketnet_driver.h,        *)
+(* counted SEND_FAILED): the code tests the room after the refusal and    *)
+(* breaks only when it is gone.                                           *)
 (*                                                                         *)
 (* SkipUnreachable = FALSE is the reversed witness: an unreachable        *)
 (* refusal is treated as a full staging and ends the sweep with the       *)
 (* cursor on that slot.  Every later update starts there and stops at     *)
 (* once, so no reachable slot is ever served again; BoundedWait fails.    *)
+(* SkipRefused = FALSE is the same witness for a refusal with room left.  *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -26,13 +31,16 @@ CONSTANTS
     N,                  \* client slots
     MaxRoom,            \* most frames the staging takes in one update
     Unreachable,        \* slots whose address has no link-layer destination
-    SkipUnreachable     \* the rule: an unreachable refusal advances the cursor
+    Refused,            \* slots whose start the transport refuses with room left
+    SkipUnreachable,    \* the rule: an unreachable refusal advances the cursor
+    SkipRefused         \* the rule: a refusal with room left advances the cursor
 
 Slots == 0 .. (N - 1)
-Reachable == Slots \ Unreachable
+Reachable == Slots \ (Unreachable \cup Refused)
 
 ASSUME N >= 2 /\ MaxRoom >= 1 /\ Unreachable \subseteq Slots
-       /\ SkipUnreachable \in BOOLEAN
+       /\ Refused \subseteq Slots /\ Unreachable \cap Refused = {}
+       /\ SkipUnreachable \in BOOLEAN /\ SkipRefused \in BOOLEAN
 
 VARIABLES
     cursor,     \* maintenance_next_client
@@ -98,6 +106,16 @@ SweepStep ==
        ELSE IF i \in Unreachable
        THEN IF SkipUnreachable
             THEN \* counted SEND_NO_LINK_ADDRESS; the keep-alive stays due
+                 /\ cursor' = next
+                 /\ offset' = offset + 1
+                 /\ UNCHANGED << sweeping, first, room, served, wait >>
+            ELSE \* the defect: treated as a full staging
+                 /\ cursor' = i
+                 /\ EndSweepVars
+                 /\ UNCHANGED << offset, first, room, served >>
+       ELSE IF i \in Refused
+       THEN IF SkipRefused
+            THEN \* counted SEND_FAILED; the room is left, so the sweep goes on
                  /\ cursor' = next
                  /\ offset' = offset + 1
                  /\ UNCHANGED << sweeping, first, room, served, wait >>

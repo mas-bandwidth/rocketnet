@@ -4,16 +4,25 @@
 Reads every workflow under .github/workflows and:
   * refuses any `runs-on:` value, matrix os/runner value, or expression branch
     that resolves to a GitHub-hosted label (ubuntu-*, macos-*, windows-*);
-  * refuses any `run:` line that installs software onto the runner
-    (sudo apt-get install, brew install, npm -g/--global, go install,
-    cargo install, pip install, dotnet tool install -g, luarocks install
-    without --tree).
+  * refuses any `run:` command that installs software onto the runner:
+    a package manager's install verb in any spelling (sudo, env and VAR=value
+    words, flags between the tool and the verb, quoted or chained commands:
+    apt-get, apt, dnf, yum, zypper, apk add, pacman -S, pip/pip3/python -m
+    pip, brew, cargo, go, gem, snap, choco, winget, port, npm -g/--global,
+    dotnet tool install -g, luarocks install without --tree), and a
+    downloaded script piped into a shell;
+  * refuses an unguarded `uses: actions/setup-*` step (it installs a toolchain).
 
 A workflow+job pair is exempt when the job is listed in
 scripts/fleet-runners-exceptions.txt with one of:
   TEMPORARY  naming the card that removes the entry (nightly workflows today)
   DISABLED   the job carries `if: false` and a `# DISABLED:` comment
-  GUEST      an install inside a VM the job boots
+  GUEST      an install inside a VM the job boots: exempts the install rule
+             only, never a hosted label, and a GUEST row whose job has no
+             install the rule sees is stale and refused
+
+The last line printed counts the install commands seen and how many were
+guarded or exempt, so a rule that sees nothing is visible.
 
 A `run:` step guarded by `if: runner.environment == 'github-hosted'` is
 allowed: it never runs on the fleet. This mirrors the rule that guarded
@@ -34,17 +43,31 @@ EXC_FILE = os.environ.get("ROCKETNET_EXC_FILE") or os.path.join(HERE, "fleet-run
 # ubuntu label is four bare digits (ubuntu-24.04, ubuntu-latest, ubuntu-slim).
 HOSTED = re.compile(r"^(?:macos-|windows-|ubuntu-(?![0-9]{4}$))")
 
-INSTALL_CHECKS = [
-    (re.compile(r"\bsudo\s+apt-get\s+install\b"), "apt-get install"),
-    (re.compile(r"\bbrew\s+install\b"), "brew install"),
-    (re.compile(r"\bnpm\s+(?:i|install)\s+(?:-\S+\s+)*-g\b"), "npm -g"),
-    (re.compile(r"\bnpm\s+(?:i|install)\s+(?:-\S+\s+)*--global\b"), "npm --global"),
-    (re.compile(r"\bgo\s+install\b"), "go install"),
-    (re.compile(r"\bcargo\s+install\b"), "cargo install"),
-    (re.compile(r"\bpip\s+install\b"), "pip install"),
-    (re.compile(r"\bdotnet\s+tool\s+install\s+-g\b"), "dotnet tool install -g"),
-    (re.compile(r"\bluarocks\s+install\b"), "luarocks install"),
-]
+# package manager -> the verbs that install onto the machine
+INSTALL_VERBS = {
+    "apt-get": ("install", "build-dep"),
+    "apt": ("install",),
+    "aptitude": ("install",),
+    "dnf": ("install", "groupinstall"),
+    "yum": ("install", "groupinstall"),
+    "zypper": ("install", "in"),
+    "apk": ("add",),
+    "brew": ("install", "reinstall", "bundle"),
+    "cargo": ("install",),
+    "go": ("install",),
+    "gem": ("install",),
+    "snap": ("install",),
+    "choco": ("install",),
+    "winget": ("install",),
+    "port": ("install",),
+    "pip": ("install",),
+    "pip3": ("install",),
+    "pipx": ("install",),
+}
+# words that run the next word as the command
+PREFIX_WORDS = ("sudo", "env", "command", "exec", "nice", "time", "nohup", "doas")
+PIPE_TO_SHELL = re.compile(r"\b(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:ba|z|da)?sh\b")
+SETUP_ACTION = re.compile(r"^\s*actions/setup-[\w-]+")
 
 GUARDED_OK = re.compile(r"runner\.environment.*github-hosted|github-hosted.*runner\.environment")
 
@@ -59,7 +82,7 @@ class JobInfo(object):
         self.include_rows = []
         self.scalar_os = []
         self.scalar_runner = []
-        self.steps = []  # (run_line, guard, run_text)
+        self.steps = []  # [run_line, guard, run_text, uses]
 
 
 def split_top_level(text):
@@ -169,7 +192,7 @@ def parse_workflow(lines):
     def flush():
         # the job's last step and last include row end where the job does
         if job is not None:
-            if cur_step is not None and cur_step[2].strip():
+            if cur_step is not None and (cur_step[2].strip() or cur_step[3]):
                 job.steps.append(cur_step)
             if cur_row is not None:
                 job.include_rows.append(cur_row)
@@ -250,7 +273,7 @@ def parse_workflow(lines):
                     job.include_rows.append(cur_row)
                 cur_row = {}
                 body = stripped[2:].strip()
-                body = re.split(r"\s+#", body, 1)[0].strip()
+                body = re.split(r"\s+#", body, maxsplit=1)[0].strip()
                 if body.startswith("{") and body.endswith("}"):
                     inner = body[1:-1]
                     for kv in split_top_level(inner):
@@ -299,7 +322,7 @@ def parse_workflow(lines):
             continue
 
         if indent == 6 and (stripped.startswith("- ") or stripped.startswith('-')):
-            if cur_step is not None and cur_step[2].strip():
+            if cur_step is not None and (cur_step[2].strip() or cur_step[3]):
                 job.steps.append(cur_step)
             cur_step = None
             run_collect = None
@@ -308,17 +331,20 @@ def parse_workflow(lines):
                 if rm is not None:
                     body = rm.group(1).strip()
                     guard = ""
-                    cur_step = [lineno, guard, ""]
+                    cur_step = [lineno, guard, "", ""]
                     if body and body not in ("|", ">"):
                         cur_step[2] = body
                     else:
                         run_collect = "|" if body == "|" else ">"
                         run_indent = indent
                 else:
-                    cur_step = [lineno, "", ""]
+                    cur_step = [lineno, "", "", ""]
                     run_collect = None
             else:
-                cur_step = [lineno, "", ""]
+                cur_step = [lineno, "", "", ""]
+                um = re.search(r"\buses:\s*(\S+)", stripped)
+                if um is not None:
+                    cur_step[3] = um.group(1)
             continue
 
         if cur_step is not None and indent > 6:
@@ -335,6 +361,7 @@ def parse_workflow(lines):
                 cur_step[1] = stripped[len("if:"):].strip().strip('"').strip("'")
                 continue
             if stripped.startswith("uses:"):
+                cur_step[3] = stripped[len("uses:"):].strip()
                 continue
             if run_collect is not None and indent > run_indent:
                 if run_collect == "|":
@@ -372,13 +399,77 @@ def disabled(job):
     return bool(job.if_false and job.disabled_comment)
 
 
-def install_violations(run_text, guard):
-    if guard and GUARDED_OK.search(guard):
-        return []
+def shell_commands(run_text):
+    """Split a run: body into simple commands: lines (with backslash
+    continuations joined), then on ; && || | and the inside of quoted
+    strings (a command handed to ssh, bash -c or a container is still a
+    command), each as a list of words."""
+    text = re.sub(r"\\\n", " ", run_text)
+    text = re.sub(r"[\"']", " ; ", text)
+    commands = []
+    for line in text.split("\n"):
+        line = re.split(r"(?:^|\s)#", line, maxsplit=1)[0]
+        for part in re.split(r"&&|\|\||;|\||\$\(|`|\(|\)", line):
+            words = part.split()
+            if words:
+                commands.append(words)
+    return commands
+
+
+def command_word(words):
+    """Drop sudo/env-style prefixes, their flags and VAR=value words."""
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w):
+            i += 1
+            continue
+        if w in PREFIX_WORDS:
+            i += 1
+            while i < len(words) and words[i].startswith("-"):
+                # sudo -u user: the flag's value is the next word
+                if words[i] in ("-u", "-g", "-C", "-D", "-U"):
+                    i += 1
+                i += 1
+            continue
+        break
+    return words[i:]
+
+
+def install_label(words):
+    words = command_word(words)
+    if not words:
+        return None
+    tool = os.path.basename(words[0])
+    rest = words[1:]
+    if re.match(r"^python[0-9.]*$", tool) and rest[:2] == ["-m", "pip"]:
+        tool, rest = "pip", rest[2:]
+    verbs = INSTALL_VERBS.get(tool)
+    if verbs is not None:
+        for w in rest:
+            if w in verbs:
+                return "%s %s" % (tool, w)
+        return None
+    if tool == "pacman" and any(re.match(r"^-S[a-z]*$", w) for w in rest):
+        return "pacman -S"
+    if tool == "npm" and any(w in ("i", "install", "add") for w in rest) and \
+            any(w in ("-g", "--global") or w.startswith("--location=global") for w in rest):
+        return "npm -g"
+    if tool == "dotnet" and rest[:2] == ["tool", "install"] and any(w in ("-g", "--global") for w in rest):
+        return "dotnet tool install -g"
+    if tool == "luarocks" and "install" in rest and not any(w.startswith("--tree") for w in rest):
+        return "luarocks install"
+    return None
+
+
+def install_violations(run_text):
     out = []
-    for pat, label in INSTALL_CHECKS:
-        if pat.search(run_text):
+    for words in shell_commands(run_text):
+        label = install_label(words)
+        if label:
             out.append(label)
+    if PIPE_TO_SHELL.search(run_text):
+        out.append("downloaded script piped into a shell")
     return out
 
 
@@ -386,6 +477,10 @@ def main():
     exit_code = 0
     exc = load_exceptions()
     seen_jobs = set()
+    installs_seen = 0
+    installs_guarded = 0
+    installs_exempt = 0
+    guest_used = set()
 
     if not os.path.isdir(WF_DIR):
         print("no workflow directory: %s" % WF_DIR, file=sys.stderr)
@@ -415,7 +510,7 @@ def main():
                     if HOSTED.match(label):
                         hosted_found.append(label)
             if hosted_found:
-                if exc_type in ("TEMPORARY", "GUEST"):
+                if exc_type == "TEMPORARY":
                     pass
                 elif exc_type == "DISABLED":
                     if not disabled(job):
@@ -427,11 +522,22 @@ def main():
                                      % (name, job.runs_on_line or 1, name, job.name, ", ".join(sorted(set(hosted_found)))))
                     exit_code = 1
 
-            for run_line, guard, run_text in job.steps:
-                for vio in install_violations(run_text, guard):
+            for run_line, guard, run_text, uses in job.steps:
+                guarded = bool(guard and GUARDED_OK.search(guard))
+                found = install_violations(run_text)
+                if uses and SETUP_ACTION.match(uses):
+                    found.append("uses: %s" % uses.split("@")[0])
+                for vio in found:
+                    installs_seen += 1
+                    if guarded:
+                        installs_guarded += 1
+                        continue
                     if exc_type in ("TEMPORARY", "GUEST"):
+                        installs_exempt += 1
+                        guest_used.add(wf_job)
                         continue
                     if exc_type == "DISABLED" and disabled(job):
+                        installs_exempt += 1
                         continue
                     sys.stdout.write("%s:%d: %s / %s %s on the runner; replace with a presence check or exempt the job\n"
                                      % (name, run_line, name, job.name, vio))
@@ -443,7 +549,13 @@ def main():
                 sys.stdout.write("%s: exception row %s %s %s names no job in %s\n"
                                  % (os.path.basename(EXC_FILE), wf, job_name, rows[job_name], WF_DIR))
                 exit_code = 1
+            elif rows[job_name] == "GUEST" and job_name != "*" and (wf, job_name) not in guest_used:
+                sys.stdout.write("%s: GUEST row %s %s exempts no install the rule sees; delete the row\n"
+                                 % (os.path.basename(EXC_FILE), wf, job_name))
+                exit_code = 1
 
+    print("check-fleet-runners: install commands seen %d: guarded for hosted runners %d, exempt %d, refused %d"
+          % (installs_seen, installs_guarded, installs_exempt, installs_seen - installs_guarded - installs_exempt))
     return exit_code
 
 

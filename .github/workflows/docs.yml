@@ -65,6 +65,8 @@ jobs:
           python3 tools/docs/check_links.py
           sh tools/docs/check_agents_md.sh all
           python3 tools/docs/check_getting_started.py
+          python3 tools/docs/check_doc_c_blocks.py --self-test
+          python3 tools/docs/check_doc_c_blocks.py
           python3 tools/docs/check_fuzz_harnesses.py --self-test
           python3 tools/docs/check_fuzz_harnesses.py
 
@@ -82,6 +84,13 @@ jobs:
             echo "::error::make docs-undocumented printed $count undocumented symbol(s) (exit $status); document each one in sdk/rocketnet.h"
             exit 1
           fi
+
+      # zero rows above passes, so the same MrDocs, config and parser are run
+      # on a scratch copy whose header holds one undocumented export: exactly
+      # that row and a refusal, or a warn-* key, the log's wording or the
+      # parser has stopped the gate from seeing anything
+      - name: Prove the undocumented-symbol gate sees a planted symbol
+        run: sh tools/docs/mrdocs_control.sh
 
       - name: Upload HTML reference documentation
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2

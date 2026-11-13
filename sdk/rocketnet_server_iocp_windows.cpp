@@ -1870,9 +1870,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
 
 failed:
 #if ROCKETNET_DEV
-    rocketnet_warn( "iocp transport create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
+    rocketnet_warn( "iocp transport create failed (%s, Win32 %lu, test stage %d)", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text, GetLastError(), fail_stage );
 #else
-    rocketnet_warn( "iocp transport create failed (Winsock %d, Win32 %lu)", WSAGetLastError(), GetLastError() );
+    rocketnet_warn( "iocp transport create failed (%s, Win32 %lu)", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text, GetLastError() );
 #endif // #if ROCKETNET_DEV
     // The wait has no bound, unlike RIO's inline drain: here the workers and
     // the send worker may already run on this memory, so it can be neither

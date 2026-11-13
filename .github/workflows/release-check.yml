@@ -1,8 +1,7 @@
 # rocketnet release checks (#111).
 #
 # Each job states its trigger and its reader above itself. This file is
-# about the release rather than the build, so it is separate from ci.yml,
-# as serialize splits them.
+# about the release rather than the build, so it is separate from ci.yml.
 
 name: Release Check
 

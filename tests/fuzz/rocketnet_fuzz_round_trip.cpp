@@ -47,6 +47,7 @@
 #include <sodium.h>
 
 #include "../portable_crt.h"
+#include "rocketnet_fuzz_quiet.h"
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
@@ -82,11 +83,24 @@ static uint64_t fuzz_u64( struct fuzz_reader_t * r )
     return v;
 }
 
+// the next bytes of the input, then zeros once it runs out, as fuzz_u8 reads
+// them one at a time. One copy and one fill: gcc 15 on aarch64 vectorizes the
+// byte loop this replaces and its -Wstringop-overflow then reports a 16-byte
+// store past a 32-byte array the loop never writes beyond (every caller passes
+// the array's own size).
+
 static void fuzz_bytes( struct fuzz_reader_t * r, uint8_t * out, size_t bytes )
 {
-    for ( size_t i = 0; i < bytes; i++ )
+    const size_t left = r->pos < r->size ? r->size - r->pos : 0;
+    const size_t take = bytes < left ? bytes : left;
+    if ( take > 0 )
     {
-        out[i] = fuzz_u8( r );
+        memcpy( out, r->data + r->pos, take );
+        r->pos += take;
+    }
+    if ( take < bytes )
+    {
+        memset( out + take, 0, bytes - take );
     }
 }
 
@@ -530,7 +544,10 @@ static void fuzz_write_seed( const char * dir, const char * name, uint8_t select
 
 static void fuzz_write_seeds( const char * dir )
 {
-    static uint8_t body[2048];
+    // room for seed 4, which carries the whole replay window: 512 bytes at the
+    // default history, 4096 at ROCKETNET_HISTORY_PACKETS 32768
+
+    static uint8_t body[2048 + sizeof( ( (struct rocketnet_replay_protection_t *) 0 )->window )];
     memset( body, 0, sizeof( body ) );
 
     // 0, 1, 6: the fields at their defaults
@@ -643,7 +660,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
         abort();
     }
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     char seed_dir[1024];
     if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )

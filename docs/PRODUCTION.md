@@ -215,6 +215,30 @@ end-to-end verification across both Go and C# backends):
 python3 tools/run_backend_examples.py --build build-production --production
 ```
 
+### Spread joins over time
+
+When many clients join one server at once, the backend is expected to spread
+the issue of their connect tokens over time, so their connection requests do
+not all arrive in the same instant. The server takes at most
+`handshakes_per_update` connection requests (default 16) to the signature check
+in one update, as its defence against handshake CPU floods. A request past that
+is dropped and the client sends it again at its send rate, 10 times a second,
+with the return cookie it holds; that cookie lives about 3 seconds, and the
+client must finish within its token's `timeout_seconds` (default 10).
+
+The rule: the server can process at most `handshakes_per_update` times its
+update rate connection requests each second, for example 16 x 60 = 960 a
+second at 60 updates a second. Issue tokens to one server at a rate below that,
+spread evenly, and the requests are processed as they arrive. Measured at the
+defaults with a 100 Hz server update: 1000 clients whose requests were spread
+across the send interval all connected in about 1.6 seconds, while 1000 clients
+sending in the same instant did not all connect inside a 10-second token
+timeout (912 did).
+
+The example backends mint one token for each `GET /match/{clientID}` as it
+arrives and do not pace the issue; a backend serving many joins at once adds
+the pacing.
+
 ## 5. Handle token and handshake refusals safely
 
 Treat each stage separately:

@@ -5,8 +5,8 @@
 # only build-checks the Debug configuration, and windows / Debug runs Debug
 # unsanitized. This workflow runs the full unit and functional suites in DEBUG
 # (the asserts Release compiles out) under AddressSanitizer with both Windows
-# compilers, and runs Application Verifier over the unit suite and a
-# functional subset (tools/windows/appverif_run.py, which no other workflow
+# compilers, and runs Application Verifier over the unit suite and the whole
+# functional suite (tools/windows/appverif_run.py, which no other workflow
 # runs; ci.yml tests only its image naming). Three legs on the fleet's native
 # Windows runner, each in its own build directory and its own job:
 #
@@ -20,9 +20,9 @@
 #                 and AddressSanitizer each replace the heap). appverif_run.py
 #                 runs each executable under the Basics layers (Handles, Heaps,
 #                 Locks, Memory, TLS, Threadpool, Leak) and is red on any stop:
-#                 test.exe, test_lifecycle.exe and test_iocp.exe, then the
-#                 functional cases of ci.yml's Windows transport matrix once per
-#                 server transport (portable, iocp, rio). appverif writes Image
+#                 test.exe, test_lifecycle.exe and test_iocp.exe, then every
+#                 functional case once per server transport (portable, iocp,
+#                 rio), through tools/run_functional.sh. appverif writes Image
 #                 File Execution Options in HKLM, so the runner's account must be
 #                 allowed to: the first step proves it can, and the leg is red
 #                 with APPVERIF-REFUSED when it cannot.
@@ -183,33 +183,59 @@ jobs:
           python tools/windows/appverif_run.py --xml logs/appverif-iocp.xml -- "$LEG_BIN/test_iocp.exe" 2>&1 | tr -d '\r' | tee iocp.log || rc=1
           exit "$rc"
 
-      - name: Functional subset under Application Verifier, per server transport
+      # every functional case, once per server transport, as the ASan legs run
+      # functional.exe whole. appverif_run.py verifies a copy of the binary
+      # under its own image name; the suite runner starts each case as a child
+      # of that same image (GetModuleFileNameW, tests/suite_runner.h), and
+      # Image File Execution Options are keyed by image name, so every child is
+      # verified too and appverif_run exports one log per process. Its own
+      # lines go to a report file (--report), so the suite's log is the suite's
+      # alone: run_functional.sh holds it to the leg's skips (expected_skips.txt,
+      # legs windows-dev-appverif-<transport>) and to the registry. A pass also
+      # needs appverif_run's PASS line, and a name line in the log for every
+      # case functional.exe --list names under the same pin.
+      - name: Functional suite under Application Verifier, per server transport
         if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg == 'appverif' }}
         run: |
           set -euo pipefail
           mkdir -p logs
-          # the cases of ci.yml's Windows transport matrix, each pinned to one server transport
-          cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
+          # the exec rows: their names, from the functional registry's exec table
+          exec_rows=$(sed -n 's/.*{ *"\(test_[a-z0-9_]*\)", *"test[a-z0-9_]*",.*/\1/p' tests/functional/main.cpp tests/functional/unit_case_memory.cpp | sort -u | paste -sd '|' -)
+          [ -n "$exec_rows" ] || { echo "FAIL no exec rows read from tests/functional/main.cpp"; exit 1; }
           failed=0
-          ran=0
           for server in portable iocp rio; do
-            for case in $cases; do
-              log="logs/functional.$server.$case.log"
-              if ROCKETNET_SERVER_TRANSPORT=$server python tools/windows/appverif_run.py --xml "logs/appverif-functional.$server.$case.xml" -- "$LEG_BIN/functional.exe" --run "$case" 2>&1 | tr -d '\r' > "$log"; then rc=0; else rc=$?; fi
-              ran=$((ran + 1))
-              # a pass is exit 0, the case's own name printed, no skip, and appverif_run's PASS line
-              if [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" && grep -q '^appverif_run: PASS' "$log"; then
-                echo "PASS server=$server $case ($(grep -o 'appverif_run: PASS.*' "$log"))"
-              else
-                echo "FAIL server=$server $case (exit $rc)"
-                grep -E 'appverif_run: (STOP|FAIL)|\[SKIPPED' "$log" | sed 's/^/    /' || echo "    (no appverif_run STOP or FAIL line, no skip)"
-                tail -n 5 "$log" | sed 's/^/    /'
-                failed=1
-              fi
-            done
+            log="logs/functional.$server.log"
+            # the cases a run under this pin starts (--list reads the same
+            # environment and the same predicates as the run)
+            ROCKETNET_SERVER_TRANSPORT=$server "$LEG_BIN/functional.exe" --list | tr -d '\r' > "logs/functional.$server.list"
+            listed=$(awk '/^test_/ { n++ } END { print n + 0 }' "logs/functional.$server.list")
+            report="logs/appverif-functional.$server.report"
+            : > "$report"
+            verify=(python tools/windows/appverif_run.py --xml "logs/appverif-functional.$server.xml" --report "$report" -- "$LEG_BIN/functional.exe")
+            rc=0
+            case $server in
+              portable) ROCKETNET_SERVER_TRANSPORT=portable bash tools/run_functional.sh dev-appverif-portable --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+              iocp)     ROCKETNET_SERVER_TRANSPORT=iocp bash tools/run_functional.sh dev-appverif-iocp --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+              rio)      ROCKETNET_SERVER_TRANSPORT=rio bash tools/run_functional.sh dev-appverif-rio --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+            esac
+            skipped=$(awk '/^SKIPPED / { n++ } END { print n + 0 }' "$log")
+            # every listed registry row printed its own name line in the run;
+            # the exec rows (tests/functional/main.cpp) run a sibling binary and
+            # print that binary's cases instead, and run_functional.sh's
+            # check_test_environment.py holds them and every row to the registry
+            unrun=$(awk 'NR == FNR { ran[$0] = 1; next } /^test_/ && !($0 in ran) { print }' "$log" "logs/functional.$server.list" | grep -cvxE "$exec_rows" || [ $? = 1 ])
+            # an empty log is no run at all (awk would read the list as the log)
+            if [ ! -s "$log" ]; then unrun=$listed; fi
+            if [ "$rc" = 0 ] && grep -q '^appverif_run: PASS' "$report" && [ "$listed" -gt 0 ] && [ "$unrun" = 0 ]; then
+              echo "PASS server=$server: $listed cases listed, all ran; $skipped skipped ($(grep -o 'appverif_run: PASS.*' "$report"))"
+            else
+              echo "FAIL server=$server (exit $rc): $listed cases listed, $unrun of them did not run, $skipped skipped"
+              awk '/^appverif_run: (STOP|FAIL)/ && n++ < 20 { print "    " $0 }' "$report"
+              awk '/check failed|FAILED/ && n++ < 10 { print "    " $0 }' "$log"
+              tail -n 5 "$log" | sed 's/^/    /'
+              failed=1
+            fi
           done
-          echo "appverif functional subset: $ran runs"
-          [ "$ran" = 12 ] || { echo "FAIL expected 12 runs (4 cases x 3 server transports), ran $ran"; exit 1; }
           exit "$failed"
 
       # GitHub expressions have no replace(): the artifact name's ref and leg slug is made here

@@ -17,12 +17,12 @@ sequenced compare made at the wrong width or with the wrong boundary.
 
 | Site | Code | Model |
 |---|---|---|
-| `rn_sequenced_in_turn`, `sdk/rocketnet_channel_sequenced.cpp:377`, `:340` | `held_gap = ( sequencing - held->sequencing ) & mask`; superseded at 0 or at or past the half range | `InTurn`, `hg` |
-| `rn_sequenced_in_turn`, `sdk/rocketnet_channel_sequenced.cpp:396`, `:357` | `sequence_gap = ( sequencing - rx->sequenced_watermark ) & mask`; stale at or past the half range | `InTurn`, `wg` |
-| `rn_channels_dispatch_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:474`, `:420` | `delta = ( ordering - rx->ordered_read ) & mask`; stale at or past the half range, in turn at 0 | `Arrive`, `delta` |
-| `rn_channels_dispatch_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:523`, `:464`, `:467` | the future hold: `gap` and `sequence_gap`, the newer by ordering then sequencing kept | `Future`, `g`, `sg` |
-| `rn_channels_drain_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:644`, `:579` | the hold's `gap = ( ordering - rx->ordered_read ) & mask` after an ordered delivery | `OpenEpoch`, `g` |
-| `rn_channels_deliver_sequenced`, `sdk/rocketnet_channel.cpp:478`, `:438` | the delivery's own check, then `sequenced_watermark = ( sequencing + 1 ) & mask` | `DeliverOK`, `wm'` |
+| `rn_sequenced_in_turn`, `sdk/rocketnet_channel_sequenced.cpp` | `held_gap = ( sequencing - held->sequencing ) & mask`; superseded at 0 or at or past the half range | `InTurn`, `hg` |
+| `rn_sequenced_in_turn`, `sdk/rocketnet_channel_sequenced.cpp` | `sequence_gap = ( sequencing - rx->sequenced_watermark ) & mask`; stale at or past the half range | `InTurn`, `wg` |
+| `rn_channels_dispatch_sequenced`, `sdk/rocketnet_channel_sequenced.cpp` | `delta = ( ordering - rx->ordered_read ) & mask`; stale at or past the half range, in turn at 0 | `Arrive`, `delta` |
+| `rn_channels_dispatch_sequenced`, `sdk/rocketnet_channel_sequenced.cpp` | the future hold: `gap` and `sequence_gap`, the newer by ordering then sequencing kept | `Future`, `g`, `sg` |
+| `rn_channels_drain_sequenced`, `sdk/rocketnet_channel_sequenced.cpp` | the hold's `gap = ( ordering - rx->ordered_read ) & mask` after an ordered delivery | `OpenEpoch`, `g` |
+| `rn_channels_deliver_sequenced`, `sdk/rocketnet_channel.cpp` | the delivery's own check, then `sequenced_watermark = ( sequencing + 1 ) & mask` | `DeliverOK`, `wm'` |
 
 An unmasked difference is the uint32 subtraction: modulo `CounterMod` in the
 model (2^32 in the code), a multiple of `Mod`.
@@ -90,13 +90,13 @@ Each writes one compare of the code wrong, as a one-line defect would.
 
 | Case | Defect | Declared invariant |
 |---|---|---|
-| `MCRNSequencingWrapBrokenDeltaUnmasked.cfg` | `:418` `delta = ordering - rx->ordered_read`, the mask left out | `NewerNeverDiscarded` |
-| `MCRNSequencingWrapBrokenDeltaBoundary.cfg` | `:420` `delta > ROCKETNET_MESSAGE_HALF_RANGE` | `HoldAhead` |
-| `MCRNSequencingWrapBrokenBlockGapUnmasked.cfg` | `:337` `held_gap = sequencing - held->sequencing`, the mask left out | `NewerNeverDiscarded` |
-| `MCRNSequencingWrapBrokenWatermarkUnmasked.cfg` | `:356` `sequence_gap = sequencing - rx->sequenced_watermark`, the mask left out | `NewerNeverDiscarded` |
-| `MCRNSequencingWrapBrokenWatermarkBoundary.cfg` | `:357` `sequence_gap > ROCKETNET_MESSAGE_HALF_RANGE` | `NothingSilent` |
-| `MCRNSequencingWrapBrokenHoldGapUnmasked.cfg` | `:463` `gap = ordering - held_ordering`, the mask left out | `NewerNeverDiscarded` |
-| `MCRNSequencingWrapBrokenDrainGapUnmasked.cfg` | `:576` `gap = ordering - rx->ordered_read`, the mask left out | `NewerNeverDiscarded` |
+| `MCRNSequencingWrapBrokenDeltaUnmasked.cfg` | `delta = ordering - rx->ordered_read`, the mask left out | `NewerNeverDiscarded` |
+| `MCRNSequencingWrapBrokenDeltaBoundary.cfg` | `delta > ROCKETNET_MESSAGE_HALF_RANGE` | `HoldAhead` |
+| `MCRNSequencingWrapBrokenBlockGapUnmasked.cfg` | `held_gap = sequencing - held->sequencing`, the mask left out | `NewerNeverDiscarded` |
+| `MCRNSequencingWrapBrokenWatermarkUnmasked.cfg` | `sequence_gap = sequencing - rx->sequenced_watermark`, the mask left out | `NewerNeverDiscarded` |
+| `MCRNSequencingWrapBrokenWatermarkBoundary.cfg` | `sequence_gap > ROCKETNET_MESSAGE_HALF_RANGE` | `NothingSilent` |
+| `MCRNSequencingWrapBrokenHoldGapUnmasked.cfg` | `gap = ordering - held_ordering`, the mask left out | `NewerNeverDiscarded` |
+| `MCRNSequencingWrapBrokenDrainGapUnmasked.cfg` | `gap = ordering - rx->ordered_read`, the mask left out | `NewerNeverDiscarded` |
 
 A signed compare of the unmasked difference (`(int32_t)( a - b ) < 0`) reads a
 wrapped newer value as older exactly as the unsigned unmasked one does, so the
@@ -105,10 +105,10 @@ unmasked witnesses stand for both.
 Three compares have no witness, because no defect at them can fail under the
 honest network:
 
-- `:340` `held_gap > HALF_RANGE`: the in-turn block passed the watermark and
+- `held_gap > HALF_RANGE`: the in-turn block passed the watermark and
   no newer record has been delivered since, so a record in turn is within
   `Half - 1` of it either way; `held_gap` never equals the half range.
-- `:464` `sequence_gap` unmasked, or `:467` `sequence_gap > HALF_RANGE`: two
+- `sequence_gap` unmasked, or `sequence_gap > HALF_RANGE`: two
   records of one future epoch both lie in `0 .. Half - 1` (its watermark is 0
   until it opens), so their difference never wraps and never reaches the half
   range. A sender more than 2^23 sequenced sends into an epoch the receiver
@@ -142,7 +142,7 @@ counted stale; masked, `sequence_gap` is 1 and it is delivered.
 `MCRNSequencingWrapBrokenWatermarkBoundary.cfg`: from sequencing 6 records 7, 8
 and 9 are delivered (watermark 10, wire 2) while record 6 is still in flight,
 exactly the half range behind. `(6 - 2) & mask` is the half range; `>` lets it
-through, and `rn_channels_deliver_sequenced` (`sdk/rocketnet_channel.cpp:480`)
+through, and `rn_channels_deliver_sequenced` (`sdk/rocketnet_channel.cpp`)
 refuses it, so `rn_sequenced_in_turn` returns `ROCKETNET_CHANNEL_DISPATCH_NONE`
 with nothing counted (a code-4 record's number is not released either).
 

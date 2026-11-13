@@ -348,22 +348,37 @@ static void test_dst_budget_queued_sequenced_seed_84959() { dst_quiet_window_see
 static void test_dst_budget_queued_sequenced_seed_93289() { dst_quiet_window_seed_passes( 93289 ); }
 
 REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_69363 );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_budget_queued_sequenced_seed_69363, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_71434 );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_budget_queued_sequenced_seed_71434, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_84959 );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_budget_queued_sequenced_seed_84959, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_93289 );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_budget_queued_sequenced_seed_93289, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_same_seed_same_trace );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_same_seed_same_trace, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_schedule_same_seed_same_trace );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_schedule_same_seed_same_trace, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_clock_back_reaches_endpoints );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_clock_back_reaches_endpoints, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_seq_gap_exceeds_history );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_seq_gap_exceeds_history, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_burst_releases_a_batch_in_one_step );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_burst_releases_a_batch_in_one_step, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_dup_storm_duplicates_payloads );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_dup_storm_duplicates_payloads, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_seeds_differ );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_seeds_differ, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_substreams_independent );
 REGISTER_UNIT_TEST( test_dst_seed_range_uint64_max_terminates );
 REGISTER_UNIT_TEST( test_dst_fail_names_seed );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_fail_names_seed, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_server_kick_reaches_slot_holder );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_server_kick_reaches_slot_holder, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_reliable_timeout_ends_connections_cleanly );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_reliable_timeout_ends_connections_cleanly, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_duplicate_server_ack_explained );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_duplicate_server_ack_explained, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 
 static void test_dst_steps_refused_past_int_range()
 {
@@ -419,7 +434,9 @@ static void test_dst_witness_foreign_ack_fails()
 }
 
 REGISTER_UNIT_TEST( test_dst_witness_ordered_swap_fails );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_witness_ordered_swap_fails, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_witness_foreign_ack_fails );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_witness_foreign_ack_fails, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 
 // The outage schedules (docs/DST.md, "Fault schedules"): a drawn subset of
 // the clients goes dark for T - 1 s and every dark session survives it, its
@@ -477,5 +494,8 @@ static void test_dst_witness_outage_bright_fails()
 }
 
 REGISTER_UNIT_TEST( test_dst_outage_holds_dark_sessions );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_outage_holds_dark_sessions, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_outage_past_times_out_both_ends );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_outage_past_times_out_both_ends, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_witness_outage_bright_fails );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_witness_outage_bright_fails, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8

@@ -39,7 +39,11 @@ NAMES = (
     ("the seri" + "alize library",
      re.compile(r"mas-bandwidth/seri" + r"alize|\bseri" + r"alize\.h\b|\bseri" + r"alize library\b|\bseri" + r"alize's"
                 r"|\bseri" + r"alize (?:pin|header|stream)\b|\b(?:Bit" + r"Reader|Bit" + r"Writer|Read" + r"Stream"
-                r"|Write" + r"Stream|Measure" + r"Stream)\b",
+                r"|Write" + r"Stream|Measure" + r"Stream)\b"
+                # the library as a noun: the subject of a verb ("as seri" + "alize splits them") or an item of a
+                # list ("(soak, seri" + "alize)"); the verb ("seri" + "alize access") stays allowed
+                r"|\bseri" + r"alize (?:does|did|has|had|is|was|keeps|kept|splits|split|uses|used|names|calls|puts)\b"
+                r"|[(,] ?seri" + r"alize ?[,)]",
                 re.IGNORECASE)),
     ("Network " + "Next",
      re.compile(r"network ?" + r"next|\bnext\.h\b|\bnext_[a-z0-9_]+\.(?:h|c|cpp)\b", re.IGNORECASE)),
@@ -57,6 +61,25 @@ RECORDS_ALLOWED = (
     (re.compile(r"^docs/QUALIFICATION-[^/]*\.md$"), "dated qualification records, kept as written"),
     (re.compile(r"^docs/RELEASE-NOTES-[^/]*\.md$"), "published release notes, kept as written"),
 )
+
+NOTES = re.compile(r"^docs/RELEASE-NOTES-v(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z0-9.-]+))?\.md$")
+
+
+def notes_version(path):
+    """A sort key for a release-notes path (a pre-release sorts before its release), or None."""
+    m = NOTES.match(path)
+    if not m:
+        return None
+    pre = m.group(4)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), 0 if pre else 1, pre or "")
+
+
+def newest_notes(files):
+    """The newest release-notes file: it is checked like any file. Until its tag exists it is unpublished, and
+    once tagged it was checked while written, so it is clean; only the older notes are kept as written. A
+    checkout without tags (CI's) cannot ask git which are published, so the version order decides."""
+    notes = [name for name in files if notes_version(name)]
+    return max(notes, key=notes_version) if notes else None
 
 
 def allowed(path):
@@ -94,8 +117,9 @@ def tracked_files(root):
 
 def check(root, files):
     found = []
+    newest = newest_notes(files)
     for name in files:
-        if allowed(name):
+        if allowed(name) and name != newest:
             continue
         found.extend(violations_in_path(name))
         path = root / name
@@ -127,7 +151,8 @@ def main(argv=None):
               "state the reason in RocketNet's terms, or cite the standard it comes from. "
               "The dated records that are kept live in tools/check_other_libraries.py.")
         return 1
-    kept = sum(1 for name in files if allowed(name))
+    newest = newest_notes(files)
+    kept = sum(1 for name in files if allowed(name) and name != newest)
     print(f"OK: no other network library named in {len(files) - kept} tracked files "
           f"({kept} dated records kept as written)")
     return 0

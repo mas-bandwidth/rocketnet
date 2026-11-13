@@ -55,7 +55,11 @@ class CoverageTest(unittest.TestCase):
         (self.repo / "tests" / "test_channels.cpp").write_text(CHANNELS_TABLE)
         (self.repo / "tests" / "test_unit_fixture.cpp").write_text(UNIT_FILE)
         # a registration outside the unit suite's sources is not a unit case
+        # when CMakeLists.txt builds its file into another binary
         (self.repo / "tests" / "source_audit_fixture.cpp").write_text("REGISTER_UNIT_TEST( test_source_audit );\n")
+        (self.repo / "CMakeLists.txt").write_text(
+            'file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_*.cpp" )\n'
+            "add_executable(source_audit\n    tests/source_audit_fixture.cpp\n)\n")
         self.lists = Path(self.temp.name) / "lists"
         self.lists.mkdir()
 
@@ -134,6 +138,66 @@ class CoverageTest(unittest.TestCase):
         errors = coverage.check(self.repo, [full], [])
         self.assertEqual(len(errors), 1, errors)
         self.assertIn("test_file_a is registered in both", errors[0])
+
+    # VERIFY-3 W10: a registering file built by nothing, at either place the review planted one
+    def test_a_registration_built_by_nothing_fails(self) -> None:
+        full = self.write_list("Linux-Debug", ALL_CASES)
+        for relative in ("tests/test_planted_orphan.cpp", "tests/functional/test_unit_planted2.cpp"):
+            with self.subTest(relative=relative):
+                path = self.repo / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("REGISTER_UNIT_TEST( test_planted );\n")
+                errors = coverage.check(self.repo, [full], [])
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(f"test_planted ({relative}) is registered in a file CMakeLists.txt builds into nothing",
+                              errors[0])
+                path.unlink()
+
+    def test_the_unit_glob_gone_fails(self) -> None:
+        (self.repo / "CMakeLists.txt").write_text("add_executable(source_audit tests/source_audit_fixture.cpp)\n")
+        errors = coverage.check(self.repo, [self.write_list("Linux-Debug", ALL_CASES)], [])
+        self.assertTrue(any("no longer globs" in e for e in errors), errors)
+
+    def write_log(self, name: str, cases: list[str], passed: bool = True) -> Path:
+        path = self.lists / f"{name}.log"
+        body = "shard 0/1\n" + "".join(f"{case}\n" for case in cases) + "skipped: 0\n"
+        path.write_text(body + ("\n*** ALL TESTS PASSED ***\n\n" if passed else "check failed: x\n"))
+        return path
+
+    def test_a_run_log_counts_only_what_ran(self) -> None:
+        log = self.write_log("Linux-Debug", ["test_sdk_a", "test_channels_a", "test_file_a"])
+        production = self.write_list("Linux-Release", ["test_sdk_production", "test_file_production"])
+        self.assertEqual(coverage.check(self.repo, [log, production], []), [])
+        short = self.write_log("Linux-Debug", ["test_sdk_a", "test_channels_a"])
+        errors = coverage.check(self.repo, [short, production], [])
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("test_file_a (tests/test_unit_fixture.cpp) is compiled into no CI configuration", errors[0])
+
+    def test_a_failing_run_log_is_refused(self) -> None:
+        log = self.write_log("Linux-Debug", ALL_CASES, passed=False)
+        errors = coverage.check(self.repo, [log], [])
+        self.assertTrue(any("a run log without" in e for e in errors), errors)
+
+    def test_nightly_tier_counts_only_while_nightly_runs_it(self) -> None:
+        (self.repo / "tests" / "test.cpp").write_text(
+            'static const char * const rocketnet_unit_nightly_cases[] = {\n    "test_file_a",\n    NULL,\n};\n')
+        log = self.write_log("Linux-Debug", ["test_sdk_a", "test_sdk_production", "test_channels_a",
+                                             "test_file_production"])
+        errors = coverage.check(self.repo, [log], [])
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("test_file_a", errors[0])
+        workflows = self.repo / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "nightly.yml").write_text(
+            "jobs:\n  a:\n    steps:\n      - name: Unit suite, nightly tier\n        env:\n"
+            '          ROCKETNET_TEST_NIGHTLY: "1"\n        run: ./bin/test\n')
+        self.assertEqual(coverage.check(self.repo, [log], []), [])
+
+    def test_the_real_tree_has_no_stray_registration(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        self.assertEqual(coverage.stray_registrations(repo), [])
+        self.assertTrue(coverage.nightly_cases(repo), "tests/test.cpp's nightly table read as empty")
+        self.assertTrue(coverage.nightly_step_runs_the_suite(repo), "nightly.yml's unit nightly-tier step not found")
 
     def test_a_missing_table_fails(self) -> None:
         (self.repo / "tests" / "test_channels.cpp").write_text("// no table\n")

@@ -769,13 +769,16 @@ static void test_channel_hostile_chunks_refused()
 
 REGISTER_UNIT_TEST( test_channel_hostile_chunks_refused );
 REGISTER_UNIT_TEST( test_dispatch_reaches_each_of_n_channels );
+UNIT_TEST_SKIPPED_UNLESS( test_dispatch_reaches_each_of_n_channels, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_disabled_codes_are_refused_and_counted );
 REGISTER_UNIT_TEST( test_unreliable_delivered_as_a_view );
 REGISTER_UNIT_TEST( test_unreliable_never_takes_a_number );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_never_takes_a_number, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_ack_feed_marks_only_carried_numbers );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_rnchannel_witness_replays );
+UNIT_TEST_SKIPPED_UNLESS( test_rnchannel_witness_replays, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_unreliable_delivery_budget_drops_and_counts );
 REGISTER_UNIT_TEST( test_default_mask_enables_all_eight_types );
 REGISTER_UNIT_TEST( test_ordered_dispatch_refuses_collisions_and_bad_rings );
@@ -1003,3 +1006,4 @@ static void test_channel_config_front_ready_rotation_and_work()
 
 REGISTER_UNIT_TEST( test_channel_queue_fill_refuses_and_keeps_the_queue );
 REGISTER_UNIT_TEST( test_channel_config_front_ready_rotation_and_work );
+UNIT_TEST_SKIPPED_UNLESS( test_channel_config_front_ready_rotation_and_work, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1

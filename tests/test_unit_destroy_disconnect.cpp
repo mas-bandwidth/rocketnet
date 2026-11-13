@@ -37,11 +37,11 @@ static const int DESTROY_DISCONNECT_MAX_CLIENTS = 4;
 // the cases build both endpoints over the loopback transport their config
 // structs name (destroy_disconnect_server_create and
 // destroy_disconnect_client_create below). the environment overlays the
-// struct (sdk/rocketnet_server_transport.cpp:1013 and
-// sdk/rocketnet_client_transport.cpp:616), so a ROCKETNET_SERVER_TRANSPORT
+// struct (sdk/rocketnet_server_transport.cpp (rocketnet_server_transport_resolve_staged) and
+// sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_resolve)), so a ROCKETNET_SERVER_TRANSPORT
 // or ROCKETNET_CLIENT_TRANSPORT pin replaces "loopback": the server binds a
 // portable socket, and the step-driven client create is refused at
-// sdk/rocketnet_client_transport.cpp:1056 because portable has no
+// sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_create_impl) because portable has no
 // non-blocking step. each case clears both names for its run and restores
 // them at its end.
 #if ROCKETNET_DEV
@@ -568,7 +568,7 @@ static void test_shutdown_without_live_connection_sends_nothing()
     destroy_disconnect_mint_token( &keys, 40000, 0xE301ULL, token );
 
     // each fake transport is static and zeroed in place: one fake holds two 256
-    // datagram rings (tests/fake_client_driver.h:39), and an unoptimised MSVC
+    // datagram rings (tests/fake_client_driver.h), and an unoptimised MSVC
     // build gives both blocks their own stack slot, past the default 1 MB stack
 
     // client on the base fake transport: destroyed before any session keys exist

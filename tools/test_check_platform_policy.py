@@ -27,7 +27,7 @@ WORKFLOW = """name: ci
 on: push
 jobs:
   functional:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
     steps:
       - name: Functional tests
         run: make test
@@ -60,16 +60,16 @@ class CheckPlatformPolicyTest(unittest.TestCase):
         (self.root / "docs" / "PLATFORMS.md").write_text("# Platforms\n\n" + HEADER + rows + "\n")
 
     def test_backed_claims_pass(self):
-        self.write_table(SUPPORTED.format(label="ubuntu-24.04") + UNSUPPORTED)
+        self.write_table(SUPPORTED.format(label="Linux, X64") + UNSUPPORTED)
         result = self.run_tool(self.root)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 supported, 0 nightly, 1 unsupported", result.stdout)
 
     def test_a_label_no_workflow_names_is_refused(self):
-        self.write_table(SUPPORTED.format(label="ubuntu-22.04-arm") + UNSUPPORTED)
+        self.write_table(SUPPORTED.format(label="Linux, ARM64") + UNSUPPORTED)
         result = self.run_tool(self.root)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("runner label token 'ubuntu-22.04-arm'", result.stderr)
+        self.assertIn("holds every token of 'Linux, ARM64'", result.stderr)
 
     def test_zero_rows_is_refused(self):
         self.write_table("")
