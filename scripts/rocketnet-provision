@@ -67,7 +67,9 @@
 #                             the unload is refused while the attached program
 #                             is rocketnet's server_xdp and a rocketnet
 #                             instance on this host is live (the sweep's rule
-#                             4): it would stop a running server receiving.
+#                             4): it would stop a running server receiving,
+#                             and while which program is attached cannot be
+#                             read (the refusal fails closed).
 #                             ROCKETNET_PROVISION_UNLOAD_LIVE=1 unloads anyway.
 #   R4. irq pinning           each of the interface's queue IRQs pinned to
 #                             the cpu its xdp thread pins to: <iface>-TxRx-<k>
@@ -688,15 +690,32 @@ r3_enforce()
                     # in either form; a crashed server's leftover has no
                     # live instance and unloads as before. The pin roots do
                     # not name an interface, so a live server on another
-                    # interface refuses too: the message says so
+                    # interface refuses too: the message says so.
+                    #
+                    # FAIL CLOSED: the unload is destructive, so the program's
+                    # identity is read from one snapshot that must itself be
+                    # good -- the query succeeded, printed something, and
+                    # still grades occupied by the one grader. Anything else
+                    # refuses: an identity that cannot be read is never
+                    # taken as "not rocketnet's".
 
                     LIVE_PIDS=""
-                    if query_xdp_slot_stdout "$INTERFACE" | grep -Eq '(^|[[:space:]])server_xdp_filt(er)?([[:space:]]|$)'; then
-                        LIVE_PIDS="$(live_rocketnet_instances)"
+                    IDENTITY_KNOWN=1
+                    if [ $VERIFY -eq 0 ]; then
+                        R3_IDENTITY_STDOUT=""
+                        if ! R3_IDENTITY_STDOUT="$(query_xdp_slot_stdout "$INTERFACE")"; then
+                            IDENTITY_KNOWN=0
+                        elif [ -z "$R3_IDENTITY_STDOUT" ] || ! xdp_slot_occupied "$R3_IDENTITY_STDOUT"; then
+                            IDENTITY_KNOWN=0
+                        elif printf '%s\n' "$R3_IDENTITY_STDOUT" | grep -Eq '(^|[[:space:]])server_xdp_filt(er)?([[:space:]]|$)'; then
+                            LIVE_PIDS="$(live_rocketnet_instances)"
+                        fi
                     fi
 
                     if [ $VERIFY -eq 1 ]; then
                         fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
+                    elif [ $IDENTITY_KNOWN -eq 0 ] && [ "${ROCKETNET_PROVISION_UNLOAD_LIVE:-}" != "1" ]; then
+                        fail "an XDP program is attached to $INTERFACE but a second xdp-loader status read failed, printed nothing, or no longer showed it (R3): which program it is cannot be told, so nothing is unloaded. run again; to unload anyway, run again with ROCKETNET_PROVISION_UNLOAD_LIVE=1"
                     elif [ -n "$LIVE_PIDS" ] && [ "${ROCKETNET_PROVISION_UNLOAD_LIVE:-}" != "1" ]; then
                         fail "rocketnet's server_xdp_filter is attached to $INTERFACE and a rocketnet server is running on this host (pid $LIVE_PIDS) (R3): if that server is on $INTERFACE, unloading would stop it receiving. stop the server first; if it is on another interface, or to unload anyway, run again with ROCKETNET_PROVISION_UNLOAD_LIVE=1"
                     else
@@ -1320,6 +1339,27 @@ STUB
     OUT="$(run_r3 0 live4)"; expect_case "r3 provision refuses a live server's program by its full name" $? 1 "$OUT" "a rocketnet server is running on this host (pid $$) (R3)" 1 "unloading XDP programs"
     echo lookalike > "$STUB_STATE_DIR/state.live5"
     OUT="$(run_r3 0 live5)"; expect_case "r3 provision unloads a program merely named like rocketnet's" $? 0 "$OUT" "confirmed clear after unload"
+
+    # the identity read after the occupied grade fails closed: a second
+    # status read that fails, prints nothing, or no longer shows the program
+    # must refuse, never unload (the first grade is injected occupied, the
+    # identity read is the one overridden)
+    for IDENTITY_FORM in 'return 1' 'return 0' 'echo "live6 <No XDP program loaded!>"; return 0'; do
+        echo rocketnet > "$STUB_STATE_DIR/state.live6"
+        OUT="$( ( r3_query_and_grade() { echo occupied; return 0; }
+                  eval "query_xdp_slot_stdout() { $IDENTITY_FORM; }"
+                  UNMET=0; VERIFY=0; INTERFACE=live6; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+                  r3_enforce; exit $UNMET ) 2>&1 )"
+        expect_case "r3 provision identity read '$IDENTITY_FORM' refuses" $? 1 "$OUT" "which program it is cannot be told, so nothing is unloaded" 1 "unloading XDP programs"
+        expect_case "r3 provision identity read '$IDENTITY_FORM' leaves it attached" "$(cat "$STUB_STATE_DIR/state.live6")" rocketnet "" ""
+    done
+    echo rocketnet > "$STUB_STATE_DIR/state.live7"
+    OUT="$( ( r3_query_and_grade() { if [ ! -f "$STUB_STATE_DIR/live7_graded" ]; then touch "$STUB_STATE_DIR/live7_graded"; echo occupied; else echo clean; fi; return 0; }
+              query_xdp_slot_stdout() { return 1; }
+              ROCKETNET_PROVISION_UNLOAD_LIVE=1; UNMET=0; VERIFY=0; INTERFACE=live7; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    expect_case "r3 provision unreadable identity unloads when told to" $? 0 "$OUT" "confirmed clear after unload"
+    rm -f "$STUB_STATE_DIR/live7_graded"
     rm -rf "$R3_PIN_ROOTS/rocketnet_xdp_7_$$_${SELF_START}_${SELF_BOOT}"
 
     mkdir -p "$R3_PIN_ROOTS/rocketnet_xdp_7_999999999_12345_${SELF_BOOT}"
