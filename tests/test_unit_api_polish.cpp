@@ -341,7 +341,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
 
     // every status code from OK down to the last names itself; -9 and -22 are reserved
 
-    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE; status-- )
+    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL );

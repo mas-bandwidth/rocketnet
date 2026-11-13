@@ -12,6 +12,9 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
+#if defined( _WIN32 )
+#include "rocketnet_server_rio.h"
+#endif // #if defined( _WIN32 )
 #if ROCKETNET_DEV
 #include "channel_harness.h"
 #endif // #if ROCKETNET_DEV
@@ -70,7 +73,21 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_functional_prepare();
 
+#if defined( _WIN32 ) && ROCKETNET_DEV
+    const uint64_t rio_lanes_before = rocketnet_server_rio_test_lanes_made();
+    const uint64_t rio_transports_before = rocketnet_server_rio_test_transports_made();
+#endif // #if defined( _WIN32 ) && ROCKETNET_DEV
     int result = rocketnet_functional_run_named( name );
+#if defined( _WIN32 ) && ROCKETNET_DEV
+    // CI's RIO lanes leg reads this: the lanes the case's RIO transports
+    // really made, against how many transports it made whole
+    char rio_lanes_env[16];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_RIO_LANES", rio_lanes_env, sizeof( rio_lanes_env ) ) )
+    {
+        printf( "rio_made lanes=%llu transports=%llu\n", (unsigned long long) ( rocketnet_server_rio_test_lanes_made() - rio_lanes_before ),
+                (unsigned long long) ( rocketnet_server_rio_test_transports_made() - rio_transports_before ) );
+    }
+#endif // #if defined( _WIN32 ) && ROCKETNET_DEV
     if ( !rocketnet_test_loopback_hub_release() )
     {
         result = 1;

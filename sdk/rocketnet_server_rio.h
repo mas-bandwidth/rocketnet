@@ -215,6 +215,8 @@ enum rocketnet_server_rio_test_fault_t
 // lanes every RIO server in this process has made, so a test reads the lanes a
 // server it made through any path really has
 uint64_t rocketnet_server_rio_test_lanes_made();
+// RIO transports this process has created whole (every lane made)
+uint64_t rocketnet_server_rio_test_transports_made();
 void rocketnet_server_rio_test_fail_next( rocketnet_server_rio_t * rio, int fault, int count, int status );
 int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fault );
 // receive slices whose re-post was refused and that wait for the worker's

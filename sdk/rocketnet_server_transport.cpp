@@ -2544,13 +2544,15 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
     bool port_zero_refused_seen[ROCKETNET_NUM_TRANSPORTS];
     memset( port_zero_refused_seen, 0, sizeof( port_zero_refused_seen ) );
 
-    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED and
-    // TRANSPORT_NOT_BUILT are the start status when every open refused for
-    // that reason.
+    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED,
+    // TRANSPORT_NOT_BUILT, TRANSPORT_BIND_REFUSED and INVALID_ADDRESS are the
+    // start status when every open refused for that reason.
 
     int open_refusals = 0;
     int families_unsupported_refusals = 0;
     int not_built_refusals = 0;
+    int bind_refusals = 0;
+    int invalid_address_refusals = 0;
 
     for ( int i = 0; i < ladder->num_candidates && granted_transport < 0; i++ )
     {
@@ -2656,6 +2658,14 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
                 {
                     not_built_refusals++;
                 }
+                if ( transport_status == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED )
+                {
+                    bind_refusals++;
+                }
+                if ( transport_status == ROCKETNET_STATUS_INVALID_ADDRESS )
+                {
+                    invalid_address_refusals++;
+                }
             }
         }
 
@@ -2725,6 +2735,14 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
             else if ( open_refusals > 0 && not_built_refusals == open_refusals )
             {
                 *status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
+            }
+            else if ( open_refusals > 0 && bind_refusals == open_refusals )
+            {
+                *status = ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED;
+            }
+            else if ( open_refusals > 0 && invalid_address_refusals == open_refusals )
+            {
+                *status = ROCKETNET_STATUS_INVALID_ADDRESS;
             }
             else
             {

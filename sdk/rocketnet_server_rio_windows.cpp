@@ -1260,6 +1260,8 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
     if ( bind( rio->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
     {
+        // a held port or an address this host cannot bind
+        rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
         goto failed;
     }
     address_bytes = sizeof( address );
@@ -2951,6 +2953,7 @@ static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_addr
                  bind( probe, (sockaddr *) &address, address_bytes ) != SOCKET_ERROR;
     if ( !bound )
     {
+        rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
         rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         rocketnet_warn( "rio transport refused: the exclusive probe could not bind port %d (Winsock %d): another socket holds it",
                         bind_address->port, WSAGetLastError() );
@@ -2969,10 +2972,16 @@ static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_addr
 
 #if ROCKETNET_DEV
 static std::atomic<uint64_t> rocketnet_rio_lanes_made{ 0 };
+static std::atomic<uint64_t> rocketnet_rio_transports_made{ 0 };
 
 uint64_t rocketnet_server_rio_test_lanes_made()
 {
     return rocketnet_rio_lanes_made.load( std::memory_order_relaxed );
+}
+
+uint64_t rocketnet_server_rio_test_transports_made()
+{
+    return rocketnet_rio_transports_made.load( std::memory_order_relaxed );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -3115,6 +3124,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 #endif // #if ROCKETNET_DEV
     }
 
+#if ROCKETNET_DEV
+    rocketnet_rio_transports_made.fetch_add( 1, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
     rio->lane_slots = rio->lanes[0]->send_frames;
     for ( int i = 1; i < lanes; ++i )
     {

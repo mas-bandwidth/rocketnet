@@ -5402,8 +5402,10 @@ void rocketnet_test_server_rio_send_full()
 
 #if ROCKETNET_DEV
 // The public server on RIO lanes, through the driver: with num_xdp_queues 4
-// and no bind address the server binds the wildcard, so start refuses and no
-// lane is made; with bind_ipv4_address set, start makes exactly four lanes
+// and no bind address the server binds the wildcard, so start refuses with
+// INVALID_ADDRESS and no lane is made; with bind_ipv4_address set on a port
+// another socket holds, start refuses with TRANSPORT_BIND_REFUSED and no lane
+// is made; on a free port, start makes exactly four lanes
 // (counted as the transport made them, not as asked) and eight clients all
 // connect and are served. Which lane each client's sends take is not checked
 // here; test_rio_transport_lanes_send_and_receive checks the spread.
@@ -5424,12 +5426,29 @@ void rocketnet_test_server_rio_lanes_through_the_server()
         const uint64_t before = rocketnet_server_rio_test_lanes_made();
         struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
         rocketnet_check( refused );
-        rocketnet_check( rocketnet_server_start( refused ) != ROCKETNET_STATUS_OK );
+        rocketnet_check( rocketnet_server_start( refused ) == ROCKETNET_STATUS_INVALID_ADDRESS );
         rocketnet_check( rocketnet_server_rio_test_lanes_made() == before );
         rn_cli_server_stop_and_destroy( refused );
     }
 
     server_config.bind_ipv4_address = "127.0.0.1";
+    {
+        rocketnet_address_t held_address;
+        rocketnet_address_parse( &held_address, "127.0.0.1:0" );
+        rocketnet_platform_socket_t * holder = rocketnet_platform_socket_create( NULL, &held_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64 * 1024, 64 * 1024 );
+        rocketnet_check( holder );
+        rocketnet_check( held_address.port != 0 );
+        char held[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+        snprintf( held, sizeof( held ), "127.0.0.1:%d", (int) held_address.port );
+        const uint64_t before = rocketnet_server_rio_test_lanes_made();
+        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, held, NULL, &server_config, NULL );
+        rocketnet_check( refused );
+        rocketnet_check( rocketnet_server_start( refused ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        rocketnet_check( rocketnet_server_rio_test_lanes_made() == before );
+        rn_cli_server_stop_and_destroy( refused );
+        rocketnet_platform_socket_destroy( holder );
+    }
+
     const uint64_t before = rocketnet_server_rio_test_lanes_made();
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     rocketnet_check( server );
