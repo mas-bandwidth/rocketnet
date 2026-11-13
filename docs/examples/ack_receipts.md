@@ -1,9 +1,14 @@
 # Ack Receipts
 
 A game sends state updates unreliably because a lost update is superseded by the next frame's update, never retransmitted.
-Delta compression still needs to know the newest update the client actually received so the next frame can encode against that baseline.
+Delta compression wants to know which updates reached the other end, so the next frame can encode against one of them.
 Use `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` to receive ACKED or LOSS
-outcomes for messages that fit one packet. Larger sends promote to reliable
+outcomes for messages that fit one packet. ACKED means the other end's
+connection layer acknowledged the packet that carried the message; its message
+layer can still have dropped the message (counted MESSAGE_UNRELIABLE_DELIVERY_FULL or by the sequenced drop counters),
+so ACKED alone does not prove the message was delivered. LOSS means no
+acknowledgement came back, which can also be a lost acknowledgement of a
+packet that did arrive. Larger sends promote to reliable
 delivery. The receipt ring is bounded, and sends still in flight when a
 connection ends get no terminal outcome; see [receipts](../CHANNELS.md#receipts-and-stats).
 
@@ -37,9 +42,11 @@ receipts resolved: 20/20 (acked 14, loss 6)
 PASS
 ```
 
-Each `update <n> (serial <s>): ACKED|LOSS` line reports the single outcome for that send. A game can use its newest acknowledged update as a delta baseline, provided
-the receiver retains that state. ACKED is a transport acknowledgement, not
-an application commit, and LOSS can also mean a missing return acknowledgement.
+Each `update <n> (serial <s>): ACKED|LOSS` line reports the single outcome for that send. ACKED is a connection-layer acknowledgement, not proof of
+delivery or an application commit: the receiving message layer can still drop
+the message, and LOSS can also mean a missing return acknowledgement. A game
+that encodes deltas against an ACKED update needs the receiver to confirm, in
+its own messages, which baseline it holds.
 Lost updates in this example are skipped without retransmission. `PASS` means every send received one receipt with both `ACKED` and `LOSS` outcomes observed.
 
 <a id="public-calls-it-uses"></a>

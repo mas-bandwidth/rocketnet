@@ -8,9 +8,22 @@ a demo and a profiling instrument, not a load claim.
 
 ## What it shows
 
-1. Pass a counting allocator to `rocketnet_init` to verify `allocs/tick == 0` during the steady-state soak and zero leaks at teardown.
+1. Pass a counting allocator to `rocketnet_init` that serves every SDK
+   allocation from one arena. It reports `allocs/tick` during the
+   steady-state soak (printed and written to the TSV, not a pass check), and
+   the run fails if any SDK allocation is still live at teardown. The arena
+   is `--arena-mib <n>` MiB; by default 2048 + 128 x clients MiB, allocated
+   up front (on Linux reserved as address space, not resident bytes; on
+   other platforms an ordinary allocation of that size). A run whose SDK
+   allocations do not fit fails.
 2. Connect `--clients <n>` (1..1000, default 1000) to one server in a single
-   process over `loopback` by default. Loopback excludes kernel UDP/NIC cost;
+   process over `loopback` by default. Both ends use the soak's own configs
+   (the defaults with the soak's own budgets, buffers and windows set in
+   `soak.c`), so a 1000-client run holds the server and all 1000 clients in one process
+   and needs a large machine: `rocketnet_server_required_memory` and
+   `rocketnet_client_required_memory` report what each takes in your build
+   (see [Memory](../MEMORY.md)). Start with `--clients 32` on a smaller
+   host. Loopback excludes kernel UDP/NIC cost;
    1000 real UDP clients in one process also need host socket-buffer planning. `--transport <name>` selects a candidate name/list for both endpoints; the
    endpoint environment overrides still take precedence. Use transports
    available on the host, and inspect the selected transport. XDP requires

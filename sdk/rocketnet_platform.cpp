@@ -3631,7 +3631,8 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 // set SCHED_RR at rocketnet_platform_network_thread_rr_priority() and nothing
 // else. On macOS it requests 32 clamped to the SCHED_RR range; elsewhere
 // it retains the minimum raised to the default thread's priority (1 on Linux).
-// No macOS server transport calls the server hook.
+// On macOS the msgx server's transmit and receive workers call the server
+// hook; the portable server's workers do not.
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {

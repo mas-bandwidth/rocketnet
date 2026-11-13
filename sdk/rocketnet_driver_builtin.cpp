@@ -25,8 +25,10 @@ static void * portable_socket_create( void * context, const char * name, rocketn
 // the buffered interface borrows caller packets for the duration of send_batch.
 // This adapter copies them into one of three owned banks before returning. The
 // TX and RX workers own only their respective banks; main never calls socket
-// I/O. Off macOS the msgx name runs this same code; on macOS the msgx server is
-// its own (sdk/rocketnet_server_msgx_apple.cpp).
+// I/O. The portable server uses this ownership. Off macOS the msgx name runs
+// this same code. The macOS msgx server does not: it is its own staged
+// transport (rocketnet_server_msgx_apple.cpp, below); the msgx client is the
+// portable client, with the msgx pump selected at create.
 static const int PORTABLE_TX_BANKS = 3;
 static const int PORTABLE_RX_BANKS = 3;
 
