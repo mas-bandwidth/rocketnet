@@ -447,7 +447,11 @@ void rocketnet_test_free_loopback_address( char * buffer, size_t buffer_size )
 // the create are one retried operation: the grant proves the port with a
 // second bind, but another process can take it in the gap before this create
 // binds it, so a create refused on address-in-use is retried with a new free
-// port, up to three times. Any other refusal is final and returned as NULL.
+// port, up to three times. The server create reports a refused bind as
+// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED when every refusal was a bind (or
+// xdp) refusal, and as ROCKETNET_STATUS_NO_TRANSPORT_FOUND when a bind refusal
+// was mixed with other reasons (sdk/rocketnet_server_transport.cpp), so both
+// are retried; any other refusal is final and returned as NULL.
 
 struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_free_port(
     const struct rocketnet_server_transport_config_t * config )
@@ -466,7 +470,7 @@ struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_
         {
             return server;
         }
-        if ( status != ROCKETNET_STATUS_NO_TRANSPORT_FOUND )
+        if ( status != ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED && status != ROCKETNET_STATUS_NO_TRANSPORT_FOUND )
         {
             return NULL;
         }
