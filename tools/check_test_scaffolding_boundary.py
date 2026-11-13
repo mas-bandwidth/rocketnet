@@ -84,6 +84,8 @@ DEV_ONLY_DECLARATIONS = (
     ("rocketnet_client_transport_inventory_matches_for_test", "rocketnet_connection_reset.h"),
     ("rocketnet_client_slots_inventory_matches_for_test", "rocketnet_connection_reset.h"),
     ("rocketnet_server_replay_marks_inventory_matches_for_test", "rocketnet_connection_reset.h"),
+    ("rocketnet_dev_backend_secret_key", "rocketnet_connect_token.h"),
+    ("rocketnet_dev_server_secret_key", "rocketnet_connect_token.h"),
 )
 
 IDENTIFIER = re.compile(r"\b(?:rocketnet_[a-z0-9_]+|ROCKETNET_[A-Z0-9_]+|rn_[a-z0-9_]+)\b")
@@ -326,7 +328,7 @@ def main() -> int:
     parser.add_argument("--shared", type=Path, help="DEV=0 shared library to inspect")
     parser.add_argument("--archive", type=Path, help="DEV=0 static archive to inspect")
     parser.add_argument("--import-library", type=Path, help="Windows DEV=0 import library to inspect")
-    parser.add_argument("--red-controls", action="store_true", help="Run compiler and CMake negative-control checks")
+    parser.add_argument("--red-controls", action="store_true", help="Run the detector self-test and compiler negative controls")
     parser.add_argument("--cxx", type=str, help="C++ compiler to use for --red-controls")
     args = parser.parse_args()
 
