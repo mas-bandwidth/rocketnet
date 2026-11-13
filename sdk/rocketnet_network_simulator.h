@@ -206,6 +206,7 @@ static inline bool rocketnet_network_simulator_patterns_active( const struct roc
 static inline void rocketnet_network_simulator_flush_window( struct rocketnet_network_simulator_t * ) {}
 static inline void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t *, const struct rocketnet_address_t *, const struct rocketnet_address_t *, const uint8_t *, int, double ) {}
 static inline int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t *, double, struct rocketnet_address_t *, struct rocketnet_address_t *, uint8_t * ) { return 0; }
+static inline int rocketnet_network_simulator_deliver_packets( struct rocketnet_network_simulator_t *, const struct rocketnet_address_t *, const struct rocketnet_address_t *, const uint8_t * const *, const int *, int, double ) { return 0; }
 static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t *, struct rocketnet_platform_mutex_t * ) { return false; }
 static inline bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * ) { return false; }
 static inline uint64_t rocketnet_network_simulator_memory_bytes( int, int ) { return 0; }

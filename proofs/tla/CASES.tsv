@@ -434,6 +434,11 @@ MCRNClientIoShutdownBrokenRepeatCallback.cfg	MCRNClientIoShutdown.tla	invariant	
 MCRNClientLinkStop.cfg	MCRNClientLinkStop.tla	pass	-	ignore-terminal	rnclientlinkstop	required	-
 MCRNClientLinkStopBrokenNoDrain.cfg	MCRNClientLinkStop.tla	invariant	StopLeavesNothingStaged	ignore-terminal	rnclientlinkstop	required	-
 MCRNClientLinkStopBrokenDueOnly.cfg	MCRNClientLinkStop.tla	temporal	BurstArrives	ignore-terminal	rnclientlinkstop	required	-
+MCRNServerLinkStop.cfg	MCRNServerLinkStop.tla	pass	-	check	rnserverlinkstop	required	-
+MCRNServerLinkStopOneQueue.cfg	MCRNServerLinkStop.tla	pass	-	check	rnserverlinkstop	required	-
+MCRNServerLinkStopBrokenFewest.cfg	MCRNServerLinkStop.tla	temporal	StopFinishes	ignore-terminal	rnserverlinkstop	required	-
+MCRNServerLinkStopBrokenNoDiscard.cfg	MCRNServerLinkStop.tla	temporal	StopFinishes	ignore-terminal	rnserverlinkstop	required	-
+MCRNServerLinkStopBrokenEarlyDiscard.cfg	MCRNServerLinkStop.tla	invariant	NoDropWhileRoomCanReturn	ignore-terminal	rnserverlinkstop	required	-
 MCRNClientIoSafety.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveDestroy.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveStop.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-

@@ -1165,6 +1165,24 @@ static void rocketnet_server_transport_return_fill_tails( struct rocketnet_serve
 
 
 
+// The io's send queue count: a transport that is not staged, or without all
+// three queue operations, is one queue. Read when the io opens, when a unit
+// test swaps one in, and at every opening of the budget, so every judgement
+// of room from the first update on (the sweep, the drains, a stop before any
+// update) is made per destination queue.
+static int rocketnet_server_transport_io_send_queues( const struct rocketnet_server_transport_t * server_transport )
+{
+    const struct rocketnet_server_transport_io_operations_t * operations = server_transport->io.operations;
+    if ( !rocketnet_server_transport_staged( server_transport ) || !operations || !operations->send_queues ||
+         !operations->send_queue_of || !operations->send_room_queue )
+    {
+        return 1;
+    }
+    const int queues = operations->send_queues( server_transport->io.instance );
+    rocketnet_assert( queues >= 1 && queues <= ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    return queues < 1 ? 1 : ( queues > ROCKETNET_SERVER_MAX_SEND_QUEUES ? ROCKETNET_SERVER_MAX_SEND_QUEUES : queues );
+}
+
 // proofs/tla/RNSendReserve.tla OpenFill: main, with no game packet being started, gives
 // each queue a budget of its room less its reserve and zeroes the
 // claims. A transport that is not staged keeps the game's packets in its own
@@ -1176,17 +1194,9 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
         return;
     }
 
-    // the queue count is read here, not cached at create, so an io swapped
-    // in by a unit test is read whole; a transport without all three queue
-    // operations is one queue
-    const struct rocketnet_server_transport_io_operations_t * operations = server_transport->io.operations;
-    int queues = 1;
-    if ( operations && operations->send_queues && operations->send_queue_of && operations->send_room_queue )
-    {
-        queues = operations->send_queues( server_transport->io.instance );
-        rocketnet_assert( queues >= 1 && queues <= ROCKETNET_SERVER_MAX_SEND_QUEUES );
-        queues = queues < 1 ? 1 : ( queues > ROCKETNET_SERVER_MAX_SEND_QUEUES ? ROCKETNET_SERVER_MAX_SEND_QUEUES : queues );
-    }
+    // the queue count is read again here, so an io a unit test swapped in is
+    // read whole (rocketnet_server_transport_io_send_queues)
+    const int queues = rocketnet_server_transport_io_send_queues( server_transport );
     const int queues_before = server_transport->send_queues;
     server_transport->send_queues = queues;
 
@@ -1813,7 +1823,9 @@ uint64_t rocketnet_server_transport_link_lock_misses_for_test( struct rocketnet_
 // io the server sends through with the one given, so a test can fake the
 // staging callbacks on a server that connected over loopback. Called again
 // with the returned pair it puts the real io back; the caller does that
-// before destroy.
+// before destroy. The swapped io's queue count is read at once, as at
+// create; the tails of queues the new io does not have are returned first
+// (main, between updates, with no fill running).
 void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transport_t * server_transport,
                                                   const struct rocketnet_server_transport_io_operations_t ** operations,
                                                   void ** instance )
@@ -1825,6 +1837,12 @@ void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transp
     server_transport->io.instance = *instance;
     *operations = saved_operations;
     *instance = saved_instance;
+    const int queues = rocketnet_server_transport_io_send_queues( server_transport );
+    if ( queues < server_transport->send_queues )
+    {
+        rocketnet_server_transport_return_fill_tails( server_transport, server_transport->send_queues );
+    }
+    server_transport->send_queues = queues;
 }
 
 uint64_t rocketnet_server_transport_fill_budget_for_test( const struct rocketnet_server_transport_t * server_transport, int queue )
@@ -2035,8 +2053,21 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 // A due packet leaves only while the transport reports send room; the rest
 // stay held for the next update's drain, so none is refused and lost
 // (proofs/tla/ServerStopSpread.tla Room).  A busy simulator lock leaves the
-// held packets for the next drain.  This path does not wait, except for the
-// stop's one window flush, which must not leave packets outside the slots.
+// held packets for the next drain.  This path takes no lock that waits,
+// except the stop's one window flush, which must not leave packets outside
+// the slots; the stop's drain also asks the transport's send_idle, which on
+// io_uring acquires a queue mutex (below).
+//
+// The stop's drain (shutdown) judges room by each packet's own send queue,
+// as the stop step judges a burst's (proofs/tla/RNServerLinkStop.tla DrainOne): it
+// goes on while any queue has room, a packet whose queue has room leaves, and
+// a packet whose queue has none is held back and ends this step's drain while
+// a send staged or in flight could still free room; with nothing in flight
+// (send_idle) no packet for that queue can ever leave, so it is discarded and
+// counted as a start refused for a full staging (SEND_RING_FULL), as an
+// abandoned burst is, and the drain goes on. So a queue that stays full
+// through the stop no longer keeps the simulator holding packets, which the
+// I/O stop waits for (link_empty), and stopped() turns true.
 static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport, bool shutdown = false )
 {
     if ( !transport->link_simulator )
@@ -2056,7 +2087,8 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
     const double cutoff_time = shutdown ? DBL_MAX : transport->time;
     for ( ;; )
     {
-        if ( rocketnet_server_transport_io_send_room( transport ) <= 0 )
+        if ( shutdown ? rocketnet_server_transport_io_send_room_total( transport ) <= 0 && !rocketnet_server_transport_io_send_idle( transport )
+                      : rocketnet_server_transport_io_send_room( transport ) <= 0 )
         {
             break;
         }
@@ -2071,6 +2103,38 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
 
         const int packet_bytes = rocketnet_network_simulator_receive_any( transport->link_simulator,
                                                                           cutoff_time, &from, &to, packet );
+
+        // the stop's judgement of a packet whose queue has no room is made
+        // under the simulator's lock, so the capacity its receive freed is
+        // still free when a packet held back is put back: no other send can
+        // take it meanwhile. The simulator may give it a different slot (an
+        // earlier hole), which can change which held packet the next step
+        // takes first, not what happens to any of them. The transport's room
+        // and idle reads take no lock the simulator's holders take, though
+        // io_uring's send_idle acquires its queue's mutex and may wait on it
+        // (as it did before this drain called it)
+        if ( packet_bytes > 0 && shutdown &&
+             rocketnet_server_transport_queue_room( transport, rocketnet_server_transport_send_queue_of( transport, &to ) ) <= 0 )
+        {
+            if ( rocketnet_server_transport_io_send_idle( transport ) &&
+                 rocketnet_server_transport_queue_room( transport, rocketnet_server_transport_send_queue_of( transport, &to ) ) <= 0 )
+            {
+                rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+                rocketnet_server_transport_io_count_refused_judged( transport, 0, true );
+                continue;
+            }
+            // the put-back cannot find the store full (the receive just freed
+            // a slot under this same lock); the one way it is refused is a
+            // free slot whose generation is exhausted, and the simulator
+            // counts that refusal itself (store_refused, with a warning if it
+            // is the simulator's first refusal), as it counts every packet its
+            // store refuses on the send
+            // path. Counting it here as well would count it twice
+            const uint8_t * held = packet;
+            (void) rocketnet_network_simulator_deliver_packets( transport->link_simulator, &from, &to, &held, &packet_bytes, 1, transport->time );
+            rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+            break;
+        }
         rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
         if ( packet_bytes <= 0 )
         {
@@ -3565,6 +3629,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
 
     server_transport->transport = granted_transport;
 
+    // the queue count as the io opened: until the first opening of the
+    // budget the game's packets are unbudgeted, but every judgement of room
+    // (the first update's sweep and drains, a stop before any update) is
+    // made per destination queue from here on
+    server_transport->send_queues = rocketnet_server_transport_io_send_queues( server_transport );
+
     // the started line names the granted tier -- performance claims attach
     // to what this says, never to what was requested
 
@@ -3913,7 +3983,8 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 static void rocketnet_server_transport_flush( struct rocketnet_server_transport_t * server_transport, bool shutdown );
 
 // proofs/tla/ServerStopSpread.tla SealOne, Flush and RequestIoStop: one stop
-// step. The waiting bursts are sealed within the transport's send room,
+// step (with the link simulator, proofs/tla/RNServerLinkStop.tla Flush, its
+// drain DrainOne, and RequestIoStop once the simulator is empty). The waiting bursts are sealed within the transport's send room,
 // what was sealed is flushed, and once nothing waits and the transport
 // reports every send it was handed finished, the I/O is told to stop, so no
 // flushed send is cut off. Bounded work and no wait: a burst the room
@@ -4035,7 +4106,8 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
     rocketnet_server_transport_stop_step( server_transport );
 }
 
-// proofs/tla/ServerStopSpread.tla IoStopped: stopped only once the last burst
+// proofs/tla/ServerStopSpread.tla IoStopped (and proofs/tla/RNServerLinkStop.tla
+// IoStopped): stopped only once the last burst
 // was handed over and the workers have exited. While bursts wait, the poll
 // is the next stop step, as the I/O's own stopped may service ready
 // completions; the transport is never a const object, only this view of it.

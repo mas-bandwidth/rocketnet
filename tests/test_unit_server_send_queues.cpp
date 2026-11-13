@@ -58,7 +58,10 @@ static struct
     bool used[SQ_FRAMES];
     uint16_t to[SQ_FRAMES];                 // the port each frame was started to
     uint64_t finished[SQ_CLIENTS];          // frames handed back finished, per client
+    uint64_t aborted[SQ_CLIENTS];           // frames handed back unsent, per client: with the
+                                            // link simulator on, one per datagram it took
     uint64_t refused[SQ_QUEUES];            // starts refused for a full queue
+    bool busy;                              // send_idle answers false: a send still in flight
 } sq;
 
 alignas( 16 ) static uint8_t sq_frames[SQ_FRAMES][ROCKETNET_FRAME_STRIDE];
@@ -108,6 +111,11 @@ static void sq_abort( void *, uint64_t id, uint8_t * )
 {
     if ( id >= 1 && id <= SQ_FRAMES )
     {
+        const int client = sq.to[id - 1] - 1000;
+        if ( client >= 0 && client < SQ_CLIENTS )
+        {
+            sq.aborted[client]++;
+        }
         sq.used[id - 1] = false;
     }
 }
@@ -131,7 +139,7 @@ static int sq_send_room( void * )
     return room;
 }
 
-static bool sq_send_idle( void * ) { return true; }
+static bool sq_send_idle( void * ) { return !sq.busy; }
 static int sq_send_queues( void * ) { return SQ_QUEUES; }
 static int sq_send_queue_of( void *, const rocketnet_address_t * to ) { return sq_queue_of_port( to->port ); }
 static int sq_send_room_queue( void *, int queue ) { return sq.room[queue]; }
@@ -434,7 +442,187 @@ static void test_server_stop_finishes_past_a_jammed_queue()
     sq_teardown( &rig );
 }
 
+// The same stop before any update: the io's queue count is read when the io
+// is swapped in (and when a real one opens at create), not first at the
+// update's opening of the budget, so a stop before the first update judges
+// room per queue too: the bursts of the queues with room are sealed whole
+// and the jammed queue's burst is abandoned.
+static void test_server_stop_before_any_update_finishes_past_a_jammed_queue()
+{
+    struct sq_rig_t rig;
+    sq_setup( &rig, false );
+
+    sq_set_rooms( 0, SQ_ROOM, SQ_ROOM );
+    const uint64_t ring_full = rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    for ( int c = 0; c < SQ_CLIENTS; c++ )
+    {
+        rocketnet_server_transport_disconnect_client_shutdown( rig.transport, c );
+    }
+    rocketnet_server_transport_stop( rig.transport );
+    bool stopped = false;
+    for ( int step = 0; step < 4 * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS && !stopped; step++ )
+    {
+        stopped = rocketnet_server_transport_stopped( rig.transport );
+    }
+    check( stopped );
+    check( sq.finished[0] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[1] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[3] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[2] == 0 );
+    check( rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL] > ring_full );
+
+    sq_set_rooms( SQ_ROOM, SQ_ROOM, SQ_ROOM );
+    sq_teardown( &rig );
+}
+
+// The first update's maintenance sweep, before any opening of the budget,
+// with queue 0 full: the clients of the other queues are sent their
+// keep-alives in that update, and nothing is started on the full queue.
+static void test_server_first_update_sweep_serves_past_a_full_queue()
+{
+    struct sq_rig_t rig;
+    sq_setup( &rig, false );
+
+    sq_set_rooms( 0, SQ_ROOM, SQ_ROOM );
+    rig.time += 1.0;
+    rocketnet_message_server_update( rig.server, rig.time );
+    check( sq.finished[0] > 0 );
+    check( sq.finished[1] > 0 );
+    check( sq.finished[3] > 0 );
+    check( sq.finished[2] == 0 );
+    check( sq.refused[0] == 0 );
+
+    sq_set_rooms( SQ_ROOM, SQ_ROOM, SQ_ROOM );
+    sq_teardown( &rig );
+}
+
+// Stop with the link simulator holding packets (a second of latency) and
+// queue 0 jammed: the stop's drain of the simulator sends the held packets of
+// the queues with room, and discards those of the jammed queue, counted as a
+// full staging, once nothing is in flight; the simulator is left empty and
+// the stop finishes (proofs/tla/RNServerLinkStop.tla). Before, the drain
+// stopped at the fewest free frames of any queue, so the simulator kept its
+// packets and the stop waited on it until destroy.
+static void test_server_stop_finishes_with_held_link_packets_past_a_jammed_queue()
+{
+    struct sq_rig_t rig;
+    sq_setup( &rig, true );
+
+    // every client is sent keep-alives that the simulator holds for a second
+    // (no loss, no duplicates: each datagram it takes is one copy, and one
+    // aborted staging frame)
+    check( rocketnet_server_transport_network_simulator( rig.transport, 1000, 0, 0, 0 ) );
+    uint64_t taken_before[SQ_CLIENTS];
+    uint64_t sent_before[SQ_CLIENTS];
+    memcpy( taken_before, sq.aborted, sizeof( taken_before ) );
+    memcpy( sent_before, sq.finished, sizeof( sent_before ) );
+    for ( int i = 0; i < 30; i++ )
+    {
+        sq_tick( &rig );
+    }
+
+    sq_set_rooms( 0, SQ_ROOM, SQ_ROOM );
+    uint64_t before[SQ_CLIENTS];
+    memcpy( before, sq.finished, sizeof( before ) );
+    const uint64_t held2 = sq.aborted[2] - taken_before[2];
+    check( held2 > 0 );
+    const uint64_t ring_full = rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    for ( int c = 0; c < SQ_CLIENTS; c++ )
+    {
+        rocketnet_server_transport_disconnect_client_shutdown( rig.transport, c );
+    }
+    rocketnet_server_transport_stop( rig.transport );
+    bool stopped = false;
+    for ( int step = 0; step < 4 * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS && !stopped; step++ )
+    {
+        stopped = rocketnet_server_transport_stopped( rig.transport );
+    }
+    check( stopped );
+    check( sq.finished[0] - before[0] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[1] - before[1] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[3] - before[3] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[2] == before[2] );
+    check( sq.refused[0] == 0 );
+
+    // every copy the simulator took for a client on a queue with room went
+    // out exactly once (its keep-alives and its burst); client 2's held
+    // copies were each discarded and counted, with its abandoned burst
+    for ( int c = 0; c < SQ_CLIENTS; c++ )
+    {
+        if ( c != 2 )
+        {
+            check( sq.finished[c] - sent_before[c] == sq.aborted[c] - taken_before[c] );
+        }
+    }
+    check( sq.finished[2] == sent_before[2] );
+    check( sq.aborted[2] - taken_before[2] == held2 );
+    check( rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL] - ring_full >= held2 + 1 );
+
+    sq_set_rooms( SQ_ROOM, SQ_ROOM, SQ_ROOM );
+    sq_teardown( &rig );
+}
+
+// The same with a send still in flight (send_idle false) while queue 0 has
+// no room: the stop's drain holds queue 0's packets back in the simulator
+// rather than discard them, and the stop waits; once queue 0's room returns
+// and nothing is in flight, they are sent and the stop finishes.
+static void test_server_stop_holds_link_packets_while_room_can_return()
+{
+    struct sq_rig_t rig;
+    sq_setup( &rig, true );
+
+    check( rocketnet_server_transport_network_simulator( rig.transport, 1000, 0, 0, 0 ) );
+    uint64_t taken_before[SQ_CLIENTS];
+    uint64_t sent_before[SQ_CLIENTS];
+    memcpy( taken_before, sq.aborted, sizeof( taken_before ) );
+    memcpy( sent_before, sq.finished, sizeof( sent_before ) );
+    for ( int i = 0; i < 30; i++ )
+    {
+        sq_tick( &rig );
+    }
+
+    sq_set_rooms( 0, SQ_ROOM, SQ_ROOM );
+    sq.busy = true;
+    uint64_t before[SQ_CLIENTS];
+    memcpy( before, sq.finished, sizeof( before ) );
+    for ( int c = 0; c < SQ_CLIENTS; c++ )
+    {
+        rocketnet_server_transport_disconnect_client_shutdown( rig.transport, c );
+    }
+    rocketnet_server_transport_stop( rig.transport );
+    for ( int step = 0; step < 4 * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS; step++ )
+    {
+        check( !rocketnet_server_transport_stopped( rig.transport ) );
+    }
+    check( sq.finished[2] == before[2] );
+
+    // the in-flight send finishes and queue 0's room returns
+    sq.busy = false;
+    sq_set_rooms( SQ_ROOM, SQ_ROOM, SQ_ROOM );
+    bool stopped = false;
+    for ( int step = 0; step < 4 * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS && !stopped; step++ )
+    {
+        stopped = rocketnet_server_transport_stopped( rig.transport );
+    }
+    check( stopped );
+
+    // every copy the simulator took went out exactly once, client 2's held
+    // ones included: one discarded while the send was in flight, or put
+    // back twice, would break the count
+    for ( int c = 0; c < SQ_CLIENTS; c++ )
+    {
+        check( sq.finished[c] - before[c] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+        check( sq.finished[c] - sent_before[c] == sq.aborted[c] - taken_before[c] );
+    }
+
+    sq_teardown( &rig );
+}
+
 REGISTER_UNIT_TEST( test_server_stop_finishes_past_a_jammed_queue );
+REGISTER_UNIT_TEST( test_server_stop_finishes_with_held_link_packets_past_a_jammed_queue );
+REGISTER_UNIT_TEST( test_server_stop_holds_link_packets_while_room_can_return );
+REGISTER_UNIT_TEST( test_server_stop_before_any_update_finishes_past_a_jammed_queue );
+REGISTER_UNIT_TEST( test_server_first_update_sweep_serves_past_a_full_queue );
 REGISTER_UNIT_TEST( test_server_send_pass_continues_past_a_full_queue );
 REGISTER_UNIT_TEST( test_server_send_pass_rotates_past_a_full_queue );
 REGISTER_UNIT_TEST( test_server_sweep_serves_clients_past_a_full_queue );
