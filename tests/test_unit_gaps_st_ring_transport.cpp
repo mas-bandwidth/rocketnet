@@ -1003,18 +1003,20 @@ static void test_gaps_st_ring_replay_walk_forgets_a_departed_client()
     server->replay_marks = rocketnet_server_replay_marks_create( server->context, 2 );
     rocketnet_unit_check( server->replay_marks );
 
-    double time = 1000.0;
-    rocketnet_server_transport_update( server, time );
-    st_ring_expect( f->marks >= 1 && f->forgets == 0, "the walk did not mark the connected client" );
-
-    rocketnet_server_transport_disconnect_client( server, 0 );
-    time += 1.0 / 60.0;
-
     // a sink without the forget is reported by the walk's assert, named here;
     // the zeroed stack makes an unset forget NULL rather than garbage
     rocketnet_assert_function_t saved = rn_assert_function;
     g_st_ring_asserts = 0;
     rocketnet_assert_function( st_ring_assert_hook );
+
+    double time = 1000.0;
+    st_ring_fill_stack_call( 0x00 );
+    rocketnet_server_transport_update( server, time );
+    st_ring_expect( g_st_ring_asserts == 0, "the replay walk was handed a sink without the transport's forget" );
+    st_ring_expect( f->marks >= 1 && f->forgets == 0, "the walk did not mark the connected client" );
+
+    rocketnet_server_transport_disconnect_client( server, 0 );
+    time += 1.0 / 60.0;
     st_ring_fill_stack_call( 0x00 );
     rocketnet_server_transport_update( server, time );
     rocketnet_assert_function( saved );
