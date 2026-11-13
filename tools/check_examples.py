@@ -51,9 +51,34 @@ SCANF_CALL = re.compile(r"\b[fs]?scanf\s*\(([^;]*)\)\s*")
 SCANF_TARGET = re.compile(r"&\s*([A-Za-z_][A-Za-z0-9_]*)\b")
 
 
-def uninitialized_declaration(name):
-    """A scalar declaration of name with no initializer, e.g. "unsigned int byte;"."""
-    return re.compile(r"\b(?:unsigned|signed|int|long|short|char|float|double|[A-Za-z0-9_]+_t)\s+" + re.escape(name) + r"\s*;")
+# a declaration statement: one or more type words, then its declarator list
+TYPE_WORD = (r"(?:const|volatile|static|register|unsigned|signed|int|long|short|char|float|double|bool|_Bool"
+             r"|struct\s+[A-Za-z_]\w*|enum\s+[A-Za-z_]\w*|[A-Za-z_]\w*_t)")
+DECLARATION = re.compile(r"(?:^|(?<=[;{}]))\s*(?:" + TYPE_WORD + r"\s+)+(?P<list>[^;{}]*);", re.M)
+
+
+def declarators(text):
+    """(offset of the statement, declarator text) for every declarator of every
+    declaration statement: "int a, b = 0;" gives "a" and "b = 0"."""
+    for match in DECLARATION.finditer(text):
+        part, depth = [], 0
+        for c in match.group("list") + ",":
+            if c in "([":
+                depth += 1
+            elif c in ")]":
+                depth -= 1
+            if c == "," and depth == 0:
+                yield match.start("list"), "".join(part).strip()
+                part = []
+            else:
+                part.append(c)
+
+
+def uninitialized_declarations(name, text):
+    """Offsets of each declaration of name with no initializer: "unsigned int
+    byte;", "int a, byte;", "struct reading byte;", "int * byte;"."""
+    bare = re.compile(r"^\**\s*" + re.escape(name) + r"$")
+    return [offset for offset, declarator in declarators(text) if bare.match(declarator)]
 
 
 def strip_comments(text):
@@ -120,8 +145,8 @@ def main(argv=None):
 
         for call in SCANF_CALL.finditer(cleaned):
             for target in SCANF_TARGET.finditer(call.group(1)):
-                for decl in uninitialized_declaration(target.group(1)).finditer(cleaned):
-                    print(f"{rel}:{line_of(cleaned, decl.start())}: {target.group(1)} is written by scanf but declared without an initializer; a failed conversion leaves it uninitialized", file=sys.stderr)
+                for offset in uninitialized_declarations(target.group(1), cleaned):
+                    print(f"{rel}:{line_of(cleaned, offset)}: {target.group(1)} is written by scanf but declared without an initializer; a failed conversion leaves it uninitialized", file=sys.stderr)
                     source_failed = True
 
         if source_failed:

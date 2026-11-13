@@ -58,6 +58,26 @@ class CheckExamplesProcessTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('examples/hello.c:2: #include "sys/socket.h" is not allowed', result.stderr)
 
+    def scanf_example(self, declarations):
+        return CLEAN.replace("    if ( rocketnet_init() != 0 )",
+                             declarations + "    if ( scanf( \"%d %d\", &a, &b ) != 2 ) { return 1; }\n"
+                             "    if ( rocketnet_init() != 0 )")
+
+    def test_scanf_targets_in_a_declarator_list_need_initializers(self):
+        for declarations, refused in (
+                ("    int a, b;\n", ["a", "b"]),
+                ("    int a = 0, b;\n", ["b"]),
+                ("    struct reading a;\n    long b;\n", ["a", "b"]),
+                ("    unsigned int * a, b = 0;\n", ["a"]),
+                ("    int a = 0, b = 0;\n", []),
+                ("    int a = 0;\n    int b[ 2 ] = { 0, 0 };\n", [])):
+            (self.root / "examples" / "hello.c").write_text(self.scanf_example(declarations))
+            result = self.run_tool()
+            named = [line.split(": ")[1].split(" ")[0] for line in result.stderr.splitlines()
+                     if "written by scanf" in line]
+            self.assertEqual(named, refused, declarations + result.stderr)
+            self.assertEqual(result.returncode, 1 if refused else 0, declarations + result.stderr)
+
     def test_zero_examples_fail(self):
         result = self.run_tool()
         self.assertNotEqual(result.returncode, 0)
