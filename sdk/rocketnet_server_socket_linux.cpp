@@ -2696,42 +2696,20 @@ bool rocketnet_server_socket_stopped( rocketnet_server_socket_t * server_socket 
 
 int rocketnet_server_socket_send_slot( ptrdiff_t offset )
 {
-    if ( offset < 0 || offset % ROCKETNET_XDP_FRAME_SIZE != 0 )
-    {
-        return -1;
-    }
-    const ptrdiff_t slot = offset / ROCKETNET_XDP_FRAME_SIZE;
-    if ( slot >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
-    {
-        return -1;
-    }
-    return (int) slot;
+    return rocketnet_send_queue_slot( offset, ROCKETNET_XDP_FRAME_SIZE, ROCKETNET_XDP_SEND_QUEUE_SIZE );
 }
 
 // the TX queue for a destination: a hash of its address bytes and port, so
 // every packet and fragment to one client goes through one queue and leaves
 // in the order it was staged. the packet id carries the queue (id modulo the
-// queue count), so finish and abort find it again
+// queue count), so finish and abort find it again (rocketnet_send_queue.h)
 
 int rocketnet_server_socket_send_queue( const rocketnet_address_t * to, int num_queues )
 {
     rocketnet_assert( to );
     rocketnet_assert( num_queues >= 1 );
 
-    uint64_t hash = 0xCBF29CE484222325ULL;
-    const uint8_t * address = (const uint8_t *) &to->data;
-    const int address_bytes = to->type == ROCKETNET_ADDRESS_IPV6 ? 16 : 4;
-    for ( int i = 0; i < address_bytes; i++ )
-    {
-        hash ^= address[i];
-        hash *= 0x100000001B3ULL;
-    }
-
-    hash ^= (uint8_t) ( to->port & 0xFF );
-    hash *= 0x100000001B3ULL;
-    hash ^= (uint8_t) ( to->port >> 8 );
-    hash *= 0x100000001B3ULL;
-    return (int) ( hash % (uint64_t) num_queues );
+    return rocketnet_send_queue_of( to, num_queues );
 }
 
 // proofs/tla/RNDriverSendStaging.tla XdpStart: stages a packet in the producer buffer
@@ -2888,7 +2866,7 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
 
     const int queue = rocketnet_server_socket_send_queue( to, server_socket->num_queues );
 
-    *packet_id = server_socket->packet_id.fetch_add( 1 ) * (uint64_t) server_socket->num_queues + (uint64_t) queue;
+    *packet_id = rocketnet_send_queue_packet_id( server_socket->packet_id.fetch_add( 1 ), server_socket->num_queues, queue );
 
     return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to, destination_mac );
 }
@@ -2903,7 +2881,7 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     rocketnet_assert( packet_bytes > 0 );
     rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
 
-    const int queue = (int) ( packet_id % (uint64_t) server_socket->num_queues );
+    const int queue = rocketnet_send_queue_of_packet( packet_id, server_socket->num_queues );
 
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
@@ -2961,7 +2939,7 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 {
     rocketnet_assert( server_socket );
 
-    const int queue = (int) ( packet_id % (uint64_t) server_socket->num_queues );
+    const int queue = rocketnet_send_queue_of_packet( packet_id, server_socket->num_queues );
 
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
