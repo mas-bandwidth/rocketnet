@@ -1080,7 +1080,14 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
                 break;
             }
 
+            // the trace check's plant (tests/tla_trace_xdp_reply_macs.cpp):
+            // the eviction takes the entry learned last, the reversed
+            // witness MCRNXdpReplyMacsLayoutBrokenEvictNewest.cfg
+#if defined( ROCKETNET_TLA_PLANT_XDP_REPLY_MACS )
+            if ( !oldest || candidate->learned > oldest->learned )
+#else  // #if defined( ROCKETNET_TLA_PLANT_XDP_REPLY_MACS )
             if ( !oldest || candidate->learned < oldest->learned )
+#endif // #if defined( ROCKETNET_TLA_PLANT_XDP_REPLY_MACS )
             {
                 oldest = candidate;
             }
@@ -1291,7 +1298,11 @@ static inline int rocketnet_xdp_gateway_refresh( struct rocketnet_xdp_gateway_re
         return 0;
     }
 
+    // tests/tla_trace_xdp_gateway_refresh.cpp plants a refresh that keeps
+    // its old deadline, so every later call resolves again
+#if !defined( ROCKETNET_TLA_PLANT_XDP_GATEWAY_REFRESH )
     refresh->next_time = now + ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS;
+#endif // #if !defined( ROCKETNET_TLA_PLANT_XDP_GATEWAY_REFRESH )
 
     int num_changes = 0;
     const int num_families = refresh->serves_both ? 2 : 1;

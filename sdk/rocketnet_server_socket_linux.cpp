@@ -62,8 +62,10 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_pending_frames.h"
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_replay_marks.h"
+#include "rocketnet_xdp_replay_sink.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_free_list.h"
+#include "rocketnet_xdp_receive_pass.h"
 #include "rocketnet_xdp_socket_config.h"
 #include "rocketnet_gateway_netlink.h"
 #include "rocketnet_replay.h"
@@ -3074,17 +3076,7 @@ bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
 
-    // proofs/tla/RNXdpReplay.tla Walk (pendingMacForget' = accepted): only a
-    // queued forget drops the learned reply MAC; a refused one leaves it with
-    // the slot that still owes the forget
-
-    const bool queued = rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
-    if ( queued )
-    {
-        rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
-    }
-
-    return queued;
+    return rocketnet_xdp_replay_sink_forget( server_socket->replay_marks, &server_socket->reply_macs, address );
 }
 
 void rocketnet_server_socket_client_accepted( struct rocketnet_server_socket_t * server_socket, int view_index )
@@ -3103,17 +3095,7 @@ bool rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * ser
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
 
-    const bool queued = rocketnet_xdp_replay_marks_mark( server_socket->replay_marks, address, high_water );
-
-    // a new session's zero mark the buffer refused: its key is not held
-    // anywhere, so the next publish holds every keep-alive (proofs/tla/RNXdpReplay.tla
-    // HoldGreetingUntilMarked, markOwed); the walk owes the mark and asks again
-
-    if ( !queued && high_water == 0 )
-    {
-        server_socket->replay_zero_mark_refused = true;
-    }
-    return queued;
+    return rocketnet_xdp_replay_sink_mark( server_socket->replay_marks, address, high_water, &server_socket->replay_zero_mark_refused );
 }
 
 static void rocketnet_server_socket_replay_commit_failed( struct rocketnet_server_socket_t * server_socket, const char * call )
@@ -3180,46 +3162,14 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     rocketnet_assert( server_socket );
     rocketnet_assert( server_socket->replay_marks );
 
-    struct rocketnet_xdp_replay_marks_t * marks = server_socket->replay_marks;
+    // the calls below count each kernel refusal in replay_commit_failures as
+    // they make it; the buffer's own refusals are added after
 
-    // proofs/tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
-    // in one commit; this is the only writer of the kernel map. A forget the
-    // kernel refuses stays pending for the next commit (ForgetOwedUntilApplied)
-    // until it lands or a newer mark of its key lands (RetryNeverDeletesNewerMark);
-    // a mark the kernel refuses stays pending too (MarkOwedUntilApplied), so a
-    // reconnect's refused zero mark is retried rather than lost.
-
-    // a batch the kernel stops (at a missing key, or a refusal) goes on past
-    // the entry it stopped at, which takes one single call so its outcome is
-    // known; a kernel without the batch command is walked one call an entry
-    // (rocketnet_xdp_replay_apply). An applied mark supersedes a refused
-    // forget of the same key (RetryNeverDeletesNewerMark).
-
-    bool * forget_failed = server_socket->replay_forget_failed;
-    memset( forget_failed, 0, marks->capacity * sizeof( bool ) );
-    rocketnet_xdp_replay_apply( marks->forget_count, rocketnet_server_socket_replay_delete_batch, rocketnet_server_socket_replay_delete_single, server_socket,
-                                forget_failed );
-
-    bool * mark_applied = server_socket->replay_mark_applied;
-    memset( mark_applied, 0, marks->capacity * sizeof( bool ) );
-    rocketnet_xdp_replay_apply( marks->mark_count, rocketnet_server_socket_replay_update_batch, rocketnet_server_socket_replay_update_single, server_socket,
-                                mark_applied );
-    for ( uint32_t i = 0; i < marks->mark_count; i++ )
-    {
-        mark_applied[i] = !mark_applied[i];
-    }
-
-    // a full buffer's refusals land in the commit failure count; a refused
-    // forget is kept unless an applied mark of its key superseded it, and a
-    // refused mark is kept for the next commit
-
-    server_socket->replay_commit_failures += rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
-
-    // the publish after this commit holds the greeting of every session whose
-    // zero mark is kept or was not queued (rocketnet_server_socket_hold_greetings)
-
-    server_socket->replay_hold_all_greetings = server_socket->replay_zero_mark_refused;
-    server_socket->replay_zero_mark_refused = false;
+    const uint64_t refused = rocketnet_xdp_replay_commit( server_socket->replay_marks, server_socket->replay_forget_failed, server_socket->replay_mark_applied,
+                                                          rocketnet_server_socket_replay_delete_batch, rocketnet_server_socket_replay_delete_single,
+                                                          rocketnet_server_socket_replay_update_batch, rocketnet_server_socket_replay_update_single,
+                                                          server_socket, &server_socket->replay_zero_mark_refused, &server_socket->replay_hold_all_greetings );
+    server_socket->replay_commit_failures += refused;
 }
 
 uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket )
@@ -4289,13 +4239,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     auto return_pending_frames = [&]()
     {
-        return pending_return.flush(
-            [&]( uint32_t count, uint32_t * index )
-            { return xsk_ring_prod__reserve( &socket->fill_queue, count, index ); },
-            [&]( uint32_t index, uint64_t frame )
-            { *xsk_ring_prod__fill_addr( &socket->fill_queue, index ) = frame; },
-            [&]( uint32_t count )
-            { xsk_ring_prod__submit( &socket->fill_queue, count ); } );
+        return rocketnet_xdp_fill_flush( &pending_return, &socket->fill_queue );
     };
 
     bool reported_frame_pressure = false;
@@ -4344,9 +4288,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
         rocketnet_server_socket_receive_buffer_t * receive_buffer =
             &socket->receive_buffer[socket->receive_handoff.producer];
-        const uint32_t receive_capacity = ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_buffer->num_packets;
-        const uint32_t receive_limit = (uint32_t) pending_return.available() < receive_capacity ? (uint32_t) pending_return.available() : receive_capacity;
-        uint32_t num_packets = receive_limit ? xsk_ring_cons__peek( &socket->receive_queue, receive_limit, &receive_index ) : 0;
+        uint32_t num_packets = rocketnet_xdp_receive_peek( &socket->receive_queue, receive_buffer, ROCKETNET_XDP_RECV_QUEUE_SIZE, &pending_return, &receive_index );
 
         if ( num_packets > 0 )
         {
@@ -4367,7 +4309,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             // (xsk_ring_cons__release), so a later peek returns them first.
             // The frame ownership is modelled in proofs/tla/RNXdpReceiveRing.tla;
             // the loop below is its Take, one descriptor read and its frame
-            // held while the staging buffer has room.
+            // held while the staging buffer has room (sdk/rocketnet_xdp_receive_pass.h).
 
             uint32_t num_consumed = 0;
 
@@ -4382,80 +4324,25 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             const uint64_t receive_region_begin = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
             const uint64_t receive_region_end = (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
-            for ( uint32_t i = 0; i < num_packets; i++ )
+            // a server of one family takes only that family's frames
+            // (rocketnet_xdp_frame_receive's address_type)
+
+            const int address_type = socket->serves_both ? -1 : socket->server_address.type;
+
+            while ( num_consumed < num_packets )
             {
-                rocketnet_assert( receive_buffer->num_packets < ROCKETNET_XDP_RECV_QUEUE_SIZE );
-
-                const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
-
-                num_consumed++;
-
-                // only a receive-region frame goes back to the fill queue; a
-                // descriptor naming any other frame is dropped, never refilled
-                // (proofs/tla/RNXdpReceiveRing.tla FillHoldsOnlyReceiveFrames)
-
-                if ( rocketnet_xdp_fill_return( desc->addr, receive_region_begin, receive_region_end, &frame[num_returned] ) )
-                {
-                    num_returned++;
-                }
-
-                // the descriptor is checked against the receive region and
-                // its own frame before a byte of it is read; a refused one is
-                // counted once, in receive_drops.descriptor (a refused one in
-                // the receive region still went back to the fill queue above,
-                // like any dropped frame)
-
-                const uint8_t * __restrict__ packet_data = rocketnet_xdp_receive_descriptor( socket->buffer,
-                                                                                             receive_region_begin, receive_region_end,
-                                                                                             desc->addr, desc->len, &socket->receive_drops );
-                if ( !packet_data )
-                {
-                    continue;
-                }
-
-                // the codec dispatches on the ethertype: IPv4 at its
-                // offsets, IPv6 at the 40-byte fixed header, the from-address
-                // in the family it read. a frame it does not take (another
-                // ethertype, an IPv6 extension header, the family this server
-                // does not serve, a frame too short for any server packet) is
-                // counted by reason in receive_drops, never parsed at the
-                // wrong offsets
-
-                rocketnet_address_t from;
-                const uint8_t * payload_data = NULL;
-                int payload_bytes = 0;
-
-                const int address_type = socket->serves_both ? -1 : socket->server_address.type;
-                if ( rocketnet_xdp_frame_receive( packet_data, (size_t) desc->len, address_type, &from, &payload_data, &payload_bytes, &socket->receive_drops ) )
-                {
-                    const int index = (int) receive_buffer->num_packets;
-
-                    receive_buffer->from[index] = from;
-
-                    memcpy( receive_buffer->eth[index], packet_data + ETH_ALEN, ETH_ALEN );      // the ethernet source
-
-                    memcpy( receive_buffer->packet_data[index], payload_data, (size_t) payload_bytes );
-
-                    receive_buffer->packet_bytes[index] = (size_t) payload_bytes;
-
-                    receive_buffer->num_packets++;
-                }
+                rocketnet_xdp_receive_take( &socket->receive_queue, receive_index, &num_consumed,
+                                            socket->buffer, receive_region_begin, receive_region_end, address_type,
+                                            receive_buffer, ROCKETNET_XDP_RECV_QUEUE_SIZE,
+                                            frame, &num_returned, &socket->receive_drops );
             }
 
-            rocketnet_xdp_receive_ring_finish( num_packets, num_consumed, []( void * r, uint32_t n )
-                                               { xsk_ring_cons__cancel( (struct xsk_ring_cons *) r, n ); }, []( void * r, uint32_t n )
-                                               { xsk_ring_cons__release( (struct xsk_ring_cons *) r, n ); }, &socket->receive_queue );
+            // the drop counts the loop wrote, published before the pass's end
+            // (only this thread writes them)
 
             rocketnet_server_socket_publish_receive_dropped( socket );
 
-            // The peek was bounded by available pending storage, so every
-            // returned frame remains owned until a full fill reservation. The
-            // fill credit is the returned count, not num_consumed: a refused
-            // descriptor outside the receive region is released from the RX
-            // ring above but never refilled.
-
-            const bool retained = pending_return.append( frame, num_returned );
-            rocketnet_assert( retained );
+            const bool retained = rocketnet_xdp_receive_end( &socket->receive_queue, num_packets, num_consumed, frame, num_returned, &pending_return );
 
             if ( !retained )
             {
