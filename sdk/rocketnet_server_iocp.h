@@ -11,6 +11,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_network_threads.h"
 
 // Windows server transport. The public transport API is unchanged. The send
 // side is lanes, the XDP shape: each lane owns its staging, its pool of send
@@ -31,8 +32,10 @@
 // worker drains only positions below the enqueue ticket captured at the start
 // of its pass.
 
-// One completion worker by default, on one socket bound exclusively. More
-// than one worker (the server config's num_xdp_queues) is as many endpoints:
+// The completion workers are the server config's num_iocp_completion_workers
+// (default ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS, 2, on a specific bind
+// address; one on the wildcard when nothing was asked, said in a warning).
+// One worker is one socket bound exclusively. More than one is as many endpoints:
 // each worker has its own socket and completion port, the socket given the
 // worker's processor with SIO_CPU_AFFINITY before bind and all bound to the
 // same specific address and port, and the worker pinned to that processor.
@@ -43,19 +46,19 @@
 // port shared by processor: a socket of another process that also sets
 // SIO_CPU_AFFINITY can join the port and receive the flows RSS hands its
 // processor (a plain or SO_REUSEADDR bind is refused, measured).
-#define ROCKETNET_IOCP_DEFAULT_WORKERS 1
-#define ROCKETNET_IOCP_MAX_WORKERS 32
+#define ROCKETNET_IOCP_MAX_WORKERS ROCKETNET_IOCP_MAX_COMPLETION_WORKERS
 
 // The send threads. A send thread takes the ready banks of the lanes it owns
 // (lane l belongs to thread l % threads), groups and posts them. There are
-// ROCKETNET_IOCP_SEND_THREADS of them, or as many as there are lanes when
-// there are fewer, each pinned to a core of its own after the completion
-// workers' cores (rocketnet_server_iocp_send_placement). The count is the
+// num_iocp_send_threads of them (default ROCKETNET_IOCP_DEFAULT_SEND_THREADS,
+// or as many as there are lanes when there are fewer; an asked count above the
+// lanes is refused), each pinned to a core of its own after the completion
+// workers' cores (rocketnet_server_iocp_send_placement). The default is the
 // smallest measured to hold the space game's peak (1000 players, 15 packets
 // of 1200 bytes each per 60 Hz frame, 900k packets a second, the game threads
 // half busy, 2 completion workers): 60 frames a second with every player whole.
-#define ROCKETNET_IOCP_SEND_THREADS 2
-#define ROCKETNET_IOCP_MAX_SEND_THREADS 16
+// ROCKETNET_IOCP_MAX_SEND_THREADS is in sdk/rocketnet_network_threads.h.
+#define ROCKETNET_IOCP_SEND_THREADS ROCKETNET_IOCP_DEFAULT_SEND_THREADS
 
 // The send staging is sized by rate. The lanes together stage
 // ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT for every sized client: 32 at 1000
@@ -99,6 +102,24 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_SEND_THREADS >= 1 && ROCKETNET_IOCP_SEND
 static inline int rocketnet_server_iocp_send_threads( int lanes )
 {
     return lanes < ROCKETNET_IOCP_SEND_THREADS ? lanes : ROCKETNET_IOCP_SEND_THREADS;
+}
+
+// The send threads for lanes lanes when num_iocp_send_threads asked for
+// asked: zero is the default above; a count from 1 up to the lanes is that
+// count; 0 back is a refusal (below 0, above the lanes, or past
+// ROCKETNET_IOCP_MAX_SEND_THREADS): a thread with no lane would never post.
+// Any thread.
+static inline int rocketnet_server_iocp_send_threads_for( int asked, int lanes )
+{
+    if ( asked == 0 )
+    {
+        return rocketnet_server_iocp_send_threads( lanes );
+    }
+    if ( asked < 0 || asked > lanes || asked > ROCKETNET_IOCP_MAX_SEND_THREADS )
+    {
+        return 0;
+    }
+    return asked;
 }
 
 // the thread that owns lane l. Any thread.

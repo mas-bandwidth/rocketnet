@@ -2289,8 +2289,8 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
 
 static void * msgx_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    return rocketnet_server_msgx_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients,
-                                         config->transport->packet_filter, config->status );
+    const int workers = rocketnet_network_threads_count( config->transport->num_msgx_transmit_workers, ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS );
+    return rocketnet_server_msgx_create( context, bind, workers, config->transport->max_clients, config->transport->packet_filter, config->status );
 }
 
 static void msgx_destroy( void * transport ) { rocketnet_server_msgx_destroy( (rocketnet_server_msgx_t *) transport ); }
