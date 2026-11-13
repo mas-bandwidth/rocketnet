@@ -24,7 +24,9 @@
 #include <mstcpip.h>
 #include <atomic>
 #include <new>
+#include <limits.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -4197,11 +4199,58 @@ void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio, uint64_t p
     rocketnet_rio_lane_abort_packet( rio->lanes[lane], (uint64_t) index, frame );
 }
 
+// MEASUREMENT ONLY (tools/v1.1.x/rio-lane-print, never merged): per lane,
+// each second of flushes, what the fill threads left staged in the open
+// phase at the flush, its room then, how many flushes found the room at or
+// below 1000 (the in-place start's reserve at 1000 players), and how many
+// kept the phase open (the next phase not idle)
+struct rocketnet_rio_lane_print_t
+{
+    uint64_t flushes = 0, staged_sum = 0, staged_max = 0, room_low = 0, waits_before = 0;
+    int room_min = INT_MAX;
+};
+static rocketnet_rio_lane_print_t rocketnet_rio_lane_prints[ROCKETNET_RIO_MAX_LANES];
+static uint64_t rocketnet_rio_lane_print_calls = 0;
+
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
 {
+    for ( int i = 0; i < rio->num_lanes && i < ROCKETNET_RIO_MAX_LANES; ++i )
+    {
+        rocketnet_rio_lane_t * lane = rio->lanes[i];
+        rocketnet_rio_lane_print_t * p = &rocketnet_rio_lane_prints[i];
+        const int phase = lane->fill.load( std::memory_order_relaxed );
+        const uint64_t staged = lane->next[phase].load( std::memory_order_relaxed );
+        const int room = rocketnet_rio_lane_send_room( lane );
+        p->flushes++;
+        p->staged_sum += staged;
+        p->staged_max = staged > p->staged_max ? staged : p->staged_max;
+        p->room_min = room < p->room_min ? room : p->room_min;
+        p->room_low += room <= 1000 ? 1 : 0;
+    }
     for ( int i = 0; i < rio->num_lanes; ++i )
     {
         rocketnet_rio_lane_send_packets( rio->lanes[i] );
+    }
+    if ( ++rocketnet_rio_lane_print_calls % 60 == 0 )
+    {
+        for ( int i = 0; i < rio->num_lanes && i < ROCKETNET_RIO_MAX_LANES; ++i )
+        {
+            rocketnet_rio_lane_t * lane = rio->lanes[i];
+            rocketnet_rio_lane_print_t * p = &rocketnet_rio_lane_prints[i];
+            const uint64_t waits = lane->counters[ROCKETNET_COUNTER_RIO_SEND_WAITS - ROCKETNET_SERVER_RIO_FIRST_COUNTER].load();
+            const uint64_t sent = lane->counters[ROCKETNET_COUNTER_RIO_PACKETS_SENT - ROCKETNET_SERVER_RIO_FIRST_COUNTER].load();
+            printf( "rio_lane_print: call=%llu lane=%d flushes=%llu staged_sum=%llu staged_max=%llu room_min=%d room_le_1000=%llu waits=%llu sent_total=%llu\n",
+                    (unsigned long long) rocketnet_rio_lane_print_calls, i, (unsigned long long) p->flushes, (unsigned long long) p->staged_sum,
+                    (unsigned long long) p->staged_max, p->room_min, (unsigned long long) p->room_low, (unsigned long long) ( waits - p->waits_before ),
+                    (unsigned long long) sent );
+            p->flushes = 0;
+            p->staged_sum = 0;
+            p->staged_max = 0;
+            p->room_low = 0;
+            p->room_min = INT_MAX;
+            p->waits_before = waits;
+        }
+        fflush( stdout );
     }
 }
 
