@@ -8,14 +8,23 @@ EXTENDS Naturals, FiniteSets, Sequences, TLC
 \* reaches first (MCRNChannelNotReceived.cfg: 8630 distinct on one run, 8634
 \* on another, under LossySafetyView).
 \*
-\* A and B are two independent copies of RNChannel; the product reaches
-\* every pair of reachable states. ViewSound holds at a pair with equal views
-\* when they agree on the invariants and, for each labelled step of Next,
-\* the step is enabled in both or neither, and taking it in both gives equal
-\* views. Each label names one disjunct of Next with its existential
-\* parameters bound, so with MaxDelay = 0 each label has at most one
-\* successor and the per-label check is the successor-set check. A label
-\* matching only itself is a sufficient condition, stronger than needed.
+\* A runs RNChannel's Next. B is, at every step, a copy of A with the
+\* variables a view may drop given other values: each Link's pulse (0 or 1)
+\* and send counter (0..Horizon), and rxQueue reordered across channels with
+\* each channel's order kept. B's values are kept only where B's view equals
+\* A's, so the product reaches every pair (A, B) of a reachable A and a state
+\* B with A's view that differs from A only in those variables. SafetyView
+\* keeps every other variable, so for it these B are every state with A's
+\* view (reachable or not), and checking them all is sufficient for
+\* soundness. LossySafetyView also merges trace with rxQueue; the B here are
+\* only some of the states it merges, enough to show it is not sound.
+\*
+\* ViewSound holds at (A, B) when they agree on the invariants and, for each
+\* labelled step of Next, the step is enabled in both or neither and taking
+\* it in both gives equal views. Each label names one disjunct of Next with
+\* its existential parameters bound, so with MaxDelay = 0 each label has at
+\* most one successor and the per-label check is the successor-set check
+\* (matching a step only by its own label is stronger than needed).
 \*
 \* LossyView = FALSE checks SafetyView (MCRNChannelViewSound.cfg, pass);
 \* LossyView = TRUE checks the pre-v1.1.9 LossySafetyView
@@ -85,8 +94,114 @@ bvars == <<b_written, b_waitedForRoom, b_roomReturned, b_refused, b_uDropped, b_
       b_uCount, b_seen, b_probeWrite, b_probeRead, b_resetOK, b_taken, b_notReceived, b_misused,
       b_deliveredCount, b_fwdWire, b_fwdSent, b_fwdPulse, b_revWire, b_revSent, b_revPulse>>
 
-Init == A!Init /\ B!Init
-Next == (A!Next /\ UNCHANGED bvars) \/ (B!Next /\ UNCHANGED avars)
+\* The rxQueue orders with each channel's order kept.
+Interleavings(q) == {p \in [1..Len(q) -> A!Messages] :
+                       \A c \in A!Channels : A!OnChannel(p, c) = A!OnChannel(q, c)}
+BAt(fp, rp, fs, rs, q) ==
+ /\ b_written = a_written
+ /\ b_waitedForRoom = a_waitedForRoom
+ /\ b_roomReturned = a_roomReturned
+ /\ b_refused = a_refused
+ /\ b_uDropped = a_uDropped
+ /\ b_queued = a_queued
+ /\ b_admitted = a_admitted
+ /\ b_acked = a_acked
+ /\ b_smap = a_smap
+ /\ b_forgotten = a_forgotten
+ /\ b_reserved = a_reserved
+ /\ b_ordered_write = a_ordered_write
+ /\ b_sequenced_write = a_sequenced_write
+ /\ b_ordered_read = a_ordered_read
+ /\ b_sequenced_watermark = a_sequenced_watermark
+ /\ b_sentTrace = a_sentTrace
+ /\ b_trace = a_trace
+ /\ b_rxQueue = q
+ /\ b_chunks = a_chunks
+ /\ b_received = a_received
+ /\ b_live = a_live
+ /\ b_batch = a_batch
+ /\ b_phase = a_phase
+ /\ b_pending = a_pending
+ /\ b_duplicateReady = a_duplicateReady
+ /\ b_whole = a_whole
+ /\ b_placed = a_placed
+ /\ b_collision = a_collision
+ /\ b_uSent = a_uSent
+ /\ b_uCount = a_uCount
+ /\ b_seen = a_seen
+ /\ b_probeWrite = a_probeWrite
+ /\ b_probeRead = a_probeRead
+ /\ b_resetOK = a_resetOK
+ /\ b_taken = a_taken
+ /\ b_notReceived = a_notReceived
+ /\ b_misused = a_misused
+ /\ b_deliveredCount = a_deliveredCount
+ /\ b_fwdWire = a_fwdWire
+ /\ b_fwdSent = fs
+ /\ b_fwdPulse = fp
+ /\ b_revWire = a_revWire
+ /\ b_revSent = rs
+ /\ b_revPulse = rp
+BNext(fp, rp, fs, rs, q) ==
+ /\ b_written' = a_written'
+ /\ b_waitedForRoom' = a_waitedForRoom'
+ /\ b_roomReturned' = a_roomReturned'
+ /\ b_refused' = a_refused'
+ /\ b_uDropped' = a_uDropped'
+ /\ b_queued' = a_queued'
+ /\ b_admitted' = a_admitted'
+ /\ b_acked' = a_acked'
+ /\ b_smap' = a_smap'
+ /\ b_forgotten' = a_forgotten'
+ /\ b_reserved' = a_reserved'
+ /\ b_ordered_write' = a_ordered_write'
+ /\ b_sequenced_write' = a_sequenced_write'
+ /\ b_ordered_read' = a_ordered_read'
+ /\ b_sequenced_watermark' = a_sequenced_watermark'
+ /\ b_sentTrace' = a_sentTrace'
+ /\ b_trace' = a_trace'
+ /\ b_rxQueue' = q
+ /\ b_chunks' = a_chunks'
+ /\ b_received' = a_received'
+ /\ b_live' = a_live'
+ /\ b_batch' = a_batch'
+ /\ b_phase' = a_phase'
+ /\ b_pending' = a_pending'
+ /\ b_duplicateReady' = a_duplicateReady'
+ /\ b_whole' = a_whole'
+ /\ b_placed' = a_placed'
+ /\ b_collision' = a_collision'
+ /\ b_uSent' = a_uSent'
+ /\ b_uCount' = a_uCount'
+ /\ b_seen' = a_seen'
+ /\ b_probeWrite' = a_probeWrite'
+ /\ b_probeRead' = a_probeRead'
+ /\ b_resetOK' = a_resetOK'
+ /\ b_taken' = a_taken'
+ /\ b_notReceived' = a_notReceived'
+ /\ b_misused' = a_misused'
+ /\ b_deliveredCount' = a_deliveredCount'
+ /\ b_fwdWire' = a_fwdWire'
+ /\ b_fwdSent' = fs
+ /\ b_fwdPulse' = fp
+ /\ b_revWire' = a_revWire'
+ /\ b_revSent' = rs
+ /\ b_revPulse' = rp
+
+VA == IF LossyView THEN A!LossySafetyView ELSE A!SafetyView
+VB == IF LossyView THEN B!LossySafetyView ELSE B!SafetyView
+
+Init ==
+ /\ A!Init
+ /\ \E fp, rp \in {0, 1}, fs \in 0..A!Fwd!Horizon, rs \in 0..A!Rev!Horizon,
+       q \in Interleavings(a_rxQueue) : BAt(fp, rp, fs, rs, q)
+ /\ VB = VA
+
+Next ==
+ /\ A!Next
+ /\ \E fp, rp \in {0, 1}, fs \in 0..A!Fwd!Horizon, rs \in 0..A!Rev!Horizon,
+       q \in Interleavings(a_rxQueue') : BNext(fp, rp, fs, rs, q)
+ /\ VB' = VA'
 
 Blank == [n |-> "", s |-> {}, p |-> 0, u |-> FALSE, m |-> 0, i |-> 0]
 Plain == {"RefuseSend", "DropUnreliableForBudget", "Enqueue", "NumberRecord", "ReserveBeforeRoom", "OpenHead", "FixBatch", "Take", "SendAck", "EndUpdate", "ReceiveAckAny", "GhostSequencedWrite", "GhostSequencedRead"}
@@ -158,9 +273,6 @@ StepB(l) ==
     \/ (l.n = "RevReorder" /\ B!RevEnvironment /\ B!Rev!Reorder(l.i))
     \/ (l.n = "RevDelay" /\ B!RevEnvironment /\ B!Rev!Delay(l.i))
     \/ (l.n = "RevAge" /\ MaxDelay > 0 /\ B!RevEnvironment /\ B!Rev!Age)
-
-VA == IF LossyView THEN A!LossySafetyView ELSE A!SafetyView
-VB == IF LossyView THEN B!LossySafetyView ELSE B!SafetyView
 
 InvariantsAgree ==
  /\ (A!TypeOK <=> B!TypeOK)
