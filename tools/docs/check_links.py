@@ -20,23 +20,56 @@ LINK = re.compile(r"\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+\"[^\"]*\")?\s*\)")
 REFERENCE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(<[^>]+>|\S+)", re.M)
 
 
+LIST_ITEM = re.compile(r"^\s{0,3}(?:[-*+]|[0-9]{1,9}[.)])(?:\s|$)")
+
+
 def prose(text):
-    """Keep line numbers while excluding fenced examples and comments."""
+    """Keep line numbers while excluding fenced examples, indented code and comments.
+
+    An indented line (four spaces or a tab) is code only where CommonMark makes
+    it an indented code block: after a blank line (or another code line) and
+    not inside a list item. Inside a list, or right after a paragraph line, it
+    is a continuation line of prose, and its links are checked.
+    """
     lines = []
     fence = None
+    previous_blank = True
+    in_code = False
+    in_list = False
     for line in text.splitlines():
         match = re.match(r"^\s{0,3}(`{3,}|~{3,})", line)
         if fence:
             if match and match[1][0] == fence[0] and len(match[1]) >= len(fence):
+                # a closed fence ends any paragraph, so an indented line after it is code
                 fence = None
+                previous_blank = True
             lines.append("")
-        elif match:
+            continue
+        if match:
             fence = match[1]
+            in_code = False
+            previous_blank = False
             lines.append("")
-        elif line.startswith("    ") or line.startswith("\t"):
-            lines.append("")
-        else:
+            continue
+        if not line.strip():
+            previous_blank = True
             lines.append(line)
+            continue
+        if line.startswith("    ") or line.startswith("\t"):
+            if in_code or (previous_blank and not in_list):
+                in_code = True
+                lines.append("")
+            else:
+                lines.append(line)
+            previous_blank = False
+            continue
+        in_code = False
+        if LIST_ITEM.match(line):
+            in_list = True
+        elif previous_blank:
+            in_list = False
+        previous_blank = False
+        lines.append(line)
     return re.sub(r"<!--.*?-->", lambda m: "\n" * m[0].count("\n"), "\n".join(lines), flags=re.S)
 
 

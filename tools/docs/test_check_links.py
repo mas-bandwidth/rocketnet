@@ -37,6 +37,34 @@ class LinkTests(unittest.TestCase):
             self.assertIn('missing heading or anchor', failures[0])
             self.assertIn('missing target', failures[1])
 
+    def test_list_continuation_links_are_checked(self):
+        # an indented line inside a list item, or right after a paragraph line,
+        # is prose; only an indented block after a blank line outside a list is code
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            page = root / 'README.md'
+            page.write_text('- item one\n'
+                            '    [broken](list-continuation.md)\n'
+                            '\n'
+                            '1. numbered\n'
+                            '\n'
+                            '    [also broken](after-blank-in-list.md)\n'
+                            '\n'
+                            'A paragraph\n'
+                            '    [lazy](paragraph-continuation.md)\n'
+                            '\n'
+                            '    [code](indented-code-block.md)\n'
+                            '    [more code](still-code.md)\n'
+                            '```sh\n'
+                            'echo\n'
+                            '```\n'
+                            '    [after fence](code-after-fence.md)\n')
+            count, failures = check([page], root)
+            self.assertEqual(count, 3)
+            self.assertEqual([failure.split(': ')[1] for failure in failures],
+                             ['list-continuation.md', 'after-blank-in-list.md',
+                              'paragraph-continuation.md'])
+
 
 class TrackedTreeTests(unittest.TestCase):
     """The guide list is git's: a guide outside the old roots is checked, a
