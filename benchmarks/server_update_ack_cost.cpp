@@ -38,6 +38,18 @@
 #define ACK_COST_CYCLES 0
 #endif // #if defined( __linux__ )
 
+// under callgrind --collect-atstart=no, collection is on for the measured
+// update calls alone (the connect phase and the warmup are excluded)
+#if defined( __has_include )
+#if __has_include( <valgrind/callgrind.h> )
+#include <valgrind/callgrind.h>
+#define ACK_COST_COLLECT() CALLGRIND_TOGGLE_COLLECT
+#endif // #if __has_include( <valgrind/callgrind.h> )
+#endif // #if defined( __has_include )
+#ifndef ACK_COST_COLLECT
+#define ACK_COST_COLLECT() do { } while ( 0 )
+#endif // #ifndef ACK_COST_COLLECT
+
 #define CHECK( x ) do { if ( !( x ) ) { fprintf( stderr, "server update ack cost bench failed: %s, line %d\n", #x, __LINE__ ); exit( 1 ); } } while ( 0 )
 
 #define ACK_COST_PROTOCOL 0x51E7D41A92B3C6D9ULL
@@ -290,7 +302,17 @@ int main( int argc, char ** argv )
         ack_cost_counter_enable( &instructions );
         ack_cost_counter_enable( &cycles );
 
+        if ( frame >= 0 )
+        {
+            ACK_COST_COLLECT();
+        }
+
         rocketnet_server_update( server, ack_cost_now );
+
+        if ( frame >= 0 )
+        {
+            ACK_COST_COLLECT();
+        }
 
         const uint64_t frame_cycles = ack_cost_counter_disable( &cycles );
         const uint64_t frame_instructions = ack_cost_counter_disable( &instructions );
