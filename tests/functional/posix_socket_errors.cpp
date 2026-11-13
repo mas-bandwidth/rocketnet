@@ -2381,12 +2381,13 @@ void rocketnet_test_posix_msgx_retired_socket_counted()
 // and for an IPv6 client on its own port: its shared socket sets
 // SO_REUSEADDR and SO_REUSEPORT after its bind, the client sockets before
 // theirs. The open count is read, so a client socket that failed to open and
-// fell back to the shared socket is red. Skipped where the host has no IPv6,
-// which a plain socket bound to ::1 decides before the transport is asked:
-// on a host with IPv6 every create failure of the transport fails the case.
-// Real sockets: the server transport directly, no datagram sent.
+// fell back to the shared socket is red. The row runs only where the host has
+// IPv6 (runs_here rocketnet_test_posix_msgx_dual_stack_runs_here, a plain
+// socket bound to ::1, decided before the transport is asked) and prints
+// SKIPPED elsewhere; where it runs, every create failure of the transport
+// fails the case. Real sockets: the server transport directly, no datagram sent.
 
-static bool posix_host_has_ipv6()
+bool rocketnet_test_posix_msgx_dual_stack_runs_here()
 {
     const int probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
     if ( probe < 0 )
@@ -2404,12 +2405,7 @@ static bool posix_host_has_ipv6()
 
 void rocketnet_test_posix_msgx_dual_stack_client_sockets_open()
 {
-    if ( !posix_host_has_ipv6() )
-    {
-        printf( "  msgx dual stack: skipped, this host cannot bind an IPv6 socket to ::1\n" );
-        fflush( stdout );
-        return;
-    }
+    posix_check( rocketnet_test_posix_msgx_dual_stack_runs_here() ); // the row runs only where this holds
 
     rocketnet_address_t bind_address;
     posix_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );

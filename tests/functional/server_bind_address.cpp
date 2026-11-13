@@ -365,8 +365,9 @@ void rocketnet_test_server_bind_refused_msgx()
 // bind succeeds over a port a plain IPv4 socket holds, and that socket then
 // receives every IPv4 datagram (the server starts, and no IPv4 client ever
 // reaches it). Both macOS transports reserve; these cases hold portable to it
-// as well as msgx. Real sockets: functional tests. Skipped where the host has
-// no IPv6.
+// as well as msgx. Real sockets: functional tests. Their rows run only where
+// the host has IPv6 loopback (runs_here rocketnet_test_server_bind_dual_stack_runs_here
+// below); elsewhere they print SKIPPED, and run by name there they fail.
 
 // these cases name their transports: an outer suite pin is set aside for the
 // case and put back after it
@@ -451,7 +452,8 @@ static enum rocketnet_status_t bind_dual_stack_start( const char * transport, un
     return start_status;
 }
 
-static bool bind_host_has_ipv6()
+// the runs_here of the three dual-stack rows: an IPv6 socket binds [::1]
+bool rocketnet_test_server_bind_dual_stack_runs_here()
 {
     const int probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
     if ( probe < 0 )
@@ -498,11 +500,7 @@ static void bind_dual_stack_ipv4_held_for( const char * transport )
 
 void rocketnet_test_server_bind_dual_stack_ipv4_held()
 {
-    if ( !bind_host_has_ipv6() )
-    {
-        printf( "  no IPv6 on this host: nothing to check\n" );
-        return;
-    }
+    bind_check( rocketnet_test_server_bind_dual_stack_runs_here() ); // the row runs only where this holds
     struct bind_pins_t pins;
     bind_pins_clear( &pins );
     bind_dual_stack_ipv4_held_for( "portable" );
@@ -539,11 +537,7 @@ static void bind_dual_stack_port_zero_for( const char * transport, const unsigne
 
 void rocketnet_test_server_bind_dual_stack_port_zero()
 {
-    if ( !bind_host_has_ipv6() )
-    {
-        printf( "  no IPv6 on this host: nothing to check\n" );
-        return;
-    }
+    bind_check( rocketnet_test_server_bind_dual_stack_runs_here() ); // the row runs only where this holds
 
     struct rlimit limit;
     bind_check( getrlimit( RLIMIT_NOFILE, &limit ) == 0 );
@@ -583,11 +577,7 @@ void rocketnet_test_server_bind_dual_stack_port_zero()
 #if ROCKETNET_DEV
 void rocketnet_test_server_msgx_dual_stack_both_families_connect()
 {
-    if ( !bind_host_has_ipv6() )
-    {
-        printf( "  no IPv6 on this host: nothing to check\n" );
-        return;
-    }
+    bind_check( rocketnet_test_server_bind_dual_stack_runs_here() ); // the row runs only where this holds
 
     struct bind_pins_t pins;
     bind_pins_clear( &pins );
@@ -684,9 +674,11 @@ void rocketnet_test_server_bind_refused_default_transports()
 // Windows: a start whose bind Winsock refuses (WSAEADDRINUSE: another socket
 // holds the port, no SO_REUSEADDR) returns ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED
 // from the iocp and rio transports, and from a bind address that is not this
-// host's (WSAEADDRNOTAVAIL). A control start on the free port runs first: a
-// host where the transport cannot start at all (rio needs the RIO extension)
-// skips, so the status checked is the bind's. Real sockets: a functional test.
+// host's (WSAEADDRNOTAVAIL). A control start on a free port runs first and
+// must succeed, so the status checked is the bind's: a transport that does not
+// start fails the case (every Windows CI host runs iocp and RIO; the rio rows
+// elsewhere check rocketnet_server_rio_available too). Real sockets: a
+// functional test.
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -744,15 +736,15 @@ static void bind_refused_for( const char * transport )
     bind_check( WSAStartup( MAKEWORD( 2, 2 ), &data ) == 0 );
 
     // the control first: the transport starts on a port the kernel picks at the
-    // start (port 0), or the host cannot run it. No released port is rebound:
-    // another process could take it between the close and the start.
-    if ( bind_refused_start( transport, "127.0.0.1:0", NULL ) != ROCKETNET_STATUS_OK )
+    // start (port 0). No released port is rebound: another process could take
+    // it between the close and the start.
+    const enum rocketnet_status_t control = bind_refused_start( transport, "127.0.0.1:0", NULL );
+    if ( control != ROCKETNET_STATUS_OK )
     {
-        printf( "  skipped: the %s transport does not start on this host\n", transport );
+        printf( "  the %s transport did not start on a free port: %s\n", transport, rocketnet_status_name( control ) );
         fflush( stdout );
-        WSACleanup();
-        return;
     }
+    bind_check( control == ROCKETNET_STATUS_OK );
 
     // a port held by another socket for the rest of the test
     SOCKET holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
