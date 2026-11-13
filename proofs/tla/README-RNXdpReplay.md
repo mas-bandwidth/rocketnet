@@ -321,8 +321,9 @@ between start and finish.
   and takes no mark for the new address, so the new session's greeting is
   not held by its zero mark and an older entry for the new address can
   stand. The model cannot express it (slot and address are one here), and
-  the trace's walk steers clear of it (`rp_owed_slot`). The slot-keyed model
-  is `RNServerReplaySlots`.
+  the trace's walk steers clear of it (`rp_owed_slot`). `RNServerReplaySlots`
+  keys by slot but has no greeting or freshness property, so that harm is
+  checked by no model.
 - **A disconnect before the first keep-alive.** A client that gives up while
   still sending its connection response sends a disconnect burst, session
   packets, before it is greeted; the kernel may drop that burst against an

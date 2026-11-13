@@ -769,8 +769,8 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
 
         if ( !walk.flush && choice < 8 )
         {
-            // connect: a free slot never another address's owed forget, no
-            // slot seen at this address, every live session greeted
+            // connect: a free slot never another address's owed forget, and
+            // no slot seen at this address
             if ( walk.session[a] != 0 || walk.next_session > RP_SESSIONS || rp_owed_slot() || rp_record( a ).seen )
             {
                 continue;
