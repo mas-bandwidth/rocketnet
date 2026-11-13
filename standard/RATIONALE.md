@@ -1834,7 +1834,9 @@ which that window was measured to survive an outage of one second less than the
 timeout; at 1000 ms it did not. The recovery bound counts the keep-alive that reopens
 the path, one round trip, an update, one resend delay and the backlog at the usable
 budget rate, which the 100 ms bucket depth caps for an endpoint that updates less often
-than ten times a second.
+than ten times a second. The budget is not the only rate: a small `packets_per_update`,
+the 16-record and one-fragment limits of a packet, or the window can drain a backlog
+more slowly, and then the bound is taken at that rate.
 
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules

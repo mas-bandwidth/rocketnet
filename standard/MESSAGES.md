@@ -157,6 +157,17 @@ and it cannot ask for the message again.
    and is resent ([m9.3 Resend classes and the reliable timeout](#m9.3)): the
    sender holds it until the client can receive it. An unreliable message sent in
    that state is lost, as on any lossy path.
+6. A receiver whose update has no delivery room left for a reliable record,
+   counting the deliveries that record can release, MUST stop processing that
+   payload at that record, MUST NOT mark the record received, and MUST NOT
+   report the packet accepted to the connection layer, so the packet is not
+   acknowledged. The records before it in the payload stay accepted and their
+   deliveries stand. When the sender resends the packet's reliable records,
+   those already accepted are dropped as duplicates
+   ([m5.2 Receiver reconstruction and window check](#m5.2)), so none is
+   delivered twice. An unreliable record after the stopping point is lost, and
+   an earlier record that carries a receipt is not acknowledged by that
+   packet.
 
 <a id="m1.7"></a>
 ### m1.7. Send refusal
@@ -230,17 +241,28 @@ remote endpoint.
    response and the client's entry to connected (4) of
    [RN-1 t11 Handshake: client](TRANSPORT.md#t11), the client's silence is at
    most `D + RTT + m`, where `RTT` is the round trip. This revision states the
-   guarantee for round trips of at most 900 ms, and for `D = T - 1` it needs
-   `2κ + u + Δδ < 1` second.
+   guarantee for round trips of at most 900 ms. For `D = T - 1` it needs
+   `m < 1` second once both endpoints are connected, and `RTT + m < 1` second
+   before the client is connected, so a round trip of 900 ms leaves `m` less
+   than 100 ms there.
 4. After the last interval in which a direction delivers nothing, every
-   message the application started and finished on a reliable channel MUST be
-   delivered exactly once, in its channel's order. When both endpoints update at
+   message the application started and finished with a reliable reliability
+   MUST be delivered as that reliability delivers it
+   ([m7 Delivery: reliable codes 2, 3 and 4](#m7)): a RELIABLE_ORDERED message
+   exactly once, in its channel's order; a RELIABLE message exactly once, in no
+   set order; a RELIABLE_SEQUENCED message at most once, and not at all when a
+   newer message on its channel supersedes it. When both endpoints update at
    least every 0.1 seconds this completes within
    `κ + 2r + u + rd + backlog_bytes / rate_usable` plus one probe round of
    [m9.3 Resend classes and the reliable timeout](#m9.3), where `r` is the
    one-way delay, `backlog_bytes` the reliable bytes waiting, `rd` is at most
    `message_resend_delay_max_ms` and `rate_usable` is the send budget of
    [m9.4 Send budget](#m9.4) in bytes per second times `min(1, 0.1 / u)`.
+   That bound holds while the budget is the limit that binds. When another
+   limit binds first, the backlog drains at that slower rate and the bound
+   uses it in place of `rate_usable`: `packets_per_update` packets per update,
+   at most 16 records and one block fragment in a packet, and the window of
+   rule 2.
 5. The guarantee of rules 3 and 4 holds only when both endpoints keep this
    revision of RN-2. An endpoint that keeps revision 1.0 ends a connection by
    the reliable timeout, which that revision enables by default, bounds its
@@ -276,8 +298,13 @@ A sender MUST aggregate fitting messages into back-to-back records of a
 shared RECORDS payload when room remains. Start reserves the declared maximum
 after the committed prefix; finish commits only the actual length, and abort
 leaves the prefix unchanged. Neither operation moves committed payloads.
-Seal the payload when the next reservation cannot fit, a receipt-reference
-bound is reached, or send_packets or update closes the build.
+Seal the payload when the next reservation cannot fit, when it holds 16
+records, when its reliable numbers and receipt references together reach 16,
+or when send_packets or update closes the build. A sender MAY seal a fitting
+unreliable message alone when the application finishes it from a thread that
+writes its own packets: the reference implementation's per-client finish does
+so, and when the update's send limits leave no room it drops the message and
+counts `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY`.
 
 A sender MAY use SINGLE for an unpromoted plain UNRELIABLE message when
 the available packet buffer can hold its data and form byte but cannot also
@@ -304,7 +331,7 @@ The one-record limit of a reliability is the largest message that reliability se
 | RELIABLE_SEQUENCED | 4 | the row `RELIABLE_SEQUENCED record limit`, or the WIDE row on a channel of 256 or more | sent as a block |
 | UNRELIABLE_WITH_ACK_RECEIPT | 5 | the row `UNRELIABLE record limit`, in wire code 0 | sent as RELIABLE (code 2) and keeps its ACKED receipt |
 
-When the connection layer's payload capacity is below the row `maximum payload size`, the UNRELIABLE_SEQUENCED one-record limit is that capacity less the record's header and the form byte. A sender MUST send a message at or below its one-record limit without fragmentation: as SINGLE when permitted by [m2 Payload forms and sender size rules](#m2), otherwise as exactly one record. A sender MUST send a reliable message above that limit as a block of consecutive fragments of the row `block stride` bytes; only the last fragment MAY be shorter, and every fragment MUST carry at least 1 byte.
+When the connection layer's payload capacity is below the row `maximum payload size`, each unreliable one-record limit (UNRELIABLE, UNRELIABLE_SEQUENCED and UNRELIABLE_WITH_ACK_RECEIPT) is the smaller of its row and that capacity less the record's header and the form byte. A sender MUST send a message at or below its one-record limit without fragmentation: as SINGLE when permitted by [m2 Payload forms and sender size rules](#m2), otherwise as exactly one record. A sender MUST send a reliable message above that limit as a block of consecutive fragments of the row `block stride` bytes; only the last fragment MAY be shorter, and every fragment MUST carry at least 1 byte.
 
 A sender MUST promote an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to its reliable twin: code 0 to code 2, code 1 to code 4, and code 5 to its reliable receipt twin (reliability 6, wire code 2) with the ACKED receipt kept. The receiver observes the twin's wire code. The sender MUST count each promotion once per send in `MESSAGE_PROMOTED_UNRELIABLE`, `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` or `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT`, according to the reliability the application chose.
 
@@ -343,9 +370,11 @@ A sender MUST refuse a message above the configured maximum message size. For UN
 These vectors exercise the encoding capacities. The SINGLE limit vector is
 a format boundary, not a sender-policy exception: an application message
 above the unreliable record limit is promoted under
-[m2.1 One-record limits and promotion](#m2.1).
+[m2.1 One-record limits and promotion](#m2.1). In every vector, data byte i of
+a message is (7i + 3) mod 256.
 
 ```vector m2.single-limit
+input: SINGLE form, one UNRELIABLE message of 1415 bytes
 03 0a 11 18 1f 26 2d 34 3b 42 49 50 57 5e 65 6c
 73 7a 81 88 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc
 e3 ea f1 f8 ff 06 0d 14 1b 22 29 30 37 3e 45 4c
@@ -438,6 +467,7 @@ a3 aa b1 b8 bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c
 ```
 
 ```vector m2.single-over
+input: RECORDS form, the first fragment of a two-fragment code 2 block, reliable number 9, 1152 data bytes
 0a 80 04 09 00 00 00 00 00 00 01 00 03 0a 11 18
 1f 26 2d 34 3b 42 49 50 57 5e 65 6c 73 7a 81 88
 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc e3 ea f1 f8
@@ -514,6 +544,7 @@ bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c 13 1a 21 28
 ```
 
 ```vector m2.code0-at-limit
+input: RECORDS form, one code 0 record of 1411 bytes
 00 83 05 03 0a 11 18 1f 26 2d 34 3b 42 49 50 57
 5e 65 6c 73 7a 81 88 8f 96 9d a4 ab b2 b9 c0 c7
 ce d5 dc e3 ea f1 f8 ff 06 0d 14 1b 22 29 30 37
@@ -606,6 +637,7 @@ fe 05 0c 13 1a 21 28 2f 36 3d 44 4b 52 59 60 67
 ```
 
 ```vector m2.code0-over
+input: RECORDS form, the first fragment of a two-fragment code 2 block, reliable number 5, 1152 data bytes
 0a 80 04 05 00 00 00 00 00 00 01 00 03 0a 11 18
 1f 26 2d 34 3b 42 49 50 57 5e 65 6c 73 7a 81 88
 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc e3 ea f1 f8
@@ -682,6 +714,7 @@ bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c 13 1a 21 28
 ```
 
 ```vector m2.code1-1404
+input: RECORDS form, one code 1 record of 1404 bytes, channel 3, ordering 7, sequencing 4
 01 7c 05 04 00 00 07 00 00 03 03 0a 11 18 1f 26
 2d 34 3b 42 49 50 57 5e 65 6c 73 7a 81 88 8f 96
 9d a4 ab b2 b9 c0 c7 ce d5 dc e3 ea f1 f8 ff 06
@@ -774,6 +807,7 @@ cd d4 db e2 e9 f0 f7 fe 05 0c 13 1a 21 28 2f 36
 ```
 
 ```vector m2.code1-1405
+input: RECORDS form, one code 1 record of 1405 bytes, channel 3, ordering 7, sequencing 4
 01 7d 05 04 00 00 07 00 00 03 03 0a 11 18 1f 26
 2d 34 3b 42 49 50 57 5e 65 6c 73 7a 81 88 8f 96
 9d a4 ab b2 b9 c0 c7 ce d5 dc e3 ea f1 f8 ff 06
@@ -866,6 +900,7 @@ cd d4 db e2 e9 f0 f7 fe 05 0c 13 1a 21 28 2f 36
 ```
 
 ```vector m2.code1-1406
+input: RECORDS form, the first fragment of a two-fragment code 4 block, reliable number 5, channel 3, ordering 7, sequencing 4, 1152 data bytes
 0c 80 04 05 00 00 00 00 04 00 00 07 00 00 03 00
 00 01 00 03 0a 11 18 1f 26 2d 34 3b 42 49 50 57
 5e 65 6c 73 7a 81 88 8f 96 9d a4 ab b2 b9 c0 c7
@@ -943,6 +978,7 @@ fe 05 0c 13 1a 21 28 2f 36 3d 44 4b 52 59 60 67
 ```
 
 ```vector m2.reliable-1407
+input: RECORDS form, one code 2 record of 1407 bytes, reliable number 5
 02 7f 05 05 00 00 03 0a 11 18 1f 26 2d 34 3b 42
 49 50 57 5e 65 6c 73 7a 81 88 8f 96 9d a4 ab b2
 b9 c0 c7 ce d5 dc e3 ea f1 f8 ff 06 0d 14 1b 22
@@ -1035,6 +1071,7 @@ e9 f0 f7 fe 05 0c 13 1a 21 28 2f 36 3d 44 4b 52
 ```
 
 ```vector m2.reliable-1408
+input: RECORDS form, one code 2 record of 1408 bytes, reliable number 5
 02 80 05 05 00 00 03 0a 11 18 1f 26 2d 34 3b 42
 49 50 57 5e 65 6c 73 7a 81 88 8f 96 9d a4 ab b2
 b9 c0 c7 ce d5 dc e3 ea f1 f8 ff 06 0d 14 1b 22
@@ -1127,6 +1164,7 @@ e9 f0 f7 fe 05 0c 13 1a 21 28 2f 36 3d 44 4b 52
 ```
 
 ```vector m2.reliable-1409
+input: RECORDS form, the first fragment of a two-fragment code 2 block, reliable number 5, 1152 data bytes
 0a 80 04 05 00 00 00 00 00 00 01 00 03 0a 11 18
 1f 26 2d 34 3b 42 49 50 57 5e 65 6c 73 7a 81 88
 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc e3 ea f1 f8
@@ -1203,6 +1241,7 @@ bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c 13 1a 21 28
 ```
 
 ```vector m2.reliable-ordered-1400
+input: RECORDS form, one code 3 record of 1400 bytes, reliable number 5, channel 3, ordering 7
 03 78 05 05 00 00 00 00 07 00 00 03 03 0a 11 18
 1f 26 2d 34 3b 42 49 50 57 5e 65 6c 73 7a 81 88
 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc e3 ea f1 f8
@@ -1295,6 +1334,7 @@ bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c 13 1a 21 28
 ```
 
 ```vector m2.reliable-ordered-1401
+input: RECORDS form, one code 3 record of 1401 bytes, reliable number 5, channel 3, ordering 7
 03 79 05 05 00 00 00 00 07 00 00 03 03 0a 11 18
 1f 26 2d 34 3b 42 49 50 57 5e 65 6c 73 7a 81 88
 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc e3 ea f1 f8
@@ -1387,6 +1427,7 @@ bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c 13 1a 21 28
 ```
 
 ```vector m2.reliable-ordered-1402
+input: RECORDS form, the first fragment of a two-fragment code 3 block, reliable number 5, channel 3, ordering 7, 1152 data bytes
 0b 80 04 05 00 00 00 00 07 00 00 03 00 00 01 00
 03 0a 11 18 1f 26 2d 34 3b 42 49 50 57 5e 65 6c
 73 7a 81 88 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc
@@ -1464,6 +1505,7 @@ a3 aa b1 b8 bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c
 ```
 
 ```vector m2.reliable-sequenced-1398
+input: RECORDS form, one code 4 record of 1398 bytes, reliable number 5, channel 3, ordering 7, sequencing 4
 04 76 05 05 00 00 00 00 04 00 00 07 00 00 03 03
 0a 11 18 1f 26 2d 34 3b 42 49 50 57 5e 65 6c 73
 7a 81 88 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc e3
@@ -1556,6 +1598,7 @@ aa b1 b8 bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c 13
 ```
 
 ```vector m2.reliable-sequenced-1399
+input: RECORDS form, one code 4 record of 1399 bytes, reliable number 5, channel 3, ordering 7, sequencing 4
 04 77 05 05 00 00 00 00 04 00 00 07 00 00 03 03
 0a 11 18 1f 26 2d 34 3b 42 49 50 57 5e 65 6c 73
 7a 81 88 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc e3
@@ -1648,6 +1691,7 @@ aa b1 b8 bf c6 cd d4 db e2 e9 f0 f7 fe 05 0c 13
 ```
 
 ```vector m2.reliable-sequenced-1400
+input: RECORDS form, the first fragment of a two-fragment code 4 block, reliable number 5, channel 3, ordering 7, sequencing 4, 1152 data bytes
 0c 80 04 05 00 00 00 00 04 00 00 07 00 00 03 00
 00 01 00 03 0a 11 18 1f 26 2d 34 3b 42 49 50 57
 5e 65 6c 73 7a 81 88 8f 96 9d a4 ab b2 b9 c0 c7
@@ -1813,7 +1857,9 @@ payload that fails a check is a violation: the receiver MUST refuse the whole
 payload, MUST hand no record of it to the application, and MUST increment the
 counter that the check names. Checks 1 to 9 run over the whole payload before
 any record of it is handed up, except check 7's block-descriptor agreement,
-which runs when the record is applied. Checks 10 to 12 run as each record is
+which runs when the record is applied. The scan takes the records in wire
+order and applies checks 2 to 9 to one record before it reads the next, so
+the first record that fails names the counter. Checks 10 to 12 run as each record is
 applied. Block completion also checks the reconstructed message length under
 [m8 Blocks](#m8).
 A duplicate is not a violation: the receiver MUST count it as
@@ -1856,7 +1902,8 @@ The constants this section names are:
     k is at most W; k times `message fragment bytes` is at most the maximum message size
     plus `message fragment bytes` minus 1; every fragment but the last is
     exactly `message fragment bytes` long; the last is at most `message fragment bytes` long. Counter: `MESSAGE_BAD_BLOCK`. When the
-    record is applied, a block record's ring base, the ring less the fragment
+    record is applied, its reconstructed number MUST be at least its fragment
+    index, so the block's first number is not below zero, and a block record's ring base, the ring less the fragment
     index times `message fragment bytes` divided by 16, MUST agree with a live
     block descriptor for the same block. Counter: `MESSAGE_BAD_BLOCK`.
 8. A holdable record MUST have a span inside B. The span of a non-block record
@@ -2213,10 +2260,13 @@ n     = R + delta
    2. When `delta >= W` or `R + delta` exceeds the largest `u64`, the record is
       a violation and the receiver MUST refuse the connection with
       `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
-   3. When the descriptor at `n mod W` is live for a number other than `n`, the
+   3. When `n` is already marked received, the record is a duplicate: the
+      receiver MUST drop it, MUST count `MESSAGE_DUPLICATE`, and MUST NOT
+      treat it as a violation.
+   4. When the descriptor at `n mod W` is live for a number other than `n`, the
       record is a violation and the receiver MUST refuse the connection with
       `MESSAGE_SLOT_COLLISION`.
-   4. Otherwise the record is accepted: the receiver MUST mark `n` received,
+   5. Otherwise the record is accepted: the receiver MUST mark `n` received,
       and while the number at `R` is marked received, MUST clear that mark and
       MUST increment `R`.
 9. A duplicate is a normal outcome of a resend and carries no reliable
@@ -2312,7 +2362,7 @@ A sender chooses unreliable or unreliable sequenced in [m1.3 Reliability types](
 4. The per-update unreliable delivery allowance is the connection's `unreliable_messages_per_update` configuration field. A code 0 delivery and a code 1 delivery each count against it. When the update has already made that many code 0 and code 1 deliveries, a receiver MUST drop each further code 0 record and each further code 1 record, MUST count the drop as `MESSAGE_UNRELIABLE_DELIVERY_FULL`, and MUST NOT treat the drop as a violation.
 5. A receiver MUST keep, for each channel, an ordered read index and a sequencing watermark. A code 1 record is in its epoch when its ordering index equals the read index. A record in its epoch whose sequencing index is at or after the watermark MUST be delivered, and the receiver MUST then set the watermark to one past that sequencing index modulo the counter modulus.
 6. A code 1 record in its epoch whose sequencing index is before the watermark MUST be dropped and counted `MESSAGE_SEQUENCED_STALE`. A code 1 record whose ordering index is behind the read index, when the difference lies in the upper half of the counter modulus, MUST be dropped and counted `MESSAGE_SEQUENCED_STALE`.
-7. A code 1 record ahead of its epoch MUST be held as the channel's newest held message. A receiver MUST keep at most one held code 1 message per channel, in one slot of the connection's `sequenced_messages_held` configuration field. A newer held message, ordered by ordering index and then by sequencing index, MUST replace the held message, and the replaced message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A candidate that is not newer than the held message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A record larger than one hold slot, or a record with no free hold slot, MUST be dropped and counted `MESSAGE_SEQUENCED_HOLD_FULL`.
+7. A code 1 record ahead of its epoch MUST be held as the channel's newest held message. A receiver MUST keep at most one held code 1 message per channel, in one slot of the connection's `sequenced_messages_held` configuration field. A newer held message, ordered by ordering index and then by sequencing index, MUST replace the held message, and the replaced message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A candidate that is not newer than the held message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A record larger than one hold slot, or a record with no free hold slot, MUST be dropped and counted `MESSAGE_SEQUENCED_HOLD_FULL`. This hold is the channel's one future sequenced hold, shared with code 4 ([m7.3 Code 4, RELIABLE_SEQUENCED](#m7.3) rule 4).
 8. When an ordered message is delivered on a channel, the receiver MUST set the channel's read index to one past that ordering index and MUST reset the channel's watermark to zero. The receiver MUST then deliver the channel's held message when its ordering index is the read index and its sequencing index is at or after the watermark, and MUST clear the hold.
 9. A receiver MUST NOT refuse a code 1 record for how far ahead of the read index its ordering index is: the sender takes it from the ordered write index under rule 10, which runs ahead of the read index by the sender's ordered backlog, a bound the receiver does not know. A record ahead of its epoch is held under rule 7.
 10. A sender MUST take a code 1 record's ordering index from the channel's ordered write index and its sequencing index from the channel's sequencing write index, and MUST increment the sequencing write index. An ordered send MUST take the ordered write index as its ordering index, MUST increment the ordered write index, and MUST reset the sequencing write index to zero.
@@ -2456,7 +2506,11 @@ duplicate; it is never delivered and is not a violation.
    ring offset the sender chose. The receiver MUST keep at most one held code
    4 record per channel, the newest by ordering index and then sequencing
    index; a newer record replaces the held one, and an older or equal one MUST
-   be dropped and counted as superseded.
+   be dropped and counted as superseded. A channel has one future sequenced
+   hold for codes 1 and 4 together: the held message of
+   [m6.1 Rule](#m6.1) rule 7 and the held code 4 record are that one hold, a
+   record of either code is compared with the held message of either code,
+   and a newer one replaces it whatever its code.
 5. A code 4 record behind its epoch in 24-bit half-range order MUST be
    dropped and counted as stale; it is not a violation.
 6. A receiver MUST NOT refuse a code 4 record for how far ahead of its epoch
@@ -2510,7 +2564,7 @@ sequence of records.
 | bytes | 5 | 2 | u16 | the delivered message's length | `1` to `65535` |
 | data | 7 | `bytes` | bytes[`bytes`] | the delivered message | the input record's data |
 
-Each delivery entry is 7 bytes plus its data. A step is 3 bytes plus its
+Each delivery entry is 4 bytes, its code, channel and length, plus its data. A step is 3 bytes plus its
 delivery entries. The trace is the steps of the input records in order.
 
 | Name | Value | Meaning |
@@ -2593,8 +2647,13 @@ delivered whole. Each fragment is one record ([m3 Record format](#m3)).
 3. **Numbering.** A sender MUST assign the block's fragments consecutive
    numbers in ascending fragment order, all before the first fragment enters a
    payload. If the first fragment's number is b, fragment i MUST carry number
-   b + i. Every fragment MUST carry the block's channel and ordering index;
-   the block MUST take one ordering slot.
+   b + i. Every fragment MUST carry the fields its code carries
+   ([m3 Record format](#m3)), with the block's values: a code 2 block carries
+   no channel and no ordering index; every fragment of a code 3 block carries
+   the block's channel and ordering index, and the block takes one ordering
+   slot; every fragment of a code 4 block carries the block's channel,
+   ordering index and sequencing index, and the block is one sequenced
+   message ([m7.3 Code 4, RELIABLE_SEQUENCED](#m7.3)).
 4. **Ring placement.** The receive ring is B bytes. A sender MUST place a
    block in one contiguous span that starts at ring position p and does not
    cross a multiple of B. When the span does not fit between the position the
@@ -2617,16 +2676,23 @@ delivered whole. Each fragment is one record ([m3 Record format](#m3)).
    message length as `(k - 1) × F + last_fragment_length`. If it exceeds the
    configured maximum message size, the receiver MUST refuse the block with
    `MESSAGE_BAD_BLOCK` and MUST NOT deliver it. Otherwise a receiver MUST
-   deliver the block exactly once and whole, at its one ordering slot,
-   as fragments 0 to k − 1 in order. A
+   deliver the block exactly once and whole, at its ordering slot when its
+   code has one, as fragments 0 to k − 1 in order. A code 4 block is the
+   exception: like any RELIABLE_SEQUENCED message it is delivered at most
+   once, and a block that is stale when it arrives, or that a newer message on
+   its channel supersedes before it completes, is released undelivered and
+   counted as [m7.3 Code 4, RELIABLE_SEQUENCED](#m7.3) states. A
    receiver MUST NOT deliver an incomplete block. A receiver MUST count a
    duplicate fragment once. A receiver MUST refuse a fragment whose fragment
-   count, first number or base disagrees with the block's first fragment.
+   count, first number or base disagrees with the block's first fragment, a
+   fragment of a code 4 block whose ordering index or sequencing index
+   disagrees with it, and a fragment whose reconstructed number is below its
+   fragment index ([m4 Receiver checks](#m4) check 7).
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
 | collecting | a fragment arrives | no block state exists, or its count, first number and base agree | copy the fragment to base_bytes + fragment × F and count it | collecting |
-| collecting | a fragment arrives | a block state exists and the count, first number or base disagrees | refuse the payload as a violation | connection ends |
+| collecting | a fragment arrives | a block state exists and the count, first number or base disagrees, or for code 4 the ordering or sequencing index | refuse the payload as a violation | connection ends |
 | collecting | a duplicate fragment arrives | its number was already counted | count it once and change nothing | collecting |
 | collecting | the last missing fragment arrives | every fragment has arrived and the exact message length exceeds the configured maximum | refuse with MESSAGE_BAD_BLOCK | connection ends |
 | collecting | the last missing fragment arrives | every fragment has arrived and the exact message length is within the configured maximum | deliver the block whole at its ordering slot | complete |
@@ -2640,7 +2706,11 @@ fragments 0 and 1 carry 1152 bytes and fragment 2 carries 100. The ring-wrap
 vector is two RECORDS payloads back to back, fragment 0 and then fragment 1 of
 a two-fragment block of 1153 bytes placed after the ring was filled to 1152
 bytes of its 1168-byte ring, so the span is padded to the boundary and the
-fragments' ring fields are 0 and 72.
+fragments' ring fields are 0 and 72. That block is a synthetic fixture for the
+ring arithmetic: a conforming sender sends a 1153-byte message as one record
+where its reliability's one-record limit allows
+([m2.1 One-record limits and promotion](#m2.1)), so only the placement it
+shows is normative.
 
 ```vector m8.split-nonfinal
 block bytes: 2404
@@ -2860,12 +2930,14 @@ trip, the dropped entry is one whose acknowledgement can no longer arrive.
 
 On an acknowledgement, for each number the packet carried that is still
 unacknowledged, the sender MUST mark the number acknowledged, remove it from
-its resend queue, advance the lowest unacknowledged number, and take one
-round-trip sample equal to the time between the send and the acknowledgement,
-except a sample the acknowledgement-silence rule of
-[m9.2 Round-trip estimate and resend delay](#m9.2) forbids.
-A number that was already acknowledged MUST NOT be acknowledged or sampled a
-second time.
+its resend queue and advance the lowest unacknowledged number. The sender MUST
+take one round-trip sample per acknowledged send, equal to the time between
+that send and the acknowledgement, when the send carried a number this
+acknowledgement newly acknowledged or carried receipt serials and no reliable
+number, except a sample the acknowledgement-silence rule of
+[m9.2 Round-trip estimate and resend delay](#m9.2) forbids. A send whose
+numbers were all acknowledged already gives no sample, and a number that was
+already acknowledged MUST NOT be acknowledged a second time.
 
 <a id="m9.2"></a>
 ### m9.2. Round-trip estimate and resend delay
@@ -2922,7 +2994,7 @@ sampled.
 | message_resend_delay_min_ms | `0` | ms | optional floor for the sampled resend delay; zero disables it |
 | message_resend_delay_max_ms | `2000` | ms | the configured largest resend delay |
 | reliable_message_timeout_ms | `0` | ms | how long the oldest unacknowledged number may stand; zero (the default) turns the reliable timeout off and the token timeout alone ends a silent connection |
-| min_resend_attempts | `4` | count | the sends that fit before a configured reliable timeout |
+| min_resend_attempts | `4` | count | the sends of a block fragment that fit before a configured reliable timeout; a single-packet record's resend delay is not capped by it |
 
 <a id="m9.3"></a>
 ### m9.3. Resend classes and the reliable timeout
@@ -2935,10 +3007,13 @@ The resend delay of a single-packet record MUST be `resend_delay_seconds`.
 When the reliable timeout is configured, the resend delay of a chunk MUST be
 `min(resend_delay_seconds, (reliable_message_timeout_ms / 1000) / min_resend_attempts)`
 seconds, with real-valued division; when it is disabled, the resend delay of a
-chunk MUST be `resend_delay_seconds`. A sender MUST resend a due number
-at the first update whose time is at least the number's last send plus its
-resend delay, except a number held by probe pacing below, and MUST NOT resend it
-before then. A resend MUST use a fresh
+chunk MUST be `resend_delay_seconds`. A number is due at the first update
+whose time is at least its last send plus its resend delay, the earliest time
+it is resent; a sender MUST NOT resend it before then. A sender MUST resend a
+due number at that update unless probe pacing below holds it, the send budget
+of [m9.4 Send budget](#m9.4) cannot pay it, or the update's
+`packets_per_update` allowance is spent; a number so postponed stays due and
+is resent at a later update. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.
 
 A `reliable_message_timeout_ms` of 0 disables the reliable timeout, and the
@@ -2963,10 +3038,13 @@ reliable timeout is configured, a sender MUST NOT hold a number by probe pacing.
 <a id="m9.4"></a>
 ### m9.4. Send budget
 
-Every connection MUST send at most its send budget, a rate in kilobits per
-second where 1 kbps is 1000 bit/s. The bytes counted MUST be the wire bytes of
-each sealed packet: the prefilter header, sequence, acknowledgement block,
-payload and tag, excluding the IP and UDP headers. A budget of K kbps is
+Every connection MUST send its message packets within its send budget, a
+rate in kilobits per second where 1 kbps is 1000 bit/s. The bytes counted MUST
+be the wire bytes of each sealed packet that carries an RN-2 payload: the
+prefilter header, sequence, acknowledgement block, payload and tag, excluding
+the IP and UDP headers. The packets RN-1 sends for itself, keep-alives,
+standalone acknowledgements, handshake and disconnect packets, are outside the
+budget and are not charged; at a small budget they alone can exceed it. A budget of K kbps is
 K x 125 bytes per second.
 
 The sender MUST hold the budget in a token bucket. The bucket starts full. It
@@ -3141,7 +3219,8 @@ configuration: build-specific maximum at least 301; num_channels 301
 ## m11. CONFIG control record
 
 1. Each endpoint MUST send exactly one CONFIG record for each connection and
-   MUST NOT send another.
+   MUST NOT send a different CONFIG; the resends of rule 2 carry the same
+   record.
 2. An endpoint MUST send the CONFIG record before any other reliable record of
    that connection, and MUST resend it until the connection layer acknowledges
    it ([m7 Delivery: reliable codes 2, 3 and 4](#m7)).
@@ -3188,11 +3267,11 @@ reliable number. The payload is 35 bytes:
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
       |    enabled    |     zero      |         num_channels          |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-      |         num_channels          |        reliable_messages_in_flight        |
+      |         num_channels          |  reliable_messages_in_flight  |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-      |        reliable_messages_in_flight        |      receive_message_buffer_bytes       |
+      |  reliable_messages_in_flight  | receive_message_buffer_bytes  |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-      |      receive_message_buffer_bytes       |       max_message_bytes       |
+      | receive_message_buffer_bytes  |       max_message_bytes       |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
       |       max_message_bytes       |        fragment_bytes         |
       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -3410,9 +3489,15 @@ within the message layer of a sealed connection.
    [m4 Receiver checks](#m4), [m5 Message numbering and the reliable window](#m5)
    and [m8 Blocks](#m8), never stored. A receiver MUST NOT read outside the byte
    range the transport delivers.
-4. **Amplification.** The checks run over a payload once. A receiver MUST
-   complete them in time bounded by the payload's own length, with no
-   allocation, so a sender MUST NOT be able to grow a receiver's work or memory.
+4. **Amplification.** The structural checks of [m4 Receiver checks](#m4)
+   run over a payload in a bounded number of passes, each linear in the
+   payload's length, with no allocation. The work a record causes against
+   the receiver's state, the delivery reservation, the window and hold checks
+   and the drain an ordered delivery releases, is bounded by the
+   configuration: by the window `W`, a block's fragment count, and the records
+   it releases, each released record delivered once. A receiver MUST complete
+   a payload within those bounds, so a sender MUST NOT be able to grow a
+   receiver's memory, or its work beyond them.
 
 <a id="ma"></a>
 ## ma. Appendix A: test vectors
