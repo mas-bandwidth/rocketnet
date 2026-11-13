@@ -53,13 +53,22 @@ static void * test_thread_main( void * arg )
 
 static struct load_census_t test_before, test_after;
 
-static struct load_census_survivors_t test_survivors( void )
+// the census after test_before, taken as the harness takes a later phase
+// (load_census_take_after, at most `waits` 1 ms waits for joined threads to
+// leave on macOS; it returns at once when no new thread is listed); every
+// survivor is printed, so a red names it
+static struct load_census_survivors_t test_survivors_within( int waits )
 {
     struct load_census_survivors_t survivors;
 
-    CENSUS_CHECK( load_census_take( &test_after ) );
-    CENSUS_CHECK( load_census_survivors( NULL, NULL, 0, &test_before, &test_after, &survivors ) );
+    CENSUS_CHECK( load_census_take_after( &test_before, &test_after, waits ) );
+    CENSUS_CHECK( load_census_survivors( "test_load_census", "test", 0, &test_before, &test_after, &survivors ) );
     return survivors;
+}
+
+static struct load_census_survivors_t test_survivors( void )
+{
+    return test_survivors_within( LOAD_CENSUS_SETTLE_WAITS );
 }
 
 int main( void )
@@ -119,11 +128,16 @@ int main( void )
 #endif // #if !defined( _WIN32 )
 
     /* a thread left running survives, a joined one does not: this process
-       created it, so it is never an operating-system pool worker */
+       created it, so it is never an operating-system pool worker. The running
+       one is still counted after a settle (load_census_take_after; 20 waits
+       here, not the harness's whole bound, which a live thread would spend in
+       full): a leak stays red. The joined one is gone however soon the census
+       reads after the join (on macOS the join returns before the kernel
+       thread ends) */
 #if defined( _WIN32 )
     HANDLE thread = CreateThread( NULL, 0, test_thread_main, NULL, 0, NULL );
     CENSUS_CHECK( thread );
-    survivors = test_survivors();
+    survivors = test_survivors_within( 20 );
     CENSUS_CHECK( survivors.threads == 1 && survivors.os_pool_threads == 0 );
     CENSUS_CHECK( survivors.handles >= 1 );
     SetEvent( test_release );
@@ -134,13 +148,14 @@ int main( void )
 
     pthread_t thread;
     CENSUS_CHECK( pthread_create( &thread, NULL, test_thread_main, NULL ) == 0 );
-    survivors = test_survivors();
+    survivors = test_survivors_within( 20 );
     CENSUS_CHECK( survivors.threads == 1 && survivors.os_pool_threads == 0 );
     pthread_mutex_unlock( &test_mutex );
     CENSUS_CHECK( pthread_join( thread, NULL ) == 0 );
 #endif // #if defined( _WIN32 )
     survivors = test_survivors();
-    CENSUS_CHECK( survivors.threads == 0 && survivors.handles == 0 );
+    CENSUS_CHECK( survivors.threads == 0 );
+    CENSUS_CHECK( survivors.handles == 0 );
 
     remove( "test_load_census.tmp" );
     printf( "test_load_census\n" );

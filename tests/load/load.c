@@ -562,7 +562,28 @@ enum
     LOAD_PHASES
 };
 static struct load_census_t load_census_phase[LOAD_PHASES];
-#define LOAD_CENSUS( phase ) ( (void) load_census_take( &load_census_phase[phase] ) )
+
+/* A later phase is taken against the phase it is compared with
+ * (load_resource_verdict: PRE_TERM against POST_INIT, POST_TERM against
+ * PRE_INIT), so a thread joined just before it is not read as a survivor
+ * (load_census_take_after). The two earlier phases are plain takes. */
+static void load_census_phase_take( int phase )
+{
+    if ( phase == LOAD_PRE_TERM )
+    {
+        (void) load_census_take_after( &load_census_phase[LOAD_POST_INIT], &load_census_phase[phase], LOAD_CENSUS_SETTLE_WAITS );
+    }
+    else if ( phase == LOAD_POST_TERM )
+    {
+        (void) load_census_take_after( &load_census_phase[LOAD_PRE_INIT], &load_census_phase[phase], LOAD_CENSUS_SETTLE_WAITS );
+    }
+    else
+    {
+        (void) load_census_take( &load_census_phase[phase] );
+    }
+}
+
+#define LOAD_CENSUS( phase ) load_census_phase_take( phase )
 
 /* One warm cycle before the baseline: init, a one-client server on an
  * ephemeral loopback port, one client that connects to it, a few frames of

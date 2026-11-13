@@ -89,6 +89,11 @@
 
 extern char ** environ;
 
+// the suite's capture of the library's log lines (harness.inc), printed before
+// a failed check so the error lines behind it (an errno, a refused rung) are
+// in the case's output
+void rocketnet_functional_log_ring_dump();
+
 #define ROCKETNET_COUNTERS_CHECK posix_hard_killed_require
 static void posix_hard_killed_check( bool condition, const char * expression, const char * function, int line )
 {
@@ -96,6 +101,7 @@ static void posix_hard_killed_check( bool condition, const char * expression, co
     {
         return;
     }
+    rocketnet_functional_log_ring_dump();
     printf( "check failed: ( %s ), function %s, file %s, line %d\n", expression, function, __FILE__, line );
     fflush( stdout );
     exit( 1 );
@@ -254,9 +260,12 @@ static const char * posix_hk_server_pump( struct rocketnet_server_transport_t * 
     return rocketnet_platform_socket_pump( rocketnet_server_transport_platform_socket_for_testing( server ) );
 }
 
-// Create the cell server with its canonical transport pin.
+// Create the cell server with its canonical transport pin. A refusal prints the
+// library's reason (its status and the address) and fails the case, or, given
+// `refused`, returns NULL with the status there for the caller to judge (the
+// plain socket path only; the XDP path always fails the case).
 
-static struct rocketnet_server_transport_t * posix_hk_server_create( const posix_hk_cell_t & cell, int port, int max_clients )
+static struct rocketnet_server_transport_t * posix_hk_server_create( const posix_hk_cell_t & cell, int port, int max_clients, int * refused = NULL )
 {
     posix_hk_setenv( "ROCKETNET_SERVER_TRANSPORT", cell.server );
 
@@ -314,7 +323,18 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
         posix_hk_server_address( cell, port, address, sizeof( address ) );
     }
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, address, &config );
+    int status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, address, &config, 0.0, &status );
+    if ( !server )
+    {
+        printf( "posix_hk_server_create server=%s: create on %s refused: %s\n", cell.server, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
+        fflush( stdout );
+        if ( refused )
+        {
+            *refused = status;
+            return NULL;
+        }
+    }
     posix_hard_killed_require( server );
     posix_hk_require_server_io( server, cell );
     return server;
@@ -1110,6 +1130,26 @@ static int posix_hk_closed_port( const posix_hk_cell_t & cell )
     return 0;
 }
 
+// Whether another socket holds the cell's loopback port now: a probe bind on
+// it, as posix_hk_closed_port makes, is refused. Plain socket cells only.
+
+static bool posix_hk_port_held( const posix_hk_cell_t & cell, int port )
+{
+    char text[128];
+    posix_hk_server_address( cell, port, text, sizeof( text ) );
+
+    rocketnet_address_t address;
+    posix_hard_killed_require( rocketnet_address_parse( &address, text ) );
+
+    struct rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536, "portable" );
+    if ( !socket )
+    {
+        return true;
+    }
+    rocketnet_platform_socket_destroy( socket );
+    return false;
+}
+
 // count datagrams to the closed port, sent from the server's own sockets:
 // the one platform socket of portable and msgx, or the socket group of gso
 // and io_uring, staged through the transport instance's own start, finish
@@ -1353,7 +1393,7 @@ static void posix_client_server_gone( const posix_hk_cell_t & cell )
     posix_hk_setenv( "ROCKETNET_CLIENT_TRANSPORT", cell.client );
 
     int port = 0;
-    char server_address[128];
+    char server_address[128] = {};
 #if defined( __linux__ ) && ROCKETNET_XDP
     if ( posix_hk_is_xdp( cell ) )
     {
@@ -1368,31 +1408,62 @@ static void posix_client_server_gone( const posix_hk_cell_t & cell )
         rocketnet_xdp_veth_note_server( NULL );
         posix_hk_server_stop_and_destroy( first );
     }
-    else
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
-    {
-        port = posix_hk_closed_port( cell );
-        posix_hk_server_address( cell, port, server_address, sizeof( server_address ) );
-    }
 
-    // the client starts its handshake against a closed port: every request
-    // it sends draws ICMP port unreachable
+    // The plain socket cells leave their port closed for a second and bind it
+    // afterwards, so the port is nobody's in that second: another process on
+    // the machine (a runner sharing it, a case binding a port it chose in the
+    // same range) can bind it first, and the server's create is then refused.
+    // A refusal whose port a probe bind finds held is that collision: the case
+    // starts again on a new closed port, up to three times. A refusal on a
+    // port the probe finds free is the server's own and fails the case, with
+    // the library's reason printed.
+
+    static const int kClosedPortTries = 3;
 
     std::vector<posix_hk_live_t> live( 1 );
-    posix_hk_live_init( live[0], posix_hk_client_open( cell, server_address, 0x6F000ULL ) );
+    struct rocketnet_server_transport_t * server = NULL;
 
-    const double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 1.0 )
+    for ( int attempt = 0; !server; attempt++ )
     {
-        rocketnet_client_transport_update( live[0].client, rocketnet_platform_time() );
-        posix_hard_killed_require( rocketnet_client_transport_state( live[0].client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-        rocketnet_platform_sleep( POSIX_HK_TICK );
+        if ( !posix_hk_is_xdp( cell ) )
+        {
+            port = posix_hk_closed_port( cell );
+            posix_hk_server_address( cell, port, server_address, sizeof( server_address ) );
+        }
+
+        // the client starts its handshake against a closed port: every
+        // request it sends draws ICMP port unreachable
+
+        posix_hk_live_init( live[0], posix_hk_client_open( cell, server_address, 0x6F000ULL ) );
+
+        const double start = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start < 1.0 )
+        {
+            rocketnet_client_transport_update( live[0].client, rocketnet_platform_time() );
+            posix_hard_killed_require( rocketnet_client_transport_state( live[0].client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+            rocketnet_platform_sleep( POSIX_HK_TICK );
+        }
+
+        // the server comes up on that port; the client connects through the
+        // same receive thread that took the errors
+
+        int refused = ROCKETNET_STATUS_OK;
+
+        server = posix_hk_server_create( cell, port, posix_hk_is_xdp( cell ) ? 4 : 8, posix_hk_is_xdp( cell ) ? NULL : &refused );
+        if ( !server )
+        {
+            const bool held = posix_hk_port_held( cell, port );
+
+            printf( "posix_client_server_gone server=%s family=%s client=%s: attempt %d of %d: port %d %s\n",
+                    cell.server, cell.ipv6 ? "ipv6" : "ipv4", cell.client, attempt + 1, kClosedPortTries, port,
+                    held ? "was taken by another socket while it stood closed" : "is free: the refusal is the server's own" );
+            fflush( stdout );
+            posix_hard_killed_require( held );
+            posix_hard_killed_require( attempt + 1 < kClosedPortTries );
+            posix_hk_client_disconnect_and_destroy( live[0].client );
+        }
     }
-
-    // the server comes up on that port; the client connects through the
-    // same receive thread that took the errors
-
-    struct rocketnet_server_transport_t * server = posix_hk_server_create( cell, port, posix_hk_is_xdp( cell ) ? 4 : 8 );
 
     if ( posix_hk_is_xdp( cell ) )
     {
