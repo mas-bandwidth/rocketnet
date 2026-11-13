@@ -3827,6 +3827,7 @@ The registry of counters, in index order, is:
 | `CLIENT_SEND_TWO_THREADS` | `refusal` | `none` |
 | `SEND_RESERVE_REFUSED_TAILS_HELD` | `refusal` | `none` |
 | `RECEIVE_DROPPED_STOPPED` | `expected` | `none` |
+| `GSO_PIN_REFUSALS` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3983,7 +3984,7 @@ d7 01 00 00 1c 31 f2 57 00 00 00 d4 1f 4d 66 00
 63 05 00 00 00 a1 e9 0d d3 00 00 00 2c 79 8c cf
 01 00 00 83 0e ee 6b 00 00 00 86 ee 14 9c 00 00
 00 da 28 2c b9 00 00 00 9f ba 38 0a 00 00 00 ad
-33 2a 98 01 00 00
+33 2a 98 01 00 00 48 5b 6f 96 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

@@ -89,6 +89,22 @@ static long gso_send_queues_rss_bound_mb()
 
 SUITE_CASE_RSS_BOUND( test_server_gso_send_queues, gso_send_queues_rss_bound_mb );
 
+// a refused worker pin is the public row GSO_PIN_REFUSALS, by value
+static void test_server_gso_pin_refusal_is_counted()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso != NULL );
+    uint64_t counters[ROCKETNET_NUM_COUNTERS] = {};
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 0 );
+    rocketnet_server_gso_test_refused_pin( gso );
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 1 );
+    check( rocketnet_server_gso_pin_refusals( gso ) == 1 );
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_pin_refusal_is_counted );
 REGISTER_UNIT_TEST( test_server_gso_send_queues );
 
 #if ROCKETNET_XDP
