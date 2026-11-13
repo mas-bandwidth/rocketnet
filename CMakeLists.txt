@@ -1530,3 +1530,10 @@ function(rocketnet_check_fp_floor)
     message(STATUS "Floating-point floor (${family}) on all ${checked} compiled targets")
 endfunction()
 rocketnet_check_fp_floor()
+
+# RUN-MATRIX probe (scratch clone only): server_receive_cost's connect phase with counters
+add_executable(receive_connect_probe benchmarks/receive_connect_probe.cpp)
+target_link_libraries(receive_connect_probe PRIVATE rocketnet_dev)
+target_compile_definitions(receive_connect_probe PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+target_compile_features(receive_connect_probe PRIVATE cxx_std_11)
+rocketnet_use_sodium(receive_connect_probe)
