@@ -144,8 +144,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Linux readings agree): computed, not measured on Windows. The client gains
 // one 64-byte rounding, as on macOS: actual=15394156 (the Windows unit job,
 // MSVC, Release, DEV=ON).
-// The msgx branch's two appended counters (STOPPED, RETIRED) add 64 to the
-// server: actual=1503911323 (the Windows unit job, run 43439700060).
+// The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
+// to the server and nothing to the client: actual=1503911323 (aws-win-rio-1,
+// MSVC, Release, DEV=ON), measured.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862747 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345580 )
 #elif defined( __APPLE__ )
@@ -216,8 +217,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // bytes to the server over the update in three calls (1502863099) and nothing to the client
 // (their 16 bytes fit the client's 64-byte rounding) (measured on the studio, Apple clang, Release,
 // DEV=ON; the probe's actual= lines are 1625576867 and 15041674).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624528291 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993098 )
+// With RIO_PIN_REFUSALS and RECEIVE_DROPPED_RETIRED appended (285 counters),
+// 64 more to each: actual=1625576931 and 15041738 (studio, Apple clang,
+// Release, DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624528355 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993162 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -339,10 +343,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 #else // #if defined( __aarch64__ )
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809927ULL )
 #endif // #if defined( __aarch64__ )
-// The two appended receive drop counters (RECEIVE_DROPPED_STOPPED,
-// RECEIVE_DROPPED_RETIRED) add 64 to the client (16 bytes a counter block
-// across a 64-byte rounding) and nothing to the server (hetzner1, gcc,
-// Release, DEV ON: actual=15190354 for the client, the server equal to its pin).
+// The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
+// to the client (16 bytes a counter block across a 64-byte rounding) and
+// nothing to the server: actual=15190354 (hetzner1, gcc, Debug, DEV ON).
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141778 )
 #endif // #if defined( _WIN32 )
 

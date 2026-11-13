@@ -214,9 +214,88 @@ static void test_rio_transport_context_phase_never_reaches_kind()
     rocketnet_unit_check( rocketnet_rio_context_index( c ) == 7 );
 }
 
+// The lane hash is FNV-1a over the family, the port (low byte first) and the
+// address bytes; the expected values were computed apart from this code.
+static void test_rio_transport_lane_hash_and_lane()
+{
+    const uint8_t v4[4] = { 10, 0, 0, 1 };
+    const uint8_t v6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    rocketnet_unit_check( rocketnet_rio_lane_hash( 1, 40000, v4, 4 ) == 0x1fff2155u );
+    rocketnet_unit_check( rocketnet_rio_lane_hash( 1, 40008, v4, 4 ) == 0x2e57136du );
+    rocketnet_unit_check( rocketnet_rio_lane_hash( 2, 40000, v6, 16 ) == 0x545fe330u );
+
+    rocketnet_unit_check( rocketnet_rio_lane_of( 0x1fff2155u, 8 ) == 2 );
+    rocketnet_unit_check( rocketnet_rio_lane_of( 0x1fff2155u, 3 ) == 2 );
+    rocketnet_unit_check( rocketnet_rio_lane_of( 0x2e57136du, 8 ) == 2 );
+    rocketnet_unit_check( rocketnet_rio_lane_of( 0x545fe330u, 8 ) == 7 );
+    rocketnet_unit_check( rocketnet_rio_lane_of( 0xffffffffu, 32 ) == 0 );
+
+    // one lane, or a count below one, is lane 0 whatever the hash
+    rocketnet_unit_check( rocketnet_rio_lane_of( 0x545fe330u, 1 ) == 0 );
+    rocketnet_unit_check( rocketnet_rio_lane_of( 0x545fe330u, 0 ) == 0 );
+
+    // every lane in range for every hash bit pattern tried
+    for ( uint32_t h = 0; h < 4096; ++h )
+    {
+        const uint32_t hash = h * 0x9e3779b9u;
+        for ( int lanes = 1; lanes <= ROCKETNET_RIO_MAX_LANES; ++lanes )
+        {
+            const int lane = rocketnet_rio_lane_of( hash, lanes );
+            rocketnet_unit_check( lane >= 0 && lane < lanes );
+        }
+    }
+}
+
+// proofs/tla/RNRioLaneLayout.tla Encode and Decode: every lane's every slot
+// round trips, and an id past the last lane's last slot is refused with the
+// outputs untouched.
+static void test_rio_transport_lane_packet_ids()
+{
+    rocketnet_unit_check( rocketnet_rio_lane_packet_id( 0, 0, 12288 ) == 0 );
+    rocketnet_unit_check( rocketnet_rio_lane_packet_id( 1, 0, 12288 ) == 12288 );
+    rocketnet_unit_check( rocketnet_rio_lane_packet_id( 7, 12287, 12288 ) == 98303 );
+
+    int lane = -1;
+    int index = -1;
+    rocketnet_unit_check( rocketnet_rio_lane_packet_decode( 98303, 8, 12288, &lane, &index ) );
+    rocketnet_unit_check( lane == 7 && index == 12287 );
+    rocketnet_unit_check( rocketnet_rio_lane_packet_decode( 12288, 8, 12288, &lane, &index ) );
+    rocketnet_unit_check( lane == 1 && index == 0 );
+    rocketnet_unit_check( rocketnet_rio_lane_packet_decode( 12287, 8, 12288, &lane, &index ) );
+    rocketnet_unit_check( lane == 0 && index == 12287 );
+
+    lane = -1;
+    index = -1;
+    rocketnet_unit_check( !rocketnet_rio_lane_packet_decode( 98304, 8, 12288, &lane, &index ) );
+    rocketnet_unit_check( !rocketnet_rio_lane_packet_decode( 0xFFFFFFFFFFFFFFFFull, 8, 12288, &lane, &index ) );
+    rocketnet_unit_check( !rocketnet_rio_lane_packet_decode( 0, 0, 12288, &lane, &index ) );
+    rocketnet_unit_check( !rocketnet_rio_lane_packet_decode( 0, 8, 0, &lane, &index ) );
+    rocketnet_unit_check( lane == -1 && index == -1 );
+
+    for ( int lanes = 1; lanes <= 4; ++lanes )
+    {
+        for ( int slots = 1; slots <= 4; ++slots )
+        {
+            for ( int l = 0; l < lanes; ++l )
+            {
+                for ( int i = 0; i < slots; ++i )
+                {
+                    const uint64_t id = rocketnet_rio_lane_packet_id( l, i, slots );
+                    rocketnet_unit_check( id < (uint64_t) ( lanes * slots ) );
+                    rocketnet_unit_check( rocketnet_rio_lane_packet_decode( id, lanes, slots, &lane, &index ) );
+                    rocketnet_unit_check( lane == l && index == i );
+                }
+            }
+            rocketnet_unit_check( !rocketnet_rio_lane_packet_decode( (uint64_t) ( lanes * slots ), lanes, slots, &lane, &index ) );
+        }
+    }
+}
+
 REGISTER_UNIT_TEST( test_rio_transport_layout_slices_tile_the_region );
 REGISTER_UNIT_TEST( test_rio_transport_layout_refuses_bad_geometry );
 REGISTER_UNIT_TEST( test_rio_transport_layout_refuses_a_page_that_wraps_the_total );
 REGISTER_UNIT_TEST( test_rio_transport_layout_index_bounds );
 REGISTER_UNIT_TEST( test_rio_transport_context_round_trips );
 REGISTER_UNIT_TEST( test_rio_transport_context_phase_never_reaches_kind );
+REGISTER_UNIT_TEST( test_rio_transport_lane_hash_and_lane );
+REGISTER_UNIT_TEST( test_rio_transport_lane_packet_ids );

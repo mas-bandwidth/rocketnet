@@ -343,6 +343,7 @@ static const char * const counters_appended_names[] = {
     "SEND_RESERVE_REFUSED_TAILS_HELD",
     "MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY",
     "RECEIVE_DROPPED_STOPPED",
+    "RIO_PIN_REFUSALS",
     "RECEIVE_DROPPED_RETIRED",
 };
 #endif // #if ROCKETNET_DEV
@@ -546,6 +547,7 @@ static void test_counters_every_counter_has_a_class()
         { "SEND_RESERVE_REFUSED_TAILS_HELD", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RECEIVE_DROPPED_STOPPED", ROCKETNET_COUNTER_CLASS_EXPECTED },
+        { "RIO_PIN_REFUSALS", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RECEIVE_DROPPED_RETIRED", ROCKETNET_COUNTER_CLASS_EXPECTED },
     };
     for ( size_t row = 0; row < sizeof( counter_classes_by_name ) / sizeof( counter_classes_by_name[0] ); ++row )

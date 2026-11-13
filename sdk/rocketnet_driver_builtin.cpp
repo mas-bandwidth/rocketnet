@@ -2690,12 +2690,24 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 
 #include "rocketnet_server_rio.h"
 
+// num_xdp_queues is the lane count (0 is one lane); every lane's worker
+// prefilters with the server's packet filter
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
+    if ( !rocketnet_server_rio_lane_count( config->transport->num_xdp_queues ) )
+    {
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+        rocketnet_warn( "rio transport refused: num_xdp_queues %d is past the rio transport's %d lanes",
+                        config->transport->num_xdp_queues, ROCKETNET_RIO_MAX_LANES );
+        return NULL;
+    }
+    rocketnet_server_rio_options_t options;
+    options.lanes = config->transport->num_xdp_queues;
+    options.packet_filter = config->transport->packet_filter;
 #if ROCKETNET_DEV
-    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, 0, config->status );
+    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, 0, config->status, &options );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, config->status );
+    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, config->status, &options );
 #endif // #if ROCKETNET_DEV
 }
 
@@ -2725,16 +2737,29 @@ static uint64_t rio_send_failures( void * transport )
 
 static void rio_receive_drop_totals( void * transport, uint64_t * values )
 {
-    // read from the rio row the I/O worker already counts, at the same site,
-    // so the pair agrees: a receive completed with an error status or an
-    // unreadable source (RECEIVE_FAILED is RIO_RECEIVE_FAILED). rio never
-    // drops for a full bank: the dequeue takes at most the bank's room, and
-    // with every bank full the worker stops dequeuing.
+    // the lanes' worker tallies (the prefilter's refusals by reason, and
+    // datagrams with no room or left at stop), summed over every lane; plus
+    // RECEIVE_FAILED, read from the rio row the I/O worker already counts at
+    // the same site, so the pair agrees: a receive completed with an error
+    // status or an unreadable source (RECEIVE_FAILED is RIO_RECEIVE_FAILED)
 
+    rocketnet_server_rio_receive_drop_totals( (rocketnet_server_rio_t *) transport, values );
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, counters );
-    memset( values, 0, ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) );
     values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] = counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED];
+}
+
+// each lane is a send queue for the server's protocol send reserve
+static int rio_send_queues( void * transport ) { return rocketnet_server_rio_lanes( (rocketnet_server_rio_t *) transport ); }
+
+static int rio_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_rio_lane_of( (rocketnet_server_rio_t *) transport, to );
+}
+
+static int rio_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_rio_lane_send_room( (rocketnet_server_rio_t *) transport, queue );
 }
 
 static void rio_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
@@ -2749,7 +2774,8 @@ static const rocketnet_server_transport_io_operations_t rio_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     rio_create, rio_destroy, rio_stop, rio_stopped,
     rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle, NULL, rio_receive_drop_totals, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle, NULL, rio_receive_drop_totals,
+    rio_send_queues, rio_send_queue_of, rio_send_room_queue
 };
 
 extern const rocketnet_transport_backend_t rocketnet_rio_transport = { &rio_operations, NULL };
@@ -2853,24 +2879,29 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     }
     else if ( strcmp( transport, "rio" ) == 0 )
     {
-        plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes( config->max_clients );
+        // a socket, an I/O worker and a registered region per lane
+        // (num_xdp_queues; rocketnet_server_rio_create)
 
-        // the registered region is one rocketnet_malloc (rocketnet_server_rio_create)
+        const int lanes = rocketnet_server_rio_lane_count( config->num_xdp_queues );
+        plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes( config->max_clients, lanes );
+
+        // each lane's registered region is one rocketnet_malloc
 
         const uint64_t region = rocketnet_server_rio_registered_region_bytes( config->max_clients );
-        if ( !region )
+        if ( !lanes || !region )
         {
             return false;
         }
 
-        plan.registered_region_bytes = rocketnet_memory_allocations( { region } );
-        if ( !plan.registered_region_bytes )
+        plan.registered_region_bytes = 0;
+        if ( !rocketnet_memory_add( plan.registered_region_bytes, (uint64_t) lanes, rocketnet_memory_allocations( { region } ) ) ||
+             !plan.registered_region_bytes )
         {
             return false;
         }
 
-        plan.worker_threads = 1;
-        plan.sockets = 1;
+        plan.worker_threads = lanes;
+        plan.sockets = lanes;
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else
