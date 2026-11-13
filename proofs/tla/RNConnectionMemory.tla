@@ -154,8 +154,9 @@ UseSpan(s, n) ==
 \* rn_region_send_free (an ack or an abort) or a delivery released by the
 \* application. Not guarded by ~exhausted: an ack that arrives between
 \* Exhaust and Kick frees room (rn_endpoint_on_acked does not read the
-\* exhausted state), and that room is never taken again before Reuse,
-\* because Use and UseSpan refuse while exhausted.
+\* exhausted state), and that room is never taken again before the next
+\* Connect carves the region, because Use and UseSpan refuse while
+\* exhausted.
 Release(s) ==
     /\ state[s] = "Connected"
     /\ used[s] > 0
@@ -227,7 +228,7 @@ Reuse(s) ==
     /\ state[s] = "Disconnected"
     /\ state' = [state EXCEPT ![s] = "Free"]
     /\ owner' = [owner EXCEPT ![s] = NoClient]
-    /\ UNCHANGED <<used, exhausted, reason, records, refused>
+    /\ UNCHANGED <<used, exhausted, reason, records, refused>>
 
 Next ==
     \E s \in Slots :
@@ -325,7 +326,7 @@ ExhaustionOnlyLeadsToDisconnect ==
 NoCrossSlotEffect ==
     [][\E s \in Slots : \A t \in Slots \ {s} : Slot(t)' = Slot(t) /\ refused'[t] = refused[t]]_vars
 
-\* Liveness: an exhausted slot is eventually Free (kicked, then reset)
+\* Liveness: an exhausted slot is eventually Free (kicked, then freed)
 ExhaustedEventuallyFree ==
     \A s \in Slots : exhausted[s] ~> state[s] = "Free"
 

@@ -17,7 +17,10 @@ A client owns one region; it is the same machine with one slot.
   `reason` the connection ended with, and `records`: the clients whose records
   the region still holds.
 - **Actions.**
-  - `Connect(s, c)`: a client takes a free slot.
+  - `Connect(s, c)`: a client takes a free slot. The binding carves the
+    slot's region first (`rn_endpoint_reset`, which runs `rn_region_reset`,
+    that is `rn_region_carve`, and zeroes the connection's `send_refused`; on
+    the server the Observe that binds the slot calls it, RNSlots).
   - `Use(s)`: a send, a receive placement or a hold takes room
     (`rn_region_send_alloc` finding room).
   - `UseSpan(s, n)`: a large send takes `n` records at once, a descriptor and
@@ -26,25 +29,33 @@ A client owns one region; it is the same machine with one slot.
   - `Release(s)`: an ack or a released delivery gives room back
     (`rn_region_send_free`, `rn_region_send_free_fragment`), also while
     exhausted; that room is not taken again before `Reuse`.
-  - `Exhaust(s)`: an operation finds no room. The region takes its sticky
-    exhausted state with the reason `MESSAGE_MEMORY_EXHAUSTED`
-    (`rn_region_exhaust`, called from the refusals of `rn_region_send_alloc`
-    and `rn_region_send_alloc_span`).
+  - `Refuse(s, n)`: a send start of `n` records that the fit refuses (no
+    room, or a region the receive side exhausted): `rn_region_send_refuse`
+    counts it and the region and the connection are as they were
+    (standard/MESSAGES.md m1.7). A refusal for no room moves the region's
+    `room_refusals`, and `rn_endpoint_start` counts the connection's
+    `send_refused` only when it sees `room_refusals` move across the start; a
+    refusal of an exhausted region moves neither (the endpoint records
+    `send_error` instead). `refused[s]` is `send_refused`. `room_refusals`
+    is a counter the endpoint only compares across one start, never reset by
+    the carve, so the model has no variable for it.
+  - `Exhaust(s)`: a receive placement finds no room. The region takes its
+    sticky exhausted state with the reason `MESSAGE_MEMORY_EXHAUSTED`
+    (`rn_region_exhaust`). A send never exhausts the region: the send
+    allocators' refusals call `rn_region_send_refuse`, which counts and
+    changes nothing else.
   - `Kick(s)`: the owner, reading `rn_connection_memory_decide`, disconnects
     the connection with that reason. A server kicks the slot; a client
     disconnects itself.
   - `Leave(s)`: an ordinary disconnect, not from exhaustion.
-  - `Reuse(s)`: the slot is freed and its region reset (`rn_region_reset`,
-    which is `rn_region_carve`). The server performs the two halves of this
-    step at two times (the lazy reset): the update its connection ends in
-    frees the slot in O(1) (`rn_message_connection_release`,
-    sdk/rocketnet_message_server.cpp), and the Observe that binds the slot
-    to its next connection carves the region before anything else touches it.
-    Between the two the slot is Free, and no action of a Free slot reads or
-    writes its region (every path checks CONNECTED, and `rn_slots_admit`
-    discards for an unbound slot), so the split is a stutter of this step
-    and the model keeps it one step. proofs/tla/RNSlots.tla models the split itself
-    (ResetFree keeps the region, Observe carves it).
+  - `Reuse(s)`: the slot is freed in O(1), its region left as the ended
+    connection left it (`rn_message_connection_release`,
+    sdk/rocketnet_message_server.cpp): the lazy reset. The carve is the next
+    `Connect`'s. Between the two the slot is Free with the old room,
+    exhaustion, reason and records still in its region, and no action of a
+    Free slot reads or writes its region (every path checks CONNECTED, and
+    `rn_slots_admit` discards for an unbound slot). proofs/tla/RNSlots.tla
+    models the same split (ResetFree keeps the region, Observe carves it).
 - **Fairness.** Weak fairness on `Kick(s)` and `Reuse(s)` for every slot.
 
 ## Properties
@@ -53,9 +64,14 @@ A client owns one region; it is the same machine with one slot.
   connected slot, the steps that change that slot are the kick to
   `Disconnected` with the reason kept, and a release that gives one record
   back; no further use, span or delivery takes room.
-- **`ReusedSlotStartsClean`** (invariant): a free slot has `used = 0`, no
-  exhaustion, no reason and no records, so the `Connect` that takes it sees a
-  fresh region. A connected slot holds records of its own client only.
+- **`ReusedSlotStartsClean`** (invariant): a connected slot holds records of
+  its own client only, and its reason is its own (none, or the receive side's
+  exhaustion), never the previous connection's end. A free slot's region may
+  still hold the ended connection's state (the lazy reset); the `Connect`
+  that takes it carves it first.
+- **`RefusalLeavesStateUnchanged`** (action property): a start the fit
+  refuses leaves its slot as it was; `refused` moves by one for a refusal for
+  no room and not at all for a refusal of an exhausted region.
 - **`NoCrossSlotEffect`** (action property): every step changes at most one
   slot. One slot's use or exhaustion never changes another slot's state or
   region.
@@ -69,13 +85,15 @@ A client owns one region; it is the same machine with one slot.
 
 | Case | Change | Must fail |
 |---|---|---|
-| `MCRNConnectionMemoryBrokenNoReset.cfg` | `Reset = FALSE`: `Reuse` frees the slot without the carve | `ReusedSlotStartsClean` |
+| `MCRNConnectionMemoryBrokenNoReset.cfg` | `Reset = FALSE`: `Connect` binds a reused slot without the carve | `ReusedSlotStartsClean` |
 | `MCRNConnectionMemoryBrokenCarryOn.cfg` | `CarryOn = TRUE`: an exhausted connection keeps taking room (`Use`, `UseSpan`) | `ExhaustionOnlyLeadsToDisconnect` |
+| `MCRNConnectionMemoryBrokenCountExhausted.cfg` | `CountExhausted = TRUE`: a refusal of an exhausted region is counted in `send_refused` | `RefusalLeavesStateUnchanged` |
 
 The traces TLC printed, checked against the code by hand:
 
-- **BrokenNoReset**, depth 4: `Connect(s1, c1)`, `Leave(s1)`, `Reuse(s1)`.
-  The slot is `Free` with the reason `LEFT` still set. In the code,
+- **BrokenNoReset**: `Connect(s1, c1)`, `Leave(s1)`, `Reuse(s1)`,
+  `Connect(s1, c2)`. The connected slot carries the reason `LEFT` of the
+  connection before. In the code,
   `rn_region_carve` clears the exhausted state and its reason, every table and
   every free list; a reuse without it leaves the previous connection's
   bookkeeping in place. `test_reused_slot_starts_clean` checks the code's side: a
