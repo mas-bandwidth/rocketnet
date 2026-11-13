@@ -424,7 +424,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // more 64-byte rounding) and nothing to the server, with the three
 // *_reserve_cpu_0 fields appended to the transport config: actual=15190482
 // (amd-3, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146450 )
+// Together (integration/v1.1.55-hot: the send store's free stack, the
+// refused-token table and PORTABLE_PIN_REFUSALS): actual=15195090 (aws-mut-3,
+// gcc, Debug and Release, DEV ON); the server reads its pin unchanged.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146514 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
