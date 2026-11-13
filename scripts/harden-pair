@@ -55,6 +55,7 @@ server_ip=""
 remote=""
 client_remote=""
 server_env=""
+server_extra=""
 server_os=linux
 profile_after=20
 profile_seconds=""
@@ -91,6 +92,7 @@ while [ $# -gt 0 ]; do
         --client-remote) client_remote="$2"; shift 2 ;;
         --server-env) server_env="$server_env $(printf '%q' "$2")"; shift 2 ;;
         --server-os) server_os="$2"; shift 2 ;;
+        --server-arg) server_extra="$server_extra $(printf '%q' "$2")"; shift 2 ;;
         --profile-after) profile_after="$2"; shift 2 ;;
         --profile-seconds) profile_seconds="$2"; shift 2 ;;
         --transport) transport="$2"; shift 2 ;;
@@ -255,6 +257,7 @@ end_at=$(( $(date +%s) + join_seconds + seconds + 8 ))
 server_args=$(printf '%q ' "$tool" server --address "$address" --transport "$transport" \
     --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$server_dev" --warm-seconds "$warm_seconds" --sample-seconds 60 \
     "${server_shape[@]}")
+server_args="$server_args${server_extra:-}"
 if [ -n "$profile_seconds" ]; then
     server_args="$server_args --profile-after $(printf '%q' "$profile_after") --profile-seconds $(printf '%q' "$profile_seconds")"
 fi
