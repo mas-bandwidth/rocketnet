@@ -37,7 +37,8 @@ static int rn_client_link_acked( void * transport, const int ** client_index, co
 static uint8_t * rn_client_link_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
 {
     (void) client_index;
-    return rocketnet_client_transport_start_packet( (rocketnet_client_transport_t *) transport, request_bytes, context );
+    // the link hands the layer the frame (rocketnet_message_object.h, start_packet)
+    return rocketnet_client_transport_start_packet( (rocketnet_client_transport_t *) transport, request_bytes, context ) ? context->frame : NULL;
 }
 
 static uint64_t rn_client_link_connection( void * transport, int client_index )

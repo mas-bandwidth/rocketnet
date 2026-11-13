@@ -52,7 +52,7 @@ Two modules:
   `fill_started` counts it in `fill_own_used`, which lowers the reserve the
   budget keeps back. A transport that refuses it (`fill_refused`) leaves it in
   the reserve: its client's keep-alive is still due.
-- **`Claim`, `Check`**: any other frame adds one to the claims (`claim_frame`);
+- **`Claim`, `Check`**: any other frame adds one to the claims (`claim_frames`);
   an index below the budget is granted.
 - **`Read1`, `Read2`, `Read3`**: at or past the budget,
   `rocketnet_server_transport_refresh_fill_budget` recomputes it from
@@ -117,8 +117,10 @@ frames per thread, two retires and two openings.
 | `MCRNSendReserveBrokenIndexTest.cfg` | `NeverStarved` | the recompute tests the claim's index, which a refused claim ahead of it has raised |
 | `MCRNSendReserveBrokenNoRetry.cfg` | `NeverStarved` | a claim taken back is refused with no retest, so two threads refused by each other's claims are both refused with a frame left |
 
-RNSendReserveCalls: two clients, a reserve of 3 in a queue of 5, bounded at
-three refusals and seven frames staged per opening.
+RNSendReserveCalls: two clients, a reserve of 3 in a queue of 5, one frame a
+claim, bounded at three refusals and seven frames staged per opening; and
+the chunked claims in a queue of 8 with a reserve of 2, chunks of three and
+a guard of three.
 
 | Config | Expected | What it shows |
 |---|---|---|
@@ -126,16 +128,23 @@ three refusals and seven frames staged per opening.
 | `MCRNSendReserveCallsBrokenRoomOnly.cfg` | `ReserveKept` | the budget is the whole room |
 | `MCRNSendReserveCallsBrokenNoRefresh.cfg` | `NeverStarved` | a start is refused while retired frames stand above the reserve |
 | `MCRNSendReserveCallsBrokenAbortReturns.cfg` | `ReserveKept` | an aborted packet gives its claim back though its frame left the room |
+| `MCRNSendReserveCallsChunk.cfg` | pass | the code with chunked claims: a chunk while the guard holds, its tail taken a frame a start, given back on a refused frame and at the next opening |
+| `MCRNSendReserveCallsBrokenTailLeak.cfg` | `NeverStarved` | a refused frame gives back its own claim and not the tail held with it |
 
 ## The trace check
 
 `tests/tla_trace_send_reserve.cpp` drives a server transport with three seated
 clients and a fake staged transport of one queue, one call per step, and
 writes the reserve's words after each. TLC checks each record is the
-RNSendReserveCalls action its call's result names. Its plant
+RNSendReserveCalls action its call's result names. An odd seed's queue is the
+reserve and six frames, so every claim is one frame; an even seed's is the
+reserve, the chunk guard (a chunk of 8 for each of 64 lines) and 200 frames,
+so its walk claims chunks near the top of the room and single frames below
+(reach predicates ChunkTail and SingleInBigRoom). Its plant
 (`ROCKETNET_SEND_RESERVE_PLANT`) keeps the claim of a frame the transport
-refused; the planted trace must be rejected at the first record where the
-claims and the frames staged differ.
+refused, and the tail held with it; the planted trace must be rejected at
+the first record where the claims differ from the frames staged and the
+tail held.
 
 The walk is one thread, whole calls. It does not see two threads inside a
 call: that is RNSendReserve's ground, and its witnesses SplitClaim, RoomFirst,
