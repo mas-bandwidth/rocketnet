@@ -26,24 +26,30 @@ static void test_iocp_server_has_one_completion_worker()
 
     rocketnet_server_memory_plan_t plan;
 
+    // the network runs on the completion workers and no other thread: one by
+    // default, num_xdp_queues when it asks for more than one, each with its
+    // own socket; past ROCKETNET_IOCP_MAX_WORKERS there is no plan
     config.num_xdp_queues = 0;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
-    rocketnet_unit_check( plan.worker_threads == 2 );
+    rocketnet_unit_check( plan.worker_threads == 1 );
     rocketnet_unit_check( plan.sockets == 1 );
 
     const uint64_t transport_io_bytes = plan.transport_io_bytes;
 
-    config.num_xdp_queues = 4;
+    config.num_xdp_queues = 1;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
-    rocketnet_unit_check( plan.worker_threads == 2 );
+    rocketnet_unit_check( plan.worker_threads == 1 );
     rocketnet_unit_check( plan.sockets == 1 );
     rocketnet_unit_check( plan.transport_io_bytes == transport_io_bytes );
 
-    config.num_xdp_queues = 1024;
+    config.num_xdp_queues = 4;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
-    rocketnet_unit_check( plan.worker_threads == 2 );
-    rocketnet_unit_check( plan.sockets == 1 );
-    rocketnet_unit_check( plan.transport_io_bytes == transport_io_bytes );
+    rocketnet_unit_check( plan.worker_threads == 4 );
+    rocketnet_unit_check( plan.sockets == 4 );
+    rocketnet_unit_check( plan.transport_io_bytes > transport_io_bytes );
+
+    config.num_xdp_queues = 1024;
+    rocketnet_unit_check( !rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
 }
 
 REGISTER_UNIT_TEST( test_iocp_server_has_one_completion_worker );
