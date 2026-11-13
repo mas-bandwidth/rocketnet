@@ -164,67 +164,87 @@ Do the same.
 
 ### Network adapter setup for rio and iocp
 
-The network card's receive work, its interrupts and the deferred procedure
-calls (DPCs) that follow them, runs on the processors RSS names, ahead of every
-thread there. The `rio` lane workers run at `THREAD_PRIORITY_TIME_CRITICAL`, so
-a process in the normal priority class cannot take their processors, but DPCs
-can. With `rio` the receive work belongs on each lane's socket processor (`2l`)
-and never on its worker's (`2l + 1`); step 3 above places RSS that way. (The
-`iocp` layout is different, each completion worker on its own socket's
-processor: follow "IOCP at 10 Gb/s" below. The check here is for `rio`.)
+The network card's work, its interrupts and the deferred procedure calls
+(DPCs) that follow them, runs ahead of every thread on the processor it lands
+on. The `rio` lane workers and `iocp` completion workers run at
+`THREAD_PRIORITY_TIME_CRITICAL`, so a process in the normal priority class
+cannot take their processors, but interrupts and DPCs can. The rule for both
+transports: **keep the network card's processors and the workers' processors
+apart.** With `rio`, receive work belongs on each lane's socket processor
+(`2l`) and never on its worker's (`2l + 1`); step 3 above places RSS that way.
+For `iocp`, see "IOCP at 10 Gb/s" below.
 
-Check it on the running server at or near its peak load, from PowerShell:
+On the measured machines (two logical processors a core), RSS used one logical
+processor a core, the even-numbered ones: put the base and maximum on even
+processors. Every `Set-NetAdapterRss` resets the adapter (a remote session to
+the host drops for a few seconds), and after a reset the adapter's interrupts
+can land on other processors than before, although `Get-NetAdapterRss` reads
+back the same settings. So check where the work lands after every change, on
+the running server at or near its peak load, from PowerShell:
 
 ```powershell
 Get-Counter -Counter '\Processor Information(0,*)\% DPC Time','\Processor Information(0,*)\% Interrupt Time' -SampleInterval 2 -MaxSamples 5
 ```
 
-Read the instances `0,0`, `0,2` ... `0,(2L - 2)` for the lanes' socket
-processors and `0,1`, `0,3` ... `0,(2L - 1)` for their workers. In the measured
-5-lane rows at the peak load (about 900,000 packets a second), the socket
-processors 0, 2, 4, 6 and 8 each spent 38 to 47% of their time in DPCs, with
-about 40,000 to 47,000 DPCs queued a second each, and the worker processors 1,
-3, 5, 7 and 9 spent 0.0% in DPCs and 0.0% in interrupts. More than a trace of
-either on a worker's processor most likely means RSS is not where step 3 put
-it: set it again, read it back, and check again before reading any other
-number.
+Each instance is `0,<processor>`. The server's log names each worker's
+processor (`rio transport: lane <l> socket on processor <p> ..., worker pinned
+to mask ...`, `iocp transport: worker <w> socket on processor <p> ..., worker
+pinned to mask ...`). A worker's processor should read 0.0 on both counters.
+In the measured 5-lane `rio` rows at the peak load (about 900,000 packets a
+second), the socket processors 0, 2, 4, 6 and 8 each spent 38 to 47% of their
+time in DPCs, with about 40,000 to 47,000 DPCs queued a second each, and the
+worker processors 1, 3, 5, 7 and 9 spent 0.0% in DPCs and 0.0% in interrupts.
+If a worker's processor shows more than a trace of either, set RSS again, read
+it back, and check again before reading any other number.
 
-What a run that falls behind looks like: on one host, 5-lane rows of v1.1.53,
-with RSS read back as in step 3, fell 9 s into the load's ramp and stayed there
-to the end: about 565,000 to 600,000 packets a second instead of 900,000, and
-about 315,000 to 360,000 message starts refused a second. Against passing runs
-of the same build on the same host:
+What a run looks like when the adapter's interrupts land on the workers: in
+6-lane `rio` rows on one host, after an RSS change that read back as step 3
+gives it (`-BaseProcessorNumber 0 -MaxProcessorNumber 10 -MaxProcessors 6
+-NumberOfReceiveQueues 6`), the worker processors 7 and 9 spent 21.6 to 23.1%
+of their time in interrupts (about 50,000 interrupts a second each) and 11 spent
+about 15%. Those runs held about 685,000 to 740,000 packets a second instead of
+900,000, with about 165,000 to 225,000 message starts refused a second, from
+the load's ramp to its end, three runs out of three. 5-lane rows of the same
+build on the same host just before, with 0.0% interrupt time on every worker
+processor, held 900,000 a second with 0 refused, three runs out of three.
+Against passing runs, a run in this state shows:
 
 - the counter `RIO_SEND_WAITS` (flushes that kept a lane's fill phase open
-  because its next phase was not yet idle): about 8,000 in the run, against 10
-  or fewer;
-- the counter `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY`: about 1.6 million by
-  80 s, against 0;
+  because its next phase was not yet idle) in the thousands (about 8,000 to
+  10,000 by 80 s in the failing rows), against 10 or fewer;
+- the counter `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY` climbing (about 1.6
+  million by 80 s in one host's failing 5-lane v1.1.53 rows), against 0;
 - the lane workers' thread time (`\Thread(<server process>/*)\% Processor
-  Time`; at this load the lane workers are the server's busiest threads): 55
-  to 78%, against 85 to 96%;
+  Time`; at this load the lane workers are the server's busiest threads) at
+  55 to 79%, against 85 to 96%: the time the interrupts take is not the
+  thread's;
 - the players' input delay that the load harness measured, at 60 Hz: about
-  30 ms mean and 125 ms p99, against 9 to 13 ms mean and 29 to 35 ms p99.
+  22 to 33 ms mean and 125 to 145 ms p99, against 9 to 13 ms mean and 29 to
+  35 ms p99 for v1.1.53 and 5 to 9 ms mean and 18 to 20 ms p99 for this
+  version.
 
-Those rows had no per-processor counters, so where that host's DPCs ran is not
-known. The same build on the same host held 900,000 packets a second with 0
-refused about 15 minutes later. A stall of every worker for 3 s, forced on
-purpose, cost those 3 s and about one more, and the server was then back at
-900,000 a second with 0 refused, so a single stall of the workers does not
-explain a run that stays in this state. Take the per-processor check above
-first on any run that looks like this.
+A single stall of every worker for 3 s, forced on purpose, cost those 3 s and
+about one more, and the server was then back at 900,000 a second with 0
+refused. A run that stays in this state is held there by something that
+lasts, and the per-processor check above is the first thing to read.
 
 ### IOCP at 10 Gb/s
 
 IOCP completion worker `w` sits on the first logical processor of core `w`
 (processor `2w` with two a core), and its send threads take the cores after the
-workers. Its rows (2 completion workers, 2 send threads) also ran with RSS on
-the workers' processors, one queue a worker, set with `Set-NetAdapterRss` as
-above: `-NumberOfReceiveQueues 2 -MaxProcessors 2`, base and maximum on the two
-workers' processors. Those rows placed the workers with a development layout
-(RSS on processors 2 and 4, workers on 3 and 5) rather than the built-in
-placement, so the built-in form, `-BaseProcessorNumber 0 -MaxProcessorNumber 2`,
-follows from the placement rather than from a measured row.
+workers. The same rule holds as for `rio`: keep the RSS processors and the
+completion workers' processors apart, and check them as above. The measured
+`iocp` row (2 completion workers, 2 send threads, peak load) ran with RSS on
+processors 2 and 4, the completion workers on 3 and 5, the send threads on 6
+and 8 and the main thread on 10:
+
+```powershell
+Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 2 -MaxProcessorNumber 4 -MaxProcessors 2 -NumberOfReceiveQueues 2
+```
+
+It held 900,000 packets a second with 0 refused, with 54 to 57% DPC time on
+processors 2 and 4. Read the worker processors the server logs against the RSS
+processors you set: no worker should sit on one.
 
 Without a bind address, every Windows server transport binds the wildcard
 address on the server's port with `SO_EXCLUSIVEADDRUSE`, so a second process
