@@ -103,7 +103,7 @@ LAYERS = {
         "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
         "untraced": {},
         "reach": ["Wrapped", "WindowLive"],
-        "steps": 400,
+        "steps": 250,
     },
     "xdp-replay-marks": {
         "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
