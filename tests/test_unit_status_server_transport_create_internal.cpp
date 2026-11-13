@@ -344,6 +344,18 @@ REGISTER_UNIT_TEST( test_protocol_id_zero_refused );
 // has exited: stopped is true, destroy frees it, and the library terminates
 // with nothing live under a counting allocator. The failure is a second
 // loopback server on the address the first holds. No socket.
+//
+// What this shows: who owns the transport. The public server keeps it
+// through the failed start, reports it, refuses a restart, and frees it once
+// the worker has exited; nothing is reached through a captured pointer. What
+// it does not show: a real worker delayed past a second (the hold stands in
+// for its completion, simulated, with no real time), a failure after the
+// protocol was set up (the failure here is the bind), the keys wiped at the
+// handoff, a successful start after the worker exits (the case destroys
+// instead), or how long destroy waits (its budget is set to 0 s, so the early
+// destroy returns at once rather than after the 1 s a build gives it).
+// proofs/tla/RNCreateUnwind.tla UnwindDeadline then RetainedFrees model the
+// ownership.
 
 struct failed_start_hold_t
 {

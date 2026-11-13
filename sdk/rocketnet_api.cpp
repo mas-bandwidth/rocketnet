@@ -3183,7 +3183,8 @@ bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
 static void rn_server_finish_stop( struct rocketnet_server_t * server )
 {
     // a failed start's transport, its worker exited: freed before the next
-    // start or the destroy (it never coexists with a retiring run)
+    // start or the destroy (it never coexists with a retiring run;
+    // proofs/tla/RNCreateUnwind.tla RetainedFrees)
     if ( server->failed_start )
     {
         rocketnet_assert( rocketnet_server_stopped( server ) );

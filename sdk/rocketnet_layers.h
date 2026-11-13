@@ -1696,7 +1696,13 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // connection (the client's one, one per server slot) -- and allocates nothing
 // after create. memory is optional: NULL makes the one allocation, and a
 // caller block of at least *_required_memory bytes, 64-aligned, makes none
-// (the transport still allocates its own at its create).
+// (the transport still allocates its own at its create). A create whose
+// object fails after its transport was created (with memory NULL, the one
+// allocation refused) stops that transport and waits for its worker to exit,
+// with no deadline, before it returns NULL and OUT_OF_MEMORY: nothing it made
+// stays live, and the create blocks for as long as the worker runs. A caller
+// block of at least *_required_memory bytes cannot fail there
+// (proofs/tla/RNCreateUnwind.tla).
 //
 // The update order, on the main thread: update (the transport's update, the
 // transport's acked packet ids into the channels -- the only ack there is --

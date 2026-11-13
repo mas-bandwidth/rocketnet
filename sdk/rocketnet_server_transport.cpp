@@ -3934,10 +3934,8 @@ bool rocketnet_server_transport_failed_create_stopped( struct rocketnet_server_t
     return rocketnet_server_transport_stopped( transport );
 }
 
-// The failed-create unwind of a create with an owner waits as long as the
-// message layer's does (rn_message_link_stop_and_wait,
-// sdk/rocketnet_message_server.cpp): one second, the budget
-// rocketnet_client_destroy polls a worker for.
+// The failed-create unwind of a create with an owner waits one second, the
+// budget rocketnet_client_destroy polls a worker for.
 static const double RN_SERVER_ABORT_CREATE_WAIT_SECONDS = 1.0;
 
 // A failed create cannot return a live partially constructed object. This
@@ -3950,7 +3948,9 @@ static const double RN_SERVER_ABORT_CREATE_WAIT_SECONDS = 1.0;
 // owner reports not stopped until rocketnet_server_transport_failed_create_stopped
 // is true and then destroys it. With no owner the wait has no deadline, since
 // nobody else could ever free the transport. The create returns its failure
-// status either way.
+// status either way. proofs/tla/RNCreateUnwind.tla models the ownership:
+// FailInTransport, UnwindWaits, then UnwindFrees, or with an owner
+// UnwindDeadline into the retained slot.
 static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport, struct rocketnet_server_transport_t ** retained )
 {
     transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;

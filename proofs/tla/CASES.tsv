@@ -1066,3 +1066,7 @@ MCRNIocpSendLanesBrokenOwnerInvert.cfg	MCRNIocpSendLanes.tla	invariant	OnlyOwner
 MCRNIocpEndpoints.cfg	MCRNIocpEndpoints.tla	pass	-	check	rniocpendpoints	required	-
 MCRNIocpEndpointsBrokenRepostOnPoster.cfg	MCRNIocpEndpoints.tla	invariant	OnOwnerSocket	check	rniocpendpoints	required	-
 MCRNIocpEndpointsBrokenCancelSocketZero.cfg	MCRNIocpEndpoints.tla	temporal	EveryWorkerExits	check	rniocpendpoints	required	-
+MCRNCreateUnwind.cfg	MCRNCreateUnwind.tla	pass	-	ignore-terminal	rncreateunwind	required	-
+MCRNCreateUnwindBrokenBoundedUnwind.cfg	MCRNCreateUnwind.tla	invariant	LiveTransportOwned	ignore-terminal	rncreateunwind	required	-
+MCRNCreateUnwindBrokenNoRetain.cfg	MCRNCreateUnwind.tla	invariant	LiveTransportOwned	ignore-terminal	rncreateunwind	required	-
+MCRNCreateUnwindBrokenFreeAtDeadline.cfg	MCRNCreateUnwind.tla	invariant	FreedOnlyAfterExit	ignore-terminal	rncreateunwind	required	-
