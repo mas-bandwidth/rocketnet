@@ -890,6 +890,10 @@ void rocketnet_test_transport_ring_exhaustion()
     const int capacity = rocketnet_test_fill_server_ring( server, completion_capacity );
     rocketnet_check( capacity >= 256 );
     rocketnet_check( capacity < 20000 );
+    // msgx's one transmit worker takes a frame's whole peak share: space game's
+    // peak is 15 starts a client at 1000 clients, 15,000 a frame, and two
+    // workers at 4096 each refused 7,000 of them (ROCKETNET_MSGX_SEND_QUEUE_SIZE)
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "msgx" ) != 0 || capacity >= 15000 );
     rocketnet_check( completion_capacity == 0 || ( capacity >= completion_capacity && capacity <= completion_capacity + completion_own ) );
 
     // refusal holds until the flush -- 44 more starts all refuse, and the
