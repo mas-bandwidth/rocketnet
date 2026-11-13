@@ -183,7 +183,8 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_INVALID_CONNECT_TOKEN:            return "INVALID_CONNECT_TOKEN";
         case ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED:            return "CONNECT_TOKEN_EXPIRED";
         case ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED:  return "TRANSPORT_PORT_ZERO_UNSUPPORTED";
-        case ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED:       return "TRANSPORT_LADDER_EXHAUSTED";
+        case ROCKETNET_STATUS_NO_TRANSPORT_FOUND:               return "NO_TRANSPORT_FOUND";
+        case ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED:           return "TRANSPORT_BIND_REFUSED";
         case ROCKETNET_STATUS_OUT_OF_MEMORY:                    return "OUT_OF_MEMORY";
         case ROCKETNET_STATUS_MUTEX_CREATE_FAILED:              return "MUTEX_CREATE_FAILED";
         case ROCKETNET_STATUS_THREAD_CREATE_FAILED:             return "THREAD_CREATE_FAILED";
@@ -995,6 +996,14 @@ bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void 
 
     (void) context;
 
+    // the level first, so init's own lines obey it, a failure line included
+
+    char log_level_override[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    if ( rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
+    {
+        rocketnet_log_level_override_apply( log_level_override );
+    }
+
     const bool platform_ready = rocketnet_platform_init();
 
     // before rocketnet_crypto_open_source, whose sodium_init and stir are the
@@ -1028,14 +1037,6 @@ bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void 
 
         rocketnet_error( platform_ready ? "failed to initialize sodium" : "failed to initialize platform" );
         return false;
-    }
-
-    // the level first, so init's own lines obey it
-
-    char log_level_override[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    if ( rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
-    {
-        rocketnet_log_level_override_apply( log_level_override );
     }
 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );

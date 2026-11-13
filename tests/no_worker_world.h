@@ -22,7 +22,7 @@
 #include "loopback_hub.h"
 
 #define NO_WORKER_PROTOCOL     0x5747A75D0C1E4A11ULL
-#define NO_WORKER_CLIENTS      1000
+#define NO_WORKER_CLIENTS      ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )   // the default max_clients (rocketnet.h)
 #define NO_WORKER_CHANNEL      0
 
 static double no_worker_now = 1000.0;

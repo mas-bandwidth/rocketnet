@@ -204,11 +204,12 @@ def main() -> int:
         assert "rss=externally_provisioned_one_queue" in first.stdout
 
         largest = list(args)
-        largest[largest.index("--payload-bytes") + 1] = "1412"
+        largest[largest.index("--payload-bytes") + 1] = "1411"
         result = run(largest, 0)
-        assert "nominal_rocketnet_bytes=1449" in result.stdout
+        assert "nominal_rocketnet_bytes=1448" in result.stdout
         over_largest = list(args)
-        over_largest[over_largest.index("--payload-bytes") + 1] = "1413"
+        # 1412 would be promoted to a numbered message the raw echo refuses
+        over_largest[over_largest.index("--payload-bytes") + 1] = "1412"
         run(over_largest, 2)
 
         token_file.write_text("".join(
@@ -238,6 +239,15 @@ def main() -> int:
         refused_wide({"--cpus": "1-x"}, (), "exactly one distinct CPU per thread")
         refused_wide({"--mode": "robustness"}, ("--server-transport-profile", "xdp"), "plan values are absent or out of bounds")
         token_file.write_text(token_text + "\n", encoding="ascii")
+
+        assert "PLAN vlan=" not in first.stdout
+        tagged = run(list(args) + ["--vlan", "7"], 0)
+        assert "PLAN vlan=7 tag_bytes=4" in tagged.stdout
+        assert "nominal_frame_bytes=147" in tagged.stdout
+        assert "nominal_wire_slot_bytes=171" in tagged.stdout
+        for vlan in ("0", "4095", "x"):
+            refused = run(list(args) + ["--vlan", vlan], 2)
+            assert "unknown or invalid argument: --vlan" in refused.stderr, refused.stderr
 
         unconfirmed = list(args)
         unconfirmed[unconfirmed.index("I-OWN-THIS-BENCH")] = "no"

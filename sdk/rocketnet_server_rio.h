@@ -8,6 +8,7 @@
 #define ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H
 
 #include "rocketnet_constants.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
 
@@ -76,7 +77,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
 #if ROCKETNET_DEV
     // Development constructor control: fail after the socket, RIO table,
     // region, completion queues, request queue, first posted receive or last
-    // posted receive.
+    // posted receive (stages 1..7); stage 8 refuses the bind with WSAENOBUFS.
                                                       ,
                                                       int fail_stage = 0
 #endif // #if ROCKETNET_DEV
@@ -102,23 +103,14 @@ bool rocketnet_server_rio_send_idle( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio );
 rocketnet_server_socket_process_packets_t * rocketnet_server_rio_process_packets( rocketnet_server_rio_t * rio );
 
-enum rocketnet_server_rio_counter_t
-{
-    ROCKETNET_RIO_COUNTER_PACKETS_SENT,             // send completions with a good status
-    ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED,         // datagrams copied into a receive bank
-    ROCKETNET_RIO_COUNTER_SEND_FULL,                // start_packet found the fill phase full
-    ROCKETNET_RIO_COUNTER_SEND_FAILED,              // a refused start, finish or post, or a failed send completion
-    ROCKETNET_RIO_COUNTER_SEND_WAITS,               // flushes that kept the fill phase open: the next phase not yet idle
-    ROCKETNET_RIO_COUNTER_RECEIVE_FAILED,           // receive completions with a failed status
-    ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE,     // datagrams outside the wire's size bounds
-    ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT,        // datagrams below the wire's minimum size
-    ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE,        // datagrams past the receive ceiling
-    ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW, // datagrams past the fill bank's capacity (the bounded dequeue keeps it zero)
-    ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED,    // slices retired by a refused re-post
-    ROCKETNET_RIO_COUNTER_COMMITS,                  // RIO_MSG_COMMIT_ONLY calls
-    ROCKETNET_RIO_NUM_COUNTERS
-};
-
+// The rio transport's counters are rows of the public table: the
+// ROCKETNET_COUNTER_RIO_* rows of sdk/rocketnet_counters.h, contiguous from
+// ROCKETNET_COUNTER_RIO_PACKETS_SENT. Any thread: writes those rows of
+// counters, an array of ROCKETNET_NUM_COUNTERS values indexed by public
+// counter, cumulative for the transport's life; every other value is left as
+// it was.
+#define ROCKETNET_SERVER_RIO_FIRST_COUNTER ROCKETNET_COUNTER_RIO_PACKETS_SENT
+#define ROCKETNET_SERVER_RIO_COUNTER_ROWS  ( ROCKETNET_COUNTER_RIO_COMMITS - ROCKETNET_COUNTER_RIO_PACKETS_SENT + 1 )
 void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * counters );
 // posted sends and receives the kernel has not completed or the transport has
 // not yet dequeued

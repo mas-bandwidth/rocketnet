@@ -23,6 +23,8 @@ Rules enforced:
   - A row with result != 'PASS' is allowed only when result == 'FAIL',
     case['gate'] == 'bench', case['debt'] != '-', and row['exit'] == '124'
     (honest declared timeout debt).
+  - The cases declared timeout debt are exactly DECLARED_DEBT, and every row
+    was measured under the pinned budget of 110 s.
   - Each row's input_sha256 and input_files are the fingerprint its case has
     now (the pinned tlacheck's): a record of other inputs is stale and refused.
 """
@@ -39,6 +41,30 @@ DEFAULT_CASES = ROOT / "proofs" / "tla" / "CASES.tsv"
 DEFAULT_RUNS = ROOT / "proofs" / "tla" / "RUNS.tsv"
 
 PINNED_JAR_SHA256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+
+# The one bounded budget every record is measured under (tlacheck's default and
+# ceiling outside --manual): a record measured under a shorter one turns a
+# healthy case into a timeout.
+PINNED_BUDGET = "110"
+
+# The cases declared timeout debt, by name. A debt row in CASES.tsv takes a
+# case out of the release gate (tlc-debt.yml runs it weekly), so declaring one
+# must be an edit here that a reviewer sees, never a CASES.tsv edit alone
+# (VERIFY-6 A13). A name here must stay declared debt in CASES.tsv.
+DECLARED_DEBT = frozenset(
+    {
+        "MCClientConnectionLArbitrary.cfg",
+        "MCClientConnectionLCrash.cfg",
+        "MCClientConnectionSNone.cfg",
+        "MCClientConnectionSAlternate.cfg",
+        "MCClientConnectionSBurst.cfg",
+        "MCClientConnectionSArbitrary.cfg",
+        "MCReplayWindowMid.cfg",
+        "MCRNClientIoDecrypt.cfg",
+        "MCRNFillPhaseN3.cfg",
+        "MCSessionAcksLive.cfg",
+    }
+)
 
 CASES_COLUMNS = (
     "config",
@@ -319,7 +345,13 @@ def fingerprint(tla_dir, config):
     return h.hexdigest(), len(digests)
 
 
-def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forbid_stale=True):
+def check(
+    cases_path=DEFAULT_CASES,
+    runs_path=DEFAULT_RUNS,
+    out=sys.stdout,
+    forbid_stale=True,
+    declared_debt=DECLARED_DEBT,
+):
     errors = []
 
     with Path(cases_path).open(encoding="utf-8", newline="") as handle:
@@ -344,6 +376,11 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
             return 1
         runs = list(runs_reader)
 
+    if not cases or not runs:
+        # zero inputs is an error: header-only ledgers match each other and prove nothing
+        print(f"{len(cases)} cases in {cases_path}, {len(runs)} rows in {runs_path}: nothing was checked", file=out)
+        return 1
+
     plan = {}
     for case in cases:
         cfg = case["config"]
@@ -363,6 +400,18 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
                 errors.append(f"{cfg}: {expected} case must name a property, got {prop!r}")
 
     errors.extend(check_property_witnesses(list(plan.values()), Path(cases_path).parent))
+
+    for cfg, case in plan.items():
+        if case["debt"].strip() not in ("", "-") and cfg not in declared_debt:
+            errors.append(
+                f"{cfg}: declared timeout debt in CASES.tsv but not in DECLARED_DEBT (tools/check_tla_records.py); a new debt is declared there, where a reviewer sees it"
+            )
+    for cfg in sorted(declared_debt):
+        case = plan.get(cfg)
+        if case is None or case["debt"].strip() in ("", "-"):
+            errors.append(
+                f"{cfg}: in DECLARED_DEBT but not declared timeout debt in CASES.tsv; remove it from DECLARED_DEBT"
+            )
 
     seen_runs = set()
     for row in runs:
@@ -390,6 +439,10 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
             )
         if row["mode"] != "bounded":
             errors.append(f"{cfg}: not a bounded measurement (mode={row['mode']!r})")
+        if row["budget"] != PINNED_BUDGET:
+            errors.append(
+                f"{cfg}: measured under budget {row['budget']!r}, not the pinned {PINNED_BUDGET} s"
+            )
         if row["jar_sha256"] != PINNED_JAR_SHA256:
             errors.append(f"{cfg}: different JAR ({row['jar_sha256']!r})")
         if forbid_stale:
@@ -425,6 +478,35 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
                 errors.append(
                     f"{cfg}: failure without declared timeout debt (result={row['result']!r}, exit={row['exit']!r}, gate={case['gate']!r}, debt={case['debt']!r})"
                 )
+
+    # NIGHTLY-DEBT.tsv beside CASES.tsv: the timeout debt tlc.yml re-runs every
+    # night under its own budget. Each row must be a declared timeout-debt
+    # case with a FAIL/124 record, listed once, with budget_s at least twice
+    # measured_s and positive completed counts (plan_tlc_nightly.nightly_debt,
+    # the planner's own check). No file is no nightly debt.
+    from plan_tlc_nightly import read_nightly_debt  # pylint: disable=import-outside-toplevel
+    nightly_debt_path = Path(cases_path).parent / "NIGHTLY-DEBT.tsv"
+    try:
+        read_nightly_debt(nightly_debt_path, cases, runs)
+    except (ValueError, KeyError, OSError) as error:
+        errors.append(f"{nightly_debt_path}: {error}")
+
+    # The budget margin (plan_tlc_nightly.margin): a PASS record over 60% of
+    # its budget is refused unless BUDGETS.tsv beside CASES.tsv declares its
+    # larger budget (at least twice its seconds; the nightly re-run runs it
+    # under that) or it becomes nightly timeout debt. The declared ones are
+    # printed. No file is no declared budget.
+    from plan_tlc_nightly import margin, read_budgets  # pylint: disable=import-outside-toplevel
+    budgets_path = Path(cases_path).parent / "BUDGETS.tsv"
+    try:
+        budgets = read_budgets(budgets_path, runs)
+    except (ValueError, KeyError, OSError) as error:
+        errors.append(f"{budgets_path}: {error}")
+        budgets = {}
+    flagged, problems = margin(runs, budgets)
+    errors.extend(problems)
+    for line in flagged:
+        print(line, file=out)
 
     for cfg in plan:
         if cfg not in seen_runs:

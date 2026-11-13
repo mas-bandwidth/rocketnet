@@ -15,6 +15,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_config.h"
 #include "rocketnet_base64.h"
+#include "../loopback_hub.h"
 #include <time.h>
 
 #include <stdio.h>
@@ -135,6 +136,11 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
             rocketnet_client_config_t config;
             rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
 
+            // a transport pin may name loopback, whose create refuses a NULL
+            // hub; the hub is released before the term below
+
+            config.loopback_hub = rocketnet_test_loopback_hub();
+
             rocketnet_status_t status = ROCKETNET_STATUS_OK;
             rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
             rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
@@ -144,6 +150,7 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
             rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
             rocketnet_check( rng_lifecycle_fd_count() == with_client );
             rocketnet_client_destroy( client );
+            rocketnet_check( rocketnet_test_loopback_hub_release() );
         }
 
         rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
@@ -721,6 +728,29 @@ static void rocketnet_platform_primitives_capture_end()
     rocketnet_log_level( rocketnet_platform_primitives_saved_level );
 }
 
+// A bind refused because the port is held logs the OS error by number and
+// name (EADDRINUSE; WSAEADDRINUSE on Windows, whose sockets are exclusive),
+// so a refusal tells address-in-use from no buffers. Functional: real
+// sockets on 127.0.0.1.
+static void rocketnet_platform_primitives_bind_error_named()
+{
+    struct rocketnet_address_t address;
+    rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * held =
+        rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
+    rocketnet_check( held != NULL );
+    rocketnet_check( address.port != 0 );
+
+    rocketnet_platform_primitives_capture_begin( "EADDRINUSE" );
+    struct rocketnet_platform_socket_t * second =
+        rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
+    rocketnet_platform_primitives_capture_end();
+    rocketnet_check( second == NULL );
+    rocketnet_check( rocketnet_platform_primitives_matching_lines == 1 );
+
+    rocketnet_platform_socket_destroy( held );
+}
+
 static void rocketnet_platform_primitives_key_warning_environment()
 {
     rocketnet_platform_real_environment_t transport( "ROCKETNET_SERVER_TRANSPORT" );
@@ -746,7 +776,7 @@ static void rocketnet_platform_primitives_key_warning_environment()
 
     rocketnet_platform_primitives_capture_begin( "public and not for production", ROCKETNET_LOG_LEVEL_WARN );
     rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
-    rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+    rocketnet_check( status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
     rocketnet_check( rocketnet_platform_primitives_matching_lines == 0 );
     rocketnet_platform_primitives_capture_end();
 }
@@ -831,7 +861,7 @@ static void rocketnet_platform_primitives_production_status_environment()
         snprintf( config.transport, sizeof( config.transport ), "%s", transports[i] );
         status = -1;
         rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_check( status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
     }
 }
 
@@ -965,10 +995,10 @@ static void rocketnet_platform_primitives_production_filter_environment()
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
 
-    // a fixed port: the served address is the create address, and the token
-    // writer refuses a port of 0
+    // port 0, then the bound port: a fixed port here could be held by a case
+    // running in parallel (the token writer refuses a port of 0)
 
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:48123", NULL, &server_config, &status );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     rocketnet_check( server && status == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
@@ -979,7 +1009,8 @@ static void rocketnet_platform_primitives_production_filter_environment()
     rocketnet_check( client && status == ROCKETNET_STATUS_OK );
 
     char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
-    snprintf( address, sizeof( address ), "127.0.0.1:48123" );     // the create address is the served address
+    rocketnet_check( rocketnet_server_port( server ) != 0 );
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
 
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( server, server_public );
@@ -1193,6 +1224,7 @@ int main()
     rocketnet_platform_primitives_environment();
     rocketnet_platform_primitives_public_config_environment();
     rocketnet_platform_primitives_key_warning_environment();
+    rocketnet_platform_primitives_bind_error_named();
 #if !ROCKETNET_DEV
     rocketnet_platform_primitives_production_status_environment();
     rocketnet_platform_primitives_production_simulator_environment();

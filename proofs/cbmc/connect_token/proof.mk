@@ -1,4 +1,5 @@
-# Connect-token reader proofs on the real SDK. Nightly only.
+# Connect-token reader proofs on the real SDK. Nightly only. Each harness is
+# followed by its reachability control (check_reachability_control.sh).
 NIGHTLY += proofs-connect_token
 
 CONNECT_TOKEN_SOURCE = connect_token/proof_connect_token.cpp
@@ -46,5 +47,10 @@ proofs-connect_token:
 	      cat "$$output"; \
 	      exit 1; \
 	    fi; \
-	    if [ -z "$$CONNECT_TOKEN_LOG_DIR" ]; then rm -f "$$output"; fi; \
+	    status=0; \
+	    $(CURDIR)/run_with_timeout.sh $(CONNECT_TOKEN_TIMEOUT) prlimit --as=$(CONNECT_TOKEN_AS_LIMIT) -- \
+	      $(ESBMC) $(CONNECT_TOKEN_FLAGS) --unwind $$unwind -DREACHABILITY_CONTROL=1 --function $$harness \
+	      $(CONNECT_TOKEN_SOURCE) > "$$output.reachability" 2>&1 || status=$$?; \
+	    $(CURDIR)/check_reachability_control.sh esbmc $$harness $$status "$$output.reachability" || exit 1; \
+	    if [ -z "$$CONNECT_TOKEN_LOG_DIR" ]; then rm -f "$$output" "$$output.reachability"; fi; \
 	done

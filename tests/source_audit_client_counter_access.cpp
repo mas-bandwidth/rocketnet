@@ -17,6 +17,7 @@
 
 #include "test_unit_registry.h"
 #include "portable_crt.h"
+#include "source_audit_text.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -26,6 +27,10 @@
 #include <set>
 #include <string>
 #include <vector>
+
+#ifndef ROCKETNET_PUBLIC_PROGRAM_SOURCES
+#error "the build passes ROCKETNET_PUBLIC_PROGRAM_SOURCES to this file"
+#endif // #ifndef ROCKETNET_PUBLIC_PROGRAM_SOURCES
 
 static bool client_cast_read_file( const char * relative, std::string & text )
 {
@@ -44,93 +49,6 @@ static bool client_cast_read_file( const char * relative, std::string & text )
     }
     fclose( file );
     return true;
-}
-
-// Comments and string or character literals become spaces, newlines kept, so
-// offsets map to the same lines and nothing quoted can match.
-static std::string client_cast_code_only( const std::string & source )
-{
-    std::string code = source;
-    bool line_comment = false;
-    bool block_comment = false;
-    bool string_literal = false;
-    bool char_literal = false;
-    bool escaped = false;
-    for ( size_t i = 0; i < code.size(); i++ )
-    {
-        const char c = code[i];
-        const char next = i + 1 < code.size() ? code[i + 1] : '\0';
-        if ( line_comment )
-        {
-            if ( c == '\n' )
-            {
-                line_comment = false;
-            }
-            else
-            {
-                code[i] = ' ';
-            }
-            continue;
-        }
-        if ( block_comment )
-        {
-            if ( c == '*' && next == '/' )
-            {
-                code[i] = ' ';
-                code[++i] = ' ';
-                block_comment = false;
-            }
-            else if ( c != '\n' )
-            {
-                code[i] = ' ';
-            }
-            continue;
-        }
-        if ( string_literal || char_literal )
-        {
-            if ( c != '\n' )
-            {
-                code[i] = ' ';
-            }
-            if ( escaped )
-            {
-                escaped = false;
-            }
-            else if ( c == '\\' )
-            {
-                escaped = true;
-            }
-            else if ( ( string_literal && c == '"' ) || ( char_literal && c == '\'' ) )
-            {
-                string_literal = false;
-                char_literal = false;
-            }
-            continue;
-        }
-        if ( c == '/' && next == '/' )
-        {
-            code[i] = ' ';
-            code[++i] = ' ';
-            line_comment = true;
-        }
-        else if ( c == '/' && next == '*' )
-        {
-            code[i] = ' ';
-            code[++i] = ' ';
-            block_comment = true;
-        }
-        else if ( c == '"' )
-        {
-            code[i] = ' ';
-            string_literal = true;
-        }
-        else if ( c == '\'' )
-        {
-            code[i] = ' ';
-            char_literal = true;
-        }
-    }
-    return code;
 }
 
 static bool client_cast_is_identifier_char( char c )
@@ -311,7 +229,7 @@ static void test_tools_never_cast_public_client_to_internal()
             "    struct rocketnet_client_t * same = (struct rocketnet_client_t *) client;\n"
             "}\n";
         std::vector<std::string> found;
-        client_cast_find_casts( "fixture-with-cast", client_cast_code_only( with_cast ), found );
+        client_cast_find_casts( "fixture-with-cast", source_audit_code_only( with_cast ), found );
         if ( found.size() != 2 )
         {
             char line[128];
@@ -319,24 +237,52 @@ static void test_tools_never_cast_public_client_to_internal()
             failures.push_back( line );
         }
         found.clear();
-        client_cast_find_casts( "fixture-without-cast", client_cast_code_only( without_cast ), found );
+        client_cast_find_casts( "fixture-without-cast", source_audit_code_only( without_cast ), found );
         for ( size_t i = 0; i < found.size(); i++ )
         {
             failures.push_back( "detector witness: false cast " + found[i] );
         }
     }
 
-    static const char * const files[] = { "tests/client_server/client.c", "tests/client_server/server.c", "tests/load/load.c", "tests/soak/soak.c" };
-    for ( size_t f = 0; f < sizeof( files ) / sizeof( files[0] ); f++ )
+    // every C/C++ source the build compiles into a program (CMakeLists.txt,
+    // ROCKETNET_PUBLIC_PROGRAM_SOURCES): not a list of directories, so a new
+    // tool, example or benchmark is read the day it is added (VERIFY-3 W16)
+    std::vector<std::string> files;
+    {
+        std::string item;
+        for ( const char * c = ROCKETNET_PUBLIC_PROGRAM_SOURCES;; c++ )
+        {
+            if ( *c == '|' || *c == '\0' )
+            {
+                if ( !item.empty() )
+                {
+                    files.push_back( item );
+                }
+                item.clear();
+                if ( *c == '\0' )
+                {
+                    break;
+                }
+                continue;
+            }
+            item.push_back( *c );
+        }
+    }
+    if ( files.size() < 4 )
+    {
+        failures.push_back( "the build named fewer than 4 program sources to read" );
+    }
+    for ( size_t f = 0; f < files.size(); f++ )
     {
         std::string text;
-        if ( !client_cast_read_file( files[f], text ) )
+        if ( !client_cast_read_file( files[f].c_str(), text ) )
         {
-            failures.push_back( std::string( "cannot read " ) + files[f] );
+            failures.push_back( "cannot read " + files[f] );
             continue;
         }
-        client_cast_find_casts( files[f], client_cast_code_only( text ), failures );
+        client_cast_find_casts( files[f].c_str(), source_audit_code_only( text ), failures );
     }
+    printf( "test_tools_never_cast_public_client_to_internal: %zu program sources read\n", files.size() );
 
     if ( !failures.empty() )
     {

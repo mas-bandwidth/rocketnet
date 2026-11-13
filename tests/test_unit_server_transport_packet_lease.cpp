@@ -201,7 +201,7 @@ static void test_server_transport_finish_after_flush()
         rocketnet_packet_context_t ctx_a;
         uint8_t * frame_a = rocketnet_server_transport_start_packet( server, slot, 16, &ctx_a );
         check( frame_a != NULL );
-        memset( frame_a + ctx_a.payload_index, 0xAA, 16 );
+        memset( frame_a, 0xAA, 16 );
 
         rocketnet_server_transport_send_packets( server );
 
@@ -215,7 +215,7 @@ static void test_server_transport_finish_after_flush()
         rocketnet_packet_context_t ctx_b;
         uint8_t * frame_b = rocketnet_server_transport_start_packet( server, slot, 16, &ctx_b );
         check( frame_b != NULL );
-        memset( frame_b + ctx_b.payload_index, 0xBB, 16 );
+        memset( frame_b, 0xBB, 16 );
 
         world.time += 0.01;
         rocketnet_server_transport_update( server, world.time );
@@ -230,7 +230,7 @@ static void test_server_transport_finish_after_flush()
         rocketnet_packet_context_t ctx_ok;
         uint8_t * frame_ok = rocketnet_server_transport_start_packet( server, slot, 16, &ctx_ok );
         check( frame_ok != NULL );
-        memset( frame_ok + ctx_ok.payload_index, 0xCC, 16 );
+        memset( frame_ok, 0xCC, 16 );
         const int wire_bytes = rocketnet_server_transport_finish_packet( server, &ctx_ok, 16 );
         check( wire_bytes > 0 );
         check( g_lease_test_asserts == 0 );
@@ -245,12 +245,12 @@ static void test_server_transport_finish_after_flush()
         // 1d. A lease already consumed by finish_packet or abort_packet is in
         //     state 3, not an active lease retired by reset: after a later
         //     reset (send_packets or update), finishing a saved copy of that
-        //     context must NOT be treated as retired(), must NOT increment
-        //     api_misuses, and must assert in assert-enabled builds.
+        //     context must NOT be treated as retired(), counts one api_misuse
+        //     like any other misuse, and must assert in assert-enabled builds.
         rocketnet_packet_context_t ctx_fin;
         uint8_t * frame_fin = rocketnet_server_transport_start_packet( server, slot, 16, &ctx_fin );
         check( frame_fin != NULL );
-        memset( frame_fin + ctx_fin.payload_index, 0xCE, 16 );
+        memset( frame_fin, 0xCE, 16 );
         rocketnet_packet_context_t saved_fin = ctx_fin;
         check( rocketnet_server_transport_finish_packet( server, &ctx_fin, 16 ) > 0 );
         check( g_lease_test_asserts == 0 );
@@ -258,7 +258,7 @@ static void test_server_transport_finish_after_flush()
         const uint64_t misuses_before_fin = rocketnet_api_misuse_count();
         check( rocketnet_server_transport_finish_packet( server, &saved_fin, 16 ) == 0 );
         check( saved_fin.frame == NULL );
-        check( rocketnet_api_misuse_count() == misuses_before_fin );
+        check( rocketnet_api_misuse_count() == misuses_before_fin + 1 );
 #if ROCKETNET_ASSERTS
         check( g_lease_test_asserts == 1 );
 #else
@@ -276,7 +276,7 @@ static void test_server_transport_finish_after_flush()
         const uint64_t misuses_before_abt = rocketnet_api_misuse_count();
         check( rocketnet_server_transport_finish_packet( server, &saved_abt, 16 ) == 0 );
         check( saved_abt.frame == NULL );
-        check( rocketnet_api_misuse_count() == misuses_before_abt );
+        check( rocketnet_api_misuse_count() == misuses_before_abt + 1 );
 #if ROCKETNET_ASSERTS
         check( g_lease_test_asserts == 1 );
 #else
@@ -304,7 +304,7 @@ static void test_server_transport_finish_after_stop()
         rocketnet_packet_context_t ctx;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, slot, 16, &ctx );
         check( frame != NULL );
-        memset( frame + ctx.payload_index, 0xDD, 16 );
+        memset( frame, 0xDD, 16 );
 
         rocketnet_server_transport_stop( server );
         check( rocketnet_server_transport_stopped( server ) );
@@ -318,6 +318,61 @@ static void test_server_transport_finish_after_stop()
     lease_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_server_transport_finish_after_stop );
+
+// 3. start_packet returns the payload, not the frame: the pointer is the
+//    payload the lease's own view names (frame + payload_index, the same as
+//    packet_payload hands back), 16-aligned, with payload_capacity bytes
+//    behind it. A payload written there to its full capacity arrives byte for
+//    byte; a caller who wrote at the frame instead would overwrite the wire
+//    header and the receiver would see neither the bytes nor the length.
+static void test_server_transport_start_returns_payload()
+{
+    lease_world_t world;
+    const int slot = lease_world_create( &world, 0x63 );
+    rocketnet_server_transport_t * server = world.server;
+
+    {
+        lease_assert_scope_t scope;
+
+        rocketnet_packet_context_t ctx;
+        uint8_t * payload = rocketnet_server_transport_start_packet( server, slot, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &ctx );
+        check( payload != NULL );
+        check( payload == ctx.frame + ctx.payload_index );
+        check( payload != ctx.frame );
+        check( ( (uintptr_t) payload & 15 ) == 0 );
+        check( ctx.payload_capacity >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
+        int view_capacity = 0;
+        check( rocketnet_server_transport_packet_payload( server, &ctx, &view_capacity ) == payload );
+        check( view_capacity == ctx.payload_capacity );
+
+        const int bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+        for ( int i = 0; i < bytes; i++ )
+        {
+            payload[i] = (uint8_t) ( i * 7 + 3 );
+        }
+
+        world.last_rx_payload_bytes = 0;
+        check( rocketnet_server_transport_finish_packet( server, &ctx, bytes ) > 0 );
+        rocketnet_server_transport_send_packets( server );
+        for ( int step = 0; step < 20 && world.last_rx_payload_bytes == 0; step++ )
+        {
+            lease_world_pump( &world );
+        }
+
+        check( world.last_rx_payload_bytes == bytes );
+        bool same = world.last_rx_payload_bytes == bytes;
+        for ( int i = 0; same && i < bytes; i++ )
+        {
+            same = world.last_rx_payload[i] == (uint8_t) ( i * 7 + 3 );
+        }
+        check( same );
+        check( g_lease_test_asserts == 0 );
+    }
+
+    lease_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_transport_start_returns_payload );
 
 // bug: resolve and take skip an entry in the writing phase instead of waiting on its writer
 // (proofs/tla/RNPacketLease.tla RLoad, MCRNPacketLeaseSkipWriting.cfg; the wait is

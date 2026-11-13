@@ -116,6 +116,16 @@ static void test_server_gso_drain_room()
 
 REGISTER_UNIT_TEST( test_server_gso_drain_room );
 
+// receives whose UDP_GRO control was truncated (MSG_CTRUNC) are counted in
+// GRO_CMSG_FAULTS once each after main's fold, as io_uring counts them; no
+// socket, no thread, no clock
+static void test_server_gso_gro_cmsg_faults_counted()
+{
+    check( rocketnet_server_gso_test_gro_cmsg_faults() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_gro_cmsg_faults_counted );
+
 static void test_server_gso_receive_backoff()
 {
     check( rocketnet_server_gso_test_receive_backoff() );
@@ -138,6 +148,8 @@ struct gso_segment_socket_t
     uint16_t plain_ports[8];
     int plain_ports_n;
     uint16_t segment_port;
+    int plain_fail;                         // nonzero: the next plain sendmmsg calls answer -1 with plain_errno
+    int plain_errno;
 };
 
 static int gso_segment_stride( const struct msghdr * header )
@@ -181,6 +193,13 @@ static int gso_segment_send( struct mmsghdr * messages, unsigned int count, void
         socket->refuse_segment--;
         socket->refusals++;
         errno = EINVAL;
+        return -1;
+    }
+
+    if ( count > 0 && gso_segment_stride( &messages[0].msg_hdr ) == 0 && socket->plain_fail > 0 )
+    {
+        socket->plain_fail--;
+        errno = socket->plain_errno;
         return -1;
     }
 
@@ -266,11 +285,11 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     check( socket.segment_port == 40001 );
     check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 4 );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS] == 1 );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 4 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_GSO_SENDS] == 1 );
 
     // a later send to another destination is still segmented
     memset( &socket, 0, sizeof( socket ) );
@@ -325,7 +344,7 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) == 0 );
 
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
 
     // the tier stays plain
     memset( &socket, 0, sizeof( socket ) );
@@ -338,6 +357,70 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_keeps_other_destinations );
+
+// a refused segmented run is resent plain, and that plain send fails too. a
+// full socket stops the resend at the first unsent packet with nothing
+// dropped; a hard error drops that one packet, counts it, and the rest of the
+// run still leaves.
+static void test_server_gso_plain_resend_failures()
+{
+    const int full_errors[2] = { EAGAIN, ENOBUFS };
+    for ( int e = 0; e < 2; e++ )
+    {
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+        check( gso );
+        rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+        struct gso_segment_socket_t socket;
+        memset( &socket, 0, sizeof( socket ) );
+        socket.refuse_segment = 1;
+        socket.plain_fail = 1;
+        socket.plain_errno = full_errors[e];
+        rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+        gso_segment_stage( gso, 44000, 2 );
+        check( !rocketnet_server_gso_test_flush_staged( gso ) );
+        check( socket.refusals == 1 );
+        check( socket.plain_fail == 0 );
+        check( socket.plain_packets == 0 );
+
+        uint64_t counters[ROCKETNET_NUM_COUNTERS];
+        rocketnet_server_gso_counters( gso, counters );
+        check( counters[ROCKETNET_COUNTER_GSO_SEND_SYSCALLS] == 2 );
+        check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 0 );
+        check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
+
+        rocketnet_server_gso_test_close( gso );
+    }
+
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso );
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_segment_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    socket.refuse_segment = 1;
+    socket.plain_fail = 1;
+    socket.plain_errno = EHOSTUNREACH;
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+    gso_segment_stage( gso, 44001, 2 );
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+    check( socket.refusals == 1 );
+    check( socket.plain_fail == 0 );
+    check( socket.plain_packets == 1 );
+    check( socket.plain_ports[0] == 44001 );
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_SYSCALLS] == 3 );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 1 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 1 );
+
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_plain_resend_failures );
 
 // a new destination refuses a segmented run every round, interleaved with
 // accepted segmented runs to another destination: the first refusal warns,
@@ -434,10 +517,10 @@ static void test_server_gso_segment_refusal_is_per_destination()
     check( socket.plain_packets == 3 * rounds );
     check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == (uint64_t) ( 3 * rounds ) );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == (uint64_t) ( 3 * rounds ) );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
 
     // the accepting destination's run is one segmented send, and the
     // refusing destination's run in the same batch leaves plain, unrefused
@@ -452,29 +535,39 @@ static void test_server_gso_segment_refusal_is_per_destination()
     check( socket.refusals == 0 );
 
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
 
     rocketnet_server_gso_test_close( gso );
 }
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_is_per_destination );
 
-// Four full receive queues, and the real per-update budget, which two queues
-// exhaust (8192 + 8192 is past 16000). The queues the first update consumes
-// are published full again: a walk that always starts at 0 then stays on 0
-// and 1, and queues 2 and 3 never deliver. Across two updates every queue
-// must. No socket, no thread, no clock.
+// Full receive queues, two more than the real per-update budget reaches: the
+// budget ends inside a queue (at 1000 clients it is less than one 32768-slot
+// queue), so the first update claims that queue and stops, and the last two
+// queues are left unclaimed. The queues the first update consumes are
+// published full again: a walk that always starts at 0 then stays on the
+// claimed queues, and the last two never deliver. Across as many updates as
+// there are queues, every queue must. No socket, no thread, no clock.
 static void test_server_gso_receive_queue_rotation()
 {
-    const int queues = 4;
+    const int budget = rocketnet_server_receive_packets_per_update( ROCKETNET_DEFAULT_MAX_CLIENTS );
+    const int claimed = ( budget + ROCKETNET_GSO_RECV_QUEUE_SIZE - 1 ) / ROCKETNET_GSO_RECV_QUEUE_SIZE;
+    const int queues = claimed + 2;
+    check( queues <= ROCKETNET_GSO_MAX_QUEUES );
+
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( queues );
     check( gso );
 
-    struct rocketnet_server_socket_process_packets_t * view = rocketnet_server_gso_process_packets( gso );
-    check( view->capacity > ROCKETNET_GSO_RECV_QUEUE_SIZE );
-    check( view->capacity < 2 * ROCKETNET_GSO_RECV_QUEUE_SIZE );
+    // the budget ends inside a queue, so the first update claims that queue
+    // too and stops there
 
-    int seen[4] = { 0, 0, 0, 0 };
+    struct rocketnet_server_socket_process_packets_t * view = rocketnet_server_gso_process_packets( gso );
+    check( view->capacity == budget );
+    check( view->capacity > ( claimed - 1 ) * ROCKETNET_GSO_RECV_QUEUE_SIZE );
+    check( view->capacity < claimed * ROCKETNET_GSO_RECV_QUEUE_SIZE );
+
+    int seen[ROCKETNET_GSO_MAX_QUEUES] = {};
 
     for ( int q = 0; q < queues; q++ )
     {
@@ -489,35 +582,147 @@ static void test_server_gso_receive_queue_rotation()
         check( marker >= 1 && marker <= queues );
         seen[marker - 1]++;
     }
-    check( seen[0] > 0 );
-    check( seen[1] > 0 );
-    check( seen[2] == 0 );
-    check( seen[3] == 0 );
-
-    // 0 and 1 have a free buffer again; 2 and 3 still hold the ready buffer
-    // the first update did not claim.
-    check( rocketnet_server_gso_test_publish_marked( gso, 0, (uint8_t) 1, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( rocketnet_server_gso_test_publish_marked( gso, 1, (uint8_t) 2, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( !rocketnet_server_gso_test_publish_marked( gso, 2, (uint8_t) 3, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( !rocketnet_server_gso_test_publish_marked( gso, 3, (uint8_t) 4, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-
-    rocketnet_server_gso_receive_packets( gso );
-    check( view->num_packets == view->capacity );
-    for ( int i = 0; i < view->num_packets; i++ )
+    for ( int q = 0; q < claimed; q++ )
     {
-        const int marker = (int) view->packet_data[i][0];
-        check( marker >= 1 && marker <= queues );
-        seen[marker - 1]++;
+        check( seen[q] > 0 );
+    }
+    check( seen[claimed] == 0 );
+    check( seen[claimed + 1] == 0 );
+
+    // the claimed queues have a free buffer again, the others still hold the
+    // ready buffer the first update did not claim. Each update claims the
+    // next queue after the last it filled: every queue delivers within as
+    // many updates as there are queues.
+    for ( int round = 1; round < queues; round++ )
+    {
+        for ( int q = 0; q < queues; q++ )
+        {
+            // a queue still holding its ready buffer refuses; that is the point
+            rocketnet_server_gso_test_publish_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE );
+        }
+        rocketnet_server_gso_receive_packets( gso );
+        check( view->num_packets == view->capacity );
+        for ( int i = 0; i < view->num_packets; i++ )
+        {
+            const int marker = (int) view->packet_data[i][0];
+            check( marker >= 1 && marker <= queues );
+            seen[marker - 1]++;
+        }
     }
 
-    check( seen[0] > 0 );
-    check( seen[1] > 0 );
-    check( seen[2] > 0 );
-    check( seen[3] > 0 );
+    for ( int q = 0; q < queues; q++ )
+    {
+        check( seen[q] > 0 );
+    }
 
     rocketnet_server_gso_test_close( gso );
 }
 
 REGISTER_UNIT_TEST( test_server_gso_receive_queue_rotation );
+
+// The segmented runs a flush builds, read back from the messages it hands
+// sendmmsg: a run to one destination holds packets of the first one's size,
+// a shorter packet joins it as the tail and closes it, and every gathered
+// datagram points at its own staged bytes in staging order.
+
+#define GSO_RUN_MAX_MESSAGES 8
+#define GSO_RUN_MAX_IOVECS 8
+
+struct gso_run_socket_t
+{
+    int messages;
+    int iovecs[GSO_RUN_MAX_MESSAGES];
+    int stride[GSO_RUN_MAX_MESSAGES];
+    uint16_t port[GSO_RUN_MAX_MESSAGES];
+    int bytes[GSO_RUN_MAX_MESSAGES][GSO_RUN_MAX_IOVECS];
+    uint8_t first[GSO_RUN_MAX_MESSAGES][GSO_RUN_MAX_IOVECS];
+    uint8_t last[GSO_RUN_MAX_MESSAGES][GSO_RUN_MAX_IOVECS];
+};
+
+static int gso_run_send( struct mmsghdr * messages, unsigned int count, void * user )
+{
+    struct gso_run_socket_t * socket = (struct gso_run_socket_t *) user;
+
+    for ( unsigned int m = 0; m < count; m++ )
+    {
+        check( socket->messages < GSO_RUN_MAX_MESSAGES );
+        const int index = socket->messages++;
+        const struct msghdr * header = &messages[m].msg_hdr;
+        check( header->msg_iovlen <= GSO_RUN_MAX_IOVECS );
+
+        socket->iovecs[index] = (int) header->msg_iovlen;
+        socket->stride[index] = gso_segment_stride( header );
+        socket->port[index] = gso_segment_port( header );
+        for ( int i = 0; i < (int) header->msg_iovlen; i++ )
+        {
+            const struct iovec * iov = &header->msg_iov[i];
+            const uint8_t * data = (const uint8_t *) iov->iov_base;
+            socket->bytes[index][i] = (int) iov->iov_len;
+            socket->first[index][i] = data && iov->iov_len > 0 ? data[0] : 0;
+            socket->last[index][i] = data && iov->iov_len > 0 ? data[iov->iov_len - 1] : 0;
+        }
+    }
+
+    return (int) count;
+}
+
+static void gso_run_stage( struct rocketnet_server_gso_t * gso, uint16_t port, int bytes, uint8_t tag )
+{
+    struct rocketnet_address_t to;
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 127;
+    to.data.ipv4[3] = 1;
+    to.port = port;
+
+    uint64_t packet_id = 0;
+    uint8_t * packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
+    check( packet );
+    // the slot is a frame: the wire packet starts at the wire offset
+    memset( packet + ROCKETNET_FRAME_WIRE_OFFSET, tag, (size_t) bytes );
+    rocketnet_server_gso_finish_packet( gso, packet_id, packet, bytes );
+}
+
+static void test_server_gso_segment_runs_gather_their_own_packets()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso );
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_run_socket_t * socket = new gso_run_socket_t();
+    rocketnet_server_gso_test_set_send( gso, gso_run_send, socket );
+
+    // one packet to 39999, then 200, 150 and 200 bytes to 40000: the 150 is
+    // the first run's tail and closes it, so the last 200 is a run of its own
+
+    gso_run_stage( gso, 39999, 120, 0x10 );
+    gso_run_stage( gso, 40000, 200, 0x21 );
+    gso_run_stage( gso, 40000, 150, 0x22 );
+    gso_run_stage( gso, 40000, 200, 0x23 );
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+
+    check( socket->messages == 3 );
+
+    check( socket->port[0] == 39999 && socket->iovecs[0] == 1 && socket->stride[0] == 0 );
+    check( socket->bytes[0][0] == 120 && socket->first[0][0] == 0x10 && socket->last[0][0] == 0x10 );
+
+    check( socket->port[1] == 40000 && socket->iovecs[1] == 2 && socket->stride[1] == 200 );
+    check( socket->bytes[1][0] == 200 && socket->first[1][0] == 0x21 && socket->last[1][0] == 0x21 );
+    check( socket->bytes[1][1] == 150 && socket->first[1][1] == 0x22 && socket->last[1][1] == 0x22 );
+
+    check( socket->port[2] == 40000 && socket->iovecs[2] == 1 && socket->stride[2] == 0 );
+    check( socket->bytes[2][0] == 200 && socket->first[2][0] == 0x23 && socket->last[2][0] == 0x23 );
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 4 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
+    check( counters[ROCKETNET_COUNTER_GSO_GSO_SENDS] == 1 );
+
+    rocketnet_server_gso_test_close( gso );
+    delete socket;
+}
+
+REGISTER_UNIT_TEST( test_server_gso_segment_runs_gather_their_own_packets );
 
 #endif

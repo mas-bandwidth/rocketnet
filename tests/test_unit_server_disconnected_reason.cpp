@@ -244,7 +244,7 @@ static void test_unreliable_packing_interleaved_clients_and_stop()
 
     rocketnet_server_stop( server );
 
-    check( object->pending_connection == -1 && object->in_place == 0 );
+    check( rn_message_open_count( object ) == 0 && object->connections[slots[0]].open.in_place == 0 );
 
     for ( int c = 0; c < 2; ++c )
     {
@@ -763,9 +763,9 @@ REGISTER_UNIT_TEST( test_server_reused_slot_inherits_nothing_from_a_timeout );
 
 // A client message object over a link that is not a client transport (the
 // unit suites' in-memory links, the functional channel harness): the link
-// leaves end_reason NULL (sdk/rocketnet_message_object.h:80), and the
+// leaves end_reason NULL (sdk/rocketnet_message_object.h), and the
 // terminal check in rn_message_object_update
-// (sdk/rocketnet_message_server.cpp:518) calls end_reason only when it is
+// (sdk/rocketnet_message_server.cpp) calls end_reason only when it is
 // set, so a link whose transport ends reads NONE and nothing reads the
 // transport as a client transport. A link that names an end reason has it
 // recorded, and the reset keeps it.
@@ -922,8 +922,8 @@ static void server_disconnect_now_case( bool all )
 
     rn_message_object_t * object = &rocketnet_server_message_server( server )->object;
     check( rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) != NULL );
-    check( object->in_place != 0 );
-    check( object->pending_connection == (int) index );
+    check( object->connections[index].open.in_place != 0 );
+    check( object->connections[index].open.pending );
 
     const uint64_t drops = rn_server_stats_of( server ).messages_dropped_not_connected;
 
@@ -946,8 +946,8 @@ static void server_disconnect_now_case( bool all )
     server_disconnect_now_check( !rocketnet_server_client_connected( server, other_index ) );
     server_disconnect_now_check( rocketnet_server_disconnect_reason( server, index ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
     server_disconnect_now_check( rocketnet_server_disconnect_reason( server, other_index ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
-    server_disconnect_now_check( object->in_place == 0 );
-    server_disconnect_now_check( object->pending_connection == -1 );
+    server_disconnect_now_check( object->connections[index].open.in_place == 0 );
+    server_disconnect_now_check( rn_message_open_count( object ) == 0 );
 
     const rocketnet_assert_function_t saved_assert = rn_assert_function;
     static int disconnect_now_finish_asserts = 0;

@@ -43,13 +43,39 @@
 
 static void sized_config_quiet_assert( const char *, const char *, const char *, int ) {}
 
-// the defaults, then the published development keys set by hand
+// the test's own protocol id and backend key (never the published development
+// key, which a production library refuses), so the cases run against the
+// development and the production library alike
+static const uint8_t sized_config_packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x53, 0x49, 0x5A, 0x45 };
+
+static void sized_config_test_keys( struct rocketnet_server_config_t * config )
+{
+    config->protocol_id = 0x53495A4544ULL;
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+    {
+        seed[i] = (uint8_t) ( 0x5A ^ i );
+    }
+    uint8_t backend_public_key[32];
+    uint8_t backend_secret_key[64];
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+    memcpy( config->backend_public_key, backend_public_key, 32 );
+    memcpy( config->packet_filter, sized_config_packet_filter, sizeof( config->packet_filter ) );
+}
+
+// the test's own packet filter on a client, matching its servers
+static void sized_config_client_filter( struct rocketnet_client_config_t * config )
+{
+    memcpy( config->packet_filter, sized_config_packet_filter, sizeof( config->packet_filter ) );
+}
+
+// the defaults, then the test's keys
 static void sized_config_dev_server_config( struct rocketnet_server_config_t * config )
 {
     check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
 
-    config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    sized_config_test_keys( config );
 }
 
 static const size_t client_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };
@@ -366,12 +392,13 @@ static void test_sized_config_refuses_unknown_size()
 
 static void test_server_default_config_max_clients_is_1000()
 {
+    const int expected = ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000;     // 1000, or a smaller build maximum (rocketnet.h)
     struct rocketnet_server_transport_config_t unsized, sized;
     rocketnet_server_transport_default_config( &unsized );
     memset( &sized, 0xA5, sizeof( sized ) );
     check( rocketnet_server_transport_default_config_sized( &sized, sizeof( sized ) ) == 1 );
-    check( unsized.max_clients == 1000 );
-    check( sized.max_clients == 1000 );
+    check( unsized.max_clients == expected );
+    check( sized.max_clients == expected );
 }
 
 // The public creates run one validation per side (rn_client_config_valid
@@ -386,6 +413,7 @@ do                                                                              
 {                                                                                                               \
     struct rocketnet_client_config_t c;                                                                         \
     check( rocketnet_client_default_config( &c ) == ROCKETNET_STATUS_OK );                                      \
+    sized_config_client_filter( &c );                                                                           \
     mutation;                                                                                                   \
     enum rocketnet_status_t made_status = ROCKETNET_TEST_STATUS_UNSET;                                               \
     struct rocketnet_client_t * made = rocketnet_client_create( NULL, &c, &made_status );                       \
@@ -431,6 +459,7 @@ static void test_sized_config_create_refuses_before_init()
 
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    sized_config_client_filter( &client_config );
 
     struct rocketnet_server_config_t server_config;
     sized_config_dev_server_config( &server_config );
@@ -577,20 +606,34 @@ static void test_public_config_bytes_zeroed_is_refused()
     check( rocketnet_server_required_memory( &server_config ) == 0 );
 
     // config_bytes exactly the field: nothing else is the caller's, every
-    // other field takes its default
+    // other field takes its default. The default packet filter is the
+    // published test filter: the development library accepts it, a
+    // production library refuses it by name
 
     memset( &client_config, 0, sizeof( client_config ) );
     client_config.config_bytes = sizeof( size_t );
     status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
+#if ROCKETNET_DEV
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
 
     rn_test_client_stop_and_destroy( client );
+#else // #if ROCKETNET_DEV
+    check( client == NULL );
+    check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_client_config_t defaults;
     check( rocketnet_client_default_config( &defaults ) == ROCKETNET_STATUS_OK );
+#if ROCKETNET_DEV
+    check( rocketnet_client_required_memory( &client_config ) > 0 );
     check( rocketnet_client_required_memory( &client_config ) == rocketnet_client_required_memory( &defaults ) );
+#else // #if ROCKETNET_DEV
+    // the default (published) filter sizes nothing in a production library
+    check( rocketnet_client_required_memory( &client_config ) == 0 );
+    check( rocketnet_client_required_memory( &defaults ) == 0 );
+#endif // #if ROCKETNET_DEV
 }
 
 // an older caller, compiled against a struct that ended before num_channels:
@@ -617,8 +660,10 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     check( rocketnet_client_default_config( &client_defaults ) == ROCKETNET_STATUS_OK );
     check( memcmp( client_bytes + sizeof( size_t ), (const uint8_t *) &client_defaults + sizeof( size_t ), client_older - sizeof( size_t ) ) == 0 );
 
-    // past the prefix, a value create would refuse if it read it
+    // the test's packet filter (inside the prefix), then past the prefix, a
+    // value create would refuse if it read it
 
+    sized_config_client_filter( &client_config );
     client_config.num_channels = 0;
     client_config.reliable_message_timeout_ms = -1;
 
@@ -631,6 +676,8 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     check( status == ROCKETNET_STATUS_OK );
 
     rn_test_client_stop_and_destroy( client );
+    sized_config_client_filter( &client_defaults );
+    check( rocketnet_client_required_memory( &client_config ) > 0 );
     check( rocketnet_client_required_memory( &client_config ) == rocketnet_client_required_memory( &client_defaults ) );
 
     // loopback_hub is past the prefix and reads its default, NULL: a loopback
@@ -661,8 +708,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
         check( server_bytes[i] == 0xCD );
     }
 
-    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    sized_config_test_keys( &server_config );
     server_config.max_clients = 4;
     server_config.num_channels = 0;
     server_config.reliable_message_timeout_ms = -1;
@@ -789,7 +835,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
     check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
     check( defaults.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
-    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 == sizeof( defaults ) );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 < ROCKETNET_SERVER_CONFIG_BYTES_6 && ROCKETNET_SERVER_CONFIG_BYTES_6 == sizeof( defaults ) );
 
     struct rocketnet_server_config_t old_caller;
     memset( &old_caller, 0xCD, sizeof( old_caller ) );
@@ -803,8 +849,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
         check( old_bytes[i] == 0xCD );
     }
 
-    old_caller.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( old_caller.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    sized_config_test_keys( &old_caller );
     old_caller.max_clients = 4;
 
     enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
@@ -813,6 +858,9 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
 
     rn_test_server_stop_and_destroy( old_server );
 
+    // the resolved transport config is read through the development
+    // library's resolve entry point, which a production library does not have
+#if ROCKETNET_DEV
     const int values[] = { 1, 9, 64, 1024 };
 
     for ( int i = 0; i < COUNT( values ); i++ )
@@ -842,7 +890,39 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
         check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
         check( transport.handshakes_per_update == budgets[i] );
     }
+#endif // #if ROCKETNET_DEV
 }
+
+// a transport name shorter than the default "auto" is copied whole, its
+// terminator included, so nothing of the default is left behind it, on
+// the client and on the server (the resolve calls are ROCKETNET_DEV only)
+
+#if ROCKETNET_DEV
+static void test_public_config_short_transport_name_is_copied_whole()
+{
+    const char * names[] = { "gso", "xdp", "portable", "auto" };
+
+    for ( int i = 0; i < COUNT( names ); i++ )
+    {
+        struct rocketnet_message_config_t message;
+        uint32_t kbps = 0;
+
+        struct rocketnet_client_config_t client_config;
+        check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+        client_config.transport = names[i];
+        struct rocketnet_client_transport_config_t client_transport;
+        check( rocketnet_client_config_resolve( &client_config, false, &client_transport, &message, &kbps ) );
+        check( strcmp( client_transport.transport, names[i] ) == 0 );
+
+        struct rocketnet_server_config_t server_config;
+        check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+        server_config.transport = names[i];
+        struct rocketnet_server_transport_config_t server_transport;
+        check( rocketnet_server_config_resolve( &server_config, false, &server_transport, &message, &kbps ) );
+        check( strcmp( server_transport.transport, names[i] ) == 0 );
+    }
+}
+#endif // #if ROCKETNET_DEV
 
 static void test_public_config_bytes_newer_larger_ignores_the_tail()
 {
@@ -862,6 +942,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     check( memcmp( (const uint8_t *) &newer_client.config + sizeof( size_t ), (const uint8_t *) &client_defaults + sizeof( size_t ),
                    sizeof( client_defaults ) - sizeof( size_t ) ) == 0 );
 
+    sized_config_client_filter( &newer_client.config );
     enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &newer_client.config, &status );
     check( client != NULL );
@@ -869,6 +950,8 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
 
     rn_test_client_stop_and_destroy( client );
 
+    sized_config_client_filter( &client_defaults );
+    check( rocketnet_client_required_memory( &newer_client.config ) > 0 );
     check( rocketnet_client_required_memory( &newer_client.config ) == rocketnet_client_required_memory( &client_defaults ) );
 
     for ( int i = 0; i < 4; i++ )
@@ -894,8 +977,7 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
         check( newer_server.tail_field[i] == (int) 0xEEEEEEEE );
     }
 
-    newer_server.config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( newer_server.config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    sized_config_test_keys( &newer_server.config );
     newer_server.config.max_clients = 4;
     status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &newer_server.config, &status );
@@ -1089,14 +1171,28 @@ static void test_public_config_default_fills_every_field()
     check( memcmp( &client_a, &client_b, sizeof( client_a ) ) == 0 );
     check( memcmp( &client_a, &client_sized, sizeof( client_a ) ) == 0 );
 
-    // the default, read whole by create: a valid struct
+    // the default, read whole by create: a valid struct. Its packet filter is
+    // the published test filter, which a production library refuses by name
 
     enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_a, &status );
+#if ROCKETNET_DEV
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
 
     rn_test_client_stop_and_destroy( client );
+#else // #if ROCKETNET_DEV
+    check( client == NULL );
+    check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+
+    sized_config_client_filter( &client_a );
+    status = ROCKETNET_TEST_STATUS_UNSET;
+    client = rocketnet_client_create( NULL, &client_a, &status );
+    check( client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+
+    rn_test_client_stop_and_destroy( client );
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_config_t server_a, server_b, server_sized, dev_a, dev_sized;
     memset( &server_a, 0xAB, sizeof( server_a ) );
@@ -1143,6 +1239,9 @@ REGISTER_UNIT_TEST( test_sized_config_server_create_checks_the_config );
 REGISTER_UNIT_TEST( test_public_config_bytes_zeroed_is_refused );
 REGISTER_UNIT_TEST( test_public_config_bytes_older_smaller_reads_the_prefix );
 REGISTER_UNIT_TEST( test_public_config_bytes_newer_larger_ignores_the_tail );
+#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_public_config_short_transport_name_is_copied_whole );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_config_bytes_inside_a_field_is_refused );
 REGISTER_UNIT_TEST( test_public_light_config_honours_caller_size );
 REGISTER_UNIT_TEST( test_public_server_disconnect_allowance_revision_and_copy );

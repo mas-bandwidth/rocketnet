@@ -15,13 +15,16 @@
 # with the nightly's compile and link lines plus -DNDEBUG and fuzzes it.
 #
 # Usage: tools/fuzz_ndebug.sh [--seconds N] [--target NAME] [--jobs N]
-#                             [--out DIR] [--build-jobs N]
+#                             [--out DIR] [--build-jobs N] [--phase P]
 #   --seconds N     seconds to fuzz each target (default 60)
-#   --target NAME   run one target (repeatable); default all fourteen
+#   --target NAME   run one target (repeatable); default all sixteen
 #   --jobs N        targets fuzzed at once (default 1)
 #   --out DIR       reproducers, logs and scratch corpora (default
 #                   build-fuzz-ndebug/out, which .gitignore covers)
 #   --build-jobs N  build parallelism (default 4)
+#   --phase P       all (default), build (configure, build and check the
+#                   library and the harnesses, then stop) or fuzz (fuzz
+#                   what a build phase left in the build directory)
 #
 # Environment: CC / CXX (default clang / clang++, which must carry the
 # libFuzzer runtime); ASAN_OPTIONS / UBSAN_OPTIONS (default as the nightly's
@@ -30,10 +33,16 @@
 # <out>/crashes/<target>/ and the script exits 1 naming it.
 #
 # Linux (the nightly's link set: bpf, xdp, io_uring) or macOS (CoreFoundation
-# and SystemConfiguration); rocketnet_fuzz_differential checks out the pinned
-# netcode reference into the build directory, as the nightly does.
+# and SystemConfiguration). Bash 4 or later (associative arrays, wait -n): on
+# macOS, whose /bin/bash is 3.2, run it with a newer bash first on PATH
+# (Homebrew's).
 
 set -euo pipefail
+
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+    echo "fuzz_ndebug.sh: needs bash 4 or later (associative arrays, wait -n); this is bash $BASH_VERSION" >&2
+    exit 2
+fi
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
@@ -49,19 +58,17 @@ ALL_TARGETS=(
     rocketnet_fuzz_server_transport
     rocketnet_fuzz_client_transport
     rocketnet_fuzz_session
+    rocketnet_fuzz_session_raw
     rocketnet_fuzz_xdp_frame
     rocketnet_fuzz_uring_recvmsg
     rocketnet_fuzz_gateway_netlink
-    rocketnet_fuzz_differential
+    rocketnet_fuzz_endpoint
+    rocketnet_fuzz_xdp_filter
 )
-
-# the pinned netcode reference the nightly's differential leg builds against
-NETCODE_REPO=https://github.com/mas-bandwidth/netcode.git
-NETCODE_SHA=1dd10f892f4742498a99a0bb5d9b1f8f6e94f26b
-
 SECONDS_PER_TARGET=60
 JOBS=1
 BUILD_JOBS=4
+PHASE=all
 OUT="$ROOT/build-fuzz-ndebug/out"
 TARGETS=()
 
@@ -76,10 +83,16 @@ while [ $# -gt 0 ]; do
         --jobs) JOBS="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --build-jobs) BUILD_JOBS="$2"; shift 2 ;;
+        --phase) PHASE="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "fuzz_ndebug: unknown argument '$1'" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+case "$PHASE" in
+    all|build|fuzz) ;;
+    *) echo "fuzz_ndebug: --phase '$PHASE' is not all, build or fuzz" >&2; exit 2 ;;
+esac
 
 for n in "$SECONDS_PER_TARGET" "$JOBS" "$BUILD_JOBS"; do
     if ! [[ "$n" =~ ^[1-9][0-9]*$ ]]; then
@@ -110,6 +123,7 @@ export UBSAN_OPTIONS=${UBSAN_OPTIONS:-halt_on_error=1:print_stacktrace=1}
 BUILD="$ROOT/build-fuzz-ndebug"
 BIN="$BUILD/bin"
 SAN_LIB="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -U_FORTIFY_SOURCE"
+read -r -a SAN_LIB_ARGS <<< "$SAN_LIB"
 SAN_BIN=("-fsanitize=fuzzer,address,undefined" -fno-sanitize-recover=all -fno-omit-frame-pointer)
 
 if [ "$(uname -s)" = "Darwin" ]; then
@@ -121,6 +135,7 @@ fi
 mkdir -p "$OUT/logs" "$OUT/corpus" "$OUT/crashes" "$BIN"
 OUT=$(cd "$OUT" && pwd)
 
+build_all() {
 # 1. the library: Release (NDEBUG) with the nightly's instrumentation
 echo "== configure $BUILD (Release, NDEBUG, fuzzer-no-link + asan + ubsan)"
 cmake -S "$ROOT" -B "$BUILD" \
@@ -139,8 +154,8 @@ LIB="$BUILD/librocketnet_dev.a"
 # (awk reads the whole file: an early-exit grep -m1 would SIGPIPE the
 # pipeline under pipefail)
 lib_commands=$(awk '/"command"/ && /rocketnet_dev\.dir\// && /\/sdk\//' "$BUILD/compile_commands.json")
-sdk_lines=$(printf '%s\n' "$lib_commands" | grep -c . || true)
-sdk_ndebug=$(printf '%s\n' "$lib_commands" | grep -c -- ' -DNDEBUG ' || true)
+sdk_lines=$(printf '%s\n' "$lib_commands" | grep -c . || [ $? -eq 1 ])
+sdk_ndebug=$(printf '%s\n' "$lib_commands" | grep -c -- ' -DNDEBUG ' || [ $? -eq 1 ])
 if [ "$sdk_lines" -eq 0 ] || [ "$sdk_lines" -ne "$sdk_ndebug" ]; then
     echo "NDEBUG-LIBRARY FAIL: $sdk_ndebug of $sdk_lines rocketnet_dev sdk/ compile lines carry -DNDEBUG" >&2
     exit 1
@@ -148,7 +163,10 @@ fi
 echo "NDEBUG-LIBRARY compile: $sdk_ndebug of $sdk_lines rocketnet_dev sdk/ compile lines carry -DNDEBUG"
 printf '%s\n' "$lib_commands" | awk '!shown && /\/sdk\/rocketnet\.cpp"/ { sub(/^ *"command": */, ""); print; shown = 1 }' \
     | tee "$OUT/logs/ndebug-compile-line.txt"
-referencing=$(nm -A "$LIB" 2>/dev/null | grep -E ' U .*rn_assert_function' || true)
+# nm on its own line: an unreadable library stops here instead of reading as
+# "no reference"; grep exits 1 when nothing references the callback
+symbols=$(nm -A "$LIB")
+referencing=$(printf '%s\n' "$symbols" | grep -E ' U .*rn_assert_function') || [ $? -eq 1 ]
 if [ -n "$referencing" ]; then
     echo "NDEBUG-LIBRARY FAIL: library objects still reference rn_assert_function:" >&2
     echo "$referencing" >&2
@@ -159,21 +177,23 @@ echo "NDEBUG-LIBRARY nm: no object in $(basename "$LIB") references rn_assert_fu
 # 3. the harnesses: the nightly's compile and link line plus -DNDEBUG
 build_target() {
     local t="$1"
+    # bash 3.2 under set -u calls an empty "${extra[@]}" unbound, hence the
+    # ${extra[@]+...} form below
     local extra=()
-    if [ "$t" = rocketnet_fuzz_differential ]; then
-        local ref="$BUILD/netcode-ref"
-        if [ ! -d "$ref/.git" ]; then
-            git clone --quiet "$NETCODE_REPO" "$ref"
-        fi
-        git -C "$ref" checkout --quiet "$NETCODE_SHA"
-        "$CC" -O2 -DNDEBUG -ffp-contract=off -c "$ref/netcode.c" -o "$BUILD/netcode_ref.o" -I "$ref" -I sodium
-        extra=(-Itools/differential "-I$ref" -DROCKETNET_DIFFERENTIAL_NETCODE_DIR "$BUILD/netcode_ref.o")
+    # the XDP filter as host C (tests/xdp_host/), instrumented like the
+    # library; Linux only, elsewhere the target compiles to a no-op
+    if [ "$t" = rocketnet_fuzz_xdp_filter ] && [ "$(uname -s)" = Linux ]; then
+        "$CC" -g -O1 -std=gnu11 -ffreestanding -ffp-contract=off -D__linux__ -D__BPF__ -DNDEBUG \
+            "${SAN_LIB_ARGS[@]}" \
+            -Itests/xdp_host -Isdk "-DROCKETNET_XDP_FILTER_SOURCE=\"$ROOT/sdk/xdp/server_xdp.c\"" \
+            -c tests/xdp_host/server_xdp_host.c -o "$BUILD/xdp_host_fuzz.o"
+        extra=(-DROCKETNET_FUZZ_XDP_FILTER_HOST=1 "$BUILD/xdp_host_fuzz.o")
     fi
     "$CXX" -g -O1 -std=c++17 \
         -ffp-contract=off \
         -DROCKETNET_DEV=1 -DNDEBUG \
         "${SAN_BIN[@]}" \
-        -Isodium -Isdk "${extra[@]}" "tests/fuzz/$t.cpp" "$LIB" \
+        -Isodium -Isdk -Itests ${extra[@]+"${extra[@]}"} "tests/fuzz/$t.cpp" "$LIB" \
         "${LINK[@]}" \
         -o "$BIN/$t"
 }
@@ -184,6 +204,23 @@ for t in "${TARGETS[@]}"; do
         cat "$OUT/logs/build-$t.log" >&2
         echo "BUILD FAIL $t" >&2
         exit 1
+    fi
+done
+}
+
+# --phase build stops here and --phase fuzz starts here, so a caller can put
+# a deadline on the build alone (the fuzz campaign is never cut short)
+if [ "$PHASE" != fuzz ]; then
+    build_all
+fi
+if [ "$PHASE" = build ]; then
+    echo "== built ${#TARGETS[@]} target(s) in $BIN"
+    exit 0
+fi
+for t in "${TARGETS[@]}"; do
+    if [ ! -x "$BIN/$t" ]; then
+        echo "fuzz_ndebug: $BIN/$t is not built (run --phase build first)" >&2
+        exit 2
     fi
 done
 
@@ -207,36 +244,49 @@ fuzz_target() {
 }
 
 echo "== fuzz ${#TARGETS[@]} target(s), ${SECONDS_PER_TARGET}s each, $JOBS at a time; output $OUT"
-declare -A PID_TARGET=()
-running=0
+# bash 3.2 (macOS's /bin/bash) has neither associative arrays nor wait -n:
+# the pool is a queue of pids, and a full pool waits for its oldest job
+pids=()
 for t in "${TARGETS[@]}"; do
-    if [ "$running" -ge "$JOBS" ]; then
-        wait -n || true
-        running=$((running - 1))
+    if [ "${#pids[@]}" -ge "$JOBS" ]; then
+        wait "${pids[0]}" 2>/dev/null || true
+        pids=("${pids[@]:1}")
     fi
     fuzz_target "$t" &
-    PID_TARGET[$!]="$t"
-    running=$((running + 1))
+    pids+=("$!")
 done
 
 failed=0
-for pid in "${!PID_TARGET[@]}"; do
-    wait "$pid" 2>/dev/null || true
-done
+if [ "${#pids[@]}" -gt 0 ]; then
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+fi
 
 # the exit status of a reaped background job is gone, so a target's result
 # is read from its log: libFuzzer prints "Done N runs" only on a clean finish
 for t in "${TARGETS[@]}"; do
     log="$OUT/logs/fuzz-$t.log"
-    done_line=$(grep -E '^Done [0-9]+ runs' "$log" | tail -n 1 || true)
-    execs=$(grep -E '^stat::number_of_executed_units' "$log" | tail -n 1 | awk '{print $2}' || true)
+    if [ ! -f "$log" ]; then
+        failed=1
+        echo "FAIL $t: no log $log"
+        continue
+    fi
+    done_line=$(grep -E '^Done [0-9]+ runs' "$log" | tail -n 1 || [ $? -eq 1 ])
+    execs=$(grep -E '^stat::number_of_executed_units' "$log" | tail -n 1 | awk '{print $2}' || [ $? -eq 1 ])
     reproducers=$(find "$OUT/crashes/$t" -type f 2>/dev/null | sort)
     if [ -n "$done_line" ] && [ -z "$reproducers" ]; then
         echo "PASS $t: $done_line (executed units ${execs:-?})"
+        # a clean finish is not enough: the run must reach its target's floor
+        # of coverage and executed units (tools/fuzz_floors.tsv)
+        if ! python3 "$ROOT/tools/check_fuzz_stats.py" --target "$t" --seconds "$SECONDS_PER_TARGET" "$log"; then
+            failed=1
+            echo "FAIL $t: under its floor; log $log"
+        fi
     else
         failed=1
         echo "FAIL $t: no clean finish; log $log"
-        grep -E 'ERROR: (AddressSanitizer|LeakSanitizer|libFuzzer)|runtime error:|SUMMARY:' "$log" | head -n 5 || true
+        grep -m 5 -E 'ERROR: (AddressSanitizer|LeakSanitizer|libFuzzer)|runtime error:|SUMMARY:' "$log" || [ $? -eq 1 ]
         if [ -n "$reproducers" ]; then
             while IFS= read -r r; do echo "  REPRODUCER $t $r"; done <<<"$reproducers"
         fi

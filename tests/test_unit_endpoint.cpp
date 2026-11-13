@@ -1788,6 +1788,20 @@ static int ep_reuse_write( rn_endpoint_t * endpoint, double now, uint64_t first_
     return count;
 }
 
+// The receipt sends of ep_reuse_sends after the reset, three updates of
+// four sends from serial 1: the reliable receipt send is serial 1 + 4u and
+// the unreliable one 3 + 4u, so receipt send k is serial 2k + 1. Each is
+// counted once, and only as ACKED.
+
+#define EP_REUSE_RECEIPT_SENDS 6
+
+static void ep_reuse_receipt_seen( int * seen, const rocketnet_message_receipt_t & receipt )
+{
+    check( receipt.status == ROCKETNET_RECEIPT_STATUS_ACKED );
+    check( receipt.serial % 2 == 1 && receipt.serial <= 2 * EP_REUSE_RECEIPT_SENDS - 1 );
+    seen[receipt.serial / 2]++;
+}
+
 static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
 {
     rocketnet_message_config_t config;
@@ -1849,6 +1863,7 @@ static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
 
     // the same sends after it: the same packets and the same receipts
 
+    int seen[EP_REUSE_RECEIPT_SENDS] = {};
     for ( int update = 0; update < 3; update++ )
     {
         const double now = 2000.0 + 0.1 * update;
@@ -1868,8 +1883,56 @@ static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
             check( busy_hashes[p] == fresh_hashes[p] );
         }
 
-        rn_endpoint_on_acked( &busy, 100 + 10 * (uint64_t) update, now + 0.05 );
-        rn_endpoint_on_acked( &fresh, 100 + 10 * (uint64_t) update, now + 0.05 );
+        // every packet of the update acked, then the update's end publishes
+        // its receipts (rn_endpoint_tick): both receipt sends of each update
+        // come back, so the comparison below compares something
+
+        for ( int p = 0; p < busy_count; p++ )
+        {
+            rn_endpoint_on_acked( &busy, 100 + 10 * (uint64_t) update + (uint64_t) p, now + 0.05 );
+            rn_endpoint_on_acked( &fresh, 100 + 10 * (uint64_t) update + (uint64_t) p, now + 0.05 );
+        }
+        rn_endpoint_tick( &busy, now + 0.05 );
+        rn_endpoint_tick( &fresh, now + 0.05 );
+        rocketnet_message_receipt_t busy_receipts[16];
+        rocketnet_message_receipt_t fresh_receipts[16];
+        const int busy_taken = rn_endpoint_take_receipts( &busy, busy_receipts, 16 );
+        const int fresh_taken = rn_endpoint_take_receipts( &fresh, fresh_receipts, 16 );
+        check( busy_taken > 0 );
+        check( busy_taken == fresh_taken );
+        for ( int r = 0; r < busy_taken && r < fresh_taken; r++ )
+        {
+            check( busy_receipts[r].serial == fresh_receipts[r].serial && busy_receipts[r].status == fresh_receipts[r].status );
+            ep_reuse_receipt_seen( seen, busy_receipts[r] );
+        }
+    }
+
+    // drain: updates with no new sends write what the reliable load kept
+    // queued (each update's unreliable sends wait for an update with room),
+    // until both endpoints have written everything. Every receipt send of
+    // the three updates then has its one receipt, ACKED: the reliable ones
+    // through their messages, the unreliable ones through the packets that
+    // carried them (rn_endpoint_packet_sent's receipt commit)
+
+    for ( int drain = 0; drain < 8; drain++ )
+    {
+        const double now = 2000.5 + 0.1 * drain;
+        int busy_lengths[8];
+        int fresh_lengths[8];
+        uint64_t busy_hashes[8];
+        uint64_t fresh_hashes[8];
+        const uint64_t first_id = 200 + 10 * (uint64_t) drain;
+        const int busy_count = ep_reuse_write( &busy, now, first_id, busy_lengths, busy_hashes, 8 );
+        const int fresh_count = ep_reuse_write( &fresh, now, first_id, fresh_lengths, fresh_hashes, 8 );
+        check( busy_count == fresh_count );
+        for ( int p = 0; p < busy_count; p++ )
+        {
+            check( busy_lengths[p] == fresh_lengths[p] && busy_hashes[p] == fresh_hashes[p] );
+            rn_endpoint_on_acked( &busy, first_id + (uint64_t) p, now + 0.05 );
+            rn_endpoint_on_acked( &fresh, first_id + (uint64_t) p, now + 0.05 );
+        }
+        rn_endpoint_tick( &busy, now + 0.05 );
+        rn_endpoint_tick( &fresh, now + 0.05 );
         rocketnet_message_receipt_t busy_receipts[16];
         rocketnet_message_receipt_t fresh_receipts[16];
         const int busy_taken = rn_endpoint_take_receipts( &busy, busy_receipts, 16 );
@@ -1878,7 +1941,18 @@ static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
         for ( int r = 0; r < busy_taken && r < fresh_taken; r++ )
         {
             check( busy_receipts[r].serial == fresh_receipts[r].serial && busy_receipts[r].status == fresh_receipts[r].status );
+            ep_reuse_receipt_seen( seen, busy_receipts[r] );
         }
+        if ( busy_count == 0 && busy_taken == 0 )
+        {
+            break;
+        }
+    }
+
+    check( busy.unreliable_count == 0 && fresh.unreliable_count == 0 );
+    for ( int i = 0; i < EP_REUSE_RECEIPT_SENDS; i++ )
+    {
+        check( seen[i] == 1 );
     }
 
     rn_arena_destroy( arena_busy );
@@ -1961,6 +2035,49 @@ static void test_endpoint_start_refusals_count_their_own_counter()
     endpoint.ordered.channels.enabled_types = enabled;
 
     rocketnet_quiet( 0 );
+    rn_arena_destroy( arena );
+}
+
+// A whole-frame in-place send the bucket can no longer pay at its finish
+// (proofs/tla/RNOutgoingBuild.tla Seal, the drop branch) took a transport
+// frame at its start: the drop is counted OVER_BUDGET and, as a packed
+// build's drop and a failed send do, uses up one of the update's packets.
+static void test_endpoint_in_place_over_budget_finish_is_a_written_packet()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.send_kbps = 64;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+    check( endpoint.send_budget_enabled );
+
+    const int header = rn_endpoint_in_place_header( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 1000.0 );
+    check( header >= 0 );
+    check( rn_endpoint_in_place_affordable( &endpoint, header + 100 + 1, 1000.0 ) );
+    rn_endpoint_in_place_begin( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100, header );
+
+    // the bucket empties between the start and the finish; time does not move
+
+    endpoint.budget.tokens = 0.0;
+    const int written_before = endpoint.written;
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES] = {};
+    int payload_bytes = -1;
+    check( rn_endpoint_in_place_finish( &endpoint, frame, 100, 1000.0, &payload_bytes ) != 0 );
+    check( payload_bytes == 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 1 );
+    check( endpoint.written == written_before + 1 );
+
     rn_arena_destroy( arena );
 }
 
@@ -2161,8 +2278,10 @@ static void test_endpoint_opted_in_timeout_ends_the_stall_and_the_config_wait()
 REGISTER_UNIT_TEST( test_endpoint_default_never_times_out_a_heard_stream );
 REGISTER_UNIT_TEST( test_endpoint_opted_in_timeout_ends_the_stall_and_the_config_wait );
 REGISTER_UNIT_TEST( test_endpoint_back_to_back_over_lossy_array );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_back_to_back_over_lossy_array, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_never_allocates_or_reads_a_clock, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
 REGISTER_UNIT_TEST( test_endpoint_dropped_large_sequenced_is_not_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );
@@ -2171,11 +2290,15 @@ REGISTER_UNIT_TEST( test_endpoint_partial_ack_stall_requests_no_frame );
 REGISTER_UNIT_TEST( test_endpoint_probe_hold_requests_frame_only_for_u );
 REGISTER_UNIT_TEST( test_endpoint_ended_pass_stays_ended_until_the_next_flush );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_keeps_queue_order );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_unreliable_renumber_at_ticket_wrap_keeps_queue_order, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_endpoint_unreliable_ring_full_push_keeps_every_live_message );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring );
 REGISTER_UNIT_TEST( test_endpoint_reused_slot_writes_what_a_fresh_slot_writes );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_reused_slot_writes_what_a_fresh_slot_writes, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_endpoint_start_refusals_count_their_own_counter );
+REGISTER_UNIT_TEST( test_endpoint_in_place_over_budget_finish_is_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_write_refuses_a_frame_smaller_than_planned );
 
 // The cases above that take ep_config's timeout, rerun opted in at 600000
@@ -2206,3 +2329,4 @@ static void test_endpoint_cases_opted_in()
 }
 
 REGISTER_UNIT_TEST( test_endpoint_cases_opted_in );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_cases_opted_in, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2

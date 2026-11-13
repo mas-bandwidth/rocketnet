@@ -4,8 +4,9 @@
 */
 
 // A client start_packet can refuse after spending its sequence: it takes
-// the sequence at sdk/rocketnet_client_transport.cpp:3729 and refuses after
-// at :3745 (payload ring full) and :3767 (lease table full). The
+// the sequence in sdk/rocketnet_client_transport.cpp
+// (rocketnet_client_transport_start_packet) and refuses after it
+// when the payload ring is full or the lease table is full. The
 // server assigns a sequence only when finish accepts the payload and reserves
 // every wire frame, so a server lease or ring refusal, an abort, or a
 // refused finish leaves no sequence gap.
@@ -23,7 +24,7 @@
 // none refused), and on the message layer the reliable channel's resends and
 // the resend delay estimate. The lease table is not driven here: on the loopback transport
 // a fill phase holds at most the payload ring's 256 frames, below its
-// refusal point (half its capacity, sdk/rocketnet_packet_lease.h:37). The server assigns the sequence
+// refusal point (half its capacity, sdk/rocketnet_packet_lease.h (rocketnet_packet_leases_t)). The server assigns the sequence
 // after lease insertion, so that refusal also leaves no gap.
 
 #include "unit_shutdown.h"
@@ -370,7 +371,7 @@ static bool sequence_burn_send_one( struct sequence_burn_pair_t * pair, int side
     {
         return false;
     }
-    uint8_t * payload = frame + context.payload_index;
+    uint8_t * payload = frame;
     memset( payload, (uint8_t) ( 0xB0 + round ), BURN_SMALL_BYTES );
     payload[0] = (uint8_t) index;
 
@@ -653,7 +654,7 @@ static void test_sequence_burn_server_finish_populates_sequence()
         rocketnet_unit_check( frame != NULL );
         rocketnet_unit_check( context.sequence == 0 );
 
-        memset( frame + context.payload_index, 0xB0, (size_t) sizes[i] );
+        memset( frame, 0xB0, (size_t) sizes[i] );
         rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, sizes[i] ) > 0 );
         rocketnet_unit_check( context.sequence > previous_sequence );
 
@@ -705,7 +706,7 @@ static float sequence_burn_server_uncommitted_loss( int kind )
             }
             else
             {
-                memset( frame + context.payload_index, 0xB0, BURN_SMALL_BYTES );
+                memset( frame, 0xB0, BURN_SMALL_BYTES );
                 rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, 0 ) == 0 );
             }
         }
@@ -758,12 +759,12 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_refused_finish_does_not_count_as_l
 // in each of those fourth rounds the first start_packet the message layer
 // makes finds the transport's payload ring full: the test's seam (the
 // object's link.start_packet, the one transport call the layer starts frames
-// through, sdk/rocketnet_message_object.h:65) first claims every free ring
+// through, sdk/rocketnet_message_object.h) first claims every free ring
 // slot with a start it aborts, then makes the layer's own call, which the
 // transport refuses for real (SEND_RING_FULL). Client starts spend their
 // sequence before this refusal; server starts spend none until finish.
 // The layer's write pass then treats the frame as not started
-// (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1206) and writes the
+// (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp) and writes the
 // rest next update. The control run is the same traffic with no seam. Measured
 // on the burning side: reliable records resent on the resend delay (MESSAGE_RESENT),
 // the ordered window's srtt, rttvar and resend_delay; on the receiving side: every reliable
@@ -1462,3 +1463,220 @@ REGISTER_UNIT_TEST( test_client_refused_start_ring_full_after_reliable_keeps_unr
 static void test_client_refused_start_no_frame_unreliable_only_keeps_unreliable() { refused_start_keeps_unreliable( BURN_SIDE_CLIENT, REFUSED_START_NO_FRAME, false ); }
 REGISTER_UNIT_TEST( test_client_refused_start_no_frame_unreliable_only_keeps_unreliable );
 #endif // #if ROCKETNET_DEV
+
+// ---- a packed build the seal's re-check drops ----------------------------------------
+//
+// standard/MESSAGES.md m9.4: a packed unreliable build already open when
+// reliable work becomes due is aborted at the seal's re-check and counted
+// MESSAGE_UNRELIABLE_OVER_BUDGET. Its frame was started first, so on a server
+// it spends no sequence (the server numbers a packet at finish) and on a
+// client it burns exactly one (the client numbers it at start, m1.8), which
+// is never sent and never named by an ack (proofs/tla/SessionAcks.tla BurnOne,
+// BurnedNeverNamed). The sending side is capped at 16 kbps, its bucket one
+// maximum packet: one small unreliable message opens the build, then a
+// reliable message makes ordered work due, and the seal then needs the
+// build's bytes plus one maximum packet. Seams on the side's link record
+// every frame aborted and every frame finished, by its sequence.
+
+static int packed_drop_aborted;
+static uint64_t packed_drop_aborted_sequence;
+static uint64_t packed_drop_finished[4096];
+static int packed_drop_num_finished;
+static void ( *packed_drop_abort_next )( void * transport, struct rocketnet_packet_context_t * context );
+static int ( *packed_drop_finish_next )( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+
+static void packed_drop_abort( void * transport, struct rocketnet_packet_context_t * context )
+{
+    if ( context->frame )
+    {
+        packed_drop_aborted++;
+        packed_drop_aborted_sequence = context->sequence;
+    }
+    packed_drop_abort_next( transport, context );
+}
+
+static int packed_drop_finish( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+{
+    const int wire = packed_drop_finish_next( transport, context, payload_bytes );
+    if ( wire > 0 && packed_drop_num_finished < 4096 )
+    {
+        packed_drop_finished[packed_drop_num_finished++] = context->sequence;
+    }
+    return wire;
+}
+
+// takes every message either end delivered, so the next update may run
+static void packed_drop_drain( struct sequence_burn_message_pair_t * pair )
+{
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    while ( rocketnet_message_client_receive( pair->client, NULL, &data, &bytes ) )
+    {
+        rocketnet_message_client_release( pair->client, data );
+    }
+    while ( rocketnet_message_server_receive( pair->server, NULL, NULL, &data, &bytes ) )
+    {
+        rocketnet_message_server_release( pair->server, data );
+    }
+}
+
+static void packed_build_dropped_at_seal( int side )
+{
+    struct sequence_burn_message_pair_t pair;
+    rocketnet_unit_check( sequence_burn_message_pair_setup( &pair ) );
+    struct sequence_burn_message_measures_t m;
+    memset( &m, 0, sizeof( m ) );
+
+    for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
+    {
+        sequence_burn_message_step( &pair, side, -1, false, &m );
+    }
+    rocketnet_unit_check( rocketnet_message_server_client_connected( pair.server, 0 ) );
+
+    struct rn_message_object_t * object = side == BURN_SIDE_SERVER ? &pair.server->object : &pair.client->object;
+    const struct rocketnet_counters_t * counters = side == BURN_SIDE_SERVER ? rocketnet_message_server_counters( pair.server )
+                                                                            : rocketnet_message_client_counters( pair.client );
+    const struct rocketnet_counters_t * transport_counters =
+        side == BURN_SIDE_SERVER ? rocketnet_server_transport_counters( rocketnet_message_server_transport( pair.server ) )
+                                 : rocketnet_client_transport_counters( rocketnet_message_client_transport( pair.client ) );
+    const int unknown_counter = side == BURN_SIDE_SERVER ? ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE : ROCKETNET_COUNTER_CLIENT_ACK_UNKNOWN_SEQUENCE;
+
+    const uint8_t unreliable[8] = { 0xE3, 1, 2, 3, 4, 5, 6, 7 };
+    static uint8_t reliable[1000];
+    memset( reliable, 0xE4, sizeof( reliable ) );
+
+    packed_drop_aborted = 0;
+    packed_drop_aborted_sequence = 0;
+    packed_drop_num_finished = 0;
+    packed_drop_abort_next = object->link.abort_packet;
+    packed_drop_finish_next = object->link.finish_packet;
+    object->link.abort_packet = packed_drop_abort;
+    object->link.finish_packet = packed_drop_finish;
+
+    // one uncapped packet: the last sequence before the drop
+
+    if ( side == BURN_SIDE_SERVER )
+    {
+        rocketnet_unit_check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, unreliable, (int) sizeof( unreliable ) ) != 0 );
+    }
+    else
+    {
+        rocketnet_unit_check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, unreliable, (int) sizeof( unreliable ) ) != 0 );
+    }
+    sequence_burn_message_step( &pair, side, -1, false, &m );
+    const int num_before = packed_drop_num_finished;
+    rocketnet_unit_check( num_before >= 1 );
+    const uint64_t last_before = packed_drop_finished[num_before - 1];
+
+    // the cap holds the bucket at one maximum packet
+
+    if ( side == BURN_SIDE_SERVER )
+    {
+        rocketnet_unit_check( rocketnet_message_server_set_send_kbps( pair.server, 0, 16 ) );
+    }
+    else
+    {
+        rocketnet_unit_check( rocketnet_message_client_set_send_kbps( pair.client, 16 ) );
+    }
+
+    const uint64_t over_budget = counters->values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET];
+
+    // one update: the unreliable message opens the build, the reliable one
+    // makes ordered work due, send_packets seals
+
+    pair.time += 0.01;
+    sequence_burn_clock = pair.time;
+    rocketnet_unit_check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_unit_check( rocketnet_message_client_update( pair.client, pair.time ) == ROCKETNET_UPDATE_OK );
+    packed_drop_drain( &pair );
+
+    if ( side == BURN_SIDE_SERVER )
+    {
+        rocketnet_unit_check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, unreliable, (int) sizeof( unreliable ) ) != 0 );
+        rocketnet_unit_check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable, (int) sizeof( reliable ) ) != 0 );
+    }
+    else
+    {
+        rocketnet_unit_check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, unreliable, (int) sizeof( unreliable ) ) != 0 );
+        rocketnet_unit_check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable, (int) sizeof( reliable ) ) != 0 );
+    }
+    rocketnet_message_server_send_packets( pair.server );
+    rocketnet_message_client_send_packets( pair.client );
+
+    // the build was dropped at the seal and counted (the reliable packet
+    // the bucket kept its maximum packet for may follow it)
+
+    rocketnet_unit_check( packed_drop_aborted == 1 );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == over_budget + 1 );
+
+    // lift the cap and run on: every later packet is sent and acked
+
+    if ( side == BURN_SIDE_SERVER )
+    {
+        rocketnet_unit_check( rocketnet_message_server_set_send_kbps( pair.server, 0, 0 ) );
+    }
+    else
+    {
+        rocketnet_unit_check( rocketnet_message_client_set_send_kbps( pair.client, 0 ) );
+    }
+    for ( int i = 0; i < 100; i++ )
+    {
+        sequence_burn_message_step( &pair, side, -1, false, &m );
+        if ( side == BURN_SIDE_SERVER )
+        {
+            rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, unreliable, (int) sizeof( unreliable ) );
+        }
+        else
+        {
+            rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, unreliable, (int) sizeof( unreliable ) );
+        }
+    }
+    sequence_burn_message_step( &pair, side, -1, false, &m );
+
+    rocketnet_unit_check( packed_drop_aborted == 1 );
+    rocketnet_unit_check( packed_drop_num_finished > num_before + 10 );
+    for ( int i = 1; i < packed_drop_num_finished; i++ )
+    {
+        rocketnet_unit_check( packed_drop_finished[i] > packed_drop_finished[i - 1] );
+    }
+
+    // no ack named a sequence the sender holds no record of
+    rocketnet_unit_check( transport_counters->values[unknown_counter] == 0 );
+
+    const uint64_t first_after = packed_drop_finished[num_before];
+    // between the last packet before the drop and the first after it the
+    // transport sends one packet of its own at the drop's update, which
+    // takes one sequence on either side (the clock is fixed, so the run is
+    // the same every time). Every other sequence between them is a burn.
+
+    const uint64_t transport_own = 1;
+    if ( side == BURN_SIDE_SERVER )
+    {
+        // the server numbers at finish: the aborted frame holds no
+        // sequence, and none is burned
+        rocketnet_unit_check( packed_drop_aborted_sequence == 0 );
+        rocketnet_unit_check( first_after == last_before + transport_own + 1 );
+    }
+    else
+    {
+        // the client numbered the aborted frame at start: exactly one
+        // sequence burned, never sent, so never named by an ack
+        rocketnet_unit_check( packed_drop_aborted_sequence > last_before && packed_drop_aborted_sequence < first_after );
+        rocketnet_unit_check( first_after == last_before + transport_own + 2 );
+        for ( int i = 0; i < packed_drop_num_finished; i++ )
+        {
+            rocketnet_unit_check( packed_drop_finished[i] != packed_drop_aborted_sequence );
+        }
+    }
+
+    object->link.abort_packet = packed_drop_abort_next;
+    object->link.finish_packet = packed_drop_finish_next;
+    sequence_burn_message_pair_teardown( &pair );
+}
+
+static void test_server_packed_build_dropped_at_seal_spends_no_sequence() { packed_build_dropped_at_seal( BURN_SIDE_SERVER ); }
+REGISTER_UNIT_TEST( test_server_packed_build_dropped_at_seal_spends_no_sequence );
+static void test_client_packed_build_dropped_at_seal_burns_one_sequence() { packed_build_dropped_at_seal( BURN_SIDE_CLIENT ); }
+REGISTER_UNIT_TEST( test_client_packed_build_dropped_at_seal_burns_one_sequence );

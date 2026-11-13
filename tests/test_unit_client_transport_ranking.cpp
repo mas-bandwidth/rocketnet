@@ -370,7 +370,7 @@ static void test_client_ranking_falls_back_to_portable()
         check( ranking_log_count( refused ) == 1 );
 
         char granted[96];
-        snprintf( granted, sizeof( granted ), "client transport ladder granted portable after refusals: %s", native );
+        snprintf( granted, sizeof( granted ), "client transport portable granted after refusals: %s", native );
         check( ranking_log_count( granted ) == 1 );
         check( ranking_log_count( "refused" ) == 1 );
     }
@@ -379,7 +379,7 @@ static void test_client_ranking_falls_back_to_portable()
     {
         const ranking_result_t result = ranking_create_client( "auto", native, "portable" );
         check( !result.created );
-        check( result.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        check( result.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         check( ranking_record.num_creates == ( native ? 2 : 1 ) );
         check( strcmp( ranking_record.creates[ranking_record.num_creates - 1], "portable" ) == 0 );
         for ( int i = 0; i < ranking_record.num_creates; i++ )
@@ -417,7 +417,7 @@ static void test_client_ranking_pin_is_honoured()
 
         const ranking_result_t refused = ranking_create_client( name, name, NULL );
         check( !refused.created );
-        check( refused.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        check( refused.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         check( ranking_record.num_creates == 1 );
         check( strcmp( ranking_record.creates[0], name ) == 0 );
     }
@@ -458,19 +458,23 @@ static void test_client_ranking_pin_is_honoured()
     ranking_env_put_back( &env );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// Linux only, and registered only there: elsewhere the body would be empty and
+// the case would pass having checked nothing
+
 static void test_client_ladder_parse_iocp_on_linux_takes_auto()
 {
     ranking_env_t env;
     ranking_env_set_aside( &env );
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // "iocp" is a known Windows client: on a Linux client it is skipped, the
     // list names no candidate, and the endpoint falls back to auto (gso,portable)
     {
         int num_available = 0;
         const int * available = rocketnet_client_transport_io_availability( &num_available );
-        struct rocketnet_transport_ladder_t ladder;
-        check( rocketnet_transport_ladder_parse( "iocp", available, num_available, &ladder, false ) );
+        struct rocketnet_transport_order_t ladder;
+        check( rocketnet_transport_order_parse( "iocp", available, num_available, &ladder, false ) );
         check( ladder.num_skipped == 1 );
         check( ladder.skipped[0] == ROCKETNET_TRANSPORT_IOCP );
         check( ladder.num_candidates == 2 );
@@ -488,13 +492,40 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
         check( ranking_log_count( "names no transport for this endpoint on this platform. using auto" ) == 1 );
         check( result.destroy_calls == 1 );
     }
+
+    ranking_env_put_back( &env );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// an operator memory budget below a pinned client's plan exhausts the ladder
+// before any create: the list's first candidate is judged against the budget
+// like every other
+
+static void test_client_ranking_budget_judges_the_first_candidate()
+{
+    ranking_env_t env;
+    ranking_env_set_aside( &env );
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "1", 1 );
+
+    const ranking_result_t result = ranking_create_client( "portable", NULL, NULL );
+
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
+
+    check( !result.created );
+    check( result.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
+    check( ranking_record.num_creates == 0 );
+    check( ranking_log_count( "client transport portable refused: memory plan" ) == 1 );
+    check( result.destroy_calls == 0 );
 
     ranking_env_put_back( &env );
 }
 
 REGISTER_UNIT_TEST( test_client_ranking_auto_picks_native_client );
+REGISTER_UNIT_TEST( test_client_ranking_budget_judges_the_first_candidate );
 REGISTER_UNIT_TEST( test_client_ranking_falls_back_to_portable );
 REGISTER_UNIT_TEST( test_client_ranking_pin_is_honoured );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 REGISTER_UNIT_TEST( test_client_ladder_parse_iocp_on_linux_takes_auto );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #endif // #if ROCKETNET_DEV

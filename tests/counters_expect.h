@@ -170,6 +170,41 @@ do                                                                              
     ROCKETNET_COUNTERS_CHECK( rocketnet_counters_balanced );                                                      \
 } while(0)
 
+// Whether a transport row counts the same events as a shared row
+// (standard/TRANSPORT.md t18, the aliasing table): the shared row is the
+// transport-blind total, so a walk over every refusal row reads the shared
+// row and leaves these out, or it counts one event twice. IOCP_RECEIVE_DROPPED
+// is not one of them: it also counts full-bank and failed receives, which
+// iocp does not yet feed to a shared row.
+
+inline bool rocketnet_counter_aliases_shared_row( int counter )
+{
+    switch ( counter )
+    {
+        case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE:
+        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE:
+        case ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT:
+        case ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE:
+        case ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_SIZE:
+        case ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT:
+        case ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE:
+        case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_OVERFLOW:
+        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW:
+        case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE:
+        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE:
+        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER:
+        case ROCKETNET_COUNTER_RIO_RECEIVE_FAILED:
+        case ROCKETNET_COUNTER_GSO_SEND_DROPPED:
+        case ROCKETNET_COUNTER_URING_SEND_DROPPED:
+        case ROCKETNET_COUNTER_IOCP_SEND_FAILED:
+        case ROCKETNET_COUNTER_RIO_SEND_FAILED:
+        case ROCKETNET_COUNTER_RIO_SEND_FULL:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // The clean-run rule: every REFUSAL counter reads 0 on a clean path. Returns
 // the number of refusal counters that moved, and writes one line per counter
 // into report (NULL for none). A caller whose run injects a fault lists the
@@ -182,9 +217,34 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
     std::string lines;
     int moved = 0;
 
+    // COOKIE_REPLY_WITHHELD on a clean run: an honest client's cookieless
+    // requests (it sends again at its send rate) can land in one server
+    // update when the receive worker banks them late, and the per-update
+    // limit answers the first and withholds the copy (t12 rule 7). That is
+    // the limit working, so it is explained when a cookie reply did go out:
+    // each withheld request is also counted by its cookie reason, so the
+    // reasons less the withheld count are the requests answered. An update
+    // late by k send intervals banks about k copies of one request, so the
+    // number of copies per answered request has no fixed bound; withheld
+    // with none answered is still a failure. A bitmap that is never cleared
+    // is caught by the handshake budget unit tests (exact WITHHELD values
+    // across updates) and by the connect that then times out.
+
+    const uint64_t withheld = counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD];
+    const uint64_t cookie_reasons = counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] +
+                                    counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY] +
+                                    counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED];
+    const bool withheld_copies_of_answered = withheld > 0 && cookie_reasons > withheld;
+
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
-        if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || counters->values[i] == 0 )
+        if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || counters->values[i] == 0 ||
+             rocketnet_counter_aliases_shared_row( i ) )
+        {
+            continue;
+        }
+
+        if ( i == ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD && withheld_copies_of_answered )
         {
             continue;
         }

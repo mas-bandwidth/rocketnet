@@ -18,16 +18,16 @@ one 1,415-byte message (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`, which fits one
 1,500-byte MTU packet) per 100 ms in each direction at 10 Hz. It does not
 change public defaults; the `default` profile remains the stock acceptance.
 
-## Low-bandwidth population ladder
+## Low-bandwidth population steps
 
-The requested ladder is 10, 100, 250, 500 and 1,000 clients. At each rung,
+The requested steps is 10, 100, 250, 500 and 1,000 clients. At each rung,
 offer one 32-byte application message per client per second in each direction
 with the fixed-rate option below. For the stock 1,000-client acceptance, run
 the `default` profile so the result covers SDK-default sizing. The `light`
 profile is a separate, additional bounded-memory workload; it cannot substitute
 for the default-profile acceptance. The current `bin/load` harness is capped
 at the build's `ROCKETNET_MAX_CLIENTS` (1,000 by default) and records no
-fixed-rate ladder results (below). The
+fixed-rate step results (below). The
 recorded 1,000-client results are the LAN proof cells in
 [`runs/lan-1000-proof.md`](runs/lan-1000-proof.md)
 ([Linux gso and io_uring](runs/lan-1000-proof-linux.md),
@@ -50,7 +50,7 @@ population, profile, transports and receipt. Report the highest population that
 passed all functional and rate criteria, the first population with a functional
 failure, and any higher population blocked by a capacity guard as `UNRUN`.
 A capacity refusal is not a functional failure, and an unrun rung has no pass
-result. Product documentation records no current ladder results.
+result. Product documentation records no current step results.
 
 `bin/load` puts the public server and all clients in one process on loopback.
 Its byte and rate counters measure this colocated logic workload; they do not
@@ -76,7 +76,7 @@ endpoint. The receipt reports `client_public_required_bytes`,
 `total_public_required_bytes = server + clients * client`. A zero required
 size, arithmetic overflow or failed SDK termination returns a FAIL receipt and
 nonzero exit. Required-memory figures bound allocator memory over the
-lifecycle for the largest planned built-in transport in the configured ladder,
+lifecycle for the largest planned built-in transport in the configured transports,
 including create and connect/start allocations. Development builds include the
 link simulator. Operating-system-owned memory, custom-transport allocations
 and configuration or environment overrides changed after planning remain
@@ -191,12 +191,13 @@ require both per-client maxima to stay strictly below 100 kbps; the summary
 reports `client_wire_under_100kbps`. `session_*_wire_bytes_*` covers
 handshake, traffic and drain before teardown, as labeled by
 `wire_session_scope`. These SDK counters do not establish the physical NIC's
-line rate, so a scaling ladder must compare its aggregate measured traffic
+line rate, so a scaling series must compare its aggregate measured traffic
 with the actual host link capacity separately. The fixed-rate workload has
 `timing_baseline=fixed_rate_v1`; compare its frame timings only with runs that
 share rate, population, transport and measurement scope.
 
-The light profile is the SDK's public light-client geometry: eight channels, a
+The light profile is the SDK's public light-client geometry: eight channels (or
+`ROCKETNET_MAX_CHANNELS` in a build of fewer), a
 256-message in-flight reliability window, a 142,400-byte receive buffer, a
 1415-byte (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`) maximum message, a
 141,500-byte send buffer, a 128-message send queue, 256 packets in flight, 4
@@ -207,7 +208,7 @@ of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 120,000 bits/s). The reliable timeout stays at its default, 0 (off). On the Linux x86-64
 Release development build (`ROCKETNET_DEV=1`, io_uring and XDP built) described
 in the tables below, at `max_clients = 1000`
-the server's `rocketnet_server_required_memory` is 3,111,668,715 bytes and the
+the server's `rocketnet_server_required_memory` is 5,610,439,915 bytes and the
 client's `rocketnet_client_required_memory` is 15,186,082 bytes. Both include
 the planned lifecycle allocator peak plus the 1 MiB caller-allocator allowance.
 These v1.1.0 queries include type-9 removal, seeded RTT tracking, resend
@@ -265,7 +266,35 @@ identity. The harness drains the endpoint-wide receive queue and checks:
 - no unexpected disconnect occurs;
 - reliable messages arrive exactly once and ordered streams stay in order;
 - every delivered unreliable message is intact and at most once;
-- receipt and drop counters reconcile with attempted sends;
+- receipt and drop counters reconcile with attempted sends (`counters_agree`).
+  After the drain the harness quiesces one direction at a time and, at each
+  cut, requires packets sent = packets received + every counted drop, with
+  nothing left in flight and the XDP ring empty. The counted drops are the
+  library's `SEND_FAILED`, `XDP_KERNEL_DROPPED_*` and
+  `XDP_RECEIVE_FRAME_DROPPED`, and the kernel's UDP `SndbufErrors` (sender's
+  namespace) and `InErrors` (receiver's namespace) from `/proc/net/snmp`;
+  Linux counts a send its device queue refused in `SndbufErrors` while
+  `sendmsg` reports success. The message check is a bound, not an exact
+  count: client-to-server messages not covered by the library's message drops
+  must be at most (client-to-server packets counted as dropped) x (the most
+  unreliable messages any one client `send_packets` call carried in the run).
+  The harness cannot tell which packets were dropped or what each carried, so
+  the bound assumes every dropped packet carried the most; it catches gross
+  loss only. In a measured run 398 dropped packets allowed 398 lost messages
+  while about 64 were really lost, and a planted loss of every 100th
+  unreliable message (about 318 more) still passed. The packet equations are
+  the exact part. When the clients share the
+  server's namespace the kernel counters are host-wide, so they bound the
+  remainder instead of naming it. Every term prints to stderr on every run.
+  Untested: the server-side send term (`SndbufErrors` in the server's
+  namespace beside the server's `SEND_FAILED`). Every recorded run had zero
+  server-side send drops, so that term has never been nonzero. Exercising it
+  needs a socket server cell whose server-side veth is constrained (a short
+  transmit queue on the server end) so that its sends overflow; that run is
+  owed;
+- in the `drop-one` mode the destroyed client's disconnect burst and the
+  server's later packets to it fall outside both packet equations, so they
+  are printed and not judged;
 - in fixed-rate runs (`fixed_message_rate`), a refused `start_message` or
   `finish_message` is counted and fails the `application_offers_accepted`
   criterion.
@@ -302,8 +331,8 @@ universal preset suitable for every game:
   packets in flight, 256 packets and 1,024 unreliable messages per update,
   a 1,000-kbps client send budget, and a 10,000-kbps server per-client send
   budget. The server budget produces an `18,878,016`-byte (18.00 MiB) message
-  region per connection and a `21,028,276,715`-byte
-  (19.58 GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
+  region per connection and a `23,527,047,915`-byte
+  (21.91 GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
   `max_clients = 1000`. A game with small messages, fewer channels, or smaller
   match sizes pays for unused per-client arena space if it leaves every field
   at `0` (default).
@@ -336,7 +365,7 @@ requirements to each configuration group:
   server instance (for example `16` for a squad server, `64` for an arena
   match, or `100` for a survival match). Lowering `max_clients` from `1000` to
   `64` on the `default` profile reduces `rocketnet_server_required_memory` from
-  `21,028,276,715` bytes (19.58 GiB) to `3,055,772,955` bytes (2.85 GiB) with
+  `23,527,047,915` bytes (21.91 GiB) to `5,554,840,859` bytes (5.17 GiB) with
   unpinned `transport = NULL` (`"auto"`), or to `1,454,603,366` bytes
   (1.35 GiB) with `transport = "gso"`.
 - **Compile-time `ROCKETNET_MAX_CLIENTS`**: the most clients a config may ask
@@ -357,7 +386,8 @@ requirements to each configuration group:
 
 - **Runtime `num_channels`** (`rocketnet_*_config_t.num_channels`, environment
   `ROCKETNET_CLIENT_NUM_CHANNELS` / `ROCKETNET_SERVER_NUM_CHANNELS`, range
-  `1 .. ROCKETNET_MAX_CHANNELS`, default `32`, light `8`): each channel owns
+  `1 .. ROCKETNET_MAX_CHANNELS`, default `32`, light `8`, each at most
+  `ROCKETNET_MAX_CHANNELS`): each channel owns
   independent ordered (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED*`) and sequenced
   (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED*`) state.
 - **Tradeoff**: Head-of-line blocking on `RELIABLE_ORDERED` is scoped to a
@@ -461,14 +491,14 @@ requirements to each configuration group:
 ### 6. Transports, queues, CPUs, and memory budgets (`transport`, `num_xdp_queues`, `num_os_cpus`, `ROCKETNET_*_MEMORY_BUDGET_BYTES`, `ROCKETNET_XDP_MEMORY_MIB`)
 
 - **Transport selection (`transport`)**:
-  - Leaving `transport = NULL` or `"auto"` selects the platform ladder (`xdp -> gso -> io_uring -> portable`
+  - Leaving `transport = NULL` or `"auto"` selects the platform transport order (`xdp -> gso -> io_uring -> portable`
     on Linux server; `gso -> portable` on Linux client; `msgx -> portable` on
     macOS; production Windows servers prefer `iocp -> rio -> portable`, while
     development Windows servers prefer `portable -> iocp -> rio`).
   - Because `rocketnet_server_required_memory` and `rocketnet_client_required_memory`
     are called **before** `rocketnet_server_start` / `rocketnet_client_connect`
-    probes the host, an unpinned ladder must size the caller allocator for the
-    largest compiled-in candidate in that ladder (`xdp` on a Linux server build
+    probes the host, an unpinned transport order must size the caller allocator for the
+    largest compiled-in candidate in that order (`xdp` on a Linux server build
     with `ROCKETNET_XDP=ON`).
   - If a deployment will run on `gso` or `portable` (for example in a container
     or VM without AF_XDP), pin `config.transport = "gso"` or `"portable"` (or
@@ -476,23 +506,30 @@ requirements to each configuration group:
     `rocketnet_server_required_memory` and `rocketnet_server_create`. At
     `max_clients = 64` (`default` profile, `ROCKETNET_DEV=1`), pinning
     `transport = "gso"` reduces `rocketnet_server_required_memory` from
-    `3,055,772,955` bytes (2.85 GiB) to `1,454,603,366` bytes (1.35 GiB), and
+    `5,554,840,859` bytes (5.17 GiB) to `1,454,603,366` bytes (1.35 GiB), and
     pinning `transport = "portable"` reduces it to `1,280,303,711` bytes
     (1.19 GiB).
 - **AF_XDP queues, CPU count, and compile-time cap (`num_xdp_queues`, `num_os_cpus`, `ROCKETNET_XDP_MEMORY_MIB`)**:
   - Preserve the pinned AF_XDP geometry: `ROCKETNET_XDP_FRAME_SIZE = 4096`,
-    `ROCKETNET_XDP_SEND_QUEUE_SIZE = 4096`,
-    `ROCKETNET_XDP_RECV_QUEUE_SIZE = 16384`,
-    `ROCKETNET_XDP_FILL_FRAMES = 16384`,
-    `ROCKETNET_XDP_FILL_RING_SIZE = 32768`, and
-    `ROCKETNET_XDP_UMEM_FRAMES = 49152`. The UMEM is 192 MiB raw /
-    `201,326,592` bytes per queue. These constants are not runtime tuning
+    `ROCKETNET_XDP_SEND_QUEUE_SIZE = 16384`,
+    `ROCKETNET_XDP_RECV_QUEUE_SIZE = 32768`,
+    `ROCKETNET_XDP_FILL_FRAMES = 32768`,
+    `ROCKETNET_XDP_FILL_RING_SIZE = 65536`, and
+    `ROCKETNET_XDP_UMEM_FRAMES = 98304`. The UMEM is 384 MiB raw /
+    `402,653,184` bytes per queue. These constants are not runtime tuning
     controls; change only the supported queue/CPU configuration below.
+    The send queue is the most packets one queue starts in one update: two
+    queues at 60 Hz start up to 1,966,080 packets a second, twice 10 GbE line
+    rate (958.6k a second at 1304 bytes on the wire), a static assert in
+    `sdk/rocketnet_constants.h`. XDP sizes its own process batch (what its
+    queues drain into each update) at no fewer than twice the send queue,
+    32768 packets (`ROCKETNET_XDP_MIN_RECEIVE_PACKETS_PER_UPDATE`); every
+    other transport keeps the shared 16 packets per client.
   - `num_xdp_queues` (`0` selects the transport default, public range
     `1 .. 1024`) selects the planned AF_XDP queue count. `num_os_cpus`
     (`0` selects the transport default, `1 .. 256`) selects the first worker
     CPU: worker `q` runs on `num_os_cpus + q`. Total planned AF_XDP memory is
-    checked against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `4096` MiB).
+    checked against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `8192` MiB).
   - GSO and io_uring also use `num_xdp_queues`, with a maximum of 32, but
     their send staging is shared: 4096 slots in the active GSO producer bank
     and 2048 slots in io_uring's send array. Extra receive queues do not
@@ -506,11 +543,11 @@ requirements to each configuration group:
     is not a hard ceiling on the endpoint/message block allocated at create,
     and it does not change the value from `rocketnet_*_required_memory`.
   - At `rocketnet_client_connect` / `rocketnet_server_start`, each candidate in
-    the transport ladder is checked against the remaining budget, including both
+    the transport list is checked against the remaining budget, including both
     user-space transport allocator bytes and AF_XDP `umem_bytes`
     (`total_bytes = allocator_bytes + umem_bytes`). Candidates that exceed the
-    budget are skipped; if no candidate in the ladder fits, connect/start
-    returns `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`.
+    budget are skipped; if no candidate in the transport order fits, connect/start
+    returns `ROCKETNET_STATUS_NO_TRANSPORT_FOUND`.
 
 ---
 
@@ -541,7 +578,7 @@ memory or a performance qualification. The build used the default constants:
 - `ROCKETNET_MAX_CLIENTS = 1000`
 - `ROCKETNET_MAX_CHANNELS = 32`
 - `ROCKETNET_MAX_MESSAGE_BYTES = 1048576` (1 MiB)
-- `ROCKETNET_XDP_MEMORY_MIB = 4096`
+- `ROCKETNET_XDP_MEMORY_MIB = 8192`
 - `ROCKETNET_ALLOCATION_ALIGNMENT = 64` (cache-line alignment)
 - Per-allocation tracking header overhead: `rocketnet_allocation_overhead() = 87`
   bytes (`sizeof(rocketnet_allocation_header_t) = 24` bytes +
@@ -628,7 +665,7 @@ match:
 
 | Client profile | `transport` setting | Per-connection message region (`conn_bytes`) | `ROCKETNET_DEV=1` required bytes | `ROCKETNET_DEV=0` required bytes | Notes |
 | --- | --- | ---: | ---: | ---: | --- |
-| `default` | `NULL` / `"auto"` or `"gso"` | `7,924,608` (7.56 MiB) | `22,149,282` (21.12 MiB) | `21,364,374` (20.37 MiB) | Client `send_kbps = 1000`; auto ladder `gso -> portable`, sized for `gso` (`11,067,211` dev transport bytes) |
+| `default` | `NULL` / `"auto"` or `"gso"` | `7,924,608` (7.56 MiB) | `22,149,282` (21.12 MiB) | `21,364,374` (20.37 MiB) | Client `send_kbps = 1000`; automatic transport order `gso -> portable`, sized for `gso` (`11,067,211` dev transport bytes) |
 | `default` | `"portable"` | `7,924,608` (7.56 MiB) | `21,999,026` (20.98 MiB) | `21,214,118` (20.23 MiB) | Single UDP socket, one client I/O worker |
 | `default` | `"loopback"` | `7,924,608` (7.56 MiB) | `21,998,041` (20.98 MiB) | `21,213,133` (20.23 MiB) | Caller-owned hub and its datagram queues are additional; see the note below |
 | `light` | `NULL` / `"auto"` or `"gso"` | `963,136` (0.92 MiB) | `15,186,082` (14.48 MiB) | `14,401,174` (13.73 MiB) | `max_message_bytes = 1415`, `send_kbps = 256` |
@@ -644,36 +681,36 @@ match:
 
 | Server profile | `max_clients` | `transport` setting | Per-client message region (`conn_bytes`) | `ROCKETNET_DEV=1` required bytes | `ROCKETNET_DEV=0` required bytes |
 | --- | ---: | --- | ---: | ---: | ---: |
-| `default` | `1` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `1,847,786,813` (1.72 GiB) | `1,841,525,473` (1.72 GiB) |
-| `default` | `2` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `1,866,961,183` (1.74 GiB) | `1,860,699,715` (1.73 GiB) |
-| `default` | `64` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `3,055,772,955` (2.85 GiB) | `3,049,503,551` (2.84 GiB) |
+| `default` | `1` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `4,346,854,717` (4.05 GiB) | `4,340,593,377` (4.04 GiB) |
+| `default` | `2` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `4,366,029,087` (4.07 GiB) | `4,359,767,619` (4.06 GiB) |
+| `default` | `64` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `5,554,840,859` (5.17 GiB) | `5,548,571,455` (5.17 GiB) |
 | `default` | `64` | `"io_uring"` | `18,878,016` (18.00 MiB) | `2,418,424,467` (2.25 GiB) | `2,411,888,639` (2.25 GiB) |
 | `default` | `64` | `"gso"` | `18,878,016` (18.00 MiB) | `1,454,603,366` (1.35 GiB) | `1,448,333,922` (1.35 GiB) |
 | `default` | `64` | `"portable"` | `18,878,016` (18.00 MiB) | `1,280,303,711` (1.19 GiB) | `1,274,034,275` (1.19 GiB) |
 | `default` | `64` | `"loopback"` | `18,878,016` (18.00 MiB) | `1,271,159,799` (1.18 GiB) | `1,264,890,403` (1.18 GiB) |
-| `default` | `100` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `3,746,050,979` (3.49 GiB) | `3,739,776,967` (3.48 GiB) |
-| `default` | `250` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `6,622,209,103` (6.17 GiB) | `6,615,915,891` (6.16 GiB) |
-| `default` | `500` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `11,415,805,763` (10.63 GiB) | `11,409,480,551` (10.63 GiB) |
-| `default` | `1000` | `NULL` / `"auto"` or `"xdp"` | `18,878,016` (18.00 MiB) | `21,028,276,715` (19.58 GiB) | `21,021,887,503` (19.58 GiB) |
+| `default` | `100` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `6,245,118,883` (5.82 GiB) | `6,238,844,871` (5.81 GiB) |
+| `default` | `250` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `9,121,277,007` (8.49 GiB) | `9,114,983,795` (8.49 GiB) |
+| `default` | `500` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `13,914,873,667` (12.96 GiB) | `13,908,548,455` (12.95 GiB) |
+| `default` | `1000` | `NULL` / `"auto"` or `"xdp"` | `18,878,016` (18.00 MiB) | `23,527,047,915` (21.91 GiB) | `23,520,658,703` (21.91 GiB) |
 | `default` | `1000` | `"io_uring"` | `18,878,016` (18.00 MiB) | `20,407,934,147` (19.01 GiB) | `20,401,278,511` (19.00 GiB) |
 | `default` | `1000` | `"gso"` | `18,878,016` (18.00 MiB) | `19,426,944,662` (18.09 GiB) | `19,420,555,410` (18.09 GiB) |
 | `default` | `1000` | `"portable"` | `18,878,016` (18.00 MiB) | `19,386,100,879` (18.05 GiB) | `19,379,711,635` (18.05 GiB) |
 | `default` | `1000` | `"loopback"` | `18,878,016` (18.00 MiB) | `19,243,251,239` (17.92 GiB) | `19,236,862,035` (17.92 GiB) |
-| `light` | `1` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `1,829,870,205` (1.70 GiB) | `1,823,608,865` (1.70 GiB) |
-| `light` | `64` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `1,909,110,043` (1.78 GiB) | `1,902,840,639` (1.77 GiB) |
+| `light` | `1` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `4,328,938,109` (4.03 GiB) | `4,322,676,769` (4.03 GiB) |
+| `light` | `64` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `4,408,177,947` (4.11 GiB) | `4,401,908,543` (4.10 GiB) |
 | `light` | `64` | `"io_uring"` | `963,136` (0.92 MiB) | `1,271,761,555` (1.18 GiB) | `1,265,225,727` (1.18 GiB) |
 | `light` | `64` | `"gso"` | `963,136` (0.92 MiB) | `307,940,454` (293.67 MiB) | `301,671,010` (287.70 MiB) |
 | `light` | `64` | `"portable"` | `963,136` (0.92 MiB) | `133,640,799` (127.45 MiB) | `127,371,363` (121.47 MiB) |
 | `light` | `64` | `"loopback"` | `963,136` (0.92 MiB) | `124,496,887` (118.73 MiB) | `118,227,491` (112.75 MiB) |
-| `light` | `100` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `1,954,390,179` (1.82 GiB) | `1,948,116,167` (1.81 GiB) |
-| `light` | `250` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `2,143,057,103` (2.00 GiB) | `2,136,763,891` (1.99 GiB) |
-| `light` | `500` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `2,457,501,763` (2.29 GiB) | `2,451,176,551` (2.28 GiB) |
-| `light` | `1000` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `3,111,668,715` (2.90 GiB) | `3,105,279,503` (2.89 GiB) |
+| `light` | `100` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `4,453,458,083` (4.15 GiB) | `4,447,184,071` (4.14 GiB) |
+| `light` | `250` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `4,642,125,007` (4.32 GiB) | `4,635,831,795` (4.32 GiB) |
+| `light` | `500` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `4,956,569,667` (4.62 GiB) | `4,950,244,455` (4.61 GiB) |
+| `light` | `1000` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `5,610,439,915` (5.23 GiB) | `5,604,050,703` (5.22 GiB) |
 | `light` | `1000` | `"io_uring"` | `963,136` (0.92 MiB) | `2,491,326,147` (2.32 GiB) | `2,484,670,511` (2.31 GiB) |
 | `light` | `1000` | `"gso"` | `963,136` (0.92 MiB) | `1,510,336,662` (1.41 GiB) | `1,503,947,410` (1.40 GiB) |
 | `light` | `1000` | `"portable"` | `963,136` (0.92 MiB) | `1,469,492,879` (1.37 GiB) | `1,463,103,635` (1.36 GiB) |
 | `light` | `1000` | `"loopback"` | `963,136` (0.92 MiB) | `1,326,643,239` (1.24 GiB) | `1,320,254,035` (1.23 GiB) |
-| `arena-64` | `64` | `NULL` / `"auto"` (includes `xdp`) | `1,479,488` (1.41 MiB) | `1,942,144,283` (1.81 GiB) | `1,935,874,879` (1.80 GiB) |
+| `arena-64` | `64` | `NULL` / `"auto"` (includes `xdp`) | `1,479,488` (1.41 MiB) | `4,441,212,187` (4.14 GiB) | `4,434,942,783` (4.13 GiB) |
 | `arena-64` | `64` | `"gso"` | `1,479,488` (1.41 MiB) | `340,974,694` (325.18 MiB) | `334,705,250` (319.20 MiB) |
 | `arena-64` | `64` | `"portable"` | `1,479,488` (1.41 MiB) | `166,675,039` (158.95 MiB) | `160,405,603` (152.97 MiB) |
 
@@ -752,11 +789,12 @@ directions:
      (`8 MiB = 8,388,608` bytes default on Linux x86-64: 2 threads = `16 MiB`
      for `portable`, 5 threads = `40 MiB` for `gso`, 7 threads = `56 MiB` for
      default 7-queue `xdp`, 0 threads for `io_uring` and `loopback`).
-   - **AF_XDP UMEM and kernel rings**: Each AF_XDP queue allocates a 49,152-frame,
-     page-aligned `201,326,592`-byte (192 MiB raw) UMEM buffer via `mmap` plus
-     kernel fill/completion/RX/TX rings (`327,680` bytes per queue;
-     `1,409,286,144` bytes UMEM + `2,293,760` bytes rings across 7 default
-     queues). UMEM is counted against `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`
+   - **AF_XDP UMEM and kernel rings**: Each AF_XDP queue allocates a 98,304-frame,
+     page-aligned `402,653,184`-byte (384 MiB raw) UMEM buffer via `mmap` plus
+     kernel RX/TX rings (`786,432` bytes of descriptors per queue;
+     `2,818,572,288` bytes UMEM + `5,505,024` bytes of RX and TX descriptors
+     across 7 default queues; the fill and completion rings are not in that
+     figure). UMEM is counted against `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`
      and `-DROCKETNET_XDP_MEMORY_MIB`, but is not allocated from
      `rocketnet_allocator_t`.
    - **`io_uring` mapped rings**: One server-wide submission/completion ring

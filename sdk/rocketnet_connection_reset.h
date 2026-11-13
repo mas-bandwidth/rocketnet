@@ -35,7 +35,7 @@ struct rn_message_object_t;
     X( RESET, connection_salt ) X( RESET, client_ephemeral_public_key ) \
     X( RESET, client_ephemeral_secret_key ) X( RESET, return_cookie ) X( RESET, has_cookie ) \
     X( RESET, latest_cookie ) X( RESET, has_latest_cookie ) X( RESET, send_latest_cookie ) \
-    X( RESET, session_nonce ) X( RESET, keys ) X( RESET, stored_response ) \
+    X( RESET, keys ) X( RESET, stored_response ) \
     X( RESET, client_index ) X( RESET, max_clients ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) \
     X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) \
@@ -64,7 +64,7 @@ struct rn_message_object_t;
     X( KEEP, receive_buffer_index ) X( KEEP, received_packets ) X( KEEP, receive_buffer ) \
     X( KEEP, time ) X( KEEP, raw_time ) X( KEEP, time_offset ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
     X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, client_io ) \
-    X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, link_simulator ) X( KEEP, link_simulator_from ) \
+    X( KEEP, time_callback ) X( KEEP, link_simulator ) X( KEEP, link_simulator_from ) \
     X( KEEP, counters ) X( RESET, protocol ) \
     X( KEEP, client_stats ) X( KEEP, stats_frames ) X( KEEP, current_stats_index )
 
@@ -95,7 +95,7 @@ struct rn_message_object_t;
     X( RESET, packet_records ) X( RESET, receipt_count ) X( RESET, receipt_serials )
 
 #define ROCKETNET_MESSAGE_CONNECTION_FIELDS( X ) \
-    X( KEEP, hot ) X( KEEP, disconnect_reason ) X( RESET, unreliable_build )
+    X( KEEP, hot ) X( KEEP, disconnect_reason ) X( RESET, unreliable_build ) X( KEEP, open )
 
 #define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
     X( RESET, connection_id ) X( KEEP, views ) X( RESET, receive_cursor ) \
@@ -174,7 +174,6 @@ bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size
 bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t failure_bytes );
 bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, size_t failure_bytes );
 bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_transport_t * client );
-void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet_client_transport_t * client );
 bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketnet_client_transport_t * client,
                                                                  char * failure, size_t failure_bytes );
 void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index );

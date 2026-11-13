@@ -199,31 +199,37 @@ static void test_sim_schedule_long_skip_stragglers()
     rocketnet_unit_check( sim_schedule_flush( &sched ) == 0 );
     rocketnet_unit_check( sim_schedule_receive( &sched ) == 0 );
 
-    // the stragglers arrive after a time step: highest-k for k in 1..4096.
-    // the rule (ClearedWords = Words): after the final long skip the whole
-    // window is clear except the high-water mark itself, so every sequence
-    // highest-k for k in 1..4095 is genuine and accepted, while highest-4096
-    // sits below the floor and is refused as too old.
+    // the stragglers arrive after a time step: highest-k for k in 1..W, W the
+    // replay window (ROCKETNET_REPLAY_WINDOW_BITS, 4096 at the default
+    // history), in batches of at most 4096, which the schedule's queue holds.
+    // the rule (ClearedWords = Words): after the final long skip, 65536, past
+    // every window a build allows, the whole window is clear except the
+    // high-water mark itself, so every sequence highest-k for k in 1..W-1 is
+    // genuine and accepted, while highest-W sits below the floor and is
+    // refused as too old.
 
     sim_schedule_advance_time( &sched, 1.0 );
 
+    const uint64_t window = ROCKETNET_REPLAY_WINDOW_BITS;
     uint8_t straggler_packets[4096][8];
-    for ( int idx = 0; idx < 4096; idx++ )
+    for ( uint64_t first = 1; first <= window; first += 4096 )
     {
-        sim_write_u64_le( straggler_packets[idx], highest - (uint64_t) ( idx + 1 ) );
-        sim_schedule_deliver( &sched, straggler_packets[idx], 8 );
+        const uint64_t last = first + 4095 < window ? first + 4095 : window;
+        for ( uint64_t k = first; k <= last; k++ )
+        {
+            sim_write_u64_le( straggler_packets[k - first], highest - k );
+            sim_schedule_deliver( &sched, straggler_packets[k - first], 8 );
+        }
+
+        rocketnet_unit_check( sim_schedule_flush( &sched ) == (int) ( last - first + 1 ) );
+
+        for ( uint64_t k = first; k <= last; k++ )
+        {
+            rocketnet_unit_check( sim_schedule_receive( &sched ) == 8 );
+            const bool too_old = rocketnet_replay_already_received( &replay, sim_read_u64_le( sched.rx ) ) != 0;
+            rocketnet_unit_check( too_old == ( k == window ) );
+        }
     }
-
-    rocketnet_unit_check( sim_schedule_flush( &sched ) == 4096 );
-
-    for ( uint64_t k = 1; k <= 4095; k++ )
-    {
-        rocketnet_unit_check( sim_schedule_receive( &sched ) == 8 );
-        rocketnet_unit_check( !rocketnet_replay_already_received( &replay, sim_read_u64_le( sched.rx ) ) );
-    }
-
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == 8 );
-    rocketnet_unit_check( rocketnet_replay_already_received( &replay, sim_read_u64_le( sched.rx ) ) != 0 );
 
     sim_schedule_end( &sched );
 }

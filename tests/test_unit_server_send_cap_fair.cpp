@@ -965,42 +965,62 @@ static void pc_world_create( pc_world_t * world, int num_clients, int capacity )
         check( create_status == ROCKETNET_STATUS_OK );
     }
 
-    // connect every client, one after another
+    // connect every client at once, then step them all together until every
+    // one is connected: stepping the earlier clients once per later connect
+    // made the setup grow with the square of the client count (27.9 s of the
+    // 1000-client case)
 
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( world->server ) );
+    const char * addresses[] = { address };
     for ( int i = 0; i < num_clients; i++ )
     {
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         uint8_t raw[ROCKETNET_CONNECT_TOKEN_BYTES];
-        char address[64];
-        snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( world->server ) );
-        const char * addresses[] = { address };
         check( rocketnet_write_production_connect_token( world->identity.backend_secret, world->identity.server_public, FAIR_PROTOCOL, addresses, 1,
                                                          0xA000 + (uint64_t) i, 1000, 1ULL << 40, 300, NULL, raw, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
         check( rocketnet_base64_encode_data( raw, sizeof( raw ), token, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
         check( rocketnet_client_connect( world->clients[i], token ) == ROCKETNET_STATUS_OK );
-        for ( int step = 0; step < 400 && ( rocketnet_client_state( world->clients[i] ) != ROCKETNET_CLIENT_STATE_CONNECTED ||
-                                            !rocketnet_server_client_connected( world->server, rocketnet_client_index( world->clients[i] ) ) );
-              step++ )
+    }
+
+    bool all_connected = false;
+    for ( int step = 0; step < 400 && !all_connected; step++ )
+    {
+        fair_now = world->time;
+        for ( int c = 0; c < num_clients; c++ )
         {
-            fair_now = world->time;
-            for ( int c = 0; c <= i; c++ )
-            {
-                rocketnet_client_update( world->clients[c], world->time );
-                while ( rocketnet_client_receive_messages( world->clients[c] ) != NULL )
-                {
-                }
-                rocketnet_client_send_packets( world->clients[c] );
-            }
-            rocketnet_server_update( world->server, world->time );
-            while ( rocketnet_server_receive_messages( world->server ) != NULL )
+            rocketnet_client_update( world->clients[c], world->time );
+            while ( rocketnet_client_receive_messages( world->clients[c] ) != NULL )
             {
             }
-            rocketnet_server_send_packets( world->server );
-            world->time += FAIR_DT;
+            rocketnet_client_send_packets( world->clients[c] );
         }
+        rocketnet_server_update( world->server, world->time );
+        while ( rocketnet_server_receive_messages( world->server ) != NULL )
+        {
+        }
+        rocketnet_server_send_packets( world->server );
+        world->time += FAIR_DT;
+
+        all_connected = true;
+        for ( int c = 0; c < num_clients && all_connected; c++ )
+        {
+            all_connected = rocketnet_client_state( world->clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+                            rocketnet_server_client_connected( world->server, rocketnet_client_index( world->clients[c] ) );
+        }
+    }
+
+    // every client connected, each to a slot of its own
+
+    for ( int i = 0; i < num_clients; i++ )
+    {
         check( rocketnet_client_state( world->clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
         world->slot[i] = rocketnet_client_index( world->clients[i] );
         check( rocketnet_server_client_connected( world->server, world->slot[i] ) );
+        for ( int j = 0; j < i; j++ )
+        {
+            check( world->slot[j] != world->slot[i] );
+        }
     }
 }
 
@@ -1057,6 +1077,28 @@ static void pc_run( const pc_kind_t * kinds, int num_clients, int capacity, pc_r
     memset( record, 0, sizeof( *record ) );
     pc_world_t world;
     pc_world_create( &world, num_clients, capacity );
+
+    // packets_sent counts the connect too, and the connect does not always
+    // take the same number of updates: the server answers one cookie request
+    // per source per update, by a bit of a bitmap at a SipHash of the source
+    // address under a key drawn at create, so two clients whose addresses
+    // share a bit in the first update leave the later one unanswered until
+    // its next send (rocketnet_server_protocol.cpp, the cookie reply limit).
+    // Its connect then takes one more update, and every client already
+    // connected is sent one more packet in it (about 1 run in 2000 with 16
+    // clients; the loopback ports differ between the runs of one process, so
+    // seeding the key does not repeat it). The record counts the packets of
+    // these PC_TICKS updates only, from what each client had been sent when
+    // they began.
+
+    uint64_t sent_before[PC_MAX_CLIENTS];
+    for ( int c = 0; c < num_clients; c++ )
+    {
+        struct rocketnet_server_client_stats_t stats;
+        memset( &stats, 0, sizeof( stats ) );
+        rocketnet_server_client_stats( world.server, world.slot[c], &stats );
+        sent_before[c] = stats.packets_sent;
+    }
 
     int start[PC_MAX_CLIENTS];
     int member = 0;
@@ -1144,7 +1186,7 @@ static void pc_run( const pc_kind_t * kinds, int num_clients, int capacity, pc_r
             struct rocketnet_server_client_stats_t stats;
             memset( &stats, 0, sizeof( stats ) );
             rocketnet_server_client_stats( world.server, world.slot[c], &stats );
-            record->server_packets[c][tick] = stats.packets_sent;
+            record->server_packets[c][tick] = stats.packets_sent - sent_before[c];
             check( rocketnet_server_client_connected( world.server, world.slot[c] ) );
         }
 
@@ -1698,8 +1740,11 @@ static void test_server_send_capacity_spare_slots_keep_in_place()
 
 REGISTER_UNIT_TEST( test_server_send_capacity_spare_slots_keep_in_place );
 REGISTER_UNIT_TEST( test_server_send_cap_two_three_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_two_three_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_server_send_cap_one_two_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_one_two_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_server_send_cap_one_three_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_one_three_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 #endif // #if ROCKETNET_DEV
 
 // The configuration test_server_send_capacity_default_covers_clients creates: the

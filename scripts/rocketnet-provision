@@ -37,20 +37,20 @@
 #                             ("higher bandwidth nics may need more cores").
 #   B2. isolated cpu set      /sys/devices/system/cpu/isolated is non-empty
 #                             (the observable effect of B1's isolcpus).
-#   B3. NIC transport            a recent vendor transport built manually where the
-#                             distro's is too old for stable AF_XDP zero copy
-#                             -- for Intel 700 series, i40e from
-#                             github.com/mas-bandwidth/ethernet-linux-i40e.
+#   B3. NIC driver            one with AF_XDP zero copy. Measured on an X710:
+#                             the in-tree i40e of Ubuntu's 7.0.0-43-generic
+#                             binds it; Intel's i40e 2.30.18 compiles it out
+#                             on Ubuntu and on kernels 5.2 and newer.
 #                             Reported informationally (ethtool -i); not
 #                             machine-verifiable beyond the version string.
 #
 # RUNTIME TIER -- this script PERFORMS these, idempotently:
 #
 #   R1. root                  the XDP data plane requires euid 0.
-#   R2. interface             the interface exists and is UP (this script
-#                             takes the interface name; whether it carries
-#                             the server's public IPv4 address is checked by
-#                             the pre-flight, which alone knows the address).
+#   R2. interface             the interface exists and is UP; an 802.1Q VLAN
+#                             device resolves to its parent NIC, where R3-R7
+#                             act (QinQ, 802.1ad, stacked devices refuse); the
+#                             pre-flight checks it carries the public address.
 #   R3. exclusive xdp slot    no XDP program attached (this script unloads;
 #                             the library never unloads anyone and pins only
 #                             under its own per-INSTANCE random-token root
@@ -124,7 +124,11 @@
 #                          replayed reality -- the IRQ matcher's case set,
 #                          and the R3/R7 enforcement functions end to end
 #                          in both modes over stubs replaying captured
-#                          xdp-tools 1.6.2 output (no root, no arguments;
+#                          xdp-tools 1.6.2 output, and the whole script's
+#                          verify over a stub /proc and /sys tree with
+#                          every condition met, then each one unmet alone
+#                          (ROCKETNET_PROVISION_STUB_ROOT, a verify-only
+#                          seam every other mode refuses) (no root, no arguments;
 #                          touches only a private temp dir it creates and
 #                          removes; CI runs it); also invocable bare as
 #                          `rocketnet-provision selftest`
@@ -171,6 +175,36 @@ esac
 
 if [ "$MODE" != "selftest" ]; then
     unset R8_RELEASE R8_RUNTIME R8_CONFIG R8_PROC_CONFIG
+fi
+
+# THE STUB ROOT, for the selftest's whole-script cases: with
+# ROCKETNET_PROVISION_STUB_ROOT set, verify reads every /proc and /sys file
+# of the main flow under that directory instead, takes the caller's euid
+# from <root>/stub-euid and the kernel release from
+# <root>/proc/sys/kernel/osrelease, and says so on its first line. It is a
+# verify-only seam: every other mode refuses it, so it can never steer a
+# write, and a verify under it is a verdict about the stub, never about
+# this machine. The selftest sets it for its child runs only.
+
+FS=""
+CALLER_EUID=""
+if [ -n "${ROCKETNET_PROVISION_STUB_ROOT:-}" ]; then
+    case "$MODE" in
+        verify) ;;
+        selftest) unset ROCKETNET_PROVISION_STUB_ROOT ;;
+        *) echo "ROCKETNET_PROVISION_STUB_ROOT is set: only verify reads a stub root; $MODE refuses it (it would act on this machine from a stub's readings)" >&2; exit 2 ;;
+    esac
+fi
+if [ -n "${ROCKETNET_PROVISION_STUB_ROOT:-}" ]; then
+    FS="$ROCKETNET_PROVISION_STUB_ROOT"
+    CALLER_EUID="$(cat "$FS/stub-euid" 2>/dev/null || echo unreadable)"
+    R8_RELEASE="$(cat "$FS/proc/sys/kernel/osrelease" 2>/dev/null || echo unreadable)"
+    R8_RUNTIME="$FS/proc/sys/kernel/sched_rt_runtime_us"
+    R8_CONFIG="$FS/boot/config-$R8_RELEASE"
+    R8_PROC_CONFIG="$FS/proc/config.gz"
+    echo "rocketnet-provision: STUB ROOT $FS: every /proc and /sys read below is the stub's, not this machine's"
+else
+    CALLER_EUID="$(id -u)"
 fi
 
 if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ] || [ "$MODE" = "repin" ]; then
@@ -385,7 +419,7 @@ r3_enforce()
         if [ $XDP_GRADE_RC -ne 0 ]; then
             # the second query can race a change on the NIC; its staleness
             # colors only this error text, never a grade
-            XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null || true)"
+            XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null)"
             fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-query failed}"
         else
             # FAIL CLOSED outside the outcome set (the round-eleven law): the
@@ -501,7 +535,7 @@ r7_enforce()
         # invocation deliberately does NOT ride query_combined_stdout: it wants
         # the INVERSE stream (stderr for the signature, stdout discarded), so
         # the locale pin is repeated here rather than shared
-        ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null || true)"
+        ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null)"
         case "$ETHTOOL_ERROR" in
             *"not supported"*)
                 say "no channel surface on $INTERFACE (R7 passes: the transport does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
@@ -586,6 +620,89 @@ r8_enforce()
             say "kernel.sched_rt_runtime_us confirmed at -1 (R8)"
         fi
     fi
+}
+
+# THE XDP DEVICE (R2): the interface named carries the server's address; the
+# device the transport attaches to, and that this script provisions, is the
+# one the library's pre-flight resolves the same way (rocketnet_xdp_link_classify
+# in sdk/rocketnet_gateway_netlink_linux.cpp):
+#
+#   an untagged device         itself
+#   one 802.1Q VLAN device     its parent, when the parent is a physical NIC
+#                              (no link kind) or veth: the queues, IRQs,
+#                              busy-poll knobs and the XDP slot are the
+#                              parent's
+#   refused, by name           an 802.1ad VLAN, a VLAN on a VLAN (QinQ), a
+#                              VLAN on any other kind or whose parent is in
+#                              another namespace, and a bond, bridge, team,
+#                              macvlan, macvtap, ipvlan or ipvtap
+#
+# read from `ip -o -d link show dev NAME`: the name field is NAME@PARENT (or
+# NAME@ifN for a parent in another namespace, with link-netnsid), and the
+# third backslash-separated segment starts with the link kind when the device
+# has one (vlan carries "vlan protocol 802.1Q id N"). Prints one line:
+#   plain NAME | vlan PARENT ID | refused REASON | unread REASON
+
+xdp_link_line()
+{
+    ip -o -d link show dev "$1" 2>/dev/null | head -n 1
+}
+
+xdp_link_kind()   # one ip -o -d line on stdin: the link kind, or empty
+{
+    awk -F'\\' 'NF >= 3 { sub( /^ +/, "", $3 ); split( $3, w, " " ); if ( w[1] != "addrgenmode" ) print w[1] }'
+}
+
+xdp_device_resolve()
+{
+    local NAME="$1" LINE KIND PARENT PARENT_LINE PARENT_KIND PROTOCOL ID
+    LINE="$(xdp_link_line "$NAME")"
+    if [ -z "$LINE" ]; then
+        echo "unread ip -o -d link show dev $NAME printed nothing"
+        return
+    fi
+    KIND="$(printf '%s\n' "$LINE" | xdp_link_kind)"
+    case "$KIND" in
+        bond|bridge|team|macvlan|macvtap|ipvlan|ipvtap)
+            echo "refused $NAME is a $KIND device, stacked on other devices"
+            return
+            ;;
+        vlan) ;;
+        *)
+            echo "plain $NAME"
+            return
+            ;;
+    esac
+    PROTOCOL="$(printf '%s\n' "$LINE" | sed -n 's/.* vlan protocol \([^ ]*\) id \([0-9]*\) .*/\1/p')"
+    ID="$(printf '%s\n' "$LINE" | sed -n 's/.* vlan protocol \([^ ]*\) id \([0-9]*\) .*/\2/p')"
+    PARENT="$(printf '%s\n' "$LINE" | awk '{ name = $2; sub( /:$/, "", name ); at = index( name, "@" ); if ( at > 0 ) print substr( name, at + 1 ) }')"
+    if [ "$PROTOCOL" != "802.1Q" ]; then
+        echo "refused $NAME is a VLAN whose tag protocol is ${PROTOCOL:-unknown}, not 802.1Q (802.1ad, the outer tag of QinQ)"
+        return
+    fi
+    case "$ID" in
+        ''|*[!0-9]*) echo "refused $NAME is a VLAN whose id could not be read"; return ;;
+    esac
+    if [ "$ID" -lt 1 ] || [ "$ID" -gt 4094 ]; then
+        echo "refused $NAME is a VLAN whose id $ID is not 1 to 4094"
+        return
+    fi
+    if [ -z "$PARENT" ] || printf '%s\n' "$LINE" | grep -q ' link-netnsid '; then
+        echo "refused $NAME is a VLAN whose parent is not a device in this network namespace"
+        return
+    fi
+    PARENT_LINE="$(xdp_link_line "$PARENT")"
+    if [ -z "$PARENT_LINE" ]; then
+        echo "refused $NAME is a VLAN whose parent $PARENT could not be read"
+        return
+    fi
+    PARENT_KIND="$(printf '%s\n' "$PARENT_LINE" | xdp_link_kind)"
+    case "$PARENT_KIND" in
+        vlan) echo "refused $NAME is a VLAN on the VLAN $PARENT (nested tags, QinQ)"; return ;;
+        ''|veth) ;;
+        *) echo "refused $NAME is a VLAN on $PARENT, a $PARENT_KIND device (only a physical NIC or veth carries it)"; return ;;
+    esac
+    echo "vlan $PARENT $ID"
 }
 
 # SELFTEST: the script's matcher held to the SAME CASE SET as the C test
@@ -971,7 +1088,7 @@ STUB
     TOOLS_DIR="$STUB_DIR/tools"
     mkdir -p "$TOOLS_DIR"
     for TOOL in grep awk cat; do
-        ln -s "$(command -v $TOOL)" "$TOOLS_DIR/$TOOL" 2>/dev/null || true
+        ln -s "$(command -v $TOOL)" "$TOOLS_DIR/$TOOL" 2>/dev/null
     done
 
     OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=any0; PATH="$TOOLS_DIR"
@@ -1066,6 +1183,198 @@ STUB
     elif ! printf '%s\n' "$FULL2_OUT" | grep -qF "verify FAILED: $FULL2_UNMET_LINES unmet condition(s)"; then
         echo "selftest FAIL: second full-flow PROPAGATION: $FULL2_UNMET_LINES UNMET lines printed but the summary counted differently"; PASS=0
     fi
+
+    # --- THE XDP DEVICE (R2): the resolver over `ip -o -d link show dev`,
+    # replayed from lines captured with iproute2 6.19.0 in a virtme-ng
+    # guest (the MAC addresses and the tails past the kind's fields
+    # trimmed). The stub answers only that exact form, and a device it has
+    # no line for as ip does: nothing on stdout, exit 1 ---
+
+    cat > "$STUB_DIR/ip" << 'STUB'
+#!/bin/sh
+[ "$1 $2 $3 $4 $5" = "-o -d link show dev" ] || { echo "stub: unexpected invocation $*" >&2; exit 99; }
+[ -f "$STUB_STATE_DIR/link.$6" ] || { echo "Device \"$6\" does not exist." >&2; exit 1; }
+cat "$STUB_STATE_DIR/link.$6"
+STUB
+    chmod +x "$STUB_DIR/ip"
+
+    link_line()   # $1 name  $2 the ip -o -d line
+    {
+        printf '%s\n' "$2" > "$STUB_STATE_DIR/link.$1"
+    }
+    IP_HEAD='mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/ether 02:00:00:00:00:01 brd ff:ff:ff:ff:ff:ff'
+    IP_TAIL='addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535'
+    link_line vk0       "3: vk0@vk1: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535 \\    veth $IP_TAIL"
+    link_line dk0       "4: dk0: <BROADCAST,NOARP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 0 \\    dummy $IP_TAIL"
+    link_line eno1      "2: eno1: <BROADCAST,MULTICAST,UP,LOWER_UP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 9702 $IP_TAIL"
+    link_line vk0.10    "5: vk0.10@vk0: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 10 <REORDER_HDR> $IP_TAIL"
+    link_line eno1.4094 "6: eno1.4094@eno1: <BROADCAST,MULTICAST,UP,LOWER_UP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 4094 <REORDER_HDR> $IP_TAIL"
+    link_line vk0.10.20 "7: vk0.10.20@vk0.10: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 20 <REORDER_HDR> $IP_TAIL"
+    link_line vkad      "8: vkad@vk0: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1ad id 30 <REORDER_HDR> $IP_TAIL"
+    link_line dk0.40    "9: dk0.40@dk0: <BROADCAST,NOARP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 40 <REORDER_HDR> $IP_TAIL"
+    link_line vn0.5     "13: vn0.5@if12: <BROADCAST,MULTICAST> $IP_HEAD link-netnsid 0 promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 5 <REORDER_HDR> $IP_TAIL"
+    link_line bk0       "10: bk0: <BROADCAST,MULTICAST,MASTER> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535 netns-immutable \\    bond mode balance-rr miimon 0 updelay 0 $IP_TAIL"
+    link_line brk0      "11: brk0: <BROADCAST,MULTICAST> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535 netns-immutable \\    bridge forward_delay 1500 vlan_filtering 0 vlan_protocol 802.1Q $IP_TAIL"
+    link_line mvk0      "12: mvk0@vk0: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535 \\    macvlan mode bridge bcqueuelen 1000 $IP_TAIL"
+    link_line bk0.7     "14: bk0.7@bk0: <BROADCAST,MULTICAST,MASTER> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 7 <REORDER_HDR> $IP_TAIL"
+    link_line lo        "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 allmulti 0 minmtu 0 maxmtu 0 netns-immutable $IP_TAIL"
+
+    expect_device()   # $1 interface  $2 the resolver's whole line, or a prefix ending in "*"
+    {
+        RESULT="$(PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" xdp_device_resolve "$1")"
+        case "$2" in
+            *'*') case "$RESULT" in "${2%\*}"*) return ;; esac ;;
+            *) [ "$RESULT" = "$2" ] && return ;;
+        esac
+        echo "selftest FAIL: the xdp device of '$1' resolved '$RESULT', want '$2'"; PASS=0
+    }
+
+    expect_device eno1      "plain eno1"
+    expect_device vk0       "plain vk0"
+    expect_device dk0       "plain dk0"
+    expect_device lo        "plain lo"
+    expect_device vk0.10    "vlan vk0 10"
+    expect_device eno1.4094 "vlan eno1 4094"
+    expect_device vk0.10.20 "refused vk0.10.20 is a VLAN on the VLAN vk0.10 (nested tags, QinQ)"
+    expect_device vkad      "refused vkad is a VLAN whose tag protocol is 802.1ad, not 802.1Q*"
+    expect_device dk0.40    "refused dk0.40 is a VLAN on dk0, a dummy device*"
+    expect_device bk0.7     "refused bk0.7 is a VLAN on bk0, a bond device*"
+    expect_device vn0.5     "refused vn0.5 is a VLAN whose parent is not a device in this network namespace"
+    expect_device bk0       "refused bk0 is a bond device, stacked on other devices"
+    expect_device brk0      "refused brk0 is a bridge device, stacked on other devices"
+    expect_device mvk0      "refused mvk0 is a macvlan device, stacked on other devices"
+    expect_device nosuch0   "unread *"
+
+    # the whole script on a VLAN: R3 and R7 act on the parent, and the
+    # refused forms end the run by name before any condition is read
+
+    echo clean > "$STUB_STATE_DIR/state.stubnic0"
+    echo 7 > "$STUB_STATE_DIR/combined.stubnic0"
+    link_line stubnic0     "20: stubnic0: <BROADCAST,MULTICAST,UP,LOWER_UP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 9702 $IP_TAIL"
+    link_line stubnic0.300 "21: stubnic0.300@stubnic0: <BROADCAST,MULTICAST,UP,LOWER_UP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 300 <REORDER_HDR> $IP_TAIL"
+    OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubnic0.300 7 verify 2>&1 )"
+    expect_case "full-flow verify on a VLAN names the parent" $? 1 "$OUT" "stubnic0.300 is 802.1Q VLAN 300 on stubnic0: the xdp transport attaches to stubnic0" "" "on stubnic0.300 (R3)"
+    expect_case "full-flow verify on a VLAN reads R3 on the parent" 1 1 "$OUT" "no XDP program attached to stubnic0"
+    expect_case "full-flow verify on a VLAN reads R7 on the parent" 1 1 "$OUT" "combined queue count already 7 (R7)" "" "stubnic0.300 (R7)"
+
+    OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" vk0.10.20 7 verify 2>&1 )"
+    expect_case "full-flow verify refuses QinQ by name" $? 1 "$OUT" "the xdp transport refuses vk0.10.20: vk0.10.20 is a VLAN on the VLAN vk0.10 (nested tags, QinQ) (R2)" "" "(R3)"
+    OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" bk0 7 verify 2>&1 )"
+    expect_case "full-flow verify refuses a bond by name" $? 1 "$OUT" "the xdp transport refuses bk0: bk0 is a bond device" "" "(R3)"
+    # --- THE WHOLE SCRIPT ON A STUB ROOT, every condition met and then each
+    # one unmet alone (VERIFY-3 W14): the two runs above can only show that
+    # SOME condition stays unmet on the CI host, so a verify that stopped
+    # failing an unpinned irq, smt on, busy-poll unset, a non-root caller or
+    # a bad command line still passed them. Here verify reads /proc and /sys
+    # from a tree this case builds (ROCKETNET_PROVISION_STUB_ROOT), R3 and R7
+    # from the stubs, and must pass the provisioned tree and fail each
+    # broken one with exactly the UNMET lines it names ---
+
+    stub_root_met()  # $1 root: a machine provisioned for stubiface2 with 2 queues
+    {
+        rm -rf "$1"
+        mkdir -p "$1/proc/sys/kernel" "$1/proc/irq/119" "$1/proc/irq/120" "$1/proc/irq/121" "$1/proc/irq/122" \
+                 "$1/sys/devices/system/cpu/smt" "$1/sys/class/net/stubiface2"
+        echo 0 > "$1/stub-euid"
+        echo "BOOT_IMAGE=/vmlinuz root=/dev/sda1 irqaffinity=0 isolcpus=1-3 nohz_full=1-3 nosmt" > "$1/proc/cmdline"
+        echo "1-3" > "$1/sys/devices/system/cpu/isolated"
+        echo 0x1003 > "$1/sys/class/net/stubiface2/flags"
+        {
+            echo "            CPU0       CPU1       CPU2       CPU3"
+            echo " 119:         10          0          0          0  IR-PCI-MSIX-0000:01:00.0    0-edge      stubiface2"
+            echo " 120:          0        900          0          0  IR-PCI-MSIX-0000:01:00.0    1-edge      stubiface2-TxRx-0"
+            echo " 121:          0          0        800          0  IR-PCI-MSIX-0000:01:00.0    2-edge      stubiface2-TxRx-1"
+            echo " 130:          0          0          0          5  IR-PCI-MSIX-0000:02:00.0    1-edge      stubiface20-TxRx-0"
+        } > "$1/proc/interrupts"
+        echo 3 > "$1/proc/irq/119/smp_affinity_list"
+        echo 1 > "$1/proc/irq/120/smp_affinity_list"
+        echo 2 > "$1/proc/irq/121/smp_affinity_list"
+        echo 2 > "$1/sys/class/net/stubiface2/napi_defer_hard_irqs"
+        echo 200000 > "$1/sys/class/net/stubiface2/gro_flush_timeout"
+        echo off > "$1/sys/devices/system/cpu/smt/control"
+        echo 6.8.0-147-generic > "$1/proc/sys/kernel/osrelease"
+        echo -1 > "$1/proc/sys/kernel/sched_rt_runtime_us"
+        echo clean > "$STUB_STATE_DIR/state.stubiface2"
+        echo 2 > "$STUB_STATE_DIR/combined.stubiface2"
+    }
+
+    run_stub_root()  # $1 root  $2 queues  -> rc of a whole-script verify of stubiface2
+    {
+        ROCKETNET_PROVISION_STUB_ROOT="$1" PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" \
+            bash "$SELF" stubiface2 "$2" verify 2>&1
+    }
+
+    SR="$STUB_DIR/root"
+
+    # the irq at 119 is the misc vector (named exactly stubiface2): it is an
+    # irq of the interface, so it must be pinned too -- the met tree pins
+    # it to an isolated cpu, cpu 3
+    stub_root_met "$SR"
+    OUT="$(run_stub_root "$SR" 2)"
+    expect_case "stub root: every condition met" $? 0 "$OUT" "verify passed: machine is provisioned" 0
+    for MET_LINE in "STUB ROOT" "carries irqaffinity=0 (B1)" "isolated cpu set is 1-3 (B2)" "stubiface2 present and up (R2)" \
+                    "irq 120 pinned to isolated cpu 1 (R4)" "napi_defer_hard_irqs already 2 (R5)" \
+                    "gro_flush_timeout already 200000 (R5)" "smt already off (R6)" "already -1 (R8)"; do
+        expect_case "stub root met: $MET_LINE" 0 0 "$OUT" "$MET_LINE" 0
+    done
+
+    # one case per condition: $1 name  $2 queues  $3 want UNMET lines
+    # $4 required text  $5 the edit (a shell command run on the met tree)
+    stub_root_case()
+    {
+        stub_root_met "$SR"
+        eval "$5"
+        OUT="$(run_stub_root "$SR" "$2")"
+        expect_case "stub root: $1" $? 1 "$OUT" "$4" "$3" "verify passed"
+        expect_case "stub root: $1 (summary counts it)" 0 0 "$OUT" "verify FAILED: $3 unmet condition(s)"
+    }
+
+    stub_root_case "R1 caller not root" 2 1 "not root (R1)" \
+        'echo 1000 > "$SR/stub-euid"'
+    stub_root_case "B1 irqaffinity is not 0" 2 1 "lacks irqaffinity=0" \
+        'echo "irqaffinity=1 isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 xisolcpus is not isolcpus" 2 1 "lacks isolcpus=<range> (B1)" \
+        'echo "irqaffinity=0 xisolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 nohz_full without a value" 2 1 "lacks nohz_full=<range> (B1)" \
+        'echo "irqaffinity=0 isolcpus=1-3 nohz_full= nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B2 no isolated cpus" 2 2 "no isolated cpus (B2)" \
+        ': > "$SR/sys/devices/system/cpu/isolated"'
+    stub_root_case "R2 interface down" 2 1 "is not up (R2)" \
+        'echo 0x1002 > "$SR/sys/class/net/stubiface2/flags"'
+    stub_root_case "R2 interface absent" 2 1 "does not exist (R2)" \
+        'rm -rf "$SR/sys/class/net/stubiface2"'
+    stub_root_case "R3 slot occupied" 2 1 "an XDP program is attached to stubiface2 (R3)" \
+        'echo foreign > "$STUB_STATE_DIR/state.stubiface2"'
+    stub_root_case "R7 queue count" 2 1 "combined queue count is 4, want 2 (R7)" \
+        'echo 4 > "$STUB_STATE_DIR/combined.stubiface2"'
+    stub_root_case "R4 irq on a range" 2 1 "irq 121 affinity is '1-3', want a single isolated cpu (R4)" \
+        'echo 1-3 > "$SR/proc/irq/121/smp_affinity_list"'
+    stub_root_case "R4 irq unpinned (housekeeping cpu)" 2 1 "irq 120 is pinned to cpu 0, which is not in the isolated set" \
+        'echo 0 > "$SR/proc/irq/120/smp_affinity_list"'
+    stub_root_case "R4 two irqs on one cpu" 2 1 "two IRQs pinned to cpu 1 (R4)" \
+        'echo 1 > "$SR/proc/irq/121/smp_affinity_list"'
+    stub_root_case "R4 interrupt table unreadable" 2 1 "/proc/interrupts is unreadable (R4)" \
+        'rm -f "$SR/proc/interrupts"'
+    stub_root_case "R4 more irqs than isolated cpus" 2 1 "4 IRQs on stubiface2 but only 3 isolated cpus (R4)" \
+        'echo " 122:  0  0  0  0  IR-PCI-MSIX-0000:01:00.0  3-edge  stubiface2-TxRx-2" >> "$SR/proc/interrupts"; echo 1 > "$SR/proc/irq/122/smp_affinity_list"'
+    stub_root_case "R4 fewer isolated cpus than queues" 4 1 "only 3 isolated cpus for 4 queues" \
+        'echo 4 > "$STUB_STATE_DIR/combined.stubiface2"'
+    stub_root_case "R5 napi_defer_hard_irqs unset" 2 1 "napi_defer_hard_irqs is 0, want 2 (R5)" \
+        'echo 0 > "$SR/sys/class/net/stubiface2/napi_defer_hard_irqs"'
+    stub_root_case "R5 gro_flush_timeout unset" 2 1 "gro_flush_timeout is 0, want 200000 (R5)" \
+        'echo 0 > "$SR/sys/class/net/stubiface2/gro_flush_timeout"'
+    stub_root_case "R6 smt on" 2 1 "smt is 'on', want off (R6)" \
+        'echo on > "$SR/sys/devices/system/cpu/smt/control"'
+    stub_root_case "R8 real-time throttle on" 2 1 "kernel.sched_rt_runtime_us is 950000, want -1 (R8)" \
+        'echo 950000 > "$SR/proc/sys/kernel/sched_rt_runtime_us"'
+
+    # the seam is verify's alone: provision and repin under a stub root
+    # refuse before reading or writing anything
+    stub_root_met "$SR"
+    OUT="$( ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 2 provision 2>&1 )"
+    expect_case "stub root refused by provision" $? 2 "$OUT" "only verify reads a stub root"
+    OUT="$( ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 2 repin 2>&1 )"
+    expect_case "stub root refused by repin" $? 2 "$OUT" "only verify reads a stub root"
 
     # --- the pair-level pins kept from round eleven: the parser sees only
     # what the query's stdout carried ---
@@ -1217,7 +1526,7 @@ if [ "$MODE" = "sweep" ]; then
         say "sweep must run as root"; exit 1
     fi
     say "CAVEAT: pids and start times are read from THIS host's /proc; with bpffs shared into containers, sweep from the namespace that owns the servers"
-    HOST_BOOT_ID="$(tr -d '-' < /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+    HOST_BOOT_ID="$(tr -d '-' < /proc/sys/kernel/random/boot_id 2>/dev/null)"
     SWEPT=0
     for PIN_ROOT in /sys/fs/bpf/rocketnet_xdp_*; do
         [ -e "$PIN_ROOT" ] || continue
@@ -1253,7 +1562,7 @@ if [ "$MODE" = "sweep" ]; then
         else
             # fields resume after the LAST ')' -- comm may contain
             # anything, including a ') ' -- matching the C recorder exactly
-            LIVE_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$PIN_PID/stat 2>/dev/null || true)"
+            LIVE_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$PIN_PID/stat 2>/dev/null)"
             if [ -z "$LIVE_START" ]; then
                 # rule 5's principle: an unreadable start time is not
                 # PROVABLY stale, and we never delete what we cannot judge
@@ -1282,7 +1591,7 @@ fi
 
 # R1. root (needed to perform, and to read some of what verify reads)
 
-if [ "$(id -u)" != "0" ]; then
+if [ "$CALLER_EUID" != "0" ]; then
     if [ $VERIFY -eq 1 ]; then
         fail "not root (R1): the XDP data plane requires euid 0"
     else
@@ -1296,7 +1605,7 @@ fi
 # 0, and the range parameters must carry a value -- matching the library
 # pre-flight's B1 check exactly
 
-CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
+CMDLINE="$(cat "$FS/proc/cmdline" 2>/dev/null)"
 
 B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)"
 
@@ -1321,7 +1630,7 @@ done
 
 # B2. isolated cpu set
 
-ISOLATED="$(cat /sys/devices/system/cpu/isolated 2>/dev/null || true)"
+ISOLATED="$(cat "$FS/sys/devices/system/cpu/isolated" 2>/dev/null)"
 if [ -n "$ISOLATED" ]; then
     say "isolated cpu set is $ISOLATED (B2)"
 else
@@ -1343,17 +1652,40 @@ if [ -n "$ISOLATED" ]; then
     done
 fi
 
-# B3. NIC transport, reported informationally
+# R2, the device: the interface named, or the parent of its 802.1Q VLAN
+# (THE XDP DEVICE above); everything below acts on it. A refused device ends
+# the run in either mode: no condition below means anything for it.
+
+ADDRESS_INTERFACE="$INTERFACE"
+if command -v ip >/dev/null 2>&1; then
+    RESOLVED="$(xdp_device_resolve "$INTERFACE")"
+    case "$RESOLVED" in
+        "vlan "*)
+            read -r _ INTERFACE VLAN_ID <<< "$RESOLVED"
+            say "$ADDRESS_INTERFACE is 802.1Q VLAN $VLAN_ID on $INTERFACE: the xdp transport attaches to $INTERFACE and tags its frames, so R3 to R7 act on $INTERFACE (R2)"
+            ;;
+        "refused "*)
+            fail "the xdp transport refuses $ADDRESS_INTERFACE: ${RESOLVED#refused } (R2). supported: an untagged interface, or one 802.1Q VLAN device on a physical NIC"
+            say "$MODE FAILED: $UNMET_COUNT unmet condition(s) above"
+            exit 1
+            ;;
+        *) ;;   # plain; or unread, and R2 below names the missing interface
+    esac
+else
+    fail "ip (iproute2) is not installed, so whether $INTERFACE is a VLAN or a stacked device cannot be read (R2)"
+fi
+
+# B3. NIC driver, reported informationally
 
 if command -v ethtool >/dev/null 2>&1; then
-    TRANSPORT_INFO="$(ethtool -i "$INTERFACE" 2>/dev/null | awk '/^transport:|^version:/{printf "%s ", $2}')"
-    [ -n "$TRANSPORT_INFO" ] && say "NIC transport: $TRANSPORT_INFO(B3: build a recent vendor transport where the distro's is too old -- see the header)"
+    TRANSPORT_INFO="$(ethtool -i "$INTERFACE" 2>/dev/null | awk '/^driver:|^version:/{printf "%s ", $2}')"
+    [ -n "$TRANSPORT_INFO" ] && say "NIC driver: $TRANSPORT_INFO(B3: it needs AF_XDP zero copy -- see the header)"
 fi
 
 # R2. interface exists and is up
 
-if [ -d "/sys/class/net/$INTERFACE" ]; then
-    FLAGS="$(cat /sys/class/net/$INTERFACE/flags 2>/dev/null || echo 0)"
+if [ -d "$FS/sys/class/net/$INTERFACE" ]; then
+    FLAGS="$(cat "$FS/sys/class/net/$INTERFACE/flags" 2>/dev/null || echo 0)"
     if [ $(( FLAGS & 1 )) -eq 1 ]; then
         say "interface $INTERFACE present and up (R2)"
     else
@@ -1412,8 +1744,8 @@ if [ "$MODE" = "repin" ]; then
     while :; do
         SLOT="$(r3_query_and_grade "$INTERFACE" || echo unknown)"
         CARRIER="$(cat "/sys/class/net/$INTERFACE/carrier" 2>/dev/null || echo 0)"
-        QUEUE_VECTORS="$(queue_irq_lines_for_interface "$INTERFACE" < /proc/interrupts 2>/dev/null || true)"
-        VECTOR_COUNT=$(printf '%s\n' "$QUEUE_VECTORS" | grep -c . || true)
+        QUEUE_VECTORS="$(queue_irq_lines_for_interface "$INTERFACE" < /proc/interrupts 2>/dev/null)"
+        VECTOR_COUNT=$(printf '%s\n' "$QUEUE_VECTORS" | grep -c .)
         if [ "$SLOT" = "occupied" ] && [ "$CARRIER" = "1" ] && [ "$VECTOR_COUNT" -eq "$NUM_QUEUES" ]; then
             break
         fi
@@ -1450,7 +1782,7 @@ if [ "$MODE" = "repin" ]; then
             continue
         fi
         CPU="${ISOLATED_CPUS[$QUEUE]}"
-        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
         if [ "$CURRENT" = "$CPU" ]; then
             say "irq $IRQ (queue $QUEUE) already pinned to cpu $CPU (repin)"
         else
@@ -1462,7 +1794,7 @@ if [ "$MODE" = "repin" ]; then
         case "$QUEUE_IRQS" in
             *" $IRQ "*) continue ;;
         esac
-        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
         case "$WORKER_CPUS" in
             *" $CURRENT "*)
                 if [ -z "$HOUSEKEEPING" ]; then
@@ -1477,7 +1809,7 @@ if [ "$MODE" = "repin" ]; then
     while read -r IRQ QUEUE; do
         [ -n "$IRQ" ] || continue
         [ "$QUEUE" -lt "$NUM_QUEUES" ] || continue
-        READ_BACK="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        READ_BACK="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
         [ "$READ_BACK" = "${ISOLATED_CPUS[$QUEUE]}" ] || fail "irq $IRQ (queue $QUEUE) reads '$READ_BACK' after repin, want ${ISOLATED_CPUS[$QUEUE]}"
     done <<< "$QUEUE_VECTORS"
     if [ $UNMET -eq 1 ]; then
@@ -1517,20 +1849,20 @@ r7_enforce
 # rocketnet_server_socket_interrupt_line_matches_interface is the C form.
 
 INTERRUPTS_READABLE=0
-if [ ! -r /proc/interrupts ]; then
+if [ ! -r "$FS/proc/interrupts" ]; then
     # silence must never verify: an unreadable interrupt table is unmet,
     # exactly as the pre-flight refuses it
-    fail "/proc/interrupts is unreadable (R4): irq pinning can be neither performed nor verified"
+    fail "$FS/proc/interrupts is unreadable (R4): irq pinning can be neither performed nor verified"
     IRQS=""
 else
     INTERRUPTS_READABLE=1
-    IRQS="$(irq_lines_for_interface "$INTERFACE" < /proc/interrupts || true)"
+    IRQS="$(irq_lines_for_interface "$INTERFACE" < "$FS/proc/interrupts")"
 fi
 if [ ${#ISOLATED_CPUS[@]} -gt 0 ] && [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
     fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (B1/R4 scale together): one queue wants one isolated core"
 fi
 
-IRQ_COUNT=$(echo "$IRQS" | grep -c . || true)
+IRQ_COUNT=$(echo "$IRQS" | grep -c .)
 
 if [ -z "$IRQS" ]; then
     [ $INTERRUPTS_READABLE -eq 1 ] && say "no /proc/interrupts line names $INTERFACE (R4): either this NIC has no per-queue vectors, or its transport's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be performed or verified BY NAME here; pin and verify via the NIC transport's own tooling"
@@ -1545,7 +1877,7 @@ else
     SEEN_CPUS=()
     for IRQ in $IRQS; do
         CPU="${ISOLATED_CPUS[$INDEX]}"
-        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        CURRENT="$(cat "$FS/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null)"
         if [ $VERIFY -eq 1 ]; then
             # ONE logic path (ruled on the #110 gate, round five): every
             # branch classifies the CURRENT affinity and every single-cpu
@@ -1574,7 +1906,7 @@ else
             say "irq $IRQ already pinned to cpu $CPU (R4)"
         else
             say "pinning irq $IRQ to cpu $CPU (R4)"
-            echo "$CPU" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $CPU (R4)"
+            echo "$CPU" > "$FS/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $CPU (R4)"
         fi
         INDEX=$(( INDEX + 1 ))
     done
@@ -1582,8 +1914,8 @@ fi
 
 # R5. busy-poll pair
 
-NAPI_DEFER="/sys/class/net/$INTERFACE/napi_defer_hard_irqs"
-GRO_FLUSH="/sys/class/net/$INTERFACE/gro_flush_timeout"
+NAPI_DEFER="$FS/sys/class/net/$INTERFACE/napi_defer_hard_irqs"
+GRO_FLUSH="$FS/sys/class/net/$INTERFACE/gro_flush_timeout"
 
 if [ -f "$NAPI_DEFER" ]; then
     if [ "$(cat $NAPI_DEFER)" = "2" ]; then
@@ -1613,7 +1945,7 @@ fi
 
 # R6. smt off (belt-and-braces under B1's nosmt)
 
-SMT_CONTROL=/sys/devices/system/cpu/smt/control
+SMT_CONTROL="$FS"/sys/devices/system/cpu/smt/control
 if [ -f "$SMT_CONTROL" ]; then
     SMT="$(cat $SMT_CONTROL)"
     case "$SMT" in

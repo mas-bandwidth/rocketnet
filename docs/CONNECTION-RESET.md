@@ -23,7 +23,7 @@ naming `<struct>.<member>`.
 | | `state` | terminal state / disconnect reason | KEEP | observable until the next connection attempt |
 | | `token`, `signed_fields`, `server_address` | parsed attempt and server | RESET | belongs to one attempt |
 | | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie`, `latest_cookie`, `has_latest_cookie`, `send_latest_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
-| | `session_nonce`, `keys`, `stored_response` | session key state | RESET | one session only; key copies retire before erasure |
+| | `keys`, `stored_response` | session key state | RESET | one session only; key copies retire before erasure |
 | | `client_index`, `max_clients` | assigned server slot | RESET | learned by this session |
 | | handshake/session sequences | wire sequence spaces | RESET | fresh sequence spaces start at one |
 | | replay windows, `integrity_failures` | receive security state | RESET | old traffic must not affect a new session |
@@ -78,6 +78,7 @@ other session state.
 | | other slots, server totals, transport/config and counters | server-wide state | KEEP | lifetime state or another connection |
 | message connection / endpoint | the client table's message and channel fields | per-slot message state | RESET | endpoint reset makes the slot fresh |
 | | `disconnect_reason` | last connection's reason | KEEP | cleared only when a new id is observed |
+| | `open` | the message open on the slot | KEEP through the reset | a start still open is cancelled before the reset (`rn_message_connection_cancel_at_reset`), so the reset finds it closed |
 
 The server reset wipes the encryption mapping's secrets and removes it while the slot still
 names it, releases identity and user data, clears the connection id, compacts
@@ -125,7 +126,7 @@ material is overwritten in place with `sodium_memzero`:
 - Client protocol reset (`rocketnet_client_protocol_wipe_secrets`):
   `keys` (`session_client_to_server`, `session_server_to_client`, `cookie_key`),
   `token`, `client_ephemeral_secret_key` (also erased immediately after
-  challenge processing), and `session_nonce`.
+  challenge processing).
 - Client I/O open-key copy (`rocketnet_client_io_drop_keys`):
   `session_server_to_client`, `connection_salt`, and `packet_filter`. When a
   background I/O thread owns `client_io.open`, `retire_keys` publishes

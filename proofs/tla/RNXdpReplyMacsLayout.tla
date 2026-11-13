@@ -12,13 +12,16 @@
 (* Every probe sequence starts at the address's home slot (the FNV hash,   *)
 (* rocketnet_xdp_reply_macs_slot, chosen here at Init from every map of    *)
 (* addresses to slots, so every collision pattern is checked) and runs at  *)
-(* most P slots, wrapping modulo N.                                        *)
+(* most P slots, wrapping modulo N.  Under HomesGiven the addresses are    *)
+(* numbers and each one's home is its value modulo N: the trace check      *)
+(* names each address by the code's hash of it plus a multiple of N.       *)
 (*                                                                         *)
 (*   Find(a, s)  rocketnet_xdp_reply_macs_find_state: the first slot of    *)
 (*               state s holding a, stopping at the first EMPTY slot       *)
 (*   Learn       rocketnet_xdp_reply_macs_learn: the address's LIVE entry, *)
-(*               else its ANSWERED one, else the first slot of the window  *)
-(*               not LIVE, else the LIVE entry learned longest ago         *)
+(*               else its ANSWERED one, else the first EMPTY slot of the   *)
+(*               window, else the ANSWERED entry of the window answered    *)
+(*               longest ago, else the LIVE entry learned longest ago      *)
 (*   Answer      rocketnet_xdp_reply_mac with a usable answered MAC and no *)
 (*               learned entry: rocketnet_xdp_reply_macs_answer, the       *)
 (*               address's ANSWERED entry, else the first EMPTY slot of    *)
@@ -26,6 +29,11 @@
 (*               else not kept                                             *)
 (*   Forget      rocketnet_xdp_reply_macs_forget: LIVE becomes ANSWERED    *)
 (*   Reset       rocketnet_xdp_reply_macs_reset with no gateway            *)
+(*   Ignore      rocketnet_xdp_reply_macs_learn of an unusable MAC         *)
+(*   ReplyLearned, ReplyAnswered, Refuse  rocketnet_xdp_reply_mac giving   *)
+(*               the learned MAC, the answered entry's MAC (no frame), or  *)
+(*               none: calls that change nothing, so the trace check can   *)
+(*               name them (TraceRNXdpReplyMacsLayout.tla)                 *)
 (*                                                                         *)
 (* The code has no tombstone state: a forget leaves an ANSWERED entry in   *)
 (* place.  Nothing ever returns a used slot to EMPTY but a reset of the    *)
@@ -43,6 +51,9 @@
 (*                     treated as empty                                    *)
 (*   EvictOldest       learn evicts the LIVE entry learned last, not first *)
 (*   InsertWindowExact learn's insert probes P + 1 slots, the lookups P    *)
+(*   LearnTakesEmptyFirst  learn takes the first slot of the window that   *)
+(*                     is not LIVE, another address's ANSWERED entry       *)
+(*                     before an EMPTY slot further on (the code before)   *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -54,10 +65,14 @@ CONSTANTS
     SkipOtherEntries,   \* find_state goes on past a slot that is not EMPTY and not a match
     EvictOldest,        \* learn's eviction takes the smallest learned stamp
     InsertWindowExact,  \* learn's insert loop probes P slots, as the lookups do
-    NOADDR              \* the address field of a never-used slot (a model value)
+    LearnTakesEmptyFirst, \* learn's insert takes an EMPTY slot before another address's ANSWERED entry
+    NOADDR,             \* the address field of a never-used slot (a model value)
+    NOMAC,              \* the MAC field of a never-used slot, the zero bytes (a model value)
+    HomesGiven          \* Addrs are numbers, each one's home its value modulo N (the trace check)
 
 ASSUME N \in Nat \ {0} /\ P \in 1..N
-ASSUME \A f \in {SkipOtherEntries, EvictOldest, InsertWindowExact} : f \in BOOLEAN
+ASSUME \A f \in {SkipOtherEntries, EvictOldest, InsertWindowExact, LearnTakesEmptyFirst, HomesGiven} : f \in BOOLEAN
+ASSUME HomesGiven => Addrs \subseteq Nat
 
 Slots == 0..(N - 1)
 EMPTY == "empty"
@@ -101,11 +116,18 @@ Lookup(a) ==
 
 LearnWindow == IF InsertWindowExact THEN P ELSE P + 1
 
-\* learn's insert: the first slot of the window that is not LIVE, else the
-\* oldest LIVE one (the window is then all LIVE)
+\* learn's insert: the first EMPTY slot of the window, else the oldest
+\* ANSWERED one, else the oldest LIVE one (the window is then all LIVE);
+\* ~LearnTakesEmptyFirst is the code before, the first slot not LIVE
 LearnFree(a) == { i \in 0..(LearnWindow - 1) : st[Probe(a, i)] # LIVE }
+LearnEmpty(a) == { i \in 0..(LearnWindow - 1) : st[Probe(a, i)] = EMPTY }
+LearnOld(a) == { Probe(a, i) : i \in 0..(LearnWindow - 1) } \cap { x \in Slots : st[x] = ANSWERED }
 LearnSlot(a) ==
-    IF LearnFree(a) # {}
+    IF LearnTakesEmptyFirst /\ LearnEmpty(a) # {}
+    THEN Probe(a, CHOOSE i \in LearnEmpty(a) : \A j \in LearnEmpty(a) : i <= j)
+    ELSE IF LearnTakesEmptyFirst /\ LearnOld(a) # {}
+    THEN CHOOSE x \in LearnOld(a) : \A y \in LearnOld(a) : stamp[x] <= stamp[y]
+    ELSE IF ~LearnTakesEmptyFirst /\ LearnFree(a) # {}
     THEN Probe(a, CHOOSE i \in LearnFree(a) : \A j \in LearnFree(a) : i <= j)
     ELSE LET W == { Probe(a, i) : i \in 0..(LearnWindow - 1) }
          IN IF EvictOldest
@@ -131,10 +153,10 @@ Displace(x, a, new) ==
                       ELSE abs[b] ]
 
 Init ==
-    /\ home \in [ Addrs -> Slots ]
+    /\ home \in IF HomesGiven THEN { [ a \in Addrs |-> a % N ] } ELSE [ Addrs -> Slots ]
     /\ st = [ s \in Slots |-> EMPTY ]
     /\ addr = [ s \in Slots |-> NOADDR ]
-    /\ mac = [ s \in Slots |-> CHOOSE m \in Macs : TRUE ]
+    /\ mac = [ s \in Slots |-> NOMAC ]
     /\ stamp = [ s \in Slots |-> 0 ]
     /\ count = 0
     /\ abs = [ a \in Addrs |-> None ]
@@ -156,7 +178,9 @@ Learn(a, m) ==
           /\ abs' = IF found THEN [ abs EXCEPT ![a] = Entry(LIVE, m) ]
                     ELSE Displace(x, a, Entry(LIVE, m))
           /\ badEviction' = (badEviction \/
-                              (evicts /\ \E y \in W : st[y] = LIVE /\ stamp[y] < stamp[x]))
+                              (evicts /\ \E y \in W : st[y] = LIVE /\ stamp[y] < stamp[x]) \/
+                              (~found /\ st[x] = ANSWERED /\
+                               \E y \in W : st[y] = EMPTY \/ (st[y] = ANSWERED /\ stamp[y] < stamp[x])))
     /\ UNCHANGED home
 
 \* rocketnet_xdp_reply_mac with a usable answered MAC and no gateway: a
@@ -191,16 +215,49 @@ Forget(a) ==
 Reset ==
     /\ st' = [ s \in Slots |-> EMPTY ]
     /\ addr' = [ s \in Slots |-> NOADDR ]
-    /\ mac' = [ s \in Slots |-> CHOOSE m \in Macs : TRUE ]
+    /\ mac' = [ s \in Slots |-> NOMAC ]
     /\ stamp' = [ s \in Slots |-> 0 ]
     /\ count' = 0
     /\ abs' = [ a \in Addrs |-> None ]
     /\ UNCHANGED <<home, badEviction>>
 
+\* The calls below change nothing; they are actions so that the trace check
+\* names each one and checks it changed nothing.
+
+\* rocketnet_xdp_reply_macs_learn of a zero or multicast MAC: ignored
+Ignore(a) ==
+    UNCHANGED vars
+
+\* rocketnet_xdp_reply_mac of a learned address: its learned MAC m, with or
+\* without an answered MAC, and nothing kept
+ReplyLearned(a, m) ==
+    /\ Find(a, LIVE) # -1
+    /\ mac[Find(a, LIVE)] = m
+    /\ UNCHANGED vars
+
+\* rocketnet_xdp_reply_mac with no answered MAC (no frame in hand) for an
+\* address that is not learned: its answered entry's MAC m
+ReplyAnswered(a, m) ==
+    /\ Find(a, LIVE) = -1
+    /\ Find(a, ANSWERED) # -1
+    /\ mac[Find(a, ANSWERED)] = m
+    /\ UNCHANGED vars
+
+\* rocketnet_xdp_reply_mac returning no MAC for an address that is not
+\* learned: framed, the answered MAC was zero or multicast; not framed, there
+\* was none and the address has no answered entry
+Refuse(a, framed) ==
+    /\ Find(a, LIVE) = -1
+    /\ framed \/ Find(a, ANSWERED) = -1
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E a \in Addrs, m \in Macs : Learn(a, m) \/ Answer(a, m)
     \/ \E a \in Addrs : Forget(a)
     \/ Reset
+    \/ \E a \in Addrs : Ignore(a)
+    \/ \E a \in Addrs, m \in Macs : ReplyLearned(a, m) \/ ReplyAnswered(a, m)
+    \/ \E a \in Addrs, framed \in BOOLEAN : Refuse(a, framed)
 
 Spec == Init /\ [][Next]_vars
 
@@ -218,7 +275,7 @@ TypeOK ==
     /\ home \in [ Addrs -> Slots ]
     /\ st \in [ Slots -> States ]
     /\ addr \in [ Slots -> Addrs \cup {NOADDR} ]
-    /\ mac \in [ Slots -> Macs ]
+    /\ mac \in [ Slots -> Macs \cup {NOMAC} ]
     /\ count \in Nat
 
 \* every lookup returns what the contract says: the learned MAC while the
@@ -237,7 +294,8 @@ NoEntryPastEmpty ==
                               /\ \A j \in 0..(i - 1) : st[Probe(addr[x], j)] # EMPTY
 
 \* an eviction takes only the entry of its kind longest unrenewed in the
-\* window, and an answer never displaces a learned entry
+\* window, a learn takes another address's answered entry only when its
+\* window has no EMPTY slot, and an answer never displaces a learned entry
 EvictOnlyOldest == ~badEviction
 
 =============================================================================

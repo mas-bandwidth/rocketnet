@@ -908,6 +908,16 @@ static void test_conditions_values_follow_a_dark_remote_endpoint()
 
 REGISTER_UNIT_TEST( test_conditions_values_follow_a_dark_remote_endpoint );
 
+// the heard age of no transport is -1, as for one with nothing heard
+
+static void test_conditions_heard_age_of_no_transport()
+{
+    check( rocketnet_server_transport_heard_age( NULL, 0 ) == -1.0 );
+    check( rocketnet_client_transport_heard_age( NULL ) == -1.0 );
+}
+
+REGISTER_UNIT_TEST( test_conditions_heard_age_of_no_transport );
+
 // ---------------------------------------------------------------------------
 // m1.7 through the public API: a start that finds no room is refused at each
 // send path, nothing accepted is lost across a refusal, and no amount or
@@ -1436,6 +1446,7 @@ struct hammer_t
 {
     bool open;
     int open_bytes;
+    int open_slot;              // the server slot the open message is on
     uint64_t room_refusals;
     uint64_t given;
     uint64_t records;         // refusing calls whose before and after were compared
@@ -1566,7 +1577,8 @@ static void hammer_snap_expect( const hammer_snap_t * before, const hammer_snap_
 
 // an abort, or a finish whose size is refused, releases the open message.
 // While it was open every room answer of its handle was no (a start would be
-// refused: one message open per client, one per server); after, they are as
+// refused: one message open per client, and on the server one per client
+// index, so only the open slot's answers); after, they are as
 // before the start (nothing could take that room meanwhile: no other start
 // succeeds and no frame runs while a message is open) and everything else is
 // as it was before this call. `client` names the client whose message was
@@ -1585,14 +1597,13 @@ static void hammer_snap_expect_released( const hammer_t * h, const hammer_snap_t
     }
     else
     {
-        for ( int s = 0; s < HAMMER_SLOTS; s++ )
+        const int s = h->open_slot;
+        check( s >= 0 && s < HAMMER_SLOTS );
+        for ( int k = 0; k < HAMMER_ASKS; k++ )
         {
-            for ( int k = 0; k < HAMMER_ASKS; k++ )
-            {
-                check( !before->slot_can[s][k] );
-            }
+            check( !before->slot_can[s][k] );
         }
-        memcpy( expect.slot_can, h->at_open.slot_can, sizeof( expect.slot_can ) );
+        memcpy( expect.slot_can[s], h->at_open.slot_can[s], sizeof( expect.slot_can[s] ) );
     }
     hammer_snap_expect( &expect, after, -1, -1, 0, 0 );
 }
@@ -1731,7 +1742,14 @@ static void hammer_server_step( const refuse_world_t * w, int connected_slot, ha
 {
     const hammer_args_t a = hammer_args( w );
     const int indices[] = { connected_slot, connected_slot, connected_slot, w->empty_slot, -1, 3, INT_MAX, INT_MIN };
-    const int index = indices[hammer_rand() % ( sizeof( indices ) / sizeof( indices[0] ) )];
+    int index = indices[hammer_rand() % ( sizeof( indices ) / sizeof( indices[0] ) )];
+    if ( h->open && index >= 0 && index < 3 && index != h->open_slot && rocketnet_server_client_connected( w->server, index ) )
+    {
+        // one message open per client index: a start on another connected
+        // slot would open a second, which this one-thread walk does not model
+        // (tests/wide_fill_cases.cpp does); it asks the open slot instead
+        index = h->open_slot;
+    }
     const bool in_range = index >= 0 && index < 3;
     const bool connected = in_range && rocketnet_server_client_connected( w->server, index );
     const uint32_t what = hammer_rand() % 10;
@@ -1769,6 +1787,7 @@ static void hammer_server_step( const refuse_world_t * w, int connected_slot, ha
             memset( p, 0x6E, (size_t) a.bytes );
             h->open = true;
             h->open_bytes = a.bytes;
+            h->open_slot = index;
             h->given++;
             h->at_open = before;
             return;

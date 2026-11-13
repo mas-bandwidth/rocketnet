@@ -3,13 +3,14 @@
 # sodium compiled the same way (sodium/ is part of the build; the default
 # config uses it, so every linked object is instrumented). tools/run_msan.sh
 # is the one command. A clean run prints "MSan: clean". The script fails when a
-# finding is not listed in tools/msan_known.txt, when a test crashes or fails,
-# or when the run stops without a test fail line; a listed finding does not
-# fail the script (MSan's exitcode is 0, so the suite runs every test). The
-# C++ library is the MSan-instrumented libc++ the fleet installs under
-# /opt/msan-libcxx-<clang version> (tools/build_msan_libcxx.sh); a runner
-# without it fails with a TOOL-MISSING line. The job stays continue-on-error
-# until it has gated green on the fleet for a while (after v1.0.0-preview-2).
+# finding is not listed in tools/msan_known.txt, when an entry there names no
+# in-tree frame, when a test crashes or fails, or when the run stops without a
+# test fail line; a listed finding does not fail the script (MSan's exitcode
+# is 0, so the suite runs every test). The C++ library is the MSan-instrumented
+# libc++ the fleet installs under /opt/msan-libcxx-<clang version>
+# (tools/build_msan_libcxx.sh); a runner without it fails with a TOOL-MISSING
+# line. The job gates: a red MSan run is a red run (no continue-on-error; it
+# hid a red job inside green runs until 2026-11-12).
 name: msan
 
 # NIGHTLY TIER (2026-10-31): 172-187s on the fleet, over the per-commit
@@ -22,7 +23,7 @@ on:
 concurrency:
   # each main commit queues in its own group: pending runs on main are
   # replaced, not queued, so a burst of landings leaves every commit a verdict
-  group: msan-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: msan-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   # main never cancels a run in progress: every merge gets a verdict.
   # Branches and PRs still cancel a superseded run.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -35,12 +36,15 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   msan:
     name: MemorySanitizer
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
-    continue-on-error: true
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

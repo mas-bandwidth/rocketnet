@@ -425,6 +425,7 @@ REGISTER_UNIT_TEST( test_watermark_resets_on_ordered_delivery );
 REGISTER_UNIT_TEST( test_held_newest_ahead_of_epoch );
 REGISTER_UNIT_TEST( test_reliable_sequenced_uses_shared_watermark );
 REGISTER_UNIT_TEST( test_hold_full_drops_and_counts );
+UNIT_TEST_SKIPPED_UNLESS( test_hold_full_drops_and_counts, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_large_future_state_drops_without_violation );
 REGISTER_UNIT_TEST( test_never_takes_a_reliable_number );
 REGISTER_UNIT_TEST( test_large_state_promotes_to_reliable_sequenced );

@@ -269,7 +269,7 @@ static void test_packet_builder_no_allocation_after_create()
 
     // the hot path: write packets, dispatch records, feed acks, end the update.
     // each update queues its items afresh: the builder skips an item it marked
-    // taken (rn_builder_writable, sdk/rocketnet_packet_builder.cpp:139).
+    // taken (rn_builder_writable, sdk/rocketnet_packet_builder.cpp).
 
     for ( int update = 0; update < 8; update++ )
     {
@@ -1099,6 +1099,7 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
 REGISTER_UNIT_TEST( test_small_records_packed_several_per_packet );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
+UNIT_TEST_SKIPPED_UNLESS( test_builder_obeys_budget_and_class_order, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );
 REGISTER_UNIT_TEST( test_message_record_valid_takes_each_edge );

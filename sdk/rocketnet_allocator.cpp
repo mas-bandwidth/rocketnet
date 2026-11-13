@@ -888,9 +888,11 @@ static void rn_region_send_refuse( rn_region_t * region, int fit )
             rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
             break;
         case RN_SEND_FIT_QUEUE_FULL:
+            region->room_refusals++;
             rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
             break;
         case RN_SEND_FIT_STORE_FULL:
+            region->room_refusals++;
             rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
             break;
         default:

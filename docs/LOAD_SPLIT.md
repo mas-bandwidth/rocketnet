@@ -5,7 +5,7 @@ one machine and disjoint client shards on other machines. The established
 same-process `load` executable remains the correctness gate; its pass receipt
 does not qualify dedicated-server performance. This split harness currently
 supports at most the build's `ROCKETNET_MAX_CLIENTS` (1000 by default). Use the 10, 100, 250, 500,
-1000 ladder with the SDK-default profile. A higher cap needs separate SDK
+1000 series with the SDK-default profile. A higher cap needs separate SDK
 configuration and validation work.
 
 Build the **same exact source revision** on every host with the development
@@ -299,7 +299,7 @@ phase, and exact-log allocation record. Missing or contradictory timing
 evidence is invalid evidence, not a timing-only result. Malformed logs,
 delivery errors, underload, resource imbalance, bandwidth excess, or
 allocation gaps report `non_timing_verdict=FAIL` and never authorize a
-performance-ladder continuation. A runner may continue to the next rung
+performance-series continuation. A runner may continue to the next rung
 only when `non_timing_verdict=PASS` and should retain the overall FAIL and
 timing evidence in its report.
 
@@ -480,3 +480,32 @@ A proof run's logs and allocation manifest are operator artifacts: keep them
 with the run's receipt. The merger's exit status and its
 `split_proof_cell: verdict=PASS` line are the run's proof; the timing verdict
 beside it is the server API budget, judged at full load and not by this cell.
+
+### Same-host smoke
+
+`scripts/split-smoke` runs the proof load end to end on one host: one server
+and two client shards on loopback, every role on the portable transport, then
+the merger over the three logs. It proves that every stream joins across
+roles, that every delivery happens once and that every receipt is accounted
+for. It is never a qualification: every role shares one host.
+
+```text
+scripts/split-smoke --bin ./bin/load_split --dir build/split-smoke
+```
+
+Its allocation manifest names `"allocation_type": "same_host_smoke"` for
+every role. Each shard has the server's `host_id` and its own
+`allocation_id`. The merger takes that manifest only with `--same-host-smoke`,
+and only with `--load proof`. With the flag, a qualification manifest is
+refused, and a manifest without the flag is refused the same way. Under the
+flag the merger prints `split_smoke_cell:` in place of `split_proof_cell:`,
+and its JSON names `"qualification": "same_host_smoke"`.
+
+The smoke passes only when:
+
+- both shards exit 0;
+- the server exits 0 or 1 (1 is the timing verdict, which this smoke does not
+  judge);
+- the merger prints `split_smoke_cell: verdict=PASS`.
+
+The nightly soak job runs it on Linux.

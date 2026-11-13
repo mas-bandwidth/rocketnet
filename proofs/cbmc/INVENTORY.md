@@ -35,11 +35,12 @@ after the recorded run.
 
 | Target / harness | Checker and source binding | Property and assumptions | Bound and unwind | Reachability / negative control | Exact-head status |
 | --- | --- | --- | --- | --- | --- |
-| `replay-near-4096` / `harness_replay_near_partition_completeness`, `harness_replay_near_nw_*`, `harness_replay_near_wrap_*` | CBMC 6.6.0 + CaDiCaL 2.1.3; includes current `sdk/rocketnet_replay.cpp` | For symbolic `sequence > highest_opened`, delta below the deployed 4096-bit history, and an arbitrary selected word, the production advance clears exactly the skipped ring bits, sets the received bit, and advances the high mark. Partitioned across 13 disjoint/exhaustive clear-loop-shape and selected-word relation cases (`0..12`). `highest_opened < UINT64_MAX` prevents only arithmetic wrap outside this operation's contract. | Full delta 1..4095 across the 13 disjoint/exhaustive partitions; 64 window words; global unwind 65 covers 64-word initialization and every production range-clear path. | `harness_replay_near_partition_completeness` proves pairwise disjointness, joint exhaustiveness, and witness membership (`0 of 429 failed`). All 13 concrete intended-failure controls fail solely on `replay path reachability negative control` (`1 of 431 failed`). | **HOLD** in `full-bounds-partition-results.md`: completeness (`0 of 429 failed`) and partitions 0..4 (`nw_empty_clear` and all four `nw_single_partial_*`, `0 of 431 failed` each) plus their 5 negative controls passed at full `REPLAY_DELTA_BOUND=4096, --unwind 65`; partition 5 (`nw_multi_first_word`) timed out (`HOLD`, exit 124). |
+| `replay-near-4096` / `harness_replay_near_partition_completeness`, `harness_replay_near_nw_*`, `harness_replay_near_wrap_*` | CBMC 6.6.0 + CaDiCaL 2.1.3; includes current `sdk/rocketnet_replay.cpp` | For symbolic `sequence > highest_opened`, delta below the deployed 4096-bit history, and an arbitrary selected word, the production advance clears exactly the skipped ring bits, sets the received bit, and advances the high mark. Partitioned across 13 disjoint/exhaustive clear-loop-shape and selected-word relation cases (`0..12`). `highest_opened < UINT64_MAX` prevents only arithmetic wrap outside this operation's contract. | Full delta 1..4095 across the 13 disjoint/exhaustive partitions; 64 window words; global unwind 65 covers 64-word initialization and every production range-clear path. | `harness_replay_near_partition_completeness` proves pairwise disjointness, joint exhaustiveness, and witness membership (`0 of 429 failed`). All 13 concrete intended-failure controls fail solely on `replay path reachability negative control` (`1 of 431 failed`). | **PASS** nightly: run 43162404799 (2026-11-12, at ee94e6fbf), completeness and all 13 partitions green, each job's control failing as it must. Earlier, `full-bounds-partition-results.md` recorded partition 5 (`nw_multi_first_word`) timing out at CBMC_REPLAY_TIMEOUT=600 (`HOLD`, exit 124). |
 | `replay-delta-1-3` / `harness_replay_near` | CBMC 6.6.0; includes current `sdk/rocketnet_replay.cpp` | Quick per-commit reduced-bound instance of `harness_replay_near` admitting deltas 1..3. | Reduced delta 1..3 (`REPLAY_DELTA_BOUND=4`); 64 words; unwind 65. | Covered by `nw_empty_clear` and `nw_single_partial_*` concrete reachability controls. | **PASS** at `d5dd954f` (`0 of 431 failed`, `VERIFICATION SUCCESSFUL` in `full-bounds-partition-results.md`). |
 | `replay-far` / `harness_replay_far` | CBMC 6.6.0; includes current `sdk/rocketnet_replay.cpp` | For delta at least 4096, the production advance clears every word, sets only the received bit, and advances the high mark. The high mark is restricted only enough to make the subtraction defined. | Full far range; 64 words; unwind 65. | All 64 result words are asserted. | **PASS** at `d5dd954f` (`0 of 431 failed`, `VERIFICATION SUCCESSFUL` in `full-bounds-partition-results.md`). |
 | `reconstruct` | CBMC 6.6.0; includes current `sdk/rocketnet_protocol.cpp` and `sdk/rocketnet_message.h` | `rocketnet_reconstruct_near` and `rocketnet_reconstruct_sequence` (32-bit) and `rocketnet_message_u24_delta` (the 24-bit message number `rn_window_receive_accept` reconstructs) keep the wire low bits, select the documented nearest candidate, and round-trip an in-window value. | One arithmetic step; unwind 1. | `reconstruct-reachability` must fail only its named control (`1 of 609 failed`). A tie rule turned around in `rocketnet_reconstruct_near` or `rocketnet_message_u24_delta` fails the round-trip assertions. | **PASS** at `59752f6` on hulk: `0 of 608 failed`; reachability `1 of 609 failed` only on the intended assertion, wrapper EXPECTED FAILURE. Current and historical evidence: [reconstruct-results.md](reconstruct-results.md). |
-| `ack-run-bound-8`, `ack-run-full-4096` / `harness_ack_apply_run` | ESBMC 8.5.0 C++17; includes current `sdk/rocketnet_ack.cpp` and calls its static production leaf | A symbolic in-window run has matching live records and exact `sent_written`, `sent_held`, and `sent_unacked` identities; each record's prior ack state is symbolic. Records carry no packet id and use a negative RTT sample. The production bitmap walk must count every and only newly acked record, visit it once, retain live identity, clear unacked identity, produce no unknown/batch-full result, and update `largest_acked_sequence`. | Required run 1..8, then declared retained-window run 1..4096. Run-8 global unwind 65 plus named init 9, popcount 3, bitmap inner 9 / outer 3 and unreachable RTT 1; full unwind 4097 with named init 4097. | `ack-run-negative-control` requires a newly unacked record and negates the observed production visit count after the call. It must fail on the named assertion. | **HOLD** at the `59752f6` type-9 integration: actual ACK negative control and positive bound-eight proof remain pending. The deliberately short pre-type9 initialization control has no completed verdict; observed loop cutoffs are not a proof. `ack-run-bound-8` and `ack-run-negative-control` run each night on studio (`.github/workflows/nightly-ack-proof.yml`: 512 GB machine, 384 GiB limit per proof, ESBMC built from pinned source by `tools/build_pinned_esbmc.sh`); a night without `VERIFICATION SUCCESSFUL` and `EXPECTED FAILURE` is red. At a26abaf8 on vision, `ack-run-bound-8` and `ack-run-negative-control` each stop `HOLD out of memory` under the target's 16 GB address-space limit (535 s for the pair); run 8 alone with a 48 GB limit exhausts it with Z3 (31 min) and with Bitwuzla (34 min). The endpoint is the full `struct rocketnet_ack_endpoint_t` whatever the run bound (`sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE]`), and its symbolic-index copies are what grow. |
+| `ack-run-bound-8`, `ack-run-full-4096` / `harness_ack_apply_run` | ESBMC 8.5.0 C++17; includes current `sdk/rocketnet_ack.cpp` and calls its static production leaf | A symbolic in-window run has matching live records and exact `sent_written`, `sent_held`, and `sent_unacked` identities; each record's prior ack state is symbolic. Records carry no packet id and use a negative RTT sample. The production bitmap walk must count every and only newly acked record, visit it once, retain live identity, clear unacked identity, produce no unknown/batch-full result, and update `largest_acked_sequence`. | Required run 1..8, then declared retained-window run 1..4096. Run-8 global unwind 65 plus named init 9, popcount 3, bitmap inner 9 / outer 3 and unreachable RTT 1; full unwind 4097 with named init 4097. | `ack-run-negative-control` requires a newly unacked record and negates the observed production visit count after the call. It must fail on the named assertion. | **NO ESBMC VERDICT AT ANY BOUND (2026-11-12)**: ESBMC 8.5 cannot encode this leaf; see "ACK run measurements" below. Never a proof; on no list and in no workflow since 2026-11-12. The bound-8 claim is checked instead by `ack-run-exhaustive-8` (next row), which is exhaustive native testing, not a symbolic proof. `ack-run-full-4096` has never run and is not established by anything. |
+| `ack-run-exhaustive-8` / `ack_run_exhaustive.cpp` | Native C++17 (g++/clang `-O2 -Wall -Wextra -Wpedantic -Werror`); includes current `sdk/rocketnet_ack.cpp` and calls its static production leaf | Every assertion of `harness_ack_apply_run`, checked for every sequence of the run (not one chosen), plus: in the filled neighbourhood the neighbours' unacked bits, records and share of `stats_eligible_unacked` are unchanged, and the whole endpoint is all-zero again after the run and its neighbours are cleared (no write outside them). | Every case of the harness's finite state at run length 1..8: first ring slot 0..4095, length 1..8, every prior-ack pattern, every `highest - low` in [len - 1, 4095], in two neighbourhoods (the rest of the ring empty, as the ESBMC harness has it; and every other slot of the bitmap words the run touches holding a live unacked record of the sequence the window gives it, as production has it), in sequence blocks 0 (start-up: the stats window clamped at 1), 1 and the last below 2^64; 51,258,513,416 cases. Blocks 2 to last - 1 are not run: for `highest >= 4096` the leaf reads sequences only through `% 4096`, differences and comparisons with `highest - 4095` and `highest - 2048`, which a shift by a multiple of 4096 preserves (an argument, not a check). Run lengths 9..4096 are not covered. | `ack-run-exhaustive-negative-control` (visit check negated, must fail); `ack-run-exhaustive-vacuity-plant` (no case reaches the leaf, must report VACUOUS: the coverage counters for cases, wrapped runs, runs straddling the loss-eligibility edge, the start-up regime, filled neighbourhoods and newly acked records must all be non-zero); `ack-run-exhaustive-mutants` (four one-line bugs planted by sed in a copy of the leaf: masked top bit, masked low bits, unacked bit left set, wrapped half of the walk skipped; each must fail, and a sed that no longer applies is HOLD; the masked-low-bits mutant survived the first driver and is caught by this one). Every build stops at its first failure. Planted-violations row `nightly-ack-proof/exhaustive/top-bit` plants the masked-top-bit bug in `sdk/rocketnet_ack.cpp` itself and requires the nightly step to go red. | **PASS** at 76edea48e plus this driver (2026-11-12, MacBook M5 Max, 8 threads): `failures=0`, every coverage counter non-zero. Negative control, vacuity plant and all four mutants as expected. The whole set (seven builds, the full check, the negative control, the plant and four mutants) took 880 s wall, 6076 s CPU, 121 MB peak RSS (the compiler; the check itself holds about 5 MB). The empty-neighbourhood half alone passed earlier on space3 in 67.5 s on 22 threads. Nightly: `.github/workflows/nightly-ack-proof.yml` on the Linux long runners. |
 | `read-write` | CBMC 6.6.0; current inline bodies from `sdk/rocketnet_read_write.h`; copied `rocketnet_copy_string` body from `sdk/rocketnet.cpp` | Integer and byte round trips and bounded string termination. | Eight-byte buffers; unwind 9. | Direct accepted/refused assertions. No retained planted failure. | **PASS** at `d5dd954f` (`0 of 1031 failed`, `VERIFICATION SUCCESSFUL` in `full-bounds-partition-results.md`); copied string body is not source-specific. |
 | `message-read` | CBMC 6.6.0; includes current `sdk/rocketnet_message.cpp` | Reader begin/next never reads beyond a 24-byte symbolic payload; accepted record spans fit the receive buffer; malformed input and a short fixed config body refuse. Limits are symbolic over every value the configuration accepts and below: W and B 1..`1 << 20`, `max_message_bytes` 1..`ROCKETNET_MAX_MESSAGE_BYTES` (1048576). | Payload 24; unwind 8. | `message-read-reachability`; with check 8's block span test removed from `rocketnet_message.cpp` the proof fails `block span fits the ring`. | **PASS** at a26abaf8 on vision (`0 of 1440 failed`, `VERIFICATION SUCCESSFUL`). |
 | `xdp-free-list` | CBMC 6.6.0; includes current `sdk/rocketnet_xdp_free_list.h` | Push/pop preserves exactly the admitted frames; full, out-of-region, and non-4096-aligned pushes refuse. | Capacity 3, four operations; unwind 5. | Refusal branches and list equality asserted. | **PASS** at `d5dd954f` (`0 of 92 failed`, `VERIFICATION SUCCESSFUL` in `full-bounds-partition-results.md`); reduced capacity 3 is not the deployed frame count. |
@@ -62,13 +63,21 @@ after the recorded run.
   ESBMC 8.5.0); both workflows compare the installed `--version` output
   against it and fail with TOOL-MISSING on a mismatch. No container digest
   is pinned, so a run receipt still hashes the actual host binaries.
-- HOLD: `replay-near-4096` remains HOLD at the full bound (partition
-  `nw_multi_first_word` timed out at CBMC_REPLAY_TIMEOUT=600, a third of the
-  Makefile's 1800 s; see `full-bounds-partition-results.md`). Each partition
-  is its own target (`replay-near-4096-<partition>`) and its own job in
-  nightly-proofs.yml, with its unwind derived from ROCKETNET_HISTORY_PACKETS,
-  so the partition that holds is red alone; it is not a per-commit gate until
-  that HOLD clears.
+- `replay-near-4096` is proved at the full bound, nightly: Nightly proofs run
+  43162404799 (2026-11-12, at ee94e6fbf) passed all 13 partitions and the
+  completeness check, 14 jobs, each partition with its reachability control
+  failing as it must. The earlier HOLD (partition `nw_multi_first_word` timed
+  out at CBMC_REPLAY_TIMEOUT=600; `full-bounds-partition-results.md`) is
+  history. Each partition is its own target (`replay-near-4096-<partition>`)
+  and its own job in nightly-proofs.yml, with its unwind derived from
+  ROCKETNET_HISTORY_PACKETS, so a partition that fails is red alone; it is
+  nightly, not a per-commit gate, for its run time.
+- The nightly's reader and partition lists must equal `NIGHTLY-TARGETS`
+  (`check_nightly_targets.sh`, run by the nightly's plan job and by ci.yml's
+  lint job): a reader that drops out of the `*/proof.mk` wildcard is red.
+- `harness_replay_near_nonwrapping` (proof_replay_advance.c) is run only by the
+  hand script `run_replay_paths_lifo.sh`, for its `--paths lifo` measurement;
+  the 13 partitions supersede it as evidence.
 
 ## Soundness rules
 
@@ -78,3 +87,58 @@ reaching negative control, a successful checker verdict, and a retained raw
 receipt. Cryptographic caller proofs cover memory/state behavior only. Native
 tests, fuzzing, sanitizers, TLA correspondence, and production qualification
 remain separate evidence.
+
+## ACK run measurements
+
+2026-11-12, space3 (Ubuntu 24.04, x86_64, 755 GB), ESBMC 8.5.0 (the v8.5
+Linux release, and the same version built by `tools/build_pinned_esbmc.sh`
+with Z3 4.13.3). Raw logs are kept with the review record of that day.
+
+- The nightly's failure. Run 43172277595 (studio, pinned ESBMC 8.5.0,
+  Z3 4.13.3): symex 3820 s, 6012 VCCs, Z3 416 s, then `ERROR: SMT solver
+  failed`; the negative control the same. ESBMC's Z3 back end returns that
+  for any answer other than sat or unsat, so Z3 answered unknown. It was not
+  memory (384 GiB limit, no kill) and not a timeout (none set). Every night
+  from 11-01 to 11-12 ended this way or was cancelled; neither target ever
+  printed a verdict.
+- The cause, isolated with `diag_ack_micro.c` (one static endpoint, one
+  symbolic slot): writing and reading `endpoint.sent[slot]` by index, or
+  through a pointer to the endpoint, solves in under a second with
+  Bitwuzla. A single write through `record = &endpoint.sent[slot]` does not
+  finish in 300 s with Z3 (4.13.3 pinned and the release's), and takes
+  0.04 s with Bitwuzla. Two or more writes through such pointers (MICRO 5
+  and 8) are killed in "Encoding" at 52 to 90 GB with Bitwuzla too. So ESBMC
+  turns each write through a pointer with a symbolic offset into the 260 KB
+  endpoint into a byte-level update of the whole object, and the formula
+  grows by tens of GB per write whatever the solver. The production visit
+  makes one such write (`record->acked = 1`) per newly acked record, plus
+  reads through the same pointer.
+- `diag_ack_micro.c` is a diagnostic, not a proof: it measures how ESBMC
+  encodes writes into the ACK endpoint, and its asserts read back what it
+  wrote. No Makefile target or workflow runs it (CBMC cannot parse it: it
+  includes the C++ leaf). Run one variant by hand from proofs/cbmc with the
+  pinned ESBMC, through a C++ file that includes it as the Makefile's ACK
+  targets do: `printf '#include "%s"\n' "$PWD/diag_ack_micro.c" > /tmp/micro.cpp`,
+  then `esbmc /tmp/micro.cpp --function harness_micro --std c++17 --z3
+  -DROCKETNET_ESBMC -DNDEBUG -DROCKETNET_DEV=1 -I../../sdk --include-file
+  $PWD/esbmc_shim.h -DMICRO=<1..8> -DMICRO_N=<writes>` (add
+  `-DMICRO_LOCAL=1` for a local endpoint; MICRO=1 prints VERIFICATION
+  SUCCESSFUL in seconds with ESBMC 8.5.0). It was named `proof_ack_micro.c`
+  until 2026-11-12; a `proof_*.c` file is one a target runs.
+- The harness made it worse. It wrote 7 record fields and 2 or 3 bitmap
+  words per run element through pointers. It now indexes the endpoint
+  directly; with that, the bound-1 symex takes 400 s.
+- No bound fits. Bound 8 (original harness), Z3 and Bitwuzla: still in
+  symex after 40 min at 61 GB. Bound 1 (direct-index harness, every unwind
+  limited to one visit, Bitwuzla, positive and negative control): symex
+  397 s / 400 s, 1399 VCCs, then `ERROR: Out of memory` at a 150 GB
+  address-space limit after about 15 minutes of encoding. Earlier: 16 GB
+  and 48 GB limits exhausted at a26abaf8 on vision.
+- CBMC 6.6.0 cannot parse the leaf's C++17 (`PARSING ERROR` in
+  `<initializer_list>` and rocketnet.h), so it is not an alternative.
+- What a symbolic proof of this leaf would need: a verifier that keeps a
+  pointer made from `&a[i]` as an index into `a` rather than a byte offset
+  into the enclosing object. CBMC has that, but it needs a C++17 front end
+  it lacks. Or the visit would have to write
+  `endpoint->sent[slot].acked` by index; micro cases 1, 3 and 6 show
+  ESBMC handles that form. That is an SDK change, and none is made here.

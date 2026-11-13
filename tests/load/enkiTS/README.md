@@ -1,0 +1,1 @@
+enkiTS from github.com/mas-bandwidth/enkiTS at 771a0876f7b1b26a9c9381f476b31b08798583cf (src/TaskScheduler.{h,cpp}, src/LockLessMultiReadPipe.h, License.txt), unmodified: tests only, never linked into the SDK. harden_load's space frame shape runs its jobs on it through tests/load/thread_pool.h, the ThreadPool API space game's server uses.

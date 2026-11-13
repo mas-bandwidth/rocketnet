@@ -119,7 +119,7 @@ REGISTER_UNIT_TEST( test_server_stats_current_every_update );
 #define NO_WORKER_PAIR_PAGES        56
 #define NO_WORKER_BUILD_SLOT_BYTES  ( 12 * 1024 )
 #define NO_WORKER_MARGIN_MB         32
-#define NO_WORKER_STATS_CLIENTS     1000
+#define NO_WORKER_STATS_CLIENTS     ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )
 
 static long no_worker_rss_bound_mb_at( uint64_t page_bytes )
 {

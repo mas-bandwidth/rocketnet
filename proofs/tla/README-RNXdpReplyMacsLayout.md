@@ -19,7 +19,11 @@ evictions.
 
 `home` is chosen at `Init` from every map of addresses to slots, so every
 collision pattern is checked. Probe `i` of address `a` is slot
-`(home[a] + i) % N`, for `i < P`.
+`(home[a] + i) % N`, for `i < P`. Under `HomesGiven` (the trace check,
+`TraceRNXdpReplyMacsLayout.tla`) the addresses are numbers and each one's home
+is its value modulo `N`: the walk names each address by the code's hash slot of
+it plus a multiple of `N`. A never-used slot's address and MAC are the model
+values `NOADDR` and `NOMAC`, the zero bytes the reset leaves.
 
 The table has no tombstone state: a forget turns a `LIVE` entry into an
 `ANSWERED` one in place, and nothing returns a used slot to `EMPTY` but a reset
@@ -37,8 +41,9 @@ MAC, else none).
 
 - **`Learn(a, m)`**: `rocketnet_xdp_reply_macs_learn` of a usable MAC: the
   address's `LIVE` entry, else its `ANSWERED` entry
-  (`rocketnet_xdp_reply_macs_find_state`), else the first slot of the window
-  that is not `LIVE`, else the `LIVE` entry with the smallest stamp. The slot
+  (`rocketnet_xdp_reply_macs_find_state`), else the first `EMPTY` slot of the
+  window, else the `ANSWERED` entry with the smallest stamp, else the `LIVE`
+  entry with the smallest stamp. The slot
   becomes `LIVE` with the MAC and the next stamp. A learn that takes another
   address's slot removes that address from the contract.
 - **`Answer(a, m)`**: `rocketnet_xdp_reply_mac` with a usable answered MAC and
@@ -48,6 +53,11 @@ MAC, else none).
 - **`Forget(a)`**: `rocketnet_xdp_reply_macs_forget`: the `LIVE` entry
   becomes `ANSWERED` in place.
 - **`Reset`**: `rocketnet_xdp_reply_macs_reset` with no gateway.
+- **`Ignore(a)`**, **`ReplyLearned(a, m)`**, **`ReplyAnswered(a, m)`**,
+  **`Refuse(a, framed)`**: calls that change nothing, actions so the trace
+  check names each one: a learn of a zero or multicast MAC; a reply giving the
+  learned MAC `m`; a reply with no frame's MAC giving the answered entry's MAC
+  `m`; a reply giving none (`framed`: the frame's MAC was zero or multicast).
 
 The lookups are `rocketnet_xdp_reply_macs_find_state`: from the home slot,
 stop at the first `EMPTY` slot, return the first slot of the state sought
@@ -61,8 +71,10 @@ operators (`Find`, `Lookup`), not actions.
 - **`NoEntryPastEmpty`**: every used slot lies within `P` probes of its
   address's home, with no `EMPTY` slot before it on the way.
 - **`EvictOnlyOldest`**: a learn evicts a `LIVE` entry only from a window
-  that is all `LIVE`, and only the one with the smallest stamp; an answer never
-  takes a `LIVE` slot.
+  that is all `LIVE`, and only the one with the smallest stamp; a learn takes
+  another address's `ANSWERED` entry only from a window with no `EMPTY`
+  slot, and only the one with the smallest stamp; an answer never takes a
+  `LIVE` slot.
 
 ## The instance
 
@@ -92,6 +104,16 @@ counterexample below was checked against the C by hand.
    takes slot 0, `a3` (home 1) slot 1; `a2` (home 0) finds both window slots
    `LIVE` and takes slot 2, offset 2; every lookup of `a2` stops after slots 0
    and 1 and returns nothing, and its next learn would insert a second entry.
+4. **`MCRNXdpReplyMacsLayoutBrokenLearnTakesAnswered.cfg`**
+   (`LearnTakesEmptyFirst = FALSE`): learn's insert taking the first slot of
+   the window that is not `LIVE`, the code before. Violates
+   `EvictOnlyOldest`: `a1` and `a2` share home 0; `a1` is answered into
+   slot 0; learning `a2` takes slot 0 while slot 1 is `EMPTY`, and `a1`'s
+   answered MAC is gone. In the C before, the loop's `candidate->state !=
+   ROCKETNET_XDP_REPLY_MAC_LIVE` took the answered entry, and a reply the
+   link simulator held for `a1` was refused
+   (`test_xdp_transport_reply_mac_learn_keeps_a_colliding_answered_entry` in
+   `tests/test_unit_xdp_reply_macs_simulated.cpp` is that case on the code).
 
 ## Runs
 

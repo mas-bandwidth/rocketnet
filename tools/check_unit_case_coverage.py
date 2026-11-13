@@ -13,24 +13,46 @@ The unit suite (bin/test) registers its cases three ways:
 A registration can sit behind a preprocessor guard, and a whole translation
 unit can be left out of a build by CMakeLists.txt, so a case can compile into
 no configuration CI builds and never run. Each CI job that runs the suite
-saves `bin/test --list` as one list file. This check reads every list file and
-fails on:
+saves what it ran as one file: `bin/test --list`, with the environment of its
+run (`--list` prints the cases a run in that environment starts:
+suite_list_cases, the run's own selection, nightly tier included only under
+ROCKETNET_TEST_NIGHTLY=1), or the suite's own run output as a .log file. This
+check reads every file and fails on:
 
-  * a registered case named in no list (it runs nowhere);
-  * a listed case the scan above did not find (the scan has a blind spot, so
+  * a registered case named in no file (it runs nowhere);
+  * a named case the scan above did not find (the scan has a blind spot, so
     its verdict cannot be trusted);
-  * an expected configuration with no list file, or an empty list.
+  * an expected configuration with no file, or an empty one;
+  * a REGISTER_UNIT_TEST in a tracked C or C++ file that CMakeLists.txt
+    builds into nothing: not one of the tests/test_unit_*.cpp files the
+    unit suite globs, and not a source CMakeLists.txt names (the source
+    audit binary's files). Such a case is invisible to the scan and runs
+    nowhere (VERIFY-3 W10: tests/test_planted_orphan.cpp and
+    tests/functional/test_unit_planted2.cpp each passed).
+
+A file ending .log is the suite's own output from a run (`bin/test` prints
+each case it ran, by name, and `*** ALL TESTS PASSED ***` at the end): only
+the cases that run printed count, and a log without the banner is refused.
+A file ending .txt is a `bin/test --list` listing: what a binary compiles in,
+which is not what it runs (VERIFY-3 W10, VERIFY-4 W1: --list names the
+nightly-tier cases, which a per-commit run leaves out). Lists remain readable
+for the configurations that have not moved to run logs.
+
+The nightly-tier cases (tests/test.cpp, rocketnet_unit_nightly_cases) run in
+nightly.yml's unit nightly-tier step (ROCKETNET_TEST_NIGHTLY=1 ./bin/test);
+they count as run there only while that step exists.
 
 Usage:
-  check_unit_case_coverage.py --repo . --expect NAME... -- LIST...
+  check_unit_case_coverage.py --repo . --expect NAME... -- FILE...
 
-A list file's configuration name is its file name without the extension.
+A file's configuration name is its file name without the extension.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -79,8 +101,76 @@ def registered_cases(repo: Path) -> dict[str, str]:
     return cases
 
 
+UNIT_GLOB_LINE = '"${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_*.cpp"'
+SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".inc")
+CASE_LINE = re.compile(r"^test_[a-z0-9_]+$")
+PASSED_BANNER = "*** ALL TESTS PASSED ***"
+NIGHTLY_TABLE = ("tests/test.cpp", "rocketnet_unit_nightly_cases[] = {")
+NIGHTLY_ROW = re.compile(r'^\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,', re.M)
+
+
+def tracked_sources(repo: Path) -> list[str]:
+    """Every tracked C or C++ file, relative; every such file on disk when repo is not a git work tree."""
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"], check=True, capture_output=True).stdout
+        names = [n for n in out.decode("utf-8").split("\0") if n]
+    except (OSError, subprocess.CalledProcessError):
+        names = [p.relative_to(repo).as_posix() for p in repo.rglob("*") if p.is_file()]
+    return sorted(n for n in names if n.endswith(SOURCE_SUFFIXES))
+
+
+def stray_registrations(repo: Path) -> list[str]:
+    """A registration CMakeLists.txt builds into nothing, one error each."""
+    cmake_path = repo / "CMakeLists.txt"
+    if not cmake_path.is_file():
+        return ["CMakeLists.txt not found: cannot tell which registrations are built"]
+    cmake = cmake_path.read_text(encoding="utf-8", errors="replace")
+    errors = []
+    if UNIT_GLOB_LINE not in cmake:
+        errors.append(f"CMakeLists.txt no longer globs {UNIT_GLOB_LINE}: the scan's unit file set is unknown")
+    for relative in tracked_sources(repo):
+        if re.fullmatch(r"tests/test_unit_[^/]*\.cpp", relative):
+            continue
+        names = REGISTER_RE.findall((repo / relative).read_text(encoding="utf-8", errors="replace"))
+        if not names or re.search(r"(?<![\w/.-])" + re.escape(relative) + r"(?![\w/.-])", cmake):
+            continue
+        for name in names:
+            errors.append(f"{name} ({relative}) is registered in a file CMakeLists.txt builds into nothing "
+                          "(the unit suite globs tests/test_unit_*.cpp), so it never runs")
+    return errors
+
+
+def nightly_cases(repo: Path) -> list[str]:
+    relative, opener = NIGHTLY_TABLE
+    path = repo / relative
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    start = text.find(opener)
+    if start < 0:
+        return []
+    end = text.find("\n};", start)
+    return NIGHTLY_ROW.findall(text[start + len(opener):end])
+
+
+def nightly_step_runs_the_suite(repo: Path) -> bool:
+    """nightly.yml has a step with ROCKETNET_TEST_NIGHTLY "1" whose run is ./bin/test."""
+    path = repo / ".github" / "workflows" / "nightly.yml"
+    if not path.is_file():
+        return False
+    steps = re.split(r"(?m)^\s*- (?=name:|uses:|run:)", path.read_text(encoding="utf-8", errors="replace"))
+    return any(re.search(r'(?m)^\s*ROCKETNET_TEST_NIGHTLY:\s*"1"\s*$', step)
+               and re.search(r"(?m)^\s*run:\s*\./bin/test\s*$", step) for step in steps)
+
+
 def read_list(path: Path) -> set[str]:
-    return {line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()}
+    """The cases a file names: a run log's printed cases, or a listing's lines."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if path.suffix == ".log":
+        if PASSED_BANNER not in text:
+            raise ValueError(f"{path}: a run log without '{PASSED_BANNER}': not a passing run, so it shows nothing ran")
+        return {line.strip() for line in text.splitlines() if CASE_LINE.match(line.strip())}
+    return {line.strip() for line in text.splitlines() if line.strip()}
 
 
 def check(repo: Path, lists: list[Path], expect: list[str]) -> list[str]:
@@ -90,6 +180,7 @@ def check(repo: Path, lists: list[Path], expect: list[str]) -> list[str]:
         cases = registered_cases(repo)
     except (OSError, ValueError) as error:
         return [str(error)]
+    errors.extend(stray_registrations(repo))
 
     configurations: dict[str, set[str]] = {}
     for path in lists:
@@ -97,7 +188,11 @@ def check(repo: Path, lists: list[Path], expect: list[str]) -> list[str]:
         if name in configurations:
             errors.append(f"two list files name configuration {name}")
             continue
-        names = read_list(path)
+        try:
+            names = read_list(path)
+        except ValueError as error:
+            errors.append(str(error))
+            continue
         if not names:
             errors.append(f"{path}: empty list for configuration {name}")
         configurations[name] = names
@@ -107,6 +202,8 @@ def check(repo: Path, lists: list[Path], expect: list[str]) -> list[str]:
             errors.append(f"no list file for expected configuration {name}")
 
     listed: set[str] = set().union(*configurations.values()) if configurations else set()
+    if nightly_step_runs_the_suite(repo):
+        listed |= set(nightly_cases(repo)) & cases.keys()
 
     for name in sorted(listed - cases.keys()):
         where = ", ".join(sorted(c for c, names in configurations.items() if name in names))

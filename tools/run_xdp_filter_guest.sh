@@ -3,9 +3,9 @@
 # Licensed under the GNU Affero General Public License v3.0
 #
 # Runs ./bin/test_xdp_filter -v against the built server_xdp.o inside a
-# virtme-ng (vng) guest of the host's matching kernel, requiring all 18
+# virtme-ng (vng) guest of the host's matching kernel, requiring all 19
 # registered BPF_PROG_TEST_RUN and guest-only XDP cases to print "ok" with
-# zero skips and the exact final line "test_xdp_filter: 18 cases passed".
+# zero skips and the exact final line "test_xdp_filter: 19 cases passed".
 #
 #   bash tools/run_xdp_filter_guest.sh [options]
 #
@@ -59,6 +59,7 @@ REQUIRED_CASES=(
     "ipv6_icmpv6_passes"
     "ipv6_same_drops_as_ipv4"
     "config_layout_matches_header"
+    "vlan_server_takes_its_tag"
     "replay_drops_behind_the_window"
     "replay_never_writes_the_map"
     "replay_key_layout_matches_header"
@@ -67,7 +68,7 @@ REQUIRED_CASES=(
     "xsk_bind_falls_back_to_copy"
 )
 EXPECTED_CASE_COUNT=${#REQUIRED_CASES[@]}
-EXPECTED_SUMMARY="test_xdp_filter: 18 cases passed"
+EXPECTED_SUMMARY="test_xdp_filter: 19 cases passed"
 
 usage()
 {
@@ -142,8 +143,8 @@ validate_guest_log()
         fail_qualification "guest log $log_file is missing or unreadable"
     fi
 
-    grep -E '^verifier: ' "$log_file" > "$ARTIFACT_DIR/verifier.txt" 2>/dev/null || : > "$ARTIFACT_DIR/verifier.txt"
-    grep -E '^[a-z0-9_]+: (ok|FAILED|skipped.*)$' "$log_file" > "$ARTIFACT_DIR/cases.txt" 2>/dev/null || : > "$ARTIFACT_DIR/cases.txt"
+    grep -E '^verifier: ' "$log_file" > "$ARTIFACT_DIR/verifier.txt"
+    grep -E '^[a-z0-9_]+: (ok|FAILED|skipped.*)$' "$log_file" > "$ARTIFACT_DIR/cases.txt"
 
     if [ "$run_exit" -ne 0 ]; then
         fail_qualification "test_xdp_filter exited non-zero ($run_exit)"
@@ -226,7 +227,7 @@ fi
 if [ -z "$OBJECT" ]; then
     if [ -r "$ROOT_DIR/build/generated/server_xdp.o" ]; then
         if [ ! -r "$ROOT_DIR/build/server_xdp.o" ] || ! cmp -s "$ROOT_DIR/build/generated/server_xdp.o" "$ROOT_DIR/build/server_xdp.o"; then
-            cp -f "$ROOT_DIR/build/generated/server_xdp.o" "$ROOT_DIR/build/server_xdp.o" 2>/dev/null || true
+            cp -f "$ROOT_DIR/build/generated/server_xdp.o" "$ROOT_DIR/build/server_xdp.o" || fail_qualification "cannot refresh build/server_xdp.o from build/generated/server_xdp.o"
         fi
         if [ -r "$ROOT_DIR/build/server_xdp.o" ]; then
             OBJECT="$ROOT_DIR/build/server_xdp.o"
@@ -276,10 +277,10 @@ host_snapshot()
     local label=$1
     echo "=== host_$label ==="
     echo "loadavg: $(cat /proc/loadavg 2>/dev/null || echo unknown)"
-    echo "test_interfaces: $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp)' | tr '\n' ' ' || true)"
-    echo "netns: $(ip netns list 2>/dev/null | tr '\n' ' ' || true)"
-    echo "xdp_links: $(ip link show 2>/dev/null | grep -E 'xdp|prog/xdp' | tr '\n' ' ' || true)"
-    echo "processes: $(ps -eo pid=,comm=,args= 2>/dev/null | grep -E '(/bin/test_xdp_filter|/bin/server|/bin/client)' | grep -v grep | grep -v "$NAME" || true)"
+    echo "test_interfaces: $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp|x[0-9]+[0-9a-f]{2}[ab])' | tr '\n' ' ')"
+    echo "netns: $(ip netns list 2>/dev/null | tr '\n' ' ')"
+    echo "xdp_links: $(ip link show 2>/dev/null | grep -E 'xdp|prog/xdp' | tr '\n' ' ')"
+    echo "processes: $(ps -eo pid=,comm=,args= 2>/dev/null | grep -E '(/bin/test_xdp_filter|/bin/server|/bin/client)' | grep -v grep | grep -v "$NAME")"
 }
 
 host_snapshot "before" > "$ARTIFACT_DIR/cleanup.txt"
@@ -303,9 +304,9 @@ set -u
 {
     echo "guest_uname_r=\$(uname -r)"
     echo "guest_uname_a=\$(uname -a)"
-    echo "guest_cmdline=\$(cat /proc/cmdline 2>/dev/null || true)"
-    echo "guest_isolated_cpus=\$(cat /sys/devices/system/cpu/isolated 2>/dev/null || true)"
-    echo "guest_online_cpus=\$(cat /sys/devices/system/cpu/online 2>/dev/null || true)"
+    echo "guest_cmdline=\$(cat /proc/cmdline 2>/dev/null)"
+    echo "guest_isolated_cpus=\$(cat /sys/devices/system/cpu/isolated 2>/dev/null)"
+    echo "guest_online_cpus=\$(cat /sys/devices/system/cpu/online 2>/dev/null)"
 } > "$GUEST_KERNEL"
 
 mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf
@@ -318,11 +319,11 @@ echo "guest_test_exit=\$rc" > "$GUEST_STATUS"
 
 {
     echo "=== guest_after ==="
-    echo "guest_test_interfaces: \$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp)' | tr '\n' ' ' || true)"
-    echo "guest_netns: \$(ip netns list 2>/dev/null | tr '\n' ' ' || true)"
-    echo "guest_xdp_links: \$(ip link show 2>/dev/null | grep -E 'xdp|prog/xdp' | tr '\n' ' ' || true)"
-    echo "guest_bpf_pins: \$(find /sys/fs/bpf -mindepth 1 \\( -type f -o -name 'rocketnet*' \\) 2>/dev/null | tr '\n' ' ' || true)"
-    echo "guest_processes: \$(ps -eo pid=,comm=,args= 2>/dev/null | grep -E '(/bin/test_xdp_filter|/bin/server|/bin/client)' | grep -v grep || true)"
+    echo "guest_test_interfaces: \$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp|x[0-9]+[0-9a-f]{2}[ab])' | tr '\n' ' ')"
+    echo "guest_netns: \$(ip netns list 2>/dev/null | tr '\n' ' ')"
+    echo "guest_xdp_links: \$(ip link show 2>/dev/null | grep -E 'xdp|prog/xdp' | tr '\n' ' ')"
+    echo "guest_bpf_pins: \$(find /sys/fs/bpf -mindepth 1 \\( -type f -o -name 'rocketnet*' \\) 2>/dev/null | tr '\n' ' ')"
+    echo "guest_processes: \$(ps -eo pid=,comm=,args= 2>/dev/null | grep -E '(/bin/test_xdp_filter|/bin/server|/bin/client)' | grep -v grep)"
 } > "$GUEST_CLEANUP"
 exit "\$rc"
 EOF

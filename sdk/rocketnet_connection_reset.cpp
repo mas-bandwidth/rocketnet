@@ -21,7 +21,6 @@ void rocketnet_client_protocol_wipe_secrets( struct rocketnet_client_protocol_t 
     sodium_memzero( &client->keys, sizeof( client->keys ) );
     sodium_memzero( &client->token, sizeof( client->token ) );
     sodium_memzero( client->client_ephemeral_secret_key, sizeof( client->client_ephemeral_secret_key ) );
-    sodium_memzero( client->session_nonce, sizeof( client->session_nonce ) );
 }
 
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client )
@@ -74,6 +73,14 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
          client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
     {
         return;
+    }
+
+    // the slot's queued ack blocks apply before anything about it changes,
+    // under the connection they arrived for (rocketnet_server_acks_settle)
+
+    if ( server->acks )
+    {
+        rocketnet_server_acks_settle( server->acks, client_index );
     }
 
     int mapping_index = -1;

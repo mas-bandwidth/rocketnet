@@ -35,17 +35,13 @@ int rocketnet_unit_run_named( const char * name );
 
 int rocketnet_channels_test_count();
 const char * rocketnet_channels_test_name( int index );
+const char * rocketnet_channels_test_skipped_by( int index );
 const char * rocketnet_channels_test_resolve( const char * name );
 int rocketnet_channels_run_named( const char * name );
 void rocketnet_channels_prepare( const char * name, void * ( **malloc_function )( void * context, size_t bytes ), void ( **free_function )( void * context, void * p ) );
 void rocketnet_channels_prepare_log( const char * name );
 
-static int rocketnet_suite_test_count()
-{
-    return rocketnet_unit_test_count() + rocketnet_channels_test_count() + rocketnet_unit_tests_count();
-}
-
-static const char * rocketnet_suite_test_name( int index )
+static const char * rocketnet_suite_registered_name( int index )
 {
     const int units = rocketnet_unit_test_count();
     if ( index < units )
@@ -61,6 +57,52 @@ static const char * rocketnet_suite_test_name( int index )
     }
 
     return rocketnet_unit_tests_name( cindex - channels );
+}
+
+// The cases the suite runs, in registration order, less the cases this build
+// cannot run (UNIT_TEST_SKIPPED_UNLESS, tests/test_unit_registry.h, and
+// rocketnet_channels_test_skipped_by, tests/test_channels.cpp):
+// each of those is noted, and the run prints SKIPPED <case>: <condition> and
+// the skipped count, as the functional suite does for its predicates.
+
+static const std::vector<const char *> & rocketnet_suite_cases()
+{
+    static std::vector<const char *> cases;
+    static bool collected = false;
+    if ( !collected )
+    {
+        collected = true;
+        const int units = rocketnet_unit_test_count();
+        const int built_in = units + rocketnet_channels_test_count();
+        const int total = built_in + rocketnet_unit_tests_count();
+        for ( int i = 0; i < total; i++ )
+        {
+            const char * skipped_by = i < units      ? NULL
+                                      : i < built_in ? rocketnet_channels_test_skipped_by( i - units )
+                                                     : rocketnet_unit_file_registry()->tests[i - built_in].skipped_by;
+            if ( skipped_by )
+            {
+                suite_note_skipped( rocketnet_suite_registered_name( i ), skipped_by );
+            }
+            else
+            {
+                cases.push_back( rocketnet_suite_registered_name( i ) );
+            }
+        }
+    }
+
+    return cases;
+}
+
+static int rocketnet_suite_test_count()
+{
+    return (int) rocketnet_suite_cases().size();
+}
+
+static const char * rocketnet_suite_test_name( int index )
+{
+    const std::vector<const char *> & cases = rocketnet_suite_cases();
+    return index >= 0 && index < (int) cases.size() ? cases[(size_t) index] : NULL;
 }
 
 // The unit nightly tier (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1,
@@ -299,6 +341,7 @@ static int rocketnet_unit_worker( const char * name )
 
     rocketnet_channels_prepare_log( name );
 
+    const uint64_t checks_before = rocketnet_test_checks_run().load();
     int result = rocketnet_channels_run_named( name );
     if ( result == 2 )
     {
@@ -307,6 +350,17 @@ static int rocketnet_unit_worker( const char * name )
     if ( result == 2 )
     {
         result = rocketnet_unit_run_named( name );
+    }
+
+    // a case that returned having run no check verified nothing: its body is
+    // compiled out on this platform or it returned before its checks
+    // (tests/check_count.h). An unknown name (2) is reported as such.
+
+    if ( result == 0 && rocketnet_test_checks_run().load() == checks_before )
+    {
+        printf( "check failed: %s returned without running a single check\n", name );
+        fflush( stdout );
+        result = 1;
     }
     if ( step_driven_case && rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) != 0 )
     {
@@ -356,8 +410,13 @@ int main( int argc, char ** argv )
 
     if ( argc == 2 && argv[1][0] != '-' )
     {
+        // the same no-dialog and debug-CRT routing suite_main sets, so a heap
+        // overrun reported at its free fails this path too
+#if defined( _WIN32 )
+        suite_no_dialogs();
+#endif // #if defined( _WIN32 )
         const char * resolved = rocketnet_channels_test_resolve( argv[1] );
-        result = rocketnet_unit_worker( resolved ? resolved : argv[1] );
+        result = suite_run_case( rocketnet_unit_worker, resolved ? resolved : argv[1] );
     }
     else
     {

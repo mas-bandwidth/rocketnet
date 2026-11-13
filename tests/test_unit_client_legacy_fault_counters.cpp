@@ -100,4 +100,125 @@ static void test_client_legacy_receive_counts_too_large_at_update()
 }
 REGISTER_UNIT_TEST( test_client_legacy_receive_counts_too_large_at_update );
 
+// A byte count of exactly the UDP size limit is a datagram, not a fault: the
+// receive keeps it, the update's prefilter refuses it as too large, and it
+// counts PREFILTER_TOO_LARGE once, never also as a count past the limit. It
+// comes from the token's server (127.0.0.1:40000), so the source check
+// passes it to the prefilter.
+
+static int client_legacy_server_receive( void *, rocketnet_address_t * from, uint8_t *, int )
+{
+    if ( client_legacy_fault_calls++ > 0 )
+    {
+        return 0;
+    }
+    memset( from, 0, sizeof( *from ) );
+    from->type = ROCKETNET_ADDRESS_IPV4;
+    from->data.ipv4[0] = 127;
+    from->data.ipv4[3] = 1;
+    from->port = 40000;
+    return client_legacy_fault_bytes;
+}
+
+static void test_client_legacy_receive_keeps_a_datagram_at_the_size_limit()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_base;
+    operations.receive = client_legacy_server_receive;
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    client_legacy_fault_token( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = client_legacy_fault_time;
+    client_legacy_fault_now = 1000.0;
+
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( NULL, token, &config, 1000.0, &operations, &fake );
+    rocketnet_unit_check( transport != NULL );
+
+    const uint64_t * values = rocketnet_client_transport_counters( transport )->values;
+    const uint64_t too_large = values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+
+    client_legacy_fault_bytes = ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES;
+    client_legacy_fault_calls = 0;
+    rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
+    rocketnet_unit_check( client_legacy_fault_calls == 2 );
+    rocketnet_client_transport_update( transport, 1000.0 );
+    rocketnet_unit_check( values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large + 1 );
+
+    rocketnet_client_transport_update( transport, 1000.1 );
+    rocketnet_unit_check( values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large + 1 );
+
+    rn_test_client_transport_stop_and_destroy( transport );
+}
+
+REGISTER_UNIT_TEST( test_client_legacy_receive_keeps_a_datagram_at_the_size_limit );
+
+// receive answers client_legacy_budget_left one-byte datagrams, then nothing
+static int client_legacy_budget_left;
+
+static int client_legacy_budget_receive( void *, rocketnet_address_t * from, uint8_t * data, int )
+{
+    if ( client_legacy_budget_left <= 0 )
+    {
+        return 0;
+    }
+    client_legacy_budget_left--;
+    memset( from, 0, sizeof( *from ) );
+    from->type = ROCKETNET_ADDRESS_IPV4;
+    from->port = 1;
+    data[0] = 0;
+    return 1;
+}
+
+// The update's packet budget is a bound, not a cut short of it: two
+// published buffers holding exactly the budget between them (3 and
+// ROCKETNET_NUM_CLIENT_PACKETS - 3) are both taken by one update, and the
+// next update has nothing left. Every datagram is a runt from a foreign
+// source, so each one taken counts once, as a foreign source or a prefilter
+// refusal. Mutation that must bite: refuse a buffer that brings the update
+// to exactly its budget.
+
+static uint64_t client_legacy_budget_taken( rocketnet_client_transport_t * transport )
+{
+    const uint64_t * values = rocketnet_client_transport_counters( transport )->values;
+    return values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] + values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT];
+}
+
+static void test_client_legacy_update_takes_exactly_its_budget()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_base;
+    operations.receive = client_legacy_budget_receive;
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    client_legacy_fault_token( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = client_legacy_fault_time;
+
+    client_legacy_fault_now = 1000.0;
+    client_legacy_budget_left = 0;
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( NULL, token, &config, 1000.0, &operations, &fake );
+    rocketnet_unit_check( transport != NULL );
+
+    const uint64_t before = client_legacy_budget_taken( transport );
+
+    client_legacy_budget_left = 3;
+    rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
+    client_legacy_budget_left = ROCKETNET_NUM_CLIENT_PACKETS - 3;
+    rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
+    rocketnet_unit_check( client_legacy_budget_left == 0 );
+
+    rocketnet_client_transport_update( transport, 1000.0 );
+    rocketnet_unit_check( client_legacy_budget_taken( transport ) == before + ROCKETNET_NUM_CLIENT_PACKETS );
+    rocketnet_client_transport_update( transport, 1000.01 );
+    rocketnet_unit_check( client_legacy_budget_taken( transport ) == before + ROCKETNET_NUM_CLIENT_PACKETS );
+
+    rn_test_client_transport_stop_and_destroy( transport );
+}
+REGISTER_UNIT_TEST( test_client_legacy_update_takes_exactly_its_budget );
+
 #endif // #if ROCKETNET_DEV

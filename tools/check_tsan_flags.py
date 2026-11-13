@@ -8,7 +8,7 @@ line that passes -fsanitize=thread to the compiler, in a workflow or in a
 command a doc gives, must also pass an optimization level of 1 or more.
 Linker-only lines (CMAKE_*_LINKER_FLAGS) and YAML comments are exempt.
 
-Usage: check_tsan_flags.py [--self-test]
+Usage: check_tsan_flags.py [--self-test | --root DIR]   (0 tsan compile lines is an error)
 """
 
 import re
@@ -17,12 +17,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-def scanned():
+def scanned(root=ROOT):
     """The workflows, and every Markdown page that can hand a reader a command."""
-    paths = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
-    paths += sorted(p for p in ROOT.rglob("*.md")
+    paths = sorted((root / ".github" / "workflows").glob("*.yml"))
+    paths += sorted(p for p in root.rglob("*.md")
                     if not any(part in (".git", "build", "node_modules") or part.startswith("build-")
-                               for part in p.relative_to(ROOT).parts))
+                               for part in p.relative_to(root).parts))
     return paths
 
 TSAN = re.compile(r"-fsanitize=[\w,]*\bthread\b")
@@ -72,23 +72,32 @@ def self_test():
         if got != expected:
             print(f"self-test FAILED: {line!r}: {got} violation(s), expected {expected}")
             failed += 1
+    # zero inputs: a tree with no tsan compile line is red, never a pass
+    import tempfile
+    with tempfile.TemporaryDirectory() as empty:
+        if main(["check_tsan_flags.py", "--root", empty]) != 1:
+            print("self-test FAILED: a tree with no tsan compile line was accepted")
+            failed += 1
     if failed:
         return 1
-    print(f"check_tsan_flags self-test: {len(cases)} cases pass")
+    print(f"check_tsan_flags self-test: {len(cases) + 1} cases pass")
     return 0
 
 
 def main(argv):
     if argv[1:] == ["--self-test"]:
         return self_test()
-    if argv[1:]:
+    root = ROOT
+    if len(argv) == 3 and argv[1] == "--root":
+        root = Path(argv[2])
+    elif argv[1:]:
         print(__doc__)
         return 2
     found = []
     total = 0
-    for path in scanned():
+    for path in scanned(root):
         text = path.read_text(errors="replace")
-        found += violations(str(path.relative_to(ROOT)), text)
+        found += violations(str(path.relative_to(root)), text)
         total += tsan_lines(text)
     for name, number, line in found:
         print(f"{name}:{number}: tsan compile without -O1 or above: {line}")
@@ -96,7 +105,7 @@ def main(argv):
         print(f"check_tsan_flags: {len(found)} of {total} tsan compile lines are unoptimized")
         return 1
     if total == 0:
-        print("check_tsan_flags: no tsan compile line found in the workflows or docs")
+        print("check_tsan_flags: 0 tsan compile lines found in the workflows or docs: nothing was checked")
         return 1
     print(f"check_tsan_flags: {total} tsan compile lines, all at -O1 or above")
     return 0

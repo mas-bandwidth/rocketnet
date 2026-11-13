@@ -4,8 +4,8 @@
 */
 
 // The host shim for <linux/if_vlan.h>: the XDP filter includes it and uses
-// nothing from it. A VLAN-tagged frame carries ETH_P_8021Q in h_proto, which
-// the filter passes untouched.
+// nothing from it (the uapi header has no tag struct; the filter defines its
+// own). ETH_P_8021Q comes from the shim's <linux/if_ether.h>.
 
 #pragma once
 

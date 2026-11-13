@@ -53,7 +53,7 @@ static void env_names_log_capture( void * context, rocketnet_log_level_t level, 
     log->levels.push_back( (int) level );
 }
 
-// rocketnet_config_apply_env logs "<endpoint> config override NAME=value" (sdk/rocketnet_config.cpp:745)
+// rocketnet_config_apply_env logs "<endpoint> config override NAME=value" (sdk/rocketnet_config.cpp)
 
 static std::vector<std::string> env_names_overrides( const env_names_log_t & log )
 {
@@ -541,7 +541,7 @@ static void test_config_env_every_name_read_is_documented()
     struct rn_message_object_t * server = env_names_object_create( 1, 0 );
     struct rn_message_object_t * client = env_names_object_create( 0, 0 );
 
-    // transport public env passes (sdk/rocketnet_client_transport.cpp:613-616 and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env)
+    // transport public env passes (sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_resolve) and sdk/rocketnet_server_transport.cpp (rocketnet_server_transport_resolve_staged), each through rocketnet_config_apply_env)
 
     int num_client_fields = 0;
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
@@ -594,7 +594,9 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( documented.size() == ( ROCKETNET_DEV ? 67u : 65u ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV6_ADDRESS" ) );
+    check( documented.size() == ( ROCKETNET_DEV ? 69u : 67u ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );

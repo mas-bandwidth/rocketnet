@@ -177,8 +177,11 @@ static void family_fallback_expect_ipv4_after_ipv6_connect_refused( const char *
 
     family_fallback_check_sends_only_to( &c, &ipv4_server );
 
+    // the I/O worker closes the one socket at its exit; destroy frees it and
+    // closes nothing more
+
     rn_test_client_transport_stop_and_destroy( c.transport );
-    rocketnet_unit_check( c.fake->close_calls == 0 );
+    rocketnet_unit_check( c.fake->close_calls == 1 );
     rocketnet_unit_check( c.fake->destroy_calls == 2 );
     delete c.fake;
 }
@@ -275,7 +278,7 @@ static void test_client_family_fallback_both_refused_exhausts()
 
         family_fallback_create( &c, family_fallback_both, NULL );
         rocketnet_unit_check( c.transport == NULL );
-        rocketnet_unit_check( c.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         rocketnet_unit_check( c.fake->create_calls >= 2 && c.fake->create_calls % 2 == 0 );
         rocketnet_unit_check( c.fake->connect_calls == c.fake->create_calls );
         rocketnet_unit_check( c.fake->destroy_calls == c.fake->create_calls );
@@ -291,7 +294,7 @@ static void test_client_family_fallback_both_refused_exhausts()
 
         family_fallback_create( &c, family_fallback_both, NULL );
         rocketnet_unit_check( c.transport == NULL );
-        rocketnet_unit_check( c.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         rocketnet_unit_check( c.fake->connect_calls == 0 );
         rocketnet_unit_check( c.fake->destroy_calls == 0 );
         delete c.fake;
@@ -307,7 +310,7 @@ static void test_client_family_fallback_both_refused_exhausts()
 
         family_fallback_create( &c, ROCKETNET_ADDRESS_FLAG_IPV6, NULL );
         rocketnet_unit_check( c.transport == NULL );
-        rocketnet_unit_check( c.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         rocketnet_unit_check( c.fake->last_bind_family == ROCKETNET_ADDRESS_IPV6 );
         rocketnet_unit_check( rocketnet_address_equal( &c.fake->connected_to, &ipv6_server ) );
         rocketnet_unit_check( c.fake->connect_calls == c.fake->create_calls );
@@ -403,6 +406,66 @@ static void test_client_family_fallback_race_ends_without_cookie()
     delete c.fake;
 }
 
+// A host with no IPv6 stack. The suite's network lookup always answers
+// "IPv6 available" (tests/test.cpp), so no other unit case reaches the
+// client's no-IPv6 branches (VERIFY-4 W7, sdk/rocketnet_client_transport.cpp
+// bind_family NONE and the IPv4-because-no-IPv6 bind). A token naming only
+// IPv6 is refused before any socket opens, NO_TRANSPORT_FOUND; a token naming
+// both connects over IPv4 and never opens an IPv6 socket. The lookup is put
+// back to the suite's answer, true, before the case returns.
+
+static bool family_fallback_no_ipv6()
+{
+    return false;
+}
+
+static bool family_fallback_ipv6()
+{
+    return true;
+}
+
+static const rocketnet_platform_network_lookups_t family_fallback_no_ipv6_lookups = { family_fallback_no_ipv6 };
+static const rocketnet_platform_network_lookups_t family_fallback_ipv6_lookups = { family_fallback_ipv6 };
+
+static void test_client_family_fallback_host_without_ipv6()
+{
+    rocketnet_address_t ipv4_server, ipv6_server;
+    family_fallback_servers( &ipv4_server, &ipv6_server );
+
+    rocketnet_platform_set_network_lookups_for_testing( &family_fallback_no_ipv6_lookups );
+
+    {
+        family_fallback_case_t c = {};
+        c.fake = new rocketnet_fake_client_transport_io_t();
+        family_fallback_create( &c, ROCKETNET_ADDRESS_FLAG_IPV6, NULL );
+        rocketnet_unit_check( c.transport == NULL );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
+        rocketnet_unit_check( c.fake->create_calls == 0 );
+        rocketnet_unit_check( c.fake->connect_calls == 0 );
+        delete c.fake;
+    }
+
+    {
+        family_fallback_case_t c = {};
+        c.fake = new rocketnet_fake_client_transport_io_t();
+        family_fallback_create( &c, family_fallback_both, NULL );
+        rocketnet_unit_check( c.transport != NULL );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_OK );
+        rocketnet_unit_check( c.fake->create_calls >= 1 );
+        rocketnet_unit_check( c.fake->create_calls_ipv6 == 0 );
+        rocketnet_unit_check( c.fake->last_bind_family == ROCKETNET_ADDRESS_IPV4 );
+        rocketnet_unit_check( rocketnet_address_equal( &c.fake->connected_to, &ipv4_server ) );
+
+        family_fallback_check_sends_only_to( &c, &ipv4_server );
+
+        rn_test_client_transport_stop_and_destroy( c.transport );
+        delete c.fake;
+    }
+
+    rocketnet_platform_set_network_lookups_for_testing( &family_fallback_ipv6_lookups );
+}
+
+REGISTER_UNIT_TEST( test_client_family_fallback_host_without_ipv6 );
 REGISTER_UNIT_TEST( test_client_family_fallback_ipv6_connect_refused_auto );
 REGISTER_UNIT_TEST( test_client_family_fallback_ipv6_connect_refused_each_pin );
 REGISTER_UNIT_TEST( test_client_family_fallback_ipv6_open_refused );

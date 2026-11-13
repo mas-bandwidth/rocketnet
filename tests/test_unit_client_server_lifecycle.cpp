@@ -476,6 +476,11 @@ static void test_client_reconnects_with_a_second_token()
     lifecycle_connect( &world, 0, 0x1001 );
     lifecycle_exchange( &world, 0, 0xA1, 3 );
 
+    // while connected the client names the transport its connection runs on
+
+    const char * transport_name = rocketnet_client_transport_name( client );
+    check( transport_name != NULL && strcmp( transport_name, "loopback" ) == 0 );
+
     const uint64_t sent_first = rn_client_stats_of( client ).packets_sent;
     const uint64_t payloads_first = rn_client_stats_of( client ).payloads_received;
     check( sent_first > 0 );
@@ -1117,6 +1122,79 @@ static void test_server_send_dropped_to_slot_not_connected()
 }
 REGISTER_UNIT_TEST( test_server_send_dropped_to_slot_not_connected );
 
+// an in-place start left open across the server's update is aborted there
+// and counted once, whichever slot it was on: the update after it finds no
+// start open and counts nothing more
+static void test_server_start_open_across_update_counts_once_on_any_slot()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 3, 3 );
+    lifecycle_connect( &world, 0, 0x1510 );
+    lifecycle_connect( &world, 1, 0x1511 );
+    lifecycle_connect( &world, 2, 0x1512 );
+
+    rocketnet_server_t * server = world.server;
+
+    for ( int slot = 0; slot < 3; slot++ )
+    {
+        check( rocketnet_server_client_connected( server, slot ) != 0 );
+
+        const uint64_t misuse = rocketnet_api_misuse_count();
+        uint8_t * out = rocketnet_server_start_message( server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 );
+        check( out != NULL );
+        if ( out )
+        {
+            out[0] = 0xC1;
+            out[1] = (uint8_t) slot;
+        }
+
+        lifecycle_pump( &world );
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+
+        lifecycle_pump( &world );
+        lifecycle_pump( &world );
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+    }
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_start_open_across_update_counts_once_on_any_slot );
+
+// the server's trailing-second rates: a server with no client sends and
+// receives nothing, so every rate is exactly zero; once a client exchanges
+// messages its packets are counted received, and the bytes sent stay within
+// what a few hundred small packets a second can carry
+static void test_server_rates_are_zero_idle_and_count_traffic()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+
+    for ( int i = 0; i < 20; i++ )
+    {
+        lifecycle_pump( &world );
+    }
+
+    rocketnet_server_stats_t idle = rn_server_stats_of( world.server );
+    check( idle.packets_sent_per_second == 0.0 );
+    check( idle.packets_received_per_second == 0.0 );
+    check( idle.bandwidth_sent_kbps == 0.0 );
+    check( idle.bandwidth_received_kbps == 0.0 );
+
+    lifecycle_connect( &world, 0, 0x1520 );
+    lifecycle_exchange( &world, 0, 0xD1, 4 );
+    lifecycle_pump( &world );
+
+    rocketnet_server_stats_t busy = rn_server_stats_of( world.server );
+    check( busy.packets_received_per_second > 0.0 );
+    check( busy.packets_sent_per_second > 0.0 );
+    check( busy.bandwidth_sent_kbps > 0.0 );
+    check( busy.bandwidth_sent_kbps < 10000.0 );
+    check( busy.bandwidth_received_kbps > 0.0 );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_rates_are_zero_idle_and_count_traffic );
+
 // set_send_kbps follows the same rule: a connection that is not CONNECTED has
 // no rate to set. The call returns INVALID_ARGUMENT, changes nothing and is
 // not misuse; once CONNECTED the same call is OK.
@@ -1279,8 +1357,8 @@ REGISTER_UNIT_TEST( test_server_start_stop_start_again );
 
 // proofs/tla/ServerSession.tla NoAdmitUnlessRunning. A stopped server admits no
 // client. rocketnet_server_update returns while !server->running
-// (sdk/rocketnet_api.cpp:2013), and the transport reads only while RUNNING
-// (sdk/rocketnet_server_transport.cpp:2636).
+// (sdk/rocketnet_api.cpp), and the transport reads only while RUNNING
+// (sdk/rocketnet_server_transport.cpp).
 
 static void test_server_stopped_admits_no_client()
 {
@@ -1320,6 +1398,19 @@ static void test_server_stop_disconnects_every_client()
     check( rocketnet_server_num_connected_clients( world.server ) == 3 );
     rocketnet_server_stop( world.server );
     rn_test_server_wait_stopped( world.server );
+    check( rocketnet_server_num_connected_clients( world.server ) == 0 );
+
+    // a stopped server's slots are valid indexes that read empty: a disconnect
+    // or a reason asked of one is no misuse, changes nothing and reads NONE
+
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+    for ( int i = 0; i < 3; i++ )
+    {
+        rocketnet_server_disconnect_client( world.server, i );
+        check( rocketnet_server_disconnect_reason( world.server, i ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    }
+    rocketnet_server_disconnect_all_clients( world.server );
+    check( rocketnet_api_misuse_count() == misuse_before );
     check( rocketnet_server_num_connected_clients( world.server ) == 0 );
 
     // the redundant disconnect packets reach every client before any timeout
@@ -1842,6 +1933,10 @@ REGISTER_UNIT_TEST( test_client_reconnects_after_server_stop_without_disconnect 
 // Direct retry retains its public reason while the old generation retires,
 // then starts a fresh handshake without an explicit disconnect.
 
+// fewer channels than the server's default: 4 against 32, or one fewer than
+// the build's ROCKETNET_MAX_CHANNELS below 5
+#define LIFECYCLE_MISMATCH_CHANNELS ( ROCKETNET_MAX_CHANNELS < 5 ? ROCKETNET_MAX_CHANNELS - 1 : 4 )
+
 static void test_client_connection_ended_state_kept_until_retry()
 {
     lifecycle_world_t world;
@@ -1858,7 +1953,7 @@ static void test_client_connection_ended_state_kept_until_retry()
 
     rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
-    client_config.num_channels = 4;
+    client_config.num_channels = LIFECYCLE_MISMATCH_CHANNELS;
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
     world.num_clients = 1;
 
@@ -1887,7 +1982,7 @@ static void test_client_connection_ended_state_kept_until_retry()
     // a matching server: the next connect runs a fresh handshake
 
     rn_test_server_stop_and_destroy( world.server );
-    server_config.num_channels = 4;
+    server_config.num_channels = LIFECYCLE_MISMATCH_CHANNELS;
     world.server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world.server && rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1D02, 300, token );
@@ -1907,6 +2002,7 @@ static void test_client_connection_ended_state_kept_until_retry()
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_client_connection_ended_state_kept_until_retry );
+UNIT_TEST_SKIPPED_UNLESS( test_client_connection_ended_state_kept_until_retry, ROCKETNET_MAX_CHANNELS >= 2 ); // two channel counts that differ
 
 // A token-only expiry owns no transport worker, so a fresh token can retry
 // immediately. Reusing the expired token still reports its expiry.
@@ -2012,6 +2108,11 @@ REGISTER_UNIT_TEST( test_client_one_update_sends_more_than_sixteen_packets );
 // ignored by the other types (sdk/rocketnet_message_server.cpp,
 // rn_message_object_start, and rn_message_object_next).
 // ---------------------------------------------------------------------------
+
+// rq_run checks the server's default of at least 6 channels, so a build below
+// 8 channels, which skips the case, compiles it empty: MSVC proves that check
+// fails there and flags the code after it unreachable (C4702)
+#if ROCKETNET_MAX_CHANNELS >= 8
 
 #define RQ_CLIENTS 2
 #define RQ_ROUNDS 3
@@ -2243,7 +2344,13 @@ static void test_message_receive_one_queue_every_type_every_channel()
     rq_check_log( &run, &run.at_server, true );
     rq_check_log( &run, &run.at_client, false );
 }
+#else  // #if ROCKETNET_MAX_CHANNELS >= 8
+static void test_message_receive_one_queue_every_type_every_channel()
+{
+}
+#endif // #if ROCKETNET_MAX_CHANNELS >= 8
 REGISTER_UNIT_TEST( test_message_receive_one_queue_every_type_every_channel );
+UNIT_TEST_SKIPPED_UNLESS( test_message_receive_one_queue_every_type_every_channel, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 // The receive is pumped: each call fills the caller's batch up to
 // ROCKETNET_RECEIVE_BATCH_MESSAGES and returns true, and what one call does
@@ -3812,6 +3919,7 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     rn_test_server_stop_and_destroy( server_b );
 }
 REGISTER_UNIT_TEST( test_client_reconnect_same_and_other_server_isolates_generations );
+UNIT_TEST_SKIPPED_UNLESS( test_client_reconnect_same_and_other_server_isolates_generations, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 struct lifecycle_pressure_allocator_t
 {
@@ -4026,6 +4134,7 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     g_lifecycle_delayed_link = &delayed_link;
     server_msg_obj->link.acked = lifecycle_delayed_link_acked;
     server_msg_obj->link.acked_connection = lifecycle_delayed_link_acked_connection;
+    server_msg_obj->link.acked_connection_ids = NULL;   // the wrapper reshapes the acked batch, so it tags it entry by entry
     server_msg_obj->link.finish_packet = lifecycle_delayed_link_finish_packet;
 
     // --- Generation 1 on slot 0 (client_id 0x5101, tag 0xD1) ---
@@ -4433,6 +4542,7 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack );
+UNIT_TEST_SKIPPED_UNLESS( test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 // rocketnet_server_client_connection_id: nonzero while a slot holds a
 // connection, 0 when it is free, distinct across slots, and never the same

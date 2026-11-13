@@ -39,6 +39,16 @@
 //     loss, reordering and delay never disconnect: the owner's rule).
 //   - unbounded work is caught by libFuzzer's -timeout, memory by ASan and the
 //     rss limit.
+//
+// THE SEED GENERATOR: ROCKETNET_FUZZ_SEED_DIR=<dir> writes one script per
+// config, reliability and message size (tools/fuzz_seedgen wrote the
+// committed set the same way): A sends three messages, four rounds of a
+// write pass, twelve clean deliveries and an update, then a reordered round
+// (last packet first), then B sends and is acked. Each is replayed through
+// the target, which must keep the stream clean (no oracle fails, nothing
+// tainted, B never ends the connection), and every reliability type must be
+// delivered to B under every config by some seed. It exits 1 printing
+// INCOMPLETE otherwise.
 
 #include "rocketnet.h"
 #include "rocketnet_allocator.h"
@@ -48,12 +58,23 @@
 #include "rocketnet_message.h"
 #include "rocketnet_send_budget.h"
 
+#include "../portable_crt.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <vector>
+#include "rocketnet_fuzz_quiet.h"
+
+// A switch in the environment is on when it is set (to a value of under 64
+// bytes); through rocketnet_test_getenv, since MSVC refuses getenv (C4996).
+static bool fz_env_set( const char * name )
+{
+    char value[64];
+    return rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
+}
 
 static void fz_require( bool condition, const char * property )
 {
@@ -365,25 +386,18 @@ static int fz_reliability( uint8_t v )
     return (int) ( v % 8 );
 }
 
-extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
-{
-    (void) argc;
-    (void) argv;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    return 0;
-}
+static fz_state_t fz_state;             // large: the in-flight packets; the seed generator reads it after a run
 
-extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
+static void fz_run( const uint8_t * data, size_t size )
 {
     if ( size < 1 )
     {
-        return 0;
+        return;
     }
 
     fz_reader_t r = { data, size, 0 };
 
-    static fz_state_t state;            // large: the in-flight packets
-    fz_state_t * s = &state;
+    fz_state_t * s = &fz_state;
     s->inflight.clear();
     s->opened.clear();
     s->b_acks.clear();
@@ -401,7 +415,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     static fz_side_t sides_a[4];
     static fz_side_t sides_b[4];
     static bool made[4];
-    static const bool fresh = getenv( "FZ_EP_FRESH" ) != NULL;
+    static const bool fresh = fz_env_set( "FZ_EP_FRESH" );
 
     const int selector = fz_u8( &r ) % 4;
     if ( fresh || !made[selector] )
@@ -607,7 +621,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     const int n = rn_endpoint_take_receipts( &s->b->endpoint, receipts, 64 );
     fz_require( n >= 0 && n <= 64, "receipts are within the capacity" );
 
-    static const bool debug = getenv( "FZ_EP_DEBUG" ) != NULL;
+    static const bool debug = fz_env_set( "FZ_EP_DEBUG" );
     if ( debug )
     {
         int delivered = 0;
@@ -618,6 +632,176 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         fprintf( stderr, "sent %u delivered %d tainted %d inflight %zu opened %zu a_err %d b_err %d\n", s->sent_count, delivered,
                  s->tainted ? 1 : 0, s->inflight.size(), s->opened.size(), rn_endpoint_error( &s->a->endpoint ), rn_endpoint_error( &s->b->endpoint ) );
     }
+}
 
+// -----------------------------------------------------------------------
+//  the seed generator: ROCKETNET_FUZZ_SEED_DIR=<dir>
+
+#define FZ_SEED_MAX 1024
+
+static int fz_seed_put( uint8_t * seed, int at, const uint8_t * bytes, int count )
+{
+    if ( at + count > FZ_SEED_MAX )
+    {
+        return FZ_SEED_MAX + 1;
+    }
+    memcpy( seed + at, bytes, (size_t) count );
+    return at + count;
+}
+
+static int fz_seed_send( uint8_t * seed, int at, uint8_t reliability, uint8_t channel, int size )
+{
+    const uint8_t op[5] = { 1, reliability, channel, (uint8_t) size, (uint8_t) ( size >> 8 ) };
+    return fz_seed_put( seed, at, op, 5 );
+}
+
+static int fz_seed_deliver( uint8_t * seed, int at, uint8_t index )
+{
+    const uint8_t op[6] = { 3, index, 0, 0, 0, 0 };
+    return fz_seed_put( seed, at, op, 6 );
+}
+
+static int fz_seed_round( uint8_t * seed, int at, bool reordered )
+{
+    static const uint8_t write_pass[1] = { 2 };
+    static const uint8_t update[3] = { 4, 10, 0 };
+    at = fz_seed_put( seed, at, write_pass, 1 );
+    for ( int j = 0; j < 12; j++ )
+    {
+        at = fz_seed_deliver( seed, at, (uint8_t) ( reordered ? 200 - j : j % 3 ) );
+    }
+    return fz_seed_put( seed, at, update, 3 );
+}
+
+static int fz_seed_build( int config, int reliability, int size, uint8_t * seed )
+{
+    int at = 0;
+    const uint8_t selector[1] = { (uint8_t) config };
+    at = fz_seed_put( seed, at, selector, 1 );
+    for ( int k = 0; k < 3; k++ )
+    {
+        at = fz_seed_send( seed, at, (uint8_t) reliability, (uint8_t) k, size );
+    }
+    for ( int k = 0; k < 4; k++ )
+    {
+        at = fz_seed_round( seed, at, false );
+    }
+    at = fz_seed_send( seed, at, (uint8_t) reliability, 1, size );
+    at = fz_seed_round( seed, at, true );
+    const uint8_t b_send[4] = { 6, (uint8_t) reliability, 100, 0 };
+    at = fz_seed_put( seed, at, b_send, 4 );
+    const uint8_t b_acked[9] = { 5, 1, 0, 0, 0, 0, 0, 0, 0 };
+    at = fz_seed_put( seed, at, b_acked, 9 );
+    static const uint8_t update[3] = { 4, 10, 0 };
+    return fz_seed_put( seed, at, update, 3 );
+}
+
+static bool fz_seed_write( const char * dir, const char * name, const uint8_t * data, int bytes )
+{
+    char path[1024];
+    if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
+    {
+        fprintf( stderr, "seed generator: the seed path for %s does not fit\n", name );
+        return false;
+    }
+
+    FILE * file = rocketnet_test_fopen( path, "wb" );
+    if ( !file )
+    {
+        fprintf( stderr, "seed generator: cannot write %s\n", path );
+        return false;
+    }
+
+    const bool ok = fwrite( data, 1, (size_t) bytes, file ) == (size_t) bytes;
+
+    fclose( file );
+    if ( !ok )
+    {
+        fprintf( stderr, "seed generator: cannot write %s\n", path );
+    }
+
+    return ok;
+}
+
+static bool fz_generate( const char * dir )
+{
+    static const int sizes[5] = { 2 * 20 + 1, 2 * 1000 + 1, 0x4000, 0x8000, 0xffff & ~1 };
+    static uint8_t seed[FZ_SEED_MAX];
+    bool complete = true;
+
+    for ( int config = 0; config < 4; config++ )
+    {
+        for ( int reliability = 0; reliability < 8; reliability++ )
+        {
+            bool sent = false;
+            bool delivered = false;
+            for ( int k = 0; k < 5; k++ )
+            {
+                char name[64];
+                snprintf( name, sizeof( name ), "ep_cfg%d_rel%d_size%d", config, reliability, sizes[k] );
+                const int bytes = fz_seed_build( config, reliability, sizes[k], seed );
+                if ( bytes > FZ_SEED_MAX )
+                {
+                    fprintf( stderr, "seed generator: the %s seed does not fit\n", name );
+                    complete = false;
+                    continue;
+                }
+
+                fz_run( seed, (size_t) bytes );
+
+                const fz_state_t * s = &fz_state;
+                if ( s->tainted || rn_endpoint_error( &s->b->endpoint ) != ROCKETNET_DISCONNECT_REASON_NONE )
+                {
+                    fprintf( stderr, "seed generator: the %s seed does not keep the stream clean\n", name );
+                    complete = false;
+                    continue;
+                }
+                for ( uint32_t i = 0; i < s->sent_count; i++ )
+                {
+                    sent = true;
+                    if ( s->delivered[i] != 0 && s->sent_reliability[i] == reliability )
+                    {
+                        delivered = true;
+                    }
+                }
+
+                if ( !fz_seed_write( dir, name, seed, bytes ) )
+                {
+                    complete = false;
+                }
+            }
+            if ( !sent || !delivered )
+            {
+                fprintf( stderr, "seed generator: config %d delivers no reliability %d message to B\n", config, reliability );
+                complete = false;
+            }
+        }
+    }
+
+    printf( "seed generator: %s\n", complete ? "every seed keeps the stream clean, and every reliability is delivered under every config"
+                                             : "INCOMPLETE" );
+    return complete;
+}
+
+// -----------------------------------------------------------------------
+
+extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
+{
+    (void) argc;
+    (void) argv;
+    rocketnet_fuzz_quiet_log();
+
+    char seed_dir[1024];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
+    {
+        exit( fz_generate( seed_dir ) ? 0 : 1 );
+    }
+
+    return 0;
+}
+
+extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
+{
+    fz_run( data, size );
     return 0;
 }

@@ -245,23 +245,15 @@ int rocketnet_server_protocol_cookie_reply_source_index( const struct rocketnet_
     return (int) ( value & ( (uint64_t) words * 64 - 1 ) );
 }
 
-// whether an address is one this server advertises. on a dual-stack server
-// -- bound to the IPv6 wildcard, so it also advertises its IPv4 wildcard --
-// a v4-mapped token address normalises to native IPv4 and matches as the
-// loopback or wildcard the IPv4 client addressed.
+// whether an address is one this server advertises: equal, port included,
+// to the advertised address of its family. A v4-mapped token address
+// normalises to native IPv4 first. There is no other match: a server created
+// at a wildcard advertises the wildcard, so a token naming the loopback is
+// accepted only by a server that advertises the loopback (t12 rule 6).
 
 static int rocketnet_server_address_is_advertised( const struct rocketnet_server_protocol_t * server,
                                                    struct rocketnet_address_t * addr )
 {
-    // dual_stack: a server bound at the IPv6 wildcard ("[::]"), which
-    // advertises the IPv6 wildcard beside the IPv4 wildcard. A server that
-    // names both families (second_public_address) advertises the two named
-    // addresses and is not dual_stack here.
-    static const uint16_t ipv6_wildcard[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-    const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
-                           memcmp( server->advertised_ipv6.data.ipv6, ipv6_wildcard, sizeof( ipv6_wildcard ) ) == 0;
-
     if ( addr->type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( addr ) )
     {
         rocketnet_address_convert_ipv6_to_ipv4( addr );
@@ -273,23 +265,8 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
                rocketnet_address_equal( addr, &server->advertised_ipv6 );
     }
 
-    if ( server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-         rocketnet_address_equal( addr, &server->advertised_ipv4 ) )
-    {
-        return 1;
-    }
-
-    // on a dual-stack server the loopback is an IPv4 address the socket
-    // serves too
-
-    if ( dual_stack && addr->data.ipv4[0] == 127 && addr->data.ipv4[1] == 0 &&
-         addr->data.ipv4[2] == 0 && addr->data.ipv4[3] == 1 &&
-         addr->port == server->advertised_ipv4.port )
-    {
-        return 1;
-    }
-
-    return 0;
+    return server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
+           rocketnet_address_equal( addr, &server->advertised_ipv4 );
 }
 
 // The arrival family's token address (proofs/tla/ServerConnection.tla
@@ -349,8 +326,7 @@ static int rocketnet_server_token_address_is_advertised( const struct rocketnet_
 
             if ( addr.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &addr ) )
             {
-                rocketnet_address_convert_ipv6_to_ipv4( &addr );
-                return rocketnet_server_address_is_advertised( server, &addr );
+                return rocketnet_server_address_is_advertised( server, &addr );     // which converts it to that IPv4 address
             }
         }
 
@@ -588,10 +564,20 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // It is counted with the version refusal: the signed data is not a
     // well-formed structure of this wire version.
 
-    {
-        const int pad_offset = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES;
+    // A plain memcmp, not sodium_is_zero: both operands are public (the
+    // sender's own bytes and zero), so the time it takes tells the sender
+    // nothing it did not send. Constant time protects secrets; there is none
+    // here, and this rung runs for every request a flood sends.
 
-        if ( sodium_is_zero( signed_connect_data + pad_offset, (size_t) ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES - pad_offset ) ) == 0 )
+    {
+        enum
+        {
+            PAD_OFFSET = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES,
+            PAD_BYTES = ROCKETNET_SIGNED_CONNECT_DATA_BYTES - PAD_OFFSET
+        };
+        static const uint8_t zero_pad[PAD_BYTES] = { 0 };
+
+        if ( memcmp( signed_connect_data + PAD_OFFSET, zero_pad, PAD_BYTES ) != 0 )
         {
             rocketnet_debug( "server ignored connection request. signed zero pad is not zero" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION]++;
@@ -609,7 +595,13 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    if ( sodium_memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->server_public_key, ROCKETNET_KEY_BYTES ) != 0 )
+    // A plain memcmp, not sodium_memcmp: the server's public key is public
+    // (it is in every token the backend issues) and the other operand is the
+    // sender's own bytes, so an early exit leaks nothing. Constant time stays
+    // on every comparison against keyed or stored state (the cookie mac, the
+    // token identifier, the half-open mapping's salt).
+
+    if ( memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->server_public_key, ROCKETNET_KEY_BYTES ) != 0 )
     {
         rocketnet_debug( "server ignored connection request. token is sealed to a different server key" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY]++;
@@ -687,9 +679,8 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
             // the cookie reply limit of this update, checked before the fresh
             // mac so a refusal costs at most the one index hash: one reply
             // per source address and port (proofs/tla/RNCookieReplyLimits.tla
-            // CookieRequest). Dropped unanswered; the request is counted once,
-            // by its cookie reason above, and the refusal has no counter of
-            // its own. The client sends again at its send rate.
+            // CookieRequest). Dropped unanswered, counted by its cookie reason
+            // above and as COOKIE_REPLY_WITHHELD; the client sends again.
 
             if ( server->cookie_reply_sources )
             {
@@ -697,6 +688,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
                 const int index = rocketnet_server_protocol_cookie_reply_source_index( server, from );
                 if ( index < 0 || ( server->cookie_reply_sources[index >> 6] & ( 1ULL << ( index & 63 ) ) ) != 0 )
                 {
+                    counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD]++;
                     return ROCKETNET_SERVER_PROCESS_IGNORED;
                 }
                 server->cookie_reply_sources[index >> 6] |= 1ULL << ( index & 63 );
@@ -1095,6 +1087,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
                                                          uint64_t current_timestamp,
                                                          double current_time,
                                                          int fail_denied_writer,
+                                                         int fail_keep_alive_writer,
                                                          uint8_t * response_packet,
                                                          int * response_bytes )
 {
@@ -1199,19 +1192,27 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     mapping->last_send_time = current_time;
 
     rocketnet_debug( "client %d connected", client_index );
-    counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED]++;
     counters[ROCKETNET_COUNTER_CLIENT_CONNECTED]++;
 
     // the first keep-alive: how the client learns its index and transitions
-    // to connected
+    // to connected. the response takes one outcome (TRANSPORT.md t18 rule 1):
+    // CONNECTED when the keep-alive is written, INTERNAL_ERROR (its follow-up
+    // packet could not be written) when not. the client is connected either
+    // way: the slot is assigned and the update sends the next keep-alive.
 
-    int keep_alive_bytes = rocketnet_server_write_keep_alive( server, client_index, current_time, response_packet );
+    int keep_alive_bytes = 0;
+    if ( !fail_keep_alive_writer )
+    {
+        keep_alive_bytes = rocketnet_server_write_keep_alive( server, client_index, current_time, response_packet );
+    }
     if ( keep_alive_bytes == 0 )
     {
         rocketnet_assert( 0 );
         counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR]++;
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
     }
+
+    counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED]++;
 
     *response_bytes = keep_alive_bytes;
 
@@ -1350,10 +1351,12 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     uint64_t * counters = server->counters->values;
 
     int fail_response_denied_writer = 0;
+    int fail_keep_alive_writer = 0;
 #if ROCKETNET_DEV
     if ( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
     {
         fail_response_denied_writer = rocketnet_server_test_take_writer_fault( server, ROCKETNET_SERVER_TEST_FAIL_RESPONSE_DENIED_WRITER );
+        fail_keep_alive_writer = rocketnet_server_test_take_writer_fault( server, ROCKETNET_SERVER_TEST_FAIL_KEEP_ALIVE_WRITER );
     }
 #endif // #if ROCKETNET_DEV
 
@@ -1515,7 +1518,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         }
 
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time,
-                                                             fail_response_denied_writer, response_packet, response_bytes );
+                                                             fail_response_denied_writer, fail_keep_alive_writer, response_packet, response_bytes );
     }
 
     // proofs/tla/RNXdpReplay.tla UserOpen: a genuine session packet opens and raises the opened high water.
@@ -1581,24 +1584,16 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
         rocketnet_ack_endpoint_record_received( endpoint, sequence, packet_bytes, current_time );
 
-        int before = server->acks->num_acked;
-        rocketnet_ack_endpoint_process_block( endpoint, &block, current_time,
-                                              server->acks->acked_packet_ids, server->acks->acked_capacity, &server->acks->num_acked,
-                                              &counters[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE],
-                                              &counters[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
-        // P9b: each acked id is tagged with the connection it was received
-        // for, beside its client index, as it is appended
+        // the block applies now, or queues for its client's apply between
+        // the receive and the rest of update (rocketnet_server_acks_t, the
+        // deferred apply); its acked ids are tagged with the connection the
+        // packet was received for (P9b) either way
 
-        const uint64_t connection_id = rocketnet_server_protocol_connection_id( server, client_index );
-
-        for ( int i = before; i < server->acks->num_acked; i++ )
-        {
-            server->acks->acked_client_index[i] = client_index;
-            if ( server->acked_connection_ids )
-            {
-                server->acked_connection_ids[i] = connection_id;
-            }
-        }
+        rocketnet_server_acks_receive_block( server->acks, client_index, &block, current_time,
+                                             rocketnet_server_protocol_connection_id( server, client_index ),
+                                             server->acked_connection_ids,
+                                             &counters[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE],
+                                             &counters[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
 
         if ( rocketnet_session_elicits_ack( packet_type ) )
         {
@@ -1916,7 +1911,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
 void rocketnet_server_protocol_note_missing_mapping( struct rocketnet_server_protocol_t * server )
 {
-    server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+    rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
 }
 
 static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mapping( struct rocketnet_server_protocol_t * server,
@@ -2030,6 +2025,9 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
 
     if ( server->acks && client_index >= 0 )
     {
+        // a send changes the client's sent side: its queued blocks apply first
+        // (rocketnet_server_acks_settle)
+        rocketnet_server_acks_settle( server->acks, client_index );
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
         rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, bytes, 0, 0, current_time ),
                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
@@ -2221,7 +2219,7 @@ int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t 
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     if ( mapping_index < 0 )
     {
-        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
         return 0;
     }
 
@@ -2276,6 +2274,8 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
 
     if ( server->acks )
     {
+        // the fill runs with the acks closed: nothing is queued
+        rocketnet_assert( server->acks->phase == ROCKETNET_SERVER_ACKS_CLOSED );
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
         rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, wire_bytes, packet_id, 1, current_time ),
                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
@@ -2336,6 +2336,8 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
 
     if ( server->acks )
     {
+        // the fill runs with the acks closed: nothing is queued
+        rocketnet_assert( server->acks->phase == ROCKETNET_SERVER_ACKS_CLOSED );
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
         rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, bytes, 0, 0, current_time ),
                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
@@ -2366,7 +2368,7 @@ int rocketnet_server_protocol_client_address( struct rocketnet_server_protocol_t
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     if ( mapping_index < 0 )
     {
-        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
         return 0;
     }
 

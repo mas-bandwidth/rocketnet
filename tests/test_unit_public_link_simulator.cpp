@@ -275,8 +275,10 @@ static void test_public_link_simulator_server_switch_off_delivers_held()
 }
 
 // A datagram is counted sent only once the link took it: a send that meets the
-// simulator's lock busy is dropped, counted as SEND_RING_FULL, and never
-// reaches packets_sent or bytes_sent. The flush is called alone, without an
+// simulator's lock busy is dropped and never reaches packets_sent or
+// bytes_sent. The link simulator exists only in a development build, so the
+// drop is counted by the development count link_lock_misses, never by
+// SEND_RING_FULL, which names a full send ring. The flush is called alone, without an
 // update, so the one busy send is the payload's and nothing else's.
 static void test_public_link_simulator_server_lock_miss_not_counted_sent()
 {
@@ -288,6 +290,7 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     struct rocketnet_server_transport_stats_t after;
     rocketnet_server_transport_stats( pair.server, &before );
     const uint64_t ring_full_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    const uint64_t misses_before = rocketnet_server_transport_link_lock_misses_for_test( pair.server );
 
     // a nonzero latency keeps the simulator active, so the send goes through
     // the link and its lock
@@ -302,7 +305,8 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     rocketnet_server_transport_stats( pair.server, &after );
     check( after.packets_sent == before.packets_sent );
     check( after.bytes_sent == before.bytes_sent );
-    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 1 );
+    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before );
+    check( rocketnet_server_transport_link_lock_misses_for_test( pair.server ) == misses_before + 1 );
 
     // the next send meets a free lock: it is counted sent once and arrives
 
@@ -311,7 +315,8 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     rocketnet_server_transport_stats( pair.server, &after );
     check( after.packets_sent == before.packets_sent + 1 );
     check( after.bytes_sent > before.bytes_sent );
-    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 1 );
+    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before );
+    check( rocketnet_server_transport_link_lock_misses_for_test( pair.server ) == misses_before + 1 );
     check( live_link_client_bytes_seen( &pair, 20 ) == (int) sizeof( payload ) );
 
     live_link_pair_teardown( &pair );
@@ -416,7 +421,7 @@ static void staged_sites_run( int latency_ms, int loss_percent, int busy, int * 
     struct rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
     check( frame != NULL );
-    memcpy( frame + context.payload_index, payload, sizeof( payload ) );
+    memcpy( frame, payload, sizeof( payload ) );
     check( rocketnet_server_transport_finish_packet( pair.server, &context, (int) sizeof( payload ) ) > 0 );
     check( fake->starts == 2 );
 
@@ -511,6 +516,67 @@ static void test_public_link_simulator_drain_spreads_within_room()
 
     check( fake->payload_finishes == payloads );
     check( fake->batches == 0 );
+
+    rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
+    live_link_pair_teardown( &pair );
+    free( fake );
+}
+
+// A staged commit reads the link setting once. The staged transport here has
+// no send_batch, as gso has none: a commit that answered active and then sent
+// as if inactive would call through it. The simulator is on, a switch to
+// all-zero is handed over, and the commit's setting take meets the lock held,
+// so it answers the setting in force (active): the simulator takes the
+// datagram, the slot goes back by abort and it is charged. The next commit
+// meets a free lock, applies the zero setting and the staging finishes it.
+// The clock is an argument.
+static void test_public_link_simulator_staged_commit_reads_setting_once()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    struct staged_fake_t * fake = (struct staged_fake_t *) calloc( 1, sizeof( *fake ) );
+    check( fake != NULL );
+    struct rocketnet_server_transport_io_operations_t operations = {};
+    operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    operations.start_packet = staged_fake_start;
+    operations.finish_packet = staged_fake_finish;
+    operations.abort_packet = staged_fake_abort;
+    operations.flush = staged_fake_flush;
+    operations.receive = staged_fake_receive;
+
+    const struct rocketnet_server_transport_io_operations_t * swapped_operations = &operations;
+    void * swapped_instance = fake;
+    rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
+
+    // the simulator on and in force: the send takes the setting
+
+    uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    check( rocketnet_server_transport_network_simulator( pair.server, 1, 0, 0, 0 ) );
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->aborts == 1 && fake->finishes == 0 );
+
+    struct rocketnet_server_transport_stats_t before;
+    struct rocketnet_server_transport_stats_t after;
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_server_transport_stats( pair.server, &before );
+
+    // the switch off waits behind a held lock at the commit's one read
+
+    check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
+    rocketnet_server_transport_link_setting_busy_for_test( pair.server, 1 );
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->aborts == 2 && fake->finishes == 0 );
+
+    // the lock free: the zero setting applies and the staging finishes it
+
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->aborts == 2 && fake->finishes == 1 );
+
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_server_transport_stats( pair.server, &after );
+    check( after.packets_sent == before.packets_sent + 2 );
 
     rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
     live_link_pair_teardown( &pair );
@@ -915,6 +981,91 @@ static void test_public_link_simulator_server_inactive_passes_straight_through()
 
     live_link_pair_teardown( &pair );
 }
+
+// The client's hand-off with its simulator active gives the simulator each
+// frame committed to the filling ring once, from the first slot to the last
+// committed one, and no other: not an aborted slot (its frame was never
+// sealed), not a slot a larger earlier fill left behind, and not a count of
+// starts the full ring refused. First, fills with the simulator off, which
+// move through every ring. Then three fills with it on, each drained before
+// the next: five payloads and an aborted slot, then one (the earlier fill's
+// later slots still hold sealed frames), then more starts than the ring
+// holds. Every payload reaches the server exactly once and the server sees no
+// replay or unopenable packet. Time is an argument.
+
+static int live_link_client_fill( struct live_link_pair_t * pair, int payloads, int abort_at )
+{
+    int finished = 0;
+    for ( int i = 0; i < payloads; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_client_transport_start_packet( pair->client, 8, &context );
+        if ( !frame )
+        {
+            continue;
+        }
+        memset( frame, i & 0xFF, 8 );
+        if ( i == abort_at )
+        {
+            rocketnet_client_transport_abort_packet( pair->client, &context );
+            continue;
+        }
+        check( rocketnet_client_transport_finish_packet( pair->client, &context, 8 ) > 8 );
+        finished++;
+    }
+    return finished;
+}
+
+static void test_public_link_simulator_client_hold_sends_each_committed_frame_once()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    const uint64_t * server_counters = rocketnet_server_transport_counters( pair.server )->values;
+    const uint64_t * client_counters = rocketnet_client_transport_counters( pair.client )->values;
+    const uint64_t replays = server_counters[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED];
+    const uint64_t unopened = server_counters[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN];
+    const uint64_t ring_full = client_counters[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    // with the simulator off each hand-off moves the filling ring on, so
+    // these fills land in every ring in turn: each finish and abort finds the
+    // ring its frame lives in
+
+    for ( int round = 0; round < 6; round++ )
+    {
+        const int sent = live_link_client_fill( &pair, 3, 1 );
+        check( sent == 2 );
+        check( live_link_server_payloads_seen( &pair, 2 ) == sent );
+    }
+
+    check( rocketnet_client_transport_network_simulator( pair.client, 10, 0, 0, 0 ) );
+
+    const int first = live_link_client_fill( &pair, 6, 4 );
+    check( first == 5 );
+    check( live_link_server_payloads_seen( &pair, 10 ) == first );
+
+    const int second = live_link_client_fill( &pair, 1, -1 );
+    check( second == 1 );
+    check( live_link_server_payloads_seen( &pair, 10 ) == second );
+
+    // the ring takes its size less what the update commits in it, and every
+    // start past that is refused and counted; the refused starts leave the
+    // ring's count past its size, and the hand-off reads no slot past it
+
+    const int ring_size = 256; // ROCKETNET_CLIENT_PAYLOAD_RING_SIZE, private to sdk/rocketnet_client_transport.cpp
+    const int starts = ring_size + 1024;
+    const int third = live_link_client_fill( &pair, starts, -1 );
+    check( third > 0 && third <= ring_size );
+    check( client_counters[ROCKETNET_COUNTER_SEND_RING_FULL] - ring_full >= (uint64_t) ( starts - ring_size ) );
+    check( live_link_server_payloads_seen( &pair, 10 ) == third );
+
+    check( server_counters[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] == replays );
+    check( server_counters[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == unopened );
+    check( rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    live_link_pair_teardown( &pair );
+}
 #endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_public_link_simulator_inactive_takes_no_lock );
@@ -929,6 +1080,8 @@ REGISTER_UNIT_TEST( test_public_link_simulator_server_switch_off_delivers_held )
 REGISTER_UNIT_TEST( test_public_link_simulator_server_lock_miss_not_counted_sent );
 REGISTER_UNIT_TEST( test_public_link_simulator_staged_commit_arms );
 REGISTER_UNIT_TEST( test_public_link_simulator_drain_spreads_within_room );
+REGISTER_UNIT_TEST( test_public_link_simulator_client_hold_sends_each_committed_frame_once );
+REGISTER_UNIT_TEST( test_public_link_simulator_staged_commit_reads_setting_once );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );

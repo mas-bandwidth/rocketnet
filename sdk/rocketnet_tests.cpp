@@ -4,6 +4,7 @@
 */
 
 #include "../tests/test_env_source.h"
+#include "../tests/check_count.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_ack.h"
@@ -95,7 +96,7 @@ extern thread_local unsigned long long g_ack_visit_count;
 #define ROCKETNET_TEST_LOG_RING_LINES 32
 #define ROCKETNET_TEST_LOG_RING_LINE_BYTES 1024
 // a slot holds "<event>: <level>: " in front of a whole captured line: the
-// level name is at most 7 bytes (sdk/rocketnet.cpp:181), so 64 bytes hold
+// level name is at most 7 bytes (sdk/rocketnet.cpp (rocketnet_log_level_name)), so 64 bytes hold
 // the prefix for any uint64 event ordinal
 #define ROCKETNET_TEST_LOG_RING_PREFIX_BYTES 64
 #define ROCKETNET_TEST_LOG_RING_SLOT_BYTES ( ROCKETNET_TEST_LOG_RING_PREFIX_BYTES + ROCKETNET_TEST_LOG_RING_LINE_BYTES )
@@ -188,6 +189,7 @@ static void rocketnet_check_handler( const char * condition,
 #define rocketnet_check( condition )                                                                                 \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !(condition) )                                                                                         \
     {                                                                                                           \
         rocketnet_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );         \
@@ -207,15 +209,15 @@ void rocketnet_test_xdp_free_list_refuses_overflow()
     const uint64_t region_begin = 0;
     const uint64_t region_end = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
 
-    for ( int i = 0; i < 32768; i++ )
+    for ( int i = 0; i < capacity; i++ )
     {
         rocketnet_check( rocketnet_xdp_free_list_push( send_frames, &count, capacity, (uint64_t) i * ROCKETNET_XDP_FRAME_SIZE, region_begin, region_end ) );
     }
 
-    rocketnet_check( count == 32768 );
+    rocketnet_check( count == capacity );
 
     rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, 0, region_begin, region_end ) );
-    rocketnet_check( count == 32768 );
+    rocketnet_check( count == capacity );
 
     count = 0;
     rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, ROCKETNET_XDP_FRAME_SIZE * 3 + 1, region_begin, region_end ) );
@@ -5368,8 +5370,8 @@ void rocketnet_test_server_keep_alive_pacing()
 
 void rocketnet_test_client_payload_before_first_keep_alive()
 {
-    // a payload racing ahead of the first keep-alive is ignored, as
-    // netcode.io's client does: delivered, it let the application reply on
+    // a payload racing ahead of the first keep-alive is ignored
+    // (TRANSPORT.md t11.3): delivered, it let the application reply on
     // a connection that could not yet send. The keep-alive still connects
     // the client, and the payloads after it are delivered
 
@@ -5687,8 +5689,8 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
             }
             int connected_before = ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-            // before connected the client ignores the payload, as
-            // netcode.io's client does, counted wrong state
+            // before connected the client ignores the payload
+            // (TRANSPORT.md t11.3), counted wrong state
 
             const int delivered = rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof( payload ), &payload_bytes );
             if ( !connected_before )
@@ -5829,8 +5831,8 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
             rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof( payload ), &payload_bytes );
 
             // the standalone ack, sealed from _sending connection response_
-            // and sent once. The client now ignores payloads there (as
-            // netcode.io's client), so it accrues no debt to send it for,
+            // and sent once. The client now ignores payloads there
+            // (TRANSPORT.md t11.3), so it accrues no debt to send it for,
             // but the packet stays legal, and the server's pacing must
             // survive it all the same.
 
@@ -7989,6 +7991,9 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_running",
     "rocketnet_server_destroy",
     "rocketnet_server_update",
+    "rocketnet_server_update_receive",
+    "rocketnet_server_update_client",
+    "rocketnet_server_update_finish",
     "rocketnet_server_send_packets",
     "rocketnet_server_port",
     "rocketnet_server_public_key",
@@ -8008,6 +8013,8 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_start_message",
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
+    "rocketnet_server_finish_client_message",
+    "rocketnet_server_abort_client_message",
     "rocketnet_server_can_send_message",
     "rocketnet_server_receive_messages",
     "rocketnet_server_receipts",
@@ -8052,6 +8059,9 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_running",
     "rocketnet_server_destroy",
     "rocketnet_server_update",
+    "rocketnet_server_update_receive",
+    "rocketnet_server_update_client",
+    "rocketnet_server_update_finish",
     "rocketnet_server_send_packets",
     "rocketnet_server_port",
     "rocketnet_server_public_key",
@@ -8070,6 +8080,8 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_start_message",
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
+    "rocketnet_server_finish_client_message",
+    "rocketnet_server_abort_client_message",
     "rocketnet_server_can_send_message",
     "rocketnet_server_receive_messages",
     "rocketnet_server_receipts",
@@ -8520,6 +8532,9 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_running( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_update( NULL, 1000.0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_update_receive( NULL, 1000.0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_update_client( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_update_finish( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_port( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_public_key( NULL, token ) );
@@ -8544,6 +8559,8 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_client_message( NULL, 0, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_abort_client_message( NULL, 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_can_send_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive_messages( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receipts( NULL, 0, receipts, 2 ) == 0 ) );
@@ -9797,7 +9814,13 @@ void rocketnet_test_ack_endpoint_processing()
     block.largest = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
     block.first_range_length = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4;       // the newer quarter of the older half
 
-    for ( int drain = 0; drain < 100; drain++ )
+    // a batch admits at most 64 of the ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4
+    // acknowledged sequences: one drain per sequence is room at any history,
+    // and the block is drained before the bound
+
+    const int max_drains = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4 + 1;
+    int drain = 0;
+    for ( ; drain < max_drains; drain++ )
     {
         acked_count = 0;                    // each drained batch admits more; overflow defers to the next
         if ( rocketnet_ack_endpoint_process_block( endpoint, &block, 110.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 )
@@ -9805,6 +9828,7 @@ void rocketnet_test_ack_endpoint_processing()
             break;
         }
     }
+    rocketnet_check( drain < max_drains );
 
     rocketnet_ack_endpoint_update_stats( endpoint );
     rocketnet_check( endpoint->packet_loss > 40.0f );           // half the older half unacknowledged
@@ -9856,6 +9880,13 @@ void rocketnet_test_ack_debt()
     // back arm the debt, and one eliciting packet makes exactly one type 8 due ---
 
     const uint8_t data[4] = { 1, 2, 3, 4 };
+
+    // At a threshold of 1 the two "threshold - 1" loops below run no times:
+    // the "below the threshold" state is zero eliciting packets, which the
+    // first "not due" check covers. A threshold above 1 brings the loops to
+    // life and needs its own below-threshold case: this assert says so.
+
+    static_assert( ROCKETNET_ACK_DEBT_THRESHOLD == 1, "test_ack_debt: a threshold above 1 needs a case with eliciting packets below it" );
 
     for ( int i = 0; i < ROCKETNET_ACK_DEBT_THRESHOLD - 1; i++ )
     {
@@ -10747,12 +10778,18 @@ void rocketnet_test_send_history_lossy_long_path()
     rocketnet_check( path );
     rocketnet_test_lossy_path_setup( path, 0x11057ULL );
 
-    const int total_payloads = 12000;
-    const int burst_start = 6000;
+    // about three laps of the history: 12000 payloads, every 100th lost, at
+    // the default 4096; a larger history spaces both by the same factor, so
+    // the losses and the laps stay the same
+
+    const int lap_scale = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4096;
+    const int total_payloads = 12000 * lap_scale;
+    const int burst_start = 6000 * lap_scale;
+    const int loss_period = 100 * lap_scale;
 
     for ( int i = 0; i < total_payloads; i++ )
     {
-        const int lose = ( i % 100 ) == 99 || ( i >= burst_start && i < burst_start + 3 );
+        const int lose = ( i % loss_period ) == loss_period - 1 || ( i >= burst_start && i < burst_start + 3 );
         rocketnet_test_lossy_path_step( path, 1, lose ? ROCKETNET_TEST_PATH_LOSE : ROCKETNET_TEST_PATH_CARRY );
     }
 
@@ -11588,7 +11625,7 @@ void rocketnet_test_client_id_free_after_clean_disconnect()
 }
 
 // ----------------------------------------------------------------
-//        the config table and the transport ladder
+//        the config table and the transport list
 // ----------------------------------------------------------------
 
 // Each case restores the in-memory table state it found, so cases remain
@@ -11727,6 +11764,15 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
                 memcpy( &current, (uint8_t *) config + field->offset, sizeof( current ) );
 
                 expected_int = field->min_value != (int64_t) current ? field->min_value : field->min_value + 1;
+                if ( expected_int > field->max_value )
+                {
+                    // one legal value in this build (num_channels when ROCKETNET_MAX_CHANNELS
+                    // is 1): the env carries it, and the field starts one below it, so the
+                    // read back still proves the env was applied
+                    expected_int = field->min_value;
+                    const int start = (int) ( field->min_value - 1 );
+                    memcpy( (uint8_t *) config + field->offset, &start, sizeof( start ) );
+                }
                 rocketnet_check( expected_int <= field->max_value );
 
                 snprintf( value_string, sizeof( value_string ), "%" PRId64, expected_int );
@@ -11736,7 +11782,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
                 // a ranged row (step_driven's 0 .. 1,
-                // sdk/rocketnet_config.cpp:94) takes its max; a 0 .. 0 row
+                // sdk/rocketnet_config.cpp (rocketnet_client_config_fields)) takes its max; a 0 .. 0 row
                 // takes any value of the full width
 
                 expected_uint64 = field->max_value > field->min_value ? (uint64_t) field->max_value : 9876543210987654321ULL;
@@ -11932,6 +11978,8 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, loopback_hub ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, server_secret_key ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, token_epoch_unix_seconds ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, bind_ipv4_address ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, bind_ipv6_address ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -12069,10 +12117,10 @@ void rocketnet_test_public_config_resolve()
     // NULL is the defaults
 
     rocketnet_check( rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == ROCKETNET_DEFAULT_NUM_CHANNELS && strcmp( client_transport.transport, "auto" ) == 0 );
 
     rocketnet_check( rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == ROCKETNET_DEFAULT_MAX_CLIENTS && server_transport.public_address[0] == '\0' );
 
     // every client field lands
 
@@ -12651,9 +12699,9 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 8 );
     rocketnet_check( pointer != NULL );
 
-    rocketnet_check( object->pending_connection == 0 );
+    rocketnet_check( object->connections[0].open.pending );
     rocketnet_check( rn_message_object_finish( object, 0, 0 ) == 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( rn_message_open_count( object ) == 0 );
 
     // a new start is not refused as one already pending; bytes_written past
     // the start's bytes is refused and aborts it too
@@ -12662,7 +12710,7 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     rocketnet_check( pointer != NULL );
 
     rocketnet_check( rn_message_object_finish( object, 0, 9 ) == 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( rn_message_open_count( object ) == 0 );
 
     // a finish with nothing pending asserts in a debug build and returns 0 in a release build
 
@@ -12685,7 +12733,7 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     }
 
     rocketnet_check( rn_message_object_finish( object, 0, 8 ) != 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( rn_message_open_count( object ) == 0 );
 
     rn_message_object_destroy( object );
 }
@@ -12915,7 +12963,7 @@ void rocketnet_test_config_validation()
     rocketnet_log_level( empty_saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
-    rocketnet_check( config.max_clients == 1000 );
+    rocketnet_check( config.max_clients == ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
 
     rocketnet_test_env_restore( &guard );
@@ -12947,50 +12995,50 @@ void rocketnet_test_config_validation()
 #endif // #if ROCKETNET_DEV
 }
 
-void rocketnet_test_transport_ladder_parse()
+void rocketnet_test_transport_order_parse()
 {
     const int linux_server[] = { ROCKETNET_TRANSPORT_XDP, ROCKETNET_TRANSPORT_GSO, ROCKETNET_TRANSPORT_PORTABLE };
     const int mac_endpoint[] = { ROCKETNET_TRANSPORT_MSGX, ROCKETNET_TRANSPORT_PORTABLE };
 
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
 
     // auto -- and its spellings NULL, "", and whitespace -- expands to the
     // availability order
 
-    rocketnet_check( rocketnet_transport_ladder_parse( NULL, linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( NULL, linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 && ladder.num_skipped == 0 );
     rocketnet_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP && ladder.candidates[1] == ROCKETNET_TRANSPORT_GSO && ladder.candidates[2] == ROCKETNET_TRANSPORT_PORTABLE );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "auto", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "auto", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "  auto  ", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "  auto  ", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 );
 
     // a one-element list is a pin; an explicit list is exactly that list,
     // in exactly that order, with no implicit floor appended
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "gso", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "gso", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "gso,xdp", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "gso,xdp", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
     rocketnet_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO && ladder.candidates[1] == ROCKETNET_TRANSPORT_XDP );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( " gso , portable ", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( " gso , portable ", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
 
     // known names absent here are skipped softly, so one fleet-wide line
     // deploys unmodified to heterogeneous boxes
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "xdp,gso,msgx,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "xdp,gso,msgx,portable", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 && ladder.num_skipped == 1 );
     rocketnet_check( ladder.skipped[0] == ROCKETNET_TRANSPORT_MSGX );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "xdp,gso,msgx,portable", mac_endpoint, 2, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "xdp,gso,msgx,portable", mac_endpoint, 2, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 && ladder.num_skipped == 2 );
     rocketnet_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_MSGX && ladder.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
 
@@ -12998,26 +13046,26 @@ void rocketnet_test_transport_ladder_parse()
     // endpoint: the parse falls to the availability order, loudly, so a
     // fleet-wide line never bricks an endpoint it was not addressing
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "xdp", mac_endpoint, 2, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "xdp", mac_endpoint, 2, &ladder ) );
     rocketnet_check( ladder.num_skipped == 1 && ladder.skipped[0] == ROCKETNET_TRANSPORT_XDP );
     rocketnet_check( ladder.num_candidates == 2 );
     rocketnet_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_MSGX && ladder.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
 
     // typos are not skips: a name in no transport set fails loudly
 
-    rocketnet_check( !rocketnet_transport_ladder_parse( "protable", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "GSO", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "gso,,portable", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( ",", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "auto,gso", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "protable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "GSO", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "gso,,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( ",", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "auto,gso", linux_server, 3, &ladder ) );
     // one past ROCKETNET_MAX_TRANSPORT_CANDIDATES (16), available and skipped
-    rocketnet_check( !rocketnet_transport_ladder_parse( "portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx", linux_server, 3, &ladder ) );
 
     // duplicates of an available name are allowed: trying a rung twice is
     // the operator's list, honored as written
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "gso,gso", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "gso,gso", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
 }
 
@@ -13041,8 +13089,8 @@ void rocketnet_test_portable_server_release_gate()
 
     rocketnet_check( portable_server && portable_client );
 
-    struct rocketnet_transport_ladder_t ladder;
-    rocketnet_check( rocketnet_transport_ladder_parse( "auto", servers, server_count, &ladder ) );
+    struct rocketnet_transport_order_t ladder;
+    rocketnet_check( rocketnet_transport_order_parse( "auto", servers, server_count, &ladder ) );
 
     bool portable_in_auto = false;
     for ( int i = 0; i < ladder.num_candidates; ++i )
@@ -13051,7 +13099,7 @@ void rocketnet_test_portable_server_release_gate()
     }
     rocketnet_check( portable_in_auto );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( " portable ", servers, server_count, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( " portable ", servers, server_count, &ladder ) );
     rocketnet_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
 }
 
@@ -13156,6 +13204,71 @@ void rocketnet_test_xdp_interrupt_matcher()
 
     rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
         " 34:  0  0  IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0\n", "ens1f0" ) );
+}
+
+// the R4 reader over /proc/interrupts lines longer than its buffer, as a host
+// with more than about 372 cpus prints them (11 bytes a cpu): each line yields
+// its own IRQ once, wherever the read splits the interface name, and a line
+// whose number is not followed by ':' is not an IRQ line
+
+static char interrupt_reader_text[65536];
+
+static int interrupt_reader_append( int length, const char * text )
+{
+    const int written = snprintf( interrupt_reader_text + length, sizeof( interrupt_reader_text ) - (size_t) length, "%s", text );
+    rocketnet_check( written >= 0 && length + written < (int) sizeof( interrupt_reader_text ) );
+    return length + written;
+}
+
+void rocketnet_test_xdp_interrupt_reader_long_lines()
+{
+    // the name split by the read at each of its bytes
+
+    for ( int split = 1; split <= 12; split++ )
+    {
+        int length = interrupt_reader_append( 0, "  45:" );
+        while ( length < 4095 - split )
+        {
+            length = interrupt_reader_append( length, " " );
+        }
+        length = interrupt_reader_append( length, " eth0-TxRx-0\n" );
+        length = interrupt_reader_append( length, "98765 eth0\n" );
+
+        FILE * interrupts = fmemopen( interrupt_reader_text, (size_t) length, "r" );
+        rocketnet_check( interrupts );
+
+        int irq = 0;
+        rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+        rocketnet_check( irq == 45 );
+        rocketnet_check( !rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+
+        (void) fclose( interrupts );
+    }
+
+    // 400 cpus in the kernel's layout: the continuation of the line is not
+    // an IRQ line of its own
+
+    int length = interrupt_reader_append( 0, "  45:" );
+    for ( int cpu = 0; cpu < 400; cpu++ )
+    {
+        char count[16];
+        (void) snprintf( count, sizeof( count ), " %10u", 1000u + (unsigned) cpu );
+        length = interrupt_reader_append( length, count );
+    }
+    length = interrupt_reader_append( length, "  IR-PCI-MSI 524288-edge      eth0-TxRx-0\n" );
+    length = interrupt_reader_append( length, "  46:          0  IR-PCI-MSI 524289-edge      eth0-TxRx-1\n" );
+
+    FILE * interrupts = fmemopen( interrupt_reader_text, (size_t) length, "r" );
+    rocketnet_check( interrupts );
+
+    int irq = 0;
+    rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+    rocketnet_check( irq == 45 );
+    rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+    rocketnet_check( irq == 46 );
+    rocketnet_check( !rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+
+    (void) fclose( interrupts );
 }
 
 #endif // #if ROCKETNET_XDP
@@ -13269,7 +13382,9 @@ void rocketnet_test_config_override_logging()
     // key is untouched and its encoding appears nowhere in the log
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_MAX_CLIENTS=77" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 1000)" ) != NULL );
+    char displaced[32];
+    (void) snprintf( displaced, sizeof( displaced ), "(displaces %d)", ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( strstr( rocketnet_test_captured_log, displaced ) != NULL );
     rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) != 0 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) == NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
@@ -14603,11 +14718,12 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
 #endif // #if ROCKETNET_DEV
     { "test_handshake_deadline_is_configured", rocketnet_test_handshake_deadline_is_configured },
     { "test_config_validation", rocketnet_test_config_validation },
-    { "test_transport_ladder_parse", rocketnet_test_transport_ladder_parse },
+    { "test_transport_order_parse", rocketnet_test_transport_order_parse },
     { "test_portable_server_release_gate", rocketnet_test_portable_server_release_gate },
     { "test_server_port_zero_needs_a_discovering_transport", rocketnet_test_server_port_zero_needs_a_discovering_transport },
 #if ROCKETNET_XDP
     { "test_xdp_transport_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
+    { "test_xdp_transport_interrupt_reader_long_lines", rocketnet_test_xdp_interrupt_reader_long_lines },
 #endif // #if ROCKETNET_XDP
 #if ROCKETNET_DEV
     { "test_config_override_logging", rocketnet_test_config_override_logging },

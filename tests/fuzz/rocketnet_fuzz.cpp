@@ -38,6 +38,7 @@
 #include <memory>
 
 #include "../portable_crt.h"
+#include "rocketnet_fuzz_quiet.h"
 
 static const uint8_t rocketnet_fuzz_filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
@@ -347,7 +348,7 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
 }
 
 // -----------------------------------------------------------------------
-//  3: the config value parses -- the transport ladder and the integer parse
+//  3: the config value parses -- the transport list and the integer parse
 // -----------------------------------------------------------------------
 
 static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
@@ -377,10 +378,10 @@ static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
 
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
     memset( &ladder, 0, sizeof( ladder ) );
 
-    const bool ladder_parsed = rocketnet_transport_ladder_parse( value, available, num_available, &ladder );
+    const bool ladder_parsed = rocketnet_transport_order_parse( value, available, num_available, &ladder );
     if ( ladder_parsed )
     {
         rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_CONFIG_LADDER_PARSED]++;
@@ -714,7 +715,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     // nothing else: no rocketnet_init, so no platform threads and no
     // sodium, and the harness stays as deterministic as the parsers are
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     char seed_dir[1024];
     const int have_dir = rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) );

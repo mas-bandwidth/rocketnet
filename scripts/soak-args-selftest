@@ -37,8 +37,27 @@
 #                          failure is the coverage line. (soak 100 assumed the
 #                          handshake outlasts 100 iterations, which a fast host
 #                          does not: it connected and verified payloads.)
+#   9  send faults      -- ROCKETNET_SOAK_FAULT_SEND=skip, repeat and swap
+#                          each make the client skip a size, send one twice,
+#                          or swap two, once, on a clean link: the run must
+#                          fail "LINK WITNESS FAILED" naming missing, repeated
+#                          and late in turn (the witness's verdict, every run).
+#   (--flat runs legs 6-8 only, in nightly-soak.yml: each is a 60 s run)
+#   6  flat, impaired   -- --assert-flat over an impaired 60 s run exits 0.
+#   7  impairment fault -- ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 creates the ends
+#                          unimpaired: --assert-flat must fail "link impairment
+#                          not observed".
+#   8  leak fault       -- ROCKETNET_SOAK_FAULT_LEAK_FD=1 holds one file open
+#                          past the end sample: --assert-flat must fail on fds.
 
 set -u
+
+# --flat runs legs 6-8 only (60 s runs each: nightly-soak.yml, not per commit)
+MODE=args
+FLAT_SECONDS=60
+if [ "${1:-}" = "--flat" ]; then
+    MODE=flat
+fi
 
 cd "$( dirname "${BASH_SOURCE[0]}" )/.." || exit 1
 
@@ -93,6 +112,7 @@ check_refusal()
     fi
     return 0
 }
+if [ "$MODE" != flat ]; then
 
 # ---------------------------------------------------------------------------
 # 1. argument refusals exit 2 with a one-line reason on stderr, never a run
@@ -198,6 +218,66 @@ elif ! grep -q '^soak finished: 1 iterations, 1 connects, 0 payloads verified, 1
 else
     echo "leg 5  soak 1: the handshake at the bound completed before teardown, no refusal, exit $status (coverage only)"
 fi
+
+# ---------------------------------------------------------------------------
+# 9. the link witness's negative controls: one missing, one repeated, one late
+#    payload planted at the client on a clean link must each fail the run
+
+for fault in skip:missing repeat:repeated swap:late; do
+    name=${fault%%:*}
+    field=${fault#*:}
+    ROCKETNET_SOAK_FAULT_SEND=$name "$SOAK" 2000 > "$WORK/send_$name.txt" 2>&1
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        fail "ROCKETNET_SOAK_FAULT_SEND=$name exited 0 -- the link witness verdict is decoration"
+    elif ! grep -q "^soak: LINK WITNESS FAILED: client_to_server $field=1[ :]" "$WORK/send_$name.txt"; then
+        fail "ROCKETNET_SOAK_FAULT_SEND=$name exited $status but never failed client_to_server $field=1: $( grep -m1 'LINK WITNESS FAILED' "$WORK/send_$name.txt" )"
+    elif [ "$( grep -c 'LINK WITNESS FAILED' "$WORK/send_$name.txt" )" -ne 1 ]; then
+        fail "ROCKETNET_SOAK_FAULT_SEND=$name failed more than the planted $field: $( grep 'LINK WITNESS FAILED' "$WORK/send_$name.txt" | tr '\n' ' ' )"
+    else
+        echo "leg 9  send fault $name: red, exit $status, $( grep -m1 'LINK WITNESS FAILED' "$WORK/send_$name.txt" )"
+    fi
+done
+fi # MODE != flat
+
+# ---------------------------------------------------------------------------
+# 6-8. --assert-flat: an impaired clean run passes; with the impairment not
+#      applied (ROCKETNET_SOAK_FAULT_IMPAIRMENT=1) it must fail "link impairment
+#      not observed"; with one file leaked (ROCKETNET_SOAK_FAULT_LEAK_FD=1) it
+#      must fail on the fd (handle) count.
+if [ "$MODE" = flat ]; then
+
+# the impairment scripts/soak-per-transport runs, on the portable cell it passes nightly
+IMPAIR="ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2"
+
+env $IMPAIR "$SOAK" --seconds "$FLAT_SECONDS" --assert-flat > "$WORK/flat_clean.txt" 2>&1
+status=$?
+if [ "$status" -ne 0 ]; then
+    fail "an impaired --assert-flat run exited $status: $( grep -m1 -- '--assert-flat FAILED\|FAILED' "$WORK/flat_clean.txt" )"
+else
+    echo "leg 6  --assert-flat over an impaired clean run: exit 0"
+fi
+
+env $IMPAIR ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 "$SOAK" --seconds "$FLAT_SECONDS" --assert-flat > "$WORK/flat_impairment.txt" 2>&1
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "the impairment was not applied on purpose and --assert-flat still passed -- the impairment witness is decoration"
+elif ! grep -q 'link impairment not observed' "$WORK/flat_impairment.txt"; then
+    fail "the unimpaired run failed (exit $status) but never said the impairment was not observed"
+else
+    echo "leg 7  --assert-flat against an impairment not applied: red, exit $status, $( grep -m1 'link impairment not observed' "$WORK/flat_impairment.txt" | cut -c1-90 )"
+fi
+
+env $IMPAIR ROCKETNET_SOAK_FAULT_LEAK_FD=1 "$SOAK" --seconds "$FLAT_SECONDS" --assert-flat > "$WORK/flat_leak.txt" 2>&1
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "a file was leaked on purpose and --assert-flat still passed -- the flat check is decoration"
+elif ! grep -q -- '--assert-flat FAILED: \(fds\|handles\)' "$WORK/flat_leak.txt"; then
+    fail "the leaking run failed (exit $status) but never named the fd or handle count"
+else
+    echo "leg 8  --assert-flat against a leaked file: red, exit $status, $( grep -m1 -- '--assert-flat FAILED' "$WORK/flat_leak.txt" | cut -c1-90 )"
+fi
+fi # MODE = flat
 
 # ---------------------------------------------------------------------------
 

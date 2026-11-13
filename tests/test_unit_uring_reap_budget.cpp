@@ -33,6 +33,13 @@
 
 #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 
+#include "../sdk/rocketnet_driver.h"
+#include "../sdk/rocketnet_receive_prefilter.h"
+
+// the builtin io_uring backend (sdk/rocketnet_driver_builtin.cpp): its
+// receive_drop_totals is read on the transports these cases drive
+extern const rocketnet_transport_backend_t rocketnet_io_uring_transport;
+
 #define URING_FAKE_CAPACITY             ( 1 << 18 )
 
 // the fake transport is sized for the default configuration's clients: one
@@ -231,7 +238,7 @@ static void uring_fake_stop_and_destroy( rocketnet_server_uring_t * uring, uring
 
 static uint64_t uring_counter( struct rocketnet_server_uring_t * uring, int index )
 {
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
     return counters[index];
 }
@@ -306,9 +313,9 @@ static void test_io_uring_transport_reap_receive_flood_returns_within_budget()
         }
     }
 
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 4 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED ) == exposed );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_REAP_DEFERRED ) == 4 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_RECEIVED ) == exposed );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW ) == 0 );
 
     fake->consumed = 0;
     uring_fake_stop_and_destroy( uring, fake );
@@ -347,9 +354,9 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
     check( !fake->guard_tripped );
     check( fake->consumed <= ROCKETNET_URING_SEND_BUDGET );
     check( fake->sends_submitted == URING_TEST_SENDS );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == 0 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED ) == 1 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_SEND_DEFERRED ) == 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_REAP_DEFERRED ) == 1 );
 
     // the kernel still owns the first phase's slots: the next start_packet
     // returns none of them
@@ -362,7 +369,7 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
     }
 
     int updates = 0;
-    while ( updates < 8 && uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) < URING_TEST_SENDS + 1 )
+    while ( updates < 8 && uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) < URING_TEST_SENDS + 1 )
     {
         fake->consumed = 0;
         rocketnet_server_uring_receive_packets( uring );
@@ -379,8 +386,8 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
         updates++;
     }
 
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == URING_TEST_SENDS + 1 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) == URING_TEST_SENDS + 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_SEND_DROPPED ) == 0 );
     check( fake->sends_submitted == URING_TEST_SENDS + 1 );
 
     // every send retired: both phases were reset, so the phase start_packet
@@ -429,8 +436,8 @@ static void test_io_uring_transport_reap_destroy_after_saturation()
 
     check( !fake->guard_tripped );
     check( fake->consumed <= ROCKETNET_URING_SEND_BUDGET );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED ) == 1 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_SEND_DEFERRED ) == 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) == 0 );
 
     fake->consumed = 0;
     uring_fake_stop_and_destroy( uring, fake );
@@ -462,7 +469,7 @@ static void test_io_uring_transport_receive_without_a_buffer_is_counted()
 
     check( !fake->guard_tripped );
     check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER ) == 1 );
 
     const uint32_t outside = IORING_CQE_F_BUFFER | IORING_CQE_F_MORE | ( (uint32_t) ROCKETNET_URING_RECV_BUFFERS << IORING_CQE_BUFFER_SHIFT );
     uring_fake_push( fake, recv_tag, ROCKETNET_URING_RECV_BUFFER_BYTES, outside );
@@ -470,15 +477,24 @@ static void test_io_uring_transport_receive_without_a_buffer_is_counted()
 
     check( !fake->guard_tripped );
     check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
+
+    // the backend's receive_drop_totals reads the same site: each completion
+    // naming no buffer is a failed receive (the server's RECEIVE_FAILED), and
+    // nothing found the bank full
+
+    uint64_t drops[ROCKETNET_RECEIVE_NUM_DROPS];
+    rocketnet_io_uring_transport.server->receive_drop_totals( uring, drops );
+    check( drops[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] == 2 );
+    check( drops[ROCKETNET_RECEIVE_DROP_BANK_FULL] == 0 );
 
     uring_fake_push_receive( fake, 0 );
     rocketnet_server_uring_receive_packets( uring );
 
     check( !fake->guard_tripped );
     check( rocketnet_server_uring_process_packets( uring )->num_packets == 1 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE ) == 0 );
 
     uring_fake_stop_and_destroy( uring, fake );
     check( !fake->guard_tripped );
@@ -516,13 +532,13 @@ static void test_io_uring_transport_refused_multishot_logs_once()
     rocketnet_log_function( uring_receive_refused_log, NULL );
 
     const uint64_t recv_tag = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
-    const uint64_t rearms = uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS );
+    const uint64_t rearms = uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_REARMS );
 
     // running out of buffers ends a multishot too, and is not a refusal
     uring_fake_push( fake, recv_tag, -ENOBUFS, 0 );
     rocketnet_server_uring_receive_packets( uring );
     check( uring_receive_refused_errors == 0 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == rearms + 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_REARMS ) == rearms + 1 );
 
     const int refusals = 8;
     for ( int i = 0; i < refusals; i++ )
@@ -534,7 +550,7 @@ static void test_io_uring_transport_refused_multishot_logs_once()
     }
 
     check( uring_receive_refused_errors == 1 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == rearms + 1 + (uint64_t) refusals );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_REARMS ) == rearms + 1 + (uint64_t) refusals );
 
     uring_fake_stop_and_destroy( uring, fake );
     check( !fake->guard_tripped );
@@ -660,7 +676,7 @@ static void test_io_uring_transport_reap_holds_past_bank_room()
     rocketnet_server_uring_send_packets( uring );
     check( !fake->guard_tripped );
     check( fake->consumed <= ROCKETNET_URING_SEND_BUDGET );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_REAP_DEFERRED ) == 1 );
 
     // the receive's reap holds what the bank has no room for, reaps the
     // send's CQE behind it, and swaps what fits
@@ -673,9 +689,9 @@ static void test_io_uring_transport_reap_holds_past_bank_room()
     check( received->num_packets <= URING_TEST_BANK_SIZE );
     check( received->num_packets + ROCKETNET_URING_MAX_SEGMENTS > URING_TEST_BANK_SIZE );
     const int first = received->num_packets;
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 2 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_REAP_DEFERRED ) == 2 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) == 1 );
 
     // the next receive exposes the held rest
 
@@ -685,10 +701,10 @@ static void test_io_uring_transport_reap_holds_past_bank_room()
 
     received = rocketnet_server_uring_process_packets( uring );
     check( first + received->num_packets == datagrams );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED ) == (uint64_t) datagrams );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 2 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == 1 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_RECEIVED ) == (uint64_t) datagrams );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_REAP_DEFERRED ) == 2 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) == 1 );
 
     // more datagrams than the bank holds wait in the completion queue between
     // updates, as they normally do; a send_packets with nothing staged and
@@ -708,7 +724,7 @@ static void test_io_uring_transport_reap_holds_past_bank_room()
     rocketnet_server_uring_send_packets( uring );
     check( !fake->guard_tripped );
     check( fake->consumed == 0 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 2 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_REAP_DEFERRED ) == 2 );
 
     fake->consumed = 0;
     uring_fake_stop_and_destroy( uring, fake );
@@ -741,7 +757,7 @@ static void test_io_uring_transport_send_completions_pass_a_full_fill_bank()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, queues, &source );
     rocketnet_unit_check( uring );
 
-    const int receives = 9000;
+    const int receives = URING_TEST_BANK_SIZE * 9 / 16;      // 9000 at the default 1000 clients; the flood scales with the bank
     const int sends = 256;
     const int updates = 7;
 
@@ -776,8 +792,8 @@ static void test_io_uring_transport_send_completions_pass_a_full_fill_bank()
         check( fake->consumed <= URING_TEST_BANK_SIZE );
     }
 
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == (uint64_t) ( sends * updates ) );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) == (uint64_t) ( sends * updates ) );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_SEND_DEFERRED ) == 0 );
 
     // the held receives come out on the following swaps, none dropped
 
@@ -788,8 +804,8 @@ static void test_io_uring_transport_send_completions_pass_a_full_fill_bank()
         check( !fake->guard_tripped );
     }
 
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED ) == (uint64_t) ( 2 * receives * updates ) );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_RECEIVED ) == (uint64_t) ( 2 * receives * updates ) );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW ) == 0 );
 
     fake->consumed = 0;
     uring_fake_stop_and_destroy( uring, fake );
@@ -849,8 +865,8 @@ static void test_io_uring_transport_send_phases_stage_every_update_under_late_re
 
         // this update's sends are submitted, their CQEs behind the budget
 
-        check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == (uint64_t) ( sends * update ) );
-        check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED ) == (uint64_t) ( update + 1 ) );
+        check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) == (uint64_t) ( sends * update ) );
+        check( uring_counter( uring, ROCKETNET_COUNTER_URING_SEND_DEFERRED ) == (uint64_t) ( update + 1 ) );
 
         fake->consumed = 0;
         rocketnet_server_uring_receive_packets( uring );
@@ -859,10 +875,10 @@ static void test_io_uring_transport_send_phases_stage_every_update_under_late_re
 
         // one call late, receive_packets reaped them
 
-        check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == (uint64_t) ( sends * ( update + 1 ) ) );
+        check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_SENT ) == (uint64_t) ( sends * ( update + 1 ) ) );
     }
 
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_SEND_DROPPED ) == 0 );
 
     // a send_packets with every send reaped resets both phases
 
@@ -935,8 +951,8 @@ static void test_io_uring_transport_held_receives_take_turns_by_queue()
     printf( "held receives by queue: queue 1's datagram in update %d of the flood's %d datagrams\n", update_of_mark, datagrams );
     check( seen == datagrams );
     check( update_of_mark == 1 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED ) == (uint64_t) datagrams );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_PACKETS_RECEIVED ) == (uint64_t) datagrams );
+    check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW ) == 0 );
 
     fake->consumed = 0;
     uring_fake_stop_and_destroy( uring, fake );

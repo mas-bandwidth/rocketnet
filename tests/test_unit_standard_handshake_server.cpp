@@ -311,6 +311,41 @@ static void standard_handshake_server_token_refusals()
 
         handshake_server_teardown( &test );
     }
+
+    // in every build, the DEV=OFF unit suite included (until now only the
+    // DEV vectors saw these two): an expired cookie is answered with a fresh
+    // cookie and counted, never taken as proof of the address ...
+
+    {
+        struct handshake_server_t test;
+        handshake_server_setup( &test );
+
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        handshake_server_build_request( request, "198.51.100.7:56789",
+                                        ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, -100 );
+        check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+        check( response_bytes > 0 );
+        check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED] == 1 );
+
+        handshake_server_teardown( &test );
+    }
+
+    // ... and a token for another protocol id is ignored and counted
+
+    {
+        struct handshake_server_t test;
+        handshake_server_setup( &test );
+        test.server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID + 1;
+
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        handshake_server_build_request( request, "198.51.100.7:56789",
+                                        ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+        check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+        check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] == 1 );
+
+        handshake_server_teardown( &test );
+    }
 }
 
 static void test_standard_handshake_server_vectors()
@@ -584,6 +619,102 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
 REGISTER_UNIT_TEST( test_claim_released_with_half_open_idle_mapping );
 REGISTER_UNIT_TEST( test_claim_released_with_integrity_limit_mapping );
 REGISTER_UNIT_TEST( test_response_nonzero_padding_is_not_an_integrity_failure );
+
+// A connection response of the right size from an address the server holds no
+// mapping for is refused as CONNECTION_RESPONSE_NO_MAPPING
+// (rocketnet_server_protocol_process_sealed_packet): only that counter,
+// CONNECTION_RESPONSE_RECEIVED and PACKETS_RECEIVED move, once per packet,
+// and the mapping the handshake made is untouched, so its own response still
+// connects.
+static void response_no_mapping_check_delta( const uint64_t * before, const uint64_t * after, uint64_t packets )
+{
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; ++i )
+    {
+        uint64_t expected = before[i];
+        if ( i == ROCKETNET_COUNTER_PACKETS_RECEIVED || i == ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED ||
+             i == ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING )
+        {
+            expected += packets;
+        }
+        check( after[i] == expected );
+    }
+}
+
+static void test_response_from_unmapped_address_counts_no_mapping()
+{
+    struct handshake_server_t test;
+    handshake_server_setup( &test );
+    test.server.handshake_deadline_seconds = 30;
+
+    struct rocketnet_address_t client_address;
+    check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+    struct rocketnet_address_t stranger;
+    check( rocketnet_address_parse( &stranger, "198.51.100.8:56789" ) );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    handshake_server_build_request( request, "198.51.100.7:56789",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( handshake_server_process_from( &test, &client_address, request, 1000.0,
+                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &client_address );
+    check( mapping_index != -1 );
+    check( rocketnet_encryption_map_find( test.server.encryption_map, &stranger ) == -1 );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+
+    // a response that would connect from the mapped address
+
+    uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
+                                                      rocketnet_test_filter_value, 1, NULL,
+                                                      padding, (int) sizeof( padding ),
+                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                      mapping->client_ephemeral_public_key,
+                                                      mapping->keys.handshake_client_to_server );
+    check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    // from the stranger, three times: each is one NO_MAPPING, nothing else
+
+    uint64_t before[ROCKETNET_NUM_COUNTERS];
+    memcpy( before, test.counters.values, sizeof( before ) );
+    for ( int i = 0; i < 3; ++i )
+    {
+        response_bytes = 0;
+        check( rocketnet_server_protocol_process_packet( &test.server, &stranger, packet, packet_bytes,
+                                                         ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                         response, &response_bytes,
+                                                         payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+        check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] == before[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] + (uint64_t) ( i + 1 ) );
+    }
+    response_no_mapping_check_delta( before, test.counters.values, 3 );
+    check( rocketnet_encryption_map_find( test.server.encryption_map, &stranger ) == -1 );
+    check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+
+    // the same response from the mapped address connects: NO_MAPPING stays
+
+    response_bytes = 0;
+    check( rocketnet_server_protocol_process_packet( &test.server, &client_address, packet, packet_bytes,
+                                                     ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                     response, &response_bytes,
+                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == before[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] + 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] == before[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] + 3 );
+    check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+
+    handshake_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_response_from_unmapped_address_counts_no_mapping );
 
 // A full request-claim table is its own reason, not a mapping failure: the
 // mapping table has room, so only CLAIM_TABLE_FULL moves (standard/TRANSPORT.md

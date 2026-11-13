@@ -20,7 +20,12 @@ and top frames.
 --xml FILE keeps the most recent log at FILE and the Nth log before it at FILE's
 stem plus .N.
 
-usage: python tools/windows/appverif_run.py [--xml FILE] [--timeout SECONDS] -- EXE [ARGS...]
+--report FILE appends the run's own lines (the PASS or FAIL line, each STOP,
+the export count) to FILE instead of stdout and stderr, so the executable's
+output reaches stdout alone: a whole functional-suite run under
+tools/run_functional.sh is held to its skips and registry by that output.
+
+usage: python tools/windows/appverif_run.py [--xml FILE] [--report FILE] [--timeout SECONDS] -- EXE [ARGS...]
 
 Application Verifier settings live in the registry, so the script runs from an
 elevated prompt. appverif.exe ships with the Windows SDK (Application Verifier
@@ -386,14 +391,32 @@ def export_logs(appverif: str, image_name: str, exe_path: Path, xml_path: Path) 
     raise RuntimeError(f"verifier log export limit reached for {image_name}")
 
 
+# Where the run's own lines go: stdout (stderr for the failures) by default,
+# or a file of their own (--report) when the executable's output must stay
+# exactly its own, as a whole functional-suite log held to its skips and its
+# registry (tools/run_functional.sh) must.
+REPORT_PATH = None
+
+
+def report(line: str, error: bool = False) -> None:
+    if REPORT_PATH is not None:
+        with open(REPORT_PATH, "a", encoding="utf-8") as report_file:
+            report_file.write(line + "\n")
+        return
+    print(line, file=sys.stderr if error else sys.stdout)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run an executable under Application Verifier Basics and fail on any stop."
     )
     parser.add_argument("--xml", help="write the exported verifier log to this file and keep it")
     parser.add_argument("--timeout", type=float, default=None, help="kill the run after this many seconds")
+    parser.add_argument("--report", help="append this run's own lines to this file instead of stdout and stderr")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="-- EXE [ARGS...]")
     args = parser.parse_args()
+    global REPORT_PATH
+    REPORT_PATH = args.report
     command = list(args.command)
     if command and command[0] == "--":
         command = command[1:]
@@ -402,12 +425,12 @@ def main() -> int:
 
     exe_path = Path(command[0]).resolve()
     if not exe_path.is_file():
-        print(f"appverif_run: executable not found: {exe_path}", file=sys.stderr)
+        report(f"appverif_run: executable not found: {exe_path}", error=True)
         return 2
     try:
         appverif = find_appverif()
     except FileNotFoundError as error:
-        print(f"appverif_run: {error}", file=sys.stderr)
+        report(f"appverif_run: {error}", error=True)
         return 2
     suppress_crash_dialogs()
 
@@ -415,7 +438,7 @@ def main() -> int:
     try:
         shutil.copy2(exe_path, verified_path)
     except OSError as error:
-        print(f"appverif_run: could not copy {exe_path} to {verified_path}: {error}", file=sys.stderr)
+        report(f"appverif_run: could not copy {exe_path} to {verified_path}: {error}", error=True)
         return 2
     image_name = verified_path.name
 
@@ -456,9 +479,9 @@ def main() -> int:
             raise RuntimeError(f"no verifier log for {image_name} was exported to {xml_path}")
         for log_path in log_paths:
             stops.extend(parse_stops(log_path))
-        print(f"appverif_run: {image_name} exported {len(log_paths)} verifier logs, one per process")
+        report(f"appverif_run: {image_name} exported {len(log_paths)} verifier logs, one per process")
     except RuntimeError as error:
-        print(f"appverif_run: {error}", file=sys.stderr)
+        report(f"appverif_run: {error}", error=True)
         exit_code = exit_code if exit_code not in (None, 0) else 2
     finally:
         appverif_call(appverif, ["-delete", "logs", "-for", image_name], check=False)
@@ -478,37 +501,37 @@ def main() -> int:
         # key holds only what this run's appverif calls wrote
         if sys.platform == "win32" and not remove_image_key(WinregKeys(), image_name):
             cleanup_failed = True
-            print(f"appverif_run: could not remove HKLM\\{image_key_path(image_name)}", file=sys.stderr)
+            report(f"appverif_run: could not remove HKLM\\{image_key_path(image_name)}", error=True)
         left = enabled_layers(appverif, image_name)
         if left:
             cleanup_failed = True
-            print(f"appverif_run: {image_name} is still under verification: {', '.join(left)}", file=sys.stderr)
+            report(f"appverif_run: {image_name} is still under verification: {', '.join(left)}", error=True)
         if temp_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
         try:
             verified_path.unlink()
         except OSError as error:
-            print(f"appverif_run: could not remove {verified_path}: {error}", file=sys.stderr)
+            report(f"appverif_run: could not remove {verified_path}: {error}", error=True)
 
     for stop in stops:
         frames = " <- ".join(stop["frames"]) if stop["frames"] else "<no frames>"
-        print(
+        report(
             f"appverif_run: STOP layer={stop['layer']} code={stop['stop_code']} "
             f"severity={stop['severity']} message={stop['message']!r} frames=[{frames}]",
-            file=sys.stderr,
+            error=True,
         )
 
     summary = f"{image_name} ({elapsed:.2f}s, {len(stops)} verifier stops"
     if timed_out:
-        print(f"appverif_run: FAIL {summary}, timed out after {args.timeout}s)", file=sys.stderr)
+        report(f"appverif_run: FAIL {summary}, timed out after {args.timeout}s)", error=True)
         return 1
     if stops:
-        print(f"appverif_run: FAIL {summary}, exit {exit_code})", file=sys.stderr)
+        report(f"appverif_run: FAIL {summary}, exit {exit_code})", error=True)
         return 1
     if exit_code != 0 or cleanup_failed:
-        print(f"appverif_run: FAIL {summary}, exit {exit_code})", file=sys.stderr)
+        report(f"appverif_run: FAIL {summary}, exit {exit_code})", error=True)
         return exit_code if isinstance(exit_code, int) and exit_code > 0 else 1
-    print(f"appverif_run: PASS {summary})")
+    report(f"appverif_run: PASS {summary})")
     return 0
 
 

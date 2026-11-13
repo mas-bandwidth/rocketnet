@@ -28,13 +28,16 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 #include <utility>
 #include <vector>
 #include <netinet/in.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/if_link.h>
 #include <linux/neighbour.h>
+#include <linux/nexthop.h>
 
 // the request's sequence number and the port id the kernel assigned this
 // socket; replies carry both
@@ -446,11 +449,13 @@ static void test_xdp_transport_gateway_netlink_only_the_main_unicast_default_rou
 }
 
 // a multipath default route: two next hops, each an rtnexthop plus an
-// RTA_GATEWAY of the family's address size
+// RTA_GATEWAY of the family's address size, or of gateway_bytes when it is
+// not zero
 
-static void netlink_multipath_route( netlink_datagram_t * datagram, int family, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway )
+static void netlink_multipath_route( netlink_datagram_t * datagram, int family, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway,
+                                     size_t gateway_bytes = 0 )
 {
-    const size_t address_bytes = family == AF_INET ? 4 : 16;
+    const size_t address_bytes = gateway_bytes != 0 ? gateway_bytes : ( family == AF_INET ? 4 : 16 );
     const size_t start = netlink_begin( datagram, RTM_NEWROUTE, NLM_F_MULTI );
     struct rtmsg message;
     memset( &message, 0, sizeof( message ) );
@@ -545,6 +550,14 @@ static void test_xdp_transport_gateway_netlink_gateway_wrong_size_refuses()
         uint8_t gateway[16];
         int error = -1;
         check( parse_route( datagram, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+        // a multipath hop on this interface with the wrong size refuses the
+        // same way, never read as no route
+
+        netlink_datagram_t multipath;
+        netlink_multipath_route( &multipath, family, server_interface, gateway_ipv6, other_interface, gateway_ipv6, family == AF_INET ? 16 : 4 );
+        netlink_done( &multipath );
+        check( parse_route( multipath, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
     }
 }
 
@@ -1579,6 +1592,307 @@ static void test_xdp_transport_gateway_netlink_discover_records_the_gateway()
     fake_netlink = NULL;
 }
 
+// ---------------------------------------------------------------------------
+// the link: the RTM_NEWLINK reply to an RTM_GETLINK, as the kernel writes it
+// (rtnl_fill_ifinfo: IFLA_IFNAME, IFLA_LINK, IFLA_LINK_NETNSID, and the
+// IFLA_LINKINFO nest of IFLA_INFO_KIND and, for a VLAN device, the
+// IFLA_INFO_DATA nest of IFLA_VLAN_ID in host order and IFLA_VLAN_PROTOCOL
+// big endian), and what the XDP transport does with each device
+
+struct netlink_link_t
+{
+    int index = server_interface;
+    const char * name = "eth0.100";
+    size_t name_bytes = 0;              // 0: strlen + 1 (the kernel's NUL)
+    int link = -1;                      // -1: no IFLA_LINK
+    size_t link_bytes = 4;
+    bool netnsid = false;
+    const char * kind = NULL;           // NULL: no IFLA_LINKINFO
+    int vlan_id = -1;                   // -1: no IFLA_VLAN_ID
+    size_t vlan_id_bytes = 2;
+    int vlan_protocol = -1;             // -1: no IFLA_VLAN_PROTOCOL
+    size_t vlan_protocol_bytes = 2;
+    uint32_t sequence = netlink_sequence;
+};
+
+static void netlink_link( netlink_datagram_t * datagram, const netlink_link_t & link )
+{
+    const size_t start = netlink_begin( datagram, RTM_NEWLINK, 0, link.sequence );
+    struct ifinfomsg message;
+    memset( &message, 0, sizeof( message ) );
+    message.ifi_family = AF_UNSPEC;
+    message.ifi_index = link.index;
+    netlink_append( datagram, &message, sizeof( message ) );
+
+    if ( link.name )
+    {
+        netlink_attribute( datagram, IFLA_IFNAME, link.name, link.name_bytes ? link.name_bytes : strlen( link.name ) + 1 );
+    }
+    if ( link.link >= 0 )
+    {
+        const uint32_t value = (uint32_t) link.link;
+        netlink_attribute( datagram, IFLA_LINK, &value, link.link_bytes );
+    }
+    if ( link.netnsid )
+    {
+        netlink_attribute_u32( datagram, IFLA_LINK_NETNSID, 1 );
+    }
+    if ( link.kind )
+    {
+        netlink_datagram_t info;
+        netlink_attribute( &info, IFLA_INFO_KIND, link.kind, strlen( link.kind ) + 1 );
+        if ( link.vlan_id >= 0 || link.vlan_protocol >= 0 )
+        {
+            netlink_datagram_t data;
+            if ( link.vlan_id >= 0 )
+            {
+                const uint16_t vlan_id = (uint16_t) link.vlan_id;
+                uint8_t bytes[4] = { 0, 0, 0, 0 };
+                memcpy( bytes, &vlan_id, sizeof( vlan_id ) );
+                netlink_attribute( &data, IFLA_VLAN_ID, bytes, link.vlan_id_bytes );
+            }
+            if ( link.vlan_protocol >= 0 )
+            {
+                const uint8_t protocol[4] = { (uint8_t) ( link.vlan_protocol >> 8 ), (uint8_t) link.vlan_protocol, 0, 0 };
+                netlink_attribute( &data, IFLA_VLAN_PROTOCOL, protocol, link.vlan_protocol_bytes );
+            }
+            netlink_attribute( &info, IFLA_INFO_DATA, data.bytes.data(), data.bytes.size() );
+        }
+        netlink_attribute( datagram, IFLA_LINKINFO, info.bytes.data(), info.bytes.size() );
+    }
+    netlink_end( datagram, start );
+}
+
+static netlink_link_t vlan_link()
+{
+    netlink_link_t link;
+    link.link = 2;
+    link.kind = "vlan";
+    link.vlan_id = 100;
+    link.vlan_protocol = 0x8100;
+    return link;
+}
+
+static int parse_link( const netlink_link_t & link, rocketnet_gateway_netlink_link_t * out )
+{
+    netlink_datagram_t datagram;
+    netlink_link( &datagram, link );
+    int error = 0;
+    return rocketnet_gateway_netlink_parse_link( datagram.bytes.data(), datagram.bytes.size(), netlink_sequence, netlink_port_id, server_interface, out, &error );
+}
+
+static void test_xdp_transport_link_parse_reads_the_device()
+{
+    rocketnet_gateway_netlink_link_t link;
+
+    // a VLAN device
+
+    check( parse_link( vlan_link(), &link ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( link.index == server_interface );
+    check( strcmp( link.name, "eth0.100" ) == 0 );
+    check( strcmp( link.kind, "vlan" ) == 0 );
+    check( link.link_index == 2 && !link.link_netns );
+    check( link.vlan_id == 100 && link.vlan_protocol == 0x8100 );
+
+    // an 802.1ad one in another namespace
+
+    netlink_link_t ad = vlan_link();
+    ad.vlan_protocol = 0x88a8;
+    ad.netnsid = true;
+    check( parse_link( ad, &link ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( link.vlan_protocol == 0x88a8 && link.link_netns );
+
+    // a physical NIC: no link info, and IFLA_LINK naming itself is no lower device
+
+    netlink_link_t nic;
+    nic.name = "eth0";
+    nic.link = server_interface;
+    check( parse_link( nic, &link ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( strcmp( link.name, "eth0" ) == 0 && link.kind[0] == '\0' );
+    check( link.link_index == 0 && link.vlan_id == 0 && link.vlan_protocol == 0 );
+
+    // a bond: its kind, and no VLAN fields read from it
+
+    netlink_link_t bond;
+    bond.name = "bond0";
+    bond.kind = "bond";
+    check( parse_link( bond, &link ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( strcmp( link.kind, "bond" ) == 0 && link.vlan_id == 0 );
+
+    // another device's reply is not this one's
+
+    netlink_link_t other = vlan_link();
+    other.index = other_interface;
+    check( parse_link( other, &link ) == ROCKETNET_GATEWAY_NETLINK_MORE );
+    netlink_link_t stale = vlan_link();
+    stale.sequence = netlink_sequence + 1;
+    check( parse_link( stale, &link ) == ROCKETNET_GATEWAY_NETLINK_MORE );
+}
+
+// every attribute past its bounds or of the wrong size is MALFORMED
+static void test_xdp_transport_link_parse_refuses_malformed_attributes()
+{
+    rocketnet_gateway_netlink_link_t link;
+
+    netlink_link_t no_name = vlan_link();
+    no_name.name = NULL;
+    check( parse_link( no_name, &link ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+    netlink_link_t unterminated = vlan_link();
+    unterminated.name_bytes = strlen( unterminated.name );
+    check( parse_link( unterminated, &link ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+    netlink_link_t long_name = vlan_link();
+    long_name.name = "abcdefghijklmnop";        // 16 characters: no room for the NUL in IFNAMSIZ
+    check( parse_link( long_name, &link ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+    long_name.name = "abcdefghijklmno";         // 15: the longest name
+    check( parse_link( long_name, &link ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+
+    netlink_link_t long_kind = vlan_link();
+    long_kind.kind = "abcdefghijklmnop";
+    check( parse_link( long_kind, &link ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+    netlink_link_t short_link = vlan_link();
+    short_link.link_bytes = 2;
+    check( parse_link( short_link, &link ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+    netlink_link_t wide_id = vlan_link();
+    wide_id.vlan_id_bytes = 4;
+    check( parse_link( wide_id, &link ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+    netlink_link_t short_protocol = vlan_link();
+    short_protocol.vlan_protocol_bytes = 1;
+    check( parse_link( short_protocol, &link ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+}
+
+static rocketnet_gateway_netlink_link_t classify_link( const char * kind, int link_index = 0, int vlan_id = 0, int vlan_protocol = 0, bool link_netns = false )
+{
+    rocketnet_gateway_netlink_link_t link;
+    memset( &link, 0, sizeof( link ) );
+    link.index = server_interface;
+    snprintf( link.kind, sizeof( link.kind ), "%s", kind );
+    link.link_index = link_index;
+    link.vlan_id = vlan_id;
+    link.vlan_protocol = vlan_protocol;
+    link.link_netns = link_netns;
+    return link;
+}
+
+static int classify( const rocketnet_gateway_netlink_link_t & device, const rocketnet_gateway_netlink_link_t * lower, const char * reason_has = NULL )
+{
+    const char * reason = "unset";
+    const int result = rocketnet_xdp_link_classify( &device, lower, &reason );
+    if ( result == ROCKETNET_XDP_LINK_REFUSED )
+    {
+        check( reason != NULL && reason_has != NULL && strstr( reason, reason_has ) != NULL );
+    }
+    else
+    {
+        check( reason == NULL );
+    }
+    return result;
+}
+
+// what the transport attaches to: the device itself (PLAIN), the NIC under
+// one 802.1Q VLAN device (VLAN), or nothing, each refusal named
+static void test_xdp_transport_link_classify_names_every_refusal()
+{
+    const rocketnet_gateway_netlink_link_t nic = classify_link( "" );
+    const rocketnet_gateway_netlink_link_t veth = classify_link( "veth" );
+    const rocketnet_gateway_netlink_link_t vlan = classify_link( "vlan", 2, 100, 0x8100 );
+
+    // plain: a NIC, veth, and any kind the transport does not know
+
+    check( classify( nic, NULL ) == ROCKETNET_XDP_LINK_PLAIN );
+    check( classify( veth, NULL ) == ROCKETNET_XDP_LINK_PLAIN );
+    check( classify( classify_link( "dummy" ), NULL ) == ROCKETNET_XDP_LINK_PLAIN );
+
+    // one 802.1Q VLAN on a NIC or veth, VLAN IDs 1 and 4094
+
+    check( classify( vlan, &nic ) == ROCKETNET_XDP_LINK_VLAN );
+    check( classify( vlan, &veth ) == ROCKETNET_XDP_LINK_VLAN );
+    check( classify( classify_link( "vlan", 2, 1, 0x8100 ), &nic ) == ROCKETNET_XDP_LINK_VLAN );
+    check( classify( classify_link( "vlan", 2, 4094, 0x8100 ), &nic ) == ROCKETNET_XDP_LINK_VLAN );
+
+    // the address on a stacked device
+
+    const char * stacked[] = { "bond", "bridge", "team", "macvlan", "macvtap", "ipvlan", "ipvtap" };
+    for ( size_t i = 0; i < sizeof( stacked ) / sizeof( stacked[0] ); i++ )
+    {
+        check( classify( classify_link( stacked[i] ), NULL, "stacked on other devices" ) == ROCKETNET_XDP_LINK_REFUSED );
+    }
+
+    // 802.1ad, and a VLAN with no protocol read
+
+    check( classify( classify_link( "vlan", 2, 100, 0x88a8 ), &nic, "not 802.1Q" ) == ROCKETNET_XDP_LINK_REFUSED );
+    check( classify( classify_link( "vlan", 2, 100, 0 ), &nic, "not 802.1Q" ) == ROCKETNET_XDP_LINK_REFUSED );
+
+    // VLAN IDs 0 and 4095
+
+    check( classify( classify_link( "vlan", 2, 0, 0x8100 ), &nic, "not 1 to 4094" ) == ROCKETNET_XDP_LINK_REFUSED );
+    check( classify( classify_link( "vlan", 2, 4095, 0x8100 ), &nic, "not 1 to 4094" ) == ROCKETNET_XDP_LINK_REFUSED );
+
+    // the parent: in another namespace, unnamed, or not read
+
+    check( classify( classify_link( "vlan", 2, 100, 0x8100, true ), &nic, "not a device in this network namespace" ) == ROCKETNET_XDP_LINK_REFUSED );
+    check( classify( classify_link( "vlan", 0, 100, 0x8100 ), &nic, "not a device in this network namespace" ) == ROCKETNET_XDP_LINK_REFUSED );
+    check( classify( vlan, NULL, "not a device in this network namespace" ) == ROCKETNET_XDP_LINK_REFUSED );
+
+    // QinQ: a VLAN on a VLAN, either protocol
+
+    const rocketnet_gateway_netlink_link_t outer_ad = classify_link( "vlan", 1, 200, 0x88a8 );
+    check( classify( vlan, &vlan, "QinQ" ) == ROCKETNET_XDP_LINK_REFUSED );
+    check( classify( vlan, &outer_ad, "QinQ" ) == ROCKETNET_XDP_LINK_REFUSED );
+
+    // a VLAN on a bond, a bridge, a macvlan or any other kind
+
+    const char * lowers[] = { "bond", "bridge", "team", "macvlan", "ipvlan", "vxlan" };
+    for ( size_t i = 0; i < sizeof( lowers ) / sizeof( lowers[0] ); i++ )
+    {
+        const rocketnet_gateway_netlink_link_t lower = classify_link( lowers[i] );
+        check( classify( vlan, &lower, "stacked or virtual device" ) == ROCKETNET_XDP_LINK_REFUSED );
+    }
+}
+
+// the query: one RTM_GETLINK for the index, not a dump, answered by the one
+// reply; the kernel's ENODEV is an ERROR
+static void test_xdp_transport_link_query_asks_the_index()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+
+    netlink_datagram_t reply;
+    netlink_link( &reply, vlan_link() );
+    fake.script.push_back( reply );
+
+    rocketnet_gateway_netlink_link_t link;
+    int error = -1;
+    check( rocketnet_gateway_netlink_link_with( &fake_netlink_system, server_interface, &link, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( link.vlan_id == 100 && link.link_index == 2 );
+    check( fake.requests.size() == 1 && fake.sockets == 1 && fake.closes == 1 );
+
+    const netlink_datagram_t & request = fake.requests[0];
+    uint16_t type = 0;
+    check( !request_is_dump( request, &type ) );
+    check( type == RTM_GETLINK );
+    check( request.bytes.size() == NLMSG_LENGTH( sizeof( struct ifinfomsg ) ) );
+    struct ifinfomsg message;
+    memcpy( &message, request.bytes.data() + NLMSG_HDRLEN, sizeof( message ) );
+    check( message.ifi_family == AF_UNSPEC && message.ifi_index == server_interface );
+
+    netlink_datagram_t gone;
+    netlink_error( &gone, -ENODEV );
+    fake.script.push_back( gone );
+    check( rocketnet_gateway_netlink_link_with( &fake_netlink_system, server_interface, &link, &error ) == ROCKETNET_GATEWAY_NETLINK_ERROR );
+    check( error == ENODEV );
+
+    fake_netlink = NULL;
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_link_parse_reads_the_device );
+REGISTER_UNIT_TEST( test_xdp_transport_link_parse_refuses_malformed_attributes );
+REGISTER_UNIT_TEST( test_xdp_transport_link_classify_names_every_refusal );
+REGISTER_UNIT_TEST( test_xdp_transport_link_query_asks_the_index );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_default_route_found );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_default_route_not_on_this_interface );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_no_default_route );
@@ -1612,5 +1926,212 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_never_blocks );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_eagain_fails_and_keeps_the_gateway );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_follows_a_gateway_ip_change );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_discover_records_the_gateway );
+
+// ---------------------------------------------------------------------------
+// a default route that names a nexthop object (RTA_NH_ID, the form
+// "ip route add default nhid N" makes) carries no RTA_OIF or RTA_GATEWAY of
+// its own: the gateway and interface are the nexthop object's, asked with
+// RTM_GETNEXTHOP and NHA_ID (ip nexthop get id N). An object that cannot be
+// resolved (on another interface, a group, a blackhole, no gateway, or
+// none) is the no-gateway path: DONE, as with no default route.
+
+static const uint32_t nexthop_id = 7;
+
+static netlink_datagram_t nexthop_route_datagram( int family )
+{
+    netlink_datagram_t datagram;
+    const size_t start = netlink_begin( &datagram, RTM_NEWROUTE, NLM_F_MULTI );
+    struct rtmsg message;
+    memset( &message, 0, sizeof( message ) );
+    message.rtm_family = (unsigned char) family;
+    message.rtm_table = RT_TABLE_MAIN;
+    message.rtm_protocol = RTPROT_BOOT;
+    message.rtm_scope = RT_SCOPE_UNIVERSE;
+    message.rtm_type = RTN_UNICAST;
+    netlink_append( &datagram, &message, sizeof( message ) );
+    netlink_attribute_u32( &datagram, RTA_TABLE, RT_TABLE_MAIN );
+    netlink_attribute_u32( &datagram, RTA_NH_ID, nexthop_id );
+    netlink_end( &datagram, start );
+    netlink_done( &datagram );
+    return datagram;
+}
+
+struct netlink_nexthop_t
+{
+    int family = AF_INET;
+    uint32_t id = nexthop_id;
+    int output_interface = server_interface;       // 0: no NHA_OIF
+    const uint8_t * gateway = gateway_ipv4;         // NULL: no NHA_GATEWAY
+    bool group = false;                             // an NHA_GROUP of one member
+    bool blackhole = false;
+};
+
+static netlink_datagram_t nexthop_reply( const netlink_nexthop_t & nexthop )
+{
+    netlink_datagram_t datagram;
+    const size_t start = netlink_begin( &datagram, RTM_NEWNEXTHOP, 0 );
+    struct nhmsg message;
+    memset( &message, 0, sizeof( message ) );
+    message.nh_family = (unsigned char) nexthop.family;
+    message.nh_protocol = RTPROT_BOOT;
+    netlink_append( &datagram, &message, sizeof( message ) );
+    netlink_attribute_u32( &datagram, NHA_ID, nexthop.id );
+    if ( nexthop.group )
+    {
+        struct nexthop_grp member;
+        memset( &member, 0, sizeof( member ) );
+        member.id = nexthop.id + 1;
+        netlink_attribute( &datagram, NHA_GROUP, &member, sizeof( member ) );
+    }
+    if ( nexthop.blackhole )
+    {
+        netlink_attribute( &datagram, NHA_BLACKHOLE, NULL, 0 );
+    }
+    if ( nexthop.output_interface )
+    {
+        netlink_attribute_u32( &datagram, NHA_OIF, (uint32_t) nexthop.output_interface );
+    }
+    if ( nexthop.gateway )
+    {
+        netlink_attribute( &datagram, NHA_GATEWAY, nexthop.gateway, netlink_address_bytes( nexthop.family ) );
+    }
+    netlink_end( &datagram, start );
+    return datagram;
+}
+
+static int nexthop_route_query( fake_netlink_t * fake, int family, uint8_t * gateway, int * error )
+{
+    fake_netlink = fake;
+    memset( gateway, 0xEE, 16 );
+    *error = -1;
+    const int result = rocketnet_gateway_netlink_route_with( &fake_netlink_system, family, server_interface, gateway, error );
+    fake_netlink = NULL;
+    return result;
+}
+
+// the second request is RTM_GETNEXTHOP, not a dump, naming the route's id
+
+static void check_nexthop_asked( const fake_netlink_t & fake )
+{
+    check( fake.requests.size() == 2 );
+    struct nlmsghdr header;
+    memcpy( &header, fake.requests[1].bytes.data(), sizeof( header ) );
+    check( header.nlmsg_type == RTM_GETNEXTHOP );
+    check( ( header.nlmsg_flags & NLM_F_DUMP ) == 0 );
+    struct rtattr attribute;
+    memcpy( &attribute, fake.requests[1].bytes.data() + NLMSG_SPACE( sizeof( struct nhmsg ) ), sizeof( attribute ) );
+    check( attribute.rta_type == NHA_ID );
+    check( attribute.rta_len == RTA_LENGTH( 4 ) );
+    uint32_t id = 0;
+    memcpy( &id, fake.requests[1].bytes.data() + NLMSG_SPACE( sizeof( struct nhmsg ) ) + RTA_LENGTH( 0 ), sizeof( id ) );
+    check( id == nexthop_id );
+}
+
+static void check_nexthop_resolved( int family )
+{
+    const uint8_t * want = family == AF_INET ? gateway_ipv4 : gateway_ipv6;
+    netlink_nexthop_t nexthop;
+    nexthop.family = family;
+    nexthop.gateway = want;
+
+    fake_netlink_t fake;
+    fake.script.push_back( nexthop_route_datagram( family ) );
+    fake.script.push_back( nexthop_reply( nexthop ) );
+
+    uint8_t gateway[16];
+    int error = 0;
+    check( nexthop_route_query( &fake, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( error == 0 );
+    check( memcmp( gateway, want, netlink_address_bytes( family ) ) == 0 );
+    check_nexthop_asked( fake );
+}
+
+static void test_xdp_transport_gateway_netlink_ipv4_nexthop_object_resolved()
+{
+    check_nexthop_resolved( AF_INET );
+}
+
+static void test_xdp_transport_gateway_netlink_ipv6_nexthop_object_resolved()
+{
+    check_nexthop_resolved( AF_INET6 );
+}
+
+static void check_nexthop_unresolved( const netlink_datagram_t & reply )
+{
+    fake_netlink_t fake;
+    fake.script.push_back( nexthop_route_datagram( AF_INET ) );
+    fake.script.push_back( reply );
+
+    uint8_t gateway[16];
+    int error = -1;
+    check( nexthop_route_query( &fake, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+    check( error == 0 );
+    check_nexthop_asked( fake );
+}
+
+static void test_xdp_transport_gateway_netlink_nexthop_object_unresolved_is_no_gateway()
+{
+    netlink_nexthop_t other;
+    other.output_interface = other_interface;
+    check_nexthop_unresolved( nexthop_reply( other ) );
+
+    netlink_nexthop_t group;
+    group.group = true;
+    group.output_interface = 0;
+    group.gateway = NULL;
+    check_nexthop_unresolved( nexthop_reply( group ) );
+
+    netlink_nexthop_t blackhole;
+    blackhole.blackhole = true;
+    blackhole.output_interface = 0;
+    blackhole.gateway = NULL;
+    check_nexthop_unresolved( nexthop_reply( blackhole ) );
+
+    netlink_nexthop_t no_gateway;
+    no_gateway.gateway = NULL;
+    check_nexthop_unresolved( nexthop_reply( no_gateway ) );
+
+    netlink_nexthop_t other_family;
+    other_family.family = AF_INET6;
+    other_family.gateway = gateway_ipv6;
+    check_nexthop_unresolved( nexthop_reply( other_family ) );
+
+    netlink_datagram_t missing;
+    netlink_error( &missing, -ENOENT );
+    check_nexthop_unresolved( missing );
+
+    netlink_datagram_t unsupported;
+    netlink_error( &unsupported, -EOPNOTSUPP );
+    check_nexthop_unresolved( unsupported );
+}
+
+// a gateway of the wrong size in the nexthop object refuses, as in a route
+
+static void test_xdp_transport_gateway_netlink_nexthop_gateway_wrong_size_refuses()
+{
+    netlink_datagram_t reply;
+    const size_t start = netlink_begin( &reply, RTM_NEWNEXTHOP, 0 );
+    struct nhmsg message;
+    memset( &message, 0, sizeof( message ) );
+    message.nh_family = AF_INET;
+    netlink_append( &reply, &message, sizeof( message ) );
+    netlink_attribute_u32( &reply, NHA_ID, nexthop_id );
+    netlink_attribute_u32( &reply, NHA_OIF, (uint32_t) server_interface );
+    netlink_attribute( &reply, NHA_GATEWAY, gateway_ipv6, 16 );
+    netlink_end( &reply, start );
+
+    fake_netlink_t fake;
+    fake.script.push_back( nexthop_route_datagram( AF_INET ) );
+    fake.script.push_back( reply );
+
+    uint8_t gateway[16];
+    int error = -1;
+    check( nexthop_route_query( &fake, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_nexthop_object_resolved );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_nexthop_object_resolved );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_nexthop_object_unresolved_is_no_gateway );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_nexthop_gateway_wrong_size_refuses );
 
 #endif // #if ROCKETNET_XDP

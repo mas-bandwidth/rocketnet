@@ -70,10 +70,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #if ROCKETNET_XDP
 
 #define ROCKETNET_XDP_NUM_BUFFERS                                            3
-#define ROCKETNET_XDP_NUM_FRAMES                                         65536
-#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 4 )
-#define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
-#define ROCKETNET_XDP_FILL_FRAMES                                 ( 4096 * 4 )
+#define ROCKETNET_XDP_NUM_FRAMES                                        131072
+#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 4096 * 4 )
+#define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 8192 * 4 )
+#define ROCKETNET_XDP_FILL_FRAMES                                 ( 8192 * 4 )
 #define ROCKETNET_XDP_FILL_RING_SIZE         ( 2 * ROCKETNET_XDP_FILL_FRAMES )
 
 // each queue's UMEM: the send half (ROCKETNET_XDP_NUM_FRAMES / 2 frames from
@@ -81,9 +81,35 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #define ROCKETNET_XDP_UMEM_FRAMES     ( ROCKETNET_XDP_NUM_FRAMES / 2 + ROCKETNET_XDP_FILL_FRAMES )
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
 
+// The send queue is the most packets one queue starts in one update (one
+// flush a frame), so it caps a server's send rate at queues x send queue x
+// update rate. The owner's shape is 2 XDP threads at 10 Gb/s, 60 Hz
+// ("narrow beats wide EVERYWHERE for 10GBPS"): 10 GbE line rate at 1304
+// bytes a packet on the wire (a 1200-byte payload, as the measured rows count
+// it) is 958.6k packets a second, 7989 starts per queue per update. The send
+// queue holds twice that, so a burst update of twice the average still
+// starts whole. At 4096 the two queues capped at 491.5k a second, half the
+// line, measured (482k).
+#define ROCKETNET_XDP_LINE_RATE_QUEUES                                       2
+#define ROCKETNET_XDP_LINE_RATE_UPDATE_HZ                                   60
+#define ROCKETNET_XDP_LINE_RATE_BITS_PER_SECOND               10000000000ULL
+#define ROCKETNET_XDP_LINE_RATE_WIRE_BYTES                                1304
+
+ROCKETNET_STATIC_ASSERT( (unsigned long long) ROCKETNET_XDP_LINE_RATE_QUEUES *(unsigned long long) ROCKETNET_XDP_SEND_QUEUE_SIZE * ROCKETNET_XDP_LINE_RATE_UPDATE_HZ * ROCKETNET_XDP_LINE_RATE_WIRE_BYTES * 8 >=
+                             2 * ROCKETNET_XDP_LINE_RATE_BITS_PER_SECOND,
+                         "two XDP queues at 60 Hz start twice 10 GbE line rate: the send queue never caps the owner's shape" );
+
+// XDP's own receive sizing: the process batch XDP drains its queues into
+// (the socket's process view) holds at least twice one queue's send queue at
+// every sizing, whatever the shared per-client receive budget
+// (ROCKETNET_RECEIVE_PACKETS_PER_CLIENT) is, which the other transports read
+// and XDP never moves. rocketnet_server_xdp_receive_packets_per_update below
+// is the larger of the shared budget and this minimum.
+#define ROCKETNET_XDP_MIN_RECEIVE_PACKETS_PER_UPDATE            ( 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE )
+
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
-                                                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
-                         "an XDP frame holds ethernet, the larger IP header, UDP and a full receive-ceiling packet" );
+                                                         4 + ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
+                         "an XDP frame holds ethernet, one 4-byte 802.1Q tag, the larger IP header, UDP and a full receive-ceiling packet" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE == 4096,
                          "the XDP UMEM frame the transport registers is 4096 bytes" );
 
@@ -176,8 +202,20 @@ static inline int rocketnet_server_receive_packets_per_update( int max_clients )
 #define ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_SERVER_MIN_SIZED_CLIENTS )
 
 #if ROCKETNET_XDP
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
-                         "receive budget twice send: server process batch holds at least twice the XDP send queue" );
+// The XDP process batch: the shared per-update budget, raised to XDP's own
+// minimum so it holds twice one queue's send queue at the smallest sizing
+// (512 clients, where the shared budget is 8192). At 1000 clients it is
+// 32768 against the shared 16000. Only the XDP socket's process view uses it;
+// the payload batch and every other transport's batches stay on the shared
+// budget, so a drain past the payload batch counts as a full payload batch.
+static inline int rocketnet_server_xdp_receive_packets_per_update( int max_clients )
+{
+    const int shared = rocketnet_server_receive_packets_per_update( max_clients );
+    return shared > ROCKETNET_XDP_MIN_RECEIVE_PACKETS_PER_UPDATE ? shared : ROCKETNET_XDP_MIN_RECEIVE_PACKETS_PER_UPDATE;
+}
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "receive budget twice send: the XDP process batch holds at least twice the XDP send queue" );
 #endif // #if ROCKETNET_XDP
 
 // Portable and msgx buffered batch sizes: one packet per sized client. The
@@ -264,8 +302,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 // NOTE the relationship between these two. The process_packets arrays are
 // sized by rocketnet_server_receive_packets_per_update (16 * 1000 = 16000 at
 // 1000 clients), but the XDP path fills them while draining a queue whose
-// staging buffer holds ROCKETNET_XDP_RECV_QUEUE_SIZE entries (4096 * 4 =
-// 16384). They are independent numbers, and the drain guard MUST bound by the
+// staging buffer holds ROCKETNET_XDP_RECV_QUEUE_SIZE entries (8192 * 4 =
+// 32768). On XDP the arrays are sized by
+// rocketnet_server_xdp_receive_packets_per_update, at least twice the send
+// queue (32768). They are independent numbers, and the drain guard MUST bound by the
 // process batch's capacity -- the arrays it protects -- never the queue size,
 // or the tail of a full queue writes past the arrays.
 //
@@ -295,7 +335,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 // the AEAD integrity limit from the standard's _Replay Protection_: each end
 // counts the sealed packets that fail to open on a connection, across all of
 // that connection's keys, and disconnects it on reaching this many. 2^36 is
-// ChaCha20-Poly1305's forgery bound, the number QUIC and DTLS 1.3 name.
+// ChaCha20-Poly1305's forgery bound (RFC 9001 section 6.6, RFC 9147 section 4.5.3).
 
 #define ROCKETNET_INTEGRITY_LIMIT                               ( 1ULL << 36 )
 

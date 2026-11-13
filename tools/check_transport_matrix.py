@@ -19,6 +19,10 @@ name, and an io_uring cell the kernel gates off must be reported as an
 explicit SKIP with its reason; an unrun cell is never dropped silently.
 Exits 0 with one OK line, or 1 naming each gap.
 
+.github/workflows/nightly.yml's fifty-times cells job of each OS must run
+scripts/transport-cells-repeat --runs 50 with no --cell, so it repeats every
+cell this file's matrix names (a --cell list is a copy that drifts).
+
 Also renders the auto order per platform and endpoint from
 sdk/rocketnet_drivers.inc (server development, server production and client;
 lower nonzero rank first, pin-only excluded) and fails if sdk/rocketnet.h,
@@ -263,13 +267,71 @@ def check_unrun_cells(os_name, step, problems):
         problems.append(f"TRANSPORT_MATRIX_{os_name}: an io_uring cell gated off by the kernel was not reported as an explicit SKIP with its reason (exit {rc}): {out.strip()!r}")
 
 
+INPUTS = ("sdk/rocketnet_drivers.inc", ".github/workflows/ci.yml", ".github/workflows/nightly.yml", "sdk/rocketnet.h", "docs/USAGE.md", "docs/TRANSPORTS.md")
+
+
+NIGHTLY_REPEAT_JOBS = ("linux-transport-cells-repeat", "macos-transport-cells-repeat", "windows-transport-cells-repeat")
+
+
+def workflow_jobs(text):
+    """{job key: its text} for a workflow's top-level jobs."""
+    jobs = {}
+    lines = text.split("\n")
+    try:
+        start = lines.index("jobs:")
+    except ValueError:
+        return jobs
+    key, body = None, []
+    for line in lines[start + 1:]:
+        m = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if m:
+            if key:
+                jobs[key] = "\n".join(body)
+            key, body = m.group(1), []
+        elif key:
+            body.append(line)
+    if key:
+        jobs[key] = "\n".join(body)
+    return jobs
+
+
+def check_nightly_repeat(text, problems):
+    """nightly.yml's fifty-times cells job of each OS runs every cell of that
+    OS's matrix: scripts/transport-cells-repeat --runs 50 with no --cell, which
+    reads the cells from ci.yml. A --cell list there is a copy that drifts (the
+    Windows job named 4 of 6 cells for three weeks)."""
+    jobs = workflow_jobs(text)
+    for job in NIGHTLY_REPEAT_JOBS:
+        if job not in jobs:
+            problems.append(f"nightly.yml has no job {job}")
+            continue
+        runs = [line for line in jobs[job].split("\n") if re.search(r"scripts/transport-cells-repeat\b.*--runs 50\b", line)]
+        if not runs:
+            problems.append(f"nightly.yml {job}: no scripts/transport-cells-repeat --runs 50 step")
+        for line in runs:
+            if "--cell" in line:
+                problems.append(f"nightly.yml {job}: the fifty-times step names cells (--cell), a copy of ci.yml's list that drifts; run it without --cell: {line.strip()}")
+
+
 def main():
+    global ROOT
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--root", default=ROOT, help="tree holding the registry, ci.yml and the docs (default: this repository)")
+    ROOT = os.path.abspath(parser.parse_args().root)
+    present = [path for path in INPUTS if os.path.isfile(os.path.join(ROOT, path))]
+    if len(present) != len(INPUTS):
+        missing = ", ".join(path for path in INPUTS if path not in present)
+        print(f"TRANSPORT-MATRIX-MISSING {len(present)} files of {len(INPUTS)} under {ROOT}: missing {missing}")
+        return 1
+
     rows = transport_rows(read("sdk/rocketnet_drivers.inc"))
     blocks = matrix_blocks(read(".github/workflows/ci.yml"))
     problems = []
+    check_nightly_repeat(read(".github/workflows/nightly.yml"), problems)
 
     if not rows:
-        problems.append("no ROCKETNET_TRANSPORT rows read from sdk/rocketnet_drivers.inc")
+        problems.append("0 ROCKETNET_TRANSPORT rows read from sdk/rocketnet_drivers.inc")
     registry_rows = len(re.findall(r"^ROCKETNET_TRANSPORT\(", read("sdk/rocketnet_drivers.inc"), re.M))
     if registry_rows != len(rows):
         problems.append(f"{registry_rows} ROCKETNET_TRANSPORT rows in sdk/rocketnet_drivers.inc, {len(rows)} parsed: a row shape this check cannot read")

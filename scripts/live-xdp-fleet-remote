@@ -41,6 +41,7 @@ usage()
     cat >&2 <<'EOF'
 usage: live-xdp-fleet-remote <subcommand> ...
   build <commit>
+  i40e-guard-selftest [server-binary]
   skew
   preflight <commit> <nic> <queues> <address>
   arm <nic>
@@ -103,6 +104,58 @@ cmd_build()
 # skew: one wall-clock sample (section 11)
 # ------------------------------------------------------------------------
 
+# XDP SAFETY 4's kernel rule: succeeds (refused) when the kernel release $1,
+# read as Ubuntu's A.B.C-N, is older than 7.0.0-43, or does not read so.
+# tests/client_server/server.c (kernel_release_before_i40e_soak) is the same
+# rule; i40e-guard-selftest holds both to one case list.
+i40e_kernel_refused()
+{
+    local release=$1 a b c n
+    [[ "$release" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9]+))? ]] || return 0
+    a=$(( 10#${BASH_REMATCH[1]} )); b=$(( 10#${BASH_REMATCH[2]} )); c=$(( 10#${BASH_REMATCH[3]} ))
+    n=$(( 10#${BASH_REMATCH[5]:-0} ))
+    [ $a -ne 7 ] && { [ $a -lt 7 ]; return; }
+    [ $b -ne 0 ] && { [ $b -lt 0 ]; return; }
+    [ $c -ne 0 ] && { [ $c -lt 0 ]; return; }
+    [ $n -lt 43 ]
+}
+
+# every case, with the expected verdict; given the bench server binary, it is
+# held to the same list through its --i40e-kernel-check
+cmd_i40e_guard_selftest()
+{
+    local server=${1:-} failed=0 release want got
+    while read -r release want; do
+        if i40e_kernel_refused "$release"; then got=refused; else got=allowed; fi
+        if [ "$got" != "$want" ]; then
+            echo "FAIL i40e-guard script $release: $got, wanted $want"
+            failed=1
+        fi
+        if [ -n "$server" ]; then
+            if "$server" --i40e-kernel-check "$release" >/dev/null 2>&1; then got=allowed; else got=refused; fi
+            if [ "$got" != "$want" ]; then
+                echo "FAIL i40e-guard server $release: $got, wanted $want"
+                failed=1
+            fi
+        fi
+    done <<'CASES'
+7.0.0-31-generic refused
+7.0.0-42-generic refused
+7.0.0-43-generic allowed
+7.0.0-100-generic allowed
+7.0.1-1-generic allowed
+7.1.0-5-generic allowed
+8.0.0-1-generic allowed
+6.8.0-147-generic refused
+6.12.5 refused
+7.0.0 refused
+7.0.0-43 allowed
+generic refused
+CASES
+    [ $failed -eq 0 ] || fail "i40e-guard-selftest failed"
+    echo "i40e-guard-selftest passed${server:+ (script and $server)}"
+}
+
 cmd_skew()
 {
     date +%s.%N 2>/dev/null || python3 -c 'import time; print("%.9f" % time.time())'
@@ -128,8 +181,10 @@ cmd_preflight()
 
     ip -o link
 
-    # XDP SAFETY 4 refuses the in-tree i40e only: the i40e a distribution ships
-    # may lack AF_XDP zero copy (docs/LINUX.md). Other in-tree drivers pass.
+    # XDP SAFETY 4 refuses the in-tree i40e on a kernel older than 7.0.0-43:
+    # the in-tree i40e of 7.0.0-31 panicked twice in its zero-copy receive path
+    # (i40e_construct_skb_zc), and the one of 7.0.0-43 passed a 60-minute zero
+    # copy soak on an X710 (docs/LINUX.md). Other drivers pass.
     local transport_line driver version kernel
     transport_line=$( ethtool -i "$nic" 2>/dev/null ) || fail "preflight: ethtool -i $nic failed"
     echo "nic transport: $( echo "$transport_line" | tr '\n' ' ' )"
@@ -137,7 +192,10 @@ cmd_preflight()
     version=$( echo "$transport_line" | awk '/^version:/ { print $2 }' )
     kernel=$( uname -r )
     if [ "$driver" = "i40e" ] && [ -n "$version" ] && [ "$version" = "$kernel" ]; then
-        fail "preflight: $nic runs the in-tree i40e (version $version equals uname -r); XDP SAFETY 4 refuses the run"
+        if i40e_kernel_refused "$kernel"; then
+            fail "preflight: $nic runs the in-tree i40e on $kernel, older than 7.0.0-43; XDP SAFETY 4 refuses the run"
+        fi
+        echo "nic: the in-tree i40e on $kernel (7.0.0-43 or newer) passes XDP SAFETY 4"
     fi
 
     if ip -d link show dev "$nic" | grep -q 'prog/xdp'; then
@@ -267,7 +325,9 @@ cmd_stop_server()
         sleep 1
         waited=$(( waited + 1 ))
     done
-    systemctl stop rn-live-server 2>/dev/null || true
+    if ! systemctl stop rn-live-server 2>/dev/null && systemctl is-active --quiet rn-live-server; then
+        fail "stop server: rn-live-server is still active after systemctl stop"
+    fi
     echo "stopped: rn-live-server"
 }
 
@@ -364,9 +424,10 @@ cmd_restore()
     echo "ip link show dev $nic:"
     ip link show dev "$nic"
 
-    local provision="$BASE/$commit/scripts/rocketnet-provision"
+    # a failed sweep does not stop the teardown below; it fails restore at the end
+    local provision="$BASE/$commit/scripts/rocketnet-provision" sweep_status=0
     if [ -x "$provision" ]; then
-        "$provision" sweep || true
+        "$provision" sweep || sweep_status=$?
     fi
 
     systemctl stop rn-live-watchdog.service 2>/dev/null || true
@@ -375,7 +436,8 @@ cmd_restore()
     systemctl stop rn-live-deadman.service 2>/dev/null || true
     systemctl reset-failed rn-live-deadman.service 2>/dev/null || true
 
-    echo "restore: no program attached to $nic; watchdog stopped; dead-man cancelled"
+    [ "$sweep_status" = 0 ] || fail "restore: rocketnet-provision sweep exited $sweep_status"
+    echo "restore:no program attached to $nic; watchdog stopped; dead-man cancelled"
 }
 
 # ------------------------------------------------------------------------
@@ -389,6 +451,7 @@ shift
 
 case "$command" in
     build)      [ $# -eq 1 ] || usage; cmd_build "$1" ;;
+    i40e-guard-selftest) [ $# -le 1 ] || usage; cmd_i40e_guard_selftest "$@" ;;
     skew)       [ $# -eq 0 ] || usage; cmd_skew ;;
     preflight)  [ $# -eq 4 ] || usage; cmd_preflight "$1" "$2" "$3" "$4" ;;
     arm)        [ $# -eq 1 ] || usage; cmd_arm "$1" ;;

@@ -1,0 +1,5 @@
+# tools/check_printed_compared.py: steps that print a trace, hash or digest with nothing to compare it with.
+# path<TAB><job id>: <step name><TAB>reason. A stale or reasonless entry is red.
+.github/workflows/nightly-dst.yml	dst-linux: Sweep the nightly seed range	the sweep range rolls with the run number and is sized per OS, so no committed or cross-OS trace exists; its verdict is every check passing (FAIL lines) and the PASS line
+.github/workflows/nightly-dst.yml	dst-macos: Sweep the nightly seed range	the sweep range rolls with the run number and is sized per OS, so no committed or cross-OS trace exists; its verdict is every check passing (FAIL lines) and the PASS line
+.github/workflows/nightly-dst.yml	dst-windows: Sweep the nightly seed range	the sweep range rolls with the run number and is sized per OS, so no committed or cross-OS trace exists; its verdict is every check passing (FAIL lines) and the PASS line

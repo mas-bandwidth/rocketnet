@@ -58,7 +58,7 @@ enum rocketnet_server_transport_io_flags_t
 // rocketnet_create_status (sdk/rocketnet_internal.h), which never replaces an
 // OUT_OF_MEMORY already written; the platform socket, wake and thread creates
 // take the status for this. A NULL that leaves it OK is a refusal, and the
-// transport ladder falls to the next candidate; OUT_OF_MEMORY ends the ladder
+// transport list falls to the next candidate; OUT_OF_MEMORY ends the ladder
 // and the create (sdk/rocketnet_server_transport.cpp,
 // sdk/rocketnet_client_transport.cpp).
 struct rocketnet_server_transport_io_config_t
@@ -143,7 +143,10 @@ struct rocketnet_server_transport_io_operations_t
 
     void ( *send_batch_shutdown )( void *, const rocketnet_platform_send_t *, int );
 
-    // optional; main thread only. The frames the transport accepts before
+    // optional. On a buffered transport, main thread only. On a staged one,
+    // the main thread and any thread that starts a game packet: the protocol
+    // reserve reads it there when a start reaches its budget, so it must be
+    // safe beside start_packet and the transport's own workers. The frames the transport accepts before
     // its next flush without a refusal for room: start_packet on the staged
     // path, or the frames send_batch takes without dropping one on the
     // buffered path. A frame the transport still holds from an earlier flush
@@ -167,7 +170,40 @@ struct rocketnet_server_transport_io_operations_t
     // buffered backend may switch retained sends to its terminal attempt.
     // stop still follows the final flush and send_idle.
     void ( *begin_shutdown )( void * transport );
+
+    // optional; main thread only. Writes ROCKETNET_RECEIVE_NUM_DROPS values
+    // in rocketnet_receive_drop_t order (sdk/rocketnet_receive_prefilter.h):
+    // the datagrams the transport's own receive dropped, by reason,
+    // cumulative for the transport's life, ACCEPT written as 0. The server
+    // adds each value's growth since its last read to the counters
+    // rocketnet_receive_drop_counters names, so a datagram the transport
+    // refused reads exactly as main would have counted it, and a datagram
+    // with no room in the receive bank reads RECEIVE_DROPPED_FULL. The
+    // builtins read these from the rows their own receive already counts
+    // (sdk/rocketnet_driver_builtin.cpp); the reasons a builtin does not feed
+    // yet are named in tools/check_counter_observed.py (OWED_TRANSPORT_FEEDS).
+    void ( *receive_drop_totals )( void * transport, uint64_t * values );
+
+    // optional, all three or none: a staged transport whose staging is per
+    // queue (or per send lane). Without them the transport is one queue whose
+    // room is send_room. The server keeps a protocol reserve in each queue:
+    // a game packet start (rocketnet_server_transport_start_packet) is refused,
+    // counted as SEND_RESERVE_REFUSED, once its claims in a queue reach that
+    // queue's room when main last opened the budget, less the reserve; the
+    // protocol's own frames (responses, keep-alives, disconnect bursts) may
+    // use the whole room (proofs/tla/RNSendReserve.tla).
+    //   send_queues: any thread; the queue count, fixed after create,
+    //     1 .. ROCKETNET_SERVER_MAX_SEND_QUEUES.
+    //   send_queue_of: any thread, pure; the queue start_packet stages a
+    //     frame to this address in (the destination hash).
+    //   send_room_queue: send_room for one queue, on the same threads.
+    int ( *send_queues )( void * transport );
+    int ( *send_queue_of )( void * transport, const rocketnet_address_t * to );
+    int ( *send_room_queue )( void * transport, int queue );
 };
+
+// the most send queues a transport may report through send_queues
+#define ROCKETNET_SERVER_MAX_SEND_QUEUES 64
 
 // the start_packet id of a refusal for want of a link-layer destination
 #define ROCKETNET_TRANSPORT_PACKET_UNREACHABLE    0xFFFFFFFFFFFFFFFFULL
@@ -228,8 +264,11 @@ struct rocketnet_client_transport_io_operations_t
     // operating-system handles (socket, wake, completion port) and frees
     // nothing: destroy, on the caller's thread, frees the memory later and
     // closes nothing more. The family race closes its losing family here
-    // (sdk/rocketnet_client_transport.cpp, proofs/tla/RNClientRace.tla). NULL for a
-    // transport with nothing to close before destroy.
+    // (sdk/rocketnet_client_transport.cpp, proofs/tla/RNClientRace.tla), and
+    // the I/O thread closes its transport here at its exit, after reading and
+    // counting what is still queued (sdk/rocketnet_client_io.h,
+    // rocketnet_client_io_discard_at_stop). NULL for a transport with nothing
+    // to close before destroy.
     void ( *close )( void * transport );
 
     // optional, with send_batch; I/O thread only, instead of it while running.
@@ -302,5 +341,9 @@ inline bool rocketnet_server_transport_io_has( const rocketnet_server_transport_
 {
     return ( transport.operations->flags & flag ) != 0;
 }
+
+// the allocation the portable client's I/O record is, as the client memory
+// plan counts it (built where the platform has a wake)
+uint64_t rocketnet_portable_io_client_allocation_bytes();
 
 #endif // ROCKETNET_SDK_ROCKETNET_DRIVER_H

@@ -257,6 +257,7 @@ static void test_reliable_packet_fit_boundary()
 }
 
 REGISTER_UNIT_TEST( test_reliable_packet_fit_boundary );
+UNIT_TEST_SKIPPED_UNLESS( test_reliable_packet_fit_boundary, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 #if ROCKETNET_DEV
 static void test_rnchannel_reliable_witness_replays()
@@ -306,6 +307,49 @@ static void test_rnchannel_reliable_witness_replays()
 
 REGISTER_UNIT_TEST( test_rnchannel_reliable_witness_replays );
 #endif // #if ROCKETNET_DEV
+
+// Exactly once, in every build (the DEV=OFF unit suite included): a reliable
+// number inside the window, out of order or not, is accepted once; its second
+// arrival is a duplicate, never a second acceptance, and the numbers around it
+// are untouched.
+
+static void test_reliable_in_window_duplicate_is_never_accepted_twice()
+{
+    rocketnet_message_config_t config;
+    reliable_test_config( &config );
+
+    reliable_test_node_t node;
+    reliable_test_init( &node, &config );
+
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+
+    const uint8_t byte = 9;
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.data = &byte;
+    record.bytes = 1;
+
+    const uint32_t numbers[] = { 3, 0, 5, 1 };
+    for ( int i = 0; i < 4; i++ )
+    {
+        uint32_t slot = RN_DESCRIPTOR_NONE;
+        record.number = numbers[i];
+        check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        check( slot != RN_DESCRIPTOR_NONE );
+        slot = RN_DESCRIPTOR_NONE;
+        check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_DUPLICATE );
+    }
+
+    // a number not yet seen is still fresh after its neighbours' duplicates
+
+    uint32_t slot = RN_DESCRIPTOR_NONE;
+    record.number = 2;
+    check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+
+    rn_unit_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( test_reliable_in_window_duplicate_is_never_accepted_twice );
 
 static uint64_t reliable_allocator_calls;
 

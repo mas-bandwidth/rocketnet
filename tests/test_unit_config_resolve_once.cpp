@@ -33,6 +33,8 @@
 #include "../sdk/rocketnet_base64.h"
 #include "../sdk/rocketnet_config.h"
 #include "../sdk/rocketnet_connect_token.h"
+#include "../sdk/rocketnet_layers.h"
+#include "../sdk/rocketnet_message_object.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -193,6 +195,39 @@ static void test_config_server_env_changed_after_create_has_no_effect()
 }
 REGISTER_UNIT_TEST( test_config_server_env_changed_after_create_has_no_effect );
 
+// The internal message server create (rocketnet_message_server_create) hands
+// its config to a transport that applies the environment itself. The message
+// object is sized from the same count: with max_clients 2 in the struct and
+// ROCKETNET_SERVER_MAX_CLIENTS=4, the object has 4 connections, one for each
+// slot the transport admits.
+
+static void test_config_message_server_internal_create_sizes_from_env()
+{
+    struct rocketnet_server_transport_config_t transport_config;
+    rocketnet_server_transport_default_config( &transport_config );
+    transport_config.protocol_id = RESOLVE_ONCE_PROTOCOL;
+    transport_config.max_clients = 2;
+    snprintf( transport_config.transport, sizeof( transport_config.transport ), "%s", "loopback" );
+    transport_config.loopback_hub = rocketnet_test_loopback_hub();
+    memset( transport_config.packet_filter, 0x5A, sizeof( transport_config.packet_filter ) );
+    resolve_once_identity_t identity;
+    resolve_once_identity( &identity );
+    memcpy( transport_config.backend_public_key, identity.backend_public, sizeof( transport_config.backend_public_key ) );
+    uint8_t server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
+    check( rocketnet_generate_server_keypair( transport_config.server_public_key, server_secret ) == ROCKETNET_STATUS_OK );
+    memcpy( transport_config.server_secret_key, server_secret, sizeof( transport_config.server_secret_key ) );
+
+    resolve_once_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "4" );
+    rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, "127.0.0.1:0", &transport_config, NULL, NULL, 0, 0 );
+    resolve_once_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
+
+    check( server != NULL );
+    check( server->object.num_connections == 4 );
+
+    rn_test_message_server_stop_and_destroy( server );
+}
+REGISTER_UNIT_TEST( test_config_message_server_internal_create_sizes_from_env );
+
 // Both endpoints take filter A from the environment at create; the client's
 // variable then changes to filter B before connect. The client connects with
 // the filter it was created with, A, and reaches the server.
@@ -288,7 +323,7 @@ static void config_ladder_max_assert_hook( const char *, const char *, const cha
     config_ladder_max_assertions++;
 }
 
-static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
+static void test_config_transport_order_auto_refuses_more_than_max_candidates()
 {
     rocketnet_quiet( 1 );
 
@@ -306,7 +341,7 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 
     struct
     {
-        struct rocketnet_transport_ladder_t ladder;
+        struct rocketnet_transport_order_t ladder;
         uint8_t canary[32];
     } guarded;
 
@@ -322,7 +357,7 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 #if ROCKETNET_ASSERTS
             const int assertions_before_parse = config_ladder_max_assertions;
 #endif // #if ROCKETNET_ASSERTS
-            check( !rocketnet_transport_ladder_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
+            check( !rocketnet_transport_order_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
 #if ROCKETNET_ASSERTS
             check( config_ladder_max_assertions == assertions_before_parse + 1 );
 #endif // #if ROCKETNET_ASSERTS
@@ -347,4 +382,4 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 #endif // #if ROCKETNET_ASSERTS
     rocketnet_quiet( 0 );
 }
-REGISTER_UNIT_TEST( test_config_transport_ladder_auto_refuses_more_than_max_candidates );
+REGISTER_UNIT_TEST( test_config_transport_order_auto_refuses_more_than_max_candidates );

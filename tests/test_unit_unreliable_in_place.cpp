@@ -363,7 +363,7 @@ static void ip_pair_setup( ip_pair_t * pair, int packets_per_update = 8 )
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.num_channels = 4;
+    config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     config.packets_per_update = packets_per_update;
     config.message_resend_delay_initial_ms = 100;
     pair->net = new ip_net_t();
@@ -1595,7 +1595,7 @@ static void test_unreliable_whole_frame_sent_inside_the_budget_window()
 
     uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
     check( p != NULL );
-    check( pair.client->object.in_place == 1 );                                    // the whole-frame case
+    check( pair.client->object.connections[0].open.in_place == 1 );                                    // the whole-frame case
     check( client->handed.size() == handed + 1 && ip_inside( p, bytes, client->handed.back() ) );
     check( client->finished.size() == finished );
 
@@ -1604,7 +1604,7 @@ static void test_unreliable_whole_frame_sent_inside_the_budget_window()
 
     // sealed and staged at finish: the message and its form byte, at the address it was written
 
-    check( pair.client->object.in_place == 0 );
+    check( pair.client->object.connections[0].open.in_place == 0 );
     check( client->finished.size() == finished + 1 );
     check( client->finished.back().bytes == bytes + 1 );
     check( ip_inside( p, bytes, client->finished.back() ) );
@@ -1655,7 +1655,7 @@ static void test_unreliable_packed_build_dropped_over_budget_at_seal()
 
     uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 200 );
     check( p != NULL );
-    check( pair.client->object.in_place == 2 );                                    // packed in the open build
+    check( pair.client->object.connections[0].open.in_place == 2 );                                    // packed in the open build
     check( ip_inside( p, 200, client->handed.back() ) );
     ip_fill( p, 700, 200 );
     const uint32_t serial = rocketnet_message_client_finish( pair.client, 200 );
@@ -1751,7 +1751,7 @@ static void test_unreliable_packed_size_and_space_edges()
         ip_settled_client( &pair, 0 );
         const int bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 - 10;
         uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, bytes );
-        check( pair.client->object.in_place == 2 );
+        check( pair.client->object.connections[0].open.in_place == 2 );
         ip_client_finish( &pair, p, 800, bytes );
         rocketnet_message_client_send_packets( pair.client );
         check( pair.net->client.finished.back().bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
@@ -1774,7 +1774,7 @@ static void test_unreliable_packed_size_and_space_edges()
         const int space = rocketnet_message_writer_space( &connection->unreliable_build.writer );
         const int bytes = space - fixed;
         uint8_t * second = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
-        check( pair.client->object.in_place == 2 );
+        check( pair.client->object.connections[0].open.in_place == 2 );
         check( client->handed.size() == handed );
         check( second == first + 100 + fixed );
         ip_client_finish( &pair, second, 802, bytes );
@@ -1795,7 +1795,7 @@ static void test_unreliable_packed_size_and_space_edges()
         const size_t finished = client->finished.size();
         const int bytes = rocketnet_message_writer_space( &connection->unreliable_build.writer ) - fixed - left;
         uint8_t * second = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
-        check( pair.client->object.in_place == 2 );
+        check( pair.client->object.connections[0].open.in_place == 2 );
         ip_client_finish( &pair, second, 804, bytes );
         if ( left == fixed + 1 )
         {
@@ -1850,7 +1850,7 @@ static void test_unreliable_in_place_budget_edges()
         ip_set_tokens( &pair, connection, (double) ( packed - short_by ) );
 
         uint8_t * p = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
-        check( pair.client->object.in_place == ( short_by == 0 ? 2 : 1 ) );
+        check( pair.client->object.connections[0].open.in_place == ( short_by == 0 ? 2 : 1 ) );
         ip_client_finish( &pair, p, 810, bytes );
         rocketnet_message_client_send_packets( pair.client );
         ip_pair_teardown( &pair );
@@ -1864,7 +1864,7 @@ static void test_unreliable_in_place_budget_edges()
         rn_message_connection_t * connection = ip_settled_client( &pair, 8 );
         ip_end_t * client = &pair.net->client;
         uint8_t * first = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 50 );
-        check( pair.client->object.in_place == 2 );
+        check( pair.client->object.connections[0].open.in_place == 2 );
         ip_client_finish( &pair, first, 811, 50 );
 
         const int open = connection->unreliable_build.writer.bytes;
@@ -1900,7 +1900,7 @@ static void test_unreliable_in_place_budget_edges()
         ip_set_tokens( &pair, connection, (double) ( whole - short_by ) );
 
         uint8_t * p = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
-        check( pair.client->object.in_place == ( short_by == 0 ? 1 : 0 ) );
+        check( pair.client->object.connections[0].open.in_place == ( short_by == 0 ? 1 : 0 ) );
         ip_client_finish( &pair, p, 813, bytes );
         rocketnet_message_client_send_packets( pair.client );
         ip_pair_teardown( &pair );
@@ -1908,6 +1908,7 @@ static void test_unreliable_in_place_budget_edges()
 }
 
 REGISTER_UNIT_TEST( test_unreliable_packed_size_and_space_edges );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_packed_size_and_space_edges, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_unreliable_in_place_budget_edges );
 REGISTER_UNIT_TEST( test_unreliable_whole_frame_sent_inside_the_budget_window );
 REGISTER_UNIT_TEST( test_unreliable_packed_build_dropped_over_budget_at_seal );
@@ -1915,13 +1916,22 @@ REGISTER_UNIT_TEST( test_unreliable_packing_abort_and_short_finish );
 REGISTER_UNIT_TEST( test_unreliable_packing_receipt_boundary );
 
 REGISTER_UNIT_TEST( test_unreliable_fit_is_written_in_the_packet );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_fit_is_written_in_the_packet, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_unreliable_fit_in_place_every_transport );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_fit_in_place_every_transport, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_unreliable_fit_has_no_message_copy );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_fit_has_no_message_copy, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_unreliable_over_fit_takes_the_message_buffer );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_over_fit_takes_the_message_buffer, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_in_place_unreliable_keeps_acks_and_order );
+UNIT_TEST_SKIPPED_UNLESS( test_in_place_unreliable_keeps_acks_and_order, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_mixed_in_place_and_queued_respect_packet_cap );
+UNIT_TEST_SKIPPED_UNLESS( test_mixed_in_place_and_queued_respect_packet_cap, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_repeated_fill_flush_respects_packet_cap );
+UNIT_TEST_SKIPPED_UNLESS( test_repeated_fill_flush_respects_packet_cap, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_reliable_not_starved_by_in_place );
+UNIT_TEST_SKIPPED_UNLESS( test_reliable_not_starved_by_in_place, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_message_burst_start_finish_delivers_every_message );
+UNIT_TEST_SKIPPED_UNLESS( test_message_burst_start_finish_delivers_every_message, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_start_past_packet_allowance_falls_back_to_the_region );
 REGISTER_UNIT_TEST( test_unreliable_refused_start_counts_once );

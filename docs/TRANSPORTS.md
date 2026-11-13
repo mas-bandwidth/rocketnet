@@ -9,7 +9,8 @@ takes `auto`, the platform's order below, and the first transport that starts
 wins. Read the result with `rocketnet_server_transport_name` or
 `rocketnet_client_transport_name`. The ranks are the registry's
 (`sdk/rocketnet_drivers.inc`); a lower rank is tried first, "pin only" means
-`auto` never picks it and only a name selects it, and "-" means that endpoint
+`auto` never picks it and only a list of that one name selects it (in a
+longer list it is skipped), and "-" means that endpoint
 does not have the transport.
 
 | Transport | Platform | Server rank | Client rank | What it needs from the host |
@@ -48,7 +49,7 @@ tried in that order with nothing appended.
 | A known name this platform or endpoint does not have (`iocp` on Linux, `gso` on macOS, any server-only transport for a client) | skipped with an info line; the rest of the list is the pin |
 | Every name in the list skipped | the endpoint uses its own `auto`, with a warning, so one setting can be deployed to mixed hosts |
 | `xdp` named in a build that compiled XDP out | `rocketnet_server_start` fails with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` |
-| Every listed transport refused to start (no privilege, no RIO, memory budget) | `rocketnet_server_start` or `rocketnet_client_connect` fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`; the log names each refusal |
+| Every listed transport refused to start (no privilege, no RIO, memory budget) | `rocketnet_server_start` or `rocketnet_client_connect` fails with `ROCKETNET_STATUS_NO_TRANSPORT_FOUND`; the log names each refusal |
 | A public address with port 0 and only transports that cannot report the port they were given (`xdp`) | `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED` |
 | A transport that cannot serve both requested address families | `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` |
 

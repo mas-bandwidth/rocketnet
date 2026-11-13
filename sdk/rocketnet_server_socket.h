@@ -12,6 +12,9 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
+#include "rocketnet_send_queue.h"
+
+#include <stdio.h>
 
 struct rocketnet_server_socket_t;
 
@@ -19,20 +22,42 @@ struct rocketnet_server_socket_t;
 #include <atomic>
 #include <errno.h>
 
-// Claims the next staging slot of an XDP send buffer. A claim at or past limit
-// is refused and counted in refused. The count is 64 bits: a buffer never takes
-// 2^64 claims without a flush, so it never wraps back onto a slot it handed
-// out. Returns the slot index or -1.
+// Claims the next staging slot of an XDP send buffer: the per-queue claim
+// every per-queue send shares (rocketnet_send_queue_claim). A claim at or
+// past limit is refused and counted in refused. Returns the slot index or -1.
 inline int rocketnet_xdp_send_claim( std::atomic<uint64_t> & num_packets, int limit, std::atomic<uint64_t> & refused )
 {
-    const uint64_t index = num_packets.fetch_add( 1 );
-    if ( index >= (uint64_t) limit )
-    {
-        refused.fetch_add( 1, std::memory_order_relaxed );
-        return -1;
-    }
+    return rocketnet_send_queue_claim( num_packets, limit, refused );
+}
 
-    return (int) index;
+// The id of an XDP packet start: unique per queue for the life of the server
+// and naming its queue, ( turn * slots + slot ) * queues + queue, where turn
+// counts the queue's published producer buffers and slot is the claim's slot
+// in the current one. finish and abort recover the queue as id % queues. A
+// fill computes it from its own queue's state, so no counter is shared
+// across queues on the fill path.
+inline uint64_t rocketnet_xdp_send_packet_id( uint64_t turn, int slot, int slots, int queues, int queue )
+{
+    return rocketnet_send_queue_packet_id( turn * (uint64_t) slots + (uint64_t) slot, queues, queue );
+}
+
+// How many times main tries a queue's handoff lock before it puts that
+// queue's publish or drain off to its next call. The xdp thread holds the
+// lock only to move buffer indices, and takes it to claim only when a buffer
+// is ready, so a few tries find it free; main never waits on a worker.
+#define ROCKETNET_XDP_HANDOFF_TRIES 64
+
+// Tries a handoff lock up to tries times; true when try_lock succeeded.
+template <typename TryLock> inline bool rocketnet_xdp_handoff_lock( TryLock try_lock, int tries )
+{
+    for ( int i = 0; i < tries; i++ )
+    {
+        if ( try_lock() )
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 // An AF_XDP TX wakeup (sendto on the socket fd) fails hard when no retry can
@@ -217,7 +242,7 @@ inline uint64_t rocketnet_xdp_socket_dropped( uint64_t rx_dropped, uint64_t rx_r
 // condition list both this check and that script derive from. Read-only by
 // contract: it may create and close probe descriptors (an AF_XDP socket
 // never bound, a BPF program never attached) but never changes machine
-// state. create() runs it first and refuses without it; the transport ladder
+// state. create() runs it first and refuses without it; the transport list
 // and the test suite call it directly so a refusal is named without ever
 // touching the committing path.
 
@@ -228,7 +253,8 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 // once at its start, structurally, so every present and future test is
 // safe by default; the pre-flight stays reachable (non-mutating by
 // contract) and create refuses before its first act. allow_commit is the
-// deliberate opt-out; nothing in the suite calls it.
+// deliberate opt-out, a ROCKETNET_DEV seam: only the functional cases that
+// must commit a real data plane call it, each for its own process.
 
 void rocketnet_server_socket_forbid_commit();
 
@@ -257,6 +283,12 @@ void rocketnet_server_socket_clear_preflight_test_result();             // natur
 // "velocity0").
 
 bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line, const char * interface_name );
+
+// the next IRQ in /proc/interrupts whose line names interface_name: a line
+// that starts with its IRQ number and a ':', read whole however long it is.
+// false at the end of the file.
+
+bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char * interface_name, int * irq );
 
 // The filter value configures the kernel prefilter: only packets carrying it
 // reach the AF_XDP rings. It is the same value the protocol object checks, at the same epoch.
@@ -313,6 +345,10 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
 
 uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket );
 
+// the keep-alives send_packets held for a session whose first mark is not yet
+// applied (HoldGreetingUntilMarked). Main thread, as the commit failures are.
+uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_socket_t * server_socket );
+
 void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_socket );
 bool rocketnet_server_socket_stopped( struct rocketnet_server_socket_t * server_socket );
 
@@ -337,6 +373,13 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 // hashes to one queue. Main thread.
 int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket );
 
+// the per-queue room for the server's send reserve (rocketnet_driver.h
+// send_queues, send_queue_of, send_room_queue): main, and fill threads during
+// the fill phase; atomics only, no lock, no write
+int rocketnet_server_socket_send_queues( struct rocketnet_server_socket_t * server_socket );
+int rocketnet_server_socket_send_queue_of( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to );
+int rocketnet_server_socket_send_room_queue( struct rocketnet_server_socket_t * server_socket, int queue );
+
 // true once every queue's producer buffer is empty, its worker has copied and
 // recycled every buffer it was handed, and the TX ring's consumer has taken
 // every descriptor the worker put on it; a queue whose worker reported a hard
@@ -360,11 +403,15 @@ bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
 bool rocketnet_server_socket_test_send_idle_hard_error();
-// the unit suite's case: dispatch is rocketnet_server_transport_io_receive_frames_dropped
-// and xdp the xdp operations table, as the transport's counter read uses them
+// the unit suite's case: dispatch is rocketnet_server_transport_io_receive_frames_dropped,
+// replay_dispatch rocketnet_server_transport_io_replay_counts, and xdp the xdp
+// operations table, as the transport's counter read uses them
 typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                             uint64_t * dropped );
+typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * commit_failed, uint64_t * greetings_held );
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();

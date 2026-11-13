@@ -4,7 +4,8 @@
 
     Windows only. Each case ends its own process the way a broken test does:
     abort, a failed assertion, the CRT's invalid parameter handler (#201's
-    setvbuf) and an access violation. Under suite_main each must exit with a
+    setvbuf), an access violation and a heap overrun the debug CRT reports.
+    Under suite_main each must exit with a
     nonzero code at once and never wait on a window (suite_no_dialogs,
     tests/suite_runner.h). test_no_dialogs_dialog_routing_restored explicitly
     routes CRT errors to a message box before failing an assertion. In Debug
@@ -45,6 +46,25 @@ static int no_dialogs_access_violation()
     return 2;
 }
 
+// The debug heap finds a one-byte overrun at the free and reports it; the
+// report must end the process red (suite_crt_report_fails), never print and
+// carry on to exit 0. Release has no debug heap: the case fails by design.
+static int no_dialogs_heap_overrun()
+{
+#if defined( _MSC_VER ) && defined( _DEBUG )
+    char * volatile block = (char *) malloc( 8 );
+    if ( block == NULL )
+    {
+        return 2;
+    }
+    block[8] = 1;
+    free( block );
+    return 0;
+#else  // #if defined( _MSC_VER ) && defined( _DEBUG )
+    return 2;
+#endif // #if defined( _MSC_VER ) && defined( _DEBUG )
+}
+
 static int no_dialogs_dialog_routing_restored()
 {
     SetErrorMode( 0 );
@@ -53,6 +73,7 @@ static int no_dialogs_dialog_routing_restored()
     _set_error_mode( _OUT_TO_MSGBOX );
     _set_abort_behavior( _WRITE_ABORT_MSG | _CALL_REPORTFAULT, _WRITE_ABORT_MSG | _CALL_REPORTFAULT );
 #if defined( _DEBUG )
+    _CrtSetReportHook2( _CRT_RPTHOOK_REMOVE, suite_crt_report_fails );
     _CrtSetReportMode( _CRT_ASSERT, _CRTDBG_MODE_WNDW );
     _CrtSetReportMode( _CRT_ERROR, _CRTDBG_MODE_WNDW );
 #endif // #if defined( _DEBUG )
@@ -71,6 +92,7 @@ static const no_dialogs_case no_dialogs_cases[] = {
     { "test_no_dialogs_assert", no_dialogs_assert },
     { "test_no_dialogs_invalid_parameter", no_dialogs_invalid_parameter },
     { "test_no_dialogs_access_violation", no_dialogs_access_violation },
+    { "test_no_dialogs_heap_overrun", no_dialogs_heap_overrun },
     { "test_no_dialogs_dialog_routing_restored", no_dialogs_dialog_routing_restored },
 };
 

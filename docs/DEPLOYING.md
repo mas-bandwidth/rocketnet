@@ -20,7 +20,7 @@ and resolves the configured list before that activation. The list rides the conf
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
-    ./bin/functional                                # auto: the platform's recommended ladder
+    ./bin/functional                                # auto: the platform's recommended transport order
                                                 #   (production linux: xdp,gso,io_uring,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 #   portable server is available in both build modes
@@ -39,7 +39,7 @@ clamped: the public range is 1–1024 (zero selects a transport default),
 while gso and io_uring accept at most 32. XDP also checks its memory and host
 geometry before starting. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
-that degradation is internal to the transport, below the ladder; likewise the Darwin
+that degradation is internal to the transport, below the transport list; likewise the Darwin
 batch pump's live-refusal pause. Select the portable server in either
 build with `ROCKETNET_SERVER_TRANSPORT=portable`; select the client's portable
 side with `ROCKETNET_CLIENT_TRANSPORT=portable` in either build.
@@ -103,11 +103,21 @@ Cold, on a fresh box, as root:
     # 1. BOOT TIER (once, then reboot): edit GRUB_CMDLINE_LINUX in /etc/default/grub
     #    to carry: nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
     #    then: update-grub && reboot
-    #    (build a recent vendor NIC driver where the distro's is too old — for
-    #    Intel 700 series, i40e from github.com/mas-bandwidth/ethernet-linux-i40e)
+    #    (the NIC driver needs AF_XDP zero copy: on an X710 the in-tree i40e
+    #    of Ubuntu's 7.0.0-43-generic binds it, while Intel's i40e 2.30.18
+    #    compiles it out on Ubuntu; LINUX.md section 6 has what was measured)
 
     # 2. RUNTIME TIER (idempotent, re-run any time):
     scripts/rocketnet-provision eth0 7
+    #    The interface is the one carrying the public address. On one
+    #    802.1Q VLAN device (eth0.300) the script resolves it to the parent
+    #    NIC and provisions that (R2), and the server attaches there and tags
+    #    what it sends; QinQ, 802.1ad and VLANs on bonds or bridges are
+    #    refused by name (LINUX.md section 6, "A VLAN"). Native XDP only: a
+    #    NIC without it refuses an xdp pin, and auto falls to the next rung.
+    #    The socket transports pay for connection tracking under a stateful
+    #    firewall; LINUX.md section 6 gives the notrack rule and what the
+    #    ruleset must accept with it.
     #    On a kernel before 6.12 (Ubuntu 22.04 and 24.04) this also turns
     #    off the real-time throttle (R8), which otherwise stops every
     #    spinning XDP worker about 50 ms in every second, and 0.2 to 1 s at
@@ -121,7 +131,7 @@ Cold, on a fresh box, as root:
     scripts/rocketnet-provision eth0 7 verify
 
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
-    #    auto ladder falls to gso with the reason named where it is not.
+    #    automatic transport order falls to gso with the reason named where it is not.
 
     # 4a. ON IXGBE (and any NIC whose XDP attach resets the port): the attach
     #    rebuilds the interrupt vectors after the pre-flight has passed, and
@@ -197,8 +207,8 @@ Honest labels: CI runs the committing xdp path (BPF program build/load/attach,
 AF_XDP binds) only inside a virtme-ng guest, in the `xdp portable` cell of the
 transport matrix, and `.github/workflows/nightly-soak.yml` runs
 `bash tools/run_xdp_filter_guest.sh` inside a four-CPU virtme-ng guest on the
-built `server_xdp.o` and `test_xdp_filter`, requiring all 18 `BPF_PROG_TEST_RUN`
-and guest XDP cases to print `ok` with zero skips (`test_xdp_filter: 18 cases passed`;
+built `server_xdp.o` and `test_xdp_filter`, requiring all 19 `BPF_PROG_TEST_RUN`
+and guest XDP cases to print `ok` with zero skips (`test_xdp_filter: 19 cases passed`;
 see `ROOTGATE.md`). No CI leg attaches XDP to a real NIC, so that tier's claims
 rest on a provisioned server. The pre-flight
 supports both Ubuntu 22.04's stock libbpf 0.5 and newer libbpf/libxdp.
@@ -221,7 +231,7 @@ BPF object, static/shared libraries, examples and XDP test executables. Run
 libraries. Jammy's liburing 2.1 lacks multishot receive, so configure prints
 `liburing found without multishot receive` and does not build the io_uring
 transport: it is absent from the transport list, as in a build without
-liburing, and the production ladder is `xdp -> gso -> portable`. XDP is
+liburing, and the production transport order is `xdp -> gso -> portable`. XDP is
 independent of it.
 
 Compilation and linking in an Ubuntu 22.04 container qualify its toolchain and

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the SDK suite with hostile ambient config; require the netcode output.
+"""Run the SDK suite with hostile ambient config; require the suite's own output.
 
 A passing run prints one line per test, its test_ lowercase snake_case name,
 then a blank line, "*** ALL TESTS PASSED ***" and a blank line, and nothing else. With the
@@ -253,6 +253,178 @@ def registered_functional_names():
     return _table_names(REPO / "tests" / "functional" / "rocketnet_functional_tests.cpp")
 
 
+# ROCKETNET_FUNCTIONAL_REGISTRY names another registry source in place of the
+# functional suite's (and no exec or unit names): a test seam for
+# tools/test_run_functional.sh only.
+FUNCTIONAL_REGISTRY_SEAM = os.environ.get("ROCKETNET_FUNCTIONAL_REGISTRY")
+
+# A functional registry row: { "name", function, predicate } where a NULL
+# predicate runs everywhere (tests/functional/rocketnet_functional_tests.cpp).
+FUNCTIONAL_ROW_RE = re.compile(r'^\s*\{\s*"(test_[a-z0-9_]+)"\s*,\s*\w+\s*,\s*(\w+)\s*\}')
+
+
+def functional_rows(path=None):
+    # {name: (outside every #if, predicate name or None)}
+    if path is None:
+        path = FUNCTIONAL_REGISTRY_SEAM or REPO / "tests" / "functional" / "rocketnet_functional_tests.cpp"
+    rows = {}
+    depth = 0
+    for line in _mask_comments_and_literals(Path(path).read_text(), keep_strings=True).splitlines():
+        if IF_RE.match(line):
+            depth += 1
+            continue
+        if ENDIF_RE.match(line):
+            depth = max(0, depth - 1)
+            continue
+        m = FUNCTIONAL_ROW_RE.match(line)
+        if m:
+            predicate = None if m.group(2) == "NULL" else m.group(2)
+            rows[m.group(1)] = (depth == 0, predicate)
+    return rows
+
+
+SKIPPED_RE = re.compile(r"SKIPPED (test_[a-z0-9_]+): (\w+)")
+SKIPPED_COUNT_RE = re.compile(r"skipped: ([0-9]+)")
+RSS_OVER_RE = re.compile(r"test_[a-z0-9_]+ peak_rss_mb=[0-9]+ bound_mb=[0-9]+")
+REPORT_LINE_RE = re.compile(r"(slowest cases:|peak rss:|  .*)")
+# suite_keep_going_summary (tests/suite_runner.h): a passing nightly run says
+# no case failed and every collected case ran; any other count is not a pass.
+KEEP_GOING_PASS_RE = re.compile(r"keep going: 0 failed; ([0-9]+) of \1 collected cases ran")
+# The Windows commit state a run prints at its start, and a full-capacity
+# case's wait for the machine-wide commit lock (tests/suite_runner.h,
+# suite_commit_text and suite_commit_lock_take): reports, not cases.
+COMMIT_LINE_RE = re.compile(r"commit available [0-9]+ MiB of a [0-9]+ MiB limit, physical available [0-9]+ MiB"
+                            r"|commit state unreadable"
+                            r"|commit lock: test_[a-z0-9_]+ waited [0-9.]+ s for another run's full-capacity case")
+
+
+# ROCKETNET_TEST_REPORT=1 also prints the job count before the cases (tests/suite_runner.h)
+JOBS_LINE_RE = re.compile(r"jobs: [0-9]+ \(cpus this run may use: [0-9]+\)")
+SHARD_LINE_RE = re.compile(r"shard ([0-9]+)/([0-9]+): [0-9]+ of [0-9]+ cases")
+
+
+def shard_of(name, shards):
+    """tests/suite_runner.h suite_shard_of: FNV-1a (32 bit) of the name, mod shards."""
+    h = 2166136261
+    for b in name.encode():
+        h = ((h ^ b) * 16777619) & 0xFFFFFFFF
+    return h % shards
+
+
+def check_functional_log(lines, rows, exec_names, other_names=frozenset(), shard=None):
+    """Cases run == registered rows - skips, from one passing functional run.
+
+    Returns a list of problems (empty when the run is whole): every row
+    outside a preprocessor condition printed or SKIPPED, a SKIPPED row only
+    one with a predicate and named with it, no row both, every printed or
+    skipped name registered (or an exec case's), and the skipped count
+    equal to the SKIPPED lines. With shard (I, N), one shard's run: only the
+    rows of shard I (suite_shard_of) are owed, and the run printed its
+    "shard I/N: k of m cases" line.
+    """
+    lines = [line.rstrip("\r") for line in lines]
+    problems = []
+    if len(lines) < 4 or lines[-3:] != ["", PASSED_LINE, ""]:
+        return ["the run does not end with a blank line, %r and a blank line" % PASSED_LINE]
+    printed, skipped, counts, other, keep_going = [], {}, [], [], 0
+    shard_lines = []
+    for line in lines[:-3]:
+        if TEST_NAME_RE.fullmatch(line):
+            printed.append(line)
+            continue
+        m = SKIPPED_RE.fullmatch(line)
+        if m:
+            if m.group(1) in skipped:
+                problems.append("SKIPPED twice: %s" % m.group(1))
+            skipped[m.group(1)] = m.group(2)
+            continue
+        m = SKIPPED_COUNT_RE.fullmatch(line)
+        if m:
+            counts.append(int(m.group(1)))
+            continue
+        if KEEP_GOING_PASS_RE.fullmatch(line):
+            keep_going += 1
+            continue
+        if JOBS_LINE_RE.fullmatch(line):
+            continue
+        m = SHARD_LINE_RE.fullmatch(line)
+        if m:
+            shard_lines.append((int(m.group(1)), int(m.group(2))))
+            continue
+        if line == "" or RSS_OVER_RE.fullmatch(line) or REPORT_LINE_RE.fullmatch(line) or COMMIT_LINE_RE.fullmatch(line):
+            continue
+        other.append(line)
+    if other:
+        problems.append("lines that are not test names, SKIPPED lines or the report: %s" % "; ".join(other[:10]))
+    if keep_going > 1:
+        problems.append("expected at most one keep-going summary, found %d" % keep_going)
+    if len(counts) != 1:
+        problems.append("expected one 'skipped: <n>' line, found %d" % len(counts))
+    elif counts[0] != len(skipped):
+        problems.append("'skipped: %d' but %d SKIPPED lines" % (counts[0], len(skipped)))
+
+    def known(name):
+        return name in rows or name in other_names or bool(exec_names and exec_names.fullmatch(name))
+
+    # A name may print twice: an exec case (test_unit_case_memory reruns unit
+    # cases, test_transport_control prints its own) can share a row's name.
+    ran = set(printed)
+    both = sorted(ran & set(skipped))
+    if both:
+        problems.append("printed and SKIPPED: " + ", ".join(both[:10]))
+    unknown = sorted(name for name in ran | set(skipped) if not known(name))
+    if unknown:
+        problems.append("printed or SKIPPED but not registered: " + ", ".join(unknown[:10]))
+    for name, predicate in sorted(skipped.items()):
+        if name not in rows:
+            continue
+        row_predicate = rows[name][1]
+        if row_predicate is None:
+            problems.append("SKIPPED a row with no predicate: %s" % name)
+        elif predicate not in (row_predicate, "runs_here"):
+            problems.append("SKIPPED %s names %s, its row names %s" % (name, predicate, row_predicate))
+    if shard is not None and shard_lines != [shard]:
+        problems.append("expected one 'shard %d/%d: <k> of <m> cases' line, found %r" % (shard[0], shard[1], shard_lines))
+    if shard is None and shard_lines:
+        problems.append("a shard line in a whole-suite log: %r" % shard_lines)
+    lost = sorted(name for name, (unconditional, _) in rows.items()
+                  if unconditional and name not in ran and name not in skipped
+                  and (shard is None or shard_of(name, shard[1]) == shard[0]))
+    if lost:
+        problems.append("registered rows that neither ran nor were SKIPPED: " + ", ".join(lost[:20]))
+    return problems
+
+
+EXEC_ROW_RE = re.compile(r'\{\s*"(test_[a-z0-9_]+)"\s*,\s*"test_[a-z0-9_]+"\s*,')
+
+
+def functional_exec_unit_names():
+    # Names a functional run prints besides its registry rows: each exec row's
+    # own name (tests/functional/main.cpp, test_unit_case_memory's
+    # tests/functional/unit_case_memory.cpp) and the unit cases
+    # test_unit_case_memory reruns, which print their registered names.
+    if FUNCTIONAL_REGISTRY_SEAM:
+        return set()
+    names = set(registered_unit_names()[0])
+    names.add("test_unit_case_memory")
+    try:
+        names.update(EXEC_ROW_RE.findall((REPO / "tests" / "functional" / "main.cpp").read_text()))
+    except OSError:
+        pass
+    return names
+
+
+def check_functional_log_file(path, shard=None):
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError as error:
+        sys.exit("functional log %s: %s" % (path, error))
+    problems = check_functional_log(text.splitlines(), functional_rows(), exec_functional_names(), functional_exec_unit_names(), shard)
+    if problems:
+        sys.exit("functional run %s is not registered rows minus skips:\n  %s" % (path, "\n  ".join(problems)))
+    print("ok: functional run %s ran every registered row or SKIPPED it" % path)
+
+
 def exec_functional_names():
     # The functional binary also runs the sibling exec binaries (test_xdp,
     # test_transport_control and each platform's analogue), whose tests print
@@ -262,7 +434,6 @@ def exec_functional_names():
     # patterns, plus each exec case's own name.
     patterns = []
     for rel in (
-        "tests/test_serialize.cpp",
         "tests/test_transport_control.cpp",
         "tests/test_msgx.cpp",
         "tests/test_xdp.cpp",
@@ -283,7 +454,12 @@ def exec_functional_names():
 
 def check_shape(lines, label, once=False):
     # every line a test name, then a blank line, the passed line and a blank line;
-    # with once, each name on one line only (the unit registry prints each case once)
+    # with once, each name on one line only (the unit registry prints each case once);
+    # a Windows run's commit lines (COMMIT_LINE_RE) are reports and are set aside first
+    lines = [line for line in lines if not COMMIT_LINE_RE.fullmatch(line)]
+    if lines[-3:] == ["", PASSED_LINE, ""] and not any(line.strip() for line in lines[:-3]):
+        # zero inputs is an error: a run that printed no test name ran nothing
+        sys.exit("%s: 0 test names printed before %r: nothing was checked" % (label, PASSED_LINE))
     if len(lines) < 4 or lines[-3:] != ["", PASSED_LINE, ""]:
         sys.exit("%s: the run does not end with a blank line, %r and a blank line" % (label, PASSED_LINE))
     bad = [line for line in lines[:-3] if not TEST_NAME_RE.fullmatch(line)]
@@ -344,6 +520,20 @@ def run_binary(binary, env, timeout):
 
 
 def main():
+    if sys.argv[1:2] == ["--functional-log"]:
+        # a functional run's output, as tools/run_functional.sh logs it
+        shard = None
+        rest = sys.argv[2:]
+        if len(rest) == 3 and rest[1] == "--shard":
+            m = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", rest[2])
+            if not m or int(m.group(1)) >= int(m.group(2)):
+                sys.exit("check_test_environment.py: --shard is I/N with 0 <= I < N: %s" % rest[2])
+            shard = (int(m.group(1)), int(m.group(2)))
+            rest = rest[:1]
+        if len(rest) != 1:
+            sys.exit("usage: check_test_environment.py --functional-log LOG [--shard I/N]")
+        check_functional_log_file(rest[0], shard)
+        return
     args = [arg for arg in sys.argv[1:] if arg != "--production"]
     # --production: the binary links the production library (ROCKETNET_DEV=OFF),
     # which compiles no in-memory environment table and so no restoration test
@@ -362,9 +552,9 @@ def main():
         result = run_binary(binary, env, timeout=1200)
         if result.returncode:
             sys.exit("functional suite failed: %s" % result.returncode)
-        printed = set(check_shape(result.stdout.splitlines(), "functional"))
-        reg_all, reg_always = registered_functional_names()
-        assert_name_set(printed, reg_all, reg_always, "functional", exec_functional_names())
+        problems = check_functional_log(result.stdout.splitlines(), functional_rows(), exec_functional_names(), functional_exec_unit_names())
+        if problems:
+            sys.exit("functional: not registered rows minus skips:\n  " + "\n  ".join(problems))
         return
 
     printing = unit_sources_printing_names()

@@ -15,9 +15,6 @@ set. Commands below run from the repository root unless stated otherwise.
 
 ## Vendored test dependencies
 
-- `serialize.h` — mas-bandwidth/serialize 1.15, vendored so the serialize
-  read of rocketnet.h (the C++ stream surface) is compiled and exercised by
-  `bin/test_serialize`. Refresh it when the serialize pin moves.
 - `wycheproof/` — C2SP/wycheproof known-answer vectors for the primitives
   rocketnet calls (ChaCha20-Poly1305, X25519, Ed25519), parsed by
   tests/wycheproof.h. See tests/wycheproof/README.md for the pin and hashes.
@@ -56,7 +53,7 @@ cases in `tests/functional/corpus_consistency.cpp`, rows of
 ## Running the suite
 
 `./bin/test` and `./bin/functional` print one line per test, its name, in
-suite order, then `*** ALL TESTS PASSED ***`, as netcode's tests do. Every
+suite order, then `*** ALL TESTS PASSED ***`. Every
 name is `test_` then lowercase snake_case, and the suite fails before it runs
 anything when a registered name is not (`suite_name_is_test_snake_case` in
 `tests/suite_runner.h`). A failing test prints everything it wrote, including
@@ -68,7 +65,6 @@ not registered there, so it is neither run nor printed.
 The repository text audits that used to be unit cases — the client/server
 "says messages, not packets" scan (`test_client_server_say_messages_not_packets`),
 the environment-name documentation check (`test_config_env_every_name_read_is_documented`),
-the counter-named-by-a-test check (`test_counters_every_counter_is_named_by_a_test`),
 the one-family-per-outcome check (`test_counters_every_outcome_in_at_most_one_family`)
 and the XDP counter-row check (`test_xdp_transport_host_every_counter_has_a_case`) —
 run in the static source-audit binary `./bin/source_audit`, not `./bin/test`. It
@@ -89,6 +85,11 @@ nightly tier (`ROCKETNET_TEST_NIGHTLY=1`).
 The unit suite has a nightly tier too (`rocketnet_unit_nightly_cases` in
 `tests/test.cpp`): a unit case over a second whose smaller size runs on every
 commit, such as the per-client isolation case at `ROCKETNET_MAX_CLIENTS`.
+On the nightly tier only, `ROCKETNET_TEST_KEEP_GOING=1` runs every case past
+a failure; the summary names each failed case and counts the cases run
+against the cases collected, and the suite still exits 1. `nightly.yml` sets
+it on every nightly-tier step; a per-commit run stops at the first failure
+(`tests/suite_runner.h`, `suite_keep_going`; `tools/test_suite_keep_going.py`).
 Use generous completion deadlines to catch hangs; do not assert wall-clock
 latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See
@@ -119,9 +120,13 @@ verdict. The functional suite enforces the bound and fails with the same values.
 `test_unit_case_memory` is a functional sibling row that runs the complete unit
 binary in enforcement mode. The unit binary therefore supplies the case list,
 the suite-wide fallback, every case-specific declaration and every measured
-peak directly; there is no second bound table. The outer functional row keeps
-the 120-second limit but does not compare the unit controller's aggregate child
-usage with one case's bound. Its inner runner retains the 120-second per-case
+peak directly; there is no second bound table. The outer functional row has a
+limit of its own, 99 seconds, not a functional case's 120: it is the whole unit
+suite, and under `ROCKETNET_TEST_NIGHTLY=1` its slowest case takes 34 to 36 s in
+Debug. The slowest measured wall, 59 s (Debug, nightly tier, three 4-cpu slots
+running it at once), is 60% of 99 (the margin rule; the measurements are in
+`tests/functional/unit_case_memory.cpp`). It does not
+compare the unit controller's aggregate child usage with one case's bound. Its inner runner retains the 120-second per-case
 Release limit, including the existing Debug and sanitizer scaling, and enforces
 each unit case separately. A sanitizer build enforces no bound unless
 `ROCKETNET_TEST_MAX_CASE_RSS_MB` sets one, so there the row would check nothing;

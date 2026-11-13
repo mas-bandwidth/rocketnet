@@ -56,21 +56,37 @@ int fixture_below_floor_check(void) { return 0; }
 int fixture_budget_check(void) { return 0; }
 """
 
-TESTS = """// fixture tests
-test_below_floor
-test_budget
+TESTS = """// fixture unit tests, registered as the sdk's table registers them
+static void rocketnet_test_below_floor( void ) {}
+static void rocketnet_test_budget( void ) {}
+// test_renamed_away: the test this comment named was renamed
+static const struct { const char * name; void ( *fn )( void ); } rocketnet_unit_tests[] = {
+    { "test_below_floor", rocketnet_test_below_floor },
+    { "test_budget", rocketnet_test_budget },
+};
+"""
+
+CHANNELS = """static const int channels_tests[] = {
+    { "test_channels_fixture", 0 },
+};
 """
 
 HEADER = "section\trule\ttla_invariant\tcode_function\ttest\ttier\n"
 
 
 class CheckerFixture(unittest.TestCase):
-    def build(self, rows):
+    def build(self, rows, floor_rows=None):
+        """A fixture tree; its floor matches rows unless floor_rows is given."""
         root = tempfile.mkdtemp(prefix="witnesses-")
         os.makedirs(os.path.join(root, "docs"))
         os.makedirs(os.path.join(root, "standard"))
         os.makedirs(os.path.join(root, "proofs", "tla"))
         os.makedirs(os.path.join(root, "sdk"))
+        os.makedirs(os.path.join(root, "tests"))
+        with open(os.path.join(root, "tests", "test_channels.cpp"), "w") as handle:
+            handle.write(CHANNELS)
+        check_witnesses.write_floor(os.path.join(root, "docs", "WITNESSES.floor.tsv"),
+                                    rows if floor_rows is None else floor_rows)
         with open(os.path.join(root, "standard", "TRANSPORT.md"), "w") as handle:
             handle.write(TRANSPORT)
         with open(os.path.join(root, "standard", "MESSAGES.md"), "w") as handle:
@@ -81,7 +97,7 @@ class CheckerFixture(unittest.TestCase):
             handle.write(TLA)
         with open(os.path.join(root, "sdk", "code.cpp"), "w") as handle:
             handle.write(CODE)
-        with open(os.path.join(root, "sdk", "tests.cpp"), "w") as handle:
+        with open(os.path.join(root, "sdk", "rocketnet_tests.cpp"), "w") as handle:
             handle.write(TESTS)
         with open(os.path.join(root, "docs", "WITNESSES.tsv"), "w") as handle:
             handle.write(HEADER)
@@ -93,10 +109,10 @@ class CheckerFixture(unittest.TestCase):
         root = self.build([
             ["t1", "a receiver MUST drop a packet below its floor",
              "BelowFloorIsRefused", "sdk/code.cpp:fixture_below_floor_check",
-             "sdk/tests.cpp:test_below_floor", "unit"],
+             "sdk/rocketnet_tests.cpp:test_below_floor", "unit"],
             ["t1", "a sender MUST NOT exceed its budget",
              "SenderWithinBudget", "sdk/code.cpp:fixture_budget_check",
-             "sdk/tests.cpp:test_budget", "unit"],
+             "sdk/rocketnet_tests.cpp:test_budget", "unit"],
         ])
         code, report = check_witnesses.run(root)
         self.assertEqual(code, 0, report)
@@ -132,7 +148,7 @@ class CheckerFixture(unittest.TestCase):
     def test_review_cannot_silently_relabel_a_unit_test(self):
         root = self.build([
             ["t1", "a receiver MUST drop a packet below its floor", "-",
-             "sdk/code.cpp:fixture_below_floor_check", "sdk/tests.cpp:test_below_floor", "review"],
+             "sdk/code.cpp:fixture_below_floor_check", "sdk/rocketnet_tests.cpp:test_below_floor", "review"],
         ])
         code, report = check_witnesses.run(root)
         self.assertEqual(code, 1, report)
@@ -140,7 +156,7 @@ class CheckerFixture(unittest.TestCase):
 
     def test_deferred_mode_requires_a_boundary_witness_and_is_counted(self):
         row = ["t1", "a receiver MUST drop a packet below its floor", "-",
-               "sdk/code.cpp:fixture_below_floor_check", "sdk/tests.cpp:test_below_floor", "deferred"]
+               "sdk/code.cpp:fixture_below_floor_check", "sdk/rocketnet_tests.cpp:test_below_floor", "deferred"]
         code, report = check_witnesses.run(self.build([row]))
         self.assertEqual(code, 0, report)
         self.assertIn("DEFERRED MODES (not implemented): 1", report)
@@ -313,11 +329,65 @@ class CheckerFixture(unittest.TestCase):
     def test_stale_test_anchor_fails(self):
         root = self.build([
             ["t1", "a receiver MUST drop a packet below its floor",
-             "-", "-", "sdk/tests.cpp:test_deleted", "unit"],
+             "-", "-", "sdk/rocketnet_tests.cpp:test_deleted", "unit"],
         ])
         code, report = check_witnesses.run(root)
         self.assertEqual(code, 1)
         self.assertIn("does not resolve", report)
+
+
+    # VERIFY-3 A-2: the ledger is held to its floor, so a row deleted, a tier
+    # downgraded or a row added is a change to two files, never a green one.
+
+    ROW_FLOOR = ["t1", "a receiver MUST drop a packet below its floor", "-",
+                 "sdk/code.cpp:fixture_below_floor_check", "sdk/rocketnet_tests.cpp:test_below_floor", "unit"]
+    ROW_BUDGET = ["t1", "a sender MUST NOT exceed its budget", "-",
+                  "sdk/code.cpp:fixture_budget_check", "sdk/rocketnet_tests.cpp:test_budget", "unit"]
+
+    def test_deleted_row_fails(self):
+        code, report = check_witnesses.run(self.build([self.ROW_FLOOR], floor_rows=[self.ROW_FLOOR, self.ROW_BUDGET]))
+        self.assertEqual(code, 1, report)
+        self.assertIn("(tier unit) is gone from WITNESSES.tsv", report)
+
+    def test_deleted_duplicate_row_fails(self):
+        code, report = check_witnesses.run(self.build([self.ROW_FLOOR], floor_rows=[self.ROW_FLOOR, self.ROW_FLOOR]))
+        self.assertEqual(code, 1, report)
+        self.assertIn("has tiers unit, the floor unit/unit", report)
+
+    def test_downgraded_row_fails(self):
+        gap = ["t1", "a sender MUST NOT exceed its budget", "-", "-", "-", "none"]
+        code, report = check_witnesses.run(self.build([self.ROW_FLOOR, gap], floor_rows=[self.ROW_FLOOR, self.ROW_BUDGET]))
+        self.assertEqual(code, 1, report)
+        self.assertIn("has tiers none, the floor unit", report)
+
+    def test_row_not_in_the_floor_fails(self):
+        code, report = check_witnesses.run(self.build([self.ROW_FLOOR, self.ROW_BUDGET], floor_rows=[self.ROW_FLOOR]))
+        self.assertEqual(code, 1, report)
+        self.assertIn("is not in docs/WITNESSES.floor.tsv", report)
+
+    def test_missing_floor_fails(self):
+        root = self.build([self.ROW_FLOOR])
+        os.remove(os.path.join(root, "docs", "WITNESSES.floor.tsv"))
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 1, report)
+        self.assertIn("WITNESSES.floor.tsv could not be read", report)
+
+    def test_header_only_ledger_fails(self):
+        code, report = check_witnesses.run(self.build([]))
+        self.assertEqual(code, 1, report)
+        self.assertIn("has no rows", report)
+
+    def test_test_name_left_only_in_a_comment_fails(self):
+        row = list(self.ROW_FLOOR)
+        row[4] = "sdk/rocketnet_tests.cpp:test_renamed_away"
+        code, report = check_witnesses.run(self.build([row]))
+        self.assertEqual(code, 1, report)
+        self.assertIn("is not a registered unit case of sdk/rocketnet_tests.cpp", report)
+
+    def test_tier_counts_are_printed(self):
+        code, report = check_witnesses.run(self.build([self.ROW_FLOOR, self.ROW_BUDGET]))
+        self.assertEqual(code, 0, report)
+        self.assertIn("TIERS: unit 2, none 0, model 0, review 0, deferred 0", report)
 
 
 if __name__ == "__main__":

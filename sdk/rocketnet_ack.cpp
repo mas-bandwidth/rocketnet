@@ -14,6 +14,9 @@
 #include <math.h>
 #include <limits.h>
 
+#include <atomic>
+#include <new>
+
 #if ROCKETNET_DEV
 // Unit-library instrumentation only: each sequence visit during process_block.
 // Per thread, so independent endpoints on different threads never share it;
@@ -423,6 +426,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
                    "the record rings are one span, before the rtt history" );
 
     memset( (void *) endpoint, 0, offsetof( rocketnet_ack_endpoint_t, sent ) );
+    memset( (void *) &endpoint->block_memo, 0, sizeof( endpoint->block_memo ) );     // whole, so two endpoints with one history compare equal byte for byte
 
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
     {
@@ -1334,6 +1338,10 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
     endpoint->sent_held[slot >> 6] |= 1ull << ( slot & 63 );
     endpoint->sent_unacked[slot >> 6] |= 1ull << ( slot & 63 );
 
+    // a new unacknowledged slot: the last applied block, applied again,
+    // could now ack it, so it is no longer known to be a no-op
+    endpoint->block_memo.valid = 0;
+
     // fill-phase threads record concurrently under distinct sequences, so
     // the high-water fold is a compare-exchange max: whatever the
     // interleaving, the mark ends at the largest recorded sequence
@@ -1461,7 +1469,7 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
 // set extension, used where the compiler offers no popcount builtin and the
 // target is not x64 (MSVC for ARM64 has no __popcnt64)
 
-int rocketnet_ack_popcount64_portable( uint64_t v )
+static inline int rn_popcount64_sum( uint64_t v )
 {
     v = v - ( ( v >> 1 ) & 0x5555555555555555ull );
     v = ( v & 0x3333333333333333ull ) + ( ( v >> 2 ) & 0x3333333333333333ull );
@@ -1469,15 +1477,27 @@ int rocketnet_ack_popcount64_portable( uint64_t v )
     return (int) ( ( v * 0x0101010101010101ull ) >> 56 );
 }
 
+int rocketnet_ack_popcount64_portable( uint64_t v )
+{
+    return rn_popcount64_sum( v );
+}
+
+// gcc and clang inline __builtin_popcountll on arm64 (cnt) and on x86 when
+// the target has POPCNT (__POPCNT__); an x86 build without it would call
+// libgcc's __popcountdi2 per word, so it takes the inline portable sum.
+// MSVC on x64 has __popcnt64; MSVC on ARM64 takes the portable sum.
+
 static inline int rn_popcount64( uint64_t v )
 {
-#if defined( __GNUC__ ) || defined( __clang__ )
+#if ( defined( __GNUC__ ) || defined( __clang__ ) ) && ( defined( __x86_64__ ) || defined( __i386__ ) ) && !defined( __POPCNT__ )
+    return rn_popcount64_sum( v );
+#elif defined( __GNUC__ ) || defined( __clang__ )
     return __builtin_popcountll( v );
 #elif defined( _MSC_VER ) && defined( _M_X64 )
     return (int) __popcnt64( v );
 #else
-    return rocketnet_ack_popcount64_portable( v );
-#endif // #if defined( __GNUC__ ) || defined( __clang__ )
+    return rn_popcount64_sum( v );
+#endif // #if ( defined( __GNUC__ ) || defined( __clang__ ) ) && ( defined( __x86_64__ ) || defined( __i386__ ) ) && !defined( __POPCNT__ )
 }
 
 // popcount of one bitmap over the linear slot range [a,b] (a<=b), masking the
@@ -1557,6 +1577,55 @@ static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint3
     }
 }
 
+// read hints for the records of the unacknowledged slots in [a, b] (a <= b)
+// and their rtt history entries: for each nonzero masked word, the lines
+// from its lowest to its highest set slot, at most
+// ROCKETNET_ACK_PREFETCH_LINES lines in all. No effect on any value.
+
+#define ROCKETNET_ACK_PREFETCH_LINES 32
+
+static inline void rn_ack_prefetch_unacked( const struct rocketnet_ack_endpoint_t * endpoint, uint32_t a, uint32_t b )
+{
+    int lines = 0;
+    for ( uint32_t w = a >> 6; w <= ( b >> 6 ) && lines < ROCKETNET_ACK_PREFETCH_LINES; w++ )
+    {
+        uint64_t word = endpoint->sent_unacked[w];
+        if ( w == ( a >> 6 ) )
+        {
+            word &= ~0ull << ( a & 63 );
+        }
+
+        if ( w == ( b >> 6 ) && ( b & 63 ) != 63 )
+        {
+            word &= ( 1ull << ( ( b & 63 ) + 1 ) ) - 1;
+        }
+
+        if ( !word )
+        {
+            continue;
+        }
+
+        const uint32_t first = w * 64 + (uint32_t) rocketnet_ack_ctz64( word );
+        const uint32_t last = w * 64 + 63 - (uint32_t) rocketnet_platform_clz64( word );
+        // two records a cache line: every second record from the first, then
+        // the last, names each line the run [first, last] lies on
+        static_assert( sizeof( endpoint->sent[0] ) == 32, "the read-ahead steps two sent records a cache line" );
+        for ( uint32_t s = first; s < last && lines < ROCKETNET_ACK_PREFETCH_LINES; s += 2 )
+        {
+            rocketnet_ack_stats_prefetch( &endpoint->sent[s] );
+            lines++;
+        }
+        if ( lines < ROCKETNET_ACK_PREFETCH_LINES )
+        {
+            rocketnet_ack_stats_prefetch( &endpoint->sent[last] );
+            lines++;
+        }
+
+        rocketnet_ack_stats_prefetch( &endpoint->rtt_history[first % ROCKETNET_RTT_HISTORY_SIZE] );
+        rocketnet_ack_stats_prefetch( &endpoint->rtt_history[last % ROCKETNET_RTT_HISTORY_SIZE] );
+    }
+}
+
 // marks one described run of received sequences [low, high], clamped to the
 // retained window, and appends newly acknowledged packet ids to the batch
 // (proofs/tla/SessionAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
@@ -1631,6 +1700,13 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
     *unknown_sequence_counter += window_len - (uint64_t) held;
 
+    // the stats window and its loss-eligible top, read once: the walk never
+    // moves highest_sequence (only a recorded send does)
+
+    const uint64_t stats_base = rocketnet_ack_stats_window_base( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+    const uint64_t stats_top = rocketnet_ack_stats_window_top( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+    const uint64_t eligible_top = rocketnet_ack_stats_eligible_top( endpoint->highest_sequence );
+
     auto visit = [&]( uint64_t sequence )
     {
 #if ROCKETNET_DEV
@@ -1660,11 +1736,10 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
         else
         {
             record->acked = 1;
-            if ( sequence >= rocketnet_ack_stats_window_base( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE ) &&
-                 sequence <= rocketnet_ack_stats_window_top( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE ) )
+            if ( sequence >= stats_base && sequence <= stats_top )
             {
                 rocketnet_ack_stats_sent_add_acked( endpoint, sequence, record );
-                if ( sequence <= rocketnet_ack_stats_eligible_top( endpoint->highest_sequence ) )
+                if ( sequence <= eligible_top )
                 {
                     endpoint->stats_eligible_unacked--;
                 }
@@ -1694,12 +1769,15 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
             // the first block that acknowledges a sequence yields one rtt
             // sample: the elapsed time between sending it and receiving the
-            // block
+            // block. An elapsed time at or past ROCKETNET_ACK_RTT_NONE
+            // (a legal jump of the update clock) is no sample, as the
+            // minimum already has it: summed, it made the jitter infinite,
+            // then NaN, and past float's range its conversion is undefined
 
-            double sample = time - record->send_time;
-            if ( sample >= 0.0 )
+            const double sample_ms = ( time - record->send_time ) * 1000.0;
+            if ( sample_ms >= 0.0 && sample_ms < (double) ROCKETNET_ACK_RTT_NONE )
             {
-                rocketnet_ack_stats_rtt_write( endpoint, (int) ( sequence % ROCKETNET_RTT_HISTORY_SIZE ), (float) ( sample * 1000.0 ) );
+                rocketnet_ack_stats_rtt_write( endpoint, (int) ( sequence % ROCKETNET_RTT_HISTORY_SIZE ), (float) sample_ms );
                 endpoint->has_rtt_sample = 1;
             }
 
@@ -1709,6 +1787,20 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             }
         }
     };
+
+    // the records the walk will visit were written by the filling threads,
+    // so their lines are cold here: fetch them, and their rtt history
+    // entries, before the walk reads them one at a time. A hint only.
+
+    if ( slot_high >= slot_low )
+    {
+        rn_ack_prefetch_unacked( endpoint, slot_low, slot_high );
+    }
+    else
+    {
+        rn_ack_prefetch_unacked( endpoint, slot_low, ROCKETNET_SENT_PACKET_BUFFER_SIZE - 1 );
+        rn_ack_prefetch_unacked( endpoint, 0, slot_high );
+    }
 
     // visit the set bits (the base order: highest sequence first), word by word with clz, splitting the slot range where it wraps at the ring
 
@@ -1725,25 +1817,8 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
     return newly_acked;
 }
 
-int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endpoint,
-                                          const struct rocketnet_ack_block_t * block,
-                                          double time,
-                                          uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
-                                          uint64_t * unknown_sequence_counter,
-                                          uint64_t * batch_full_counter )
+static void rn_ack_reconcile( struct rocketnet_ack_endpoint_t * endpoint )
 {
-    rocketnet_assert( endpoint );
-    rocketnet_assert( block );
-    rocketnet_assert( acked_packet_ids );
-    rocketnet_assert( acked_count );
-    rocketnet_assert( unknown_sequence_counter );
-    rocketnet_assert( batch_full_counter );
-
-    if ( block->largest == 0 )
-    {
-        return 0;
-    }
-
     // Reconcile the shadow bitmaps to the ring (update thread only; update
     // and the fill phase never overlap). Every sequence at or above the window
     // low whose record does not hold that exact sequence -- a burned or
@@ -1778,7 +1853,17 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
         endpoint->sent_bits_checked = endpoint->highest_sequence;
     }
+}
 
+// the block's runs, highest first, then the published aggregates
+
+static int rn_ack_apply_block( struct rocketnet_ack_endpoint_t * endpoint,
+                               const struct rocketnet_ack_block_t * block,
+                               double time,
+                               uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                               uint64_t * unknown_sequence_counter,
+                               uint64_t * batch_full_counter )
+{
     int newly_acked = 0;
 
     // the first range: a received run ending at largest inclusive. validity already proved every subtraction here safe.
@@ -1804,6 +1889,116 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
     {
         rocketnet_ack_stats_publish_rtt( endpoint );
         rocketnet_ack_stats_publish_sent( endpoint );
+    }
+
+    return newly_acked;
+}
+
+int rocketnet_ack_endpoint_process_block_full( struct rocketnet_ack_endpoint_t * endpoint,
+                                               const struct rocketnet_ack_block_t * block,
+                                               double time,
+                                               uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                                               uint64_t * unknown_sequence_counter,
+                                               uint64_t * batch_full_counter )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( block );
+    rocketnet_assert( acked_packet_ids );
+    rocketnet_assert( acked_count );
+    rocketnet_assert( unknown_sequence_counter );
+    rocketnet_assert( batch_full_counter );
+
+    if ( block->largest == 0 )
+    {
+        return 0;
+    }
+
+    rn_ack_reconcile( endpoint );
+
+    return rn_ack_apply_block( endpoint, block, time, acked_packet_ids, acked_capacity, acked_count,
+                               unknown_sequence_counter, batch_full_counter );
+}
+
+static bool rn_ack_block_memo_matches( const struct rocketnet_ack_endpoint_t * endpoint, const struct rocketnet_ack_block_t * block )
+{
+    const struct rocketnet_ack_block_memo_t * memo = &endpoint->block_memo;
+
+    if ( !memo->valid || memo->highest_sequence != endpoint->highest_sequence || memo->largest != block->largest ||
+         memo->first_range_length != block->first_range_length || (int) memo->num_ranges != block->num_ranges )
+    {
+        return false;
+    }
+
+    for ( int i = 0; i < block->num_ranges; i++ )
+    {
+        if ( memo->range_gap[i] != block->range_gap[i] || memo->range_length[i] != block->range_length[i] )
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// proofs/tla/SessionAcks.tla RecvAck, and RecvAckRepeat for a block equal to
+// the memo. Why the repeat is exact: the full apply that set the memo
+// deferred nothing, so it cleared the unacknowledged bit of every slot its
+// runs name (a set bit whose record does not hold the sequence is a reconcile
+// failure, asserted, and stays set under either path). Since then nothing was
+// sent: only record_sent sets a bit or moves highest_sequence, and it clears
+// the memo; the reconcile ran again above and, highest_sequence unchanged,
+// changed nothing. So the same block applied again visits no record, acks
+// nothing, publishes nothing, and its unknown count -- arithmetic over the
+// runs, highest_sequence and sent_held, all unchanged -- is the memo's.
+
+int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endpoint,
+                                          const struct rocketnet_ack_block_t * block,
+                                          double time,
+                                          uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                                          uint64_t * unknown_sequence_counter,
+                                          uint64_t * batch_full_counter )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( block );
+    rocketnet_assert( acked_packet_ids );
+    rocketnet_assert( acked_count );
+    rocketnet_assert( unknown_sequence_counter );
+    rocketnet_assert( batch_full_counter );
+
+    if ( block->largest == 0 )
+    {
+        return 0;
+    }
+
+    rn_ack_reconcile( endpoint );
+
+    if ( rn_ack_block_memo_matches( endpoint, block ) )
+    {
+        *unknown_sequence_counter += endpoint->block_memo.unknown;
+        return 0;
+    }
+
+    const uint64_t unknown_before = *unknown_sequence_counter;
+    const uint64_t batch_full_before = *batch_full_counter;
+
+    const int newly_acked = rn_ack_apply_block( endpoint, block, time, acked_packet_ids, acked_capacity, acked_count,
+                                                unknown_sequence_counter, batch_full_counter );
+
+    struct rocketnet_ack_block_memo_t * memo = &endpoint->block_memo;
+    memo->valid = 0;
+    if ( *batch_full_counter == batch_full_before && block->num_ranges >= 0 && block->num_ranges <= ROCKETNET_ACK_BLOCK_MEMO_RANGES )
+    {
+        memo->largest = block->largest;
+        memo->highest_sequence = endpoint->highest_sequence;
+        memo->unknown = *unknown_sequence_counter - unknown_before;
+        memo->first_range_length = block->first_range_length;
+        memo->num_ranges = (uint8_t) block->num_ranges;
+        for ( int i = 0; i < block->num_ranges; i++ )
+        {
+            memo->range_gap[i] = block->range_gap[i];
+            memo->range_length[i] = block->range_length[i];
+        }
+        memo->valid = 1;
     }
 
     return newly_acked;
@@ -2120,7 +2315,7 @@ struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, i
         return NULL;
     }
 
-    memset( acks, 0, sizeof( struct rocketnet_server_acks_t ) );
+    acks = new ( acks ) rocketnet_server_acks_t();     // every field zero (the struct holds the update's time, a double: no memset)
 
     acks->context = context;
     acks->max_clients = max_clients;
@@ -2147,6 +2342,460 @@ struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, i
     return acks;
 }
 
+// one client's part of the deferred apply. claim is the only field two
+// threads ever touch: open sets it, and exactly one exchange takes it.
+
+struct alignas( 64 ) rocketnet_server_ack_client_t
+{
+    std::atomic<uint32_t> claim;
+    int head;                                   // the first queued entry not yet applied, -1 for none
+    int tail;
+    int ids;                                    // ids in the client's segment since the last gather
+    int gathered;                               // 1 once the gather has taken this client's counters
+    uint32_t padding_0;                         // the counters start on an 8-byte boundary, explicit
+    uint64_t unknown_sequence;
+    uint64_t batch_full;
+    uint8_t padding_1[64 - sizeof( std::atomic<uint32_t> ) - 5 * sizeof( int ) - 2 * sizeof( uint64_t )];   // the rest of the cache line, explicit
+};
+
+static_assert( sizeof( rocketnet_server_ack_client_t ) == 64, "one client's part of the deferred apply is one cache line with no implicit padding" );
+
+// a block carries at most this many ranges on average per received packet
+// before the queue applies and gathers early (exact either way)
+#define ROCKETNET_SERVER_ACK_PENDING_RANGES_PER_BLOCK 8
+
+static int rocketnet_server_acks_pending_capacity( int clients )
+{
+    return rocketnet_server_receive_packets_per_update( clients );
+}
+
+uint64_t rocketnet_server_acks_defer_allocation_bytes( int clients )
+{
+    if ( clients < 1 || clients > INT_MAX / ROCKETNET_SENT_PACKET_BUFFER_SIZE )
+    {
+        return 0;
+    }
+
+    const uint64_t n = (uint64_t) clients;
+    const uint64_t pending = (uint64_t) rocketnet_server_acks_pending_capacity( clients );
+    return rocketnet_memory_allocations( { pending * sizeof( rocketnet_server_ack_pending_t ),
+                                           pending * ROCKETNET_SERVER_ACK_PENDING_RANGES_PER_BLOCK * 2 * sizeof( uint16_t ),
+                                           n * sizeof( rocketnet_server_ack_client_t ),
+                                           n * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ) } );
+}
+
+static void rocketnet_server_acks_free_deferral( struct rocketnet_server_acks_t * acks )
+{
+    if ( acks->pending )
+    {
+        rocketnet_free( acks->context, acks->pending );
+        acks->pending = NULL;
+    }
+    if ( acks->ranges )
+    {
+        rocketnet_free( acks->context, acks->ranges );
+        acks->ranges = NULL;
+    }
+    if ( acks->clients )
+    {
+        for ( int i = 0; i < acks->max_clients; i++ )
+        {
+            acks->clients[i].~rocketnet_server_ack_client_t();
+        }
+        rocketnet_free( acks->context, acks->clients );
+        acks->clients = NULL;
+    }
+    if ( acks->segments )
+    {
+        rocketnet_free( acks->context, acks->segments );
+        acks->segments = NULL;
+    }
+    acks->deferred = 0;
+}
+
+bool rocketnet_server_acks_defer( struct rocketnet_server_acks_t * acks )
+{
+    rocketnet_assert( acks );
+    rocketnet_assert( !acks->deferred );
+    rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_CLOSED );
+
+    const int pending = rocketnet_server_acks_pending_capacity( acks->max_clients );
+    acks->pending_capacity = pending;
+    acks->ranges_capacity = pending * ROCKETNET_SERVER_ACK_PENDING_RANGES_PER_BLOCK;
+    rocketnet_assert( acks->ranges_capacity >= ROCKETNET_ACK_BLOCK_MAX_RANGES );   // one block's ranges always fit an empty store (RNAckApplyPhase MaxRanges <= RangesCap)
+    acks->pending = (struct rocketnet_server_ack_pending_t *) rocketnet_malloc( acks->context, (size_t) pending * sizeof( struct rocketnet_server_ack_pending_t ) );
+    acks->ranges = (uint16_t *) rocketnet_malloc( acks->context, (size_t) acks->ranges_capacity * 2 * sizeof( uint16_t ) );
+    void * clients = rocketnet_malloc( acks->context, (size_t) acks->max_clients * sizeof( struct rocketnet_server_ack_client_t ) );
+    acks->segments = (uint64_t *) rocketnet_malloc( acks->context, (size_t) acks->max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ) );
+
+    if ( clients )
+    {
+        struct rocketnet_server_ack_client_t * client = (struct rocketnet_server_ack_client_t *) clients;
+        for ( int i = 0; i < acks->max_clients; i++ )
+        {
+            new ( &client[i] ) rocketnet_server_ack_client_t();
+            client[i].claim.store( 0, std::memory_order_relaxed );
+            client[i].head = -1;
+            client[i].tail = -1;
+            client[i].ids = 0;
+            client[i].gathered = 0;
+            client[i].unknown_sequence = 0;
+            client[i].batch_full = 0;
+        }
+        acks->clients = client;
+    }
+
+    if ( !acks->pending || !acks->ranges || !acks->clients || !acks->segments )
+    {
+        rocketnet_server_acks_free_deferral( acks );
+        return false;
+    }
+
+    acks->num_pending = 0;
+    acks->num_ranges = 0;
+    acks->deferred = 1;
+    return true;
+}
+
+// the inline apply: the block into the shared batch, each new entry tagged
+// with its client and connection, as the receive loop always did
+
+static void rocketnet_server_acks_apply_inline( struct rocketnet_server_acks_t * acks, int client_index,
+                                                const struct rocketnet_ack_block_t * block, double time,
+                                                uint64_t connection_id, uint64_t * acked_connection_ids,
+                                                uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter )
+{
+    const int before = acks->num_acked;
+    rocketnet_ack_endpoint_process_block( &acks->endpoints[client_index], block, time,
+                                          acks->acked_packet_ids, acks->acked_capacity, &acks->num_acked,
+                                          unknown_sequence_counter, batch_full_counter );
+
+    // P9b: each acked id is tagged with the connection it was received
+    // for, beside its client index, as it is appended
+
+    for ( int i = before; i < acks->num_acked; i++ )
+    {
+        acks->acked_client_index[i] = client_index;
+        if ( acked_connection_ids )
+        {
+            acked_connection_ids[i] = connection_id;
+        }
+    }
+}
+
+// one client's queued blocks, in arrival order, into its own segment and
+// counters: the only work that runs on a job thread
+
+static int rocketnet_server_acks_apply_queued( struct rocketnet_server_acks_t * acks, int client_index )
+{
+    struct rocketnet_server_ack_client_t * client = &acks->clients[client_index];
+    struct rocketnet_ack_endpoint_t * endpoint = &acks->endpoints[client_index];
+    uint64_t * segment = acks->segments + (size_t) client_index * ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+
+    int applied = 0;
+    struct rocketnet_ack_block_t block = {};            // whole once: the ranges past an entry's count are never garbage
+    for ( int e = client->head; e >= 0; e = acks->pending[e].next )
+    {
+        struct rocketnet_server_ack_pending_t * entry = &acks->pending[e];
+        rocketnet_assert( entry->client_index == client_index );
+        block.largest = entry->largest;
+        block.first_range_length = entry->first_range_length;
+        block.num_ranges = entry->num_ranges;
+        const uint16_t * ranges = acks->ranges + (size_t) 2 * (size_t) entry->range_offset;
+        for ( int r = 0; r < entry->num_ranges; r++ )
+        {
+            const size_t k = (size_t) 2 * (size_t) r;
+            block.range_gap[r] = ranges[k];
+            block.range_length[r] = ranges[k + 1];
+        }
+
+        const int before = client->ids;
+        rocketnet_ack_endpoint_process_block( endpoint, &block, acks->pending_time,
+                                              segment, ROCKETNET_SENT_PACKET_BUFFER_SIZE, &client->ids,
+                                              &client->unknown_sequence, &client->batch_full );
+        entry->ids_offset = before;
+        entry->ids_count = client->ids - before;
+        applied++;
+    }
+
+    client->head = -1;
+    client->tail = -1;
+    return applied;
+}
+
+// main: every queued client applied, then the ids gathered into the batch in
+// arrival order, the counters added, the queue emptied
+
+static void rocketnet_server_acks_gather( struct rocketnet_server_acks_t * acks, uint64_t * acked_connection_ids,
+                                          uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter )
+{
+    for ( int e = 0; e < acks->num_pending; e++ )
+    {
+        const int c = acks->pending[e].client_index;
+        struct rocketnet_server_ack_client_t * client = &acks->clients[c];
+        if ( client->head >= 0 )
+        {
+            client->claim.store( 0, std::memory_order_relaxed );
+            (void) rocketnet_server_acks_apply_queued( acks, c );
+        }
+    }
+
+    for ( int e = 0; e < acks->num_pending; e++ )
+    {
+        const struct rocketnet_server_ack_pending_t * entry = &acks->pending[e];
+        const int c = entry->client_index;
+        struct rocketnet_server_ack_client_t * client = &acks->clients[c];
+
+        if ( !client->gathered )
+        {
+            client->gathered = 1;
+            *unknown_sequence_counter += client->unknown_sequence;
+            *batch_full_counter += client->batch_full;
+            client->unknown_sequence = 0;
+            client->batch_full = 0;
+        }
+
+        int count = entry->ids_count;
+        if ( count > acks->acked_capacity - acks->num_acked )
+        {
+            // the batch holds every retained record of every client, and one
+            // client surfaces each retained record at most once between two
+            // sends, so this never happens; counted as a deferral if it does
+            rocketnet_assert( 0 && "the acked batch holds every client's retained records" );
+            *batch_full_counter += (uint64_t) ( count - ( acks->acked_capacity - acks->num_acked ) );
+            count = acks->acked_capacity - acks->num_acked;
+        }
+
+        const uint64_t * ids = acks->segments + (size_t) c * ROCKETNET_SENT_PACKET_BUFFER_SIZE + entry->ids_offset;
+        for ( int i = 0; i < count; i++ )
+        {
+            const int k = acks->num_acked + i;
+            acks->acked_packet_ids[k] = ids[i];
+            acks->acked_client_index[k] = c;
+            if ( acked_connection_ids )
+            {
+                acked_connection_ids[k] = entry->connection_id;
+            }
+        }
+        acks->num_acked += count;
+    }
+
+    for ( int e = 0; e < acks->num_pending; e++ )
+    {
+        struct rocketnet_server_ack_client_t * client = &acks->clients[acks->pending[e].client_index];
+        client->gathered = 0;
+        client->ids = 0;
+    }
+
+    acks->num_pending = 0;
+    acks->num_ranges = 0;
+}
+
+void rocketnet_server_acks_begin_receive( struct rocketnet_server_acks_t * acks, double time )
+{
+    rocketnet_assert( acks );
+    rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_CLOSED );
+    rocketnet_assert( acks->num_pending == 0 );
+
+    // proofs/tla/RNAckApplyPhase.tla BeginReceive: the batch empties, and
+    // from here blocks queue
+    acks->num_acked = 0;
+    acks->pending_time = time;
+    if ( acks->deferred )
+    {
+        acks->phase = ROCKETNET_SERVER_ACKS_RECEIVING;
+    }
+}
+
+void rocketnet_server_acks_receive_block( struct rocketnet_server_acks_t * acks, int client_index,
+                                          const struct rocketnet_ack_block_t * block, double time,
+                                          uint64_t connection_id, uint64_t * acked_connection_ids,
+                                          uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter )
+{
+    rocketnet_assert( acks );
+    rocketnet_assert( block );
+    rocketnet_assert( client_index >= 0 && client_index < acks->max_clients );
+
+    if ( !acks->deferred || acks->phase != ROCKETNET_SERVER_ACKS_RECEIVING )
+    {
+        rocketnet_server_acks_apply_inline( acks, client_index, block, time, connection_id, acked_connection_ids,
+                                            unknown_sequence_counter, batch_full_counter );
+        return;
+    }
+
+    rocketnet_assert( time == acks->pending_time );
+
+    // the empty block acks nothing and counts nothing (process_block's own
+    // first test): nothing to queue
+
+    if ( block->largest == 0 )
+    {
+        return;
+    }
+
+    // proofs/tla/RNAckApplyPhase.tla Receive: the block goes to the queue's
+    // end and onto its client's chain; one that does not fit the queue or
+    // the range store has everything queued applied and gathered first
+    if ( acks->num_pending == acks->pending_capacity || block->num_ranges > acks->ranges_capacity - acks->num_ranges )
+    {
+        rocketnet_server_acks_gather( acks, acked_connection_ids, unknown_sequence_counter, batch_full_counter );
+    }
+
+    rocketnet_assert( block->num_ranges >= 0 && block->num_ranges <= acks->ranges_capacity );
+
+    const int e = acks->num_pending++;
+    struct rocketnet_server_ack_pending_t * entry = &acks->pending[e];
+    entry->largest = block->largest;
+    entry->connection_id = connection_id;
+    entry->first_range_length = block->first_range_length;
+    entry->num_ranges = block->num_ranges;
+    entry->range_offset = acks->num_ranges;
+    entry->client_index = client_index;
+    entry->next = -1;
+    entry->ids_offset = 0;
+    entry->ids_count = 0;
+
+    uint16_t * ranges = acks->ranges + (size_t) 2 * (size_t) acks->num_ranges;
+    for ( int r = 0; r < block->num_ranges; r++ )
+    {
+        const size_t k = (size_t) 2 * (size_t) r;
+        ranges[k] = block->range_gap[r];
+        ranges[k + 1] = block->range_length[r];
+    }
+    acks->num_ranges += block->num_ranges;
+
+    struct rocketnet_server_ack_client_t * client = &acks->clients[client_index];
+    if ( client->head < 0 )
+    {
+        client->head = e;
+    }
+    else
+    {
+        acks->pending[client->tail].next = e;
+    }
+    client->tail = e;
+}
+
+void rocketnet_server_acks_settle( struct rocketnet_server_acks_t * acks, int client_index )
+{
+    rocketnet_assert( acks );
+
+    if ( !acks->deferred || client_index < 0 || client_index >= acks->max_clients || acks->clients[client_index].head < 0 )
+    {
+        return;
+    }
+
+    // proofs/tla/RNAckApplyPhase.tla Settle: only main settles, and never
+    // while the clients are open to the jobs
+    rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_RECEIVING );
+
+    (void) rocketnet_server_acks_apply_queued( acks, client_index );
+}
+
+void rocketnet_server_acks_open( struct rocketnet_server_acks_t * acks )
+{
+    rocketnet_assert( acks );
+
+    if ( !acks->deferred )
+    {
+        return;
+    }
+
+    rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_RECEIVING );
+
+    // proofs/tla/RNAckApplyPhase.tla Open: every client with blocks queued
+    // gets its claim set
+    for ( int e = 0; e < acks->num_pending; e++ )
+    {
+        struct rocketnet_server_ack_client_t * client = &acks->clients[acks->pending[e].client_index];
+        if ( client->head >= 0 )
+        {
+            client->claim.store( 1, std::memory_order_relaxed );
+        }
+    }
+
+    acks->phase = ROCKETNET_SERVER_ACKS_OPEN;
+}
+
+int rocketnet_server_acks_apply_client( struct rocketnet_server_acks_t * acks, int client_index )
+{
+    rocketnet_assert( acks );
+
+    if ( !acks->deferred || client_index < 0 || client_index >= acks->max_clients )
+    {
+        return 0;
+    }
+
+    // proofs/tla/RNAckApplyPhase.tla Take: one exchange, one taker. A call
+    // that finds the claim clear does nothing: TakeRefused while open
+    // (nothing queued for the client, or taken already), TakeOutside in any
+    // other phase (no claim stands outside the open phase)
+#if defined( ROCKETNET_ACK_APPLY_PLANT )
+    // the trace check's plant (tests/tla_trace_ack_apply.cpp): the claim is
+    // read and left set, so the client can be taken again
+    if ( acks->clients[client_index].claim.load( std::memory_order_acquire ) == 0 )
+    {
+        return 0;
+    }
+#else  // #if defined( ROCKETNET_ACK_APPLY_PLANT )
+    if ( acks->clients[client_index].claim.exchange( 0, std::memory_order_acquire ) == 0 )
+    {
+        return 0;
+    }
+#endif // #if defined( ROCKETNET_ACK_APPLY_PLANT )
+
+    return rocketnet_server_acks_apply_queued( acks, client_index );
+}
+
+void rocketnet_server_acks_close( struct rocketnet_server_acks_t * acks, uint64_t * acked_connection_ids,
+                                  uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter )
+{
+    rocketnet_assert( acks );
+
+    if ( !acks->deferred )
+    {
+        return;
+    }
+
+    rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_OPEN || acks->phase == ROCKETNET_SERVER_ACKS_RECEIVING );
+
+    // proofs/tla/RNAckApplyPhase.tla Close: every client still claimed is
+    // applied here, then the batch is gathered in arrival order
+    rocketnet_server_acks_gather( acks, acked_connection_ids, unknown_sequence_counter, batch_full_counter );
+    acks->phase = ROCKETNET_SERVER_ACKS_CLOSED;
+}
+
+#if ROCKETNET_DEV
+// The trace check's seam (tests/tla_trace_ack_apply.cpp): one client's part
+// of the deferred apply, read by value. Main thread, with no taker running.
+void rocketnet_server_acks_client_for_test( const struct rocketnet_server_acks_t * acks, int client_index, int * head, int * tail, int * claim, int * ids )
+{
+    rocketnet_assert( acks && acks->deferred && client_index >= 0 && client_index < acks->max_clients );
+    const struct rocketnet_server_ack_client_t * client = &acks->clients[client_index];
+    *head = client->head;
+    *tail = client->tail;
+    *claim = (int) client->claim.load( std::memory_order_relaxed );
+    *ids = client->ids;
+}
+
+// The trace check's seam: lowers the deferred apply's queue to pending
+// entries and its range store to ranges ranges, so a walk fills them. It
+// never raises either, keeps one whole block's ranges, and runs only while
+// nothing is queued. False, with nothing changed, otherwise.
+bool rocketnet_server_acks_lower_capacity_for_test( struct rocketnet_server_acks_t * acks, int pending, int ranges )
+{
+    rocketnet_assert( acks );
+    if ( !acks->deferred || acks->phase != ROCKETNET_SERVER_ACKS_CLOSED || acks->num_pending != 0 || acks->num_ranges != 0 ||
+         pending < 1 || pending > acks->pending_capacity || ranges < ROCKETNET_ACK_BLOCK_MAX_RANGES || ranges > acks->ranges_capacity )
+    {
+        return false;
+    }
+    acks->pending_capacity = pending;
+    acks->ranges_capacity = ranges;
+    return true;
+}
+#endif // #if ROCKETNET_DEV
+
 void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks )
 {
     rocketnet_assert( acks );
@@ -2164,6 +2813,8 @@ void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks )
         rocketnet_free( acks->context, acks->endpoints );
     }
 
+    rocketnet_server_acks_free_deferral( acks );
+
     rocketnet_free( acks->context, acks );
 }
 
@@ -2171,5 +2822,7 @@ void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, in
 {
     rocketnet_assert( acks );
     rocketnet_assert( client_index >= 0 && client_index < acks->max_clients );
+    // a slot's queued blocks are settled before it resets (rocketnet_server_connection_reset)
+    rocketnet_assert( !acks->deferred || acks->clients[client_index].head < 0 );
     rocketnet_ack_endpoint_reset( &acks->endpoints[client_index] );
 }

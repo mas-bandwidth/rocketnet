@@ -401,6 +401,7 @@ struct rn_region_t
     uint32_t holds;                     // Ru
     uint32_t receipt_entries;           // Rq
     uint32_t max_message_bytes;
+    uint32_t room_refusals;             // this region's sends refused for no room (QUEUE_FULL, STORE_FULL): written by its connection's one filler, so a start reads its own refusal here, not on the owner's shared counters
 
     rn_channel_send_t * channel_send;
     rn_channel_receive_t * channel_receive;
@@ -430,7 +431,7 @@ struct rn_region_t
     rn_sequenced_payload_t * sequenced_message_payloads;
     uint32_t * sequenced_hold_free_stack;       // free hold indices in the holds part, the top at sequenced_hold_free_count - 1
     uint32_t sequenced_hold_free_count;         // holds on the free stack: taken in O(1), never scanned for
-    uint32_t held_count;                        // held-index entries in use: at most W, one per live number (proofs/tla/RNHeldOwnership.tla HeldBound)
+    uint32_t held_count;                        // held-index entries in use: at most W, one per live number (proofs/tla/RNHeldOwnership.tla HeldBound); the used cells exactly (proofs/tla/RNOpenAddress.tla CountExact)
     uint32_t * sequenced_holds_delivered;       // delivered (used == 2) hold indices in the holds part, this update's
     uint32_t sequenced_holds_delivered_count;   // delivered holds the end-of-update pass returns, none when zero
     rn_receipt_t * receipts;

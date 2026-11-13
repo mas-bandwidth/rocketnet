@@ -271,7 +271,13 @@ def main():
     parser.add_argument("--config", default=None, help="Windows configuration, such as Release")
     parser.add_argument("--backend", action="append", choices=["go", "csharp"], help="run only this backend (repeatable)")
     parser.add_argument("--production", action="store_true", help="require client and server to confirm ROCKETNET_DEV=0 and portable transport")
+    parser.add_argument("--root", default=None, help="tree holding examples/backend/ and bin/ (default: this repository)")
     args = parser.parse_args()
+
+    global ROOT, BACKEND
+    if args.root is not None:
+        ROOT = Path(args.root).resolve()
+        BACKEND = ROOT / "examples" / "backend"
 
     build = Path(args.build)
     if not build.is_absolute():

@@ -1016,7 +1016,12 @@ static void cm_refusal_check( const cm_refusal_t * r, int counter )
 
     check( !rn_region_exhausted( region ) );
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
-    check( memcmp( &r->before, region, sizeof( *region ) ) == 0 );
+    // the region: every byte but room_refusals, one higher for a room refusal
+    const bool room = counter == ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL || counter == ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL;
+    check( region->room_refusals == r->before.room_refusals + ( room ? 1u : 0u ) );
+    rn_region_t now = *region;
+    now.room_refusals = r->before.room_refusals;
+    check( memcmp( &r->before, &now, sizeof( now ) ) == 0 );
     check( rocketnet_test_raw_compare( r->memory.data(), region->base, (size_t) region->bytes ) == 0 );
 
     for ( int c = 0; c < ROCKETNET_NUM_COUNTERS; c++ )

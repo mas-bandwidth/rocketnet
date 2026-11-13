@@ -1,0 +1,30 @@
+# This job's compiler cache hit rate, read from the statistics log that
+# .github/actions/ccache started for it (CCACHE_STATSLOG under RUNNER_TEMP):
+# only this job's compiles, whatever else the host ran meanwhile. The last step
+# of every job that uses .github/actions/ccache, with `if: always()`, so a red
+# build still says how warm it was. A job without ccache prints that and passes.
+name: compiler cache statistics
+description: Print this job's ccache hit rate
+runs:
+  using: composite
+  steps:
+    - name: Compiler cache hit rate
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -z "${CCACHE_STATSLOG:-}" ] || ! command -v ccache >/dev/null 2>&1; then
+          echo "CCACHE-ABSENT on $RUNNER_NAME: no hit rate (this job compiled uncached)"
+          exit 0
+        fi
+        if [ ! -s "$CCACHE_STATSLOG" ]; then
+          echo "ccache on $RUNNER_NAME: this job compiled nothing through the cache"
+          exit 0
+        fi
+        # ccache's own summary of this job's log, the counter lines only (a ccache that cannot read the log fails the step)
+        ccache --show-log-stats -v | awk '/Hits|Misses|Uncacheable|Errors|Direct|Preprocessed/'
+        hits="$(awk '/^(direct_cache_hit|preprocessed_cache_hit)$/ { n++ } END { print n + 0 }' "$CCACHE_STATSLOG")"
+        misses="$(awk '/^cache_miss$/ { n++ } END { print n + 0 }' "$CCACHE_STATSLOG")"
+        total=$((hits + misses))
+        rate=0
+        if [ "$total" -gt 0 ]; then rate=$((100 * hits / total)); fi
+        echo "CCACHE-HIT-RATE runner=$RUNNER_NAME hits=$hits misses=$misses rate=${rate}% dir=$CCACHE_DIR max=$CCACHE_MAXSIZE"

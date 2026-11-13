@@ -53,6 +53,7 @@ struct rocketnet_loopback_hub_t
     void * context;
     int max_clients;
     int registered;                             // live endpoints; destroy refuses while any is
+    uint16_t first_port;                        // the ephemeral range's first port, fixed at create
     uint16_t next_port;
     rocketnet_platform_mutex_t mutex;
     rocketnet_loopback_endpoint_t * endpoints;  // 1 + max_clients: the server at 0, the clients after it
@@ -64,6 +65,7 @@ struct rocketnet_loopback_hub_t
 };
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_CLIENTS + 1 < 65535, "an endpoint's record index plus one fits the bound table" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_CLIENTS + 1 < ROCKETNET_LOOPBACK_LAST_PORT, "the ephemeral range can hold every endpoint without port 0" );
 ROCKETNET_STATIC_ASSERT( offsetof( rocketnet_loopback_hub_t, header ) == 0, "the hub header is at the start of the hub" );
 
 // the layout id: the sizes and offsets two copies of the library must agree on
@@ -77,6 +79,7 @@ static constexpr uint32_t loopback_layout_hash( const uint64_t * values, int cou
 
 static constexpr uint64_t ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES[] = {
     sizeof( rocketnet_loopback_hub_t ),
+    offsetof( rocketnet_loopback_hub_t, first_port ),
     offsetof( rocketnet_loopback_hub_t, mutex ),
     offsetof( rocketnet_loopback_hub_t, bound ),
     sizeof( rocketnet_platform_mutex_t ),
@@ -90,26 +93,39 @@ static constexpr uint32_t ROCKETNET_LOOPBACK_HUB_LAYOUT =
     loopback_layout_hash( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES, (int) ( sizeof( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES ) / sizeof( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES[0] ) ), 2166136261u );
 
 #if ROCKETNET_DEV
-static uint16_t loopback_test_first_port = ROCKETNET_LOOPBACK_FIRST_PORT;
+static uint16_t loopback_test_first_port = 0;
 
-void rocketnet_loopback_test_first_port( uint16_t port ) { loopback_test_first_port = port ? port : (uint16_t) ROCKETNET_LOOPBACK_FIRST_PORT; }
+void rocketnet_loopback_test_first_port( uint16_t port ) { loopback_test_first_port = port; }
 #endif // #if ROCKETNET_DEV
 
-static uint16_t loopback_first_port()
+// the ephemeral range of a hub of max_clients: from 49152, or lower when the
+// hub holds more endpoints than 49152 .. 65535 has ports, so a port 0 bind
+// of every endpoint finds a free port (proofs/tla/RNLoopbackBindLayout.tla
+// Low, HoldsEveryRecord)
+static uint16_t loopback_first_port( int max_clients )
 {
 #if ROCKETNET_DEV
-    return loopback_test_first_port;
-#else // #if ROCKETNET_DEV
-    return ROCKETNET_LOOPBACK_FIRST_PORT;
+    if ( loopback_test_first_port )
+    {
+        return loopback_test_first_port;
+    }
 #endif // #if ROCKETNET_DEV
+
+    const int endpoints = max_clients + 1;
+    if ( ROCKETNET_LOOPBACK_LAST_PORT + 1 - ROCKETNET_LOOPBACK_FIRST_PORT < endpoints )
+    {
+        return (uint16_t) ( ROCKETNET_LOOPBACK_LAST_PORT + 1 - endpoints );
+    }
+
+    return ROCKETNET_LOOPBACK_FIRST_PORT;
 }
 
 // the ephemeral range wraps from its last port to its first
 // (proofs/tla/RNLoopbackBindLayout.tla Create, EphemeralInRange: a port + 1
 // that wrapped at 65536 would hand out port 0)
-static uint16_t loopback_next_port( uint16_t port )
+static uint16_t loopback_next_port( const rocketnet_loopback_hub_t * hub, uint16_t port )
 {
-    return port == ROCKETNET_LOOPBACK_LAST_PORT ? loopback_first_port() : (uint16_t) ( port + 1 );
+    return port == ROCKETNET_LOOPBACK_LAST_PORT ? hub->first_port : (uint16_t) ( port + 1 );
 }
 
 static uint16_t * loopback_bound_entry( rocketnet_loopback_hub_t * hub, int type, uint16_t port )
@@ -455,7 +471,8 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
     rocketnet_loopback_hub_t * hub = (rocketnet_loopback_hub_t *) block;
     hub->context = context;
     hub->max_clients = max_clients;
-    hub->next_port = loopback_first_port();
+    hub->first_port = loopback_first_port( max_clients );
+    hub->next_port = hub->first_port;
     hub->endpoints = (rocketnet_loopback_endpoint_t *) ( block + endpoints_offset );
     hub->send_failures = (std::atomic<uint64_t> *) ( block + failures_offset );
 
@@ -619,7 +636,7 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
 
         uint16_t port = hub->next_port;
         bool free_port = false;
-        for ( int tries = 0; tries <= ROCKETNET_LOOPBACK_LAST_PORT - loopback_first_port(); ++tries )
+        for ( int tries = 0; tries <= ROCKETNET_LOOPBACK_LAST_PORT - hub->first_port; ++tries )
         {
             bool held = false;
             for ( int i = 0; i < num_endpoints; ++i )
@@ -637,7 +654,7 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
                 break;
             }
 
-            port = loopback_next_port( port );
+            port = loopback_next_port( hub, port );
         }
 
         if ( !free_port )
@@ -647,7 +664,7 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
         }
 
         bind->port = port;
-        hub->next_port = loopback_next_port( port );
+        hub->next_port = loopback_next_port( hub, port );
     }
 
     rocketnet_loopback_endpoint_t * ep = &hub->endpoints[slot];
@@ -755,9 +772,21 @@ static void loopback_server_send_batch_impl( void * transport, const rocketnet_p
 
     if ( shutdown && !loopback_try_send_lock( hub ) )
     {
-        if ( count > 0 )
+        // a contended lock fails every send of the batch; a size outside
+        // 1 .. ROCKETNET_RECEIVE_CEILING is no send, uncounted as below
+
+        uint64_t failed = 0;
+        for ( int i = 0; i < count; ++i )
         {
-            loopback_send_failed( sender, (uint64_t) count );
+            if ( packets[i].packet_bytes > 0 && packets[i].packet_bytes <= ROCKETNET_RECEIVE_CEILING )
+            {
+                ++failed;
+            }
+        }
+
+        if ( failed > 0 )
+        {
+            loopback_send_failed( sender, failed );
         }
         return;
     }
@@ -864,7 +893,7 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
 static const rocketnet_server_transport_io_operations_t loopback_server_operations = {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, loopback_server_create, loopback_destroy, loopback_stop, loopback_stopped,
     NULL, NULL, NULL, NULL, NULL, loopback_server_send_batch, loopback_server_receive_batch,
-    NULL, NULL, NULL, NULL, NULL, loopback_send_failures, loopback_server_send_batch_shutdown, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, loopback_send_failures, loopback_server_send_batch_shutdown, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
 // no connect: the loopback router is the hub shared by every endpoint, with

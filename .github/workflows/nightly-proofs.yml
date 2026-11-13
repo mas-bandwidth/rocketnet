@@ -27,7 +27,27 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
+  # The execution watchdogs the proofs run under: run_with_timeout.sh (every
+  # replay-near partition below) and run_bounded.sh (the manual ack-run ESBMC
+  # targets). Default mode still expires, the nightly opt-out keeps the exit
+  # code past the old limit, and the memory limit holds in both modes. Its own
+  # job, so a red watchdog does not stop the proofs and the proofs' red does
+  # not hide it.
+  watchdog:
+    name: proof watchdog controls
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Proof watchdog controls pass
+        run: python3 tools/test_proof_timeouts.py -v
+
   plan:
     name: nightly proof targets
     runs-on: [self-hosted, Linux, X64, fleet]
@@ -40,9 +60,11 @@ jobs:
 
       - name: List the targets
         id: list
-        shell: bash
         run: |
           set -euo pipefail
+          # the lists equal proofs/cbmc/NIGHTLY-TARGETS, or no matrix (VERIFY-6 A21)
+          bash proofs/cbmc/check_nightly_targets.sh --self-test
+          bash proofs/cbmc/check_nightly_targets.sh
           json() { python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))'; }
           readers="$(make -s -C proofs/cbmc print-nightly-readers | json)"
           partitions="$(make -s -C proofs/cbmc print-replay-near-partitions | json)"
@@ -69,26 +91,13 @@ jobs:
       # service's PATH. Append it (never prepend) for this job's later steps,
       # so a system tool always wins over a copy there.
       - name: Append the fleet sdk tools to the end of PATH
-        shell: bash
         run: echo "PATH=$PATH:$HOME/sdk/bin" >> "$GITHUB_ENV"
 
       - name: Check the pinned tools are present
-        shell: bash
         run: |
           set -euo pipefail
-          pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
-          check() {
-            local tool="$1" want="$2" got
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              echo "TOOL-MISSING $tool $want (missing) on $RUNNER_NAME"; exit 1
-            fi
-            got="$("$tool" --version 2>&1 | head -1)"
-            echo "$tool: $got (pinned $want)"
-            case "$got" in *"$want"*) ;; *) echo "TOOL-MISSING $tool $want (got: $got) on $RUNNER_NAME"; exit 1;; esac
-          }
-          check cbmc "$(pin CBMC)"
-          check cadical "$(pin CADICAL)"
-          check esbmc "$(pin ESBMC)"
+          bash proofs/cbmc/check_tool_versions.sh --self-test
+          bash proofs/cbmc/check_tool_versions.sh cbmc=CBMC cadical=CADICAL esbmc=ESBMC
 
       - name: Run ${{ matrix.target }}
         run: |
@@ -121,21 +130,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the pinned tools are present
-        shell: bash
         run: |
           set -euo pipefail
-          pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
-          check() {
-            local tool="$1" want="$2" got
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              echo "TOOL-MISSING $tool $want (missing) on $RUNNER_NAME"; exit 1
-            fi
-            got="$("$tool" --version 2>&1 | head -1)"
-            echo "$tool: $got (pinned $want)"
-            case "$got" in *"$want"*) ;; *) echo "TOOL-MISSING $tool $want (got: $got) on $RUNNER_NAME"; exit 1;; esac
-          }
-          check cbmc "$(pin CBMC)"
-          check cadical "$(pin CADICAL)"
+          bash proofs/cbmc/check_tool_versions.sh --self-test
+          bash proofs/cbmc/check_tool_versions.sh cbmc=CBMC cadical=CADICAL
 
       - name: Run ${{ matrix.target }}
         run: |

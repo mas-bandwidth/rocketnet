@@ -246,7 +246,42 @@ static void test_resend_next_of_a_slot_outside_the_window()
     rn_unit_arena_destroy( f.arena );
 }
 
+// A failed send of a number on the wire relinks it as its class's sent mark,
+// right before the mark it finds. A corrupt mark (at or past W) is refused
+// before it is followed: nothing in the FIFO moves and the connection ends.
+static void test_resend_fifo_corrupt_sent_mark_is_not_followed()
+{
+    for ( uint32_t beyond = 0; beyond < 6; beyond += 5 )
+    {
+        resend_bounds_fixture_t f;
+        memset( &f.config, 0, sizeof( f.config ) );
+        rocketnet_message_default_config( &f.config );
+        resend_bounds_open( &f );
+
+        uint64_t number = 0;
+        const uint32_t a = resend_bounds_number( &f, RN_RESEND_NONE, &number );
+        rn_window_ack_commit_packet( &f.ordered.ack, 1, &number, 1, 1000.0 );           // on the wire: a is the mark
+        check( f.ordered.ack.resend_sent == a );
+        check( f.ordered.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+        f.ordered.ack.resend_sent = f.region->window + beyond;
+        const rn_resend_link_t before_a = f.region->resend_fifo[a];
+        const rn_window_ack_t before = f.ordered.ack;
+
+        rn_window_ack_packet_failed( &f.ordered.ack, &number, 1, 1000.2 );
+
+        check( f.ordered.ack.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+        check( rn_ordered_decide( &f.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+        check( f.region->resend_fifo[a].prev == before_a.prev && f.region->resend_fifo[a].next == before_a.next );
+        check( f.ordered.ack.resend_head == before.resend_head && f.ordered.ack.resend_tail == before.resend_tail );
+        check( f.ordered.ack.resend_sent == before.resend_sent );
+        check( f.ordered.ack.resend_count == before.resend_count );
+        rn_unit_arena_destroy( f.arena );
+    }
+}
+
 REGISTER_UNIT_TEST( test_resend_fifo_corrupt_link_is_bounded );
+REGISTER_UNIT_TEST( test_resend_fifo_corrupt_sent_mark_is_not_followed );
 REGISTER_UNIT_TEST( test_resend_walk_stops_at_a_cut_link );
 REGISTER_UNIT_TEST( test_resend_fifo_refused_unlink_changes_nothing );
 REGISTER_UNIT_TEST( test_resend_fifo_corrupt_tail_is_not_followed );

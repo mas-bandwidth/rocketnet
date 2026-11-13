@@ -53,10 +53,18 @@ type evidence struct {
 	Exit          int         `json:"exit"`
 	Generated     string      `json:"generated"`
 	Distinct      string      `json:"distinct"`
+	Violated      []violation `json:"violated"`
 	Result        string      `json:"result"`
 	Reason        string      `json:"reason,omitempty"`
 	Interrupted   bool        `json:"interrupted"`
 	InputsCurrent bool        `json:"inputs_unchanged"`
+}
+
+// violation is one property TLC said is violated, as tlc.Parse read it: the
+// re-run comparer (tools/compare_tlc_rerun.py) holds it to the RUNS.tsv record.
+type violation struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
 }
 
 // hooks keep mutation/refusal controls deterministic without changing a model.
@@ -200,6 +208,10 @@ func runCase(ctx context.Context, o options, h hooks) (rec evidence, err error) 
 	}
 	outcome := tlc.Parse(string(raw))
 	rec.Generated, rec.Distinct = outcome.Generated, outcome.Distinct
+	rec.Violated = []violation{}
+	for _, v := range outcome.Violations {
+		rec.Violated = append(rec.Violated, violation{Kind: v.Kind, Name: v.Name})
+	}
 	after, err := tlc.SourceAt(o.root)
 	if err != nil {
 		return rec, err

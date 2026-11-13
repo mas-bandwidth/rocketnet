@@ -57,7 +57,7 @@ One build shape remains that is not a development switch: `ROCKETNET_CONFIG_PARS
 2. **Connection Reset and Field-Coverage Inventory Walker (`sdk/rocketnet_connection_reset.h`, `sdk/rocketnet_connection_reset.cpp`)**:
    - **Production (`ROCKETNET_DEV=0` and `ROCKETNET_DEV=1`)**:
      - `rocketnet_client_connection_reset`: resets client protocol per-session state and wipes cryptographic secrets.
-     - `rocketnet_client_protocol_wipe_secrets`: wipes client cryptographic secret material (`keys`, `token`, `client_ephemeral_secret_key`, `session_nonce`) with `sodium_memzero`.
+     - `rocketnet_client_protocol_wipe_secrets`: wipes client cryptographic secret material (`keys`, `token`, `client_ephemeral_secret_key`) with `sodium_memzero`.
      - `rocketnet_server_connection_reset`: resets server per-client slot protocol state and wipes session keys.
    - **Development / Test Only (`#if ROCKETNET_DEV`)**:
      - `ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS`, `ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS`, `ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS`, `ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS`, `ROCKETNET_ENDPOINT_CONNECTION_FIELDS`, `ROCKETNET_MESSAGE_CONNECTION_FIELDS` X-macros (`sdk/rocketnet_connection_reset.h`).

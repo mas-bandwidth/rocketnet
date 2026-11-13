@@ -13,18 +13,64 @@
 # compilation, and is skipped.
 set -u
 
-default_files=(
-    Makefile
-    benchmarks/Makefile
-    tests/fuzz/Makefile
-    tools/fuzz_ndebug.sh
-    tools/check_fuzz_oracle.py
-    .github/workflows/ci.yml
-    .github/workflows/fuzz-nightly.yml
-    .github/workflows/nightly.yml
-    .github/workflows/nightly-soak.yml
-    .github/workflows/release-check.yml
-)
+# The files read are every tracked build file that can name a compiler,
+# derived from `git ls-files`: Makefiles (Makefile, GNUmakefile, *.mk),
+# workflows and actions (.github/**.yml), shell (*.sh, scripts/*, any file
+# whose shebang names sh or bash) and Python (*.py). A run that reads no
+# file fails. Exclusions, each with its reason:
+#   sodium/            vendored; built only through the CMake target
+#   sdk/xdp/Makefile   BPF object, no floating point (see above)
+#   tools/check_fp_contract.sh  this checker; its self-test fixtures name
+#                      compilers without the floor on purpose
+EXCLUDED_RE='^(sodium/|sdk/xdp/Makefile$|tools/check_fp_contract\.sh$)'
+
+default_files=()
+default_files_from_tree()
+{
+    local listing name head shebang_candidates status
+    if ! listing="$(git ls-files)"; then
+        echo "check_fp_contract: git ls-files failed; nothing was checked"
+        return 2
+    fi
+    # The files with a line naming sh or bash after #!, found by one git grep
+    # rather than by reading the head of each of the tree's files (thousands
+    # of forks); each is then held to the first-line rule below. git grep
+    # exits 1 when nothing matches and 2 or more when it fails.
+    status=0
+    shebang_candidates="$(git grep -l -I -E '^#!.*(/|[[:space:]])(ba)?sh([[:space:]]|$)')" || status=$?
+    if [ "$status" -gt 1 ]; then
+        echo "check_fp_contract: git grep failed; nothing was checked"
+        return 2
+    fi
+    shebang_candidates="
+$shebang_candidates
+"
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        [[ "$name" =~ $EXCLUDED_RE ]] && continue
+        [ -f "$name" ] && [ ! -L "$name" ] || continue
+        case "$name" in
+            */Makefile|Makefile|*/GNUmakefile|GNUmakefile|*.mk) default_files+=("$name"); continue ;;
+            .github/*.yml|.github/*.yaml) default_files+=("$name"); continue ;;
+            *.sh|*.py|scripts/*) default_files+=("$name"); continue ;;
+        esac
+        case "$shebang_candidates" in
+            *"
+$name
+"*) ;;
+            *) continue ;;
+        esac
+        head="$(head -c 64 "$name" 2>/dev/null | head -n 1)"
+        if [[ "$head" =~ ^\#!.*(/|[[:space:]])(ba)?sh([[:space:]]|$) ]]; then
+            default_files+=("$name")
+        fi
+    done <<< "$listing"
+    if [ "${#default_files[@]}" -eq 0 ]; then
+        echo "check_fp_contract: no build file found in the tree; nothing was checked"
+        return 1
+    fi
+    return 0
+}
 
 # clang-cl, by name or through a variable that names it
 # ("$ROCKETNET_FUZZ_CLANG_CL", "$CLANG_CL").
@@ -94,20 +140,114 @@ has_floor()
     fi
     if [ "$ok_cflags" -eq 1 ]; then
         case "$line" in
-            *'$(CFLAGS)'*|*'${CFLAGS}'*) return 0 ;;
+            *'$(CFLAGS)'*|*'${CFLAGS}'*|*'$CFLAGS '*|*'$CFLAGS') return 0 ;;
         esac
     fi
     if [ "$ok_cxxflags" -eq 1 ]; then
         case "$line" in
-            *'$(CXXFLAGS)'*|*'${CXXFLAGS}'*) return 0 ;;
+            *'$(CXXFLAGS)'*|*'${CXXFLAGS}'*|*'$CXXFLAGS '*|*'$CXXFLAGS') return 0 ;;
         esac
     fi
     if [ "$ok_flags" -eq 1 ]; then
         case "$line" in
-            *'$(FLAGS)'*|*'${FLAGS}'*) return 0 ;;
+            *'$(FLAGS)'*|*'${FLAGS}'*|*'$FLAGS '*|*'$FLAGS') return 0 ;;
         esac
     fi
     return 1
+}
+
+# Python: every list literal whose first element names a compiler (a
+# variable called compiler, cc, cxx, cl or clang_cl, or a string naming one)
+# is an invocation; it must carry -ffp-contract=off or /fp:precise inside the
+# list unless it generates no code (a version or target query, -E,
+# -fsyntax-only, /Zs, /E, /P). Docstrings and comments are not invocations.
+check_python_file()
+{
+    python3 - "$1" <<'PY'
+import io, re, sys, tokenize
+path = sys.argv[1]
+COMPILER_NAMES = {"compiler", "compiler_c", "compiler_cxx", "cc", "cxx", "cl", "clang_cl"}
+COMPILER_STRING = re.compile(r"^(.*/)?([a-z0-9_]+-)*(cc|c\+\+|gcc|g\+\+|clang|clang\+\+|clang-cl|cl)(-[0-9]+)?(\.exe)?$")
+NO_CODE = {"--version", "-dumpmachine", "-dumpversion", "-dumpfullversion", "-E", "-fsyntax-only", "/Zs", "/E", "/P",
+           "-print-resource-dir", "--print-resource-dir"}
+FLOOR = ("-ffp-contract=off", "/fp:precise")
+with open(path, encoding="utf-8", errors="replace") as handle:
+    source = handle.read()
+try:
+    tokens = [t for t in tokenize.generate_tokens(io.StringIO(source).readline)
+              if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.INDENT, tokenize.DEDENT)]
+except (tokenize.TokenError, SyntaxError) as error:
+    print(f"{path}: cannot tokenize: {error}")
+    sys.exit(1)
+
+def literal(token):
+    try:
+        value = eval(token.string)
+    except Exception:
+        return None
+    return value if isinstance(value, str) else None
+
+# statements: token spans between NEWLINE tokens
+statements, current = [], []
+for token in tokens:
+    if token.type in (tokenize.NEWLINE, tokenize.ENDMARKER):
+        if current:
+            statements.append(current)
+        current = []
+    else:
+        current.append(token)
+
+def strings(span):
+    return [s for s in (literal(t) for t in span if t.type == tokenize.STRING) if s is not None]
+
+# a name every assignment (=, +=) of which carries the floor
+floored, unfloored = set(), set()
+for span in statements:
+    if len(span) >= 2 and span[0].type == tokenize.NAME and span[1].type == tokenize.OP and span[1].string in ("=", "+="):
+        texts = strings(span)
+        if any(any(f in s for f in FLOOR) for s in texts):
+            floored.add(span[0].string)
+        elif span[1].string == "=":
+            unfloored.add(span[0].string)
+floored -= unfloored
+
+bad = 0
+invocations = 0
+for span in statements:
+    for index, token in enumerate(span):
+        if token.type != tokenize.OP or token.string != "[" or index + 1 >= len(span):
+            continue
+        # a subscript (x[...], f()[...], y[0][...]) is not a list
+        if index > 0 and (span[index - 1].type in (tokenize.NAME, tokenize.STRING) or span[index - 1].string in (")", "]")):
+            if span[index - 1].type != tokenize.NAME or span[index - 1].string not in ("return", "in", "and", "or", "not", "else", "yield"):
+                continue
+        first = span[index + 1]
+        if first.type == tokenize.NAME:
+            if first.string not in COMPILER_NAMES:
+                continue
+        elif first.type == tokenize.STRING:
+            value = literal(first)
+            if value is None or not COMPILER_STRING.match(value):
+                continue
+        else:
+            continue
+        texts = strings(span)
+        names = {t.string for t in span if t.type == tokenize.NAME}
+        if any(s in NO_CODE or s.startswith("--print-") or s.startswith("-print-") for s in texts):
+            break
+        invocations += 1
+        if any(any(f in s for f in FLOOR) for s in texts) or names & floored:
+            break
+        line = source.splitlines()[first.start[0] - 1].strip()
+        print(f"{path}:{first.start[0]}: Python compiler invocation missing -ffp-contract=off or /fp:precise: {line}")
+        bad = 1
+        break
+import os
+if os.environ.get("FP_COUNT_OUT"):
+    with open(os.environ["FP_COUNT_OUT"], "w") as out:
+        out.write("%d\n" % invocations)
+sys.exit(bad)
+PY
 }
 
 check_file()
@@ -115,51 +255,23 @@ check_file()
     local f="$1"
     local file_bad=0
     [ -f "$f" ] || { echo "check_fp_contract: missing file $f"; return 1; }
+    if [[ "$f" == *.py ]]; then
+        check_python_file "$f"
+        return $?
+    fi
+    # a flags definition without the floor is reported only when the file
+    # also invokes a compiler (FLAGS is an ordinary name in a shell script)
+    local definition_reports="" saw_compiler=0 invocations=0
+
 
     # Pass 1: check CFLAGS / CXXFLAGS / FLAGS definitions in this file and
-    # record which ones are defined with a valid FP floor. Also check Python
-    # compiler-flag lists (`flags = [compiler, ...]`).
+    # record which ones are defined with a valid FP floor.
     local ok_cflags=0 ok_cxxflags=0 ok_flags=0
     local bad_cflags=0 bad_cxxflags=0 bad_flags=0
-    local ok_py_flags=0 bad_py_flags=0
-    local lineno=0 buf="" start_line=0 in_py_flags=0 py_buf="" py_start=0
+    local lineno=0 buf="" start_line=0 stript
 
     while IFS= read -r raw || [ -n "$raw" ]; do
         lineno=$((lineno + 1))
-        if [ "$in_py_flags" -eq 1 ]; then
-            py_buf="$py_buf $raw"
-            if [[ "$raw" == *"]"* ]]; then
-                in_py_flags=0
-                if has_literal_floor "$py_buf" "clang++"; then
-                    [ "$bad_py_flags" -eq 0 ] && ok_py_flags=1
-                else
-                    echo "$f:$py_start: Python compiler flags missing -ffp-contract=off: $py_buf"
-                    file_bad=1
-                    bad_py_flags=1
-                    ok_py_flags=0
-                fi
-            fi
-            continue
-        fi
-        local stript="${raw#"${raw%%[![:space:]]*}"}"
-        if [[ "$f" == *.py && "$stript" =~ ^flags[[:space:]]*=[[:space:]]*\[compiler, ]]; then
-            py_buf="$stript"
-            py_start=$lineno
-            if [[ "$stript" == *"]"* ]]; then
-                if has_literal_floor "$py_buf" "clang++"; then
-                    [ "$bad_py_flags" -eq 0 ] && ok_py_flags=1
-                else
-                    echo "$f:$py_start: Python compiler flags missing -ffp-contract=off: $py_buf"
-                    file_bad=1
-                    bad_py_flags=1
-                    ok_py_flags=0
-                fi
-            else
-                in_py_flags=1
-            fi
-            continue
-        fi
-
         if [ -n "$buf" ]; then
             buf="${buf%\\} $raw"
         else
@@ -182,8 +294,8 @@ check_file()
                     FLAGS)    [ "$bad_flags" -eq 0 ] && ok_flags=1 ;;
                 esac
             else
-                echo "$f:$start_line: $varname definition missing -ffp-contract=off or /fp:precise: $buf"
-                file_bad=1
+                definition_reports="$definition_reports$f:$start_line: $varname definition missing -ffp-contract=off or /fp:precise: $buf
+"
                 case "$varname" in
                     CFLAGS)   bad_cflags=1; ok_cflags=0 ;;
                     CXXFLAGS) bad_cxxflags=1; ok_cxxflags=0 ;;
@@ -213,19 +325,6 @@ check_file()
         case "$line" in
             ''|'#'*) buf=""; continue ;;
         esac
-        if [[ "$f" == *.py && "$line" =~ ^subprocess\.(run|check_call|check_output)\((flags[[:space:]]*\+|\[[[:space:]]*compiler,) ]]; then
-            if [[ "$line" == *"flags"* ]]; then
-                if [ "$ok_py_flags" -ne 1 ] && ! has_literal_floor "$line" "clang++"; then
-                    echo "$f:$start_line: Python compiler invocation without verified -ffp-contract=off: $line"
-                    file_bad=1
-                fi
-            elif ! has_literal_floor "$line" "clang++"; then
-                echo "$f:$start_line: Python compiler invocation missing -ffp-contract=off: $line"
-                file_bad=1
-            fi
-            buf=""
-            continue
-        fi
         if [[ "$line" =~ ^-?[[:space:]]*run:[[:space:]]*(.+)$ ]]; then
             line="${BASH_REMATCH[1]}"
             line="${line#"${line%%[![:space:]]*}"}"
@@ -235,6 +334,7 @@ check_file()
             -D*) buf=""; continue ;;
         esac
         if is_compiler "$cmd"; then
+            saw_compiler=1
             local first="${line%%[|;&]*}"
             read -r -a words <<< "$first"
             local w1="${words[1]:-}"
@@ -253,6 +353,7 @@ check_file()
                     fi
                     ;;
             esac
+            invocations=$((invocations + 1))
             if ! has_floor "$buf" "$cmd" "$ok_cflags" "$ok_cxxflags" "$ok_flags"; then
                 echo "$f:$start_line: compiler invocation missing -ffp-contract=off, /fp:precise (cl) or -Xclang -ffp-contract=off (clang-cl): $buf"
                 file_bad=1
@@ -261,8 +362,16 @@ check_file()
         buf=""
     done < "$f"
 
+    if [ "$saw_compiler" -eq 1 ] && [ -n "$definition_reports" ]; then
+        printf '%s' "$definition_reports"
+        file_bad=1
+    fi
+    if [ -n "${FP_COUNT_OUT:-}" ]; then
+        echo "$invocations" > "$FP_COUNT_OUT"
+    fi
     return "$file_bad"
 }
+
 
 run_selftest()
 {
@@ -335,7 +444,80 @@ run_selftest()
         return 1
     fi
 
-    echo "check_fp_contract self-test: ok (7 negative and 3 positive cases)"
+    # 9. Python: a literal compiler list without the floor fails; with it, a
+    # query, a subscript and a floored name pass.
+    printf 'import subprocess\nsubprocess.run(["clang++", "-O2", "-c", "a.cpp"])\n' > "$tmp/bad_list.py"
+    if check_file "$tmp/bad_list.py" >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: a Python [\"clang++\", ...] without the floor passed" >&2
+        return 1
+    fi
+    printf 'import subprocess\ncompiler = "cc"\ncommand = [compiler] + flags + ["a.c"]\n' > "$tmp/bad_name.py"
+    if check_file "$tmp/bad_name.py" >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: [compiler] + flags with an unknown flags passed" >&2
+        return 1
+    fi
+    printf 'import subprocess\nflags = ["-ffp-contract=off", "-O2"]\nflags += ["-DX=1"]\nsubprocess.run(["clang++", "-O2", "-ffp-contract=off", "a.cpp"])\nsubprocess.run([compiler, "--version"])\ncache[compiler] = 1\ncommand = [compiler] + flags + ["a.c"]\n"""\ngcc -fanalyzer runs over the parser\n"""\n' > "$tmp/good.py"
+    if ! check_file "$tmp/good.py" >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: valid Python invocations failed" >&2
+        check_file "$tmp/good.py" >&2
+        return 1
+    fi
+
+    # 10. A shell FLAGS variable in a file that compiles nothing is not a
+    # compiler flags definition.
+    printf 'FLAGS="$(cat /sys/class/net/eth0/flags)"\necho "$FLAGS"\n' > "$tmp/not_flags.sh"
+    if ! check_file "$tmp/not_flags.sh" >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: a non-compiler FLAGS variable failed" >&2
+        return 1
+    fi
+
+    # 11. The tree: the file list comes from git, so a compiler line in any
+    # tracked workflow or script is read; a tree with no build file and a
+    # git that cannot list both fail.
+    local self repo
+    self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    repo="$tmp/repo"
+    mkdir -p "$repo/.github/workflows" "$repo/tools"
+    git -C "$repo" init -q
+    printf 'jobs:\n  a:\n    steps:\n      - run: g++ -O2 -ffp-contract=off a.cpp\n' > "$repo/.github/workflows/ci.yml"
+    printf 'jobs:\n  a:\n    steps:\n      - run: g++ -O2 dst.cpp -o dst\n' > "$repo/.github/workflows/nightly-dst.yml"
+    printf '#!/usr/bin/env bash\nclang++ -O1 -fsanitize=memory a.cpp\n' > "$repo/tools/run_msan.sh"
+    # a script known only by its first line (no extension, outside scripts/)
+    # is read; one whose shebang is not on the first line is not a script
+    printf '#!/bin/sh\ng++ -O2 -c b.cpp\n' > "$repo/tools/build-b"
+    printf 'notes\n#!/bin/sh\ng++ -O2 -c c.cpp\n' > "$repo/tools/notes"
+    git -C "$repo" add .github tools
+    if (cd "$repo" && bash "$self") >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: a tree with g++ in nightly-dst.yml and tools/run_msan.sh passed" >&2
+        return 1
+    fi
+    if [ "$(cd "$repo" && bash "$self" 2>/dev/null | grep -c 'missing -ffp-contract=off')" != 3 ]; then
+        echo "check_fp_contract self-test failed: the tree run did not name the three planted lines (nightly-dst.yml, run_msan.sh, build-b) and only them" >&2
+        return 1
+    fi
+    git -C "$repo" rm -q --cached .github/workflows/nightly-dst.yml tools/run_msan.sh tools/build-b
+    if ! (cd "$repo" && bash "$self") >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: a clean tree failed" >&2
+        return 1
+    fi
+    git -C "$repo" rm -q --cached .github/workflows/ci.yml
+    if (cd "$repo" && bash "$self") >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: a tree with no build file passed" >&2
+        return 1
+    fi
+    if (cd "$repo" && GIT_DIR=/nonexistent bash "$self") >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: git unable to list passed" >&2
+        return 1
+    fi
+
+    # Zero inputs: a file with no compiler invocation checks nothing and must fail.
+    : > "$tmp/empty.sh"
+    if bash "$self" "$tmp/empty.sh" >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: zero compiler invocations passed" >&2
+        return 1
+    fi
+
+    echo "check_fp_contract self-test: ok (15 negative and 7 positive cases)"
     return 0
 }
 
@@ -347,17 +529,56 @@ fi
 if [ "$#" -gt 0 ]; then
     files=("$@")
 else
+    default_files_from_tree || exit $?
     files=("${default_files[@]}")
+    echo "check_fp_contract: reading ${#files[@]} build files from the tree"
 fi
 
-bad=0
-for f in "${files[@]}"; do
-    if ! check_file "$f"; then
-        bad=1
-    fi
+# The files are read in parallel, a batch of one per core (at most 8) at a
+# time, each into its own report; the reports print in file order. A file
+# whose check left no status (killed, out of space) counts as failed.
+parallel="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+case "$parallel" in
+    ''|*[!0-9]*) parallel=4 ;;
+esac
+[ "$parallel" -gt 8 ] && parallel=8
+[ "$parallel" -lt 1 ] && parallel=1
+reports="$(mktemp -d)" || { echo "check_fp_contract: cannot make a report directory; nothing was checked"; exit 2; }
+trap 'rm -rf "$reports"' EXIT
+
+count=${#files[@]}
+next=0
+while [ "$next" -lt "$count" ]; do
+    batch_end=$((next + parallel))
+    [ "$batch_end" -gt "$count" ] && batch_end=$count
+    while [ "$next" -lt "$batch_end" ]; do
+        ( status=0; FP_COUNT_OUT="$reports/$next.count" check_file "${files[$next]}" > "$reports/$next.out" 2>&1 || status=$?; echo "$status" > "$reports/$next.status" ) &
+        next=$((next + 1))
+    done
+    wait
 done
 
+# compiler invocations judged over every file: zero is an error (nothing was checked)
+bad=0
+invocations=0
+index=0
+while [ "$index" -lt "$count" ]; do
+    [ -f "$reports/$index.out" ] && cat "$reports/$index.out"
+    file_count="$(cat "$reports/$index.count" 2>/dev/null || echo 0)"
+    invocations=$((invocations + file_count))
+    status="$(cat "$reports/$index.status" 2>/dev/null)"
+    if [ "$status" != 0 ]; then
+        [ -n "$status" ] || echo "check_fp_contract: ${files[$index]}: the check left no status"
+        bad=1
+    fi
+    index=$((index + 1))
+done
+
+if [ "$invocations" -eq 0 ]; then
+    echo "check_fp_contract: 0 compiler invocations in ${#files[@]} files: nothing was checked"
+    bad=1
+fi
 if [ "$bad" -eq 0 ]; then
-    echo "ok: every compiler invocation carries the FP floor"
+    echo "ok: every compiler invocation carries the FP floor ($invocations invocations in ${#files[@]} files)"
 fi
 exit "$bad"

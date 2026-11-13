@@ -286,7 +286,7 @@ static void test_write_pass_honours_transport_payload_capacity()
 
     struct rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.num_channels = 4;
+    config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     config.packets_per_update = 8;
 
     struct rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0, 1, 1000.0 );
@@ -480,7 +480,7 @@ static void test_server_payload_batch_holds_the_receive_budget()
             {
                 break;
             }
-            uint8_t * payload = frame + context.payload_index;
+            uint8_t * payload = frame;
             payload[0] = (uint8_t) ( sent & 0xFF );
             payload[1] = (uint8_t) ( ( sent >> 8 ) & 0xFF );
             payload[2] = (uint8_t) ( ( sent >> 16 ) & 0xFF );

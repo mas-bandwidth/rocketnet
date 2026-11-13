@@ -7,7 +7,7 @@ client API. Every client connects with a 768-byte connect token
 backend mints that token.
 
 This directory contains two minimal reference backend services — one in Go and
-one in C# — modeled after `yojimbo`'s matcher and Space Game's backend registry.
+one in C#.
 Each exposes two HTTP routes:
 
 ```
@@ -83,6 +83,20 @@ platform infrastructure in production:
    and select a target server by region, available capacity, or match assignment before calling
    `generateConnectToken` / `ConnectToken.Generate`.
 
+**Join pacing is title-owned too, and these examples do not do it.**
+`GET /match/{clientID}` mints one token per request as it arrives and does not
+pace the issue. When many clients join one server at once, the backend is
+expected to spread the issue of their tokens over time: the server takes at
+most `handshakes_per_update` connection requests (default 16) to the signature
+check in one update, as its defence against handshake CPU floods, and a refused
+request is sent again with a return cookie that lives about 3 seconds, inside
+the token's 10-second default timeout. Keep the issue rate to one server below
+`handshakes_per_update` times its update rate each second (16 x 60 = 960 a
+second at 60 updates a second), spread evenly. Measured at the defaults with a
+100 Hz server update: 1000 clients with spread requests connected in about 1.6
+seconds; 1000 sending in the same instant did not all connect inside 10
+seconds. See [Production integration](../../docs/PRODUCTION.md#spread-joins-over-time).
+
 ---
 
 <a id="step-1-development-build-rocketnet_dev1-and-first-guarded-message-exchange"></a>
@@ -112,6 +126,14 @@ selected `rocketnet` library; `backend_check_token` links `rocketnet_dev` becaus
 it is a fixed-development-server-key test fixture. It cannot inspect a token
 sealed to a live production server. The harness supplies its fixture token on
 standard input, then tests a separate live server/token/client exchange.
+
+`example_backend_server` runs a 60 Hz frame. By default every server call is
+made on the main thread. With `--game-threads N` it runs a game server's
+frame: the main thread joins last frame's split-off half and reads the
+messages the last update left, and the second half of the network update
+(queue the echoes, send, update) is split off onto another thread to run in
+parallel with the main thread until the join next frame. The
+[game loop](../../docs/examples/game_loop.md) explains this frame.
 
 Both services listen on `127.0.0.1:8080` by default. Setting
 `ROCKETNET_BACKEND_LISTEN_ADDRESS` to a non-loopback address exposes the

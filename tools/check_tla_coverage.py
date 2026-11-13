@@ -3,6 +3,7 @@
 
 import argparse
 import re
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -18,27 +19,32 @@ _PATH_TOKEN_RE = re.compile(
     r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:cpp|h|c|tla|md)(?::[0-9]+(?:-[0-9]+)?)?")
 DST_CHECK_RE = re.compile(r'rocketnet_dst_check_fail\(\s*\w+,\s*"([a-z0-9_]+)"')
 
-CITATION_RE = re.compile(
+# path:line: a line number drifts with every edit above it (157 of 171 had,
+# VERIFY-6 A5), so a citation names its symbol instead.
+LINE_CITATION_RE = re.compile(
     r"((?:sdk|tests|(?:proofs/)?tla)/[A-Za-z0-9_./-]+\.[a-z]+):"
     r"(?:\s*(?:\*\))?\s*\n\s*(?:\(\*|//|\*)?\s*)?(\d+)(?:-(\d+))?")
-CITATION_SCAN_FILES = (
-    "sdk/rocketnet_driver.h",
-    "sdk/rocketnet_layers.h",
-    "sdk/rocketnet_driver_builtin.cpp",
-    "sdk/rocketnet_allocator.h",
-    "sdk/rocketnet_server_uring_linux.cpp",
-    "sdk/rocketnet_server_uring.h",
-    "sdk/rocketnet_replay.h",
-    "proofs/tla/COVERAGE.tsv",
-    "proofs/tla/ReplayWindow.tla",
-    "proofs/tla/MCReplayWindow.tla",
-    "proofs/tla/ServerSession.tla",
-    "proofs/tla/RNSlots.tla",
-    "proofs/tla/RNClientReceiveQuit.tla",
-    "proofs/tla/README-ReplayWindow.md",
-    "proofs/tla/README-ClientConnection.md",
-    "proofs/tla/README-SessionAcks.md",
-)
+# A bare line reference after a path named earlier ("`:340`", "(:2091)",
+# "at :2091"): it drifts the same way, and the path:line rule above alone
+# left 69 of them behind.
+BARE_LINE_RE = re.compile(r"(?<![\w.:/`\]\"'])`?:[0-9]{2,5}(?:-[0-9]+)?\b`?")
+# A citation pinned to a commit ("sdk/a.cpp:12` at `4e1be4e8`", or a short
+# parenthesis closed by "are cited at `14993f6`") names a fixed text and
+# cannot drift, so it stands.
+PINNED_AT_COMMIT_RE = re.compile(r"(?:(?!\.\s)[^;|]){0,160}?\bat `[0-9a-f]{7,40}`", re.S)
+_CITED_PATH = r"((?:sdk|tests|proofs/tla)/[A-Za-z0-9_./-]+\.(?:cpp|h|c|inc|tla))"
+_CITED_SYMBOL = r"((?:rn_|rocketnet_|RN_|ROCKETNET_)[A-Za-z0-9_]+)"
+# "sdk/a.cpp (rn_x)": the path, then the symbol it defines
+PATH_THEN_SYMBOL_RE = re.compile(_CITED_PATH + r"`?\s*\(\s*`?" + _CITED_SYMBOL + r"`?\s*\)")
+# "rn_x (sdk/a.cpp)": the symbol, then the path that defines it
+SYMBOL_THEN_PATH_RE = re.compile(_CITED_SYMBOL + r"`?\s*\(\s*`?" + _CITED_PATH + r"`?\s*\)")
+# Every file that can carry a path:line citation: every tracked source file
+# wherever it lives (git ls-files, not a list of directories), and the models'
+# own notes and ledgers under proofs/tla/. A hand
+# list of 16 files left 74 citations unchecked (VERIFY-6 A5, VERIFY-3 C-14),
+# and a directory list missed the test code outside tests/ (VERIFY-3 W16:
+# sdk/rocketnet_tests.cpp, tools/, benchmarks/, examples/).
+CITATION_SCAN_SUFFIXES = (".tla", ".md", ".tsv", ".h", ".hpp", ".c", ".cpp", ".inc")
 _FUNC_HEADER_RE = re.compile(
     r"^\s*(?:static\s+|extern\s+\"C\"\s+|inline\s+)*[A-Za-z_][\w\s\*&<>:,]*?"
     r"\b((?:rn_|rocketnet_|split_|simulated_)[A-Za-z0-9_]+)\s*\(")
@@ -78,15 +84,47 @@ def note_function_citations(note):
     return sorted(citations.items())
 
 
+def defines(fn, text):
+    """text holds a definition of fn: a function header with a body, or a
+    function-like macro. A call, a declaration or a comment is not one."""
+    if any(name == fn for _, name in _function_starts(text)):
+        return True
+    return re.search(rf"^\s*#\s*define\s+{re.escape(fn)}\(", text, re.M) is not None
+
+
+_NOT_A_TYPE = {"return", "if", "else", "while", "for", "switch", "case", "sizeof", "delete", "new", "do"}
+
+
+def declares(fn, text):
+    """text declares fn: a prototype line (a type, then fn, then "("), never a
+    call, a return statement or a comment."""
+    pattern = re.compile(
+        rf"^\s*([A-Za-z_]\w*)\b[\w\s\*&<>:,]*?\b{re.escape(fn)}\s*\(", re.M)
+    return any(m.group(1) not in _NOT_A_TYPE for m in pattern.finditer(text))
+
+
 def function_defined(fn, path, code_text):
+    """fn is defined (or, in a header a note names, declared) in the file a
+    note gives it; a name with no file is
+    defined in the row's own code file or in another file under sdk/ (a note
+    names the helpers its code calls). A mention (a call site, a comment)
+    once satisfied this, so a function whose definition was renamed away
+    still passed (VERIFY-6 A4)."""
     if path:
         target = ROOT / path
         if target.is_file():
-            return f"{fn}(" in target.read_text(errors="replace")
+            text = target.read_text(errors="replace")
+            return defines(fn, text) or declares(fn, text)
         return False
-    if code_text and f"{fn}(" in code_text:
+    if code_text and defines(fn, code_text):
         return True
-    return any(f"{fn}(" in text for text in sdk_texts().values())
+    return any(defines(fn, text) for text in sdk_definitions_texts(fn))
+
+
+def sdk_definitions_texts(fn):
+    """The sdk/ files that mention fn followed by "(": the only ones that can
+    define it, so the definition scan stays cheap."""
+    return [text for text in sdk_texts().values() if f"{fn}(" in text]
 
 
 def _function_starts(text):
@@ -105,80 +143,76 @@ def _function_starts(text):
     return starts
 
 
-def enclosing_symbol(target_text, line_no):
-    """The symbol whose definition encloses line_no, or None."""
-    lines = target_text.splitlines()
-    starts = _function_starts(target_text)
-    enclosing = None
-    for start, name in starts:
-        if start <= line_no:
-            enclosing = name
-        else:
-            break
-    if enclosing:
-        return enclosing
-    for idx in range(min(line_no, len(lines)) - 1, -1, -1):
-        line = lines[idx]
-        m = re.search(r"struct\s+((?:rocketnet_|rn_)[A-Za-z0-9_]+)", line)
-        if m:
-            return m.group(1)
-        m = re.search(r"#define\s+((?:ROCKETNET_|RN_)[A-Z0-9_]+)", line)
-        if m:
-            return m.group(1)
-        m = re.match(r"\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*==", line)
-        if m:
-            return m.group(1)
-    return None
+def citation_scan_files():
+    # the checkout's tracked files; a tree that is not its own checkout (a
+    # self-test's) is walked whole
+    rels = None
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        if Path(top).resolve() == ROOT.resolve():
+            out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
+            rels = out.decode("utf-8", "replace").split("\0")
+    except (OSError, subprocess.CalledProcessError):
+        rels = None
+    if rels is None:
+        rels = [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*") if ".git" not in p.parts]
+    files = []
+    for rel in sorted(rels):
+        notes = rel.endswith((".md", ".tsv")) and not rel.startswith("proofs/tla/")
+        if rel.endswith(CITATION_SCAN_SUFFIXES) and not notes and (ROOT / rel).is_file():
+            files.append(rel)
+    return files
 
 
 def check_citations():
-    """Every remaining path:line citation in the scanned files must
-    resolve: the cited line lies inside the symbol the citing text
-    names (the nearest rn_/rocketnet_ name before the citation)."""
+    """Every tracked file of a CITATION_SCAN_SUFFIXES kind: no path:line citation (cite
+    the symbol), and a path cited beside a symbol, either way round, must
+    still name that symbol: a rename or a removal leaves the citation
+    pointing at nothing. (A note may cite the header that declares a
+    function or the model of a type, so naming is the test, not defining.)"""
     failures = []
-    scan_files = list(CITATION_SCAN_FILES)
-    for pattern in ("proofs/tla/MCReplayWindow*.tla", "proofs/tla/MCServerSession*.tla",
-                    "proofs/tla/MCRNSlots*.tla", "proofs/tla/MCRNClientReceiveQuit*.tla"):
-        for path in sorted(ROOT.glob(pattern)):
-            rel = path.relative_to(ROOT).as_posix()
-            if rel not in scan_files:
-                scan_files.append(rel)
+    scan_files = citation_scan_files()
+    if not scan_files:
+        failures.append("no file to scan for citations under " + str(ROOT))
+    texts = {}
+
+    def target_text(rel):
+        if rel not in texts:
+            path = ROOT / rel
+            texts[rel] = path.read_text(errors="replace") if path.is_file() else None
+        return texts[rel]
+
     for rel in scan_files:
-        path = ROOT / rel
-        if not path.is_file():
-            continue
-        text = path.read_text(errors="replace")
-        for m in CITATION_RE.finditer(text):
-            target_rel, line_no = m.group(1), int(m.group(2))
-            if target_rel.startswith("tla/"):
-                target_rel = "proofs/" + target_rel
-            target = ROOT / target_rel
-            if not target.is_file():
-                failures.append(f"{rel}: citation {target_rel}:{line_no} "
-                                f"names no file")
+        text = (ROOT / rel).read_text(errors="replace")
+        for m in LINE_CITATION_RE.finditer(text):
+            if PINNED_AT_COMMIT_RE.match(text, m.end()):
                 continue
-            context = text[max(0, m.start() - 200):m.start()]
-            named = FUNC_RE.findall(context)
-            named = named[-1] if named else None
-            if named is None:
-                failures.append(f"{rel}: citation {target_rel}:{line_no} "
-                                f"names no symbol")
+            line = text.count("\n", 0, m.start()) + 1
+            failures.append(
+                f"{rel}:{line}: line citation {m.group(1)}:{m.group(2)}; cite the symbol "
+                f"instead, as {m.group(1)} (symbol): line numbers drift")
+        for m in BARE_LINE_RE.finditer(text):
+            if PINNED_AT_COMMIT_RE.match(text, m.end()):
                 continue
-            target_text = target.read_text(errors="replace")
-            target_lines = target_text.splitlines()
-            header_window = target_lines[line_no - 1] \
-                if line_no <= len(target_lines) else ""
-            if re.search(rf"\b{re.escape(named)}\s*\(", header_window):
-                continue
-            enclosing = enclosing_symbol(target_text, line_no)
-            if enclosing != named:
-                failures.append(
-                    f"{rel}: citation {target_rel}:{line_no} is inside "
-                    f"{enclosing}, not {named}")
+            line = text.count("\n", 0, m.start()) + 1
+            failures.append(
+                f"{rel}:{line}: bare line reference {m.group(0).strip('`')}; cite the "
+                f"symbol instead: line numbers drift")
+        pairs = [(m.group(1), m.group(2), m.start()) for m in PATH_THEN_SYMBOL_RE.finditer(text)]
+        pairs += [(m.group(2), m.group(1), m.start()) for m in SYMBOL_THEN_PATH_RE.finditer(text)]
+        for target, sym, start in pairs:
+            line = text.count("\n", 0, start) + 1
+            body = target_text(target)
+            if body is None:
+                failures.append(f"{rel}:{line}: citation {target} ({sym}) names no file")
+            elif not re.search(rf"\b{re.escape(sym)}\b", body):
+                failures.append(f"{rel}:{line}: citation {target} ({sym}): {target} does not name {sym}")
     return failures
 
 
 def iter_rows():
+    if not COVERAGE.is_file():
+        raise ValueError(f"{COVERAGE}: missing: 0 rows were read")
     lines = COVERAGE.read_text().splitlines()
     if not lines:
         return
@@ -270,7 +304,7 @@ def check_row(row, dst_names):
             failures.append(f"{module}: {code} does not cite {cite}")
         for fn, fn_path in note_function_citations(note):
             if not function_defined(fn, fn_path, text):
-                where = fn_path or code
+                where = fn_path or f"{code} nor elsewhere under sdk/"
                 failures.append(f"{module}: {fn} not defined in {where}")
     return failures
 
@@ -710,12 +744,24 @@ def main():
                         help="report per-action citations for current-row modules")
     parser.add_argument("--actions-strict", action="store_true",
                         help="exit 1 while uncited actions remain")
+    parser.add_argument("--root", type=Path, default=None,
+                        help="the repository to check (default: this one); 0 coverage rows is an error")
     args = parser.parse_args()
+    if args.root is not None:
+        global ROOT, COVERAGE, TLA_DIR
+        ROOT = args.root
+        COVERAGE = ROOT / "proofs" / "tla" / "COVERAGE.tsv"
+        TLA_DIR = ROOT / "proofs" / "tla"
 
     try:
         rows = list(iter_rows())
     except ValueError as error:
         print(error)
+        print("COVERAGE FAIL 1")
+        return 1
+    if not rows:
+        # zero inputs is an error: a coverage table with no row checks nothing
+        print(f"{COVERAGE}: 0 rows: nothing was checked")
         print("COVERAGE FAIL 1")
         return 1
     failures = []

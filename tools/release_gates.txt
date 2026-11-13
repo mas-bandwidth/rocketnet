@@ -1,0 +1,114 @@
+# The release and landing gates: the one list.
+#
+# Read by tools/release.py (before it tags), by tools/check_release_tsan.py
+# (Release Check's tag-push second check), by tools/land.py (before it merges
+# a pull request) and by tools/check_release_gates.py (lint: every workflow and
+# job named here exists). docs/RELEASING.md and docs/branch-protection.md
+# describe it; they do not repeat it.
+#
+# One gate per line, five fields separated by " | ", then the reason:
+#   workflow | job | kind | from | events | reason
+#
+# workflow  a file under .github/workflows
+# job       "-" for a whole-run gate; otherwise a display name as the Actions
+#           API reports it ("<ref>" stands for the run's own head branch;
+#           a skipped matrix job is reported under its unexpanded template)
+# kind      run          the newest completed run on the commit concluded success
+#           run-if-ran   the same, when the workflow ran on the commit at all
+#           jobs         the newest completed run on the commit: every job success,
+#                        except a job named by a `skip` row (and none missing)
+#           jobs-if-ran  the same, when the workflow ran on the commit at all
+#           job          the named job concluded success in the newest completed
+#                        run on the commit that has it
+#           skip         the named job may be `skipped` in a `jobs` gate (its own
+#                        `if:` leaves it out of these events); success also passes
+#           full         the named job of a `jobs` gate is FULL tier: for a point
+#                        release and for tools/land.py (without --full) it is
+#                        printed with its result and does not gate, and the
+#                        workflow's `run` gate is judged job by job; a minor,
+#                        major or pre-release holds it like any job (owner,
+#                        2026-11-13: point releases have light tests only)
+#           tlc-rerun    a `TLC re-run full` job success on the exact commit, or
+#                        every `TLC re-run slice K/N` (K = 0..N-1) success in
+#                        scheduled runs of the last N days on ancestors of the commit
+#           tag          a job of the run the release tag's push starts; the
+#                        release tool waits for it and publishes only on success
+# from      the first version the gate is in force for (earlier versions are
+#           judged by the gates in force then; the output names the rest)
+# events    push          the push to main of the commit (per-commit tier)
+#           pull_request  the pull request's head commit (tools/land.py)
+#           nightly       any run whose head is the commit (schedule or dispatch);
+#                         minor-only: from v1.1.8 a point release (vX.Y.Z, Z
+#                         not 0, no pre-release suffix) skips these rows, printed
+#                         as MINOR ONLY; a pre-release or a
+#                         minor or major release (Z = 0) is judged by them
+#                         (owner, 2026-11-13: point releases have fast tests only)
+#           tag           the push of the release tag
+#
+# The run, nightly-tier and tag gates in force from v1.0.0-preview-6 are the
+# ones docs/RELEASING.md and Release Check required then; the rest are new in
+# v1.1.8 (2026-11-12: every job success, Nightly CI every job, the TLC re-run
+# evidence, MemorySanitizer, the tag run's final job).
+
+# --- per-commit tier: the push run on main (release) and the pull request head (landing)
+ci.yml | - | run | v1.0.0-preview-6 | push | CI per-commit run green (RELEASING.md "The release gates")
+static.yml | - | run | v1.0.0-preview-6 | push | static analysis per-commit run green
+docs.yml | - | run | v1.0.0-preview-6 | push | docs per-commit run green
+release-check.yml | - | run | v1.0.0-preview-6 | push | Release Check per-commit run green (version consistency, wire changes)
+
+ci.yml | - | jobs | v1.1.8 | push,pull_request | every per-commit job success: a job cancelled at the two-minute cap gave no verdict
+ci.yml | backend example / ${{ matrix.backend }} | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
+ci.yml | windows / Release (${{ matrix.leg }}) | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
+ci.yml | fuzz smoke NDEBUG (every fuzzer, corpus replay) | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
+ci.yml | pinned libsodium (built from source) | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
+ci.yml | ubuntu ${{ matrix.release }} / container build and unit suite | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
+ci.yml | platform selftests / ${{ matrix.os }} | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
+ci.yml | unit-case coverage | skip | v1.1.8 | push,pull_request | if: inputs.full && !cancelled() (nightly tier)
+ci.yml | asan + ubsan (functional suite) | full | v1.1.10 | push,pull_request | sanitizer leg
+ci.yml | asan + ubsan (unit suite 0/2) | full | v1.1.10 | push,pull_request | sanitizer leg
+ci.yml | asan + ubsan (unit suite 1/2) | full | v1.1.10 | push,pull_request | sanitizer leg
+ci.yml | tsan (loopback soak) | full | v1.1.10 | push,pull_request | sanitizer leg, real sockets
+ci.yml | fuzz smoke (corpus replay) | full | v1.1.10 | push,pull_request | sanitizer fuzz build
+ci.yml | happy path / linux | full | v1.1.10 | push,pull_request | real sockets end to end
+ci.yml | happy path / windows | full | v1.1.10 | push,pull_request | real sockets end to end
+ci.yml | linux / Debug / functional | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | linux / Debug / functional (0/3) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | linux / Debug / functional (1/3) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | linux / Debug / functional (2/3) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | linux / Release / functional | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | linux / Release / functional (0/3) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | linux / Release / functional (1/3) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | linux / Release / functional (2/3) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | macos / Release / functional | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | macos / Release / functional_production | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | linux / Debug / transport_matrix | full | v1.1.10 | push,pull_request | functional, every transport
+ci.yml | linux / Release / transport_matrix | full | v1.1.10 | push,pull_request | functional, every transport
+static.yml | - | jobs | v1.1.8 | push,pull_request | every static analysis job success
+docs.yml | - | jobs | v1.1.8 | push,pull_request | every docs job success
+release-check.yml | - | jobs | v1.1.8 | push,pull_request | every Release Check job success
+release-check.yml | threaded tsan run on the release commit | skip | v1.1.8 | push,pull_request | runs on a v* tag push only
+release-check.yml | release gates passed on the tag | skip | v1.1.8 | push,pull_request | runs on a v* tag push only
+roadmap.yml | - | jobs-if-ran | v1.1.8 | push,pull_request | path-filtered: judged when it ran
+roadmap.yml | roadmap (sexp parses, ids unique) | skip | v1.1.8 | push | if: pull_request
+roadmap.yml | roadmap (regenerate ROADMAP.md on main) | skip | v1.1.8 | pull_request | if: not a pull request, on main
+
+# --- nightly tier: runs whose head is the release commit (minor and major releases only)
+nightly-ci.yml | - | run | v1.0.0-preview-6 | nightly | Nightly CI (ci.yml with full: true) green
+nightly-ci.yml | - | jobs | v1.1.8 | nightly | Nightly CI: every job success (none skipped, none cancelled)
+cbmc.yml | - | run | v1.0.0-preview-6 | nightly | CBMC arithmetic leaf proofs green
+tlc.yml | - | run | v1.0.0-preview-6 | nightly | TLC records run green
+tlc.yml | Model records are current | job | v1.1.8 | nightly | the committed TLC records are current
+tlc.yml | TLC re-run | tlc-rerun | v1.1.8 | nightly | the models were re-run by TLC, not only their records read
+nightly.yml | tsan (threaded transport) (<ref>) | job | v1.0.0-preview-6 | nightly | threaded TSan leg on the run's own head commit
+msan.yml | MemorySanitizer | job | v1.1.8 | nightly | MemorySanitizer, a release gate from v1.1.8 (advisory before)
+nightly.yml | linux / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on Linux
+nightly.yml | macos / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on macOS
+nightly.yml | windows / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on Windows
+nightly-soak.yml | - | jobs | v1.1.8 | nightly | every soak job success (v1.1.7 was tagged 2.5 h after soak per transport went red)
+nightly-leaks.yml | - | jobs | v1.1.8 | nightly | asan + ubsan + lsan over the full suite
+nightly-macos-sanitizers.yml | - | jobs | v1.1.8 | nightly | macOS asan+ubsan, tsan and leaks
+nightly-channels-stress.yml | - | jobs | v1.1.8 | nightly | the channel stress runs
+
+# --- the tag push: waited for by tools/release.py before it publishes
+release-check.yml | threaded tsan run on the release commit | tag | v1.0.0-preview-6 | tag | the second check, on the tag, of every gate above
+release-check.yml | release gates passed on the tag | tag | v1.1.8 | tag | the tag run's final job: red unless the second check succeeded

@@ -139,8 +139,9 @@ struct rocketnet_client_transport_config_table_t
 
 struct rocketnet_server_transport_config_table_t
 {
-    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V1( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     struct rocketnet_loopback_hub_t * loopback_hub;
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
 
 struct rocketnet_message_config_table_t
@@ -985,7 +986,7 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 }
 
 // ----------------------------------------------------------------
-//                        the transport ladder
+//                        the transport list
 // ----------------------------------------------------------------
 
 static int rocketnet_transport_id_from_name( const char * name, int name_length )
@@ -1001,14 +1002,14 @@ static int rocketnet_transport_id_from_name( const char * name, int name_length 
     return -1;
 }
 
-bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server )
+bool rocketnet_transport_order_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_order_t * ladder, bool server )
 {
     rocketnet_assert( available );
     rocketnet_assert( num_available > 0 );
     rocketnet_assert( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
     rocketnet_assert( ladder );
 
-    memset( ladder, 0, sizeof( struct rocketnet_transport_ladder_t ) );
+    memset( ladder, 0, sizeof( struct rocketnet_transport_order_t ) );
 
     // auto -- explicitly, or as the zero value -- expands to the
     // platform's recommended order for this endpoint
@@ -1059,6 +1060,10 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
         return true;
     }
 
+    // a pin-only transport is applicable only as the sole name of a list
+    // (standard/TRANSPORT.md t2.4); in a longer list it is skipped (rule 4)
+
+    const bool sole_name = strchr( value, ',' ) == NULL;
     const char * cursor = value;
 
     while ( true )
@@ -1109,6 +1114,12 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
             }
         }
 
+        const bool pin_only_in_list = transport_available && !sole_name && rocketnet_transport_pin_only( transport, server );
+        if ( pin_only_in_list )
+        {
+            transport_available = false;
+        }
+
         if ( transport_available )
         {
             if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
@@ -1133,7 +1144,14 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
             }
 
             ladder->skipped[ladder->num_skipped++] = transport;
-            rocketnet_info( "transport %.*s is not available here. skipped", name_length, name );
+            if ( pin_only_in_list )
+            {
+                rocketnet_info( "transport %.*s is pin-only: applicable only as the sole name of a list, not in \"%s\". skipped", name_length, name, value );
+            }
+            else
+            {
+                rocketnet_info( "transport %.*s is not available here. skipped", name_length, name );
+            }
         }
 
         if ( !comma )

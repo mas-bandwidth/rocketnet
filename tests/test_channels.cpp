@@ -19,6 +19,7 @@
     one test alone.
 */
 
+#include "check_count.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 #include "rocketnet_read_write.h"
@@ -50,6 +51,7 @@
 #define channels_check( condition )                                                         \
 do                                                                                          \
 {                                                                                           \
+    ROCKETNET_TEST_COUNT_CHECK();                                                           \
     if ( !(condition) )                                                                     \
     {                                                                                       \
         printf( "check failed: ( %s ), function %s, file %s, line %d\n",                    \
@@ -456,7 +458,7 @@ static void channels_test_violations()
 
 static void channels_test_single_zero_copy()
 {
-    // a frame with the payload root at a 16-aligned payload_index, as start_packet hands back
+    // a frame with the payload root at a 16-aligned payload_index, as the transport lays out the frame behind the payload start_packet returns
 
     alignas( 16 ) static uint8_t frame[64 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
@@ -947,9 +949,20 @@ static void rn_trap_write( const char * text )
 #endif // #if defined( _WIN32 )
 }
 
+// The in-process witness (Windows, which has no fork): a firing trap counts
+// here and returns instead of ending the process.
+static volatile int rn_trap_witness_in_process = 0;
+static volatile int rn_trap_witness_fired = 0;
+
 static void rn_trap_fire( const char * function, size_t bytes )
 {
     rn_trap_armed = 0;
+
+    if ( rn_trap_witness_in_process )
+    {
+        rn_trap_witness_fired++;
+        return;
+    }
 
     char line[160];
 
@@ -1174,6 +1187,7 @@ static void rn_test_log_function( void * context, enum rocketnet_log_level_t lev
 #define check( condition )                                                                               \
     do                                                                                                   \
     {                                                                                                    \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                    \
         if ( !( condition ) )                                                                            \
         {                                                                                                \
             rn_trap_armed = 0;                                                                           \
@@ -1278,7 +1292,7 @@ static void test_channels_allocator_layout()
 
     // odd shapes pad, and the padding is all the region adds to the formula
 
-    config.num_channels = 3;
+    config.num_channels = ROCKETNET_MAX_CHANNELS < 3 ? ROCKETNET_MAX_CHANNELS : 3;
     config.unreliable_messages_per_update = 1;
     config.sequenced_messages_held = 1;
     config.max_message_receipts = 17;
@@ -1976,6 +1990,47 @@ static void test_channels_allocator_trap_witness()
         check( waited == pid );
         check( WIFEXITED( status ) && WEXITSTATUS( status ) == 1 );
     }
+}
+#else
+static void test_channels_allocator_trap_witness_in_process()
+{
+    // Windows has no fork, so the trap is witnessed in this process: armed
+    // with nothing allocating it stays quiet; armed around each net Windows
+    // traps (the library's allocation hooks: a direct rocketnet_malloc and
+    // free, and an arena's create and destroy) it fires. operator new and libc
+    // are trapped on glibc only (RN_TEST_TRAP_LIBC). The firing trap's exit
+    // is the POSIX witness's.
+
+    rn_trap_phase = "witness";
+    rn_trap_witness_in_process = 1;
+
+    rn_trap_witness_fired = 0;
+    rn_trap_armed = 1;
+    rn_trap_armed = 0;
+    check( rn_trap_witness_fired == 0 );
+
+    for ( int net = 0; net < 2; net++ )
+    {
+        rn_trap_witness_fired = 0;
+        rn_trap_armed = 1;
+        if ( net == 0 )
+        {
+            rocketnet_free( NULL, rocketnet_malloc( NULL, 8 ) );
+        }
+        else
+        {
+            rocketnet_counters_t counters;
+            rocketnet_message_config_t config;
+            rocketnet_message_default_config( &config );
+            rn_arena_destroy( rn_arena_create( NULL, &config, 1, &counters ) );
+        }
+        const int fired = rn_trap_witness_fired;
+        rn_trap_armed = 0;
+        check( fired >= 1 );
+    }
+
+    rn_trap_witness_in_process = 0;
+    rn_trap_phase = "idle";
 }
 #endif // #if !defined( _WIN32 )
 
@@ -4285,7 +4340,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent, int reliabl
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.num_channels = 4;
+    config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     config.reliable_messages_in_flight = (int) W;
     config.receive_message_buffer_bytes = (int) B;
     config.max_message_bytes = (int) ( 3 * F );
@@ -4689,7 +4744,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent, int reliabl
 static void test_channels_window_lossy_soak_product_leg( float loss_percent, int reliable_timeout_ms )
 {
     const int total_messages = 140;
-    const int num_channels = 4;
+    const int num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
 
     rocketnet_message_config_t config;
@@ -4986,6 +5041,131 @@ static void channels_window_witness_setup( channels_window_witness_rig_t * rig, 
     rn_window_receive_init( &rig->receive, &rig->region, 0 );
 }
 
+// The server's ack drain hands a client's acked ids to the window a run at a
+// time (rn_message_object_update): one rn_window_ack_on_acks call with n ids
+// must leave exactly the state n calls with one id each leave. Two identical
+// rigs take the same sends; every ack list goes to one id by id and to the
+// other in one call, and the whole state is compared after each list. The
+// lists mix live, already-acked, evicted and never-sent ids, duplicates and
+// reordering, and the clock jumps past RN_PROBE_SECONDS so the ack-silence
+// rule fires, with the reliable timeout off and on.
+
+static void channels_window_ack_rigs_equal( const channels_window_witness_rig_t * a, const channels_window_witness_rig_t * b )
+{
+    check( memcmp( a->send_numbers, b->send_numbers, sizeof( a->send_numbers ) ) == 0 );
+    check( memcmp( a->send_first_sends, b->send_first_sends, sizeof( a->send_first_sends ) ) == 0 );
+    check( memcmp( a->sent_packets, b->sent_packets, sizeof( a->sent_packets ) ) == 0 );
+    check( memcmp( a->sent_index, b->sent_index, sizeof( a->sent_index ) ) == 0 );
+    check( memcmp( a->sent_refs, b->sent_refs, sizeof( a->sent_refs ) ) == 0 );
+    check( memcmp( a->resend_fifo, b->resend_fifo, sizeof( a->resend_fifo ) ) == 0 );
+    check( memcmp( &a->counters, &b->counters, sizeof( a->counters ) ) == 0 );
+
+    rn_window_send_t send_a = a->send;
+    rn_window_send_t send_b = b->send;
+    send_a.region = NULL;
+    send_b.region = NULL;
+    check( memcmp( &send_a, &send_b, sizeof( send_a ) ) == 0 );
+
+    rn_window_ack_t ack_a = a->ack;
+    rn_window_ack_t ack_b = b->ack;
+    ack_a.send = NULL;
+    ack_a.region = NULL;
+    ack_b.send = NULL;
+    ack_b.region = NULL;
+    check( memcmp( &ack_a, &ack_b, sizeof( ack_a ) ) == 0 );
+}
+
+static void channels_window_ack_run_matches_one_by_one( double reliable_timeout, uint64_t seed )
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    static channels_window_witness_rig_t one;
+    static channels_window_witness_rig_t run;
+    channels_window_witness_setup( &one, 8, 8 * F );
+    channels_window_witness_setup( &run, 8, 8 * F );
+    one.ack.reliable_timeout = reliable_timeout;
+    run.ack.reliable_timeout = reliable_timeout;
+
+    uint64_t state = seed;
+    auto next = [&state]() -> uint32_t
+    {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return (uint32_t) ( state >> 33 );
+    };
+
+    uint64_t next_packet_id = 1;
+    double now = 1.0;
+    int lists = 0;
+    int long_lists = 0;
+
+    for ( int step = 0; step < 4000; step++ )
+    {
+        now += ( next() % 50 == 0 ) ? 1.5 : 0.004 * (double) ( 1 + next() % 8 );
+
+        if ( next() % 3 != 0 )
+        {
+            // a send: a reliable number when the window takes one, else a packet with none
+
+            uint64_t n_one = 0, ring_one = 0, n_run = 0, ring_run = 0;
+            const int numbered_one = rn_window_send_first_write( &one.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n_one, &ring_one );
+            const int numbered_run = rn_window_send_first_write( &run.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n_run, &ring_run );
+            check( numbered_one == numbered_run );
+
+            const uint64_t packet_id = next_packet_id++;
+            if ( numbered_one == RN_WINDOW_SEND_NUMBERED )
+            {
+                check( n_one == n_run );
+                rn_window_ack_commit_packet( &one.ack, packet_id, &n_one, 1, now );
+                rn_window_ack_commit_packet( &run.ack, packet_id, &n_run, 1, now );
+            }
+            else
+            {
+                rn_window_ack_commit_packet( &one.ack, packet_id, NULL, 0, now );
+                rn_window_ack_commit_packet( &run.ack, packet_id, NULL, 0, now );
+            }
+        }
+        else
+        {
+            // an ack list: ids from well below the newest (evicted or acked
+            // already) to above it (never sent), with repeats
+
+            uint64_t ids[12];
+            const uint32_t count = 1 + next() % 12;
+            for ( uint32_t i = 0; i < count; i++ )
+            {
+                const uint64_t back = next() % 14;
+                const uint64_t id = next_packet_id + 2 > back ? next_packet_id + 2 - back : 0;
+                ids[i] = ( next() % 9 == 0 && i > 0 ) ? ids[i - 1] : id;
+            }
+
+            uint32_t matched_one = 0;
+            for ( uint32_t i = 0; i < count; i++ )
+            {
+                matched_one += rn_window_ack_on_acks( &one.ack, &ids[i], 1, now );
+            }
+            const uint32_t matched_run = rn_window_ack_on_acks( &run.ack, ids, count, now );
+            check( matched_one == matched_run );
+
+            lists++;
+            if ( count > 1 )
+            {
+                long_lists++;
+            }
+        }
+
+        channels_window_ack_rigs_equal( &one, &run );
+    }
+
+    check( lists > 1000 && long_lists > 900 );
+}
+
+static void test_channels_window_ack_run_matches_one_by_one()
+{
+    channels_window_ack_run_matches_one_by_one( 0.0, 0xACC0FFEEULL );
+    channels_window_ack_run_matches_one_by_one( 0.0, 0x5EEDF00DULL );
+    channels_window_ack_run_matches_one_by_one( 2.5, 0xACC0FFEEULL );
+    channels_window_ack_run_matches_one_by_one( 2.5, 0xBADC0DEULL );
+}
+
 // RNWindow Witness 1 (MCRNWindowBrokenBlockUPrime.cfg, KeepBlockUPrime = FALSE):
 // W = 2, block {1, 2}. Single 0 is numbered, sent, opened, delivered, released
 // at EndUpdate, and acked (U = U' = 1). Block {1, 2} takes numbers 1 and 2;
@@ -5273,6 +5453,8 @@ static const struct channels_test_t channels_tests[] = {
     { "test_channels_allocator_sizing", "ChannelsAllocatorSizing", test_channels_allocator_sizing },
 #if !defined( _WIN32 )
     { "test_channels_allocator_trap_witness", "ChannelsAllocatorTrapWitness", test_channels_allocator_trap_witness },
+#else
+    { "test_channels_allocator_trap_witness_in_process", "ChannelsAllocatorTrapWitnessInProcess", test_channels_allocator_trap_witness_in_process },
 #endif // #if !defined( _WIN32 )
     { "test_channels_allocator_no_live_allocation", "ChannelsAllocatorNoLiveAllocation", test_channels_allocator_no_live_allocation },
     { "test_channels_single_form_parses_as_one_code0_record", "ChannelsSingleFormParsesAsOneCode0Record", test_channels_single_form_parses_as_one_code0_record },
@@ -5302,6 +5484,7 @@ static const struct channels_test_t channels_tests[] = {
     { "test_channels_window_reliable_timeout_enters_the_error_state", "ChannelsWindowReliableTimeoutEntersTheErrorState", test_channels_window_reliable_timeout_enters_the_error_state },
     { "test_channels_window_lossy_soak", "ChannelsWindowLossySoak", test_channels_window_lossy_soak },
     { "test_channels_window_lossy_soak_opted_in", "ChannelsWindowLossySoakOptedIn", test_channels_window_lossy_soak_opted_in },
+    { "test_channels_window_ack_run_matches_one_by_one", "ChannelsWindowAckRunMatchesOneByOne", test_channels_window_ack_run_matches_one_by_one },
     { "test_channels_window_witness_u_prime_holds_at_a_partial_block", "ChannelsWindowWitnessUPrimeHoldsAtAPartialBlock", test_channels_window_witness_u_prime_holds_at_a_partial_block },
     { "test_channels_window_witness_reply_opens_next_update", "ChannelsWindowWitnessReplyOpensNextUpdate", test_channels_window_witness_reply_opens_next_update },
     { "test_channels_window_witness_floor_is_u_prime", "ChannelsWindowWitnessFloorIsUPrime", test_channels_window_witness_floor_is_u_prime },
@@ -5316,6 +5499,26 @@ int rocketnet_channels_test_count()
 const char * rocketnet_channels_test_name( int index )
 {
     return channels_tests[index].name;
+}
+
+// the condition a case fails in this build, or NULL when it runs: the suite
+// leaves it out and prints SKIPPED <case>: <condition> with the skipped count
+// (tests/test.cpp), as UNIT_TEST_SKIPPED_UNLESS does for the unit files
+
+const char * rocketnet_channels_test_skipped_by( int index )
+{
+#if ROCKETNET_MAX_CHANNELS < 32
+    // docs/LOAD.md Table 3 and the sizing text are the region at the library's
+    // 32-channel default: a build with fewer channels has another default
+    if ( strcmp( channels_tests[index].name, "test_channels_allocator_layout" ) == 0 ||
+         strcmp( channels_tests[index].name, "test_channels_allocator_sizing" ) == 0 )
+    {
+        return "ROCKETNET_MAX_CHANNELS >= 32";
+    }
+#else  // #if ROCKETNET_MAX_CHANNELS < 32
+    (void) index;
+#endif // #if ROCKETNET_MAX_CHANNELS < 32
+    return NULL;
 }
 
 // the suite name for a suite name or an alias, or NULL

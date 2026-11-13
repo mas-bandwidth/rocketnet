@@ -4,7 +4,7 @@
 Policy: docs/SEQUENCE-BUFFERS.md, "Owned storage manifest". Bounded
 registries, queues and pools are arrays, rings, stacks or sequence buffers;
 none links its elements to each other. This audit reads every tracked C and
-C++ source outside the vendored libsodium tree, removes comments, string and
+C++ source outside the vendored libsodium and enkiTS trees, removes comments, string and
 character literals, and works on tokens. It never matches names such as
 next, head or list: a field is a link only by how the code uses it.
 
@@ -36,6 +36,7 @@ outlive the code.
 
 Usage:
   check_no_owned_linked_lists.py            audit the repository
+  check_no_owned_linked_lists.py --root DIR audit DIR (0 source files is an error)
   check_no_owned_linked_lists.py --self-test  run the red and green controls
 """
 
@@ -47,7 +48,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "docs" / "SEQUENCE-BUFFERS.md"
 SUFFIXES = (".c", ".h", ".cpp", ".cc", ".hpp", ".inc")
-VENDORED = ("sodium/",)
+# the vendored libsodium tree, and enkiTS (tests/load/enkiTS/README.md), the job system the load test runs on
+VENDORED = ("sodium/", "tests/load/enkiTS/")
 LINK_STORE_WINDOW = 4
 
 TOKEN = re.compile(r"""
@@ -619,7 +621,7 @@ def audit(sources, manifest_text):
     return owned, external, problems
 
 
-def run(root):
+def run(root, manifest_path=MANIFEST):
     sources = {}
     for rel in tracked_sources(root):
         try:
@@ -627,7 +629,11 @@ def run(root):
         except OSError as error:
             print("FAIL cannot read %s: %s" % (rel, error))
             return 1
-    manifest = MANIFEST.read_text(encoding="utf-8") if MANIFEST.exists() else None
+    if not sources:
+        # zero inputs is an error: no source file would otherwise pass unread
+        print("FAIL: scanned 0 files under %s: nothing was checked" % root)
+        return 1
+    manifest = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
     owned, external, problems = audit(sources, manifest)
     for path, line, kind, field, function in sorted(set(owned)):
         print("FAIL %s:%d: owned linked list (%s) through %s in %s" % (path, line, kind, field, function or "declaration"))
@@ -698,6 +704,12 @@ def self_test():
     ok = any("matches no site" in p for p in problems)
     print("%s red control stale external row" % ("PASS" if ok else "FAIL"))
     failures += not ok
+    import tempfile
+    with tempfile.TemporaryDirectory() as empty:
+        # no manifest either, so only the zero-file refusal can make it red
+        ok = run(Path(empty), Path(empty) / "no-manifest.md") == 1
+    print("%s red control zero source files" % ("PASS" if ok else "FAIL"))
+    failures += not ok
     print("self-test %s" % ("passed" if failures == 0 else "failed"))
     return 1 if failures else 0
 
@@ -705,6 +717,8 @@ def self_test():
 if __name__ == "__main__":
     if sys.argv[1:] == ["--self-test"]:
         sys.exit(self_test())
+    if len(sys.argv) == 3 and sys.argv[1] == "--root":
+        sys.exit(run(Path(sys.argv[2])))
     if sys.argv[1:]:
         print(__doc__)
         sys.exit(2)

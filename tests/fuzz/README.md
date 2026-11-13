@@ -24,19 +24,12 @@ connect tokens use only the published development keys from
 | `rocketnet_fuzz_server_transport` | the server's real receive loop (`rocketnet_server_transport_update`) and the message server above it | `corpus_server_transport/` | `dict/rocketnet_fuzz_server_transport.dict` |
 | `rocketnet_fuzz_client_transport` | the client's real receive loop (`rocketnet_client_transport_update`) and the message client above it | `corpus_client_transport/` | `dict/rocketnet_fuzz_client_transport.dict` |
 | `rocketnet_fuzz_session` | a scripted session (send, tick, drop, duplicate, reorder, corrupt, inject) checked against the DST invariants in `../dst_checks.h` | `corpus_session/` | `dict/rocketnet_fuzz_session.dict` |
+| `rocketnet_fuzz_session_raw` | the same scripted session with the client off its I/O-thread decrypt copy (a link simulator pattern set at create), so the client protocol's own replay check and open refusal see every session datagram | `corpus_session_raw/` | `dict/rocketnet_fuzz_session.dict` |
 | `rocketnet_fuzz_endpoint` | the message layer's receive after decrypt, direct (`rn_endpoint_on_payload`: record decode, reliable window, channel dispatch, block and sequenced fragment reassembly, CONFIG) beside a real sending endpoint, with a clean-stream oracle (only A's bytes, reliable at most once, no disconnect) | `corpus_endpoint/` | `dict/rocketnet_fuzz_endpoint.dict` |
-| `rocketnet_fuzz_xdp_filter` | the XDP program `sdk/xdp/server_xdp.c` through the host shim (`tests/xdp_host/`), differential against `rocketnet_xdp_frame_parse` and the userspace prefilter rungs; Linux only | `corpus_xdp_filter/` | `dict/rocketnet_fuzz_xdp_filter.dict` |
-| `rocketnet_fuzz_differential` | both admission deciders on one abstract case, shared with the fixed gate (`tools/differential/decide.h`); aborts on rocketnet-weaker or an undocumented stricter class | `corpus_differential/` | `dict/rocketnet_fuzz_differential.dict` |
+| `rocketnet_fuzz_xdp_filter` | the XDP program `sdk/xdp/server_xdp.c` through the host shim (`tests/xdp_host/`), differential against `rocketnet_xdp_frame_parse` and the userspace prefilter rungs; fuzzed on Linux, a no-op where the filter is not built as host C | `corpus_xdp_filter/` | `dict/rocketnet_fuzz_xdp_filter.dict` |
 
 The input format of each target is described in the comment at the top of
-its source file. `rocketnet_fuzz_differential` runs the two admission
-deciders of `tools/differential/` (the fixed gate and this target both use
-`tools/differential/decide.h`) on one abstract case encoded as a 25-byte
-record, and aborts on a `rocketnet-weaker` verdict or a stricter class that
-`tools/differential/README.md` does not document as permitted. It needs the
-pinned netcode checkout to build: the nightly Linux leg checks out
-mas-bandwidth/netcode at tag v1.2.1 into its own path and compiles it the way
-`tools/differential/run.sh` does. `rocketnet_fuzz_server_transport`,
+its source file. `rocketnet_fuzz_server_transport`,
 `rocketnet_fuzz_client_transport` and `rocketnet_fuzz_session` are the pair targets. They share
 `rocketnet_fuzz_pair.h`: a real message server and message client joined by
 the loopback transport, with the harness standing on the wire between them.
@@ -51,6 +44,19 @@ This took the transport targets from about 20 to 50-80 inputs a second per
 worker. Elsewhere, or if protection cannot be set up, every restore copies
 every block.
 
+The session target is about twenty times slower than the transport targets
+on the same build, by design: after its script every input runs a 300-step
+quiet window, 200 steps with both ends sending and 100 draining, so the
+liveness check can require every reliable message to arrive. Measured on a
+16-core Linux host (clang 21, the nightly's Debug asan+ubsan build,
+2026-11-12): `rocketnet_fuzz_session` 9 to 10 inputs a second per worker in
+its first two minutes and about 5.6 averaged over a six-hour campaign as
+its inputs grew, `rocketnet_fuzz_server_transport` about 210; the session
+target's committed corpus replays in 2.2 s with the window at 300 steps,
+0.9 s at 150 and 0.9 s at 100, so the sending steps take most of each
+input. The same rate (9 a second) at v1.0.0: not a regression. The nightly
+gives it the time that rate needs (`fuzz-nightly.yml`).
+
 ## Building
 
 ### With libFuzzer (Linux)
@@ -61,11 +67,11 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C tests/fuzz -j 4                 # the thirteen targets (not the differential)
-make -C tests/fuzz compile              # syntax check of all thirteen sources on any host
+make -C tests/fuzz -j 4                 # the sixteen targets
+make -C tests/fuzz compile              # syntax check of all sixteen sources on any host
 ```
 
-`tests/fuzz/Makefile` builds the thirteen targets other than `rocketnet_fuzz_differential` with
+`tests/fuzz/Makefile` builds the sixteen targets with
 `-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
 nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
 nightly builds it:
@@ -128,8 +134,10 @@ the platform source names `WS2_32`, `Qwave` and `winmm` itself.
 LeakSanitizer does not exist on Windows (AddressSanitizer there has no leak
 checker), so the Windows leg runs with `detect_leaks=0` and leaks are
 checked on Linux. The nightly `fuzz-windows` job in
-`.github/workflows/fuzz-nightly.yml` runs exactly these commands for every
-target in the table above; the netcode differential target stays Linux only.
+`.github/workflows/fuzz-nightly.yml` runs exactly these commands for
+thirteen of the targets in the table above: not `rocketnet_fuzz_uring_recvmsg`,
+`rocketnet_fuzz_gateway_netlink` or `rocketnet_fuzz_xdp_filter`, which read
+Linux kernel interfaces (the Makefile's `LINUX_ONLY_TARGETS`).
 
 ### Without libFuzzer: the replay drivers
 
@@ -167,7 +175,7 @@ mkdir -p /tmp/corpus_session && cp tests/fuzz/corpus_session/* /tmp/corpus_sessi
 | NDEBUG smoke | `ci.yml` job `fuzz-smoke-ndebug` | Debug, asserts live | `-DNDEBUG` | corpus replay only |
 
 `tools/fuzz_ndebug.sh --seconds 30 --jobs 8` builds the Release library and
-all fourteen targets in `build-fuzz-ndebug/`, checks that every `sdk/` compile
+all sixteen targets in `build-fuzz-ndebug/`, checks that every `sdk/` compile
 line carries `-DNDEBUG` and that no library object references the assert
 callback, and fuzzes each target; `--target <name>` runs one. Reproducers
 land in `build-fuzz-ndebug/out/crashes/<target>/` and the script exits 1
@@ -225,7 +233,8 @@ input: the value is refused by the table's range and never clamped.
 `rocketnet_fuzz_token_private`, `rocketnet_fuzz_config`,
 `rocketnet_fuzz_connect_token`, `rocketnet_fuzz_receive_structured`,
 `rocketnet_fuzz`, `rocketnet_fuzz_message`, `rocketnet_fuzz_xdp_frame`,
-`rocketnet_fuzz_uring_recvmsg` and `rocketnet_fuzz_gateway_netlink` each contain a
+`rocketnet_fuzz_uring_recvmsg`, `rocketnet_fuzz_gateway_netlink`,
+`rocketnet_fuzz_endpoint` and `rocketnet_fuzz_xdp_filter` each contain a
 deterministic seed generator. Set `ROCKETNET_FUZZ_SEED_DIR` and run the
 binary (the libFuzzer build or the replay driver) to use it:
 
@@ -252,7 +261,13 @@ buffer per verdict, GRO stride and GRO fault, and
 `rocketnet_fuzz_gateway_netlink` one datagram per parser outcome, the last
 two in the 64-bit Linux layout, held to the uapi headers by `static_assert`
 where those exist; off Linux those two write their seeds without replaying
-them. Each seed is replayed through the target before it is written. The
+them. `rocketnet_fuzz_endpoint` writes one script per config, reliability
+and message size, each replayed with the stream kept clean, and requires
+every reliability to reach B under every config; `rocketnet_fuzz_xdp_filter`
+writes three frames (structured, with a replay entry, raw) per
+server-facing packet type, size and family, each replayed to the verdict
+the userspace rungs name for its payload (where the filter is not built as
+host C: MSVC, and the Makefile's Darwin build, it writes them without replaying). Each seed is replayed through the target before it is written. The
 generator exits 1 and prints `INCOMPLETE` unless every packet type the
 target's receive loop reads has a seed that raises that type's counter (or,
 for the session target, unless every reliability type is delivered in both
@@ -262,7 +277,7 @@ deterministic, so a regenerated corpus differs only when the code under it
 changed. The generator exits the process itself, from
 `LLVMFuzzerInitialize`, in the libFuzzer build and the replay driver alike:
 libFuzzer ignores that function's return value, and so does the replay
-driver. ci.yml's macOS checks leg, on the nightly tier, runs all thirteen
+driver. ci.yml's macOS checks leg, on the nightly tier, runs all fifteen
 generators and requires each to exit 0, and requires
 `rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` to
 exit 1 with `INCOMPLETE` when a seed is withheld
@@ -319,14 +334,16 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 ## In CI
 
-- `ci.yml` `fuzz-smoke` deterministically replays all thirteen committed corpora
+- `ci.yml` `fuzz-smoke` deterministically replays all sixteen committed corpora
   through the `fuzz_replay_*` drivers on every push. The time-boxed
   fixed-seed mutation pass moved to `fuzz-nightly.yml`.
 - `fuzz-nightly.yml` builds the libFuzzer targets on Linux, macOS and
   Windows, restores each target's growing corpus from the cache (one cache
   per platform), runs a bounded campaign (`max_total_time`, 900 s by
-  default) and uploads any reproducer.
-- `fuzz-nightly.yml` also runs the same thirteen-target matrix under
+  default; the session target 9600 s on Linux and 2400 s in the NDEBUG
+  campaign) and uploads any reproducer. The XDP filter target runs on the
+  Linux legs only.
+- `fuzz-nightly.yml` also runs the same sixteen-target matrix under
   MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
   sodium included, is built with the MSan flags and the instrumented libc++
   headers at `-O1`, exactly as `tools/run_msan.sh` does, and each target
@@ -348,7 +365,9 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 `tests/oss-fuzz/` holds `build.sh`, `Dockerfile` and `project.yaml` for running
 these targets on OSS-Fuzz. `build.sh` compiles the development library from
-`sdk/` and the vendored `sodium/`, links every target present here, zips
+`sdk/` and the vendored `sodium/`, links the fourteen targets its list names
+(every target here but `rocketnet_fuzz_session_raw` and
+`rocketnet_fuzz_xdp_filter`), zips
 each target's corpus to `<target>_seed_corpus.zip` and copies its
 dictionary. Every compile line carries `-ffp-contract=off`, which
 `tools/check_oss_fuzz_fp_contract.cmake` enforces (the `oss_fuzz_fp_contract`

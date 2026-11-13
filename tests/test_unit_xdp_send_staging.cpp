@@ -9,6 +9,8 @@
 
 #include <errno.h>
 #include <string.h>
+#include <algorithm>
+#include <vector>
 
 #if ROCKETNET_DEV
 
@@ -449,6 +451,18 @@ static void test_xdp_send_wakeup_success_clears_the_hard_error()
 
 REGISTER_UNIT_TEST( test_xdp_send_wakeup_success_clears_the_hard_error );
 
+// rx_ring_full is the fourth field of struct xdp_statistics, bytes 24 to 31:
+// an answer that does not hold all eight of its bytes does not count it
+static void test_xdp_socket_dropped_counts_ring_full_only_when_answered_whole()
+{
+    rocketnet_unit_check( rocketnet_xdp_socket_dropped( 5, 7, 24 ) == 5 );
+    rocketnet_unit_check( rocketnet_xdp_socket_dropped( 5, 7, 31 ) == 5 );
+    rocketnet_unit_check( rocketnet_xdp_socket_dropped( 5, 7, 32 ) == 12 );
+    rocketnet_unit_check( rocketnet_xdp_socket_dropped( 5, 7, 48 ) == 12 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_socket_dropped_counts_ring_full_only_when_answered_whole );
+
 // The fixture calls the actual transport send_packets twice with a fake
 // staged backend carrying the given flags, after one commit: a transport that
 // declares ROCKETNET_TRANSPORT_REFLUSHES flushes at both boundaries, any other
@@ -586,5 +600,58 @@ static void test_xdp_transport_send_claim_does_not_wrap()
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_send_claim_does_not_wrap );
+
+// Packet ids come from each queue's own turn and slot: every id over three
+// turns of four queues of a small staging is distinct, never 0 from turn 1
+// on, and names its queue as id % queues, as finish and abort read it.
+static void test_xdp_transport_send_packet_id_is_per_queue()
+{
+    const int slots = 8;
+    const int queues = 4;
+    std::vector<uint64_t> ids;
+    for ( uint64_t turn = 1; turn <= 3; ++turn )
+    {
+        for ( int queue = 0; queue < queues; ++queue )
+        {
+            for ( int slot = 0; slot < slots; ++slot )
+            {
+                const uint64_t id = rocketnet_xdp_send_packet_id( turn, slot, slots, queues, queue );
+                rocketnet_unit_check( id != 0 );
+                rocketnet_unit_check( (int) ( id % (uint64_t) queues ) == queue );
+                ids.push_back( id );
+            }
+        }
+    }
+    std::sort( ids.begin(), ids.end() );
+    rocketnet_unit_check( std::adjacent_find( ids.begin(), ids.end() ) == ids.end() );
+
+    // within one queue, a later turn's ids are all above an earlier turn's
+
+    rocketnet_unit_check( rocketnet_xdp_send_packet_id( 2, 0, slots, queues, 1 ) > rocketnet_xdp_send_packet_id( 1, slots - 1, slots, queues, 1 ) );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_send_packet_id_is_per_queue );
+
+// Main's handoff lock: it takes the lock at the first try that succeeds,
+// makes exactly tries attempts when every one fails, and never more.
+static void test_xdp_transport_handoff_lock_is_bounded()
+{
+    int attempts = 0;
+    rocketnet_unit_check( rocketnet_xdp_handoff_lock( [&attempts]()
+                                                      { return ++attempts == 3; }, ROCKETNET_XDP_HANDOFF_TRIES ) );
+    rocketnet_unit_check( attempts == 3 );
+
+    attempts = 0;
+    rocketnet_unit_check( !rocketnet_xdp_handoff_lock( [&attempts]()
+                                                       { ++attempts; return false; }, ROCKETNET_XDP_HANDOFF_TRIES ) );
+    rocketnet_unit_check( attempts == ROCKETNET_XDP_HANDOFF_TRIES );
+
+    attempts = 0;
+    rocketnet_unit_check( !rocketnet_xdp_handoff_lock( [&attempts]()
+                                                       { ++attempts; return true; }, 0 ) );
+    rocketnet_unit_check( attempts == 0 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_handoff_lock_is_bounded );
 
 #endif // #if defined(__linux__)

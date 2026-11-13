@@ -1,11 +1,26 @@
-# The nightly watch (tools/check_nightly_dispositions.py): after the scheduled
-# nightlies finish, every red job prints its commit range (the newest earlier
-# scheduled run where that job was green, and this one) and a `git bisect
-# start` line, and is matched against tools/nightly_dispositions.txt. A red job
-# no row names (NEW-RED), or a row whose job is green or whose pull request is
-# merged or closed while the job is still red (STALE), fails the watch. Known
-# reds stay listed with the open pull request that fixes them, so a new red
-# stands out the next morning instead of hiding among them.
+# The nightly watch (tools/check_nightly_dispositions.py): every workflow with
+# a `schedule:` trigger (selected by content, the watch excepted) must have
+# given a verdict for its last cron firing, and every job that is not green
+# must be owned in tools/nightly_dispositions.txt. A red job prints its commit
+# range and a `git bisect start` line. The watch is red on NEW-RED (a failed
+# job nobody owns), NO-VERDICT (no run, a stale run, a run that hung, was
+# cancelled, timed out, could not start, ran no job or skipped every job, or a
+# job that did not succeed), STALE (a row that is wrong now or older than 14
+# days with its job still red) and API-ERROR (a GET that failed three times).
+# A job that declares ROCKETNET_MAY_NOT_MEASURE in its env (a load gate, a
+# report-only leg that voids) and annotates `UNMEASURED` on a night it did not
+# measure is never counted green: that night is UNMEASURED (named in the
+# summary and as a warning, the run not failed), and NO-MEASUREMENT, red, when
+# none of its last 7 scheduled runs measured. Every such job prints
+# "MEASURED ... measured k of the last n scheduled nights". A job that declares
+# ROCKETNET_REPORT_ONLY exits 0 on a failed verdict and annotates
+# `REPORT-ONLY-FAIL`; the watch lists that night red (REPORT-FAIL).
+#
+# Telling: the last step writes the red lines first into the job summary and
+# fails this run, so GitHub's notification of a failed scheduled run reaches
+# the owner of the schedule. Who watches the watch: GitHub's failed-run mail
+# for this workflow's own scheduled run; a night on which this workflow did not
+# run at all is caught by the repository's planted-violations lint, not here.
 
 name: nightly-watch
 
@@ -19,16 +34,132 @@ permissions:
   contents: read
   pull-requests: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   watch:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 15
     steps:
 
+      # Full history: the watch reads when each workflow file arrived on main
+      # (first-parent), so a new workflow is PENDING until its first firing
+      # and red (NO-RUN) after it.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          fetch-depth: 0
 
-      - name: Every red nightly job has a commit range, a bisect line and an owner
+      # The script's exit status is kept, not acted on here, so the last step
+      # always runs, writes the summary and decides.
+      - name: Every scheduled workflow gave a verdict and every red job has an owner
+        id: watch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: python3 tools/check_nightly_dispositions.py | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -euo pipefail
+          status=0
+          python3 tools/check_nightly_dispositions.py > nightly-watch.log 2>&1 || status=$?
+          cat nightly-watch.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      # tools/verification_matrix.tsv, against the runs: each declared cell's job ran on
+      # main in its latest completed run (not skipped, not cancelled), its step
+      # ran, and a suite step's log shows executed cases. Its own verdict step
+      # follows the summary, so one red never hides the other.
+      - name: Every declared cell ran on main (run matrix, remote)
+        id: run_matrix
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          status=0
+          python3 tools/check_run_matrix.py --remote --repo "$GITHUB_REPOSITORY" > run-matrix.log 2>&1 || status=$?
+          grep -v '^OWED ' run-matrix.log || [ $? -eq 1 ]
+          echo "owed cells: $(grep -c '^OWED ' run-matrix.log || [ $? -eq 1 ])"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      # tools/check_scheduled_watched.py --remote: every workflow file on main
+      # with a cron is registered on GitHub and active (a disabled or never
+      # registered one never fires), and a registered workflow whose cron
+      # sits only on another branch is named (GitHub fires crons from main
+      # only). The lint checks the same files against the watch's list
+      # offline; this half needs the API, so it runs here. Red by name.
+      - name: Every scheduled workflow is registered, active and on main (remote)
+        if: ${{ always() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 tools/check_scheduled_watched.py --remote --repo "$GITHUB_REPOSITORY"
+
+      - name: Tell (job summary, and fail the run when red)
+        if: ${{ always() }}
+        env:
+          WATCH_STATUS: ${{ steps.watch.outputs.status }}
+        run: |
+          set -euo pipefail
+          status="${WATCH_STATUS:-none}"
+          tmp="$(mktemp -d)"
+          if [ ! -f nightly-watch.log ]; then
+            printf '## nightly watch: RED\n\nThe watch did not run (no output; step status %s).\n' "$status" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          grep -E '^(NEW-RED|NO-VERDICT|STALE|API-ERROR|BAD-ROW|NO-WORKFLOWS|NO-MEASUREMENT|REPORT-FAIL|UNMEASURED)' nightly-watch.log > "$tmp/red.txt" || [ $? -eq 1 ]
+          grep -E '^nightly watch: ' nightly-watch.log > "$tmp/counts.txt" || [ $? -eq 1 ]
+          grep -E '^UNMEASURED ' nightly-watch.log > "$tmp/unmeasured.txt" || [ $? -eq 1 ]
+          {
+            if [ "$status" = "0" ] && [ -s "$tmp/unmeasured.txt" ]; then
+              echo "## nightly watch: UNMEASURED (not green; red after 7 nights without a measurement)"
+            elif [ "$status" = "0" ]; then
+              echo "## nightly watch: green"
+            else
+              echo "## nightly watch: RED (exit $status)"
+            fi
+            echo
+            if [ -s "$tmp/red.txt" ]; then
+              echo '```'
+              cat "$tmp/red.txt"
+              echo '```'
+            fi
+            echo
+            if [ -s "$tmp/counts.txt" ]; then
+              echo '```'
+              cat "$tmp/counts.txt"
+              echo '```'
+            else
+              echo "No counts line: the watch stopped before the end."
+            fi
+            echo
+            echo '<details><summary>full listing</summary>'
+            echo
+            echo '```'
+            cat nightly-watch.log
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" != "0" ]; then
+            cat "$tmp/red.txt" >&2
+            echo "nightly watch is red (exit $status); see the job summary" >&2
+            exit 1
+          fi
+          if [ ! -s "$tmp/counts.txt" ]; then
+            echo "nightly watch printed no counts line" >&2
+            exit 1
+          fi
+          while IFS= read -r line; do
+            echo "::warning title=nightly watch UNMEASURED::$line"
+          done < "$tmp/unmeasured.txt"
+
+      - name: Run matrix verdict (fail the run when a declared cell did not run)
+        if: ${{ always() }}
+        env:
+          RUN_MATRIX_STATUS: ${{ steps.run_matrix.outputs.status }}
+        run: |
+          set -euo pipefail
+          status="${RUN_MATRIX_STATUS:-none}"
+          if [ ! -f run-matrix.log ]; then echo "the run-matrix check did not run (step status $status)" >&2; exit 1; fi
+          { echo "## run matrix: $([ "$status" = 0 ] && echo green || echo "RED (exit $status)")"; echo; echo '```'; grep -v '^OWED ' run-matrix.log || [ $? -eq 1 ]; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = 0 ] || { echo "run matrix is red (exit $status); see the job summary" >&2; exit 1; }

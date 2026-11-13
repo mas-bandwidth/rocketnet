@@ -27,6 +27,9 @@
 
 #define ROCKETNET_ETHERTYPE_IP      0x0800
 #define ROCKETNET_ETHERTYPE_IPV6    0x86DD
+#define ROCKETNET_ETHERTYPE_VLAN    0x8100      // one IEEE 802.1Q tag
+#define ROCKETNET_VLAN_TAG_BYTES    4
+#define ROCKETNET_VLAN_ID_MAX       4094
 #define ROCKETNET_UDP_PROTOCOL      17
 #define ROCKETNET_IPV4_VERSION_IHL  0x45
 #define ROCKETNET_IPV6_VERSION       0x60
@@ -107,6 +110,25 @@ static inline int rocketnet_xdp_frame_header_bytes( int address_type )
     return ( address_type == ROCKETNET_ADDRESS_IPV4 )
                ? ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES
                : ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+}
+
+// VLAN: a transport's vlan_id is 0 on an untagged network, else the 802.1Q
+// VLAN ID (1 to ROCKETNET_VLAN_ID_MAX) of the VLAN device that owns the
+// server's address. A tagged transport writes one 802.1Q tag after the MACs
+// of every frame it builds (AF_XDP transmit bypasses the kernel's VLAN
+// offload, so the frame must carry it), and every offset after the MACs
+// moves 4 bytes. The payload size limits are those of the IP packet and do
+// not change; the tagged frame is 4 bytes longer on the wire, the 1522-byte
+// tagged frame of IEEE 802.3 at a 1500-byte MTU.
+
+static inline int rocketnet_xdp_frame_tag_bytes( int vlan_id )
+{
+    return vlan_id > 0 ? ROCKETNET_VLAN_TAG_BYTES : 0;
+}
+
+static inline int rocketnet_xdp_frame_header_bytes_vlan( int address_type, int vlan_id )
+{
+    return rocketnet_xdp_frame_header_bytes( address_type ) + rocketnet_xdp_frame_tag_bytes( vlan_id );
 }
 
 // ones'-complement checksum over big-endian 16-bit words (RFC 1071).
@@ -201,19 +223,26 @@ static inline void rocketnet_xdp_frame_write_be16( uint8_t * out, uint16_t value
 // uncounted by the server (veth) or puts it on the wire, so the server
 // refuses it before the TX ring and counts it.
 
-static inline int rocketnet_xdp_frame_fits_mtu( int frame_bytes, int mtu )
+static inline int rocketnet_xdp_frame_fits_mtu_vlan( int frame_bytes, int mtu, int vlan_id )
 {
-    return mtu <= 0 || frame_bytes - ROCKETNET_ETHERNET_HEADER_BYTES <= mtu;
+    return mtu <= 0 || frame_bytes - ROCKETNET_ETHERNET_HEADER_BYTES - rocketnet_xdp_frame_tag_bytes( vlan_id ) <= mtu;
 }
 
-// BUILD: writes ethernet + IP + UDP in front of a payload already at the
-// family's header offset. Returns the frame length, or 0 for a refusal.
+static inline int rocketnet_xdp_frame_fits_mtu( int frame_bytes, int mtu )
+{
+    return rocketnet_xdp_frame_fits_mtu_vlan( frame_bytes, mtu, 0 );
+}
 
-static inline int rocketnet_xdp_frame_build(
+// BUILD: writes ethernet (with the 802.1Q tag of vlan_id when it is above 0)
+// + IP + UDP in front of a payload already at the family's header offset
+// (rocketnet_xdp_frame_header_bytes_vlan). Returns the frame length, or 0 for
+// a refusal; a vlan_id past ROCKETNET_VLAN_ID_MAX refuses.
+
+static inline int rocketnet_xdp_frame_build_vlan(
     void * frame, size_t frame_bytes,
     const uint8_t * server_mac, const uint8_t * gateway_mac,
     const rocketnet_address_t * source, const rocketnet_address_t * destination,
-    int payload_bytes )
+    int payload_bytes, int vlan_id )
 {
     uint8_t * f = (uint8_t *) frame;
     int payload_index;
@@ -227,13 +256,14 @@ static inline int rocketnet_xdp_frame_build(
     {
         return 0;
     }
-    if ( payload_bytes < 0 )
+    if ( payload_bytes < 0 || vlan_id < 0 || vlan_id > ROCKETNET_VLAN_ID_MAX )
     {
         return 0;
     }
 
     const int ipv6 = ( source->type == ROCKETNET_ADDRESS_IPV6 );
-    const int header_bytes = rocketnet_xdp_frame_header_bytes( source->type );
+    const int tag_bytes = rocketnet_xdp_frame_tag_bytes( vlan_id );
+    const int header_bytes = rocketnet_xdp_frame_header_bytes_vlan( source->type, vlan_id );
     const int max_payload = ipv6
                                 ? ROCKETNET_MAX_PACKET_BYTES
                                 : ROCKETNET_RECEIVE_PACKET_BYTES;
@@ -250,54 +280,66 @@ static inline int rocketnet_xdp_frame_build(
     memcpy( f + 6, server_mac, 6 );
     uint16_t ethertype = ipv6 ? ROCKETNET_ETHERTYPE_IPV6 : ROCKETNET_ETHERTYPE_IP;
 
+    // the tag: 0x8100, then priority 0, DEI 0 and the VLAN ID. e is the frame
+    // as an untagged one would be laid out from the ethertype on: every
+    // offset below is the untagged frame's
+
+    if ( tag_bytes )
+    {
+        rocketnet_xdp_frame_write_be16( f + 12, ROCKETNET_ETHERTYPE_VLAN );
+        rocketnet_xdp_frame_write_be16( f + 14, (uint16_t) vlan_id );
+    }
+
+    uint8_t * e = f + tag_bytes;
+
     payload_index = header_bytes;
     total = header_bytes + payload_bytes;
 
     if ( ipv6 )
     {
-        rocketnet_xdp_frame_write_be16( f + 12, ethertype );
-        f[14] = ROCKETNET_IPV6_VERSION;
-        f[15] = 0;
-        f[16] = 0;
-        f[17] = 0;
-        rocketnet_xdp_frame_write_be16( f + 18, (uint16_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ) );
-        f[20] = ROCKETNET_UDP_PROTOCOL;
-        f[21] = 64;
+        rocketnet_xdp_frame_write_be16( e + 12, ethertype );
+        e[14] = ROCKETNET_IPV6_VERSION;
+        e[15] = 0;
+        e[16] = 0;
+        e[17] = 0;
+        rocketnet_xdp_frame_write_be16( e + 18, (uint16_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ) );
+        e[20] = ROCKETNET_UDP_PROTOCOL;
+        e[21] = 64;
 
         for ( int i = 0; i < 8; ++i )
         {
-            rocketnet_xdp_frame_write_be16( f + 22 + 2 * i, source->data.ipv6[i] );
+            rocketnet_xdp_frame_write_be16( e + 22 + 2 * (size_t) i, source->data.ipv6[i] );
         }
         for ( int i = 0; i < 8; ++i )
         {
-            rocketnet_xdp_frame_write_be16( f + 38 + 2 * i, destination->data.ipv6[i] );
+            rocketnet_xdp_frame_write_be16( e + 38 + 2 * (size_t) i, destination->data.ipv6[i] );
         }
     }
     else
     {
-        rocketnet_xdp_frame_write_be16( f + 12, ethertype );
-        f[14] = ROCKETNET_IPV4_VERSION_IHL;
-        f[15] = 0x00;
-        rocketnet_xdp_frame_write_be16( f + 16, (uint16_t) ( ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES + payload_bytes ) );
-        f[18] = 0;
-        f[19] = 0;
-        f[20] = 0x40;
-        f[21] = 0x00;
-        f[22] = 64;
-        f[23] = ROCKETNET_UDP_PROTOCOL;
-        f[24] = 0;
-        f[25] = 0;
-        f[26] = source->data.ipv4[0];
-        f[27] = source->data.ipv4[1];
-        f[28] = source->data.ipv4[2];
-        f[29] = source->data.ipv4[3];
-        f[30] = destination->data.ipv4[0];
-        f[31] = destination->data.ipv4[1];
-        f[32] = destination->data.ipv4[2];
-        f[33] = destination->data.ipv4[3];
+        rocketnet_xdp_frame_write_be16( e + 12, ethertype );
+        e[14] = ROCKETNET_IPV4_VERSION_IHL;
+        e[15] = 0x00;
+        rocketnet_xdp_frame_write_be16( e + 16, (uint16_t) ( ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES + payload_bytes ) );
+        e[18] = 0;
+        e[19] = 0;
+        e[20] = 0x40;
+        e[21] = 0x00;
+        e[22] = 64;
+        e[23] = ROCKETNET_UDP_PROTOCOL;
+        e[24] = 0;
+        e[25] = 0;
+        e[26] = source->data.ipv4[0];
+        e[27] = source->data.ipv4[1];
+        e[28] = source->data.ipv4[2];
+        e[29] = source->data.ipv4[3];
+        e[30] = destination->data.ipv4[0];
+        e[31] = destination->data.ipv4[1];
+        e[32] = destination->data.ipv4[2];
+        e[33] = destination->data.ipv4[3];
 
-        uint16_t ip_check = rocketnet_xdp_frame_checksum( f + 14, ROCKETNET_IPV4_HEADER_BYTES );
-        rocketnet_xdp_frame_write_be16( f + 24, ip_check );
+        uint16_t ip_check = rocketnet_xdp_frame_checksum( e + 14, ROCKETNET_IPV4_HEADER_BYTES );
+        rocketnet_xdp_frame_write_be16( e + 24, ip_check );
     }
 
     // UDP header
@@ -314,7 +356,7 @@ static inline int rocketnet_xdp_frame_build(
         f[payload_index - 2] = 0;
         f[payload_index - 1] = 0;
         uint16_t udp_check = rocketnet_xdp_frame_ipv6_udp_checksum(
-            f + 22, f + 38, (uint32_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ),
+            e + 22, e + 38, (uint32_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ),
             f + payload_index - 8, payload_bytes );
         rocketnet_xdp_frame_write_be16( f + payload_index - 2, udp_check );
     }
@@ -327,19 +369,56 @@ static inline int rocketnet_xdp_frame_build(
     return total;
 }
 
-// PARSE: reads ethernet + IP + UDP. Returns false for anything unrecognized,
-// extension headers included; an IPv6 header with any traffic class and flow
-// label is read. Fills the source address and a pointer/length
+// the untagged build: every frame of a transport on an untagged network
+
+static inline int rocketnet_xdp_frame_build(
+    void * frame, size_t frame_bytes,
+    const uint8_t * server_mac, const uint8_t * gateway_mac,
+    const rocketnet_address_t * source, const rocketnet_address_t * destination,
+    int payload_bytes )
+{
+    return rocketnet_xdp_frame_build_vlan( frame, frame_bytes, server_mac, gateway_mac, source, destination, payload_bytes, 0 );
+}
+
+// the 802.1Q tag of a frame, read for a transport of vlan_id: returns the
+// tag's length (0 for an untagged frame, ROCKETNET_VLAN_TAG_BYTES for one
+// tag of vlan_id), or -1 when the frame is tagged for anything else: a
+// tagged frame on an untagged transport, a VLAN ID that is not the
+// transport's, or a tag cut by the frame end. An untagged frame is taken on
+// a tagged transport too: a NIC that strips the tag on receive (rx VLAN
+// offload, the ixgbe and i40e default) hands XDP the frame without it. The
+// frame holds at least ROCKETNET_ETHERNET_HEADER_BYTES.
+
+static inline int rocketnet_xdp_frame_vlan_tag( const uint8_t * f, size_t frame_bytes, int vlan_id )
+{
+    if ( ( ( f[12] << 8 ) | f[13] ) != ROCKETNET_ETHERTYPE_VLAN )
+    {
+        return 0;
+    }
+    if ( vlan_id <= 0 || frame_bytes < (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_VLAN_TAG_BYTES ) ||
+         ( ( ( f[14] << 8 ) | f[15] ) & 0x0FFF ) != vlan_id )
+    {
+        return -1;
+    }
+
+    return ROCKETNET_VLAN_TAG_BYTES;
+}
+
+// PARSE: reads ethernet (one 802.1Q tag of vlan_id, or none:
+// rocketnet_xdp_frame_vlan_tag) + IP + UDP. Returns false for anything
+// unrecognized, extension headers included; an IPv6 header with any traffic
+// class and flow label is read. Fills the source address and a pointer/length
 // into the payload bytes (inside frame).
 // Length guards: the up-front check proves the frame holds the whole IPv4
-// header set (ethernet + IPv4 + UDP), enough to name the ethertype at bytes
-// 12-13 and the version at byte 14; the IPv6 branch then proves the frame
-// holds its larger header set before it reads any byte past the ethernet
-// header, so a truncated IPv6 frame is refused before its source address or
-// UDP port is read.
+// header set (ethernet + IPv4 + UDP) after the tag, enough to name the
+// ethertype and the IP version; the IPv6 branch then proves the frame holds
+// its larger header set before it reads any byte past the ethernet header,
+// so a truncated IPv6 frame is refused before its source address or UDP port
+// is read. Below, e and e_bytes are the frame from its first MAC with the tag
+// stepped over, so every offset is the untagged frame's.
 
-static inline bool rocketnet_xdp_frame_parse(
-    const void * frame, size_t frame_bytes,
+static inline bool rocketnet_xdp_frame_parse_vlan(
+    const void * frame, size_t frame_bytes, int vlan_id,
     rocketnet_address_t * out_from,
     const uint8_t ** out_payload, int * out_payload_length )
 {
@@ -352,7 +431,7 @@ static inline bool rocketnet_xdp_frame_parse(
     {
         return false;
     }
-    if ( frame_bytes < (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) )
+    if ( frame_bytes < (size_t) ROCKETNET_ETHERNET_HEADER_BYTES )
     {
         return false;
     }
@@ -361,55 +440,69 @@ static inline bool rocketnet_xdp_frame_parse(
         return false;
     }
 
-    uint16_t ethertype = (uint16_t) ( ( f[12] << 8 ) | f[13] );
+    const int tag_bytes = rocketnet_xdp_frame_vlan_tag( f, frame_bytes, vlan_id );
+    if ( tag_bytes < 0 )
+    {
+        return false;
+    }
+
+    const uint8_t * e = f + tag_bytes;
+    const size_t e_bytes = frame_bytes - (size_t) tag_bytes;
+
+    if ( e_bytes < (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) )
+    {
+        return false;
+    }
+
+    uint16_t ethertype = (uint16_t) ( ( e[12] << 8 ) | e[13] );
     memset( out_from, 0, sizeof( *out_from ) );
 
     if ( ethertype == ROCKETNET_ETHERTYPE_IP )
     {
-        if ( f[14] != ROCKETNET_IPV4_VERSION_IHL )
+        if ( e[14] != ROCKETNET_IPV4_VERSION_IHL )
         {
             return false;
         }
-        if ( f[23] != ROCKETNET_UDP_PROTOCOL )
+        if ( e[23] != ROCKETNET_UDP_PROTOCOL )
         {
             return false;
         }
 
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
-        udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
+        udp_len = (uint16_t) ( ( e[header_bytes - 4] << 8 ) | e[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
         {
             return false;
         }
 
         out_from->type = ROCKETNET_ADDRESS_IPV4;
-        out_from->data.ipv4[0] = f[26];
-        out_from->data.ipv4[1] = f[27];
-        out_from->data.ipv4[2] = f[28];
-        out_from->data.ipv4[3] = f[29];
-        out_from->port = (uint16_t) ( ( f[header_bytes - 8] << 8 ) | f[header_bytes - 7] );
+        out_from->data.ipv4[0] = e[26];
+        out_from->data.ipv4[1] = e[27];
+        out_from->data.ipv4[2] = e[28];
+        out_from->data.ipv4[3] = e[29];
+        out_from->port = (uint16_t) ( ( e[header_bytes - 8] << 8 ) | e[header_bytes - 7] );
     }
     else if ( ethertype == ROCKETNET_ETHERTYPE_IPV6 )
     {
         // the version nibble only: the traffic class and the 20-bit flow
         // label carry any value (a Linux sender sets a flow label by default)
 
-        if ( ( f[14] & 0xF0 ) != ROCKETNET_IPV6_VERSION )
+        if ( ( e[14] & 0xF0 ) != ROCKETNET_IPV6_VERSION )
         {
             return false;
         }
-        if ( f[20] != ROCKETNET_UDP_PROTOCOL )
+        if ( e[20] != ROCKETNET_UDP_PROTOCOL )
         {
             return false;
         }
 
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
-        if ( frame_bytes < (size_t) header_bytes )
+        if ( e_bytes < (size_t) header_bytes )
         {
             return false;
         }
 
-        udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
+        udp_len = (uint16_t) ( ( e[header_bytes - 4] << 8 ) | e[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
         {
             return false;
@@ -418,9 +511,9 @@ static inline bool rocketnet_xdp_frame_parse(
         out_from->type = ROCKETNET_ADDRESS_IPV6;
         for ( int i = 0; i < 8; ++i )
         {
-            out_from->data.ipv6[i] = (uint16_t) ( ( f[22 + 2 * i] << 8 ) | f[23 + 2 * i] );
+            out_from->data.ipv6[i] = (uint16_t) ( ( e[22 + 2 * i] << 8 ) | e[23 + 2 * i] );
         }
-        out_from->port = (uint16_t) ( ( f[header_bytes - 8] << 8 ) | f[header_bytes - 7] );
+        out_from->port = (uint16_t) ( ( e[header_bytes - 8] << 8 ) | e[header_bytes - 7] );
     }
     else
     {
@@ -430,7 +523,7 @@ static inline bool rocketnet_xdp_frame_parse(
     // Bytes past the UDP length (link-layer padding) are not payload; a UDP
     // length past the frame end is refused, as server_xdp_udp drops it
 
-    payload_bytes = (int) ( frame_bytes - (size_t) header_bytes );
+    payload_bytes = (int) ( e_bytes - (size_t) header_bytes );
     if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES > payload_bytes )
     {
         return false;
@@ -438,9 +531,19 @@ static inline bool rocketnet_xdp_frame_parse(
 
     payload_bytes = (int) udp_len - ROCKETNET_UDP_HEADER_BYTES;
 
-    *out_payload = f + header_bytes;
+    *out_payload = e + header_bytes;
     *out_payload_length = payload_bytes;
     return true;
+}
+
+// the untagged parse: a tagged frame is refused
+
+static inline bool rocketnet_xdp_frame_parse(
+    const void * frame, size_t frame_bytes,
+    rocketnet_address_t * out_from,
+    const uint8_t ** out_payload, int * out_payload_length )
+{
+    return rocketnet_xdp_frame_parse_vlan( frame, frame_bytes, 0, out_from, out_payload, out_payload_length );
 }
 
 // RECEIVE: the AF_XDP receive loop's per-frame dispatch, for a server that
@@ -451,14 +554,16 @@ static inline bool rocketnet_xdp_frame_parse(
 // packet. Every frame it does not take is dropped and counted by name:
 //
 //   not_ip          the ethertype is neither IPv4 nor IPv6, or the frame is
-//                   too short to name one
+//                   too short to name one, or it carries an 802.1Q tag that
+//                   is not the transport's (rocketnet_xdp_frame_vlan_tag)
 //   ipv6_extension  an IPv6 frame whose next header is an extension header
 //                   (hop-by-hop, routing, fragment, destination options, AH,
 //                   ESP): never parsed at the UDP offsets
 //   other_family    a frame of the family this server does not serve
 //   malformed       an IPv4 or IPv6 frame the parse refuses (IPv4 options, a
-//                   next header that is not UDP) or one too short for the
-//                   smallest server packet
+//                   next header that is not UDP), one too short for the
+//                   smallest server packet, or an IPv6 frame from an
+//                   IPv4-mapped source (sdk/rocketnet_address.h)
 //   descriptor      a receive descriptor rocketnet_xdp_receive_descriptor
 //                   refuses before the frame is read (below)
 //
@@ -490,8 +595,8 @@ static inline bool rocketnet_xdp_frame_ipv6_is_extension( uint8_t next_header )
            next_header == 50;       // ESP
 }
 
-static inline bool rocketnet_xdp_frame_receive(
-    const void * frame, size_t frame_bytes, int address_type,
+static inline bool rocketnet_xdp_frame_receive_vlan(
+    const void * frame, size_t frame_bytes, int address_type, int vlan_id,
     rocketnet_address_t * out_from,
     const uint8_t ** out_payload, int * out_payload_length,
     struct rocketnet_xdp_receive_drops_t * drops )
@@ -509,7 +614,20 @@ static inline bool rocketnet_xdp_frame_receive(
         return false;
     }
 
-    const uint16_t ethertype = (uint16_t) ( ( f[12] << 8 ) | f[13] );
+    const int tag_bytes = rocketnet_xdp_frame_vlan_tag( f, frame_bytes, vlan_id );
+    if ( tag_bytes < 0 )
+    {
+        drops->not_ip++;
+        return false;
+    }
+
+    // e and e_bytes: the frame with the tag stepped over, at the untagged
+    // frame's offsets
+
+    const uint8_t * e = f + tag_bytes;
+    const size_t e_bytes = frame_bytes - (size_t) tag_bytes;
+
+    const uint16_t ethertype = (uint16_t) ( ( e[12] << 8 ) | e[13] );
 
     int family;
     if ( ethertype == ROCKETNET_ETHERTYPE_IP )
@@ -520,7 +638,7 @@ static inline bool rocketnet_xdp_frame_receive(
     {
         family = ROCKETNET_ADDRESS_IPV6;
 
-        if ( frame_bytes >= (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES ) && rocketnet_xdp_frame_ipv6_is_extension( f[20] ) )
+        if ( e_bytes >= (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES ) && rocketnet_xdp_frame_ipv6_is_extension( e[20] ) )
         {
             drops->ipv6_extension++;
             return false;
@@ -544,7 +662,17 @@ static inline bool rocketnet_xdp_frame_receive(
     const uint8_t * payload = NULL;
     int payload_bytes = 0;
 
-    if ( !rocketnet_xdp_frame_parse( frame, frame_bytes, &from, &payload, &payload_bytes ) || payload_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+    if ( !rocketnet_xdp_frame_parse_vlan( frame, frame_bytes, vlan_id, &from, &payload, &payload_bytes ) || payload_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+    {
+        drops->malformed++;
+        return false;
+    }
+
+    // the real IPv6 header is seen here, so an IPv4-mapped source is spoofed
+    // and dropped (rocketnet_address_accept_received_source, as every socket
+    // transport drops it); counted with the frames whose header is refused
+
+    if ( !rocketnet_address_accept_received_source( &from, false ) )
     {
         drops->malformed++;
         return false;
@@ -554,6 +682,17 @@ static inline bool rocketnet_xdp_frame_receive(
     *out_payload = payload;
     *out_payload_length = payload_bytes;
     return true;
+}
+
+// the untagged receive
+
+static inline bool rocketnet_xdp_frame_receive(
+    const void * frame, size_t frame_bytes, int address_type,
+    rocketnet_address_t * out_from,
+    const uint8_t ** out_payload, int * out_payload_length,
+    struct rocketnet_xdp_receive_drops_t * drops )
+{
+    return rocketnet_xdp_frame_receive_vlan( frame, frame_bytes, address_type, 0, out_from, out_payload, out_payload_length, drops );
 }
 
 // TRANSPORT BOUNDS: the checks the AF_XDP transport makes before it copies into
@@ -566,13 +705,14 @@ static inline bool rocketnet_xdp_frame_receive(
 // length of 0, one past ROCKETNET_RECEIVE_CEILING (a negative int stored
 // into the size_t lands here too) or one that does not fit the frame after
 // the header is refused before the copy: *refused is incremented and -1 is
-// returned. Else it returns the payload length.
+// returned. Else it returns the payload length. The _vlan form copies to the
+// header offset of a transport of vlan_id (rocketnet_xdp_frame_build_vlan).
 
-static inline int rocketnet_xdp_send_copy(
-    uint8_t * frame, size_t frame_bytes, int address_type,
+static inline int rocketnet_xdp_send_copy_vlan(
+    uint8_t * frame, size_t frame_bytes, int address_type, int vlan_id,
     const uint8_t * packet, size_t packet_bytes, uint64_t * refused )
 {
-    const int header_bytes = rocketnet_xdp_frame_header_bytes( address_type );
+    const int header_bytes = rocketnet_xdp_frame_header_bytes_vlan( address_type, vlan_id );
     if ( !frame || !packet || packet_bytes == 0 || packet_bytes > (size_t) ROCKETNET_RECEIVE_CEILING ||
          (size_t) header_bytes > frame_bytes || packet_bytes > frame_bytes - (size_t) header_bytes )
     {
@@ -585,6 +725,13 @@ static inline int rocketnet_xdp_send_copy(
 
     memcpy( frame + header_bytes, packet, packet_bytes );
     return (int) packet_bytes;
+}
+
+static inline int rocketnet_xdp_send_copy(
+    uint8_t * frame, size_t frame_bytes, int address_type,
+    const uint8_t * packet, size_t packet_bytes, uint64_t * refused )
+{
+    return rocketnet_xdp_send_copy_vlan( frame, frame_bytes, address_type, 0, packet, packet_bytes, refused );
 }
 
 // RECEIVE DESCRIPTOR: the bytes a receive descriptor names inside the UMEM
@@ -732,6 +879,37 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
     return true;
 }
 
+// The cpu an XDP thread pins to: queue q takes cpu num_os_cpus + q. The
+// operating system keeps core 0 on Linux, so the first XDP thread is on cpu 1
+// at the least: a num_os_cpus below 1 reads as 1 and no queue ever lands on
+// core 0.
+
+static inline int rocketnet_xdp_thread_cpu( int num_os_cpus, int queue )
+{
+    return ( num_os_cpus < 1 ? 1 : num_os_cpus ) + queue;
+}
+
+// The mask an XDP thread falls back to when its own pin is refused (a cpu
+// outside the set or offline, or the affinity call failing): the cpus it is
+// allowed on less core 0, which the operating system keeps on Linux. allowed
+// and out are bit arrays of bytes bytes, cpu n at bit n % 8 of byte n / 8 (a
+// Linux cpu_set_t's layout). Returns how many cpus out holds; with 0 the
+// thread has nowhere but core 0 and the caller leaves its mask alone.
+
+static inline int rocketnet_xdp_mask_without_core_zero( const uint8_t * allowed, uint8_t * out, int bytes )
+{
+    int count = 0;
+    for ( int i = 0; i < bytes; i++ )
+    {
+        out[i] = i == 0 ? (uint8_t) ( allowed[i] & 0xFE ) : allowed[i];
+        for ( int bit = 0; bit < 8; bit++ )
+        {
+            count += ( out[i] >> bit ) & 1;
+        }
+    }
+    return count;
+}
+
 // PIN TARGETS: every cpu this transport will pin to, num_os_cpus ..
 // num_os_cpus + num_queues - 1, is in the kernel's isolated cpu-list
 // ("1-7", "1,3,5-6", a trailing newline). A malformed or empty list never
@@ -786,7 +964,9 @@ static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_lis
         }
     }
 
-    for ( int cpu = num_os_cpus; cpu < num_os_cpus + num_queues; cpu++ )
+    const int first_cpu = rocketnet_xdp_thread_cpu( num_os_cpus, 0 );
+
+    for ( int cpu = first_cpu; cpu < first_cpu + num_queues; cpu++ )
     {
         bool found = false;
         const char * scan = cursor;
@@ -898,7 +1078,8 @@ static inline bool rocketnet_xdp_stats_publish( bool read, const struct rocketne
 // create-time allocation: open addressing over a power-of-two count of
 // slots (the index mask is the count less one), a lookup stopping at the
 // first never-used slot and probing at most ROCKETNET_XDP_REPLY_MAC_PROBES
-// slots. A learn into a full probe window replaces the entry learned longest
+// slots. A learn takes the first never-used slot of its probe window, else
+// replaces the window's oldest answered entry, else the entry learned longest
 // ago; a forget leaves the address's entry in place as its answered entry.
 // No allocation, no clock and no lock: its
 // owner serialises writes.
@@ -1049,8 +1230,8 @@ static inline bool rocketnet_xdp_reply_mac_usable( const uint8_t * mac )
 // learned entry.
 
 // proofs/tla/RNXdpReplyMacsLayout.tla Learn: the address's own entry, else the
-// first slot of the window not LIVE, else the LIVE entry learned longest ago
-// (EvictOnlyOldest)
+// first EMPTY slot of the window, else its oldest ANSWERED entry, else the
+// LIVE entry learned longest ago (EvictOnlyOldest)
 static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, const uint8_t * mac )
 {
     if ( !table || !address || !rocketnet_xdp_reply_mac_usable( mac ) )
@@ -1069,18 +1250,33 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
     if ( !entry )
     {
         const uint32_t slot = rocketnet_xdp_reply_macs_slot( table, address );
+        struct rocketnet_xdp_reply_mac_entry_t * oldest_answered = NULL;
         struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
 
         for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
         {
             struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & table->mask];
-            if ( candidate->state != ROCKETNET_XDP_REPLY_MAC_LIVE )
+            if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
             {
                 entry = candidate;
                 break;
             }
 
-            if ( !oldest || candidate->learned < oldest->learned )
+            if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_ANSWERED )
+            {
+                if ( !oldest_answered || candidate->learned < oldest_answered->learned )
+                {
+                    oldest_answered = candidate;
+                }
+            }
+            // the trace check's plant (tests/tla_trace_xdp_reply_macs.cpp):
+            // the eviction takes the live entry learned last, the reversed
+            // witness MCRNXdpReplyMacsLayoutBrokenEvictNewest.cfg
+#if defined( ROCKETNET_XDP_REPLY_MACS_PLANT )
+            else if ( !oldest || candidate->learned > oldest->learned )
+#else  // #if defined( ROCKETNET_XDP_REPLY_MACS_PLANT )
+            else if ( !oldest || candidate->learned < oldest->learned )
+#endif // #if defined( ROCKETNET_XDP_REPLY_MACS_PLANT )
             {
                 oldest = candidate;
             }
@@ -1088,7 +1284,7 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
 
         if ( !entry )
         {
-            entry = oldest;
+            entry = oldest_answered ? oldest_answered : oldest;
         }
 
         entry->address = *address;
@@ -1170,7 +1366,10 @@ static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_m
     }
 }
 
-// proofs/tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given):
+// proofs/tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given);
+// proofs/tla/RNXdpReplyMacsLayout.tla ReplyLearned (the learned MAC returned),
+// ReplyAnswered (the answered entry's MAC returned) and Refuse (no MAC, the
+// reply not sent):
 // the reply MAC for a destination: the learned MAC, else the gateway MAC,
 // else answered_mac (the source MAC of the received frame this reply
 // answers, NULL for none), kept as the address's answered entry; a zero or
@@ -1291,7 +1490,11 @@ static inline int rocketnet_xdp_gateway_refresh( struct rocketnet_xdp_gateway_re
         return 0;
     }
 
+    // tests/tla_trace_xdp_gateway_refresh.cpp plants a refresh that keeps
+    // its old deadline, so every later call resolves again
+#if !defined( ROCKETNET_XDP_GATEWAY_REFRESH_PLANT )
     refresh->next_time = now + ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS;
+#endif // #if !defined( ROCKETNET_XDP_GATEWAY_REFRESH_PLANT )
 
     int num_changes = 0;
     const int num_families = refresh->serves_both ? 2 : 1;

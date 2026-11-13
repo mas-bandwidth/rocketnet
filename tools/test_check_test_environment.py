@@ -101,6 +101,8 @@ REGISTER_UNIT_TEST( test_unguarded_after_literals );
 
 class ShapeTests(unittest.TestCase):
     def test_names_then_passed_line(self):
+        self.assertEqual(checker.check_shape(["commit available 1 MiB of a 2 MiB limit, physical available 3 MiB",
+                                              "test_a", "", checker.PASSED_LINE, ""], "suite"), ["test_a"])
         self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE, ""], "suite"),
                          ["test_a", "test_b"])
 
@@ -111,6 +113,11 @@ class ShapeTests(unittest.TestCase):
     def test_capital_letter_fails(self):
         with self.assertRaises(SystemExit):
             checker.check_shape(["TestWindowRing", "", checker.PASSED_LINE, ""], "suite")
+
+    def test_zero_names_fails_naming_the_count(self):
+        for lines in (["", checker.PASSED_LINE, ""], ["", "", checker.PASSED_LINE, ""]):
+            with self.assertRaisesRegex(SystemExit, "0 test names printed"):
+                checker.check_shape(lines, "suite")
 
     def test_missing_passed_line_fails(self):
         with self.assertRaises(SystemExit):
@@ -123,6 +130,38 @@ class ShapeTests(unittest.TestCase):
     def test_repeated_name_passes_without_once(self):
         self.assertEqual(checker.check_shape(["test_a", "test_a", "", checker.PASSED_LINE, ""], "suite"),
                          ["test_a", "test_a"])
+
+
+class FunctionalLogTests(unittest.TestCase):
+    ROWS = {"test_a": (True, None), "test_b": (True, None)}
+
+    def check(self, *middle):
+        lines = ["test_a", "test_b", "skipped: 0", *middle, "", checker.PASSED_LINE, ""]
+        return checker.check_functional_log(lines, self.ROWS, None)
+
+    def test_whole_run_passes(self):
+        self.assertEqual(self.check(), [])
+
+    def test_keep_going_summary_of_a_passing_run_passes(self):
+        self.assertEqual(self.check("keep going: 0 failed; 2 of 2 collected cases ran"), [])
+
+    def test_keep_going_summary_with_a_failure_is_refused(self):
+        self.assertTrue(self.check("keep going: 1 failed; 2 of 2 collected cases ran"))
+
+    def test_keep_going_summary_with_a_case_unrun_is_refused(self):
+        self.assertTrue(self.check("keep going: 0 failed; 1 of 2 collected cases ran"))
+
+    def test_two_keep_going_summaries_are_refused(self):
+        line = "keep going: 0 failed; 2 of 2 collected cases ran"
+        self.assertTrue(self.check(line, line))
+
+    def test_windows_commit_lines_are_reports(self):
+        self.assertEqual(self.check("commit available 320759 MiB of a 325500 MiB limit, physical available 123419 MiB",
+                                    "commit lock: test_a waited 3.5 s for another run's full-capacity case",
+                                    "commit state unreadable"), [])
+
+    def test_a_commit_line_with_more_text_is_refused(self):
+        self.assertTrue(self.check("commit available 1 MiB of a 2 MiB limit, physical available 3 MiB and then some"))
 
 
 

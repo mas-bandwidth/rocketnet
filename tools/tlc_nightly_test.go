@@ -63,10 +63,11 @@ func TestRealTLCOutcomes(t *testing.T) {
 	for _, test := range []struct {
 		name, expected, property, clause string
 		exit, workers                    int
+		violated                         string // the kind of each violation TLC reported, joined by ","
 	}{
-		{"positive", "pass", "-", "INVARIANT Safe", 0, 2},
-		{"invariant", "invariant", "Broken", "INVARIANT Broken", 12, 1},
-		{"temporal", "temporal", "EventuallyTwo", "PROPERTY EventuallyTwo", 13, 1},
+		{"positive", "pass", "-", "INVARIANT Safe", 0, 2, ""},
+		{"invariant", "invariant", "Broken", "INVARIANT Broken", 12, 1, "Invariant Broken"},
+		{"temporal", "temporal", "EventuallyTwo", "PROPERTY EventuallyTwo", 13, 1, "Temporal property"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			o := fixture(t, test.expected, test.property, test.clause)
@@ -77,6 +78,14 @@ func TestRealTLCOutcomes(t *testing.T) {
 			}
 			if rec.Mode != "nightly-no-timeout" || rec.ElapsedCap != nil || !rec.InputsCurrent || rec.InputSHA == "" || len(rec.Inputs) == 0 {
 				t.Fatalf("incomplete provenance: %+v", rec)
+			}
+			// The re-run comparer reads the violated property from the evidence.
+			var got []string
+			for _, v := range rec.Violated {
+				got = append(got, strings.TrimSpace(v.Kind+" "+v.Name))
+			}
+			if strings.Join(got, ",") != test.violated && !(test.name == "temporal" && strings.Join(got, ",") == "Temporal property EventuallyTwo") {
+				t.Fatalf("violated=%q, want %q", got, test.violated)
 			}
 			if _, err := os.Stat(filepath.Join(o.out, "RUNS.tsv")); !os.IsNotExist(err) {
 				t.Fatal("nightly must never produce bounded RUNS.tsv")

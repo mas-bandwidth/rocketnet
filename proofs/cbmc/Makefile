@@ -38,12 +38,10 @@
 #
 # `ack-run-bound-8`, `ack-run-full-4096`, and `ack-run-negative-control`
 # use ESBMC on the current C++ leaf in sdk/rocketnet_ack.cpp. They are on no
-# list here: the run-8 instance exhausts 48 GB (INVENTORY.md records the
-# measurements). `ack-run-bound-8` and `ack-run-negative-control` run each
-# night on studio (512 GB) by .github/workflows/nightly-ack-proof.yml, on an
-# ESBMC built from pinned source (tools/build_pinned_esbmc.sh), with
-# ACK_RUN_MEMORY_KB and ACK_RUN_TIMEOUT raised. run_bounded.sh applies both
-# limits on Linux and macOS.
+# list and in no workflow: ESBMC 8.5 cannot encode them in any memory we
+# have (INVENTORY.md, "ACK run measurements"). The nightly
+# (.github/workflows/nightly-ack-proof.yml) runs the ack-run-exhaustive-*
+# checks below instead.
 
 CBMC ?= cbmc
 
@@ -52,6 +50,21 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
              --unwinding-assertions
 
 SDK = ../../sdk
+
+# One CBMC proof and its verdict: $(1) the name, $(2) the arguments after the
+# flags. Passes only on exit 0 with the line VERIFICATION SUCCESSFUL, so a
+# checker that exits 0 without proving anything (a wrapper, a changed banner,
+# a stub) is a HOLD, never a pass.
+define run_cbmc_proof
+	@work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
+	status=0; \
+	$(CBMC) $(CBMC_FLAGS) $(2) > "$$work/proof.log" 2>&1 || status=$$?; \
+	cat "$$work/proof.log"; \
+	if [ $$status -ne 0 ] || ! grep -q '^VERIFICATION SUCCESSFUL' "$$work/proof.log"; then \
+	  echo "$(1) HOLD: no VERIFICATION SUCCESSFUL (exit $$status)"; exit 1; \
+	fi; \
+	echo "$(1) VERIFICATION SUCCESSFUL"
+endef
 
 # The deployed constants each bound is printed beside, read from the sdk
 # headers. A macro written as an arithmetic expression carries its deployed
@@ -96,7 +109,10 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 
 .PHONY: all replay-delta-1-3 replay-near-4096 replay-far reconstruct \
         read-write message-read xdp-free-list \
-        ack-run-bound-8 ack-run-full-4096 ack-run-negative-control clean
+        ack-run-bound-8 ack-run-full-4096 ack-run-negative-control \
+        ack-run-exhaustive-8 ack-run-exhaustive-negative-control \
+        ack-run-exhaustive-vacuity-plant ack-run-exhaustive-mutants \
+        clean
 
 all: replay-delta-1-3 replay-far reconstruct \
      read-write message-read xdp-free-list proofs-packet_open
@@ -104,9 +120,7 @@ all: replay-delta-1-3 replay-far reconstruct \
 # The quick nightly instance remains explicit about its reduced bound.
 replay-delta-1-3: proof_replay_advance.c
 	@echo "replay-delta-1-3 bound delta 1..3 deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS); deltas 4..$(shell expr $(REPLAY_WINDOW_BITS) - 1) are not proved by this target"
-	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
-	    -DREPLAY_DELTA_BOUND=4 \
-	    --function harness_replay_near proof_replay_advance.c
+	$(call run_cbmc_proof,replay-delta-1-3,--unwind $(REPLAY_UNWIND) -I$(SDK) -DREPLAY_DELTA_BOUND=4 --function harness_replay_near proof_replay_advance.c)
 
 # The full declared near-window instance. Unwind 65 initializes all 64
 # symbolic words and covers either production range-clear path. The path
@@ -170,9 +184,7 @@ replay-near-4096: replay-near-4096-completeness $(addprefix replay-near-4096-,$(
 
 replay-near-4096-completeness: proof_replay_advance.c
 	@echo "replay-near-4096 bound delta 1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 1 -I$(SDK) \
-	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) \
-	    --function harness_replay_near_partition_completeness proof_replay_advance.c
+	$(call run_cbmc_proof,replay-near-4096-completeness,--unwind 1 -I$(SDK) -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) --function harness_replay_near_partition_completeness proof_replay_advance.c)
 	@echo "replay-near-4096-partition-completeness VERIFICATION SUCCESSFUL full-domain=1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) partitions=$(words $(REPLAY_NEAR_PARTITIONS))"
 
 define replay_near_partition_target
@@ -184,14 +196,13 @@ $(foreach partition,$(REPLAY_NEAR_PARTITIONS),$(eval $(call replay_near_partitio
 
 replay-far: proof_replay_advance.c
 	@echo "replay-far bound delta >= $(REPLAY_WINDOW_BITS) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
-	    --function harness_replay_far proof_replay_advance.c
+	$(call run_cbmc_proof,replay-far,--unwind $(REPLAY_UNWIND) -I$(SDK) --function harness_replay_far proof_replay_advance.c)
 
 RECONSTRUCT_FLAGS = -DNDEBUG -I$(SDK) -I$(SDK)/../sodium
 
 reconstruct: proof_reconstruct_sequence.c
 	@echo "reconstruct bound 32-bit and 24-bit wire half-ranges deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 1 $(RECONSTRUCT_FLAGS) proof_reconstruct_sequence.c
+	$(call run_cbmc_proof,reconstruct,--unwind 1 $(RECONSTRUCT_FLAGS) proof_reconstruct_sequence.c)
 
 ESBMC ?= esbmc
 ACK_RUN_SOURCE = $(CURDIR)/proof_ack_apply_run.c
@@ -228,6 +239,12 @@ define run_ack_proof
 	if [ $$status -eq 137 ] || grep -qi 'out of memory' "$$work/output.log"; then echo "$(1) HOLD out of memory"; exit 1; fi; \
 	if grep -q 'UNKNOWN' "$$work/output.log"; then echo "$(1) HOLD UNKNOWN"; exit 1; fi; \
 	if grep -A3 '^Violated property' "$$work/output.log" | grep -q 'unwinding assertion'; then echo "$(1) HOLD unwinding assertion failed"; exit 1; fi; \
+	if [ $$status -eq 1 ] && grep -q '^VERIFICATION FAILED' "$$work/output.log"; then \
+	  echo "$(1) COUNTEREXAMPLE: a property is violated (the trace is above) bound=$(2) unwind=$(3) named-unwinds=$(4)"; exit 1; \
+	fi; \
+	if grep -q 'ERROR: SMT solver failed' "$$work/output.log"; then \
+	  echo "$(1) HOLD solver error, no verdict (exit=$$status) bound=$(2) unwind=$(3) named-unwinds=$(4)"; exit 1; \
+	fi; \
 	if [ $$status -eq 0 ] && grep -q '^VERIFICATION SUCCESSFUL' "$$work/output.log"; then \
 	  echo "$(1) VERIFICATION SUCCESSFUL bound=$(2) unwind=$(3) named-unwinds=$(4)"; \
 	else \
@@ -263,21 +280,123 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	   grep -q 'negative control reaches the production ACK operation' "$$work/output.log" && \
 	   grep -Eq '\*\* 1 of [0-9]+ properties failed' "$$work/output.log"; then \
 	  echo "ack-run-negative-control EXPECTED FAILURE bound=8 unwind=65 named-unwinds=$(ACK_RUN_SMALL_UNWINDS)"; \
+	elif grep -q 'ERROR: SMT solver failed' "$$work/output.log"; then \
+	  echo "ack-run-negative-control HOLD solver error, no verdict (exit=$$status)"; exit 1; \
 	else \
 	  echo "ack-run-negative-control HOLD: expected assertion did not fail (exit=$$status)"; exit 1; \
 	fi
 
-read-write: proof_read_write.c
+# The ACK run checks the nightly runs (.github/workflows/nightly-ack-proof.yml).
+#
+# Why not ack-run-bound-8 (measured 2026-11-12 on space3, ESBMC 8.5.0,
+# proofs/cbmc/INVENTORY.md, "ACK run measurements"): ESBMC turns a write through a pointer
+# whose offset into the 260 KB endpoint is symbolic into a byte-level update
+# of the whole object, and from the second such write the formula grows by
+# tens of GB per write whatever the solver. The production visit makes one
+# (record->acked) per newly acked record, so a run of 8 is 8 of them. With Z3
+# the solver answers unknown ("SMT solver failed"), every night since 11-01.
+# Not even run length 1 fits: with the harness indexing the endpoint
+# directly and every unwind limited to one visit, ESBMC with Bitwuzla stops
+# "Out of memory" at a 150 GB limit after 400 s of symex and 15 minutes of
+# encoding. No ESBMC instance of this leaf runs in a nightly's means.
+#
+#   ack-run-exhaustive-8  the bound-8 claim, checked by running the
+#       production leaf natively on every case of the harness's finite state:
+#       every ring position, run length 1..8, prior-ack pattern and highest
+#       offset, with the rest of the ring empty and with the run's bitmap
+#       words full of live unacked neighbours, in the start-up block, the
+#       block after it and the last block below 2^64 (ack_run_exhaustive.cpp
+#       says why the other blocks are shifts of these). 51.3e9 cases; the
+#       whole set below took 880 s on 8 cores of an M5 Max.
+#   ack-run-exhaustive-negative-control  the visit check negated: must fail.
+#   ack-run-exhaustive-vacuity-plant  no case reaches the leaf: must report
+#       VACUOUS (the coverage counters are what catch a vacuous run).
+#   ack-run-exhaustive-mutants  four one-line bugs planted in a copy of
+#       sdk/rocketnet_ack.cpp (the masked top bit, the masked low bits, the
+#       unacked bit left set, the wrapped half of the walk skipped): each must
+#       fail the check.
+
+ACK_RUN_CXX ?= c++
+ACK_RUN_THREADS ?= $(shell getconf _NPROCESSORS_ONLN)
+ACK_RUN_LINK_GC = $(if $(filter Darwin,$(shell uname -s)),-Wl$(comma)-dead_strip,-Wl$(comma)--gc-sections)
+comma := ,
+ACK_RUN_CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -DNDEBUG -DROCKETNET_DEV=1 \
+                   -ffunction-sections -fdata-sections -pthread
+
+# run_ack_exhaustive <target> <extra flags> <expected: pass|fail|vacuous> <sdk dir>
+define run_ack_exhaustive
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
+	$(ACK_RUN_CXX) $(ACK_RUN_CXXFLAGS) $(2) -I$(4) -I$(SDK) $(ACK_RUN_LINK_GC) \
+	    -o "$$work/ack_run_exhaustive" $(CURDIR)/ack_run_exhaustive.cpp || { echo "$(1) HOLD build failed"; exit 1; }; \
+	status=0; \
+	"$$work/ack_run_exhaustive" $(ACK_RUN_THREADS) > "$$work/output.log" 2>&1 || status=$$?; \
+	cat "$$work/output.log"; \
+	case "$(3)" in \
+	  pass) if [ $$status -eq 0 ] && grep -q '^VERIFICATION SUCCESSFUL' "$$work/output.log"; then \
+	          echo "$(1) VERIFICATION SUCCESSFUL bound=8 every ring position, length, ack pattern and highest offset"; \
+	        else echo "$(1) HOLD exit=$$status"; exit 1; fi ;; \
+	  fail) if [ $$status -eq 1 ] && grep -q '^VERIFICATION FAILED' "$$work/output.log"; then \
+	          echo "$(1) EXPECTED FAILURE"; \
+	        else echo "$(1) HOLD: expected failure did not happen (exit=$$status)"; exit 1; fi ;; \
+	  vacuous) if [ $$status -eq 3 ] && grep -q '^VACUOUS' "$$work/output.log"; then \
+	          echo "$(1) EXPECTED VACUOUS"; \
+	        else echo "$(1) HOLD: the vacuous plant was not reported (exit=$$status)"; exit 1; fi ;; \
+	esac
+endef
+
+ack-run-exhaustive-8: ack_run_exhaustive.cpp
+	@$(call run_ack_exhaustive,ack-run-exhaustive-8,,pass,$(SDK))
+
+ack-run-exhaustive-negative-control: ack_run_exhaustive.cpp
+	@$(call run_ack_exhaustive,ack-run-exhaustive-negative-control,-DACK_NEGATIVE_CONTROL=1,fail,$(SDK))
+
+ack-run-exhaustive-vacuity-plant: ack_run_exhaustive.cpp
+	@$(call run_ack_exhaustive,ack-run-exhaustive-vacuity-plant,-DACK_RUN_PLANT_VACUOUS=1,vacuous,$(SDK))
+
+# Each mutant is one sed over a copy of sdk/rocketnet_ack.cpp; a sed that no
+# longer matches (the source moved) is HOLD, never a silent pass.
+ACK_RUN_MUTANT_top-bit = s/( ( 1ull << ( hi_bit + 1 ) ) - 1 )/( ( 1ull << hi_bit ) - 1 )/
+ACK_RUN_MUTANT_low-bits = s/word &= ~0ull << ( a & 63 );/word \&= ~0ull;/
+ACK_RUN_MUTANT_unacked-left-set = s/endpoint->sent_unacked\[s >> 6\] &= ~( 1ull << ( s & 63 ) );/( void ) s;/
+ACK_RUN_MUTANT_wrap-skipped = s/rn_bitmap_walk_bits_desc( endpoint->sent_unacked, 0, slot_high, high - slot_high, visit );/;/
+ACK_RUN_MUTANTS = top-bit low-bits unacked-left-set wrap-skipped
+
+ack-run-exhaustive-mutants: $(addprefix ack-run-exhaustive-mutant-,$(ACK_RUN_MUTANTS))
+	@echo "ack-run-exhaustive-mutants EXPECTED FAILURE for every mutant: $(ACK_RUN_MUTANTS)"
+
+ack-run-exhaustive-mutant-%: ack_run_exhaustive.cpp
+	@mutant=$$(mktemp -d); \
+	sed '$(ACK_RUN_MUTANT_$*)' $(SDK)/rocketnet_ack.cpp > "$$mutant/rocketnet_ack.cpp"; \
+	if cmp -s $(SDK)/rocketnet_ack.cpp "$$mutant/rocketnet_ack.cpp"; then \
+	  echo "$@ HOLD: the mutant no longer applies to sdk/rocketnet_ack.cpp"; rm -rf "$$mutant"; exit 1; fi; \
+	( $(call run_ack_exhaustive,$@,,fail,$$mutant) ); status=$$?; rm -rf "$$mutant"; exit $$status
+
+# rocketnet_copy_string is proved from its own text in sdk/rocketnet.cpp (a
+# C++ file the harness cannot include whole): the definition is cut out
+# verbatim, from its signature to the first closing brace in column 0, and the
+# harness includes it. A hand copy proved a body the sdk did not have
+# (VERIFY-6 A17). An extraction that finds no complete definition stops here.
+COPY_STRING_GEN = copy_string.gen.c
+
+$(COPY_STRING_GEN): $(SDK)/rocketnet.cpp
+	@awk '/^size_t rocketnet_copy_string\( char \* dest, const char \* source, size_t dest_size \)$$/ { on = 1 } on { print } on && /^}$$/ { exit }' $< > $@.tmp
+	@if [ "$$(grep -c '^size_t rocketnet_copy_string(' $@.tmp)" != 1 ] || [ "$$(tail -1 $@.tmp)" != "}" ] || [ "$$(wc -l < $@.tmp)" -lt 10 ]; then \
+		echo "read-write HOLD: no complete rocketnet_copy_string definition in $<"; rm -f $@.tmp; exit 1; \
+	fi
+	@mv $@.tmp $@
+
+read-write: proof_read_write.c $(COPY_STRING_GEN)
 	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 9 -I$(SDK) proof_read_write.c
+	$(call run_cbmc_proof,read-write,--unwind 9 -I$(SDK) proof_read_write.c)
 
 message-read: proof_message_read.c
 	@echo "message-read bound payload 24 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 8 -DNDEBUG -I$(SDK) proof_message_read.c
+	$(call run_cbmc_proof,message-read,--unwind 8 -DNDEBUG -I$(SDK) proof_message_read.c)
 
 xdp-free-list: proof_xdp_free_list.c
 	@echo "xdp-free-list bound capacity 3 frames deployed ROCKETNET_XDP_NUM_FRAMES=$(XDP_NUM_FRAMES) frames of $(XDP_FRAME_SIZE) bytes"
-	$(CBMC) $(CBMC_FLAGS) --unwind 5 -I$(SDK) proof_xdp_free_list.c
+	$(call run_cbmc_proof,xdp-free-list,--unwind 5 -I$(SDK) proof_xdp_free_list.c)
 
 # Paired reachability controls. Each nightly target above has a
 # `<target>-reachability` partner that recompiles the same harness with a
@@ -322,7 +441,7 @@ replay-far-reachability: proof_replay_advance.c
 reconstruct-reachability: proof_reconstruct_sequence.c
 	$(call run_reachability,reconstruct,1,$(RECONSTRUCT_FLAGS) -DREACHABILITY_CONTROL=1 proof_reconstruct_sequence.c,,reconstruct reachability control)
 
-read-write-reachability: proof_read_write.c
+read-write-reachability: proof_read_write.c $(COPY_STRING_GEN)
 	$(call run_reachability,read-write,9,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_read_write.c,,read-write reachability control)
 
 message-read-reachability: proof_message_read.c
@@ -332,7 +451,7 @@ xdp-free-list-reachability: proof_xdp_free_list.c
 	$(call run_reachability,xdp-free-list,5,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_xdp_free_list.c,,xdp-free-list reachability control)
 
 clean:
-	rm -f *.goto *.output
+	rm -f *.goto *.output $(COPY_STRING_GEN)
 
 # Nightly proofs. Each reader directory holds a proof.mk that appends its
 # target to NIGHTLY, so a CBMC card adds a reader without editing a shared

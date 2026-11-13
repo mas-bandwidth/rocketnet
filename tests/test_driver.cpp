@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "native_shutdown.h"
+#include "kernel_drops.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_config.h"
 #include "rocketnet_xdp_limits.h"
@@ -198,7 +199,7 @@ static void test_transport_pin_only()
 
     int num;
     const int * servers = rocketnet_server_transport_io_availability( &num );
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
     int auto_count = 0;
     for ( int i = 0; i < num; ++i )
     {
@@ -208,7 +209,7 @@ static void test_transport_pin_only()
         }
     }
 
-    CHECK( rocketnet_transport_ladder_parse( "auto", servers, num, &ladder ) );
+    CHECK( rocketnet_transport_order_parse( "auto", servers, num, &ladder ) );
     CHECK( ladder.num_candidates == auto_count );
     for ( int i = 0; i < ladder.num_candidates; ++i )
     {
@@ -224,21 +225,31 @@ static void test_transport_pin_only()
         }
     }
 
-    CHECK( rocketnet_transport_ladder_parse( NULL, servers, num, &ladder ) );
+    CHECK( rocketnet_transport_order_parse( NULL, servers, num, &ladder ) );
     CHECK( ladder.num_candidates == auto_count );
 
-    CHECK( rocketnet_transport_ladder_parse( "loopback", servers, num, &ladder ) );
+    CHECK( rocketnet_transport_order_parse( "loopback", servers, num, &ladder ) );
     CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_LOOPBACK );
 
+    // a pin-only transport is applicable only as the sole name of a list
+    // (standard/TRANSPORT.md t2.4): inside a longer list it is skipped, and a
+    // list of nothing else falls to the auto order (rule 4)
+
+    CHECK( rocketnet_transport_order_parse( "portable,loopback", servers, num, &ladder ) );
+    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
+    CHECK( ladder.num_skipped == 1 && ladder.skipped[0] == ROCKETNET_TRANSPORT_LOOPBACK );
+    CHECK( rocketnet_transport_order_parse( "loopback,loopback", servers, num, &ladder ) );
+    CHECK( ladder.num_candidates == auto_count );
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    CHECK( rocketnet_transport_ladder_parse( "gso,loopback", servers, num, &ladder ) );
-    CHECK( ladder.num_candidates == 2 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO && ladder.candidates[1] == ROCKETNET_TRANSPORT_LOOPBACK );
-    CHECK( rocketnet_transport_ladder_parse( "iocp", servers, num, &ladder ) );
+    CHECK( rocketnet_transport_order_parse( "gso,loopback", servers, num, &ladder ) );
+    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO );
+    CHECK( rocketnet_transport_order_parse( "iocp", servers, num, &ladder ) );
     CHECK( ladder.num_candidates == auto_count );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
     const int * clients = rocketnet_client_transport_io_availability( &num );
-    CHECK( rocketnet_transport_ladder_parse( "auto", clients, num, &ladder, false ) );
+    CHECK( rocketnet_transport_order_parse( "auto", clients, num, &ladder, false ) );
     for ( int i = 0; i < ladder.num_candidates; ++i )
     {
         CHECK( !rocketnet_transport_pin_only( ladder.candidates[i], false ) );
@@ -250,7 +261,7 @@ static void test_transport_pin_only()
     CHECK( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_GSO, true ) );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     CHECK( ladder.num_candidates == 2 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO && ladder.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
-    CHECK( rocketnet_transport_ladder_parse( "gso", clients, num, &ladder, false ) );
+    CHECK( rocketnet_transport_order_parse( "gso", clients, num, &ladder, false ) );
     CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     printf( "test_transport_pin_only\n" );
@@ -281,6 +292,13 @@ static void test_buffered_transport()
     CHECK( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
     CHECK( server_address.port && client_address.port );
 
+    // loopback can lose a datagram under machine load (tests/kernel_drops.h):
+    // one still missing after the wait is sent again only when the kernel
+    // counted it lost; a loss the kernel did not count fails here
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_buffered_transport" );
+
     const uint8_t data[] = { 10, 20, 30, 40 };
     client.operations->send( client.instance, &server_address, data, sizeof( data ) );
 
@@ -288,11 +306,17 @@ static void test_buffered_transport()
     uint8_t packets[4][64];
     int bytes[4];
     int received = 0;
-    double deadline = rocketnet_platform_time() + 5.0;
-    while ( !received && rocketnet_platform_time() < deadline )
+    double deadline = rocketnet_platform_time() + ROCKETNET_LOSS_GATE_WAIT;
+    while ( !received )
     {
         received = server.operations->receive_batch( server.instance, from, &packets[0][0], 64, bytes, 4 );
-        if ( !received )
+        if ( !received && rocketnet_platform_time() >= deadline )
+        {
+            CHECK( rocketnet_loss_gate_resend( &gate, 1 ) );
+            client.operations->send( client.instance, &server_address, data, sizeof( data ) );
+            deadline = rocketnet_platform_time() + ROCKETNET_LOSS_GATE_WAIT;
+        }
+        else if ( !received )
         {
             rocketnet_platform_sleep( 0.001 );
         }
@@ -303,12 +327,18 @@ static void test_buffered_transport()
 
     rocketnet_platform_send_t packet = { &client_address, data, sizeof( data ) };
     server.operations->send_batch( server.instance, &packet, 1 );
-    deadline = rocketnet_platform_time() + 5.0;
+    deadline = rocketnet_platform_time() + ROCKETNET_LOSS_GATE_WAIT;
     received = 0;
-    while ( !received && rocketnet_platform_time() < deadline )
+    while ( !received )
     {
         received = client.operations->receive( client.instance, from, packets[0], 64 );
-        if ( !received )
+        if ( !received && rocketnet_platform_time() >= deadline )
+        {
+            CHECK( rocketnet_loss_gate_resend( &gate, 1 ) );
+            server.operations->send_batch( server.instance, &packet, 1 );
+            deadline = rocketnet_platform_time() + ROCKETNET_LOSS_GATE_WAIT;
+        }
+        else if ( !received )
         {
             rocketnet_platform_sleep( 0.001 );
         }
@@ -323,8 +353,18 @@ static void test_buffered_transport()
     printf( "test_buffered_transport\n" );
 }
 
-int main()
+int main( int argc, char ** argv )
 {
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();

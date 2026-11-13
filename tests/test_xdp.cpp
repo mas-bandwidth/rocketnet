@@ -7,6 +7,7 @@
 
 bool rocketnet_server_socket_test_buffer_exchange();
 bool rocketnet_server_socket_test_inactive_flow();
+bool rocketnet_server_socket_test_queue_room();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
 bool rocketnet_server_socket_test_send_idle_hard_error();
@@ -14,8 +15,18 @@ bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();
 bool rocketnet_server_socket_test_worker_stack();
 
-int main()
+int main( int argc, char ** argv )
 {
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
@@ -25,6 +36,7 @@ int main()
 
     const bool passed = rocketnet_server_socket_test_buffer_exchange();
     const bool inactive_passed = rocketnet_server_socket_test_inactive_flow();
+    const bool queue_room_passed = rocketnet_server_socket_test_queue_room();
     const bool replay_passed = rocketnet_server_socket_test_replay_marks();
     const bool send_failures_passed = rocketnet_server_socket_test_send_failures_without_mutex();
     const bool send_idle_hard_error_passed = rocketnet_server_socket_test_send_idle_hard_error();
@@ -48,6 +60,14 @@ int main()
     }
 
     printf( "test_xdp_transport_inactive_flow_finish_abort\n" );
+
+    if ( !queue_room_passed )
+    {
+        fprintf( stderr, "native XDP per-queue send room check failed\n" );
+        return 1;
+    }
+
+    printf( "test_xdp_transport_per_queue_send_room\n" );
 
     if ( !replay_passed )
     {
