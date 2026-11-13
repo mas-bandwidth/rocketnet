@@ -35,21 +35,25 @@ VARIABLES ti,        \* the index of the record the state matches
 VarsRec ==
     [stopping |-> stopping, shutdown |-> shutdown, quit |-> quit, seen |-> seen, st |-> st, handed |-> handed, ready |-> ready,
      held |-> held, u |-> u, k |-> k, cOk |-> cOk, cAgain |-> cAgain, cRef |-> cRef,
-     blocked |-> blocked, timer |-> timer, recv |-> recv, wakeRead |-> wakeRead,
+     blocked |-> blocked, timer |-> timer, recv |-> recv,
+     recvData |-> recvData, recvStreak |-> recvStreak, recvWait |-> recvWait, recvTimer |-> recvTimer,
+     recvQuick |-> recvQuick,
+     wakeRead |-> wakeRead,
      wakeCount |-> wakeCount, agains |-> agains, againsBefore |-> againsBefore,
      refusals |-> refusals, recvEnds |-> recvEnds, p |-> p]
 
 \* the actions each operation of the code can be
 OpActs == [publish |-> {"Publish"}, begin |-> {"BeginStop"}, stop |-> {"Stop"},
            step |-> {"Observe", "ReapOk", "ReapAgain", "ReapRefused", "ReapTimer",
-                    "ReapRecvEnd", "ReapWake", "ReapCancel",
+                    "ReapRecvEnd", "ReapRecvData", "ReapRecvTimer", "ReapWake", "ReapCancel",
                     "Retire", "Claim", "Submit", "Split", "Drop",
-                    "Abandon", "ArmTimer", "ArmRecv", "ArmWake",
+                    "Abandon", "ArmTimer", "ArmRecvTimer", "ArmRecv", "ArmWake",
                     "CancelRecv", "CancelWake", "Exit",
                     "Sleep", "Done"},
            wakes |-> {"KernelWakesWorker"}, answer |-> {"KernelOk", "KernelAgain", "KernelRefuse"},
            timerFires |-> {"KernelTimer"}, recvEnds |-> {"KernelRecvEnd"},
-           recvEndsItself |-> {"KernelRecvEndsItself"}, wakeReads |-> {"KernelWakeRead"},
+           recvEndsItself |-> {"KernelRecvEndsItself"}, recvData |-> {"KernelRecvData"},
+           recvTimerFires |-> {"KernelRecvTimer"}, wakeReads |-> {"KernelWakeRead"},
            wakeEnds |-> {"KernelWakeEnd"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
@@ -63,6 +67,8 @@ Act(a, x) == CASE a = "Publish" -> Publish
                [] a = "ReapRefused" -> ReapRefused
                [] a = "ReapTimer" -> ReapTimer
                [] a = "ReapRecvEnd" -> ReapRecvEnd
+               [] a = "ReapRecvData" -> ReapRecvData
+               [] a = "ReapRecvTimer" -> ReapRecvTimer
                [] a = "ReapWake" -> ReapWake
                [] a = "ReapCancel" -> ReapCancel
                [] a = "Retire" -> Retire
@@ -72,6 +78,7 @@ Act(a, x) == CASE a = "Publish" -> Publish
                [] a = "Drop" -> Drop
                [] a = "Abandon" -> Abandon
                [] a = "ArmTimer" -> ArmTimer
+               [] a = "ArmRecvTimer" -> ArmRecvTimer
                [] a = "ArmRecv" -> ArmRecv
                [] a = "ArmWake" -> ArmWake
                [] a = "CancelRecv" -> CancelRecv
@@ -85,6 +92,8 @@ Act(a, x) == CASE a = "Publish" -> Publish
                [] a = "KernelTimer" -> KernelTimer
                [] a = "KernelRecvEnd" -> KernelRecvEnd
                [] a = "KernelRecvEndsItself" -> KernelRecvEndsItself
+               [] a = "KernelRecvData" -> KernelRecvData
+               [] a = "KernelRecvTimer" -> KernelRecvTimer
                [] a = "KernelWakeRead" -> KernelWakeRead
                [] a = "KernelWakeEnd" -> KernelWakeEnd
                [] a = "KernelWakesWorker" -> KernelWakesWorker
@@ -122,5 +131,9 @@ TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, 
 
 \* every record of the trace is the model step it names, from the one before
 TraceConsistent == ~rejected
+
+\* the reach predicates (tools/tla_trace_check.py): a refused receive waits
+\* for its timer, the worker asleep meanwhile
+RecvWaits == recvWait /\ recvTimer = "armed" /\ st = "asleep"
 
 =============================================================================

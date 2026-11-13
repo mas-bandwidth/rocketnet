@@ -41,6 +41,15 @@
 // its completion may come after, and the ring is torn down after the join).
 // Main joins it after.
 //
+// A multishot receive that ends refused (a negative result other than
+// -ECANCELED: no provided buffer free, or a kernel that refuses the receive)
+// is armed again at once the first time: a burst that took every buffer gives
+// them back as its completions are reaped. From the second refused end in a
+// row with no datagram between, each arm waits for the receive's own retry
+// timer (the same period), so a receive the kernel keeps refusing is armed
+// once a period and never at completion speed: no core spins on it. The
+// receive module counts every refusal (RECEIVE_FAILED, RECEIVE_NO_BUFFERS).
+//
 // SENDMSG goes with MSG_DONTWAIT: without it io_uring waits inside the
 // kernel for room and never answers -EAGAIN. The wake eventfd must be
 // blocking (no EFD_NONBLOCK: a READ on a non-blocking eventfd with a zero
@@ -73,7 +82,11 @@ struct rocketnet_uring_queue_send_t;
 // the kinds of the worker's own submissions, beside ROCKETNET_URING_TAG_SEND,
 // _RECV and _CANCEL (rocketnet_uring_codec.h)
 #define ROCKETNET_URING_TAG_WAKE                                             4      // the eventfd READ
-#define ROCKETNET_URING_TAG_TIMER                                            5      // the retry timer after a full answer
+#define ROCKETNET_URING_TAG_TIMER                                            5      // a retry timer: its tag's index says whose
+
+// whose a retry timer is, its tag's index
+#define ROCKETNET_URING_TIMER_SEND                                           0      // a run answered full waits for it
+#define ROCKETNET_URING_TIMER_RECV                                           1      // a receive refused again waits for it before its arm
 
 // what a cancel names, its tag's index
 #define ROCKETNET_URING_CANCEL_RECV                                          0
@@ -111,6 +124,7 @@ struct rocketnet_uring_queue_send_t;
 #define ROCKETNET_URING_WORKER_STEP_ARM_WAKE                                12
 #define ROCKETNET_URING_WORKER_STEP_CANCEL_RECV                             13
 #define ROCKETNET_URING_WORKER_STEP_CANCEL_WAKE                             14
+#define ROCKETNET_URING_WORKER_STEP_ARM_RECV_TIMER                          15
 
 // the worker's counters, one writer, the worker
 #define ROCKETNET_URING_WORKER_COUNTER_SUBMITS                               0      // io_uring_enter calls: submits and waits
@@ -199,6 +213,9 @@ struct rocketnet_uring_queue_worker_t
     bool blocked;                                   // blocked: a run came back full, no submit until the timer fires (or main's wake, before shutdown)
     bool starved;                                   // this pass found the submission queue full (not a model variable)
     bool timer_armed;                               // timer # "none"
+    bool recv_timer_armed;                          // recvTimer # "none"
+    bool recv_waiting;                              // recvWait: the receive's next arm waits for its timer
+    int recv_refused;                               // recvStreak: refused ends in a row since a datagram, up to 2
     bool wake_armed;                                // wakeRead # "none"
     bool cancelled_recv;
     bool cancelled_wake;

@@ -460,7 +460,10 @@ static void test_uring_queue_worker_sleeps_only_with_the_wake_armed()
     check( t.receive.arms == 2 );
 
     // with no submission entry free the receive cannot be armed again: the
-    // module is handed none and refuses, and the pass does not sleep
+    // module is handed none and refuses, and the pass does not sleep (a
+    // datagram first, so this end is again the first refused in a row)
+    t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), 100, IORING_CQE_F_MORE );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
     t.kernel.capacity = 0;
     t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), -ENOBUFS, 0 );
     check( t.step() == ROCKETNET_URING_WORKER_CONTINUE );
@@ -472,6 +475,140 @@ static void test_uring_queue_worker_sleeps_only_with_the_wake_armed()
 }
 
 REGISTER_UNIT_TEST( test_uring_queue_worker_sleeps_only_with_the_wake_armed );
+
+// the receive's retry timer's completion: the timeout expired
+static uint64_t worker_test_receive_timer()
+{
+    return rocketnet_uring_tag( ROCKETNET_URING_TAG_TIMER, 0, ROCKETNET_URING_TIMER_RECV );
+}
+
+// RNUringQueueWorker ReapRecvEnd, ArmRecvTimer, ReapRecvTimer, ArmRecv
+// (RecvNoSpin): a multishot that ends refused (no buffer free, or a kernel
+// that refuses the receive) is armed again at once the first time; from the
+// second refused end in a row with no datagram between, each arm waits for
+// the receive's retry timer, so a receive the kernel keeps refusing is armed
+// once a retry period and never at completion speed. The worker sleeps
+// meanwhile. A datagram starts the count again. Each refusal is the receive
+// module's to count (RECEIVE_FAILED, RECEIVE_NO_BUFFERS).
+
+static void test_uring_queue_worker_refused_receive_waits_for_the_timer()
+{
+    worker_test_t t( 4, 8, 2 );
+    check( t.ok );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 1 );
+    const uint64_t recv = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
+
+    // the first refused end: armed again at once (a burst that took every
+    // buffer gives them back as its completions are reaped)
+    t.post( recv, -ENOBUFS, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 2 );
+    check( t.of( IORING_OP_TIMEOUT ).size() == 0 );
+
+    // the second in a row: no arm until the receive's timer fires, and the
+    // worker sleeps with that timer in the kernel; passes before it arm nothing
+    t.post( recv, -EINVAL, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 2 );
+    check( !t.receive.armed );
+    std::vector<struct io_uring_sqe> timers = t.of( IORING_OP_TIMEOUT );
+    check( timers.size() == 1 );
+    check( timers[0].user_data == worker_test_receive_timer() );
+    const struct __kernel_timespec * spec = (const struct __kernel_timespec *) (uintptr_t) timers[0].addr;
+    check( spec->tv_sec == 0 );
+    check( spec->tv_nsec == (long long) ( ROCKETNET_URING_SEND_RETRY_SECONDS * 1000000000.0 ) );
+    const size_t submitted = t.kernel.submitted.size();
+    for ( int i = 0; i < 8; i++ )
+    {
+        check( t.step() == ROCKETNET_URING_WORKER_SLEEP );
+    }
+    check( t.kernel.submitted.size() == submitted );
+    check( t.receive.arms == 2 );
+
+    // the timer fires: one arm
+    t.post( worker_test_receive_timer(), -ETIME, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 3 );
+
+    // a kernel that keeps refusing: each arm waits a whole retry period, never
+    // two arms in one
+    for ( int i = 0; i < 100; i++ )
+    {
+        t.post( recv, -EINVAL, 0 );
+        check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+        check( t.receive.arms == 3 + i );
+        check( t.of( IORING_OP_TIMEOUT ).size() == (size_t) ( 2 + i ) );
+        t.post( worker_test_receive_timer(), -ETIME, 0 );
+        check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+        check( t.receive.arms == 4 + i );
+    }
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_STRAY ) == 0 );
+
+    // a datagram starts the count again: the next refused end is armed at once
+    t.post( recv, 100, IORING_CQE_F_MORE );
+    t.post( recv, -ENOBUFS, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 104 );
+    check( t.of( IORING_OP_TIMEOUT ).size() == 101 );
+
+    // the send's retry timer is not the receive's: a full answer while the
+    // receive waits arms its own, and neither's completion ends the other's wait
+    t.post( recv, -EINVAL, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.of( IORING_OP_TIMEOUT ).size() == 102 );
+    t.stage( 1, 100 );
+    t.publish();
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.sends().size() == 1 );
+    t.post( t.sends()[0].user_data, -EAGAIN, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.worker.blocked );
+    check( t.of( IORING_OP_TIMEOUT ).size() == 103 );
+    t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_TIMER, 0, ROCKETNET_URING_TIMER_SEND ), -ETIME, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( !t.worker.blocked );
+    check( t.sends().size() == 2 );
+    check( t.receive.arms == 104 );     // the receive still waits for its own
+    t.post( worker_test_receive_timer(), -ETIME, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 105 );
+    t.post( t.sends()[1].user_data, 100, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_STRAY ) == 0 );
+
+    // with no submission entry free the receive's timer cannot be armed: the
+    // pass does not sleep, and the timer is armed once there is room
+    t.post( recv, -EINVAL, 0 );
+    t.kernel.capacity = 0;
+    check( t.step() == ROCKETNET_URING_WORKER_CONTINUE );
+    check( !t.worker.recv_timer_armed );
+    t.kernel.capacity = WORKER_TEST_SQ_MAX;
+    check( t.step() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.worker.recv_timer_armed );
+    check( t.receive.arms == 105 );
+
+    // a stop while the receive waits: never armed again, and the worker
+    // exits once the timer it has in the kernel fires
+    rocketnet_uring_queue_worker_stop( &t.worker );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), -ECANCELED, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );        // the receive's timer is still the kernel's
+    t.post( worker_test_receive_timer(), -ETIME, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_EXIT );
+    check( t.receive.arms == 105 );
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_STRAY ) == 0 );
+
+    // a timer completion with nothing armed is stray
+    worker_test_t s( 4, 8, 2 );
+    check( s.ok );
+    check( s.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    s.post( worker_test_receive_timer(), -ETIME, 0 );
+    check( s.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( s.counter( ROCKETNET_URING_WORKER_COUNTER_STRAY ) == 1 );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_worker_refused_receive_waits_for_the_timer );
 
 // RNUringQueueWorker Submit: what main publishes goes out one SENDMSG a run,
 // grouped by destination in the worker, and the bank retires once each run
@@ -799,6 +936,40 @@ static void test_uring_queue_worker_stop_cancels_the_wake_read()
 }
 
 REGISTER_UNIT_TEST( test_uring_queue_worker_stop_cancels_the_wake_read );
+
+// RNUringQueueWorker StopFinishes with datagrams still coming (the model's
+// fairness on CancelRecv and CancelWake): a pass reaps at most
+// ROCKETNET_URING_WORKER_CQE_BATCH completions, then goes on to the rest of
+// the step, so with more datagrams ready than a batch the one pass after the
+// stop still cancels the receive and the wake read
+
+static void test_uring_queue_worker_stop_cancels_under_a_flood()
+{
+    worker_test_t t( 4, 8, 2 );
+    check( t.ok );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    const uint64_t recv = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
+
+    rocketnet_uring_queue_worker_stop( &t.worker );
+    for ( int i = 0; i < ROCKETNET_URING_WORKER_CQE_BATCH + 44; i++ )
+    {
+        t.post( recv, 100, IORING_CQE_F_MORE );
+    }
+    check( t.step() == ROCKETNET_URING_WORKER_CONTINUE );
+    check( t.of( IORING_OP_ASYNC_CANCEL ).size() == 2 );
+    check( t.kernel.ready.size() == 44 );
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_REAP_DEFERRED ) == 1 );
+
+    // the datagrams already posted are still reaped, then the cancelled
+    // receive's and wake read's own ends, and the worker exits
+    t.post( recv, -ECANCELED, 0 );
+    t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), -ECANCELED, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_EXIT );
+    check( t.receive.arms == 1 );
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_STRAY ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_worker_stop_cancels_under_a_flood );
 
 // the public rows the transport reads for one queue
 // (rocketnet_server_uring_counters through rocketnet_uring_counters_add_queue)

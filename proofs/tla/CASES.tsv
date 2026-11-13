@@ -1023,10 +1023,12 @@ MCTraceRNUringQueueSendSelf.cfg	MCTraceRNUringQueueSendSelf.tla	pass	-	check	tra
 MCTraceRNUringQueueSendSelfBrokenRetire.cfg	MCTraceRNUringQueueSendSelf.tla	invariant	TraceConsistent	check	tracernuringqueuesend	required	-
 MCRNUringQueueWorker.cfg	MCRNUringQueueWorker.tla	pass	-	check	rnuringqueueworker	required	-
 MCRNUringQueueWorkerLive.cfg	MCRNUringQueueWorker.tla	pass	-	check	rnuringqueueworker	required	-
+MCRNUringQueueWorkerLiveRecv.cfg	MCRNUringQueueWorker.tla	pass	-	check	rnuringqueueworker	required	-
 MCRNUringQueueWorkerBrokenExitEarly.cfg	MCRNUringQueueWorker.tla	invariant	ExitDrained	check	rnuringqueueworker	required	-
 MCRNUringQueueWorkerBrokenRetryUnbounded.cfg	MCRNUringQueueWorker.tla	temporal	StopFinishes	check	rnuringqueueworker	required	-
 MCRNUringQueueWorkerBrokenWakeSkip.cfg	MCRNUringQueueWorker.tla	temporal	StopFinishes	ignore-terminal	rnuringqueueworker	required	-
 MCRNUringQueueWorkerBrokenShutdownNone.cfg	MCRNUringQueueWorker.tla	temporal	ShutdownDrains	check	rnuringqueueworker	required	-
+MCRNUringQueueWorkerBrokenRecvSpin.cfg	MCRNUringQueueWorker.tla	invariant	RecvNoSpin	check	rnuringqueueworker	required	-
 MCRNUringQueueReceive.cfg	MCRNUringQueueReceive.tla	pass	-	check	rnuringqueuereceive	required	-
 MCRNUringQueueReceiveLive.cfg	MCRNUringQueueReceive.tla	pass	-	check	rnuringqueuereceive	required	-
 MCRNUringQueueReceiveBrokenFullAtCapacity.cfg	MCRNUringQueueReceive.tla	invariant	NoOverwrite	check	rnuringqueuereceive	required	-

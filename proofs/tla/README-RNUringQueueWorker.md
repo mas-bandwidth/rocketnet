@@ -22,8 +22,13 @@ is one action of the model, named in a comment beside it.
     they are unbounded: that is the socket that stays full.
   - It fires the retry timer (`KernelTimer`, a 1 ms timeout), with weak fairness: time
     passes whatever the socket does.
-  - It ends the multishot receive, on a cancel (`KernelRecvEnd`) or on its own
-    (`KernelRecvEndsItself`, at most `MaxRecvEnd`, with no fairness).
+  - It ends the multishot receive, on a cancel (`KernelRecvEnd`) or on its own, refused
+    (`KernelRecvEndsItself`: no buffer free, or a kernel that refuses the receive; at most
+    `MaxRecvEnd`, with no fairness).
+  - It posts a datagram for the armed receive (`KernelRecvData`, which keeps it armed),
+    with no fairness and no bound: the network may send nothing, or keep sending after the
+    stop.
+  - It fires the receive's retry timer (`KernelRecvTimer`, 1 ms), with weak fairness.
   - It completes the wake read, or ends it on a cancel.
   - It wakes a sleeping worker only when a completion is ready.
 - **The worker:**
@@ -41,7 +46,14 @@ is one action of the model, named in a comment beside it.
     claimed starts the count again. Past the bound it abandons what waits, so the queue
     turns idle however full the socket stays.
   - It re-arms a receive that ended on its own and arms the wake read until it sees the
-    stop; then it cancels both.
+    stop; then it cancels both. The cancels have weak fairness of their own: a pass reaps
+    at most `ROCKETNET_URING_WORKER_CQE_BATCH` completions and then goes on to the rest of
+    the step, so datagrams that keep coming never hold the stop off.
+  - A refused receive (RecvRule "backoff") is re-armed at once the first time. From the
+    second refused end in a row, with no datagram between, the arm waits for the
+    receive's own retry timer (`ArmRecvTimer`, `ReapRecvTimer`), so a kernel that refuses
+    every arm costs one arm a millisecond, never a pegged core. A datagram starts the
+    count again.
   - It exits only when nothing of its own is in the kernel (its timer included) and no
     bank is held.
 - **Sleep** is enabled only when no other worker step is. With WakeRule "armed" that
@@ -58,7 +70,9 @@ here: `RNUringQueueSend` and `RNUringQueueBankLayout` cover it.
 `TraceRNUringQueueWorker.tla` binds the code to this model (README-TraceCheck.md).
 `tests/tla_trace_queue_worker.cpp` walks the real worker against a fake kernel. Every
 completion is its own step, in any order: ok, each of the four full answers, refused,
-failed, a receive that ends on its own, the timer firing, a wake read.
+failed, a datagram, a receive that ends on its own (-ENOBUFS or -EINVAL, more often
+than a datagram comes), either retry timer firing, a wake read. A trace that never
+has the receive waiting on its timer asleep (`RecvWaits`) fails the check.
 
 - Each record is read off the fake kernel (what it holds and what it has posted), off
   the handoff, and off the worker's struct. A worker that miscounts what it put in the
@@ -90,7 +104,13 @@ failed, a receive that ends on its own, the timer firing, a wake read.
   every wait ends.
 - `ShutdownDrains` (liveness): once the server is stopping, the queue turns idle (or
   the worker has exited), however full the socket stays.
-- `StopFinishes` (liveness): after a stop the worker exits.
+- `StopFinishes` (liveness): after a stop the worker exits, datagrams still coming.
+- `RecvNoSpin`: never two arms after a refused end with neither the receive's timer nor
+  a datagram between (`recvQuick`, history the trace walk keeps beside the code).
+- `RecvWaitHasTimer`: a receive waiting to be re-armed never sleeps without its timer in
+  the kernel.
+- `RecvRearms` (liveness, `MCRNUringQueueWorkerLiveRecv.cfg`): a refused receive is
+  armed again before the stop.
 - `Drains` (liveness): before the stop, what main publishes is submitted.
 
 ## The small instance (MCRNUringQueueWorker.tla)
@@ -100,7 +120,9 @@ failed, a receive that ends on its own, the timer firing, a wake read.
 - 1 full answer before the server is stopping (`MaxAgain`).
 - 2 waits after shutdown, with no run done, before the worker abandons (`MaxRetry`).
 - 1 segment refusal (`MaxRefuse`).
-- 1 receive that ends on its own (`MaxRecvEnd`).
+- 2 receives that end on their own (`MaxRecvEnd`; 1 in the liveness control, 3 in
+  `MCRNUringQueueWorkerLiveRecv.cfg`, which has 1 bank and no full answers or refusals so
+  that 3 fits the budget).
 
 The trace instance (`tests/tla_trace_queue_worker.cpp`) has 3 slots (`R` = 3), 2
 full answers before the server is stopping and 3 destinations, one of which the socket
