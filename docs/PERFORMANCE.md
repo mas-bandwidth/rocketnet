@@ -306,11 +306,93 @@ and loaded rows remain pending.
 | IOCP loaded reproduction details | Pending |
 | macOS peak and average | Pending |
 
+### XDP under hostile traffic
+
+This resilience run adds hostile packets to the normal player workload;
+the hostile stream is not player input. XDP ran peak traffic with game
+threads half busy, the corrected frame order, and two XDP threads. A sender
+on the client machine added malformed, truncated, replayed, and forged
+packets at about 1.04 million packets/s: 62.5 million over 60 seconds.
+
+| Measure | Reported result |
+| --- | --- |
+| Player delivery, server → client / client → server | 100% / 100%; none lost |
+| Server packets/s | 915,700 |
+| Frames/s | 60.6 |
+| Late frames | 1 in the reported 30-second window |
+| Main network mean / p99 / max | 0.432 / 0.484 / 0.610 ms/frame |
+| Game-thread network min / mean / max | 2.77 / 3.20 / 4.14 ms/frame |
+| Mean game-thread time left | 5.2 ms/frame, using the corrected budget calculation |
+| Server update on its game thread | 5.55 ms, maximum 7.72 ms; reported baseline 2.7 ms |
+| Hostile packets dropped before the library | 19.6 million reported |
+
+The measured build, exact hostile-sender command, steady-window boundaries,
+and counter attribution for the pre-library drops are pending. These results
+describe this supplied packet mix and rate; they do not establish behavior
+for every hostile traffic pattern.
+
 ## Run it yourself
 
 The tool is `tests/load/harden_load.cpp`. Build `harden_load` on both machines
 using the [build instructions](BUILDING.md), at the commit of the row being
 repeated. Use a server address reachable from the client machine.
+
+### Run an XDP row from the controller
+
+The committed [row script](https://github.com/mas-bandwidth/rocketnet/blob/dec497ae629d326a79bd7a3bff10180b4f3c86c5/scripts/space-frame-row)
+at `dec497ae6` drives both machines over SSH through
+[harden-pair](https://github.com/mas-bandwidth/rocketnet/blob/dec497ae629d326a79bd7a3bff10180b4f3c86c5/scripts/harden-pair).
+Use that script revision on the controller and build the remote binaries
+at the measured row's commit. Each remote checkout needs
+`bin/harden_load`, built Release with `ROCKETNET_DEV=ON`; the controller
+also needs a compatible local `harden_load` for reconciliation. The build
+and XDP provisioning commands are below.
+
+Set the SSH destinations, server IP, checkout paths, interface names, and
+a fresh local output directory. For a loaded peak row with two XDP queues,
+run this on the controller:
+
+```sh
+scripts/space-frame-row \
+  --server-host "$SERVER_HOST" --client-host "$CLIENT_HOST" \
+  --server-ip "$SERVER_IP" --remote "$SERVER_CHECKOUT" \
+  --client-remote "$CLIENT_CHECKOUT" --local-bin "$LOCAL_BIN" \
+  --out "$OUT_DIR" --server-dev "$SERVER_DEV" --client-dev "$CLIENT_DEV" \
+  --load peak --game-threads 21 --first-cpu 3 --queues 2 \
+  --game-load 0.5 --world-ms 10 --split top --input-bytes 256 \
+  --seconds 60 --clients 1000 --threads 32
+```
+
+The server role runs through `sudo -n`, so passwordless sudo is required
+for this script even without profiling. The server's matching
+`scripts/rocketnet-provision DEV 2 verify` must pass before this two-queue
+run. For average load change `--load` to `average`; for an earlier no-game
+row use its recorded work and split settings rather than the script's
+default `top`. The script currently selects XDP; it is not a generic
+transport wrapper. One real loaded peak invocation was reported to pass at
+60.53 frames/s and produce a profile; the exact binary and full result
+record for that script check are not supplied here.
+
+The output includes `server.log`, `clients.log`, and `reconcile.txt`.
+Check rate, frame timing, and delivery against the desired row as described
+below; the reconciliation result alone is not every performance criterion.
+
+Optional `--profile` runs an eight-second capture approximately 40 seconds
+after finding the server process and writes `profile.log`, `profile.tids`,
+`profile.rep`, and `profile.txt`. It needs perf on the server. `profile.txt`
+contains per-thread-class totals and the top 12 functions in estimated
+milliseconds per frame. With game work enabled, the stand-in busy loop can
+lead the main/game-thread lists; that is load-test work, not library cost.
+
+At `dec497ae6`, profile failures are not propagated to the script's exit
+status and its remote profile files use fixed temporary paths. A stale
+capture can therefore survive a failed later attempt. Use the manual
+profiling procedure below until capture freshness and success can be
+established; successful row reconciliation alone does not validate a profile.
+The script estimates frames/s from mean frame counts in the t=25–55 reports;
+the manual procedure uses actual elapsed report time for the capture window.
+
+### Build and provision the machines
 
 The target requires `ROCKETNET_BUILD_TOOLS=ON` and
 `ROCKETNET_BUILD_DEV_LIBRARIES=ON`; it links the development library. XDP
@@ -425,11 +507,12 @@ After both roles finish, collect the logs on one machine:
 ./bin/harden_load reconcile --logs server.log,clients.log
 ```
 
-The io_uring run used `scripts/harden-pair` with a bench-local wrapper that
-appended `SF_SERVER_ARGS`. XDP used a bench-local launcher. Their archived
-launcher and documented row script are pending; the checked-in script alone
-does not accept the frame and game-thread flags. The commands above invoke
-the binary directly. The recorded arguments above omit `--space-split top`.
+The older io_uring run used `scripts/harden-pair` with a bench-local wrapper
+that appended `SF_SERVER_ARGS`; its exact historical wrapper is pending.
+The committed XDP row script is linked above. At `dec497ae6`, `harden-pair`
+accepts `--server-args`, `--client-args`, and `--server-sudo` for the row
+script's direct workload arguments. The binary commands above retain the
+older rows' arguments, including omission of `--space-split top`.
 Do not substitute a different frame order when repeating a row.
 
 For GSO's new loaded peak rows, use `ebdce1ca4`, set `NETWORK_THREADS` to
@@ -540,6 +623,24 @@ the passing two-thread row uses a different pool size and main-thread CPU.
 | `--input-bytes 256` | Size of each client input message. |
 | `--logs` | Comma-separated role logs read by `reconcile`. |
 
+The row script adds these orchestration flags; workload flags shared with
+the binary keep the meanings above:
+
+| Row-script flag | Meaning |
+| --- | --- |
+| `--server-host` / `--client-host` | SSH destinations for the two machines. |
+| `--server-ip` | Server address reachable from the client machine. |
+| `--remote` | Server checkout containing `bin/harden_load`; also the default client checkout. |
+| `--client-remote` | Client checkout when its path differs from the server's. |
+| `--local-bin` | Controller directory containing `harden_load` for reconciliation. |
+| `--out` | Local directory receiving this run's logs and reports. |
+| `--server-dev` / `--client-dev` | Network interface names on the respective machines. |
+| `--first-cpu` | Server main-thread CPU; forwarded as `--pin-first-cpu`. |
+| `--queues` | XDP queue count; must match provisioning; forwarded as `--num-xdp-queues`. |
+| `--split` | `top` or `bottom` frame order; forwarded as `--space-split`. |
+| `--ssh` | SSH command; defaults to `ssh -o BatchMode=yes`. |
+| `--profile` | Request the script's perf capture and ranked report, subject to the capture-handling limitation above. |
+
 ### Check placement and read the results
 
 For XDP, the measured pool log reports `game_threads=21 first_cpu=3 pinned=21
@@ -592,8 +693,9 @@ The server was sampled for eight seconds, from t=40 to t=48 of the
 60-second run, using perf `7.0.14` and event `cpu/cycles/P`. The record
 command omitted `-e`; the worker identified the selected event with
 `perf evlist`. Although recording requested call graphs, this build does
-not support reliable unwinding: use the self-time report below. The launcher
-and row script still await their repository commit.
+not support reliable unwinding: use the self-time report below. The current
+row script is committed at `dec497ae6`; its capture-handling limitation is
+described in the controller instructions above.
 
 Start the chosen server and client row. On the server machine, the recorded
 process-selection command was:
