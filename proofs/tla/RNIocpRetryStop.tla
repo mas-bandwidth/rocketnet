@@ -351,7 +351,7 @@ PassBounded ==
 (* its cell                                                               *)
 RetryOwned ==
     \A o \in Ops : state[o] = "retry" =>
-        \/ \E w \in Workers : cur[w] = o /\ wpc[w] \in { "post", "push", "publish" }
+        \/ \E w \in Workers : cur[w] = o /\ wpc[w] \in { "post", "check", "push", "publish" }
         \/ \E k \in absDeq .. absEnq - 1 :
                /\ ref[Index(Wrap(k))] = [ op |-> o, g |-> gen[o] ]
                /\ seq[Index(Wrap(k))] = Wrap(k + 1)
