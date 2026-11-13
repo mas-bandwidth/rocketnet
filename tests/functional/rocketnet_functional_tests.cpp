@@ -916,7 +916,10 @@ void rocketnet_test_transport_ring_exhaustion()
     // Accumulate returned frames in this one fill until the same exact
     // capacity is reached. No flush or transport update assists the refill.
 
-    const int refill = rocketnet_test_fill_server_ring( server, completion_capacity );
+    // msgx's banks come back when their transmit workers have sent them:
+    // the refill waits for the whole capacity, as IOCP's for its completions
+    const int msgx_staged = strcmp( rocketnet_server_transport_io_name( server ), "msgx" ) == 0;
+    const int refill = rocketnet_test_fill_server_ring( server, msgx_staged ? capacity : completion_capacity );
     if ( refill != capacity )
     {
         printf( "ring refill: transport=%s first=%d second=%d\n", rocketnet_server_transport_io_name( server ), capacity, refill );
@@ -935,10 +938,9 @@ void rocketnet_test_transport_ring_exhaustion()
 
     rocketnet_server_transport_update( server, rocketnet_platform_time() );
 
-    // msgx hands its staged banks to transmit workers: a bank comes back
-    // when its worker has sent it, so a start right after the flush may
-    // still refuse, as IOCP's may before its completions retire
-    const int sends_asynchronously = completion_capacity || strcmp( rocketnet_server_transport_io_name( server ), "msgx" ) == 0;
+    // likewise a start right after the flush may still refuse on msgx, as
+    // IOCP's may before its completions retire
+    const int sends_asynchronously = completion_capacity || msgx_staged;
 
     int recovered = 0;
 
