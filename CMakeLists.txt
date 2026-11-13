@@ -559,23 +559,34 @@ endif()
 # (tools/header_warnings). Every game that includes the header compiles it
 # with its own flags, so the header must be clean under all of them. Angle
 # bracket includes are the compiler's own headers, never ours, so MSVC reads
-# them at /external:W0.
-add_library(rocketnet_header_warnings OBJECT
-    tools/header_warnings/header_warnings.c
-    tools/header_warnings/header_warnings.cpp)
-target_include_directories(rocketnet_header_warnings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
-if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    # C4820 (padding added) is MSVC's -Wpadded: layout, not a defect.
-    target_compile_options(rocketnet_header_warnings PRIVATE /Wall /wd4820 /external:anglebrackets /external:W0)
-elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
-    target_compile_options(rocketnet_header_warnings PRIVATE -Weverything -Wno-padded)
-    check_c_compiler_flag("-Wno-poison-system-directories" ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
-    if(ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
-        target_compile_options(rocketnet_header_warnings PRIVATE -Wno-poison-system-directories)
+# them at /external:W0. It is compiled twice: rocketnet_header_warnings with
+# the header's default (ROCKETNET_DEV 1) and rocketnet_header_warnings_dev0
+# with ROCKETNET_DEV=0, the form a production game compiles. A check, not a
+# deliverable, so a parent project that embeds the tree with its tests off
+# does not build it.
+if(ROCKETNET_BUILD_TESTS)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        check_c_compiler_flag("-Wno-poison-system-directories" ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
     endif()
-else()
-    target_compile_options(rocketnet_header_warnings PRIVATE
-        -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
+    foreach(rocketnet_header_target rocketnet_header_warnings rocketnet_header_warnings_dev0)
+        add_library(${rocketnet_header_target} OBJECT
+            tools/header_warnings/header_warnings.c
+            tools/header_warnings/header_warnings.cpp)
+        target_include_directories(${rocketnet_header_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+        if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+            # C4820 (padding added) is MSVC's -Wpadded: layout, not a defect.
+            target_compile_options(${rocketnet_header_target} PRIVATE /Wall /wd4820 /external:anglebrackets /external:W0)
+        elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+            target_compile_options(${rocketnet_header_target} PRIVATE -Weverything -Wno-padded)
+            if(ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
+                target_compile_options(${rocketnet_header_target} PRIVATE -Wno-poison-system-directories)
+            endif()
+        else()
+            target_compile_options(${rocketnet_header_target} PRIVATE
+                -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
+        endif()
+    endforeach()
+    target_compile_definitions(rocketnet_header_warnings_dev0 PRIVATE ROCKETNET_DEV=0)
 endif()
 
 if(ROCKETNET_BUILD_EXAMPLES)
