@@ -110,9 +110,15 @@ Pending == SumOver(tail, Fillers)               \* granted, not yet staged
 Unstaged == SumOver(uncounted, Fillers)         \* staged, not yet counted (BatchCount)
 OwnUnstaged == InStep("ownio")                  \* own frame taken, not yet staged
 Busy(f) == Cardinality({g \in Fillers \ {f} : pc[g] /= "idle"})
-OthersTail(f) == SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE tail[g]], Fillers)
-\* another filler's hold on the room: its tail, or one frame while it is in flight
-Held(g) == IF pc[g] = "idle" THEN 0 ELSE Max(1, tail[g])
+\* a filler's chunk hold: a chunk claim from its add until it is granted or
+\* taken back, then the tail of it not yet staged (the code's tail_held:
+\* raised by the chunk at its add, lowered at a take back, per frame
+\* staged, and by the rest at the tail's return)
+Checking == {"claimed", "read1", "read2", "read3"}
+TailHeld(g) == tail[g] + (IF pc[g] \in Checking /\ size[g] > 1 THEN size[g] ELSE 0)
+OthersTail(f) == SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE TailHeld(g)], Fillers)
+\* another filler's hold on the room: its chunk hold, or one frame while it is in flight
+Held(g) == IF pc[g] = "idle" THEN 0 ELSE Max(1, TailHeld(g))
 OthersHeld(f) == SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE Held(g)], Fillers)
 
 \* a room of r frames is above what the protocol still needs, with a frame
