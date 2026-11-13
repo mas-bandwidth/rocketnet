@@ -166,8 +166,15 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452639 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
+// The counter union, the send reserve and the sends from game threads
+// (measured on the studio, AppleClang, Debug, DEV=ON): the union's and the
+// reserve's rows and words read 1469505823 and 15037450; the per-client open
+// message, the thread rule check's per-thread and per-client lines, the
+// message object's per-thread open lines, each region's room_refusals, the
+// per-thread send lines and the per-client wire totals on a line each add
+// 237312 to the server and 4096 to the client: 1469743135 and 15041546.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468694559 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992970 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's

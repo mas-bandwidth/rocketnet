@@ -488,8 +488,15 @@ static void test_server_receive_leaves_send_staging_to_sends()
     check( fake->aborts == 0 );
     check( fake->refused == 0 );
     check( fake->starts == fake->finishes );
-    check( rocketnet_server_transport_send_capacity_available( pair.server ) == SERVER_RECEIVE_WORK_STAGING_SLOTS - fake->finishes );
+    check( server_receive_work_staging_send_room( fake ) == SERVER_RECEIVE_WORK_STAGING_SLOTS - fake->finishes );
     check( counters->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before );
+
+    // the update opened the budget again: the game may take the room less
+    // the protocol reserve (RNSendReserve). A staging of 8 is all reserve but
+    // for the connected client's own frame: its keep-alive is acknowledged, so
+    // the game's first frame to it is its own
+
+    check( rocketnet_server_transport_send_capacity_available( pair.server ) == 1 );
 
     server_receive_work_staging_swap_out( &pair, fake );
     server_receive_work_pair_teardown( &pair );
