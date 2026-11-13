@@ -128,39 +128,90 @@ def selftest():
         converter.convert(root, "rocketnet_fuzz_message", message, "message_case")
 
         problems, paired = check(root)
-        assert not problems, "a converted pair reported %r" % problems
-        assert paired == 2, "expected two paired seeds, got %d" % paired
+        require(not problems, "a converted pair reported %r" % problems)
+        require(paired == 2, "expected two paired seeds, got %d" % paired)
+
+        def one_mismatch(label, needle):
+            problems, paired = check(root)
+            require(len(problems) == 1 and problems[0].startswith("mismatch") and needle in problems[0],
+                    "%s was not one mismatch naming %r: %r" % (label, needle, problems))
+            require(paired == 1, "%s must leave one pair, got %d" % (label, paired))
+
+        for name, corpus in (("prefilter_case", "tests/fuzz/corpus"), ("message_case", "tests/fuzz/corpus_message")):
+            target = os.path.join(root, *REGESS.split("/"), name + ".pcapng")
+            seed = os.path.join(root, *corpus.split("/"), "regress_" + name)
+            with open(target, "rb") as f:
+                image = f.read()
+            with open(seed, "rb") as f:
+                seed_bytes = f.read()
+
+            # a capture whose bytes differ from its seed's by one byte
+            with open(seed, "wb") as f:
+                f.write(seed_bytes[:-1] + bytes([seed_bytes[-1] ^ 0xFF]))
+            one_mismatch("a %s seed one byte off its capture" % name, "does not carry")
+            with open(seed, "wb") as f:
+                f.write(seed_bytes)
+
+            # a capture with two packets
+            packets = pcapng.read_packets(target)
+            pcapng.write_packets(target, packets + packets)
+            one_mismatch("a two-packet %s capture" % name, "2 packets, expected 1")
+
+            # a truncated capture
+            with open(target, "wb") as f:
+                f.write(image[:-4])
+            one_mismatch("a truncated %s capture" % name, name + ".pcapng: ")
+
+            with open(target, "wb") as f:
+                f.write(image)
+            problems, paired = check(root)
+            require(not problems and paired == 2, "the restored %s pair did not pair" % name)
 
         target = os.path.join(root, *REGESS.split("/"), "prefilter_case.pcapng")
         with open(target, "rb") as f:
             image = f.read()
         os.unlink(target)
         problems, paired = check(root)
-        assert len(problems) == 1 and "orphan seed" in problems[0], "a missing capture was not one orphan"
-        assert paired == 1, "a missing capture must leave one pair"
+        require(len(problems) == 1 and "orphan seed" in problems[0], "a missing capture was not one orphan")
+        require(paired == 1, "a missing capture must leave one pair")
 
         with open(target, "wb") as f:
             f.write(image)
         problems, paired = check(root)
-        assert not problems and paired == 2, "the restored capture did not pair"
+        require(not problems and paired == 2, "the restored capture did not pair")
 
         seed = os.path.join(root, *"tests/fuzz/corpus".split("/"), "regress_prefilter_case")
         os.unlink(seed)
         problems, paired = check(root)
-        assert len(problems) == 1 and "orphan capture" in problems[0], "a missing seed was not one orphan"
-        assert paired == 1, "a missing seed must leave one pair"
+        require(len(problems) == 1 and "orphan capture" in problems[0], "a missing seed was not one orphan")
+        require(paired == 1, "a missing seed must leave one pair")
 
     with tempfile.TemporaryDirectory() as empty:
         problems, paired = check(empty)
-        assert problems and "nothing was checked" in problems[0], "a tree with no corpora was accepted"
+        require(problems and "nothing was checked" in problems[0], "a tree with no corpora was accepted")
 
-    print("check_fuzz_regressions selftest: ok (two converted pairs; missing capture, missing seed and an empty tree each red)")
+    print("check_fuzz_regressions selftest: ok (two converted pairs; a seed one byte off, a two-packet capture "
+          "and a truncated capture of each kind, a missing capture, a missing seed and an empty tree each red)")
     return 0
+
+
+class SelfTestFailed(Exception):
+    pass
+
+
+def require(condition, message):
+    """An assert that python3 -O does not remove."""
+    if not condition:
+        raise SelfTestFailed(message)
 
 
 def main(argv):
     if len(argv) == 2 and argv[1] == "--selftest":
-        return selftest()
+        try:
+            return selftest()
+        except SelfTestFailed as failure:
+            print("check_fuzz_regressions selftest FAILED: %s" % failure)
+            return 1
     root = ROOT
     if len(argv) == 3 and argv[1] == "--root":
         root = argv[2]
