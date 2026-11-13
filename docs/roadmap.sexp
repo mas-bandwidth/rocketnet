@@ -326,10 +326,10 @@
    :text "In an AddressSanitizer build the rio transport's sized block (rocketnet_rio_sized_layout: slot bytes, retry slices, process arrays, drops, each bank's data, from and packet bytes) carries poisoned red zones between its carves. The registered region laid out by sdk/rocketnet_rio_layout.h (send frames, send addresses, receive slices, receive addresses; one RIORegisterBuffer) does not: its offsets are the layout RNRioLaneLayout models and the trace check binds, so a pad there changes a modelled layout. Add the pads to the layout and its model together, or record why that region stays uncovered."
    :date "2026-11-13" :origin "#1047 merge with the rebuilt rio")
 
-  (item "uring-carve-red-zones" :group "audit-remaining" :area "tests"
-   :title "ASan red zones between the rebuilt io_uring transport's carved arrays"
-   :text "#1047 carved red zones into the replaced io_uring transport's bank block (rocketnet_server_uring_buffers_create). The rebuilt transport (#1104) removed that block; its carved allocations are now in sdk/rocketnet_uring_queue_send.cpp, sdk/rocketnet_uring_receive_queue.cpp and sdk/rocketnet_uring_send_queue.cpp, each one rocketnet_malloc of a layout. Add ROCKETNET_RED_ZONE_CARVE to each where the layout is not a modelled or kernel-registered region, and record why where it is."
-   :date "2026-11-13" :origin "#1047 merge with the rebuilt io_uring")
+  (item "sodium-windows-lock-owner" :group "audit-remaining" :area "sdk"
+   :title "Owner-aware leave for the vendored sodium's Windows lock"
+   :text "sodium_misuse leaves sodium's critical section before taking it again. On POSIX the vendored leave refuses unless this thread holds the lock (a thread-local flag, tools/generate_sodium.py LIFECYCLE_ADAPTATIONS, sodium/README.md \"POSIX lock\"). The Windows branch keeps upstream's check of the process-wide locked flag, so a fatal misuse on a thread outside the section while another thread holds the SRW lock clears that thread's flag and releases a lock it does not own. Reachable only on the abort path. Give the Windows branch the same thread-local owner flag (__declspec(thread) under MSVC, __thread under MinGW), carried through the generator."
+   :date "2026-11-13" :origin "fix-review build-sanitizers 4703c70f0 B02")
 
   (item "uring-lifecycle-rss-plan" :group "audit-remaining" :area "tests"
    :title "The io_uring provided buffers are 264 MiB a queue whatever the GRO tier"
