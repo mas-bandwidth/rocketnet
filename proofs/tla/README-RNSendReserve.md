@@ -119,8 +119,8 @@ next single claim is refused at a budget that had room for it.
 
 The two counts stay one atomic each per queue, added per frame (the shape
 the F8 change kept). A form that counts per cache line and reads the lines
-one at a time was tried and is not modelled: its re-read decides on a
-snapshot taken at the room read, which the property, measured at the
+one at a time was tried and is not modelled: its re-read decides on the
+counts as they stood at the room read, which the property, measured at the
 decision, cannot yet state.
 
 ## What it does not cover

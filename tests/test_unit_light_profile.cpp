@@ -248,7 +248,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // object's 64-byte rounding). The two fill-phase counters move the client
 // another 64 (actual=15186210, bench-nyc-6), and they and the two bind
 // addresses move the server 576 (actual=3111681075).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632563ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632499ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137634 )
 #endif // #if defined( _WIN32 )
 
