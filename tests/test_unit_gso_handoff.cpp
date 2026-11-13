@@ -542,22 +542,32 @@ static void test_server_gso_segment_refusal_is_per_destination()
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_is_per_destination );
 
-// Four full receive queues, and the real per-update budget, which two queues
-// exhaust (8192 + 8192 is past 16000). The queues the first update consumes
-// are published full again: a walk that always starts at 0 then stays on 0
-// and 1, and queues 2 and 3 never deliver. Across two updates every queue
-// must. No socket, no thread, no clock.
+// Full receive queues, two more than the real per-update budget reaches: the
+// budget ends inside a queue (at 1000 clients it is less than one 32768-slot
+// queue), so the first update claims that queue and stops, and the last two
+// queues are left unclaimed. The queues the first update consumes are
+// published full again: a walk that always starts at 0 then stays on the
+// claimed queues, and the last two never deliver. Across two updates every
+// queue must. No socket, no thread, no clock.
 static void test_server_gso_receive_queue_rotation()
 {
-    const int queues = 4;
+    const int budget = rocketnet_server_receive_packets_per_update( ROCKETNET_DEFAULT_MAX_CLIENTS );
+    const int claimed = ( budget + ROCKETNET_GSO_RECV_QUEUE_SIZE - 1 ) / ROCKETNET_GSO_RECV_QUEUE_SIZE;
+    const int queues = claimed + 2;
+    check( queues <= ROCKETNET_GSO_MAX_QUEUES );
+
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( queues );
     check( gso );
 
-    struct rocketnet_server_socket_process_packets_t * view = rocketnet_server_gso_process_packets( gso );
-    check( view->capacity > ROCKETNET_GSO_RECV_QUEUE_SIZE );
-    check( view->capacity < 2 * ROCKETNET_GSO_RECV_QUEUE_SIZE );
+    // the budget ends inside a queue, so the first update claims that queue
+    // too and stops there
 
-    int seen[4] = { 0, 0, 0, 0 };
+    struct rocketnet_server_socket_process_packets_t * view = rocketnet_server_gso_process_packets( gso );
+    check( view->capacity == budget );
+    check( view->capacity > ( claimed - 1 ) * ROCKETNET_GSO_RECV_QUEUE_SIZE );
+    check( view->capacity < claimed * ROCKETNET_GSO_RECV_QUEUE_SIZE );
+
+    int seen[ROCKETNET_GSO_MAX_QUEUES] = {};
 
     for ( int q = 0; q < queues; q++ )
     {
@@ -572,17 +582,21 @@ static void test_server_gso_receive_queue_rotation()
         check( marker >= 1 && marker <= queues );
         seen[marker - 1]++;
     }
-    check( seen[0] > 0 );
-    check( seen[1] > 0 );
-    check( seen[2] == 0 );
-    check( seen[3] == 0 );
+    for ( int q = 0; q < claimed; q++ )
+    {
+        check( seen[q] > 0 );
+    }
+    check( seen[claimed] == 0 );
+    check( seen[claimed + 1] == 0 );
 
-    // 0 and 1 have a free buffer again; 2 and 3 still hold the ready buffer
-    // the first update did not claim.
-    check( rocketnet_server_gso_test_publish_marked( gso, 0, (uint8_t) 1, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( rocketnet_server_gso_test_publish_marked( gso, 1, (uint8_t) 2, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( !rocketnet_server_gso_test_publish_marked( gso, 2, (uint8_t) 3, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( !rocketnet_server_gso_test_publish_marked( gso, 3, (uint8_t) 4, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    // the claimed queues have a free buffer again; the last two still hold
+    // the ready buffer the first update did not claim.
+    for ( int q = 0; q < claimed; q++ )
+    {
+        check( rocketnet_server_gso_test_publish_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    }
+    check( !rocketnet_server_gso_test_publish_marked( gso, claimed, (uint8_t) ( claimed + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    check( !rocketnet_server_gso_test_publish_marked( gso, claimed + 1, (uint8_t) ( claimed + 2 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
 
     rocketnet_server_gso_receive_packets( gso );
     check( view->num_packets == view->capacity );
@@ -593,27 +607,15 @@ static void test_server_gso_receive_queue_rotation()
         seen[marker - 1]++;
     }
 
-    check( seen[0] > 0 );
-    check( seen[1] > 0 );
-    check( seen[2] > 0 );
-    check( seen[3] > 0 );
+    for ( int q = 0; q < queues; q++ )
+    {
+        check( seen[q] > 0 );
+    }
 
     rocketnet_server_gso_test_close( gso );
 }
 
 REGISTER_UNIT_TEST( test_server_gso_receive_queue_rotation );
-
-// the case needs a receive budget past one queue and short of two, the
-// default 1000 clients' geometry; at ROCKETNET_MAX_CLIENTS 512 the budget is
-// exactly one queue, and the case is skipped and reported there
-
-static bool gso_budget_spans_two_queues()
-{
-    const int budget = rocketnet_server_receive_packets_per_update( ROCKETNET_DEFAULT_MAX_CLIENTS );
-    return budget > ROCKETNET_GSO_RECV_QUEUE_SIZE && budget < 2 * ROCKETNET_GSO_RECV_QUEUE_SIZE;
-}
-
-UNIT_TEST_SKIPPED_UNLESS( test_server_gso_receive_queue_rotation, gso_budget_spans_two_queues() );
 
 // The segmented runs a flush builds, read back from the messages it hands
 // sendmmsg: a run to one destination holds packets of the first one's size,
