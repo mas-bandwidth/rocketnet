@@ -385,7 +385,7 @@ its own (`test_iocp_appverif_<pid>.exe`), which keeps another `test_iocp.exe` on
 leg, another build) out of the run's logs, and removes the copy afterwards. It needs Application Verifier for x64 from
 the Windows SDK and an elevated prompt, and runs a Debug build so the frames
 carry symbols; arguments after the executable and the environment
-(`ROCKETNET_SERVER_TRANSPORT` and the rest) pass through to it, and `--xml <file>` keeps the exported logs.
+(`ROCKETNET_SERVER_TRANSPORT` and the rest) pass through to it, `--xml <file>` keeps the exported logs, and `--report <file>` writes the run's own lines (PASS or FAIL, each stop) to that file, so the executable's output is its own (the nightly runs the whole functional suite this way through `tools/run_functional.sh`, which holds that output to the leg's skips).
 After the run it deletes the copy's own key under
 `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options`, which
 appverif's own `-disable` and `-delete settings` leave behind empty, and a key it cannot delete fails the run.

@@ -51,6 +51,9 @@ leg windows-dev-iocp Windows iocp
 leg windows-dev-sanitized-iocp Windows iocp
 leg windows-dev-sanitized-rio Windows rio
 leg windows-prod-portable Windows portable
+leg windows-dev-appverif-portable Windows portable
+leg windows-dev-appverif-iocp Windows iocp
+leg windows-dev-appverif-rio Windows rio
 
 reason rocketnet_test_a_transport_pin_is_set_and_not_xdp the case checks that an env pin is honoured, so it has nothing to check unpinned (the pinned step after each unpinned run runs it with --run); under an xdp server pin its port-zero server cannot start
 reason rocketnet_test_no_transport_pin_is_set the shared-object hub runs on the default ladder; under a pin it has no meaning, and the leg's unpinned twin runs it
@@ -93,24 +96,24 @@ skip test_io_uring_transport_server_wire_gso_ipv6 rocketnet_server_uring_availab
 skip test_io_uring_transport_server_wire_ipv4 rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_io_uring_transport_server_wire_ipv6 rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_io_uring_transport_server_wire_plain rocketnet_server_uring_available linux-s390x,linux-s390x-portable
-skip test_iocp_transport_server_io_pin rocketnet_test_server_pin_allows_iocp windows-dev-sanitized-rio,windows-prod-portable
-skip test_loopback_hub_two_shared_objects rocketnet_test_no_transport_pin_is_set linux-dev-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio
+skip test_iocp_transport_server_io_pin rocketnet_test_server_pin_allows_iocp windows-dev-sanitized-rio,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-rio
+skip test_loopback_hub_two_shared_objects rocketnet_test_no_transport_pin_is_set linux-dev-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_msgx_transport_server_io_pin rocketnet_test_server_pin_allows_msgx macos-dev-portable,macos-dev-sanitized-portable,macos-prod-portable
-skip test_portable_transport_server_io_pin rocketnet_test_server_pin_allows_portable macos-dev-sanitized-msgx,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio
+skip test_portable_transport_server_io_pin rocketnet_test_server_pin_allows_portable macos-dev-sanitized-msgx,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_posix_client_server_gone_xdp_ipv4_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_posix_client_server_gone_xdp_ipv6_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_posix_hard_killed_client_xdp_ipv4_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_posix_hard_killed_client_xdp_ipv6_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_posix_send_to_closed_port_xdp_ipv4_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_posix_send_to_closed_port_xdp_ipv6_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
-skip test_rio_transport_server_io_pin rocketnet_test_server_pin_allows_rio windows-dev-iocp,windows-dev-sanitized-iocp,windows-prod-portable
+skip test_rio_transport_server_io_pin rocketnet_test_server_pin_allows_rio windows-dev-iocp,windows-dev-sanitized-iocp,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp
 skip test_server_gso_receive_buffer_request rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
-skip test_server_port_zero_transport rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable
+skip test_server_port_zero_transport rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_server_receive_1000_clients_256kbps_10hz rocketnet_test_server_receive_low_tick_measurement_requested linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_server_transport_io_ladder_fall rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_session_reconnect_isolation_io_uring rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_session_reconnect_isolation_xdp rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
-skip test_transport_all_skipped_uses_auto rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable
+skip test_transport_all_skipped_uses_auto rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_transport_env_pin_is_honoured rocketnet_test_a_transport_pin_is_set_and_not_xdp linux-dev,linux-dev-sanitized,linux-prod,linux-s390x,macos-dev,macos-prod,windows-dev,windows-dev-sanitized,windows-prod
 skip test_unit_case_memory suite_max_case_rss_mb linux-dev-sanitized,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,windows-dev-sanitized,windows-dev-sanitized-iocp,windows-dev-sanitized-rio
 skip test_uring_server_socket_hygiene rocketnet_server_uring_available linux-s390x,linux-s390x-portable

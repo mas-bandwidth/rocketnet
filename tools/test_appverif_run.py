@@ -9,7 +9,10 @@ the run's, and its own -delete logs removes the run's. The run therefore
 verifies a copy of the executable under a name no other process uses.
 """
 
+import contextlib
 import importlib.util
+import io
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -132,6 +135,35 @@ class RemoveImageKeyTest(unittest.TestCase):
     def test_the_name_the_run_verifies_is_accepted(self):
         copy = self.appverif_run.verified_image_path(Path("C:/b/bin/Debug/test_iocp.exe"), "31337")
         self.assertTrue(self.appverif_run.image_key_path(copy.name).endswith("\\test_iocp_appverif_31337.exe"))
+
+
+class ReportTest(unittest.TestCase):
+    """--report keeps the run's own lines out of the executable's output: a
+    whole functional-suite log is held to its skips and registry line by line."""
+
+    def setUp(self):
+        self.appverif_run = load_appverif_run()
+
+    def test_lines_go_to_the_report_file_and_not_stdout(self):
+        with tempfile.TemporaryDirectory(dir=".") as directory:
+            path = Path(directory) / "report.txt"
+            self.appverif_run.REPORT_PATH = str(path)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.appverif_run.report("appverif_run: PASS x")
+                self.appverif_run.report("appverif_run: FAIL y", error=True)
+            self.assertEqual(path.read_text(encoding="utf-8"), "appverif_run: PASS x\nappverif_run: FAIL y\n")
+            self.assertEqual(out.getvalue(), "")
+            self.assertEqual(err.getvalue(), "")
+
+    def test_without_a_report_file_lines_go_to_stdout_and_failures_to_stderr(self):
+        self.appverif_run.REPORT_PATH = None
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.appverif_run.report("appverif_run: PASS x")
+            self.appverif_run.report("appverif_run: FAIL y", error=True)
+        self.assertEqual(out.getvalue(), "appverif_run: PASS x\n")
+        self.assertEqual(err.getvalue(), "appverif_run: FAIL y\n")
 
 
 if __name__ == "__main__":
