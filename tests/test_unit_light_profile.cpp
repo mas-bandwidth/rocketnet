@@ -134,7 +134,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
 // (8 bytes a counter block across a 64-byte rounding): computed from the
 // macOS and Linux readings, not measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468701759 )
+// The update in three calls adds 34160412 to the server (the macOS and
+// Linux readings agree): computed, not measured on Windows; the client is
+// left as it was, as on Linux.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862171 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345516 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -290,6 +293,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Release, DEV ON).
 // The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
 // (8 bytes a counter block across a 64-byte rounding).
+// The update in three calls (the deferred ack apply's per-client store and
+// each endpoint's last applied block, as the macOS note says) adds 34160412
+// to the server and nothing to the client: actual=5644857999 (hulk, gcc,
+// Debug and Release, DEV ON).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -297,9 +304,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649067ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809479ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649011ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809423ULL )
 #endif // #if defined( __aarch64__ )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141714 )
 #endif // #if defined( _WIN32 )

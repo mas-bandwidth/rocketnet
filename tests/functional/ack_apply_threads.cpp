@@ -53,8 +53,7 @@ static void ack_schedule_threads( struct rocketnet_server_acks_t * acks, const i
                                       {
                                           taken.fetch_add( 1 );
                                       }
-                                  }
-                              } );
+                                  } } );
     }
     for ( std::thread & thread : threads )
     {
