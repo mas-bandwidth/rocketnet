@@ -206,9 +206,6 @@ struct counters_exception_t
 };
 
 static const counters_exception_t counters_no_code_path[] = {
-    { "FILL_PHASE_OVERLAP", "the row lands first; the fill-phase wiring that counts it (v1.2/wide-fill) removes this line" },
-    { "FILL_TWO_FILLERS", "the row lands first; the fill-phase wiring that counts it (v1.2/wide-fill) removes this line" },
-    { "SEND_RESERVE_REFUSED_TAILS_HELD", "the row lands first; the chunked reserve claim that counts it (v1.2/wide-fill, F8) removes this line" },
     { NULL, NULL }
 };
 

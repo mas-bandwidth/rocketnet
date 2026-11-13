@@ -416,7 +416,7 @@ static void staged_sites_run( int latency_ms, int loss_percent, int busy, int * 
     struct rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
     check( frame != NULL );
-    memcpy( frame + context.payload_index, payload, sizeof( payload ) );
+    memcpy( frame, payload, sizeof( payload ) );
     check( rocketnet_server_transport_finish_packet( pair.server, &context, (int) sizeof( payload ) ) > 0 );
     check( fake->starts == 2 );
 

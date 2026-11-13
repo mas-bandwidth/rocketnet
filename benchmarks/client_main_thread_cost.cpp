@@ -117,7 +117,7 @@ int main( int argc, char ** argv )
             rocketnet_packet_context_t context;
             uint8_t * payload = rocketnet_client_transport_start_packet( client, payload_bytes, &context );
             CHECK( payload );
-            memset( payload + context.payload_index, i, payload_bytes );
+            memset( payload, i, payload_bytes );
             CHECK( rocketnet_client_transport_finish_packet( client, &context, payload_bytes ) > payload_bytes );
         }
 
@@ -179,7 +179,7 @@ int main( int argc, char ** argv )
                 rocketnet_packet_context_t context;
                 uint8_t * payload = rocketnet_server_transport_start_packet( server, reply_client_index[i], payload_bytes, &context );
                 CHECK( payload );
-                memset( payload + context.payload_index, 'r', payload_bytes );
+                memset( payload, 'r', payload_bytes );
                 CHECK( rocketnet_server_transport_finish_packet( server, &context, payload_bytes ) > payload_bytes );
             }
 

@@ -142,7 +142,7 @@ void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * serve
 void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed );
 void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac );
 const char * rocketnet_xdp_veth_netns_path();
-uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t * packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 
 static struct rocketnet_server_transport_t * posix_hk_xdp_server = NULL;
 
@@ -1142,7 +1142,7 @@ static void posix_hk_server_send_to( struct rocketnet_server_transport_t * serve
         for ( int i = 0; i < count; i++ )
         {
             uint64_t packet_id = 0;
-            uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, 0, 0, to, posix_hk_xdp_far_mac );
+            uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, NULL, 0, to, posix_hk_xdp_far_mac );
             posix_hard_killed_require( frame );
             memcpy( frame + ROCKETNET_FRAME_WIRE_OFFSET, data, (size_t) bytes );
             rocketnet_server_socket_finish_packet( xdp, packet_id, frame, bytes );

@@ -53,6 +53,14 @@ BASELINE_ADAPTATIONS = {
         # defined, so the pragma is GCC's alone.
         ('# ifdef __GNUC__\n#  pragma GCC target("sse2")\n# endif\n# include <emmintrin.h>\n\nstatic inline int\ncrypto_verify_n(',
          '# if defined(__GNUC__) && !defined(__clang__)\n#  pragma GCC target("sse2")\n# endif\n# include <emmintrin.h>\n\nstatic inline int\ncrypto_verify_n('),
+        # Runtime AVX detection (sodium/README.md, "CPU feature detection"):
+        # upstream reads XCR0 with this XGETBV opcode on GCC and Clang when
+        # its configure defines HAVE_AVX_ASM. The pair has no configure and
+        # leaves HAVE_AVX_ASM off (it also selects assembly the subset does
+        # not carry), so XCR0 stayed 0 and AVX, and with it AVX2, was never
+        # detected. HAVE_CPUID (sodium.h: GCC or Clang on x86) reads it too.
+        ('# elif defined(HAVE_AVX_ASM)\n        __asm__ __volatile__(".byte 0x0f, 0x01, 0xd0" /* XGETBV */\n',
+         '# elif defined(HAVE_AVX_ASM) || defined(HAVE_CPUID)\n        __asm__ __volatile__(".byte 0x0f, 0x01, 0xd0" /* XGETBV */\n'),
     ],
 }
 # MemorySanitizer adaptations (sodium/README.md, "MemorySanitizer"). Two

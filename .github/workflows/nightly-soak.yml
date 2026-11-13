@@ -244,7 +244,7 @@ jobs:
           [ "$xdp_status" = 0 ] || { echo "LOAD cell=xdp $line"; xdp_err; echo "LOAD cell=xdp FAIL load in the guest exited $xdp_status"; exit 1; }
           check_cell xdp xdp "$line" || { xdp_err; exit 1; }
 
-      - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (18 cases, 0 skipped)
+      - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (19 cases, 0 skipped)
         if: runner.os == 'Linux'
         run: bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest
 

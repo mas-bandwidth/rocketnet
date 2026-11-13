@@ -240,6 +240,15 @@ def main() -> int:
         refused_wide({"--mode": "robustness"}, ("--server-transport-profile", "xdp"), "plan values are absent or out of bounds")
         token_file.write_text(token_text + "\n", encoding="ascii")
 
+        assert "PLAN vlan=" not in first.stdout
+        tagged = run(list(args) + ["--vlan", "7"], 0)
+        assert "PLAN vlan=7 tag_bytes=4" in tagged.stdout
+        assert "nominal_frame_bytes=147" in tagged.stdout
+        assert "nominal_wire_slot_bytes=171" in tagged.stdout
+        for vlan in ("0", "4095", "x"):
+            refused = run(list(args) + ["--vlan", vlan], 2)
+            assert "unknown or invalid argument: --vlan" in refused.stderr, refused.stderr
+
         unconfirmed = list(args)
         unconfirmed[unconfirmed.index("I-OWN-THIS-BENCH")] = "no"
         refused = run(unconfirmed, 2)

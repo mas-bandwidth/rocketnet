@@ -39,7 +39,15 @@
 (* and advances it; cancel moves it back; release advances the consumer.   *)
 (* The release hands the kernel the first n descriptors of the ring,       *)
 (* whichever frames they hold, so a release while ahead > 0 at the start   *)
-(* of a pass gives back descriptors that were never read.                  *)
+(* of a pass gives back descriptors that were never read.  cprod is the    *)
+(* user's cached producer minus the consumer: libxdp's peek                *)
+(* (xsk_cons_nb_avail) reads the producer again only when its cached view  *)
+(* is empty, so a peek can hand out fewer descriptors than the kernel has  *)
+(* posted; the rest wait for a later pass.                                 *)
+(*                                                                         *)
+(* The frames go onto the fill ring in the order the code writes them: the *)
+(* first fill in frame order, a flush in the pending return's order.  The  *)
+(* model does not fix that order (Orders): no rule here depends on it.     *)
 (*                                                                         *)
 (* A driver or kernel defect can post a descriptor naming a frame outside  *)
 (* the receive region (a send frame, SendFrame here): KernelMisdeliver,    *)
@@ -115,6 +123,7 @@ VARIABLES
     kused,     \* the entries of that batch the kernel has taken
     ring,      \* the RX ring's descriptors, consumer to producer (kernel view)
     ahead,     \* cached consumer - consumer (user)
+    cprod,     \* cached producer - consumer (user)
     phase,     \* "idle" or "taking" in the single-buffer abstraction
     start,     \* the ring offset the current peek began at
     peeked,    \* the descriptors the current peek returned
@@ -124,14 +133,14 @@ VARIABLES
     took,      \* ghost: the current pass has taken a descriptor
     defect     \* the kernel has posted a descriptor naming SendFrame
 
-vars == <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
+vars == <<fq, kcache, kused, ring, ahead, cprod, phase, start, peeked, taken, pending, staged, took, defect>>
 
 Range(s) == {s[i] : i \in DOMAIN s}
 
 Min(a, b) == IF a <= b THEN a ELSE b
 
-(* The frames of a set in some order: the order the flush writes them.     *)
-SetSeq(S) == CHOOSE s \in [1..Cardinality(S) -> S] : Range(s) = S
+(* The frames of a set in each order: the flush writes them in one.        *)
+Orders(S) == {s \in [1..Cardinality(S) -> S] : Range(s) = S}
 
 (* The fill ring's frames the kernel has not taken.                        *)
 Fill == {fq[i] : i \in kused + 1..Len(fq)}
@@ -145,6 +154,7 @@ TypeOK ==
     /\ kused \in 0..kcache
     /\ ring \in Seq(AllFrames) /\ Len(ring) <= RingSize
     /\ ahead \in 0..RingSize
+    /\ cprod \in ahead..Len(ring)
     /\ phase \in {"idle", "taking"}
     /\ start \in 0..RingSize
     /\ peeked \in 0..RingSize
@@ -155,11 +165,12 @@ TypeOK ==
     /\ defect \in BOOLEAN
 
 Init ==
-    /\ fq = SetSeq(Frames)
+    /\ fq \in Orders(Frames)
     /\ kcache = 0
     /\ kused = 0
     /\ ring = <<>>
     /\ ahead = 0
+    /\ cprod = 0
     /\ phase = "idle"
     /\ start = 0
     /\ peeked = 0
@@ -177,7 +188,7 @@ KernelReceive ==
     /\ Len(ring) < RingSize
     /\ kused' = kused + 1
     /\ ring' = Append(ring, fq[kused + 1])
-    /\ UNCHANGED <<fq, kcache, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
+    /\ UNCHANGED <<fq, kcache, ahead, cprod, phase, start, peeked, taken, pending, staged, took, defect>>
 
 (* KernelMisdeliver: a driver or kernel defect posts a descriptor naming a *)
 (* frame outside the receive region, once.                                 *)
@@ -186,7 +197,7 @@ KernelMisdeliver ==
     /\ Len(ring) < RingSize
     /\ ring' = Append(ring, SendFrame)
     /\ defect' = TRUE
-    /\ UNCHANGED <<fq, kcache, kused, ahead, phase, start, peeked, taken, pending, staged, took>>
+    /\ UNCHANGED <<fq, kcache, kused, ahead, cprod, phase, start, peeked, taken, pending, staged, took>>
 
 (* KernelRefresh: a packet finds the batch used up.  The kernel publishes  *)
 (* its consumer (the taken entries' slots go back to the user) and peeks   *)
@@ -198,20 +209,27 @@ KernelRefresh ==
     /\ fq' = SubSeq(fq, kused + 1, Len(fq))
     /\ kused' = 0
     /\ kcache' = Len(fq) - kused
-    /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
+    /\ UNCHANGED <<ring, ahead, cprod, phase, start, peeked, taken, pending, staged, took, defect>>
 
 (* Peek: xsk_ring_cons__peek from the cached consumer, asking for          *)
 (* receive_limit, the lesser of the staging buffer's room                  *)
 (* (receive_capacity) and the pending return's room                        *)
-(* (pending_return.available()); it returns what the ring holds up to      *)
-(* that.  Begin the modeled fill pass.  A peek of zero is no step.         *)
+(* (pending_return.available()); it returns what its cached view holds up  *)
+(* to that, reading the producer again (the whole ring) only when that     *)
+(* view is empty.  Begin the modeled fill pass.  A peek of zero is no      *)
+(* step: it changes nothing, since a refresh that finds nothing new leaves *)
+(* the cached producer where it was.  The code peeks only when the limit   *)
+(* is above zero.                                                          *)
 StageRoom == IF PeekStagingRoom THEN StageCap - staged ELSE RingSize
 PendRoom == PendCap - Cardinality(pending)
 ReceiveLimit == Min(StageRoom, PendRoom)
+Refreshed == IF cprod = ahead THEN Len(ring) ELSE cprod
 Peek ==
-    LET n == Min(Len(ring) - ahead, ReceiveLimit) IN
+    LET n == Min(Refreshed - ahead, ReceiveLimit) IN
     /\ phase = "idle"
+    /\ ReceiveLimit > 0
     /\ n > 0
+    /\ cprod' = Refreshed
     /\ start' = ahead
     /\ ahead' = ahead + n
     /\ peeked' = n
@@ -234,7 +252,7 @@ Take ==
     /\ taken' = taken + 1
     /\ staged' = IF d \in Frames THEN staged + 1 ELSE staged
     /\ took' = TRUE
-    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, defect>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, cprod, phase, start, peeked, defect>>
 
 (* Finish: every peeked descriptor taken, as the loop ends.               *)
 (* rocketnet_xdp_receive_ring_finish cancels peeked - taken (zero) and     *)
@@ -248,13 +266,14 @@ Finish ==
     /\ taken = peeked
     /\ ring' = SubSeq(ring, taken + 1, Len(ring))
     /\ ahead' = ahead - back - taken
+    /\ cprod' = cprod - taken
     /\ phase' = "idle"
     /\ start' = 0
     /\ peeked' = 0
     /\ taken' = 0
     /\ took' = FALSE
     /\ IF FlushFits
-          THEN /\ fq' = fq \o SetSeq(pending)
+          THEN /\ \E order \in Orders(pending) : fq' = fq \o order
                /\ pending' = {}
           ELSE UNCHANGED <<fq, pending>>
     /\ UNCHANGED <<kcache, kused, staged, defect>>
@@ -265,16 +284,16 @@ Refill ==
     /\ phase = "idle"
     /\ pending # {}
     /\ FlushFits
-    /\ fq' = fq \o SetSeq(pending)
+    /\ \E order \in Orders(pending) : fq' = fq \o order
     /\ pending' = {}
-    /\ UNCHANGED <<kcache, kused, ring, ahead, phase, start, peeked, taken, staged, took, defect>>
+    /\ UNCHANGED <<kcache, kused, ring, ahead, cprod, phase, start, peeked, taken, staged, took, defect>>
 
 (* Drain: consume the staged bytes in the single-buffer abstraction.      *)
 Drain ==
     /\ phase = "idle"
     /\ staged > 0
     /\ staged' = 0
-    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, took, defect>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, cprod, phase, start, peeked, taken, pending, took, defect>>
 
 Next ==
     \/ KernelReceive
