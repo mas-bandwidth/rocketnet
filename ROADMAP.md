@@ -12,7 +12,8 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
 - [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (5)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
-- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (10)
+- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (9)
+- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (14)
 
 ## Audit items not yet fixed
 
@@ -116,9 +117,9 @@ From: Piece K cold reader; piece L (io_uring) second cold reader
 
 ### io_uring receive refusals that are not in the server's drop reasons
 
-The rebuilt io_uring transport's receive drop totals are the worker prefilter's and the bank's reasons plus refused completions (RECEIVE_FAILED). A truncated source (URING_RECEIVE_DROPPED_SOURCE), a completion naming no buffer (URING_RECEIVE_DROPPED_NO_BUFFER) and segments past one receive (URING_RECEIVE_DROPPED_OVERFLOW) are counted only in their URING_ rows, where the replaced transport also folded them into RECEIVE_FAILED and BANK_FULL. Decide the fold, and test it by value.
+The rebuilt io_uring transport's receive drop totals are the worker prefilter's and the bank's reasons plus refused completions (RECEIVE_FAILED). A truncated source (URING_RECEIVE_DROPPED_SOURCE), a completion naming no buffer (URING_RECEIVE_DROPPED_NO_BUFFER) and segments past one receive (URING_RECEIVE_DROPPED_OVERFLOW) are counted only in their URING_ rows, where the replaced transport also folded them into RECEIVE_FAILED and BANK_FULL. A source drop is also counted once per completion, even for a GRO batch of several datagrams (sdk/rocketnet_uring_receive_queue.cpp about 598-624), where gso counts each datagram into RECEIVE_FAILED (sdk/rocketnet_server_gso_linux.cpp about 1052, 1197-1205). Decide the fold and the unit, and test both by value.
 
-From: Piece L (io_uring), second cold reader
+From: Piece L (io_uring), second cold reader; review before v1.2.0, finding L2 (2026-11-13)
 
 ### RNUringQueueReceive: Complete without F_MORE
 
@@ -202,9 +203,9 @@ From: Piece G, cold reader (TLA+ section)
 
 ### RNSendReserveCalls: a Capacity per send queue
 
-send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on.
+send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on. The trace check is narrower than that today: tests/tla_trace_send_reserve.cpp (213-221) only ever runs one queue, so the per-queue reserve code in sdk/rocketnet_server_transport.cpp (about 1060-1093, 1207-1253) is on no checked trace and a defect there cannot turn it red. Walk several queues.
 
-From: Piece M follow-on, cold reader
+From: Piece M follow-on, cold reader; review before v1.2.0, finding M3 (2026-11-13)
 
 ## Found while preparing v1.0.1
 
@@ -456,12 +457,6 @@ RIO with more than one lane and IOCP with more than one completion worker refuse
 
 From: Network threads per transport survey on main 5488a5443
 
-### gso memory plan counts one worker thread more than create starts
-
-rocketnet_driver_builtin.cpp's plan for gso says worker_threads = queues + 1, while the gso create was read as starting one worker a queue. Check against create, then make the plan count what create starts, with a test on the planned count (as IOCP has).
-
-From: Network threads per transport survey on main 5488a5443
-
 ### scripts/space-frame-row runs XDP only
 
 space-frame-row passes --transport xdp fixed, so the gso and io_uring re-measures called scripts/harden-pair with the same server arguments by hand. Take the transport (and its queue count) as an argument so every Linux transport's row is one command.
@@ -479,3 +474,91 @@ From: Release cutter record, v1.1.49 at 6d1139871
 Update the performance document's rows from the re-measure on main (XDP 59890655d, gso 3218cf5f6, io_uring 3afea2aed, and RIO, IOCP and macOS as their rows on main come in), with the minimum network threads each transport needs for the peak row. Done by the document's author.
 
 From: Re-measure on main, 2026-11-13
+
+## Found by the review before v1.2.0, not fixed for it
+
+Findings of the review that started on 2026-11-13 (main 5488a5443) that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.
+
+### XDP: the gateway refresh blocks the main thread every 5 seconds
+
+On XDP, rocketnet_server_socket_receive_packets (sdk/rocketnet_server_socket_linux.cpp about 4745) runs the gateway refresh on the main thread every 5 s (rocketnet_xdp_gateway_refresh, sdk/rocketnet_xdp_frame.h about 1473, through rocketnet_server_socket_resolve_gateway about 648). rocketnet_gateway_netlink_refresh opens a NETLINK_ROUTE socket, dumps the whole route table for the family (RTM_GETROUTE with NLM_F_DUMP), then queries the neighbour (RTM_GETNEIGH), each receive blocking with a 1 s timeout (sdk/rocketnet_gateway_netlink_linux.cpp about 751-840, 1006); with both families, twice. The cost grows with the host's route count and can block the main thread up to the timeout under rtnl contention; it does not show on a bench with a small table. Resolve it off the main thread (on a network thread), or query the one destination without blocking.
+
+From: Review before v1.2.0, finding X5
+
+### IOCP stop can hang on a receive reposted after its owner's worker exited
+
+Any IOCP worker reposts a refused receive on the owning endpoint's socket (sdk/rocketnet_server_iocp_windows.cpp about 1684-1699), reading stopping (1184) before it raises pending and posts (1235-1237); each stopping worker cancels only its own endpoint's receives and exits when the global pending count reads 0 (1501-1516). A repost that lands after its owner's worker has exited is never cancelled: rocketnet_server_iocp_stopped never turns true, destroy refuses (3722-3726) and create's failure path waits with no bound (3027-3035). Very rare. The model hides it: RNIocpEndpoints.tla Retry (89-96) checks ~stopping and posts in one atomic step. Fix: raise pending before the stopping check, or have every stopping worker cancel every endpoint's receives; split Retry in the model with a reversed witness.
+
+From: Review before v1.2.0, Windows reader, finding W1
+
+### Send capacity is reported for frames the caller cannot take, so an overloaded frame walks every client
+
+send_capacity_available counts own frames and every queue's budget (sdk/rocketnet_server_transport.cpp about 1510-1528), more than the next start can take, so under overload the serial walk visits every client and is refused for each (sdk/rocketnet_message_server.cpp about 2073-2080, 2195, 2225): main thread work grows with the client count on exactly the frames that are already over. Report what the caller can take.
+
+From: Review before v1.2.0, send reserve reader, finding M1
+
+### One full send queue makes the send capacity 0 for every client
+
+Capacity is the fewest free slots of any queue (sdk/rocketnet_server_transport.cpp about 1549, through io_send_room 984-1000), so one full queue stops sends to every client, including clients on queues with room. io_send_room_total (1101-1119) already does this right for disconnect drains. Use the client's own queue's room (or the total) for its start. See also send-reserve-multi-queue-capacity.
+
+From: Review before v1.2.0, send reserve reader, finding M2
+
+### io_uring stop-time send retry bound counts every refusal and never resets on progress
+
+The io_uring worker's stop-time bound counts each refused send and neither waits nor resets when a send makes progress (sdk/rocketnet_uring_queue_worker.cpp about 185-196, 275-278), so a slow drain at stop can give up early; gso resets on progress and waits (sdk/rocketnet_server_gso_linux.cpp about 722-733). Only reachable when stop runs with sends outstanding. Match gso.
+
+From: Review before v1.2.0, gso and io_uring reader, finding L1
+
+### io_uring drops a send refused with ENOBUFS or ENOMEM, where gso retries
+
+sdk/rocketnet_uring_queue_send.cpp (about 423-438) treats ENOBUFS and ENOMEM on a send as FAILED: the packets are dropped and counted. gso sends them again (sdk/rocketnet_server_gso_linux.cpp about 2554). Make the two transports treat a transient refusal the same way.
+
+From: Review before v1.2.0, gso and io_uring reader, finding L3
+
+### The XDP send side has models and no trace layer; the receive-ring walk never runs the real worker loop
+
+No trace layer binds the XDP send half to its models: the buffer exchange publish, claim and recycle (sdk/rocketnet_server_socket_linux.cpp about 158-210, RNBankFifoLayout.tla), the producer publish and turn bump in rocketnet_server_socket_send_packets (about 3268-3316, RNDriverSendStaging.tla Publish), the worker's claim, copy, recycle and send-frame free list (about 5008-5156, WorkerRetire), and the stop drain (rocketnet_server_socket_send_idle about 3051, rocketnet_xdp_send_stall_pass in sdk/rocketnet_server_socket.h about 108, RNXdpSendDrain.tla). Only unit cases cover them (tests/test_unit_xdp_send_staging.cpp, tests/test_xdp.cpp). The xdp-receive-ring trace (tests/tla_trace_xdp_receive_ring.cpp about 287-460) calls the pass helpers in an order the walk composes and never runs rocketnet_server_socket_xdp_thread_function (about 4825). Add send layers, and drive the receive walk through the real loop.
+
+From: Review before v1.2.0, XDP reader, finding X1
+
+### An XDP server on a VLAN takes frames from other VLANs when the NIC strips tags
+
+sdk/xdp/server_xdp.c (about 483-516) and sdk/rocketnet_xdp_frame.h (about 383-405) take an untagged frame on a tagged server. With receive VLAN offload on (the i40e and ixgbe default) native XDP sees every stripped frame untagged, so a frame of any VLAN the NIC accepts, or of the native segment, addressed to the server's address and port is processed, and the reply goes out tagged with the server's VLAN: layer-2 isolation is bypassed for the game port and spoofed sources skip the router's filters. Smallest fix: refuse a VLAN server unless rx-vlan-offload is off, or read the stripped tag (bpf_xdp_metadata_rx_vlan_tag, Linux 6.8 and later).
+
+From: Review before v1.2.0, XDP reader, finding X2
+
+### XDP accepts sources the kernel stack drops as martian, and does not verify checksums on receive
+
+sdk/xdp/server_xdp.c has no source check, and userspace refuses only IPv4-mapped IPv6 (sdk/rocketnet_xdp_frame.h about 675, sdk/rocketnet_address.h about 65): 0.0.0.0/8, 127/8, 224/4, 255.255.255.255, the server's own address, ::, ::1, ff00::/8 and source port 0 reach the main thread and get replies. IPv4 header and UDP checksums are not verified on receive (rocketnet_xdp_frame_parse_vlan about 420-537), and the kernel fast path does not check the version nibble (server_xdp.c about 552). The socket transports get all of this from the kernel. Refuse these in the kernel program and check the sums.
+
+From: Review before v1.2.0, XDP reader, finding X3
+
+### XDP: datagrams received and not handed to the main thread at stop are counted nowhere
+
+The XDP operations table passes NULL for receive_drop_totals (sdk/rocketnet_driver_builtin.cpp about 2523), the only feed of RECEIVE_DROPPED_STOPPED, so at stop (sdk/rocketnet_server_socket_linux.cpp about 4887-5285) the staged, ready, unread-tail (about 4761) and receive-ring datagrams are dropped uncounted. Every other rebuilt transport counts them. Feed the row, with a test that reads it by value. Separate from xdp-stop-abandoned-buffers, which is the send side.
+
+From: Review before v1.2.0, XDP reader, finding X4
+
+### The rio-lane trace checks the harness's own slot table, not the transport's
+
+tests/tla_trace_rio_lane.cpp calls the real hash, lane_of, packet_id and decode (about 126-140) but keeps every state field itself (slot, issued, staged, starts, strayed, misrouted; about 56-68, 129-211): it picks the slot with its own loop and decides misrouted itself. The transport's slot take and frame check, start_packet, finish_packet, abort_packet and lane staging in sdk/rocketnet_server_rio_windows.cpp (about 485-514, 1713-1744, 4162-4198) never run under the trace, so NoReissue, FinishOwn and OneLanePerDest cannot go red for a library defect. The hash is called with family 1 where the transport passes to->type (134, 240), and the comment at line 11 overstates what is bound. Drive lane start and finish on the no-socket fixture and read the library's state, or say plainly what the layer binds.
+
+From: Review before v1.2.0, checks reader C1 and Windows reader W3
+
+### The iocp-admit trace binds only the admit verdict
+
+tests/tla_trace_iocp.cpp (about 169-194) calls rocketnet_server_iocp_test_receive_admit for the verdict, then pushes to its own bank and increments its own full, refused and counted. rocketnet_iocp_bank_datagram (sdk/rocketnet_server_iocp_windows.cpp about 1309-1325) and the drop counters never run, so EveryDropCounted and Accounted are checked against the harness's arithmetic: a BANK_FULL datagram dropped uncounted stays green. Drive the real bank and read the library's counters.
+
+From: Review before v1.2.0, checks reader, finding C2
+
+### The xdp-gateway-refresh trace cannot see the refresh moved
+
+tests/tla_trace_xdp_gateway_refresh.cpp (about 192, 240-253, 326) decides when the refresh runs with the walk's own phase string; the real call site (sdk/rocketnet_server_socket_linux.cpp about 673) never runs, and the untraced ReceiveWithoutRefresh is justified by assumption (tools/tla_trace_check.py about 157). The deadline part is bound; the ordering part (the model's RefreshInFill witness) is not, so a refresh moved into the send path stays green. Drive the walk through the real call site.
+
+From: Review before v1.2.0, checks reader, finding C3
+
+### finish_message and abort_message from the starting thread are not checked against game threads
+
+In sdk/rocketnet_api.cpp (about 3642-3689) and sdk/rocketnet_fill_phase.cpp (about 203-210) the hand-over runs its main thread check only when another thread owns the client. When the owner is the caller or nobody, rn_server_pending_slot scans every connection's plain open.pending while other threads write theirs. rocketnet.h says one thread at a time, and nothing refuses a call that breaks it. Refuse and count it, as the other thread rules are.
+
+From: Review before v1.2.0, threading reader, finding R3
