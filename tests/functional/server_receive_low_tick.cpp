@@ -31,7 +31,6 @@
 #include "rocketnet_address.h"
 #include "../time_scale.h"
 #include "../suite_runner.h"
-#include "../counters_expect.h"
 #include "../portable_crt.h"
 
 #include <stdio.h>
@@ -83,6 +82,9 @@ static void server_receive_low_tick_check( bool condition, const char * expressi
 }
 
 #define server_receive_low_tick_require( condition ) server_receive_low_tick_check( (condition), #condition, __LINE__ )
+
+#define ROCKETNET_COUNTERS_CHECK server_receive_low_tick_require
+#include "../counters_expect.h"
 
 // the log lines of the case, captured through the library's log callback
 static char server_receive_low_tick_log[16384];
