@@ -2343,7 +2343,7 @@ void rocketnet_test_posix_msgx_retired_socket_counted()
     rocketnet_server_msgx_destroy( msgx );
 }
 
-// A dual-stack server ("[::]") opens a connected socket for an IPv4 client
+// A dual-stack server (bound to the IPv6 wildcard) opens a connected socket for an IPv4 client
 // and for an IPv6 client on its own port: its shared socket sets
 // SO_REUSEADDR and SO_REUSEPORT after its bind, the client sockets before
 // theirs. The open count is read, so a client socket that failed to open and
