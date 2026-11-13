@@ -38,9 +38,11 @@
 // before its end, and then stops the worker once nothing waits (the
 // driver's send_idle), else QWORK_DRAIN_STEPS / 2 before the end; in the
 // last third it may also stop the worker at once, with no begin (the
-// transport's free); an even seed's walk is patient: it never stops the
-// worker before nothing waits, so its records reach the shutdown-only tail
-// (BoundBeforeQuit: the bound reached with the bank held and no stop yet).
+// transport's free); an even seed's walk is patient: it begins the stop
+// halfway and never stops the worker at once in the last third (only the
+// stop QWORK_DRAIN_STEPS / 2 before the end, which keeps the plant in its
+// records), so its records reach the shutdown-only tail (BoundBeforeQuit:
+// the bound reached with the bank held and no stop yet).
 // Before the server is stopping the kernel answers full
 // only in that last third, so the timer may be in the kernel there; once it
 // is stopping the socket stays full more often than not. Once the worker
@@ -156,9 +158,10 @@ struct qwork_walk_t
     bool wake_count;
     // main has begun the server's stop (the model's stopping)
     bool stopping;
-    // the patient walk (even seeds): main stops the worker only once nothing
-    // waits, never at once, so the recorded steps reach the shutdown-only
-    // tail: the bound reached with the bank held, the abandon, then idle
+    // the patient walk (even seeds): main begins the stop halfway and never
+    // stops the worker at once in the last third, so the recorded steps
+    // reach the shutdown-only tail: the bound reached with the bank held,
+    // the abandon, then idle
     bool patient;
     const char * st;
     int handed;
@@ -655,7 +658,7 @@ static void qwork_choices( const qwork_walk_t & walk, bool main_works, bool may_
         can.push_back( QWORK_BEGIN );
         return;
     }
-    if ( main_works && stop_now && !quit && !walk.patient )
+    if ( main_works && stop_now && !quit )
     {
         can.push_back( QWORK_STOP );
         return;
@@ -939,6 +942,36 @@ static const char * qwork_act( qwork_walk_t & walk, tla_random_t & random, int a
     }
 }
 
+// takes one of can's choices and keeps recvQuick, the walk's history beside
+// the code: a datagram or the receive's timer reaped clears it, an arm after
+// a refused end counts it (to 2), any other arm clears it. When record, the
+// step is a record, and the planted effect is reported where it shows
+static void qwork_take( qwork_walk_t & walk, tla_random_t & random, const std::vector<int> & can, bool late, bool record,
+                        std::vector<tla_record_t> & records, tla_report_t & report )
+{
+    const char * act = "";
+    bool planted = false;
+    const char * op = qwork_act( walk, random, can[(size_t) random.below( (int) can.size() )], late, &act, &planted );
+    if ( strcmp( act, "ReapRecvData" ) == 0 || strcmp( act, "ReapRecvTimer" ) == 0 )
+    {
+        walk.recv_quick = 0;
+    }
+    else if ( strcmp( act, "ArmRecv" ) == 0 )
+    {
+        walk.recv_quick = walk.worker.recv_refused > 0 ? ( walk.recv_quick < 2 ? walk.recv_quick + 1 : 2 ) : 0;
+    }
+    if ( !record )
+    {
+        return;
+    }
+    report.act( act );
+    records.push_back( tla_step( op, act, "<<>>", qwork_record( walk ) ) );
+    if ( planted )
+    {
+        report.planted( (int) records.size() );
+    }
+}
+
 static int trace_queue_worker( uint64_t seed, int steps, const char * out )
 {
     qwork_walk_t walk{};
@@ -1012,7 +1045,10 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
     for ( int step = 0; step < steps && !failed; step++ )
     {
         const bool late = step >= ( 2 * steps ) / 3;
-        qwork_choices( walk, true, true, u, late, step == steps - QWORK_DRAIN_STEPS, step == steps - QWORK_DRAIN_STEPS / 2, can );
+        // the patient walk begins the stop halfway, so the shutdown-only tail
+        // has room before the stop it still forces near the end
+        const int begin_at = walk.patient ? steps / 2 : steps - QWORK_DRAIN_STEPS;
+        qwork_choices( walk, true, true, u, late, step == begin_at, step == steps - QWORK_DRAIN_STEPS / 2, can );
         if ( can.empty() && !walk.worker.quit.load() )
         {
             can.push_back( QWORK_STOP );
@@ -1024,23 +1060,7 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
             break;
         }
 
-        const char * act = "";
-        bool planted = false;
-        const char * op = qwork_act( walk, random, can[(size_t) random.below( (int) can.size() )], late, &act, &planted );
-        if ( strcmp( act, "ReapRecvData" ) == 0 || strcmp( act, "ReapRecvTimer" ) == 0 )
-        {
-            walk.recv_quick = 0;
-        }
-        else if ( strcmp( act, "ArmRecv" ) == 0 )
-        {
-            walk.recv_quick = walk.worker.recv_refused > 0 ? ( walk.recv_quick < 2 ? walk.recv_quick + 1 : 2 ) : 0;
-        }
-        report.act( act );
-        records.push_back( tla_step( op, act, "<<>>", qwork_record( walk ) ) );
-        if ( planted )
-        {
-            report.planted( (int) records.size() );
-        }
+        qwork_take( walk, random, can, late, true, records, report );
 
         // every completion the walk posts names something of the worker's
         if ( rocketnet_uring_queue_worker_counter( &walk.worker, ROCKETNET_URING_WORKER_COUNTER_STRAY ) != 0 )
@@ -1064,9 +1084,7 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
             failed = 1;
             break;
         }
-        const char * act = "";
-        bool planted = false;
-        (void) qwork_act( walk, random, can[(size_t) random.below( (int) can.size() )], true, &act, &planted );
+        qwork_take( walk, random, can, true, false, records, report );
     }
 
     // StopFinishes, past the records: main stops (when it has not), and the
@@ -1081,9 +1099,7 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
             failed = 1;
             break;
         }
-        const char * act = "";
-        bool planted = false;
-        (void) qwork_act( walk, random, can[(size_t) random.below( (int) can.size() )], true, &act, &planted );
+        qwork_take( walk, random, can, true, false, records, report );
         if ( rocketnet_uring_queue_worker_counter( &walk.worker, ROCKETNET_URING_WORKER_COUNTER_STRAY ) != 0 )
         {
             fprintf( stderr, "tla_trace queue-worker: a completion the walk posted was stray\n" );
