@@ -12,31 +12,42 @@ the arithmetic that `start_packet`, `finish_packet` and `abort_packet` share:
 The banks of every queue are laid out end to end. That is the worst case for a stray
 pointer: one byte before a bank lands inside its neighbour.
 
-Status: built. sdk/rocketnet_uring_send_queue.cpp implements it (start is Start, finish
-and abort are Finish, turn is Flush) and cites each action; the shared arithmetic is
-sdk/rocketnet_send_queue.h, which the XDP transport also calls. The code is bound to
-the model by the trace check (TraceRNUringQueueBankLayout.tla, tests/tla_trace.cpp
---layer bank, README-TraceCheck.md): its plant, the turn without its reset, is
-rejected at the turn onto the reused bank.
+Status: built. sdk/rocketnet_uring_send_queue.cpp implements it and cites each action:
+start is Start(t, d, ptr, pid) with the pointer and id it gives back, or StartFull(t, d,
+pid) when it returns NULL; finish and abort are Finish(t, k) when they return true,
+FinishRefused(t, k) when false; turn is Flush(n) with the queues it returns. The shared
+arithmetic is sdk/rocketnet_send_queue.h, which the XDP transport also calls. The code is
+bound to the model by the trace check (TraceRNUringQueueBankLayout.tla,
+tests/tla_trace_bank.cpp, `tools/tla_trace_check.py --layer bank`, README-TraceCheck.md):
+its plant, the turn without its reset, is rejected at the turn onto the reused bank.
+
+`QueueOf(d)` is `d % Q`: destinations are numbered by the queue the code's hash gives
+them, so any assignment of destinations to queues is a choice of `Dests`. The finish
+pointer's offsets are `-MaxSkew..MaxSkew`. Both are plain constants, as the trace
+check's cfg must be.
 
 ## The small instance (MCRNUringQueueBankLayout.tla)
 
 - 2 queues, each with 2 banks of 3 slots; stride 2.
 - 2 fill threads, each making 3 starts per fill, so claims run past a bank and are
   refused.
-- 3 destinations: two hash to queue 0 and one to queue 1.
-- A caller may hand finish a pointer 1 byte early, exact, or 1 byte late.
+- 3 destinations, 2 and 4 on queue 0 and 3 on queue 1 (`Dests = {2, 3, 4}`).
+- A caller may hand finish a pointer 1 byte early, exact, or 1 byte late (`MaxSkew = 1`).
 - 2 flushes.
 
-## Results (captain, pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-12; RUNS.tsv)
+## Results (bench-nyc-5, pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-13; RUNS.tsv)
 
 | cfg | expected | result | states (distinct) |
 |---|---|---|---|
-| MCRNUringQueueBankLayout.cfg | pass | pass | 4,578,934 (1,008,425), 37 s |
+| MCRNUringQueueBankLayout.cfg | pass | pass | 4,578,934 (1,008,425), 28 s |
 | MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 1,052 (383) |
-| MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg | NoSharedSlot | NoSharedSlot violated | 2,357 (846) |
+| MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg | NoSharedSlot | NoSharedSlot violated | 2,363 (847) |
 | MCRNUringQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 41 (25) |
-| MCRNUringQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 41 (25) |
+| MCRNUringQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 42 (25) |
+
+The control's counts are those of the instance before the trace check's v2 changes
+(returned values as action arguments, `QueueOf` as `d % Q`, `MaxSkew`): the same
+states. Two witnesses moved by one state, the order TLC meets the violation in.
 
 The instance went from 4 starts per thread to 3 so the control fits tlacheck's
 110 s budget; every witness still fires (NarrowCounter needs 5 claims on one bank in a
