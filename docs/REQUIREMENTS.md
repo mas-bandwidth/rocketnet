@@ -95,7 +95,8 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   [`docs/ENVIRONMENT.md`](ENVIRONMENT.md).
 - Callers query deterministic worst-case allocator requirements through
   `rocketnet_client_required_memory` and `rocketnet_server_required_memory`
-  (or `LOAD_PLAN_ONLY=1 ./bin/load` and `bin/transport_memory`) and account
+  (or `LOAD_PLAN_ONLY=1 ./bin/load <clients> <seconds>` and
+  `bin/transport_memory`) and account
   separately for OS and kernel resources outside the user-space allocator
   (thread stacks, AF_XDP page-aligned UMEM and kernel rings, `io_uring` mapped
   rings, and kernel socket buffers).

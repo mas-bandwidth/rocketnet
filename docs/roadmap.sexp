@@ -73,7 +73,7 @@
 
   (item "load-md-generated" :group "audit-remaining" :area "docs"
    :title "Generate LOAD.md's byte tables"
-   :text "The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator."
+   :text "The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator. The same goes for the planner figures quoted in docs/MEMORY.md (the default and light server and client plans, the DEV=0 figures and the example program's output): one generator for both pages, printing every cell from rocketnet_*_required_memory, rocketnet_message_connection_sizing and bin/transport_memory."
    :date "2026-10-31" :origin "#721 follow-on")
 
   (item "audit-follow-on-proposals" :group "decisions" :area "tools"

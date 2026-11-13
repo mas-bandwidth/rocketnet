@@ -39,14 +39,10 @@ results is a measurement of your current build. See [Testing](TESTING.md).
 
 ## Server memory footprint
 
-The v1.1.0 Linux x86-64 Release development-build planner query described in
+The Linux x86-64 Release development-build planner query described in
 [LOAD.md](LOAD.md#platform-build-and-allocator-assumptions) reports
-23,527,047,915 bytes (about 23.5 GB) for the default 1000-client server.
-The difference from one to two slots is 19,174,370 bytes (about 19.2 MB).
-After v1.1.0 the send store keeps a free stack, one `uint32_t` a store chunk,
-which adds 165,464 bytes a default client slot (165,464,000 at 1000 slots)
-and 4,632 a light slot ([LOAD.md](LOAD.md#platform-build-and-allocator-assumptions));
-the v1.1.0 figures in this section do not include it.
+20,224,798,194 bytes (about 20.2 GB) for the default 1000-client server.
+The difference from one to two slots is 19,372,814 bytes (about 19.4 MB).
 These are source-specific sizing examples, not portable constants:
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before
@@ -95,8 +91,8 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 ```
 
 On the same Linux x86-64 build with io_uring and XDP enabled and
-`ROCKETNET_DEV=ON`, it prints `1000 clients: 21025383757`,
-`1 client: 1845916823`, `2 clients: 1865090161` and `delta: 19173338`.
+`ROCKETNET_DEV=ON`, it prints `1000 clients: 20224798194`,
+`1 client: 689626832`, `2 clients: 708999646` and `delta: 19372814`.
 These queries include the 1 MiB allowance. The figures differ by platform,
 configuration, and source revision because each counts the largest transport
 that platform's transport order can grant. Use the planner from the exact library you
@@ -106,28 +102,32 @@ will deploy; the regeneration details are in
 A light-client server uses `rocketnet_server_light_config`, which fills the
 defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
 client at 10 Hz (10 * 1,500 * 8 = 120,000 bits/s, about 120 kbps). The
-per-client send budget is 256 kbps (256 / 120 = 2.13). A message holds one
-packet's payload, `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1` (1,415 bytes). Over the default 10 s
-connection timeout, that rate is 100 messages; a 1,415-byte message can take two
-window numbers, so the reliable window is 256. The receive buffer is 142,400
+per-client send budget is 256 kbps (256 / 120 = 2.13). The largest message
+is `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1` (1,415 bytes). That is above every
+one-record limit (`rocketnet_max_unfragmented_message_bytes`: 1,411 bytes for
+`UNRELIABLE`, less for the other modes), so a 1,415-byte message is sent in up
+to two parts, and an unreliable one is sent as its reliable type. Over the
+default 10 s connection timeout, that rate is 100 messages; a 1,415-byte
+message can take two window numbers, so the reliable window is 256. The receive buffer is 142,400
 bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, the same Linux development build
-reports 5,610,439,915 bytes (about 5.6 GB) from
+reports 2,147,358,194 bytes (about 2.1 GB) from
 `rocketnet_server_required_memory`. The matching `rocketnet_client_light_config`
-makes `rocketnet_client_required_memory` report 15,186,082 bytes. Those two
-figures, and the default-profile figures above, are v1.1.0 queries of the
-Linux x86-64 development build with io_uring and XDP.
+makes `rocketnet_client_required_memory` report 15,195,026 bytes. Those two
+figures, and the default-profile figures above, are queries of the
+Linux x86-64 development build with io_uring and XDP, the same build as
+[LOAD.md](LOAD.md#platform-build-and-allocator-assumptions) Tables 1 and 2.
 
 Both figures are the planned lifecycle peak (create, connect or start, stop or
 disconnect, the next cycle, and destroy) plus the 1 MiB allowance. They exclude
 memory owned by the operating system (worker thread stacks, XDP UMEM, io_uring
-rings, kernel socket buffers) and process overhead. The same v1.1.0 source built with
-`ROCKETNET_DEV=OFF` reports 3,105,279,503 and 14,401,174 bytes, using an accepted
-non-test packet filter. Other platforms have different transport candidates and
-layouts; the older Windows and macOS examples predate this query and are not
-current measurements. The default profile remains the stock acceptance.
+rings, kernel socket buffers) and process overhead. The same source built with
+`ROCKETNET_DEV=OFF` reports 2,140,968,918 and 14,410,118 bytes, using an
+accepted non-test packet filter (all zero). Other platforms have different
+transport candidates and layouts: query the planner on the platform you
+deploy. The default profile remains the stock acceptance.
 
 ```c
 #include "rocketnet.h"
@@ -154,7 +154,8 @@ struct rocketnet_client_t * start_client( const char * token, const struct rocke
 struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t * config )
 {
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", NULL, config, &status );
+    /* the address clients connect to, as the connect tokens name it; not 0.0.0.0 */
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40000", NULL, config, &status );
     if ( !server )
     {
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
@@ -203,8 +204,8 @@ returns. A completion query does not free the object or promise receipt by the o
 Between two updates the server's socket holds every packet that arrives.
 The portable transport's receive worker reads the socket into one of three
 banks and publishes a bank after every read. While main holds the other
-banks the worker has no free bank, stops reading the socket and waits
-(`PORTABLE_RX_WAIT_FULL`), so the traffic that arrives in that time waits in
+banks the worker has no free bank, stops reading the socket and waits,
+so the traffic that arrives in that time waits in
 the kernel's receive buffer, and a buffer too small for it drops datagrams
 before the server sees them. The GSO receive worker stops reading the same
 way once its buffer is full. Every UDP server socket therefore asks for:
@@ -253,7 +254,8 @@ gso transport: socket receive buffer asked 25000000 bytes, got 4194304 (SO_RCVBU
 The io_uring transport's line starts `io_uring transport:` instead.
 
 A short grant is not fatal: the server runs, and the kernel counts what it
-drops in the host's UDP `RcvbufErrors` (the io_uring transport also counts them, in its `URING_RECEIVE_DROPPED_SOCKET` counter). For a GSO or io_uring server at 1000 clients the
+drops in the host's UDP `RcvbufErrors`; that host counter and the start
+log line above are the signals to watch. For a GSO or io_uring server at 1000 clients the
 operator sets both limits, and keeps them across reboots in a file under
 `/etc/sysctl.d/`:
 
@@ -326,11 +328,14 @@ update, enough for two packets per client up to the 32768 build ceiling.
 XDP has 16384 send slots per queue and fixed UMEM geometry; increasing its
 queue count adds staging, subject to memory and host limits.
 
-GSO and io_uring differ: GSO has three shared send banks of 4096 slots, with
-one bank available to producers at a time. io_uring has two 2048-slot send
-phases, with one phase available to producers at a time; the other can
-remain held by pending completions. These are server-wide capacities. Adding receive queues does not multiply either
-producer's capacity. Each staged transport reports its remaining room
+GSO and io_uring stage sends per queue: a destination always stages in its
+own queue. Each GSO queue has three send banks of 16384 slots, one of them
+taking sends at a time. Each io_uring queue has three send banks, one of them
+taking sends at a time; a bank's slots are sized at create from the client
+count and the queue count (twice the queue's share of 18 packets a client an
+update), at least 4096 and at most 32768. So adding queues adds send room,
+though one queue's room still bounds what one update stages to the
+destinations that hash to it. Each staged transport reports its remaining room
 (`rocketnet_server_transport_send_capacity_available`), so the message
 layer's send pass stops where the next unserved client waits and resumes
 there on the next update, and the disconnect bursts of a kick or a stop leave
@@ -412,7 +417,7 @@ The internal transport plan, allocated at start, includes the transport, protoco
 plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
-socket/ring storage (`plan.mapped_ring_bytes` and `plan.os_bytes` in `rocketnet_server_memory_plan_t` count the `io_uring` provided buffer rings separately from `plan.allocator_bytes` and `plan.total_bytes`), libbpf/libxdp allocations, libc bookkeeping, loader and
+socket/ring storage (`plan.mapped_ring_bytes` and `plan.os_bytes` in `rocketnet_server_memory_plan_t` count each `io_uring` queue's provided buffer ring and a bound on its submission and completion ring mappings separately from `plan.allocator_bytes` and `plan.total_bytes`), libbpf/libxdp allocations, libc bookkeeping, loader and
 application memory are outside this count. Provision room for those costs; a
 plan is not an available-RAM check or a whole-host peak estimate. Existing
 component budgets, queue defaults and history limits are unchanged.
@@ -436,7 +441,7 @@ rings (the server asks for `ROCKETNET_XDP_FILL_RING_SIZE`, 65536 fill entries,
 twice the receive frames it keeps on the ring, and for
 `XSK_RING_CONS__DEFAULT_NUM_DESCS`, 2048 completion entries, in
 `rocketnet_xdp_umem_config`, sdk/rocketnet_xdp_socket_config.h), libbpf/libxdp and the XDP program's maps, the io_uring
-submission, completion and provided buffer rings (`plan.mapped_ring_bytes` in `rocketnet_server_memory_plan_t` counts the provided buffer rings; the submission and completion rings are not counted in either plan), thread guard pages
+submission, completion and provided buffer rings (`plan.mapped_ring_bytes` in `rocketnet_server_memory_plan_t` counts them, each queue's provided buffer ring and a bound on its submission and completion rings, outside `allocator_bytes`), thread guard pages
 and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
 resident pages. Statistics run on the ack path and add no thread. Each
@@ -460,13 +465,16 @@ The IOCP send threads are at most the send lanes (8 at 1000 clients, fewer
 for a smaller server). These server counts do not include client objects;
 each normal client adds its own one background network thread.
 
-On Windows the plan is committed at create. Windows charges memory against
-the machine's commit limit (RAM plus the page file) when it is allocated, not
-when it is touched, and every block of the plan, the RIO registered region
-included, is allocated by create. A default 1000-client server therefore
-commits its whole `rocketnet_server_required_memory` (about 19.4 GB) at once
-though far less is ever resident; Linux and macOS commit pages only as they
-are touched. A create that the host cannot commit fails with `OUT_OF_MEMORY`.
+On Windows the plan is committed as it is allocated. Windows charges memory
+against the machine's commit limit (RAM plus the page file) when it is
+allocated, not when it is touched. Create allocates the server's message
+block, most of the plan; start allocates the transport (the RIO registered
+region included), and a client's transport is allocated at connect.
+`rocketnet_server_required_memory` is the peak over that whole lifecycle, so
+a running server can commit up to all of it though far less is ever
+resident; query it on the Windows build you deploy. Linux and macOS commit
+pages only as they are touched. A create that the host cannot commit fails
+with `OUT_OF_MEMORY`, and a start whose transport cannot be allocated fails.
 Count the plan of every server and client in the process against the commit
 limit, not against free RAM ([WINDOWS.md](WINDOWS.md#limits-for-1000-clients)).
 
