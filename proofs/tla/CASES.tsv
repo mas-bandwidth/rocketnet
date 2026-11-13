@@ -924,6 +924,16 @@ MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg	MCRNUringQueueBankLayout.tla	inva
 MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg	MCRNUringQueueBankLayout.tla	invariant	NoSharedSlot	check	rnuringqueuebanklayout	required	-
 MCRNUringQueueBankLayoutBrokenDivideFirst.cfg	MCRNUringQueueBankLayout.tla	invariant	NoForeignWrite	check	rnuringqueuebanklayout	required	-
 MCRNUringQueueBankLayoutBrokenIdAdd.cfg	MCRNUringQueueBankLayout.tla	invariant	RouteMatches	check	rnuringqueuebanklayout	required	-
+MCRNGsoHandoffBrokenStopTail.cfg	MCRNGsoHandoff.tla	invariant	RxAccounted	check	rngsohandoff	required	-
+MCRNGsoQueueBankLayout.cfg	MCRNGsoQueueBankLayout.tla	pass	-	check	rngsoqueuebanklayout	required	-
+MCRNGsoQueueBankLayoutFlush3.cfg	MCRNGsoQueueBankLayout.tla	pass	-	check	rngsoqueuebanklayout	bench	three-flush-instance-over-budget-required-control-MCRNGsoQueueBankLayout.cfg-at-two-flushes
+MCRNGsoQueueBankLayoutBrokenClaimPastEnd.cfg	MCRNGsoQueueBankLayout.tla	invariant	InBounds	check	rngsoqueuebanklayout	required	-
+MCRNGsoQueueBankLayoutBrokenBlindStore.cfg	MCRNGsoQueueBankLayout.tla	invariant	NoSharedSlot	check	rngsoqueuebanklayout	required	-
+MCRNGsoQueueBankLayoutBrokenDivideFirst.cfg	MCRNGsoQueueBankLayout.tla	invariant	NoForeignWrite	check	rngsoqueuebanklayout	required	-
+MCRNGsoQueueBankLayoutBrokenIdAdd.cfg	MCRNGsoQueueBankLayout.tla	invariant	RouteMatches	check	rngsoqueuebanklayout	required	-
+MCRNGsoQueueBankLayoutBrokenOpenFlush.cfg	MCRNGsoQueueBankLayout.tla	invariant	NoWorkerWrite	check	rngsoqueuebanklayout	required	-
+MCTraceRNGsoQueueBankLayoutSelf.cfg	MCTraceRNGsoQueueBankLayoutSelf.tla	pass	-	check	tracerngsoqueuebanklayout	required	-
+MCTraceRNGsoQueueBankLayoutSelfBrokenTurn.cfg	MCTraceRNGsoQueueBankLayoutSelf.tla	invariant	TraceConsistent	check	tracerngsoqueuebanklayout	required	-
 MCRNSendGatherLayout.cfg	MCRNSendGatherLayout.tla	pass	-	check	rnsendgatherlayout	required	-
 MCRNSendGatherLayoutBrokenNoProbeMod.cfg	MCRNSendGatherLayout.tla	invariant	InBounds	check	rnsendgatherlayout	required	-
 MCRNSendGatherLayoutBrokenMatchAny.cfg	MCRNSendGatherLayout.tla	invariant	RunOneDest	check	rnsendgatherlayout	required	-
