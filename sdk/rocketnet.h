@@ -1501,9 +1501,9 @@ struct rocketnet_client_config_t
     /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
     /// and at least reliable_messages_in_flight. Packets with reliable
     /// messages and packets with only unreliable receipt sends share it.
-    /// With the resend delay above the round trip, no entry is evicted before
-    /// its ack lands while it holds reliable_messages_in_flight plus the
-    /// receipt-only packets sent in the longest round trip. Past that the
+    /// No entry is evicted before its ack lands while it holds every tracked
+    /// packet, of both kinds and resends included, sent between any packet's
+    /// send and the processing of its ack. Past that the
     /// oldest entry can be evicted with its ack on the way: the late ack is
     /// ignored, a reliable entry's messages are resent, and a receipt-only
     /// entry's unreliable receipts report LOSS early. Default is 1024.
@@ -1752,9 +1752,9 @@ struct rocketnet_server_config_t
     /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
     /// and at least reliable_messages_in_flight. Packets with reliable
     /// messages and packets with only unreliable receipt sends share it.
-    /// With the resend delay above the round trip, no entry is evicted before
-    /// its ack lands while it holds reliable_messages_in_flight plus the
-    /// receipt-only packets sent in the longest round trip. Past that the
+    /// No entry is evicted before its ack lands while it holds every tracked
+    /// packet, of both kinds and resends included, sent between any packet's
+    /// send and the processing of its ack. Past that the
     /// oldest entry can be evicted with its ack on the way: the late ack is
     /// ignored, a reliable entry's messages are resent, and a receipt-only
     /// entry's unreliable receipts report LOSS early. Default is 1024.

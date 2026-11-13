@@ -114,18 +114,23 @@ entry from the sent-packet map can also resolve it as LOSS before that deadline.
 
 The sent-packet map (`packets_in_flight` entries, at least
 `reliable_messages_in_flight`) is shared by every packet that carries reliable
-messages and every packet that carries only unreliable receipt sends. With the
-resend delay above the round trip, no entry leaves before its acknowledgement
-lands while the packets of both kinds sent within one round trip fit in it.
+messages and every packet that carries only unreliable receipt sends. An
+entry leaves only when it is acknowledged or when the map records the
+`packets_in_flight`-th tracked packet sent after it; acknowledged entries behind an
+older unacknowledged one keep their places until it leaves. So no entry leaves
+before its acknowledgement lands while the map holds every tracked packet, of
+both kinds and resends included, sent between any packet's send and the
+processing of its acknowledgement.
 Past that, the oldest entry can be evicted while its acknowledgement is on its
 way: the late acknowledgement is ignored, a reliable message in it is resent
 and can hold back the reliable window until a later send is acknowledged, and
 an unreliable receipt in it reports LOSS early. A steady excess
 can stop reliable progress until `reliable_message_timeout_ms`, when set, ends
-the connection. Size `packets_in_flight` at least
-`reliable_messages_in_flight` plus the receipt-only packets the connection
-sends per round trip at its longest expected round trip (for example 60 Hz
-with up to 2 receipt-only packets an update and a 1 s round trip adds 120).
+the connection. Size `packets_in_flight` for the most tracked packets the
+connection sends over its longest delay from a send to the processing of its
+acknowledgement, counting update and queue delay and bursts, not an average
+rate (for example 60 Hz with up to 4 tracked packets an update and a 1 s
+delay needs 240).
 
 Receipt reads return the number available and copy only what fits. Iterate
 up to `min(returned_count, capacity)`; rereading returns the same list rather

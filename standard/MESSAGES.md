@@ -2856,10 +2856,10 @@ resend queues.
 
 Every tracked send shares the map's entries: a send carrying reliable numbers,
 and a receipt-only send, one carrying unreliable receipt serials and no
-reliable number. `W` bounds only the first kind. With a resend delay above the
-round trip, the dropped entry is one whose acknowledgement can no longer arrive
-when the map holds at least `W` entries plus the receipt-only sends written
-inside the longest round trip. Past that, the dropped entry can be one whose
+reliable number. `W` bounds only the first kind. No entry whose
+acknowledgement can still arrive is dropped while the map holds every tracked
+send, of both kinds and resends included, written between any send and the
+processing of its acknowledgement. Past that, the dropped entry can be one whose
 acknowledgement is on its way: that acknowledgement is ignored; a reliable
 number the entry carried is resent and can hold back the lowest
 unacknowledged number until a later send of it is acknowledged; and a

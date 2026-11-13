@@ -7,13 +7,14 @@
 // (unreliable records with receipts and no reliable number,
 // rn_window_ack_commit_receipt_packet). The documented contract
 // (packets_in_flight in sdk/rocketnet.h, standard/MESSAGES.md m9.1,
-// docs/CHANNELS.md): no entry is evicted before its ack lands while the map
-// holds W plus the receipt-only packets written in one round trip. Past that
+// docs/CHANNELS.md): an entry is evicted only by the P-th tracked packet
+// written after it, so no entry is evicted before its ack lands while the map
+// holds every tracked packet written between a send and its ack. Past that
 // the oldest entry is evicted with its ack on the way, the late ack is
 // ignored and the numbers it carried are resent. These cases pin that
 // overflow behaviour by value at P = W = 64 (proofs/tla/RNSentMap.tla,
-// MCRNSentMapReceiptEviction.cfg), and show that a map sized by the rule
-// evicts nothing. The repair is docs/roadmap.sexp sent-map-receipts-give-way:
+// MCRNSentMapReceiptEviction.cfg), and show that a map holding every tracked
+// packet of these fixed-delay schedules evicts nothing. The repair is docs/roadmap.sexp sent-map-receipts-give-way:
 // when it lands, the overflow cases change with it.
 //
 // Time is an argument and the clock starts at 1000.0; nothing here reads a
@@ -44,8 +45,8 @@ struct receipt_eviction_window_t
 };
 
 // W = 64, the smallest window the config accepts, with a map of `packets`
-// entries: 64 is the tightest the config allows, 160 is sized by the rule for
-// the receipt traffic below.
+// entries: 64 is the tightest the config allows, 160 holds every tracked
+// packet the schedules below write between a send and its ack.
 static void receipt_eviction_open( receipt_eviction_window_t * w, int packets, int reliable_timeout_ms )
 {
     rocketnet_message_default_config( &w->config );
@@ -288,9 +289,10 @@ static void test_sent_map_receipt_stream_past_p_ends_in_reliable_timeout()
     receipt_eviction_close( &w );
 }
 
-// The same two traffic shapes with the map sized by the rule: P = 160 holds W
-// plus the receipt-only packets of one round trip (1 in the first, 66 in the
-// stream: 64 + 66 = 130 <= 160). Nothing is evicted, every ack is found, the
+// The same two traffic shapes with a map of P = 160, which holds every tracked
+// packet written between a send and its ack (at most 65 in the first; at most
+// 72 in the stream, 12 an update over six updates). Nothing is evicted, every
+// ack is found, the
 // reliable message is acked on its first send and the connection lives.
 static void test_sent_map_sized_for_receipts_evicts_nothing()
 {

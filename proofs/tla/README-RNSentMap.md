@@ -99,12 +99,21 @@ design change for a minor release: docs/roadmap.sexp
 The contract now says so (2026-11-13): `packets_in_flight` in sdk/rocketnet.h,
 standard/MESSAGES.md m9.1 and docs/CHANNELS.md state that reliable and
 receipt-only packets share the map, that no entry is evicted before its ack
-lands while the map holds `W` plus the receipt-only packets of one round trip,
-and what happens past that. This model's rule is unchanged: the committed run
-is that sizing with no receipt-only packets, and
-`MCRNSentMapReceiptEviction.cfg` is the overflow the contract describes.
-tests/test_unit_sent_map_receipt_eviction.cpp pins the overflow behaviour by
-value at `P = W = 64`, and shows that a map sized by the rule evicts nothing.
+lands while the map holds every tracked packet sent between a send and the
+processing of its ack, and what happens past that. That sizing is the ring's
+own arithmetic, not this model's result: an entry is evicted only by the
+`P`-th tracked write after it, since holes behind a live head are not
+reclaimed. This model's `P >= W` argument needs its fixed round trip (acks in
+send order): with acks out of order, faster acks of later packets (resends of
+lost numbers below the entry's among them) advance the window while an older
+entry's ack is on its way, and a receipt-only entry holds no number at all, so
+neither `W` nor `W` plus the receipt-only packets of one round trip bounds the
+writes after it. The
+model's rule is unchanged: the committed run is `P = W` with no receipt-only
+packets, and `MCRNSentMapReceiptEviction.cfg` is the overflow the contract
+describes. tests/test_unit_sent_map_receipt_eviction.cpp pins the overflow
+behaviour by value at `P = W = 64`, and shows that a map of `P = 160` with the
+same fixed-delay traffic evicts nothing.
 
 ## Cases
 

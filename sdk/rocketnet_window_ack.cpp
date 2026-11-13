@@ -767,15 +767,16 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     //    or the 16P-entry reference ring needs room (standard/MESSAGES.md m9.1):
     //    numbers stay in the resend FIFO, MESSAGE_SENT_MAP_EVICTED
     //    is incremented once per evicted packet entry). The config keeps
-    //    P >= W (rocketnet_message_validate_config_internal), so with the resend
-    //    delay above the round trip and no receipt-only packets the evicted
-    //    entry is never one whose ack is still on its way
-    //    (proofs/tla/RNSentMap.tla NoLiveEviction). Receipt-only packets take
-    //    entries that W does not bound: with them, reliable and receipt-only
-    //    packets past P in one round trip evict a reliable entry whose ack is
+    //    P >= W (rocketnet_message_validate_config_internal), so with acks in
+    //    send order one round trip later, the resend delay above it and no
+    //    receipt-only packets the evicted entry is never one whose ack is
+    //    still on its way (proofs/tla/RNSentMap.tla NoLiveEviction). In
+    //    general an entry is evicted only by the P-th tracked packet written
+    //    after it: holes behind a live head are not reclaimed, and
+    //    receipt-only packets take entries that W does not bound, so tracked
+    //    packets past P between a send and its ack evict an entry whose ack is
     //    on its way (MCRNSentMapReceiptEviction.cfg). That is the documented
-    //    contract (sdk/rocketnet.h packets_in_flight, m9.1): P is sized for W
-    //    plus the receipt-only packets of one round trip; the repair is
+    //    contract (sdk/rocketnet.h packets_in_flight, m9.1); the repair is
     //    docs/roadmap.sexp sent-map-receipts-give-way.
 
     rn_window_ack_reclaim_head( ack );
