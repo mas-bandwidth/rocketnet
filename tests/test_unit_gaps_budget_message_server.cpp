@@ -158,11 +158,38 @@ static void test_gaps_budget_message_server_block_is_the_server_layout()
     gm_expect( status == ROCKETNET_STATUS_OUT_OF_MEMORY, "a block one byte short: status %s, not OUT_OF_MEMORY", rocketnet_status_name( (enum rocketnet_status_t) status ) );
     gm_expect( gm_mallocs == before, "a block one byte short was refused after %llu allocations, not before the transport opened", (unsigned long long) ( gm_mallocs - before ) );
 
+    // the public create sizes for the budget, not for the unlimited reserve
+    // (which reserves no resend room and is smaller): one byte short is
+    // refused there too
+
+    check( rn_message_object_required_bytes( &message, 2, 1, 0, true ) < required );
+    server = rocketnet_message_server_create( NULL, "127.0.0.1:40000", &config, &message, block, required - 1, 0 );
+    gm_expect( server == NULL, "the public create made a server in a block one byte short of the %llu bytes required_memory gave (sized for the unlimited reserve)",
+               (unsigned long long) required );
+    rn_test_message_server_stop_and_destroy( server );
+
     // exactly required_memory: the public create makes the server in the block
 
     server = rocketnet_message_server_create( NULL, "127.0.0.1:40000", &config, &message, block, required, 0 );
     gm_expect( server != NULL, "the public create refused a block of exactly the %llu bytes required_memory gave", (unsigned long long) required );
     gm_expect( (void *) server == block, "the public create did not make the server in the caller's block" );
+    rn_test_message_server_stop_and_destroy( server );
+
+    // the server's budget sizes the block, not the client's: an uncapped
+    // server (0) beside a capped client direction needs no resend reserve,
+    // and a block of the server's required_memory makes the server
+
+    rocketnet_message_config_t uncapped = message;
+    uncapped.server_send_kbps = 0;
+    uncapped.client_send_kbps = 1000;
+    const uint64_t server_required = rocketnet_message_server_required_memory( &config, &uncapped, 0 );
+    check( server_required > 0 );
+    check( rn_message_object_required_bytes( &uncapped, 2, 0, 0, false ) > server_required );
+    std::vector<uint8_t> server_storage;
+    void * server_block = gm_aligned( server_storage, server_required );
+    server = rocketnet_message_server_create( NULL, "127.0.0.1:40000", &config, &uncapped, server_block, server_required, 0 );
+    gm_expect( server != NULL, "an uncapped server refused a block of its %llu required bytes (the create sized for the client's %d kbps)",
+               (unsigned long long) server_required, uncapped.client_send_kbps );
     rn_test_message_server_stop_and_destroy( server );
 
     check( rocketnet_test_loopback_hub_release() );
