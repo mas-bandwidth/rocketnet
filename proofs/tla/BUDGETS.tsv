@@ -2,7 +2,8 @@ config	budget_s	measured_s	slowest_s	slowest_host
 MCRNSecurityTables.cfg	360	71.833	154.2	bench-nyc-3
 MCRNChannel.cfg	480	109.799	209.2	bench-nyc-3
 MCRNChannelSafety.cfg	540	104.885	237.3	bench-nyc-3
-MCServerSessionTwoClients.cfg	240	75.202	110.0	vision
+MCServerSessionTwoClientsLive.cfg	150	72.041	72.041	aws-mut-3
+MCServerSessionTwoClientsBursts.cfg	170	81.545	81.545	aws-mut-3
 MCServerConnectionTwoSlots.cfg	200	91.002	91.002	record
 MCServerStopSpreadBrokenNoAbandon.cfg	150	72.483	72.586	bench-xdp-9
 MCServerStopSpreadLive.cfg	140	67.861	67.861	aws-mut-3

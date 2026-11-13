@@ -102,9 +102,9 @@ Each witness was checked by hand against the code:
 - **No slots destroy wipe** (Add, Destroy): a slot still assigned at
   `rocketnet_client_slots_destroy` is freed with its user data;
   `test_secrets_wiped_user_data_at_slots_and_map_destroy` fails that way.
-- **Wipe every slot** (Add, Destroy): a `rocketnet_client_slots_destroy` that
+- **Wipe every slot** (Destroy straight after create, TLC's trace at depth 2): a `rocketnet_client_slots_destroy` that
   zeroed every slot's user data, connected or not, writes the unassigned
-  slot's page, which the run never wrote. The code's loop wipes only
+  slots' pages, which the run never wrote. The code's loop wipes only
   `connected[i]` slots.
 - **Ring kept on leave** (Add, Remove with the deferred burst, BurstLeaves):
   without the `sodium_memzero` of `disconnect_burst_keys[disconnect_burst_head]`

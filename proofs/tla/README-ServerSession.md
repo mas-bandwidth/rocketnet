@@ -187,25 +187,36 @@ vacuous under `LiveSpec`.
 ## Runs
 
 Measured with the pinned runner and JAR of `proofs/tla/README.md` (Linux, two workers for the passing
-case, one for witnesses, 110-second cap per case):
+case, one for witnesses, 110-second cap per case; aws-mut-3, 2026-11-13, after revision 1.2):
 
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
-| `MCServerSession.cfg` | pass | 555,756 | 57,434 | 32.666 | 0 |
-| `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 1,084,404 | 164,147 | 16.520 | 12 |
-| `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 48 | 40 | 1.026 | 12 |
-| `MCServerSessionDisconnectAllLeavesClient.cfg` | `DisconnectAllIsAtomic` violated | 132 | 95 | 0.927 | 12 |
-| `MCServerSessionTouchesOtherSlot.cfg` | `ResetTouchesOnlyItsSlot` violated | 133 | 96 | 0.895 | 12 |
-| `MCServerSessionDestroySilent.cfg` | `StopDisconnectsAll` violated | 128 | 92 | 0.946 | 12 |
-| `MCServerSessionResetClearsHistory.cfg` | `TokenAdmitsOnce` violated | 3,927 | 1,701 | 1.472 | 12 |
-| `MCServerSessionReadmitAfterStart.cfg` | `NoReadmitAfterStart` violated | 62,962 | 17,517 | 2.775 | 12 |
-| `MCServerSessionSendBeforeConnected.cfg` | `NoSendUnlessConnected` violated | 7 | 6 | 1.029 | 12 |
-| `MCServerSessionBrokenMessageEnd.cfg` | `MessageEndOnlyConnected` violated | 7 | 6 | 0.895 | 12 |
-| `MCServerSessionBrokenReasonAcrossRestart.cfg` | `ReasonKeptWithinRun` violated | 26 | 18 | 0.798 | 12 |
-| `MCServerSessionBrokenReceiveWhileStopping.cfg` | `NoReceiveUnlessRunning` violated | 664 | 349 | 1.021 | 12 |
-| `MCServerSessionBrokenAdmitWhileStopping.cfg` | `NoAdmitUnlessRunning` violated | 21 | 14 | 0.867 | 12 |
-| `MCServerSessionBrokenDisconnectAllUnbounded.cfg` | `DisconnectWorkBounded` violated | 4,254 | 1,778 | 1.198 | 12 |
-| `MCServerSessionBrokenConnIdPerRun.cfg` | `ConnIdNeverRepeats` violated | 62,962 | 17,517 | 3.142 | 12 |
+| `MCServerSession.cfg` | pass | 730,276 | 74,719 | 25.973 | 0 |
+| `MCServerSessionTwoClients.cfg` | pass, every invariant | 4,244,278 | 411,808 | 19.355 | 0 |
+| `MCServerSessionTwoClientsLive.cfg` | pass, `HandshakeResolves` | 4,244,278 | 411,808 | 72.041 | 0 |
+| `MCServerSessionTwoClientsBursts.cfg` | pass, `BurstsDrain` | 4,244,278 | 411,808 | 81.545 | 0 |
+| `MCServerSessionTwoClientsReachable.cfg` | `NotTwoConnected` violated | 880 | 439 | 0.810 | 12 |
+| `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 1,564,903 | 259,336 | 13.200 | 12 |
+| `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 54 | 44 | 0.765 | 12 |
+| `MCServerSessionDisconnectAllLeavesClient.cfg` | `DisconnectAllIsAtomic` violated | 148 | 100 | 0.786 | 12 |
+| `MCServerSessionTouchesOtherSlot.cfg` | `ResetTouchesOnlyItsSlot` violated | 149 | 101 | 0.784 | 12 |
+| `MCServerSessionDestroySilent.cfg` | `StopDisconnectsAll` violated | 139 | 92 | 0.874 | 12 |
+| `MCServerSessionResetClearsHistory.cfg` | `TokenAdmitsOnce` violated | 3,980 | 1,731 | 0.911 | 12 |
+| `MCServerSessionReadmitAfterStart.cfg` | `NoReadmitAfterStart` violated | 65,539 | 19,295 | 1.808 | 12 |
+| `MCServerSessionSendBeforeConnected.cfg` | `NoSendUnlessConnected` violated | 8 | 7 | 0.745 | 12 |
+| `MCServerSessionBrokenMessageEnd.cfg` | `MessageEndOnlyConnected` violated | 10 | 9 | 0.733 | 12 |
+| `MCServerSessionBrokenReasonAcrossRestart.cfg` | `ReasonKeptWithinRun` violated | 32 | 22 | 0.748 | 12 |
+| `MCServerSessionBrokenReceiveWhileStopping.cfg` | `NoReceiveUnlessRunning` violated | 686 | 354 | 0.806 | 12 |
+| `MCServerSessionBrokenAdmitWhileStopping.cfg` | `NoAdmitUnlessRunning` violated | 18 | 16 | 0.827 | 12 |
+| `MCServerSessionBrokenDisconnectAllUnbounded.cfg` | `DisconnectWorkBounded` violated | 4,363 | 1,828 | 0.919 | 12 |
+| `MCServerSessionBrokenConnIdPerRun.cfg` | `ConnIdNeverRepeats` violated | 65,539 | 19,295 | 1.757 | 12 |
+
+With message-layer ends queuing their bursts the two-client instance has
+twice the states it had (411,808 distinct against 205,243), and the one run
+with every invariant and both liveness properties took 137 s on this bench,
+past the cap. It is three runs now: the invariants under `Spec`, and each
+liveness property under `LiveSpec` on its own. The two liveness runs are
+over 60% of the cap and declare budgets in `BUDGETS.tsv`.
 
 ## Bounds
 
@@ -216,8 +227,10 @@ case, one for witnesses, 110-second cap per case):
   ever CONNECTED at once, so in this case the distinct half of `ConnIdLiveAndDistinct` and the
   multi-client content of `DisconnectAllIsAtomic` and `StopDisconnectsAll` check nothing.
 - `MCServerSessionTwoClients.cfg` (module `MCServerSessionTwoClients.tla`): the same
-  constants with `MaxTokens = 2` and `MaxStarts = 1`, every invariant and both liveness
-  properties: two clients connected at once in one run (the stop and restart reuse is the
+  constants with `MaxTokens = 2` and `MaxStarts = 1`, every invariant under `Spec`;
+  `MCServerSessionTwoClientsLive.cfg` and `MCServerSessionTwoClientsBursts.cfg` check
+  `HandshakeResolves` and `BurstsDrain` on the same instance under `LiveSpec`, one a run:
+  two clients connected at once in one run (the stop and restart reuse is the
   case above). `MaxTokens = 2` with `MaxStarts = 2` also passes (5,115,808 generated,
   486,498 distinct, depth 24, 1 min 53 s with four workers on macOS, 2026-11-10; not a recorded case) but does not fit the
   cap with two workers. `MCServerSessionTwoClientsReachable.cfg` shows two CONNECTED slots
@@ -264,8 +277,8 @@ too. `DisconnectQueueCapacity` stands for the running server's cap of
 ServerStopSpread.tla takes them across the stop steps. A stop or disconnect
 call the fill-phase check refuses changes nothing and is a stutter.
 
-`MCServerSessionTwoClients.cfg` ran past the 110-second budget on the
-2026-11-11 bench (exit 124, recorded as such in `RUNS.tsv`). Run there with no
-budget, as evidence and not a record, it completes with no error at 205,243
-distinct states, the earlier count, in 4 min 44 s. Its record is owed a
-re-measure on a quieter bench.
+The two-client instance doubles (411,808 distinct states), so its run is
+split in three: `MCServerSessionTwoClients.cfg` (every invariant, `Spec`),
+`MCServerSessionTwoClientsLive.cfg` (`HandshakeResolves`) and
+`MCServerSessionTwoClientsBursts.cfg` (`BurstsDrain`); the Runs table has
+their records.
