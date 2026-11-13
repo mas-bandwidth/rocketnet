@@ -31,6 +31,8 @@
 #include "rocketnet_test_vectors.h"
 #include "unit_shutdown.h"
 #include "loopback_hub.h"
+#include "rocketnet_fill_phase.h"
+#include "rocketnet_platform.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -469,6 +471,208 @@ static void test_server_send_reserve_full_queue_is_full_staging()
     sr_teardown( &rig );
 }
 
+// ---------------------------------------------------------------------------
+// the fill lines (sdk/rocketnet_server_transport.cpp rocketnet_server_fill_line_t)
+// ---------------------------------------------------------------------------
+
+// the phase's reserve with no own frame: the connected client's keep-alive
+// is not acknowledged
+static uint64_t sr_open_phase( struct sr_rig_t * rig, int budget )
+{
+    const uint64_t reserve =
+        (uint64_t) rig->config.handshakes_per_update + (uint64_t) rig->config.disconnect_packets_per_update + 3 + 1;
+    sr.room[0] = (int) reserve + budget;
+    rocketnet_server_transport_send_packets( rig->server );
+    check( rocketnet_server_transport_fill_budget_for_test( rig->server, 0 ) == (uint64_t) budget );
+    return reserve;
+}
+
+static bool sr_start_abort( struct sr_rig_t * rig )
+{
+    struct rocketnet_packet_context_t context;
+    if ( !rocketnet_server_transport_start_packet( rig->server, 0, 8, &context ) )
+    {
+        return false;
+    }
+    rocketnet_server_transport_abort_packet( rig->server, &context );
+    return true;
+}
+
+static void sr_setup_lines( struct sr_rig_t * rig )
+{
+    sr_connect( rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 0;
+    sr_swap_in_fake( rig, 0 );
+    rocketnet_server_transport_set_keep_alive_acked_for_test( rig->server, 0, 0 );
+}
+
+#define SR_TAIL( word ) ( (word) & 0xFFFFFFFFULL )
+#define SR_HELD( word ) ( (word) >> 32 )
+
+// RNSendReserve Size (the guard): below a chunk for every line a claim is
+// one frame; at or above it, one add claims a chunk, its first frame is the
+// start and the rest is the line's tail, which the next starts take without
+// a claim, and the start after the tail claims the next chunk.
+static void test_server_fill_chunk_guard()
+{
+    struct sr_rig_t rig;
+    sr_setup_lines( &rig );
+
+    sr_open_phase( &rig, 40 );
+    check( sr_start_abort( &rig ) );
+    check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == 1 );
+    check( rocketnet_server_transport_fill_tail_for_test( rig.server, -1, 0 ) == 0 );
+
+    sr_open_phase( &rig, 1000 );
+    check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == 0 );
+    check( sr_start_abort( &rig ) );
+    const uint64_t chunk = rocketnet_server_transport_fill_claims_for_test( rig.server, 0 );
+    check( chunk > 1 && chunk * ROCKETNET_FILL_PHASE_FILL_LINES <= 1000 );
+    const uint64_t word = rocketnet_server_transport_fill_tail_for_test( rig.server, -1, 0 );
+    check( SR_TAIL( word ) == chunk - 1 && SR_HELD( word ) == 0 );
+    for ( uint64_t i = 1; i < chunk; ++i )
+    {
+        check( sr_start_abort( &rig ) );
+        check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == chunk );
+    }
+    check( rocketnet_server_transport_fill_tail_for_test( rig.server, -1, 0 ) == 0 );
+    check( sr_start_abort( &rig ) );
+    check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == 2 * chunk );
+
+    sr_teardown( &rig );
+}
+
+// RNSendReserve End, witness NoTailReturn: a frame the transport refuses
+// ends the run, and that frame's claim and the rest of the line's tail go
+// back in one add; the next start claims a fresh chunk.
+static void test_server_fill_chunk_tail_returned()
+{
+    struct sr_rig_t rig;
+    sr_setup_lines( &rig );
+
+    sr_open_phase( &rig, 1000 );
+    check( sr_start_abort( &rig ) );
+    const uint64_t chunk = rocketnet_server_transport_fill_claims_for_test( rig.server, 0 );
+    check( chunk > 2 );
+
+    const uint64_t refused_before = rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED];
+    sr.refuse_next = 1;
+    check( !sr_start_abort( &rig ) );
+    check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == 1 );
+    check( rocketnet_server_transport_fill_tail_for_test( rig.server, -1, 0 ) == 0 );
+    check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused_before );
+
+    check( sr_start_abort( &rig ) );
+    check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == 1 + chunk );
+
+    sr_teardown( &rig );
+}
+
+// RNSendReserve Refuse, witness NoFallback: a refused chunk claim is taken
+// back whole and claimed again as one frame, which the budget grants.
+static void test_server_fill_chunk_refused_falls_back()
+{
+    struct sr_rig_t rig;
+    sr_setup_lines( &rig );
+
+    sr_open_phase( &rig, 1000 );
+    const uint64_t refused_before = rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED];
+    rocketnet_server_transport_refuse_fill_chunks_for_test( rig.server, 1 );
+    check( sr_start_abort( &rig ) );
+    check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == 1 );
+    check( rocketnet_server_transport_fill_tail_for_test( rig.server, -1, 0 ) == 0 );
+    check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused_before );
+
+    sr_teardown( &rig );
+}
+
+// RNSendReserve TailsNamed: a single claim refused while another line holds
+// a tail or a chunk claim is SEND_RESERVE_REFUSED_TAILS_HELD; with none held,
+// SEND_RESERVE_REFUSED.
+static void test_server_fill_refusal_names_tails_held()
+{
+    struct sr_rig_t rig;
+    sr_setup_lines( &rig );
+
+    const int own = rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() );
+    const int other = ( own + 1 ) % ROCKETNET_FILL_PHASE_FILL_LINES;
+    const rocketnet_counters_t * counters = rocketnet_server_transport_counters( rig.server );
+
+    for ( int held = 0; held < 2; ++held )
+    {
+        sr_open_phase( &rig, 3 );
+        const uint64_t word = held ? ( 1ULL << 32 ) : 5ULL;           // a chunk claim deciding, or a tail of 5
+        rocketnet_server_transport_set_fill_tail_for_test( rig.server, other, 0, word );
+        const uint64_t refused = counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED];
+        const uint64_t tails = counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED_TAILS_HELD];
+        check( sr_fill( &rig, 10 ) == 3 );
+        check( counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused );
+        check( counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED_TAILS_HELD] == tails + 1 );
+
+        rocketnet_server_transport_set_fill_tail_for_test( rig.server, other, 0, 0 );
+        check( !sr_start_abort( &rig ) );
+        check( counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused + 1 );
+        check( counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED_TAILS_HELD] == tails + 1 );
+    }
+
+    sr_teardown( &rig );
+}
+
+// The payload ring (a buffered transport, the loopback): a chunk of slots
+// claimed with one add while the ring has a chunk free for every line; the
+// caller's unused chunk counts as free to it; and at the flush the slots of
+// the chunk no start used are empty, though an earlier phase's frames sat
+// there, so only the frames this phase finished are sent.
+static void test_server_fill_ring_chunk()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 640 );
+    rocketnet_server_transport_send_packets( rig.server );
+
+    const int capacity = rocketnet_server_transport_send_capacity_available( rig.server );
+    check( capacity >= 8 * ROCKETNET_FILL_PHASE_FILL_LINES );
+
+    // a phase that finishes a whole chunk, so its slots hold frames
+    struct rocketnet_packet_context_t context;
+    check( rocketnet_server_transport_start_packet( rig.server, 0, 8, &context ) != NULL );
+    const uint64_t chunk = rocketnet_server_transport_payload_ring_count_for_test( rig.server );
+    check( chunk > 1 );
+    const uint64_t word = rocketnet_server_transport_fill_ring_chunk_for_test( rig.server );
+    check( ( word >> 32 ) - ( word & 0xFFFFFFFFULL ) == chunk - 1 );
+    check( rocketnet_server_transport_send_capacity_available( rig.server ) == capacity - 1 );
+    check( rocketnet_server_transport_finish_packet( rig.server, &context, 8 ) > 0 );
+    for ( uint64_t i = 1; i < chunk; ++i )
+    {
+        check( rocketnet_server_transport_start_packet( rig.server, 0, 8, &context ) != NULL );
+        check( rocketnet_server_transport_finish_packet( rig.server, &context, 8 ) > 0 );
+    }
+    check( rocketnet_server_transport_payload_ring_count_for_test( rig.server ) == chunk );
+    check( rocketnet_server_transport_send_capacity_available( rig.server ) == capacity - (int) chunk );
+
+    struct rocketnet_server_transport_stats_t stats;
+    rocketnet_server_transport_stats( rig.server, &stats );
+    const uint64_t sent = stats.packets_sent;
+    rocketnet_server_transport_send_packets( rig.server );
+    rocketnet_server_transport_stats( rig.server, &stats );
+    check( stats.packets_sent == sent + chunk );
+    check( rocketnet_server_transport_payload_ring_count_for_test( rig.server ) == 0 );
+    check( rocketnet_server_transport_fill_ring_chunk_for_test( rig.server ) == 0 );
+
+    // the next phase finishes one frame of a new chunk over the same slots
+    check( rocketnet_server_transport_start_packet( rig.server, 0, 8, &context ) != NULL );
+    check( rocketnet_server_transport_finish_packet( rig.server, &context, 8 ) > 0 );
+    check( rocketnet_server_transport_payload_ring_count_for_test( rig.server ) == chunk );
+    rocketnet_server_transport_send_packets( rig.server );
+    rocketnet_server_transport_stats( rig.server, &stats );
+    check( stats.packets_sent == sent + chunk + 1 );
+
+    rn_test_client_transport_stop_and_destroy( rig.client );
+    rn_test_server_transport_stop_and_destroy( rig.server );
+}
+
 REGISTER_UNIT_TEST( test_server_send_reserve_one_queue );
 REGISTER_UNIT_TEST( test_server_send_reserve_refill );
 REGISTER_UNIT_TEST( test_server_send_reserve_refused_own_frame_stays_reserved );
@@ -476,5 +680,10 @@ REGISTER_UNIT_TEST( test_server_send_reserve_refused_start_returns_claim );
 REGISTER_UNIT_TEST( test_server_send_reserve_own_frame );
 REGISTER_UNIT_TEST( test_server_send_reserve_per_queue );
 REGISTER_UNIT_TEST( test_server_send_reserve_full_queue_is_full_staging );
+REGISTER_UNIT_TEST( test_server_fill_chunk_guard );
+REGISTER_UNIT_TEST( test_server_fill_chunk_tail_returned );
+REGISTER_UNIT_TEST( test_server_fill_chunk_refused_falls_back );
+REGISTER_UNIT_TEST( test_server_fill_refusal_names_tails_held );
+REGISTER_UNIT_TEST( test_server_fill_ring_chunk );
 
 #endif // #if ROCKETNET_DEV

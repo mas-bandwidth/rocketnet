@@ -206,7 +206,6 @@ struct counters_exception_t
 };
 
 static const counters_exception_t counters_no_code_path[] = {
-    { "SEND_RESERVE_REFUSED_TAILS_HELD", "the row lands first; the chunked reserve claim that counts it (v1.2/wide-fill, F8) removes this line" },
     { NULL, NULL }
 };
 
