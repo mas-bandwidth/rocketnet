@@ -243,6 +243,34 @@ func TestServerEndsReadsReasonNames(t *testing.T) {
 	}
 }
 
+// a run that would check nothing, or never send the largest message, is refused
+func TestCheckRunInputsRefusesRunsThatCheckLess(t *testing.T) {
+	good := [][2]any{{151, []string{"basic"}}, {300, allCases}, {8192, []string{"die"}}}
+	for _, g := range good {
+		if err := checkRunInputs(g[0].(int), g[1].([]string)); err != nil {
+			t.Errorf("count %d cases %v: %v", g[0], g[1], err)
+		}
+	}
+	bad := []struct {
+		count int
+		cases []string
+		want  string
+	}{
+		{0, []string{"basic"}, "-count 0"},
+		{150, []string{"basic"}, "-count 150"},
+		{8193, []string{"basic"}, "-count 8193"},
+		{300, nil, "names no case"},
+		{300, splitList(" , "), "names no case"},
+		{300, []string{"basic", "nope"}, `unknown case "nope"`},
+	}
+	for _, b := range bad {
+		err := checkRunInputs(b.count, b.cases)
+		if err == nil || !strings.Contains(err.Error(), b.want) {
+			t.Errorf("count %d cases %v: err %v, want %q", b.count, b.cases, err, b.want)
+		}
+	}
+}
+
 func TestPairingsRunBothDirectionsOnPortableAndEveryPairOnKernelTransports(t *testing.T) {
 	list := pairings([]string{"main", "v1.0.0", "v1.1.3"}, "main", []string{"gso"}, []string{"basic"})
 	seen := map[pairing]bool{}

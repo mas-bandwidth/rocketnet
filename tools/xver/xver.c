@@ -1219,7 +1219,17 @@ int main( int argc, char ** argv )
     }
     else if ( argc == 6 && strcmp( argv[1], "client" ) == 0 )
     {
-        result = run_client( argv[2], argv[3], argv[4], (uint32_t) strtoul( argv[5], NULL, 10 ) );
+        // the count is every stream's length: a sequence at or above XV_MAXSEQ is a bad header
+        char * end = NULL;
+        const unsigned long count = strtoul( argv[5], &end, 10 );
+        if ( argv[5][0] < '0' || argv[5][0] > '9' || !end || *end != '\0' || count < 1 || count > XV_MAXSEQ )
+        {
+            printf( "CLI FAIL count %s is not a number in 1 .. %d\n", argv[5], XV_MAXSEQ );
+        }
+        else
+        {
+            result = run_client( argv[2], argv[3], argv[4], (uint32_t) count );
+        }
     }
     else
     {

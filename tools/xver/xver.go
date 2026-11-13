@@ -381,6 +381,17 @@ func runOnce(bins map[string]string, p pairing, count int, dir string) ([]string
 	if err != nil {
 		return nil, err
 	}
+	// every return stops the server: under ROCKETNET_NIGHTLY_NO_TIMEOUT the
+	// context never cancels, so an early return would leave it holding its
+	// port on the runner
+	defer func() {
+		select {
+		case <-server.done:
+		default:
+			_ = server.cmd.Process.Kill()
+			<-server.done
+		}
+	}()
 	keyLine, ok := server.waitLine("SRV key ", 15*time.Second)
 	if !ok {
 		_ = server.cmd.Process.Kill()
@@ -543,6 +554,35 @@ func splitList(s string) []string {
 	return out
 }
 
+// The bounds on -count come from xver.c's schedule: the largest message goes
+// at seq % 200 == 150 (stream_length), so fewer than 151 messages never send
+// it, and a sequence at or above XV_MAXSEQ (8192) is refused as a bad header.
+const (
+	minCount = 151
+	maxCount = 8192
+)
+
+// checkRunInputs refuses a run that would check nothing or less than the
+// header promises: a count outside the schedule's bounds, or no case at all.
+func checkRunInputs(count int, cases []string) error {
+	if count < minCount || count > maxCount {
+		return fmt.Errorf("-count %d is outside %d .. %d (the largest message goes at seq 150; xver.c refuses seq %d and up)", count, minCount, maxCount, maxCount)
+	}
+	if len(cases) == 0 {
+		return errors.New("-cases names no case")
+	}
+	for _, c := range cases {
+		known := false
+		for _, k := range allCases {
+			known = known || k == c
+		}
+		if !known {
+			return fmt.Errorf("unknown case %q", c)
+		}
+	}
+	return nil
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: xver build -tree <source tree> -build <build dir> [-src .]")
 	fmt.Fprintln(os.Stderr, "       xver run -bin <label>=<path> ... -new <label> [-transports gso,io_uring] [-cases ...] [-parallel 4] [-count 300] [-out dir]")
@@ -588,15 +628,9 @@ func main() {
 		if _, ok := bins[*newest]; !ok || len(bins) < 1 || *parallel < 1 {
 			usage()
 		}
-		for _, c := range splitList(*cases) {
-			known := false
-			for _, k := range allCases {
-				known = known || k == c
-			}
-			if !known {
-				fmt.Printf("XVER FAIL unknown case %q\n", c)
-				os.Exit(2)
-			}
+		if err := checkRunInputs(*count, splitList(*cases)); err != nil {
+			fmt.Printf("XVER FAIL %v\n", err)
+			os.Exit(2)
 		}
 		var labels []string
 		missing := false
