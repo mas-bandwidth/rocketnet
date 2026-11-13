@@ -130,8 +130,11 @@ status code and the accompanying `ERROR` log line:
      `rocketnet_client_update(client, time)` and compare with
      `rocketnet_server_stats(server, &s)`:
      - `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`): the client sent
-       cookie requests (`REQUESTING_COOKIE`) and received no reply. The server
-       sends nothing back for a request it refuses before the cookie. Check:
+       cookie requests (`REQUESTING_COOKIE`) and received no reply for the
+       token's timeout. (When the token's lifetime is not longer than its
+       timeout, the attempt ends in `CONNECT_TOKEN_EXPIRED` instead; the
+       default token config's lifetime is the longer.) The server sends
+       nothing back for a request it refuses before the cookie. Check:
        (a) server is running (`rocketnet_server_running(server) == true`) and
        reachable at the address and UDP port named in the token; (b) the
        token's address for the family the client sends on is exactly, port
@@ -714,8 +717,8 @@ Each log line goes through the same steps:
 2. **Format once**: the line is formatted once into the 1024-byte buffer, and
    `length` is clamped as above.
 3. **Dispatch**: the installed `callback(context, level, message, length)` is
-   invoked, or the default sink, which writes the line to stdout without
-   formatting it again.
+   invoked, or the default sink, which prints the formatted line to stdout
+   after a timestamp and the level name, followed by a newline.
 4. **Last registration wins**: a non-NULL callback replaces the active sink;
    passing `NULL` restores the default sink.
 
@@ -761,9 +764,9 @@ each filling a caller struct with the current stats:
 slot). The client and server structs also carry the process-wide `api_misuses`
 and `thread_priority_refusals` counts. A NULL stats pointer is a counted no-op;
 a NULL client or server fills only the process-wide fields and zeroes the rest.
-These structs, with the per-connection `struct rocketnet_conditions_t`
-([above](#a-game-policy-for-a-client-it-cannot-send-to)), are the public
-counters. The SDK's own internal counters have no public read call.
+These structs, and the per-connection `struct rocketnet_conditions_t`
+([above](#a-game-policy-for-a-client-it-cannot-send-to)), are what a game
+can read. The SDK's own internal counters have no public read call.
 
 Client packet, byte, payload, resend, duplicate, receipt and budget counts
 describe only the connection the client currently holds. They start at zero

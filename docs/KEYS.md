@@ -224,7 +224,9 @@ What the code supports today:
   server ignores the connection request. The check runs after the cookie
   exchange, so with the default token lifetime and timeout that client ends
   in `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT`; at the `DEBUG` log
-  level the server logs `server ignored connection request. signature did not verify`.
+  level the server logs `server ignored connection request. signature did not verify`
+  (after repeated failures from one source address, `server ignored connection
+  request. too many signature failures from this source`).
 - **Server keys.** A server object keeps its keypair across stop and start,
   and wipes its copy at destroy. With the default all-zero `server_secret_key`,
   each new object generates a new key; register its public key with the backend
