@@ -55,6 +55,7 @@
 #include "rocketnet_server_gso.h"
 #include "rocketnet_receive_prefilter.h"
 #include "rocketnet_send_queue.h"
+#include "rocketnet_socket_buffer.h"
 #include "rocketnet_uring_queue_send.h"
 #include "rocketnet_uring_queue_worker.h"
 #include "rocketnet_uring_receive_queue.h"
@@ -202,6 +203,53 @@ static void rocketnet_server_uring_set_socket_option( void * user, int level, in
     setsockopt( fd, level, option_name, &value, sizeof( value ) );
 }
 
+// the grant of one buffer in the bytes requested: linux reports double its
+// grant for its own bookkeeping, so this halves it. 0 when unreadable
+
+static int rocketnet_server_uring_buffer_granted( int fd, int option )
+{
+    int granted = 0;
+    socklen_t optlen = sizeof( granted );
+    if ( getsockopt( fd, SOL_SOCKET, option, &granted, &optlen ) != 0 )
+    {
+        return 0;
+    }
+    return granted / 2;
+}
+
+// one buffer (rocketnet_socket_buffer_step): the plain request, the grant
+// read back, and when short the force option once. false only when the plain
+// request itself is refused (errno set); a refused force is a fact for the
+// start line, kept in force_error
+
+static bool rocketnet_server_uring_request_buffer( int fd, bool receive, int requested_bytes, int * granted_bytes, bool * force_tried, int * force_error )
+{
+    const int option = receive ? SO_RCVBUF : SO_SNDBUF;
+    const int force_option = receive ? SO_RCVBUFFORCE : SO_SNDBUFFORCE;
+
+    *force_tried = false;
+    *force_error = 0;
+
+    int size = requested_bytes;
+    if ( setsockopt( fd, SOL_SOCKET, option, &size, sizeof( size ) ) != 0 )
+    {
+        return false;
+    }
+    *granted_bytes = rocketnet_server_uring_buffer_granted( fd, option );
+
+    if ( rocketnet_socket_buffer_step( requested_bytes, *granted_bytes, false ) == ROCKETNET_SOCKET_BUFFER_FORCE )
+    {
+        *force_tried = true;
+        size = requested_bytes;
+        if ( setsockopt( fd, SOL_SOCKET, force_option, &size, sizeof( size ) ) != 0 )
+        {
+            *force_error = errno;
+        }
+        *granted_bytes = rocketnet_server_uring_buffer_granted( fd, option );
+    }
+    return true;
+}
+
 static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
@@ -245,50 +293,63 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         }
     }
 
-    int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
+    // request the buffer sizes, read back what was granted, and when the
+    // grant is short ask once more past the sysctl limit with the force
+    // option (rocketnet_socket_buffer_step). a short grant is not an error --
+    // it is a fact about the host's sysctls, named at start with the sysctl
+    // to set (rocketnet_socket_buffer_note) so nobody assumes.
+    //
+    // the receive request is one update's inbound packets at the configured
+    // client count (rocketnet_server_transport_receive_buffer_request; a
+    // request, and the kernel charges only what it holds): SO_REUSEPORT may
+    // hash any share of the clients to this one socket
 
-    // one update's inbound packets at the server's configured client count
-    // (rocketnet_server_transport_receive_buffer_request; a request, and the
-    // kernel charges only what it holds)
-    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", max_clients );
+    const int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
+    const int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", max_clients );
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
+    int granted_send = 0;
+    bool send_force_tried = false;
+    int send_force_error = 0;
+    if ( !rocketnet_server_uring_request_buffer( fd, false, send_buffer_size, &granted_send, &send_force_tried, &send_force_error ) )
     {
         rocketnet_error( "io_uring transport: failed to set socket send buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 0 )
+    int granted_receive = 0;
+    bool receive_force_tried = false;
+    int receive_force_error = 0;
+    if ( !rocketnet_server_uring_request_buffer( fd, true, receive_buffer_size, &granted_receive, &receive_force_tried, &receive_force_error ) )
     {
         rocketnet_error( "io_uring transport: failed to set socket receive buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
-    int granted_send = 0;
-    int granted_receive = 0;
-    socklen_t optlen = sizeof( int );
-    getsockopt( fd, SOL_SOCKET, SO_SNDBUF, &granted_send, &optlen );
-    optlen = sizeof( int );
-    getsockopt( fd, SOL_SOCKET, SO_RCVBUF, &granted_receive, &optlen );
-
-    granted_send /= 2;
-    granted_receive /= 2;
-
     if ( queue_index == 0 )
     {
-        if ( granted_send < send_buffer_size )
+        char line[512];
+        if ( rocketnet_socket_buffer_note( line, (int) sizeof( line ), "io_uring", false, send_buffer_size, granted_send, send_force_tried, send_force_error ) )
         {
-            rocketnet_warn( "io_uring transport: socket send buffer granted %d of %d requested bytes (raise net.core.wmem_max)",
-                            granted_send, send_buffer_size );
+            rocketnet_warn( "%s", line );
+        }
+        else
+        {
+            rocketnet_info( "%s", line );
+        }
+
+        if ( rocketnet_socket_buffer_note( line, (int) sizeof( line ), "io_uring", true, receive_buffer_size, granted_receive, receive_force_tried,
+                                           receive_force_error ) )
+        {
+            rocketnet_warn( "%s", line );
+        }
+        else
+        {
+            rocketnet_info( "%s", line );
         }
 
         rocketnet_server_receive_buffer_granted( "io_uring", receive_buffer_size, granted_receive );
-        if ( granted_send >= send_buffer_size && granted_receive >= receive_buffer_size )
-        {
-            rocketnet_info( "io_uring transport: socket buffers granted: send %d receive %d", granted_send, granted_receive );
-        }
     }
 
     rocketnet_address_t addr = *bind_address;
