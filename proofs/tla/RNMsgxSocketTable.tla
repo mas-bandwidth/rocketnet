@@ -804,7 +804,7 @@ LiveSnap(s) == state[s] = RETIRED \/ (mpc \in {"fword", "sword"} /\ ms = s)
 \* from the snapshot it never equals it again
 Blocks(s) == [h \in Holders |-> LiveSnap(s) /\ Odd(snap[s][h]) /\ pass[h] = snap[s][h]]
 
-SafetyView ==
+View ==
     <<word, deadRep, state, fd, gen,
       [s \in Slots |-> IF state[s] = FREE THEN 0 ELSE addr[s]],
       [s \in Slots |-> Blocks(s)],

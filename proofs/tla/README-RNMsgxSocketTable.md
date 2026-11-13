@@ -145,7 +145,7 @@ part at full size:
 | `MCRNMsgxSocketTableLive.cfg` | 2 slots, TX 1 and RX 2, no packets, `SpecFair`, no VIEW | `RetiredClosed` |
 | `MCRNMsgxSocketTableLivePacket.cfg` | 1 slot, TX 1 with a packet and RX 2, `SpecFair`, no VIEW | `RetiredClosed` with a packet in flight |
 
-The safety configs use `SafetyView`, which replaces every value no later step
+The safety configs use `View`, which replaces every value no later step
 reads by a constant (a free slot's address, the free stack above `numFree`, a
 cooldown entry already expired, a finished packet's detail), keeps the
 counters only as the differences `Accounting` reads, and keeps a live
@@ -192,43 +192,59 @@ passing case, 1 for a counterexample), linux-amd64 bench; the records are in
 
 | Config | Result | Distinct | Generated | Seconds |
 |---|---|---|---|---|
-| `MCRNMsgxSocketTable.cfg` | pass | 169,376 | 870,815 | 18.4 |
-| `MCRNMsgxSocketTableLayout.cfg` | pass | 742,825 | 2,810,771 | 52.9 |
-| `MCRNMsgxSocketTableQuarantine.cfg` | pass | 100,575 | 428,452 | 11.4 |
-| `MCRNMsgxSocketTableDead.cfg` | pass | 334,768 | 1,422,882 | 26.6 |
-| `MCRNMsgxSocketTableLive.cfg` | pass | 77,531 | 242,620 | 29.8 |
-| `MCRNMsgxSocketTableLivePacket.cfg` | pass | 9,951 | 34,698 | 5.0 |
-| `MCRNMsgxSocketTableBrokenCloseAtRetire.cfg` | `NoCrossClient` | 9,427 | 35,730 | 3.3 |
-| `MCRNMsgxSocketTableBrokenNoGenerationCheck.cfg` | `NoCrossClient` | 37,964 | 139,007 | 7.9 |
-| `MCRNMsgxSocketTableBrokenSnapshotBeforeWord.cfg` | `NoCrossClient` | 52,564 | 183,138 | 9.6 |
-| `MCRNMsgxSocketTableBrokenExhaustionTakesSlot.cfg` | `NoLeak` | 655 | 1,606 | 3.2 |
-| `MCRNMsgxSocketTableBrokenExhaustionTakesSlotAccounting.cfg` | `Accounting` | 655 | 1,606 | 1.7 |
-| `MCRNMsgxSocketTableBrokenGenWrap2.cfg` | `NoCrossClient` | 7,950 | 41,353 | 4.8 |
-| `MCRNMsgxAddressIndex.cfg` | pass | 640 | 1,984 | 1.6 |
-| `MCRNMsgxAddressIndexBrokenDeleteWithoutShift.cfg` | `LookupFindsOpen` | 497 | 833 | 1.3 |
-| `MCTraceRNMsgxSocketTableSelf.cfg` | pass | 14 | 15 | 1.4 |
-| `MCTraceRNMsgxSocketTableSelfBrokenClose.cfg` | `TraceConsistent` | 10 | 10 | 1.5 |
+| `MCRNMsgxSocketTable.cfg` | pass | 169,376 | 1,024,727 | 13.9 |
+| `MCRNMsgxSocketTableLayout.cfg` | pass | 742,825 | 3,797,376 | 56.7 |
+| `MCRNMsgxSocketTableQuarantine.cfg` | pass | 100,575 | 526,396 | 14.5 |
+| `MCRNMsgxSocketTableDead.cfg` | pass | 334,768 | 1,654,818 | 32.3 |
+| `MCRNMsgxSocketTableLive.cfg` | pass | 77,531 | 242,620 | 36.7 |
+| `MCRNMsgxSocketTableLivePacket.cfg` | pass | 9,951 | 34,698 | 6.1 |
+| `MCRNMsgxSocketTableBrokenCloseAtRetire.cfg` | `NoCrossClient` | 5,616 | 24,001 | 4.4 |
+| `MCRNMsgxSocketTableBrokenNoGenerationCheck.cfg` | `NoCrossClient` | 26,444 | 101,412 | 7.2 |
+| `MCRNMsgxSocketTableBrokenSnapshotBeforeWord.cfg` | `NoCrossClient` | 82,616 | 342,198 | 8.9 |
+| `MCRNMsgxSocketTableBrokenExhaustionTakesSlot.cfg` | `NoLeak` | 48 | 116 | 1.6 |
+| `MCRNMsgxSocketTableBrokenExhaustionTakesSlotAccounting.cfg` | `Accounting` | 48 | 116 | 1.8 |
+| `MCRNMsgxSocketTableBrokenGenWrap2.cfg` | `NoCrossClient` | 6,987 | 43,430 | 4.0 |
+| `MCRNMsgxAddressIndex.cfg` | pass | 640 | 1,984 | 1.7 |
+| `MCRNMsgxAddressIndexBrokenDeleteWithoutShift.cfg` | `LookupFindsOpen` | 497 | 833 | 1.6 |
+| `MCTraceRNMsgxSocketTableSelf.cfg` | pass | 10 | 19 | 1.9 |
+| `MCTraceRNMsgxSocketTableSelfBrokenClose.cfg` | `TraceConsistent` | 7 | 7 | 2.4 |
 
 ## The trace check
 
-`tests/tla_trace_msgx.cpp` (`tla_trace_msgx`, and `tla_trace_msgx_plant`
-built with `ROCKETNET_MSGX_SOCKET_TABLE_PLANT`) walks the real header for 400
-calls per seed over a fake kernel of three descriptors, two transmit holders,
-one receive holder, a budget of two opens and one other descriptor of the
-process, with four addresses whose real hashes give homes 2046, 2046, 2047
-and 0 in the code's 2048-entry index (a collision and a wrap). Each record
-carries every model variable and the call made; `TraceRNMsgxSocketTable.tla`
-requires the records to be a behaviour of `Spec`.
+`tests/tla_trace_msgx.cpp` (`tla_trace_msgx`, and `tla_trace_plant_msgx` built
+with `ROCKETNET_TLA_PLANT`, which includes `sdk/rocketnet_msgx_socket_table.cpp`
+with `ROCKETNET_MSGX_SOCKET_TABLE_PLANT`) walks the real table for 500 steps
+per seed over a fake kernel of three descriptors, two transmit holders, one
+receive holder, a budget of two opens and one other descriptor of the process,
+with four addresses whose real hashes give homes 2046, 2046, 2047 and 0 in the
+code's 2048-entry index (a collision and a wrap). Each record carries the op,
+the model action it took, its arguments and every model variable;
+`TraceRNMsgxSocketTable.tla` requires the records to be a behaviour of `Spec`
+one action at a time ([README-TraceCheck.md](README-TraceCheck.md)). A forget
+is `ForgetCall` and a sweep `SweepCall`; the row lists the fine-grained
+actions untraced with that reason. The row's reach predicates (`IndexProbed`,
+`IndexWrapped`, `Held`, `DeadRetired`) require some clean trace to show the
+index probing and wrapping, a socket held in quarantine by an open pass, and a
+socket retired on a dead report.
 
 - The self-test (`MCTraceRNMsgxSocketTableSelf.tla`) accepts its hand-written
   good trace and rejects the one with a single wrong step (a sweep that
   closes while holder 1 is still inside its pass).
-- Seeds 1 to 16: every clean trace passes (453 to 546 distinct states, 4 to 13
-  seconds each), every plant trace fails `TraceConsistent` (8 to 76 distinct
-  states). The plant fired 8 to 19 times per seed (`EARLY-CLOSES`); the clean
-  build never did.
+- Seeds 1 to 4, `--jobs 8` (hetzner1, under other pieces' load): every clean
+  trace passes (501 distinct states, 38 to 42 s of TLC each), every plant
+  trace fails `TraceConsistent` at the first record the plant changed (seed 1
+  at record 13, seed 2 at 26, seed 3 at 19, seed 4 at 65), a record the walk's
+  `PLANT-AT` lists (15 to 18 closes of a slot still open per seed); the clean
+  build never made one. Every action not listed untraced was taken, and the
+  four reach predicates were reached.
+- The template's `ASSUME` reads `TraceLog` once per record and TLC builds the
+  log again at each read, so a trace costs records times the log's size: the
+  walk is 500 steps, with the index and the cooldown table logged as the
+  entries in use, to stay inside the 100 s budget.
 
 The plant is the close at the retire, the same change as
 `MCRNMsgxSocketTableBrokenCloseAtRetire.cfg`: it sits in
-`rocketnet_msgx_socket_table_retire` behind the flag and is never defined
-outside the plant build.
+`rocketnet_msgx_socket_table_retire` (`sdk/rocketnet_msgx_socket_table.cpp`,
+out of line so the plant is library code) behind the flag and is never defined
+outside the plant build. `PLANT-FIRED` counts the closes of a slot still open;
+the clean build never makes one.
