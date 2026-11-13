@@ -376,8 +376,7 @@ static void wide_fill_server_update( wide_fill_world_t * world, bool three_calls
                                   for ( int c = t; c < WIDE_FILL_MAX_CLIENTS; c += num_threads )
                                   {
                                       taken[t] += (uint64_t) rocketnet_server_update_client( world->server, c );
-                                  }
-                              } );
+                                  } } );
     }
     for ( std::thread & thread : threads )
     {

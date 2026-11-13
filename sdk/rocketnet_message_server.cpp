@@ -868,9 +868,9 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 static uint64_t rn_message_entry_connection( rn_message_object_t * object, const int * client_index, uint64_t ( *entry_connection )( void * transport, int k ), int k )
 {
     const int index = client_index ? client_index[k] : 0;
-    if ( index < 0 || index >= object->num_connections )
+    if ( index < 0 || index >= object->num_connections || !object->connections )
     {
-        return 0;
+        return 0;                                       // no slot of that index (connections is carved with the slots)
     }
 
     return entry_connection ? entry_connection( object->link.transport, k )
