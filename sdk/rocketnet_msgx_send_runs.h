@@ -323,4 +323,4 @@ inline bool rocketnet_msgx_send_runs_send( const Info * info, const int * order,
     return true;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_MSGX_SEND_RUNS_H
+#endif // ROCKETNET_SDK_ROCKETNET_MSGX_SEND_RUNS_H
