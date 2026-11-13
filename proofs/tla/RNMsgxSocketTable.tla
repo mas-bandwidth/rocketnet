@@ -658,12 +658,30 @@ Next ==
     \/ EnvOpen
     \/ \E f \in Fds : EnvClose(f) \/ Disconnect(f)
 
+\* Next without the call-level actions: the fine-grained steps already take
+\* every call, with or without a holder step inside it, so the liveness
+\* configurations check the fine-grained model alone (a call-level step adds
+\* edges between states the fine-grained steps already reach)
+NextFine ==
+    \/ \E a \in Addrs : Mark(a) \/ Forget(a)
+    \/ BeginUpdate
+    \/ SweepBegin
+    \/ MainCont
+    \/ \E a \in Addrs, h \in TxHolders : Stamp(a, h)
+    \/ \E h \in Holders : HolderBegin(h) \/ HolderEnd(h) \/ ReportDead(h)
+    \/ \E h \in TxHolders : TxSend(h) \/ \E i \in 1..Len(pkts) : TxResolve(h, i)
+    \/ \E e \in poller : RxPoll(e)
+    \/ RxResolve
+    \/ RxRead
+    \/ EnvOpen
+    \/ \E f \in Fds : EnvClose(f) \/ Disconnect(f)
+
 Spec == Init /\ [][Next]_vars
 
 \* main keeps sweeping, and every holder finishes and ends its pass (strong
 \* fairness: the receive worker may keep taking events)
 SpecFair ==
-    /\ Spec
+    /\ Init /\ [][NextFine]_vars
     /\ WF_vars(SweepBegin \/ MainCont)
     /\ \A h \in Holders : SF_vars(HolderEnd(h)) /\ WF_vars(ReportDead(h))
     /\ \A h \in TxHolders : WF_vars(TxSend(h))
