@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "rocketnet.h"                          // ROCKETNET_MAX_CLIENTS
+#include "rocketnet_network_threads.h"          // ROCKETNET_XDP_DEFAULT_THREADS
 
 #ifndef ROCKETNET_XDP_MEMORY_MIB
 #define ROCKETNET_XDP_MEMORY_MIB 8192
@@ -240,11 +241,10 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
 
 // Native built-in adapter resource policy; fills transport, UMEM, RIO registered
 // region, worker and socket fields.
-// the xdp transport's queue count when num_xdp_queues is zero or negative; the
-// xdp create and rocketnet_builtin_server_memory_plan both take it
-#ifndef ROCKETNET_XDP_DEFAULT_QUEUES
-#define ROCKETNET_XDP_DEFAULT_QUEUES 7
-#endif // #ifndef ROCKETNET_XDP_DEFAULT_QUEUES
+// the xdp transport's queue count when num_xdp_threads is zero: one queue per
+// XDP thread (sdk/rocketnet_network_threads.h); the xdp create and
+// rocketnet_builtin_server_memory_plan both take it
+#define ROCKETNET_XDP_DEFAULT_QUEUES ROCKETNET_XDP_DEFAULT_THREADS
 
 bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_config_t * config,
                                            const char * transport, rocketnet_server_memory_plan_t & plan );

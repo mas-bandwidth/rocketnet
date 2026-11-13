@@ -20,6 +20,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "rocketnet_network_threads.h"
 
 // the kind fields carried in the upper bits of every RIO request's 64-bit
 // RequestContext.
@@ -227,8 +228,9 @@ static inline int rocketnet_rio_context_index( uint64_t context )
 // so every frame to one client leaves through one lane in order. The packet
 // id start_packet returns carries the lane: lane * lane_slots + index, where
 // index < lane_slots (the lane's phases times its phase size).
-// proofs/tla/RNRioLaneLayout.tla models the arithmetic.
-#define ROCKETNET_RIO_MAX_LANES 32
+// proofs/tla/RNRioLaneLayout.tla models the arithmetic. The most lanes,
+// ROCKETNET_RIO_MAX_LANES (32), is the server's num_rio_lanes limit, written
+// in sdk/rocketnet_network_threads.h.
 
 // FNV-1a over the family, the port and the address bytes the family uses
 // (the same function the xdp transport's reply table hashes with), so the

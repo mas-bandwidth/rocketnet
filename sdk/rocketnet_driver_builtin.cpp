@@ -2364,17 +2364,13 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
 uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_socket_t * server_socket );
 #endif // #if ROCKETNET_XDP
 
+// gso runs num_gso_workers queue workers (the config table has refused a
+// value outside 1 .. ROCKETNET_GSO_MAX_WORKERS; zero is the default)
 static void * gso_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    if ( config->transport->num_xdp_queues > ROCKETNET_GSO_MAX_QUEUES )
-    {
-        rocketnet_warn( "gso transport refused: num_xdp_queues %d is past the gso transport's %d queue geometry",
-                        config->transport->num_xdp_queues, ROCKETNET_GSO_MAX_QUEUES );
-        return NULL;
-    }
-
+    const int workers = rocketnet_network_threads_count( config->transport->num_gso_workers, ROCKETNET_GSO_DEFAULT_WORKERS );
     const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
-    return rocketnet_server_gso_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+    return rocketnet_server_gso_create_pinned( context, bind, workers, config->transport->max_clients, 0, os_cpus, config->status,
                                                config->transport->packet_filter );
 }
 
@@ -2432,17 +2428,13 @@ extern const rocketnet_transport_backend_t rocketnet_gso_transport = { &gso_oper
 #include "rocketnet_server_uring.h"
 
 void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large ); // rocketnet_server_uring_receive_drops in sdk/rocketnet_server_uring_linux.cpp
+// io_uring runs num_io_uring_workers workers (the config table has refused a
+// value outside 1 .. ROCKETNET_IO_URING_MAX_WORKERS; zero is the default)
 static void * io_uring_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    if ( config->transport->num_xdp_queues > ROCKETNET_URING_MAX_QUEUES )
-    {
-        rocketnet_warn( "io_uring transport refused: num_xdp_queues %d is past the io_uring transport's %d queue geometry",
-                        config->transport->num_xdp_queues, ROCKETNET_URING_MAX_QUEUES );
-        return NULL;
-    }
-
+    const int workers = rocketnet_network_threads_count( config->transport->num_io_uring_workers, ROCKETNET_IO_URING_DEFAULT_WORKERS );
     const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
-    return rocketnet_server_uring_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+    return rocketnet_server_uring_create_pinned( context, bind, workers, config->transport->max_clients, 0, os_cpus, config->status,
                                                  config->transport->packet_filter );
 }
 
@@ -2502,7 +2494,7 @@ extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_
 #if ROCKETNET_XDP
 static void * xdp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
 {
-    const int queues = config->transport->num_xdp_queues > 0 ? config->transport->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;
+    const int queues = rocketnet_network_threads_count( config->transport->num_xdp_threads, ROCKETNET_XDP_DEFAULT_THREADS );
     const int cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1;
 
     // the backend retains its existing verify-and-bind preflight and commit

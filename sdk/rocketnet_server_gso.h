@@ -12,6 +12,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_gso_pin.h"
+#include "rocketnet_network_threads.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
@@ -41,11 +42,10 @@ struct rocketnet_server_gso_t;
 
 // the transport's geometry, all compile time:
 
-#ifndef ROCKETNET_GSO_DEFAULT_QUEUES
-#define ROCKETNET_GSO_DEFAULT_QUEUES                                         4
-#endif // #ifndef ROCKETNET_GSO_DEFAULT_QUEUES
-
-#define ROCKETNET_GSO_MAX_QUEUES                                            32
+// a queue per worker: the counts are the server's num_gso_workers
+// (sdk/rocketnet_network_threads.h)
+#define ROCKETNET_GSO_DEFAULT_QUEUES                                         ROCKETNET_GSO_DEFAULT_WORKERS
+#define ROCKETNET_GSO_MAX_QUEUES                                             ROCKETNET_GSO_MAX_WORKERS
 
 // send staging: one phase's worth of slots, the same budget as the xdp
 // transport's send queue. each slot is a frame-stride wire packet.
