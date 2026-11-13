@@ -79,12 +79,6 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
-    "sendreserve": {
-        "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
-        "untraced": {},
-        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
-        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed"],
-    },
     "msgx": {
         "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
         "untraced": {
@@ -119,6 +113,12 @@ LAYERS = {
         "reach": ["SegCapEdge", "ByteCapEdge"],
         # seven steps a bank (six stages and the call): 100 calls a seed
         "steps": 700,
+    },
+    "sendreserve": {
+        "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
+        "untraced": {},
+        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
+        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed"],
     },
 }
 
