@@ -298,6 +298,12 @@ COMMIT_LINE_RE = re.compile(
 # suite_keep_going_summary (tests/suite_runner.h): a passing nightly run says
 # no case failed and every collected case ran; any other count is not a pass.
 KEEP_GOING_PASS_RE = re.compile(r"keep going: 0 failed; ([0-9]+) of \1 collected cases ran")
+# The Windows commit state a run prints at its start, and a full-capacity
+# case's wait for the machine-wide commit lock (tests/suite_runner.h,
+# suite_commit_text and suite_commit_lock_take): reports, not cases.
+COMMIT_LINE_RE = re.compile(r"commit available [0-9]+ MiB of a [0-9]+ MiB limit, physical available [0-9]+ MiB"
+                            r"|commit state unreadable"
+                            r"|commit lock: test_[a-z0-9_]+ waited [0-9.]+ s for another run's full-capacity case")
 
 
 def check_functional_log(lines, rows, exec_names, other_names=frozenset()):
@@ -429,7 +435,9 @@ def exec_functional_names():
 
 def check_shape(lines, label, once=False):
     # every line a test name, then a blank line, the passed line and a blank line;
-    # with once, each name on one line only (the unit registry prints each case once)
+    # with once, each name on one line only (the unit registry prints each case once);
+    # a Windows run's commit lines (COMMIT_LINE_RE) are reports and are set aside first
+    lines = [line for line in lines if not COMMIT_LINE_RE.fullmatch(line)]
     if lines[-3:] == ["", PASSED_LINE, ""] and not any(line.strip() for line in lines[:-3]):
         # zero inputs is an error: a run that printed no test name ran nothing
         sys.exit("%s: 0 test names printed before %r: nothing was checked" % (label, PASSED_LINE))
