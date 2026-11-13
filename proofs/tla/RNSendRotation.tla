@@ -264,10 +264,13 @@ BeginFlush ==
     /\ UNCHANGED << cursor, starve, stuck, skipOk >>
 
 \* the flush ends (the goto flush, or a round with no writer): the
-\* transport sends and its ring count resets
+\* transport sends and its ring count resets.  An ended (vain) connection is
+\* owed nothing: the next update kicks it (rn_endpoint_error in
+\* rn_message_object_update_end) and its queued work goes with it, so its wait
+\* is not counted
 EndFlushVars(sv) ==
     /\ pc' = "between"
-    /\ starve' = [ c \in Conns |-> IF sv[c] \/ ~due[c] THEN 0 ELSE starve[c] + 1 ]
+    /\ starve' = [ c \in Conns |-> IF sv[c] \/ ~due[c] \/ conn[c].vain THEN 0 ELSE starve[c] + 1 ]
 
 \* the end of a round: another over this round's writers, or the flush ends
 \* with the cursor past the last connection (rn_message_object_send_packets

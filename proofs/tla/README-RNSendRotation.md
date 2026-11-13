@@ -139,9 +139,15 @@ are written and nothing the model observes.
 - **`BoundedWait`**: a connection with writable work at every flush is served
   within `N` flushes. Each flush's first visit has capacity and moves the
   cursor past one connection, and the cursor moves past a connection only by
-  visiting it with capacity, when a connection with work is served.
-  `RNServerSendFair` states the tighter `ceil(N / K)` for the abstract
-  rotation.
+  visiting it with capacity, when a connection with work is served. An
+  ended (vain) connection is not counted: its visit can abort a frame and
+  write nothing, and the next update kicks it (`rn_endpoint_error` in
+  `rn_message_object_update_end`), its queued work with it. Without that
+  exception the Vain instance fails here: two ended connections, three
+  frames, the second's abort spends the last frame every flush, and its
+  unreliable record waits until the kick. `RNServerSendFair` states the
+  tighter `ceil(N / K)` at the loop's index arithmetic, where every visit
+  with capacity writes.
 
 ## The instances
 
@@ -213,6 +219,17 @@ counterexample was checked against the C by hand.
    `rn_message_object_send_packets` the `goto flush` at the capacity test
    leaves the cursor on the connection just served, and the next
    `send_packets` starts there again.
+7. **`MCRNSendRotationBrokenVainRetry.cfg`** (`VainEnds = FALSE`: a vain
+   ordered write leaves the reliable path open). TLC, two connections and
+   three frames: connection 0 has ended and its due test still answers yes
+   (`vain`); its one visit plans `ORDERED`, starts a frame, writes nothing,
+   aborts it, plans `ORDERED` again and aborts again until the capacity is
+   spent (`AbortsBounded`). Against the C: when `rn_ordered_write` returns 0,
+   `rn_endpoint_write_packet` sets `packet_kind` to `NONE` and calls
+   `rn_endpoint_end_reliable` (sdk/rocketnet_endpoint.cpp), so the next
+   `rn_endpoint_next_packet_bytes` plans the unreliable class or ends the
+   pass; without that call the loop of `rn_message_connection_write` would
+   plan the same ordered packet while capacity lasts.
 
 ## Revision 1.1: a dark client takes no more than its turn (RNServerSendFair)
 
