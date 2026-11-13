@@ -142,7 +142,26 @@ Mac mini server sent the whole peak, 900k packets a second, to 1000 players
 at 3. An M3 Ultra Mac Studio server topped out at 694k a second at 2 and sent
 less as workers were added (678k at 1, 660k at 3, 492k at 6), each worker near
 fully busy in the kernel's send path. More workers are not more throughput on
-every Mac; measure yours. In the `portable` server the caller copies borrowed, sealed send frames
+every Mac; measure yours.
+
+A client with a socket leaves through the transmit worker its socket-table slot
+names, slot modulo the worker count (`rocketnet_msgx_socket_table_queue_of`,
+`proofs/tla/RNMsgxSendSpread.tla`); a client without one goes by its address
+hash. The busiest worker sets the rate, so the split is kept even: with every
+slot held the workers differ by at most one client. Measured on 2026-11-13
+(the M5 Pro Mac mini above, 1000 players, 3 workers): an address hash left the
+workers 77/84/89% of a core over a peak run with game load and 87/89/90%
+without; by slot they read within 0.2 points of each other. At the peak, 900k
+packets a second of about 1280 bytes on the wire (9.2 Gb/s), each worker was
+88-89% busy without game load and 93-95% with the harness's game threads; at
+the average, 480k a second, 47-51%. The workers spend about 2.95 us of a core
+a packet in the kernel's send path without game load, at 15 datagrams a call
+and at 8 alike, so a larger batch does not lower it; with game load, 3.1-3.2
+us. The peak is 94% of the Mac's send ceiling (956k a second), and with game
+load starts were still refused in episodes (two of three 60-second runs): the
+peak with game load needs headroom this Mac does not have at 3 workers.
+
+In the `portable` server the caller copies borrowed, sealed send frames
 into one of three owned TX banks outside the lock; a try-lock publishes bank
 indices to the transmit worker. The receive worker reads datagrams into three
 owned RX banks and publishes them to the caller, which copies their packets and
