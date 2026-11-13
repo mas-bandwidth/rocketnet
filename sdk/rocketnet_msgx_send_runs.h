@@ -55,6 +55,13 @@
 #define ROCKETNET_MSGX_SHARED_FULL                           1  // try again later
 #define ROCKETNET_MSGX_SHARED_DROPPED                        2  // an error, or no address to send to
 
+// the send's place (RNMsgxSendRuns pc)
+#define ROCKETNET_MSGX_SEND_RUNS_HEAD                        0  // the loop's top
+#define ROCKETNET_MSGX_SEND_RUNS_SEND                        1  // a run built, its connected send next
+#define ROCKETNET_MSGX_SEND_RUNS_DEAD                        2  // a dead run's resend on the shared socket
+#define ROCKETNET_MSGX_SEND_RUNS_KEPT                        3  // a socket was full: the rest is kept
+#define ROCKETNET_MSGX_SEND_RUNS_DONE                        4  // every packet left
+
 // ROCKETNET_MSGX_SEND_RUNS_MUTATION selects one deliberate defect for the
 // mutation check of tests/test_unit_msgx_send_runs.cpp; never defined in a
 // real build:
@@ -67,6 +74,15 @@
 //  7 a refusal never retried
 //  8 a full socket drops the run
 //  9 an aborted packet inside a run is sent
+// ROCKETNET_MSGX_SEND_RUNS_PLANT is the trace check's plant
+// (proofs/tla/README-TraceCheck.md), the same change as mutation 3, in
+// rocketnet_msgx_send_runs_same_generation
+// (sdk/rocketnet_msgx_send_runs.cpp): the traces of
+// tests/tla_trace_msgx_send_runs.cpp must then fail TraceConsistent. Never
+// defined outside the plant build.
+
+// two stamps of one slot are at one generation (sdk/rocketnet_msgx_send_runs.cpp)
+bool rocketnet_msgx_send_runs_same_generation( uint32_t generation, uint32_t other );
 
 struct rocketnet_msgx_send_runs_io_t
 {
@@ -95,6 +111,32 @@ struct rocketnet_msgx_send_runs_counters_t
     uint64_t retired;               // packets that left through the shared socket because their socket was retired
     uint64_t dead;                  // dead answers
 };
+
+// the send's state across steps and calls (RNMsgxSendRuns pc, cursor, hd,
+// scan, run, attempts); run_packets holds the batch
+struct rocketnet_msgx_send_runs_state_t
+{
+    int pc;
+    int cursor;
+    int head;
+    int scan;
+    int run;
+    int attempts;
+    int fd;                         // the run's socket, resolved at the build (the table holds still for the call)
+    int * run_packets;
+};
+
+inline void rocketnet_msgx_send_runs_start( struct rocketnet_msgx_send_runs_state_t * state, int * run_packets )
+{
+    state->pc = ROCKETNET_MSGX_SEND_RUNS_HEAD;
+    state->cursor = 0;
+    state->head = 0;
+    state->scan = 0;
+    state->run = 0;
+    state->attempts = 0;
+    state->fd = -1;
+    state->run_packets = run_packets;
+}
 
 // the bank's packets in slot order, the shared socket's (slot -1, and any
 // slot outside the table) first, staged order kept within a slot. bucket
@@ -150,60 +192,78 @@ inline int rocketnet_msgx_send_runs_owed( const Info * info, const int * order, 
     return owed;
 }
 
-// Sends the sorted bank from *cursor; run holds batch ints. Returns false
-// when a socket is full: *cursor is then the first packet not yet taken.
-// The caller is inside one table pass for the whole call.
-// proofs/tla/RNMsgxSendRuns.tla: the loop's top is LoopTop (the run is
-// Build), the answers SendAll, SendPartial (Advance), SendFull, SendRefused,
-// SendDead and SendError, the dead run's resend Dead
+// the shared send of one packet, counted; false: full, nothing changed
+inline bool rocketnet_msgx_send_runs_shared( int packet, bool retired, const struct rocketnet_msgx_send_runs_io_t * io,
+                                             struct rocketnet_msgx_send_runs_counters_t * counters )
+{
+    const int shared = io->send_shared( io->user, packet );
+    if ( shared == ROCKETNET_MSGX_SHARED_FULL )
+    {
+#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 6
+        if ( retired )
+        {
+            counters->retired++;
+        }
+#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 6
+        return false;
+    }
+    if ( retired )
+    {
+        counters->retired++;
+    }
+    if ( shared == ROCKETNET_MSGX_SHARED_SENT )
+    {
+        counters->sent_shared++;
+    }
+    else
+    {
+        counters->dropped++;
+    }
+    return true;
+}
+
+// One step of the send (one action of proofs/tla/RNMsgxSendRuns.tla): at
+// HEAD the loop's top (HeadDone; HeadSkip, an aborted packet skipped;
+// HeadShared, HeadDropped or HeadKept, a packet whose stamp resolves to no
+// socket sent alone on the shared socket, by its answer; HeadRun, the run
+// built), at SEND one connected send and what its answer does (SendAll,
+// SendPartial, SendFull, SendRefused, SendDead, SendError), at DEAD one
+// packet of the dead run's resend (DeadDone, DeadSkip, DeadShared,
+// DeadDropped, DeadKept). KEPT and DONE take no step (Done).
+// The caller is inside one table pass for every step of one call.
 template <typename Info>
-inline bool rocketnet_msgx_send_runs_send( const Info * info, const int * order, int count, int batch, int * run_packets, int * cursor,
+inline void rocketnet_msgx_send_runs_step( const Info * info, const int * order, int count, int batch, struct rocketnet_msgx_send_runs_state_t * state,
                                            const struct rocketnet_msgx_send_runs_io_t * io, struct rocketnet_msgx_send_runs_counters_t * counters )
 {
-    while ( *cursor < count )
+    if ( state->pc == ROCKETNET_MSGX_SEND_RUNS_HEAD )
     {
-        const int first = order[*cursor];
+        if ( state->cursor >= count )
+        {
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_DONE;
+            return;
+        }
+        const int first = order[state->cursor];
         const Info * head = &info[first];
-
         if ( head->packet_bytes <= 0 )
         {
-            ( *cursor )++;                      // aborted or never finished: nothing to send
-            continue;
+            state->cursor++;                    // aborted or never finished: nothing to send
+            return;
         }
-
         const int fd = head->table_slot >= 0 ? io->resolve( io->user, head->table_slot, head->generation ) : -1;
         if ( fd < 0 )
         {
-            const int shared = io->send_shared( io->user, first );
-            if ( shared == ROCKETNET_MSGX_SHARED_FULL )
+            if ( !rocketnet_msgx_send_runs_shared( first, head->table_slot >= 0, io, counters ) )
             {
-#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 6
-                if ( head->table_slot >= 0 )
-                {
-                    counters->retired++;
-                }
-#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 6
-                return false;
+                state->pc = ROCKETNET_MSGX_SEND_RUNS_KEPT;
+                return;
             }
-            if ( head->table_slot >= 0 )
-            {
-                counters->retired++;
-            }
-            if ( shared == ROCKETNET_MSGX_SHARED_SENT )
-            {
-                counters->sent_shared++;
-            }
-            else
-            {
-                counters->dropped++;
-            }
-            ( *cursor )++;
-            continue;
+            state->cursor++;
+            return;
         }
 
         // the run: this slot's packets at this generation, in staged order
         int run = 0;
-        int scan = *cursor;
+        int scan = state->cursor;
         while ( scan < count && run < batch )
         {
             const int i = order[scan];
@@ -211,7 +271,7 @@ inline bool rocketnet_msgx_send_runs_send( const Info * info, const int * order,
 #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 3
             if ( packet->table_slot != head->table_slot )
 #else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 3
-            if ( packet->table_slot != head->table_slot || packet->generation != head->generation )
+            if ( packet->table_slot != head->table_slot || !rocketnet_msgx_send_runs_same_generation( packet->generation, head->generation ) )
 #endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 3
             {
                 break;
@@ -223,104 +283,150 @@ inline bool rocketnet_msgx_send_runs_send( const Info * info, const int * order,
                 continue;
             }
 #endif // #if !defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) || ROCKETNET_MSGX_SEND_RUNS_MUTATION != 9
-            run_packets[run++] = i;
+            state->run_packets[run++] = i;
         }
-
-        int attempts = 0;
-        for ( ;; )
-        {
-            const int result = io->send( io->user, fd, run_packets, run );
-            if ( result >= run )
-            {
-                counters->sent_connected += (uint64_t) run;
-                *cursor = scan;
-                break;
-            }
-            if ( result > 0 )
-            {
-                // a prefix went: past exactly that many live packets, the
-                // rest kept for the next call
-                counters->sent_connected += (uint64_t) result;
-                int taken = 0;
-                while ( taken < result )
-                {
-#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 1
-                    taken++;
-#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 1
-                    if ( info[order[*cursor]].packet_bytes > 0 )
-                    {
-                        taken++;
-                    }
-#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 1
-                    ( *cursor )++;
-                }
-                return false;
-            }
-#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 5
-            if ( result == ROCKETNET_MSGX_SEND_FULL )
-#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 5
-            if ( result == 0 || result == ROCKETNET_MSGX_SEND_FULL )
-#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 5
-            {
-#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 8
-                counters->dropped += (uint64_t) run;
-                *cursor = scan;
-                break;
-#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 8
-                return false;                   // nothing taken: the run is kept
-#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 8
-            }
-#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 7
-            if ( result == ROCKETNET_MSGX_SEND_REFUSED && attempts < 0 )
-#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 7
-            if ( result == ROCKETNET_MSGX_SEND_REFUSED && attempts == 0 )
-#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 7
-            {
-                // the socket's pending ICMP error answered this call and is
-                // now cleared: the run goes again once
-                counters->refused++;
-                attempts++;
-                continue;
-            }
-            if ( result == ROCKETNET_MSGX_SEND_DEAD )
-            {
-                // the socket was disconnected under us: main retires it, and
-                // the run leaves through the shared socket now
-                counters->dead++;
-                io->report_dead( io->user, head->table_slot, head->generation );
-#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 4
-                *cursor = scan;
-#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 4
-                while ( *cursor < scan )
-                {
-                    const int i = order[*cursor];
-                    if ( info[i].packet_bytes > 0 )
-                    {
-                        const int shared = io->send_shared( io->user, i );
-                        if ( shared == ROCKETNET_MSGX_SHARED_FULL )
-                        {
-                            return false;
-                        }
-                        if ( shared == ROCKETNET_MSGX_SHARED_SENT )
-                        {
-                            counters->sent_shared++;
-                        }
-                        else
-                        {
-                            counters->dropped++;
-                        }
-                    }
-                    ( *cursor )++;
-                }
-#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 4
-                break;
-            }
-            counters->dropped += (uint64_t) run;
-            *cursor = scan;
-            break;
-        }
+        state->head = first;
+        state->scan = scan;
+        state->run = run;
+        state->attempts = 0;
+        state->fd = fd;
+        state->pc = ROCKETNET_MSGX_SEND_RUNS_SEND;
+        return;
     }
-    return true;
+
+    if ( state->pc == ROCKETNET_MSGX_SEND_RUNS_SEND )
+    {
+        const Info * head = &info[state->head];
+        const int run = state->run;
+        const int result = io->send( io->user, state->fd, state->run_packets, run );
+        if ( result >= run )
+        {
+            counters->sent_connected += (uint64_t) run;
+            state->cursor = state->scan;
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_HEAD;
+            return;
+        }
+        if ( result > 0 )
+        {
+            // a prefix went: past exactly that many live packets, the rest
+            // kept for the next call
+            counters->sent_connected += (uint64_t) result;
+            int taken = 0;
+            while ( taken < result )
+            {
+#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 1
+                taken++;
+#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 1
+                if ( info[order[state->cursor]].packet_bytes > 0 )
+                {
+                    taken++;
+                }
+#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 1
+                state->cursor++;
+            }
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_KEPT;
+            return;
+        }
+#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 5
+        if ( result == ROCKETNET_MSGX_SEND_FULL )
+#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 5
+        if ( result == 0 || result == ROCKETNET_MSGX_SEND_FULL )
+#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 5
+        {
+#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 8
+            counters->dropped += (uint64_t) run;
+            state->cursor = state->scan;
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_HEAD;
+#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 8
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_KEPT;   // nothing taken: the run is kept
+#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 8
+            return;
+        }
+#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 7
+        if ( result == ROCKETNET_MSGX_SEND_REFUSED && state->attempts < 0 )
+#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 7
+        if ( result == ROCKETNET_MSGX_SEND_REFUSED && state->attempts == 0 )
+#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 7
+        {
+            // the socket's pending ICMP error answered this call and is now
+            // cleared: the run goes again once
+            counters->refused++;
+            state->attempts++;
+            return;
+        }
+        if ( result == ROCKETNET_MSGX_SEND_DEAD )
+        {
+            // the socket was disconnected under us: main retires it, and the
+            // run leaves through the shared socket now
+            counters->dead++;
+            io->report_dead( io->user, head->table_slot, head->generation );
+#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 4
+            state->cursor = state->scan;
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_HEAD;
+#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 4
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_DEAD;
+#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 4
+            return;
+        }
+        counters->dropped += (uint64_t) run;
+        state->cursor = state->scan;
+        state->pc = ROCKETNET_MSGX_SEND_RUNS_HEAD;
+        return;
+    }
+
+    if ( state->pc == ROCKETNET_MSGX_SEND_RUNS_DEAD )
+    {
+        if ( state->cursor >= state->scan )
+        {
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_HEAD;
+            return;
+        }
+        const int i = order[state->cursor];
+        if ( info[i].packet_bytes > 0 && !rocketnet_msgx_send_runs_shared( i, false, io, counters ) )
+        {
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_KEPT;
+            return;
+        }
+        state->cursor++;
+    }
+}
+
+// A kept send goes on from its cursor at HEAD (proofs/tla/RNMsgxSendRuns.tla
+// Resume, the check that does not give up)
+inline void rocketnet_msgx_send_runs_resume( struct rocketnet_msgx_send_runs_state_t * state )
+{
+    if ( state->pc == ROCKETNET_MSGX_SEND_RUNS_KEPT )
+    {
+        state->pc = ROCKETNET_MSGX_SEND_RUNS_HEAD;
+    }
+}
+
+// Sends the sorted bank from *cursor; run holds batch ints. Returns false
+// when a socket is full: *cursor is then the first packet not yet taken.
+// The caller is inside one table pass for the whole call: the steps of
+// proofs/tla/RNMsgxSendRuns.tla, taken until the bank is done or kept.
+template <typename Info>
+inline bool rocketnet_msgx_send_runs_send( const Info * info, const int * order, int count, int batch, int * run_packets, int * cursor,
+                                           const struct rocketnet_msgx_send_runs_io_t * io, struct rocketnet_msgx_send_runs_counters_t * counters )
+{
+    struct rocketnet_msgx_send_runs_state_t state;
+    rocketnet_msgx_send_runs_start( &state, run_packets );
+    state.cursor = *cursor;
+    while ( state.pc != ROCKETNET_MSGX_SEND_RUNS_KEPT && state.pc != ROCKETNET_MSGX_SEND_RUNS_DONE )
+    {
+        rocketnet_msgx_send_runs_step( info, order, count, batch, &state, io, counters );
+    }
+    *cursor = state.cursor;
+    return state.pc == ROCKETNET_MSGX_SEND_RUNS_DONE;
+}
+
+// The worker after a kept call (proofs/tla/RNMsgxSendRuns.tla GiveUp and
+// Resume): past limit retries after quit it gives up, true, and the caller
+// drops what is still owed (rocketnet_msgx_send_runs_owed from the cursor),
+// counted.
+inline bool rocketnet_msgx_send_runs_give_up( bool shutdown, int * retries_after_quit, int limit )
+{
+    return shutdown && ++( *retries_after_quit ) > limit;
 }
 
 #endif // ROCKETNET_SDK_ROCKETNET_MSGX_SEND_RUNS_H

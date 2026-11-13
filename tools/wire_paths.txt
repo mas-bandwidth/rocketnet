@@ -127,6 +127,7 @@ sdk/xdp/server_xdp.c	the kernel filter: :360-424 read header bytes at the offset
 sdk/rocketnet_receive_prefilter.h	the receive drop reasons and their counters, and the drop tallies; reads and writes no byte
 sdk/rocketnet_msgx_socket_table.h	the macOS per-client socket table: slots, passes, address index and counters over a socket the caller opens; reads and writes no packet byte
 sdk/rocketnet_msgx_socket_table.cpp	the table's retire (the trace check's plant lives here); reads and writes no packet byte
+sdk/rocketnet_msgx_send_runs.cpp	the send runs' generation test (the trace check's plant lives here); reads and writes no packet byte
 # Files a review named as defining wire bytes that the owner has not yet
 # ruled on. The check accepts them and names every one on every run; they
 # are not in the gate above until the owner moves each to a list.
