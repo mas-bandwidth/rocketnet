@@ -339,7 +339,11 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_NO_TRANSPORT_FOUND = -18,
 
     /// An allocation the operation needs failed. Nothing it allocated stays
-    /// live. Free memory or lower the config's sizes, then retry.
+    /// live, except a server start's transport whose worker had not exited a
+    /// second after the stop: the server holds it, reports not stopped, and
+    /// frees it at the next start or destroy once the worker has exited
+    /// (rocketnet_server_start). Free memory or lower the config's sizes,
+    /// then retry.
 
     ROCKETNET_STATUS_OUT_OF_MEMORY = -19,
 
@@ -3052,7 +3056,13 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// Returns ROCKETNET_STATUS_OK on success.
 /// A running or still-stopping server returns ROCKETNET_STATUS_SERVER_NOT_STOPPED.
 /// Once stopped is true, start synchronously finalizes the old run before binding.
-/// Other failures return their status and leave the server stopped.
+/// Other failures return their status and leave the server stopped, with
+/// one exception: a failure after the transport's worker started, when that
+/// worker has not exited a second after it was told to stop, leaves the
+/// server stopping. The server keeps that transport, never freeing it under
+/// its worker: rocketnet_server_stopped is false and start returns
+/// ROCKETNET_STATUS_SERVER_NOT_STOPPED until the worker exits, and the next
+/// start or destroy then frees it.
 ///
 /// Needs a stopped server. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.
@@ -3113,7 +3123,8 @@ ROCKETNET_EXPORT void rocketnet_server_stop( struct rocketnet_server_t * server 
 ///
 /// @param server The server.
 /// @return True when the server is stopped and its workers have exited,
-/// including a server never started. False while running or stopping, and
+/// including a server never started. False while running or stopping (a
+/// failed start whose transport's worker has not exited is stopping), and
 /// for a NULL server, which counts as API misuse.
 ROCKETNET_EXPORT bool rocketnet_server_stopped( const struct rocketnet_server_t * server );
 
@@ -3131,7 +3142,10 @@ ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t 
 /// As rocketnet_client_destroy, with rocketnet_server_stopped and stop in place
 /// of disconnected and disconnect. Freeing also wipes the server's keys.
 ///
-/// Call it once rocketnet_server_stopped is true. Thread: not thread-safe;
+/// Call it once rocketnet_server_stopped is true. After a failed start that
+/// left the server stopping (rocketnet_server_start), destroy is not misuse:
+/// it waits up to a second for that worker, then frees, or keeps the server
+/// (logged) if the worker still has not exited. Thread: not thread-safe;
 /// the caller owns the server one thread at a time.
 ///
 /// @param server The server, or NULL to do nothing.

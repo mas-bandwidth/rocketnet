@@ -162,7 +162,7 @@ static rocketnet_server_t * mass_disconnect_server_create( const mass_disconnect
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", &config, 0, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", &config, 0, &status, NULL );
     if ( transport == NULL || status != ROCKETNET_STATUS_OK )
     {
         mass_disconnect_refused( "rocketnet_server_transport_create_resolved", &status );

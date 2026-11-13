@@ -941,6 +941,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
  * @param public_address_string [in] Non-NULL numeric address; port zero requests dynamic binding when supported by the selected transport.
  * @param config [in] Optional full configuration; NULL selects defaults and does not supply production keys.
  * @return A caller-owned transport or NULL on any creation failure. Use create_internal to obtain the specific refusal status.
+ * @details A create that fails after its I/O worker started stops that worker and waits for it to exit before it returns NULL, with no deadline: the transport is freed only once its worker no longer owns it. rocketnet_server_start bounds that wait at one second and keeps the transport in the server instead (rocketnet.h).
  */
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config );
 

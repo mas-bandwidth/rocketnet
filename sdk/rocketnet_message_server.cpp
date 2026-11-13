@@ -2621,35 +2621,38 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
 
 // resolved_memory_budget NULL: the transport create reads the environment
 // (rocketnet_message_server_create_internal); set: transport_config is already
-// resolved and start reads nothing (rocketnet_message_server_create_resolved)
+// resolved and start reads nothing (rocketnet_message_server_create_resolved).
+// retained_transport: NULL, or the caller's slot for a transport whose failed
+// create could not wait out its worker (rocketnet_server_transport_create_resolved)
 static struct rocketnet_message_server_t * rn_message_server_create( void * context, const char * address,
                                                                      const struct rocketnet_server_transport_config_t * transport_config,
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
-                                                                     const uint64_t * resolved_memory_budget );
+                                                                     const uint64_t * resolved_memory_budget, struct rocketnet_server_transport_t ** retained_transport );
 
 struct rocketnet_message_server_t * rocketnet_message_server_create_internal( void * context, const char * address,
                                                                               const struct rocketnet_server_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,
                                                                               void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited )
 {
-    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, NULL );
+    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, NULL, NULL );
 }
 
 struct rocketnet_message_server_t * rocketnet_message_server_create_resolved( void * context, const char * address,
                                                                               const struct rocketnet_server_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,
                                                                               void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
-                                                                              uint64_t memory_budget_bytes )
+                                                                              uint64_t memory_budget_bytes, struct rocketnet_server_transport_t ** retained_transport )
 {
-    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, &memory_budget_bytes );
+    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, &memory_budget_bytes,
+                                     retained_transport );
 }
 
 static struct rocketnet_message_server_t * rn_message_server_create( void * context, const char * address,
                                                                      const struct rocketnet_server_transport_config_t * transport_config,
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
-                                                                     const uint64_t * resolved_memory_budget )
+                                                                     const uint64_t * resolved_memory_budget, struct rocketnet_server_transport_t ** retained_transport )
 {
     int ignored = ROCKETNET_STATUS_OK;
     if ( !status )
@@ -2724,7 +2727,7 @@ static struct rocketnet_message_server_t * rn_message_server_create( void * cont
         return NULL;
     }
 
-    rocketnet_server_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_server_transport_create_resolved( context, address, transport_config, *resolved_memory_budget, status ) : rocketnet_server_transport_create_current_internal( context, address, transport_config, 0.0, status );
+    rocketnet_server_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_server_transport_create_resolved( context, address, transport_config, *resolved_memory_budget, status, retained_transport ) : rocketnet_server_transport_create_current_internal( context, address, transport_config, 0.0, status );
     if ( !transport )
     {
         return NULL;

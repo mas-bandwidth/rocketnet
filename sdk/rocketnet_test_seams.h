@@ -69,8 +69,11 @@ void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_ho
 // and calls this once per poll, with the transport, instead of sleeping on
 // the platform clock: its 1 s deadline runs on a counter clock each poll
 // advances by 1 ms. Return 1 to keep polling, 0 when the worker has stopped.
-// A transport kept at the deadline is the test's to stop and destroy. NULL
-// is the transport's own stopped(). Per process, null by default.
+// A transport kept at the deadline goes to the create's owner (a server
+// start keeps it in the server): while this hook is set it also answers
+// rocketnet_server_transport_failed_create_stopped, so the server reports
+// not stopped until the hook says 0 or is cleared. NULL is the transport's
+// own stopped(). Per process, null by default.
 
 struct rocketnet_server_transport_t;
 

@@ -39,7 +39,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
 
-static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport );
+static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport, struct rocketnet_server_transport_t ** retained );
 
 bool rocketnet_server_transport_io_receive_drops( const struct rocketnet_server_transport_io_operations_t * operations,
                                                   void * transport, uint64_t * too_short, uint64_t * too_large );
@@ -2563,7 +2563,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                                      const char * public_address_string,
                                                                                      const struct rocketnet_server_transport_config_t * config,
                                                                                      double time, int * status,
-                                                                                     const uint64_t * resolved_memory_budget = NULL );
+                                                                                     const uint64_t * resolved_memory_budget = NULL,
+                                                                                     struct rocketnet_server_transport_t ** retained = NULL );
 
 // The config staging seam, compiled into the development library only: each
 // stack copy of a server config, which carries server_secret_key, is wiped on
@@ -2598,10 +2599,11 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address,
                                                                                   const struct rocketnet_server_transport_config_t * config,
-                                                                                  uint64_t memory_budget_bytes, int * status )
+                                                                                  uint64_t memory_budget_bytes, int * status,
+                                                                                  struct rocketnet_server_transport_t ** retained )
 {
     rocketnet_assert( config );
-    return rocketnet_server_transport_create_impl( context, address, config, 0.0, status, &memory_budget_bytes );
+    return rocketnet_server_transport_create_impl( context, address, config, 0.0, status, &memory_budget_bytes, retained );
 }
 
 // The inputs a server create starts from, resolved before anything is
@@ -3350,7 +3352,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
                                                                                        const struct rocketnet_server_transport_config_t * config,
                                                                                        double time, int * status,
                                                                                        const uint64_t * resolved_memory_budget,
-                                                                                       struct rocketnet_server_transport_resolved_t & resolved )
+                                                                                       struct rocketnet_server_transport_resolved_t & resolved,
+                                                                                       struct rocketnet_server_transport_t ** retained )
 {
     // docs/ERRORS-AND-LOGGING.md 2.1: a NULL required argument is a logged
     // INVALID_ARGUMENT and a NULL return in debug and release
@@ -3446,7 +3449,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             *status = ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION;
         }
         rocketnet_error( "development keys in a production build (ROCKETNET_DEV=0); refusing to start" );
-        rocketnet_server_transport_abort_create( server_transport );
+        rocketnet_server_transport_abort_create( server_transport, retained );
         return NULL;
 #endif // #if ROCKETNET_DEV
     }
@@ -3454,7 +3457,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     const int granted_transport = rocketnet_server_transport_open_in_order( server_transport, context, &resolved, &bind_address, status );
     if ( granted_transport < 0 )
     {
-        rocketnet_server_transport_abort_create( server_transport );
+        rocketnet_server_transport_abort_create( server_transport, retained );
         return NULL;
     }
 
@@ -3502,7 +3505,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             {
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             }
-            rocketnet_server_transport_abort_create( server_transport );
+            rocketnet_server_transport_abort_create( server_transport, retained );
             return NULL;
         }
 
@@ -3514,7 +3517,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             }
             rocketnet_network_simulator_destroy( server_transport->link_simulator );
             server_transport->link_simulator = NULL;
-            rocketnet_server_transport_abort_create( server_transport );
+            rocketnet_server_transport_abort_create( server_transport, retained );
             return NULL;
         }
 
@@ -3531,7 +3534,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             {
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             }
-            rocketnet_server_transport_abort_create( server_transport );
+            rocketnet_server_transport_abort_create( server_transport, retained );
             return NULL;
         }
     }
@@ -3671,7 +3674,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         }
         rocketnet_error( "server transport create: could not allocate protocol storage" );
-        rocketnet_server_transport_abort_create( server_transport );
+        rocketnet_server_transport_abort_create( server_transport, retained );
         return NULL;
     }
 
@@ -3689,10 +3692,11 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                                      const char * public_address_string,
                                                                                      const struct rocketnet_server_transport_config_t * config,
                                                                                      double time, int * status,
-                                                                                     const uint64_t * resolved_memory_budget )
+                                                                                     const uint64_t * resolved_memory_budget,
+                                                                                     struct rocketnet_server_transport_t ** retained )
 {
     struct rocketnet_server_transport_resolved_t resolved;
-    struct rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_staged( context, public_address_string, config, time, status, resolved_memory_budget, resolved );
+    struct rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_staged( context, public_address_string, config, time, status, resolved_memory_budget, resolved, retained );
     sodium_memzero( &resolved, sizeof( resolved ) );
     ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( resolved.config.server_secret_key, ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_CREATE );
     return server_transport;
@@ -3916,18 +3920,38 @@ void rocketnet_dev_set_server_abort_create_hold_hook( rocketnet_dev_server_abort
 }
 #endif // #if ROCKETNET_DEV
 
-// The failed-create unwind waits as the message layer's does
-// (rn_message_link_stop_and_wait, sdk/rocketnet_message_server.cpp): one
-// second, the budget rocketnet_client_destroy polls a worker for.
+// True once a transport a failed create handed to its retained owner has
+// stopped: its workers exited, so it can be destroyed (rocketnet_config.h).
+// The development hold above, while set, answers for it.
+bool rocketnet_server_transport_failed_create_stopped( struct rocketnet_server_transport_t * transport )
+{
+#if ROCKETNET_DEV
+    if ( rn_server_abort_create_hold )
+    {
+        return !rn_server_abort_create_hold( rn_server_abort_create_hold_context, transport );
+    }
+#endif // #if ROCKETNET_DEV
+    return rocketnet_server_transport_stopped( transport );
+}
+
+// The failed-create unwind of a create with an owner waits as long as the
+// message layer's does (rn_message_link_stop_and_wait,
+// sdk/rocketnet_message_server.cpp): one second, the budget
+// rocketnet_client_destroy polls a worker for.
 static const double RN_SERVER_ABORT_CREATE_WAIT_SECONDS = 1.0;
 
 // A failed create cannot return a live partially constructed object. This
-// private construction-only unwind waits for the I/O to stop, at most
-// RN_SERVER_ABORT_CREATE_WAIT_SECONDS; successful objects use the explicit
-// request/completion/destroy contract above. On the deadline it logs once
-// and keeps the transport rather than free it under a worker that still
-// owns it; the create still returns its failure status.
-static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport )
+// private construction-only unwind stops the I/O and waits for it to stop;
+// successful objects use the explicit request/completion/destroy contract
+// above. A caller that owns a retained slot (retained not NULL: server start,
+// rocketnet_server_t's failed_start in sdk/rocketnet_api.cpp) waits at most
+// RN_SERVER_ABORT_CREATE_WAIT_SECONDS: on the deadline the transport, still
+// owned by its worker, is handed to that slot and nothing is freed; the
+// owner reports not stopped until rocketnet_server_transport_failed_create_stopped
+// is true and then destroys it. With no owner the wait has no deadline, since
+// nobody else could ever free the transport. The create returns its failure
+// status either way.
+static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport, struct rocketnet_server_transport_t ** retained )
 {
     transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
     transport->io_stop_requested = true;
@@ -3962,10 +3986,12 @@ static void rocketnet_server_transport_abort_create( struct rocketnet_server_tra
             break;
         }
 
-        if ( now >= deadline )
+        if ( retained && now >= deadline )
         {
-            rocketnet_error( "server transport create: the worker has not exited after %.1f seconds; the transport is kept, not freed",
+            rocketnet_error( "server transport create: the worker has not exited after %.1f seconds; the server keeps the transport, not freed, until it has",
                              RN_SERVER_ABORT_CREATE_WAIT_SECONDS );
+            rocketnet_assert( *retained == NULL );
+            *retained = transport;
             return;
         }
 
