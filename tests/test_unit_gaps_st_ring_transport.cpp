@@ -544,7 +544,7 @@ static void st_ring_fill_stack( uint8_t value )
         junk[i] = value;
     }
 }
-static void ( * volatile st_ring_fill_stack_call )( uint8_t ) = st_ring_fill_stack;
+static void ( *volatile st_ring_fill_stack_call )( uint8_t ) = st_ring_fill_stack;
 
 // The packet id a staged start hands the transport starts at 0: a transport
 // that refuses without writing it is counted by the refusal it is (room
@@ -1060,7 +1060,7 @@ static void test_gaps_st_ring_accept_payload_ignores_stale_entries()
     rocketnet_server_transport_accept_payload( server, 0 );
     rocketnet_server_transport_accept_payload( server, 5 );
     st_ring_expect( !rocketnet_replay_already_received( &mapping->accepted_session, 5 ) &&
-                    !rocketnet_replay_already_received( &mapping->accepted_session, 10 ),
+                        !rocketnet_replay_already_received( &mapping->accepted_session, 10 ),
                     "accept_payload accepted a stale entry past an empty batch" );
     st_ring_expect( server->protocol.acks->endpoints[0].ack_debt == debt, "accept_payload of a stale entry raised the ack debt" );
 
