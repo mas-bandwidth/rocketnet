@@ -28,7 +28,12 @@
 // The includer defines ACK_APPLY_CHECK( condition ). The schedule is called
 // once per update with C open: schedule( acks, order, count ) must call
 // rocketnet_server_acks_apply_client for clients of order[] in any way it
-// likes (any order, repeats, threads, some left out).
+// likes (any order, repeats, threads, some left out). An includer whose
+// schedule asks for every client of order[] also defines
+// ACK_APPLY_SCHEDULE_TAKES_ALL: its takes then owe every queued block before
+// close, so C's endpoints already equal A's when the schedule returns (a
+// take that cleared a claim and applied nothing would otherwise be hidden by
+// close, which applies what is still queued).
 
 #include "rocketnet_ack.h"
 #include "rocketnet_internal.h"
@@ -286,6 +291,13 @@ static void ack_apply_differential( uint64_t seed, int updates, Schedule schedul
             order[j] = t;
         }
         schedule( w->acks[2], order, ACK_APPLY_CLIENTS, &rng );
+
+#if defined( ACK_APPLY_SCHEDULE_TAKES_ALL )
+        for ( int c = 0; c < ACK_APPLY_CLIENTS; c++ )
+        {
+            ACK_APPLY_CHECK( rocketnet_ack_endpoint_state_equal( &w->acks[0]->endpoints[c], &w->acks[2]->endpoints[c] ) );
+        }
+#endif // #if defined( ACK_APPLY_SCHEDULE_TAKES_ALL )
 
         for ( int k = 0; k < 3; k++ )
         {
