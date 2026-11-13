@@ -8860,15 +8860,11 @@ void rocketnet_test_server_uring_send_overflow()
 // pthread_setaffinity_np succeeded), or, on a machine without the cpus, the
 // refusal path as above.
 
-// the pin refusals, read from the public row the transport writes
-// (ROCKETNET_COUNTER_URING_PIN_REFUSALS), and the same count the accessor gives
+// the pin refusals, as the accessor counts them
 
 static uint64_t rocketnet_test_uring_pin_refusals( struct rocketnet_server_uring_t * uring )
 {
-    uint64_t counters[ROCKETNET_NUM_COUNTERS];
-    rocketnet_server_uring_counters( uring, counters );
-    rocketnet_check( counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS] == (uint64_t) rocketnet_server_uring_pin_refusals( uring ) );
-    return counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS];
+    return (uint64_t) rocketnet_server_uring_pin_refusals( uring );
 }
 
 static bool rocketnet_test_uring_wait_pins( struct rocketnet_server_uring_t * uring, int queues )
@@ -9072,20 +9068,6 @@ void rocketnet_test_server_uring_rows_reach_the_server()
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &config );
     rocketnet_check( server );
 
-    // every worker asks to pin and is refused: the row reads one a queue
-    uint64_t refusals = 0;
-    const double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 )
-    {
-        refusals = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_URING_PIN_REFUSALS );
-        if ( refusals >= (uint64_t) queues )
-        {
-            break;
-        }
-        rocketnet_platform_sleep( 0.001 );
-    }
-    rocketnet_check( refusals == (uint64_t) queues );
-
     // datagrams that pass the prefilter (a connection request's size and
     // header) are banked by the workers; the server takes none of them
     rocketnet_address_t client_address;
@@ -9131,7 +9113,6 @@ void rocketnet_test_server_uring_rows_reach_the_server()
 
     const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
     rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED ) == (uint64_t) datagrams );
-    rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_URING_PIN_REFUSALS ) == (uint64_t) queues );
     rn_native_server_transport_stop_and_destroy( server );
 }
 

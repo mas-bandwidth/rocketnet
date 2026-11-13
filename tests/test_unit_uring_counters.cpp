@@ -53,12 +53,11 @@ static void test_uring_counters_every_row_reads_its_module_count()
     check( counters[ROCKETNET_COUNTER_URING_GSO_FALLBACKS] == 2 * ( 2000 + ROCKETNET_URING_WORKER_COUNTER_GSO_FALLBACKS ) );
     check( counters[ROCKETNET_COUNTER_URING_GRO_BATCHES] == 2 * ( 1000 + ROCKETNET_URING_RECEIVE_COUNTER_GRO_BATCHES ) );
     check( counters[ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS] == 2 * ( 1000 + ROCKETNET_URING_RECEIVE_COUNTER_GRO_CMSG_FAULTS ) );
-    check( counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] == 2 * ( 1000 + ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOCKET ) );
 
     // no other row moved
     for ( int row = 0; row < ROCKETNET_NUM_COUNTERS; row++ )
     {
-        if ( ( row < ROCKETNET_COUNTER_URING_PACKETS_SENT || row > ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS ) && row != ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET )
+        if ( row < ROCKETNET_COUNTER_URING_PACKETS_SENT || row > ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS )
         {
             check( counters[row] == 0 );
         }

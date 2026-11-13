@@ -45,7 +45,6 @@ static inline void rocketnet_uring_counters_add_queue( uint64_t * counters, cons
     counters[ROCKETNET_COUNTER_URING_GSO_FALLBACKS] += worker[ROCKETNET_URING_WORKER_COUNTER_GSO_FALLBACKS];
     counters[ROCKETNET_COUNTER_URING_GRO_BATCHES] += receive[ROCKETNET_URING_RECEIVE_COUNTER_GRO_BATCHES];
     counters[ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS] += receive[ROCKETNET_URING_RECEIVE_COUNTER_GRO_CMSG_FAULTS];
-    counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOCKET];
 }
 
 // the finish_packet calls the send banks refused (a pointer naming no slot of

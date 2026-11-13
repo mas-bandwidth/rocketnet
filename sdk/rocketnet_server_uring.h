@@ -294,10 +294,7 @@ int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring )
 // ROCKETNET_COUNTER_URING_PACKETS_SENT. Any thread: writes those rows of
 // counters, an array of ROCKETNET_NUM_COUNTERS values indexed by public
 // counter, every queue's counts summed, cumulative for the transport's life;
-// every other value is left as it was, except ROCKETNET_COUNTER_URING_PIN_REFUSALS
-// and ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET, which are not in that run
-// and are written too (rocketnet_server_uring_pin_refusals; the datagrams the
-// kernel dropped at a queue socket, SO_RXQ_OVFL).
+// every other value is left as it was.
 #define ROCKETNET_SERVER_URING_FIRST_COUNTER ROCKETNET_COUNTER_URING_PACKETS_SENT
 #define ROCKETNET_SERVER_URING_COUNTER_ROWS  ( ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS - ROCKETNET_COUNTER_URING_PACKETS_SENT + 1 )
 void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, uint64_t * counters );
