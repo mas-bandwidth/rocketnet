@@ -1912,6 +1912,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
     counters[ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS] = gso->counter_receive_errors;
     counters[ROCKETNET_COUNTER_GSO_GRO_CMSG_FAULTS] = gso->counter_gro_cmsg_faults;
+    counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] = (uint64_t) gso->pin_refusals.load( std::memory_order_relaxed );
 }
 
 // the segments the workers' prefilter refused for a reason other than size
@@ -2823,6 +2824,16 @@ int rocketnet_server_gso_test_send_slot( struct rocketnet_server_gso_t * gso, ui
     *queue_out = rocketnet_server_gso_id_queue( gso, packet_id );
     rocketnet_server_gso_send_buffer_t * bank = NULL;
     return rocketnet_server_gso_send_slot( gso, packet_id, packet_data, &bank );
+}
+
+// queue 0's worker pin run on the calling thread for a cpu outside the cpu
+// set: refused, counted in GSO_PIN_REFUSALS, the queue left unpinned, and no
+// affinity changed (no cpu is left to confine to)
+void rocketnet_server_gso_test_refused_pin( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+    gso->num_os_cpus = CPU_SETSIZE;
+    rocketnet_server_gso_pin_worker( &gso->queues[0] );
 }
 
 int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot )

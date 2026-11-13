@@ -449,6 +449,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_test_open_slots( int num_qu
 // resident-set bound of a case that opens several (tests/suite_runner.h).
 uint64_t rocketnet_server_gso_test_open_bytes( int num_queues );
 bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, int queue_index, struct rocketnet_server_gso_test_send_lane_t * lane );
+void rocketnet_server_gso_test_refused_pin( struct rocketnet_server_gso_t * gso );
 int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot );
 int rocketnet_server_gso_test_send_slot( struct rocketnet_server_gso_t * gso, uint64_t packet_id, const uint8_t * packet_data, int * queue_out );
 int rocketnet_server_gso_test_take_send( struct rocketnet_server_gso_t * gso, int queue_index, bool * final );
