@@ -90,3 +90,9 @@ tools/bigendian/run_byte_cases.sh	bash tools/bigendian/test_run_byte_cases.sh	cd
 tools/format/check_format.sh	sh tools/format/test_check_format.sh	cd {empty} && git init -q && CLANG_FORMAT=true sh "$OLDPWD/tools/format/check_format.sh"	ci.yml	lint	Test the format checker
 tools/check_run_shell.py	python3 tools/check_run_shell.py --self-test	python3 tools/check_run_shell.py --root {empty}	ci.yml	lint	Every run step stops on its first failure
 tools/check_run_matrix.py	python3 tools/check_run_matrix.py --self-test	python3 tools/check_run_matrix.py --root {empty}	ci.yml	lint	Every verification cell is declared and wired to the job that runs it
+tools/check_counter_observed.py	python3 tools/check_counter_observed.py --self-test	python3 tools/check_counter_observed.py --root {empty} --build {empty} --platform linux	ci.yml	build-and-test	Every counter is observed by a test
+tools/check_fuzz_seeds.sh	sh tools/check_fuzz_seeds.sh --self-test	sh tools/check_fuzz_seeds.sh --root {empty} --bin {empty} rocketnet_fuzz	ci.yml	build-and-test	Run the fuzz seed generators
+tools/check_independent_steps.py	python3 tools/check_independent_steps.py --self-test	python3 tools/check_independent_steps.py --root {empty}	ci.yml	lint	Every lint check runs on its own verdict
+tools/check_tla_views.py	python3 tools/check_tla_views.py --self-test	python3 tools/check_tla_views.py --root {empty}	ci.yml	lint	Every TLC view is used where its justification holds
+tools/check_workflow_shape.py	python3 tools/check_workflow_shape.py --self-test	python3 tools/check_workflow_shape.py --root {empty}	ci.yml	lint	Every workflow is in the shape the workflow checkers read
+tools/check_workflow_yaml.py	python3 tools/check_workflow_yaml.py --self-test	python3 tools/check_workflow_yaml.py --root {empty}	ci.yml	lint	Every workflow file parses as strict YAML and has a workflow's shape

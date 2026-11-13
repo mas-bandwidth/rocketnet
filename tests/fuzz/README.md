@@ -67,11 +67,11 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C tests/fuzz -j 4                 # the fifteen targets
-make -C tests/fuzz compile              # syntax check of all fifteen sources on any host
+make -C tests/fuzz -j 4                 # the sixteen targets
+make -C tests/fuzz compile              # syntax check of all sixteen sources on any host
 ```
 
-`tests/fuzz/Makefile` builds the fifteen targets with
+`tests/fuzz/Makefile` builds the sixteen targets with
 `-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
 nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
 nightly builds it:
@@ -134,8 +134,10 @@ the platform source names `WS2_32`, `Qwave` and `winmm` itself.
 LeakSanitizer does not exist on Windows (AddressSanitizer there has no leak
 checker), so the Windows leg runs with `detect_leaks=0` and leaks are
 checked on Linux. The nightly `fuzz-windows` job in
-`.github/workflows/fuzz-nightly.yml` runs exactly these commands for every
-target in the table above.
+`.github/workflows/fuzz-nightly.yml` runs exactly these commands for
+thirteen of the targets in the table above: not `rocketnet_fuzz_uring_recvmsg`,
+`rocketnet_fuzz_gateway_netlink` or `rocketnet_fuzz_xdp_filter`, which read
+Linux kernel interfaces (the Makefile's `LINUX_ONLY_TARGETS`).
 
 ### Without libFuzzer: the replay drivers
 
@@ -332,7 +334,7 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 ## In CI
 
-- `ci.yml` `fuzz-smoke` deterministically replays all fifteen committed corpora
+- `ci.yml` `fuzz-smoke` deterministically replays all sixteen committed corpora
   through the `fuzz_replay_*` drivers on every push. The time-boxed
   fixed-seed mutation pass moved to `fuzz-nightly.yml`.
 - `fuzz-nightly.yml` builds the libFuzzer targets on Linux, macOS and
@@ -341,7 +343,7 @@ commit the minimized input to its corpus as `regress_<name>`.
   default; the session target 9600 s on Linux and 2400 s in the NDEBUG
   campaign) and uploads any reproducer. The XDP filter target runs on the
   Linux legs only.
-- `fuzz-nightly.yml` also runs the same fifteen-target matrix under
+- `fuzz-nightly.yml` also runs the same sixteen-target matrix under
   MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
   sodium included, is built with the MSan flags and the instrumented libc++
   headers at `-O1`, exactly as `tools/run_msan.sh` does, and each target
@@ -363,7 +365,9 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 `tests/oss-fuzz/` holds `build.sh`, `Dockerfile` and `project.yaml` for running
 these targets on OSS-Fuzz. `build.sh` compiles the development library from
-`sdk/` and the vendored `sodium/`, links every target present here, zips
+`sdk/` and the vendored `sodium/`, links the fourteen targets its list names
+(every target here but `rocketnet_fuzz_session_raw` and
+`rocketnet_fuzz_xdp_filter`), zips
 each target's corpus to `<target>_seed_corpus.zip` and copies its
 dictionary. Every compile line carries `-ffp-contract=off`, which
 `tools/check_oss_fuzz_fp_contract.cmake` enforces (the `oss_fuzz_fp_contract`

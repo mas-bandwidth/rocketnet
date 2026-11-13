@@ -24,6 +24,17 @@ A thread join, and a wake wait with a timeout other than 0, count as well.
 Comments are stripped before matching, and linker-wrap symbol declarations
 (__real_/__wrap_rocketnet_platform_time) are not calls.
 
+VERIFY-3 W7 found the list short of the spellings a unit case could use:
+sleep, Sleep, clock, std::jthread, CreateThread, gethostbyname, socketpair,
+poll and select, GetTickCount64, timespec_get, a condition variable's
+wait_for, fork, connect and recv each passed, and so did a helper included
+by a path with a slash. Each is refused now, with the rest of its family
+(the BSD socket calls, the Windows thread, wait and tick calls, the process
+calls), and every quoted include is followed when it resolves to a file
+under tests/, whatever its path. A bare name followed by `(` is a call; a
+member call (`.connect(`, `->send(`) and a qualified name other than std::
+are not, so the library's own methods do not count.
+
 Two helpers are not unit-case code and are not scanned: tests/suite_runner.h
 is the runner that starts each case's process, and tests/test_env_source.h
 sets the real environment only in a ROCKETNET_DEV=0 build, which has no
@@ -63,6 +74,28 @@ PATTERNS = [
     ("std::async", re.compile(r'std::async\s*\(')),
     ("socket(", re.compile(r'(?<![A-Za-z0-9_])socket\s*\(')),
     ("sendto/recvfrom", re.compile(r'(?<![A-Za-z0-9_])(?:sendto|recvfrom|sendmsg|recvmsg|sendmmsg|recvmmsg)\s*\(')),
+    # VERIFY-3 W7: the rest of each family
+    ("sleep", re.compile(r'(?<![A-Za-z0-9_.>:])(?:sleep|Sleep|SleepEx|alarm)\s*\(')),
+    ("clock(", re.compile(r'(?<![A-Za-z0-9_.>:])clock\s*\(')),
+    ("tick or system clock", re.compile(
+        r'(?<![A-Za-z0-9_.>:])(?:GetTickCount|GetTickCount64|timeGetTime|timespec_get|GetSystemTime|'
+        r'GetSystemTimeAsFileTime|GetSystemTimePreciseAsFileTime|GetLocalTime|ftime|times)\s*\(')),
+    ("std::jthread", re.compile(r'std::jthread')),
+    ("Windows thread", re.compile(r'(?<![A-Za-z0-9_.>:])(?:CreateThread|_beginthread|_beginthreadex|'
+                                  r'CreateRemoteThread)\s*\(')),
+    ("timed wait", re.compile(r'(?<![A-Za-z0-9_])(?:wait_for|wait_until|try_lock_for|try_lock_until|'
+                              r'pthread_cond_timedwait|sem_timedwait|WaitForSingleObject|WaitForSingleObjectEx|'
+                              r'WaitForMultipleObjects|WaitForMultipleObjectsEx|SleepConditionVariableCS|'
+                              r'SleepConditionVariableSRW)\s*\(')),
+    ("resolver", re.compile(r'(?<![A-Za-z0-9_.>:])(?:gethostbyname|gethostbyname2|gethostbyaddr|getnameinfo|'
+                            r'GetAddrInfoW|GetAddrInfoExW|res_query|res_search)\s*\(')),
+    ("socket call", re.compile(r'(?<![A-Za-z0-9_.>:])(?:socketpair|connect|bind|listen|accept|accept4|send|recv|'
+                               r'shutdown|WSASocket|WSASocketW|WSASocketA|WSASend|WSARecv|WSASendTo|WSARecvFrom|'
+                               r'WSAStartup|WSAPoll)\s*\(')),
+    ("poll or select", re.compile(r'(?<![A-Za-z0-9_.>:])(?:poll|ppoll|select|pselect|epoll_wait|epoll_pwait|'
+                                  r'kevent|io_uring_enter|io_uring_wait_cqe)\s*\(')),
+    ("process", re.compile(r'(?<![A-Za-z0-9_.>:])(?:fork|vfork|system|popen|_popen|execv|execve|execvp|execl|'
+                           r'execlp|posix_spawn|posix_spawnp|CreateProcess|CreateProcessA|CreateProcessW)\s*\(')),
     # the real clock or sleep handed over as a function value: a bounded wait
     # (rn_cli_bounded_wait) that polls the real clock and sleeps, which a
     # unit case needs only to wait on a thread the library started
@@ -98,6 +131,9 @@ def scan_source(source, first_line=1):
     findings = []
     for name, regex in PATTERNS:
         for match in regex.finditer(source):
+            before = source[:match.start()].rstrip()
+            if before.endswith(":") and not before.endswith("::"):
+                continue  # a constructor's member initializer, `: send( ordered.send )`, is not a call
             findings.append((first_line + source.count('\n', 0, match.start()), name))
     for match in WAKE_WAIT.finditer(source):
         timeout = match.group(1).split(',')[-1]
@@ -115,29 +151,38 @@ def read(path):
         return fh.read()
 
 
-INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"/]+\.h)"', re.M)
+INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+\.(?:h|hpp|inc))"', re.M)
 CALL = re.compile(r'(?<![A-Za-z0-9_])([A-Za-z_]\w*)\s*\(')
 DEFINITION = re.compile(r'^[A-Za-z_][\w \t\*&:<>]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{', re.M)
 
 
 def helpers(root, unit_files):
-    """The tests/*.h helpers the unit files include, transitively within tests/."""
-    tests_dir = os.path.join(root, "tests")
+    """Every file under tests/ the unit files include, transitively: a quoted
+    include is resolved against the including file's directory and then
+    tests/, whatever path it names."""
+    tests_dir = os.path.realpath(os.path.join(root, "tests"))
     found = []
     pending = []
     for path in unit_files:
-        pending.extend(INCLUDE.findall(read(path)))
+        pending.extend((os.path.dirname(path), name) for name in INCLUDE.findall(read(path)))
     seen = set()
     while pending:
-        name = pending.pop()
-        if name in seen or name in HELPERS_NOT_SCANNED:
+        base, name = pending.pop()
+        path = None
+        for directory in (base, tests_dir):
+            candidate = os.path.realpath(os.path.join(directory, name))
+            if os.path.isfile(candidate):
+                path = candidate
+                break
+        if path is None or path in seen:
             continue
-        seen.add(name)
-        path = os.path.join(tests_dir, name)
-        if not os.path.exists(path):
+        seen.add(path)
+        if not path.startswith(tests_dir + os.sep) or os.path.basename(path) in HELPERS_NOT_SCANNED:
+            continue
+        if path in (os.path.realpath(p) for p in unit_files):
             continue
         found.append(path)
-        pending.extend(INCLUDE.findall(read(path)))
+        pending.extend((os.path.dirname(path), n) for n in INCLUDE.findall(read(path)))
     return sorted(found)
 
 
@@ -213,7 +258,12 @@ def self_test():
                  "sendto( s, b, n, 0, a, l )", "recvfrom( s, b, n, 0, a, &l )", "sendmmsg( s, m, n, 0 )",
                  "rn_cli_bounded_wait( o, done, NULL, rocketnet_time, NULL, \"o\" )",
                  "rn_cli_bounded_wait( o, done, NULL, NULL, rocketnet_sleep, \"o\" )",
-                 "clock_fn = &rocketnet_platform_time"):
+                 "clock_fn = &rocketnet_platform_time",
+                 # VERIFY-3 W7's plants
+                 "sleep( 1 )", "Sleep( 1 )", "clock()", "std::jthread j( f )", "CreateThread( 0, 0, f, 0, 0, 0 )",
+                 "gethostbyname( \"h\" )", "socketpair( AF_UNIX, SOCK_DGRAM, 0, v )", "poll( f, 1, 10 )",
+                 "select( n, &r, 0, 0, &t )", "GetTickCount64()", "timespec_get( &t, TIME_UTC )",
+                 "cv.wait_for( lock, d )", "fork()", "connect( s, a, l )", "recv( s, b, n, 0 )"):
         cases.append(("helper " + call.split("(")[0].strip(), clean_fixture,
                       "static inline int helper_value() { %s; return 1; }\n" % call, 1))
     for label, fixture, helper, expected in cases:
@@ -231,14 +281,37 @@ def self_test():
             if len(found) != expected:
                 print("FAIL check_unit_purity self-test: %s: expected %d finding(s), got %r" % (label, expected, found))
                 return 1
+    # a member call is not the OS call
+    for call in ("pair.connect( a )", "endpoint->send( p )", "rn::poll( x )"):
+        with tempfile.TemporaryDirectory() as root:
+            os.mkdir(os.path.join(root, "tests"))
+            with open(os.path.join(root, "tests", "test_unit_thing.cpp"), "w") as fh:
+                fh.write("static void test_thing() { %s; }\n" % call)
+            if check(root):
+                print("FAIL check_unit_purity self-test: member call %r was refused: %r" % (call, check(root)))
+                return 1
+    # a helper included by a path with a slash, and one reached from it, are scanned
+    with tempfile.TemporaryDirectory() as root:
+        os.makedirs(os.path.join(root, "tests", "planted", "deeper"))
+        with open(os.path.join(root, "tests", "test_unit_thing.cpp"), "w") as fh:
+            fh.write('#include "planted/helper.h"\nstatic void test_thing() { helper(); }\n')
+        with open(os.path.join(root, "tests", "planted", "helper.h"), "w") as fh:
+            fh.write('#include "deeper/inner.h"\nstatic inline void helper() { usleep( 1000 ); }\n')
+        with open(os.path.join(root, "tests", "planted", "deeper", "inner.h"), "w") as fh:
+            fh.write('static inline void inner() { std::jthread t( f ); }\n')
+        names = sorted(name for _, _, name in check(root))
+        if names != ["std::jthread", "usleep"]:
+            print("FAIL check_unit_purity self-test: slash-path helpers: expected usleep and std::jthread, got %r" % names)
+            return 1
     with tempfile.TemporaryDirectory() as root:
         os.mkdir(os.path.join(root, "tests"))
         found = check(root)
         if len(found) != 1 or "0 unit source files" not in found[0][2]:
             print("FAIL check_unit_purity self-test: zero unit sources: expected 1 finding, got %r" % (found,))
             return 1
-    print("ok check_unit_purity self-test: a thread, timed wait or sleep in a DEV fixture or helper, "
-          "and a tree with no unit source, are refused")
+    print("ok check_unit_purity self-test: a thread, timed wait or sleep in a DEV fixture or helper is refused, "
+          "every planted spelling of VERIFY-3 W7 is refused, member calls are not, slash-path helpers are read, "
+          "and a tree with no unit source is refused")
     return 0
 
 

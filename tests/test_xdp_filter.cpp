@@ -1675,7 +1675,7 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     }
 
     // the case connects one client: a message object sized for the default
-    // 1000 clients does not fit the guest (server.c:920, :975)
+    // 1000 clients does not fit the guest (server.c)
 
     if ( xdp_server )
     {
@@ -2024,7 +2024,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
 // A create that fails part way tears down what it built and nothing else.
 // The example server runs with two XDP queues on a two-queue veth and the
 // development-only seam ROCKETNET_TEST_XDP_FAIL_AT_QUEUE=1
-// (sdk/rocketnet_server_socket_linux.cpp:1919-1937, the top of the create queue loop):
+// (sdk/rocketnet_server_socket_linux.cpp, the top of the create queue loop):
 // queue 0 is fully built, queue 1 fails before its mutexes exist, and create
 // calls destroy. The server must report the injected failure and exit on its
 // own, never die on a signal (a Debug build aborts on the mutex assert when

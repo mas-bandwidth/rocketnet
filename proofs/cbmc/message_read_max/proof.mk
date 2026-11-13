@@ -1,6 +1,7 @@
 # Message reader and config body reader proofs at symbolic length bounds on the
 # real SDK code (sdk/rocketnet_message.cpp). Included by proofs/cbmc/Makefile
-# through the nightly scaffold; never part of `all`.
+# through the nightly scaffold; never part of `all`. Each harness that proves
+# is followed by its reachability control (check_reachability_control.sh).
 
 NIGHTLY += proofs-message_read_max
 
@@ -48,5 +49,12 @@ proofs-message_read_max:
 	    if [ "$$verdict" != "VERIFICATION SUCCESSFUL" ]; then cat "$$output"; failed=1; fi; \
 	    echo "$$harness $$verdict"; \
 	    echo "  unwind $$unwind $$extra; $$(grep -E 'properties (failed|passed)|of [0-9]+ properties' "$$output" | head -1 | sed 's/^ *//'); $$seconds s"; \
+	    if [ "$$verdict" = "VERIFICATION SUCCESSFUL" ]; then \
+	        start=$$(date +%s); status=0; \
+	        $(CURDIR)/run_with_timeout.sh $(MESSAGE_READ_MAX_TIMEOUT) $(ESBMC) $(MESSAGE_READ_MAX_FLAGS) --unwind $$unwind $$extra \
+	            -DREACHABILITY_CONTROL=1 --function $$harness "$$work/proof.cpp" > "$$output" 2>&1 || status=$$?; \
+	        $(CURDIR)/check_reachability_control.sh esbmc $$harness $$status "$$output" || failed=1; \
+	        echo "  control: $$(( $$(date +%s) - start )) s"; \
+	    fi; \
 	done; \
 	exit $$failed

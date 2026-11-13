@@ -61,6 +61,7 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_read_write.h"
+#include "rocketnet_fuzz_quiet.h"
 #include "../portable_crt.h"
 
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
@@ -279,7 +280,7 @@ static inline int rocketnet_fuzz_pair_initialize()
     {
         return 1;
     }
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
     rocketnet_quiet( 1 );
 
     return 0;
@@ -1514,6 +1515,16 @@ static inline int rocketnet_fuzz_record_write( uint8_t * out, uint8_t mode, cons
 
 static inline bool rocketnet_fuzz_seed_write( const char * dir, const char * name, const uint8_t * data, int bytes )
 {
+    // ROCKETNET_FUZZ_WITHHOLD=<seed name> skips that seed and reports it
+    // unwritten, so the generator ends INCOMPLETE: tools/check_fuzz_seeds.sh
+    // runs this control for every generator (VERIFY-5 W4)
+    char withheld[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_WITHHOLD", withheld, sizeof( withheld ) ) && strcmp( withheld, name ) == 0 )
+    {
+        fprintf( stderr, "seed generator: withholding %s\n", name );
+        return false;
+    }
+
     // a truncated path would write the seed to the wrong file: refuse instead
     char path[1024];
     const int path_bytes = snprintf( path, sizeof( path ), "%s/%s", dir, name );

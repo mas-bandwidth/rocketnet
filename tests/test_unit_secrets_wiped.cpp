@@ -10,8 +10,9 @@
 //     secret-wipe oracle (test_unit_secret_wipe.cpp) does not drive: the token
 //     expiring from sending-connection-request, and the integrity limit
 //     reached on a forged denied. rocketnet_client_set_state runs the
-//     connection reset on every state <= 0 (sdk/rocketnet_client_protocol.cpp:58-59),
-//     and the reset zeroes the ephemeral secret (sdk/rocketnet_connection_reset.cpp:40).
+//     connection reset on every state <= 0 (sdk/rocketnet_client_protocol.cpp),
+//     and the reset zeroes the ephemeral secret (sdk/rocketnet_connection_reset.cpp
+//     (rocketnet_client_protocol_wipe_secrets)).
 //   - the client's and the server's keys at destroy, and only the keys: when
 //     rocketnet_client_destroy and rocketnet_server_destroy free the public
 //     objects and their transports, each object's secret spans are zero and

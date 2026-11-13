@@ -1228,7 +1228,7 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
 
 // The store's large class only has to hold one chunk: a message larger than a
 // large chunk takes a span of the send spans, never the store
-// (sdk/rocketnet_allocator.h:313-315, sdk/rocketnet_allocator.cpp:1121-1124).
+// (sdk/rocketnet_allocator.h (RN_SPAN_MIN_BYTES), sdk/rocketnet_allocator.cpp (rn_region_send_take)).
 // An obsolete pre-span floor demanded one large chunk per fragment of
 // max_message_bytes, so it refused the default settings with a 1 MiB send
 // store even though the span path carries the maximal message.
@@ -1256,7 +1256,7 @@ static void test_message_config_send_store_one_mib_accepted()
 // The smallest send store the table accepts (12288 bytes) with the default
 // 1 MiB max_message_bytes carries every size, each way: a message of 1152
 // bytes takes a store chunk, 1153 and the maximal message take a span
-// (sdk/rocketnet_allocator.h:313-315). Validation alone accepted this config
+// (sdk/rocketnet_allocator.h (RN_SPAN_MIN_BYTES)). Validation alone accepted this config
 // once the pre-span floor went; here the bytes cross the pair and arrive
 // equal to the bytes sent.
 

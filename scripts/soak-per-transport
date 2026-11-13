@@ -9,15 +9,20 @@
 #   scripts/soak-per-transport --seconds 120 --cell xdp       (on the XDP machine, by hand)
 #
 # The cells. The server transport is pinned by ROCKETNET_SERVER_TRANSPORT and
-# every client by ROCKETNET_CLIENT_TRANSPORT=portable, as load.c's cells are:
-#   portable   ROCKETNET_SERVER_TRANSPORT=portable
-#   gso        ROCKETNET_SERVER_TRANSPORT=gso
-#   gso-plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1 (the
-#              development library skips the UDP_SEGMENT and UDP_GRO probes)
-#   io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring; where
+# the client by ROCKETNET_CLIENT_TRANSPORT. Every cell but one runs Linux's
+# own client transport, gso, so the client side of the link the simulator
+# impairs is the platform's, not only the server's; the portable cell runs
+# the portable client against the portable server, the control:
+#   portable   ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable
+#   gso        ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=gso
+#   gso-plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=gso
+#              ROCKETNET_TEST_GSO_PLAIN=1 (the development library skips the
+#              UDP_SEGMENT and UDP_GRO probes, at both ends)
+#   io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=gso; where
 #              /proc/sys/kernel/io_uring_disabled is not 0 the cell prints
 #              SKIP naming why, and does not pass
-#   xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=1
+#   xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=gso
+#              ROCKETNET_SERVER_NUM_XDP_QUEUES=1
 #              ROCKETNET_SERVER_NUM_OS_CPUS=1, run as root inside a virtme-ng
 #              guest of this machine's own kernel (~/vm-kernels/vmlinuz-$(uname -r)),
 #              the shape of nightly-soak.yml's many-client xdp cell: a veth
@@ -41,7 +46,8 @@
 # conservation failure, no unplanned disconnect, no refusal other than the
 # planted duplicates', and --assert-flat holding, which includes the
 # impairment leaving its trace: drops missing and duplicates refused in each
-# direction), the server transport it names is the one the cell pins, and
+# direction), the server and client transports it names are the ones the
+# cell pins, and
 # both ends' "soak link simulator:" lines show the setting the cell asked for.
 #
 # A starved host is not a measurement. A cell whose soak failed is UNMEASURED,
@@ -248,8 +254,8 @@ summary_value()
 
 judge()
 {
-    # judge <cell> <want server transport> <log> <soak exit status>
-    local cell=$1 want=$2 log=$3 status=$4
+    # judge <cell> <want server transport> <want client transport> <log> <soak exit status>
+    local cell=$1 want=$2 want_client=$3 log=$4 status=$5
     local server client verified
     server=$(summary_value "$log" server_transport_io)
     client=$(summary_value "$log" client_transport_io)
@@ -259,6 +265,8 @@ judge()
         fail_reason="soak exited $status: $(grep -E '^(soak: |PAYLOAD VERIFY FAILED)' "$log" | grep -vE '^soak: ([0-9]+ iterations|conservation ok|planted duplicates)' | head -n 3 | tr '\n' ';')"
     elif [ "$server" != "$want" ]; then
         fail_reason="server transport granted '${server:-none}', the cell pins $want"
+    elif [ "$client" != "$want_client" ]; then
+        fail_reason="client transport granted '${client:-none}', the cell pins $want_client"
     else
         local end
         for end in server client; do
@@ -289,12 +297,12 @@ judge()
 
 run_host_cell()
 {
-    # run_host_cell <cell> <want server transport> <env...>
-    local cell=$1 want=$2
-    shift 2
+    # run_host_cell <cell> <want server transport> <want client transport> <env...>
+    local cell=$1 want=$2 want_client=$3
+    shift 3
     local log="$LOG_DIR/$cell.log"
     env "$@" "${IMPAIRMENT[@]}" ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat > "$log" 2>&1
-    judge "$cell" "$want" "$log" $?
+    judge "$cell" "$want" "$want_client" "$log" $?
 }
 
 run_xdp_cell()
@@ -327,7 +335,7 @@ run_xdp_cell()
         echo 'ip -n rnxdpsoak link set lo up'
         echo 'ip -n rnxdpsoak link set rnxdpsoak1 up'
         printf 'env'
-        printf ' %q' ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable \
+        printf ' %q' ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=gso \
             ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 ROCKETNET_LOG_LEVEL=2 \
             SOAK_SERVER_ADDRESS=10.77.4.1:40412 SOAK_CLIENT_NETNS=/var/run/netns/rnxdpsoak \
             "${IMPAIRMENT[@]}" "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat
@@ -353,7 +361,7 @@ run_xdp_cell()
         failures=$(( failures + 1 ))
         return 1
     fi
-    judge xdp xdp "$log" "$status"
+    judge xdp xdp gso "$log" "$status"
 }
 
 if [ "$JUDGING" = 1 ]; then
@@ -361,17 +369,20 @@ if [ "$JUDGING" = 1 ]; then
         cell=${CELLS[$index]}
         want=$cell
         [ "$cell" != gso-plain ] || want=gso
-        judge "$cell" "$want" "${JUDGE_LOGS[$index]}" "${JUDGE_STATUSES[$index]}"
+        # every cell but the portable control pins the gso client
+        want_client=gso
+        [ "$cell" != portable ] || want_client=portable
+        judge "$cell" "$want" "$want_client" "${JUDGE_LOGS[$index]}" "${JUDGE_STATUSES[$index]}"
     done
 else
     for cell in "${CELLS[@]}"; do
         case "$cell" in
-            portable)  run_host_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ;;
-            gso)       run_host_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ;;
-            gso-plain) run_host_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1 ;;
+            portable)  run_host_cell portable portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ;;
+            gso)       run_host_cell gso gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=gso ;;
+            gso-plain) run_host_cell gso-plain gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1 ;;
             io_uring)
                 if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
-                    run_host_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
+                    run_host_cell io_uring io_uring gso ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=gso
                 else
                     echo "SOAK cell=io_uring SKIP this kernel disables io_uring (/proc/sys/kernel/io_uring_disabled is not 0)"
                     failures=$(( failures + 1 ))

@@ -1,13 +1,13 @@
 # ServerSession: the server object's life, its slots across clients, and the per-slot reset
 
 **Shutdown scope:** Stop is two steps. `Stop` moves RUNNING to STOPPING and
-cleans every slot in that step (rocketnet_server_stop, sdk/rocketnet_api.cpp:1875,
-then rocketnet_server_transport_stop, sdk/rocketnet_server_transport.cpp:2295,
-which stores STOPPING at :2091). `StopCompletes` moves STOPPING to STOPPED when
-the workers have exited (rocketnet_server_stopped, sdk/rocketnet_api.cpp:1909;
-the transport update stores STOPPED at sdk/rocketnet_server_transport.cpp:2636).
+cleans every slot in that step (rocketnet_server_stop, sdk/rocketnet_api.cpp,
+then rocketnet_server_transport_stop, sdk/rocketnet_server_transport.cpp,
+which stores STOPPING). `StopCompletes` moves STOPPING to STOPPED when
+the workers have exited (rocketnet_server_stopped, sdk/rocketnet_api.cpp;
+the transport update stores STOPPED at sdk/rocketnet_server_transport.cpp).
 Start is refused while STOPPING. Destroy stays enabled from any state but NONE:
-rocketnet_server_destroy (sdk/rocketnet_api.cpp:1960) is a request plus a bounded
+rocketnet_server_destroy (sdk/rocketnet_api.cpp) is a request plus a bounded
 wait of transport updates, and that wait is the model's `state # "NONE"` guard.
 A read of a client datagram happens only while RUNNING (`NoReceiveUnlessRunning`);
 outside RUNNING the datagram stays in flight or is lost. A client is admitted
@@ -33,33 +33,33 @@ change).
 
 | Variable | Code | Meaning |
 |---|---|---|
-| `state` | the public server object, `struct rocketnet_server_t`: RUNNING while its running block is set (`rocketnet_server_running`, sdk/rocketnet_api.cpp:1938); STOPPING after `rocketnet_server_stop` (:1685) until `rocketnet_server_stopped` (:1713) | `NONE` (no object), `STOPPED`, `STOPPING`, `RUNNING` |
+| `state` | the public server object, `struct rocketnet_server_t`: RUNNING while its running block is set (`rocketnet_server_running`, sdk/rocketnet_api.cpp); STOPPING after `rocketnet_server_stop` until `rocketnet_server_stopped` | `NONE` (no object), `STOPPED`, `STOPPING`, `RUNNING` |
 | `slot[i].st`, `slot[i].sess` | `struct rocketnet_client_slots_t` (`sdk/rocketnet_client_slots.cpp`): `connected[i]`, assigned by `rocketnet_client_slots_assign` and freed by `rocketnet_client_slots_release` | `FREE`, `HANDSHAKE` (a mapping is open for the slot), `CONNECTED`; the session tag of the slot's client |
-| `slot[i].rec[f]` | the slot's per-connection state: the encryption mapping (`sdk/rocketnet_encryption_map.cpp`), the slot record, and the message layer's connection (`rn_message_connection_reset`, `sdk/rocketnet_message_server.cpp:135`) | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
-| `slot[i].reason` | `rocketnet_server_disconnect_reason` (`sdk/rocketnet_api.cpp:1537-1545` at `4e1be4e8`), over `rocketnet_message_server_disconnect_reason` | per run: kept through the reset, cleared to NONE when the slot's next client is established, NONE while STOPPED (`rn_server_slot` refuses with no running block, `sdk/rocketnet_api.cpp:1013`) and NONE at each start (the new message server zeroes its block and sets each reason to NONE, `sdk/rocketnet_message_server.cpp:268`, `:285`) |
-| `kept.used` | the used-token history, `rocketnet_used_token_history_check` and `_record` (`sdk/rocketnet_token_tables.cpp:253`, `:241`), held at `sdk/rocketnet_server_protocol.h:63` | server-wide, never per slot; per run: fresh at each start (a start builds a new server transport, which creates the history), kept across slot resets and the stop within the run (standard/TRANSPORT.md t13.4) |
-| `kept.keys`, `kept.config`, `kept.lifetime` | the cookie key and server keys (rotation at `sdk/rocketnet_server_protocol.cpp:416`), the config, the lifetime counters (`sdk/rocketnet.h:1698-1701`) | kept across slots, stops and starts; fresh only at create |
+| `slot[i].rec[f]` | the slot's per-connection state: the encryption mapping (`sdk/rocketnet_encryption_map.cpp`), the slot record, and the message layer's connection (`rn_message_connection_reset`, `sdk/rocketnet_message_server.cpp`) | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
+| `slot[i].reason` | `rocketnet_server_disconnect_reason` (`sdk/rocketnet_api.cpp:1537-1545` at `4e1be4e8`), over `rocketnet_message_server_disconnect_reason` | per run: kept through the reset, cleared to NONE when the slot's next client is established, NONE while STOPPED (`rn_server_slot` refuses with no running block, `sdk/rocketnet_api.cpp`) and NONE at each start (the new message server zeroes its block and sets each reason to NONE, `sdk/rocketnet_message_server.cpp (rn_message_object_create)`) |
+| `kept.used` | the used-token history, `rocketnet_used_token_history_check` and `_record` (`sdk/rocketnet_token_tables.cpp`), held at `sdk/rocketnet_server_protocol.h` | server-wide, never per slot; per run: fresh at each start (a start builds a new server transport, which creates the history), kept across slot resets and the stop within the run (standard/TRANSPORT.md t13.4) |
+| `kept.keys`, `kept.config`, `kept.lifetime` | the cookie key and server keys (rotation at `sdk/rocketnet_server_protocol.cpp`), the config, the lifetime counters (`sdk/rocketnet.h`) | kept across slots, stops and starts; fresh only at create |
 | `link` | the path from the clients | the session tags of client packets in flight (lossy: `Lose`); a read moves a tag from `link` to `held` |
 | `held` | a datagram the transport has already read | session tags read and not yet processed; `Deliver` consumes `held`, not `link` |
 | `readIn`, `admitIn` | ghosts | the server state of every read; the server state of every `ClientConnects` and `Establish` |
 
 The public `disconnect_all_clients` is one call too (`rocketnet_server_disconnect_all_clients`,
-`sdk/rocketnet_api.cpp:1389-1401`): every slot the transport holds connected is disconnected
+`sdk/rocketnet_api.cpp`): every slot the transport holds connected is disconnected
 in the same step, and a slot still in the handshake (not transport-connected) is left as it
 is. The model's one `DisconnectAll` action does the same; there is no draining flag and no
 later update that finishes the call.
 
-The public `stop` is one call (`rocketnet_server_stop`, `sdk/rocketnet_api.cpp:1875`): each
+The public `stop` is one call (`rocketnet_server_stop`, `sdk/rocketnet_api.cpp`): each
 connected client is kicked, the running block moves to retiring, `server->running` becomes
-NULL, and `rocketnet_server_transport_stop` (`sdk/rocketnet_server_transport.cpp:2295`) stores
-STOPPING at :2091. The model's `Stop` does that and cleans every slot in the same step.
-`StopCompletes` is the later step on which `rocketnet_server_stopped` (`sdk/rocketnet_api.cpp:1909`)
-is true and the transport update stores STOPPED (`sdk/rocketnet_server_transport.cpp:2636`).
-While STOPPING or STOPPED, `rocketnet_server_update` returns at once (`sdk/rocketnet_api.cpp:2013`)
-and the transport update returns before the receive (`sdk/rocketnet_server_transport.cpp:2636`),
+NULL, and `rocketnet_server_transport_stop` (`sdk/rocketnet_server_transport.cpp`) stores
+STOPPING. The model's `Stop` does that and cleans every slot in the same step.
+`StopCompletes` is the later step on which `rocketnet_server_stopped` (`sdk/rocketnet_api.cpp`)
+is true and the transport update stores STOPPED (`sdk/rocketnet_server_transport.cpp`).
+While STOPPING or STOPPED, `rocketnet_server_update` returns at once (`sdk/rocketnet_api.cpp`)
+and the transport update returns before the receive (`sdk/rocketnet_server_transport.cpp`),
 so no datagram is read and no client is admitted. `rocketnet_server_destroy`
-(`sdk/rocketnet_api.cpp:1960`) on a server that has not stopped is a request plus a bounded
-wait of those updates (:1769-1774); the model keeps Destroy enabled whenever `state # "NONE"`.
+(`sdk/rocketnet_api.cpp`) on a server that has not stopped is a request plus a bounded
+wait of those updates; the model keeps Destroy enabled whenever `state # "NONE"`.
 Historical citations of the transport's create, destroy and `disconnect_client`
 (`:2362`, over `rocketnet_server_protocol_disconnect_client`,
 `sdk/rocketnet_server_protocol.cpp:1998`) are cited at `14993f6`. A
@@ -81,10 +81,10 @@ inventory each field below stands for, citing this model.
 **The used-token history is per run.** standard/TRANSPORT.md t13.4 (Slot reset): a slot
 reset keeps the used-token history, and a server that starts again begins with a fresh one.
 The code does the same: `rocketnet_server_start` builds a new message server and server
-transport (`sdk/rocketnet_api.cpp:1275`, `sdk/rocketnet_message_server.cpp:1169`), the
-transport creates an empty history (`sdk/rocketnet_server_transport.cpp:1579`), stop destroys
-it with the transport (`sdk/rocketnet_api.cpp:1317`, `sdk/rocketnet_server_transport.cpp:1667`),
-and the slot reset (`rocketnet_server_connection_reset`, `sdk/rocketnet_connection_reset.cpp:63`)
+transport (`sdk/rocketnet_api.cpp`, `sdk/rocketnet_message_server.cpp`), the
+transport creates an empty history (`sdk/rocketnet_server_transport.cpp`), stop destroys
+it with the transport (`sdk/rocketnet_api.cpp`, `sdk/rocketnet_server_transport.cpp`),
+and the slot reset (`rocketnet_server_connection_reset`, `sdk/rocketnet_connection_reset.cpp`)
 does not touch it (line numbers at `dc2ff1f9`). The model's `Start` empties `kept.used`; every
 `Reset(i)` and the stop keep it. Every request in this model comes from its own address, the
 replay case the history exists for, so a token in the history is refused (`TokenAdmitsOnce`:
@@ -92,9 +92,9 @@ one connection per token per run); the standard binds a token to its first sourc
 and a re-presentation from that same address is not modelled here. A token used before a stop
 is admitted again after the next start; `MCServerSessionReadmitAfterStart.cfg` proves that
 state reachable. The
-restart sentences under _Keys_ and _Per-connection keys_ (`STANDARD.md:189`, `:1058`) make key
+restart sentences under _Keys_ and _Per-connection keys_ (`docs/STANDARD.md`) make key
 freshness independent of the history: the session nonce is chosen when the mapping is created,
-so a restart can never recreate a key. STANDARD.md:189 has the server generate its cookie key "at start"; the
+so a restart can never recreate a key. docs/STANDARD.md has the server generate its cookie key "at start"; the
 model keeps the keys as one value fresh at create and unchanged by stop and start, as the card
 lists them kept. A cookie key regenerated at each start instead would invalidate only
 outstanding cookies, which no slot record holds, so no property here depends on the choice.
@@ -112,7 +112,7 @@ outstanding cookies, which no slot record holds, so no property here depends on 
 | `Establish(i)` | the response opens: the token is recorded in the history, the slot is CONNECTED, its reason cleared |
 | `Deny(i)`, `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)` | a denial during the handshake; the slot's timeout; the client's own disconnect; `disconnect_client(i)` with its burst. The reasons TIMED_OUT, CLIENT_DISCONNECTED and SERVER_DISCONNECTED are `ROCKETNET_DISCONNECT_REASON_TIMED_OUT`, `_CLIENT_DISCONNECTED` and `_SERVER_DISCONNECTED`: the transport's reset records the first two and the message layer reads them for the slot it finds dropped (`proofs/tla/RNSlots.tla` `Observe`). DENIED, and TIMED_OUT for a HANDSHAKE slot, are abstractions: the code assigns the slot only when the session is established, so those ends leave the slot's reason as it was |
 | `ServerSend(i)` | message start/finish to a connected slot (the `sendbeforeconnected` defect also enables it for a FREE or HANDSHAKE slot) |
-| `MessageEnd(i)` | the message layer ends a CONNECTED slot while RUNNING, standing for both the update kick and the send kick: a delivery the application never took (`MESSAGE_NOT_RECEIVED`, `rn_message_object_update`, sdk/rocketnet_message_server.cpp:766) or an endpoint error (`CONFIG_MISMATCH`, `PROTOCOL_VIOLATION`, `RELIABLE_TIMED_OUT`, sdk/rocketnet_message_server.cpp:977), and a send whose connection exhausted its message memory (`MESSAGE_MEMORY_EXHAUSTED`, sdk/rocketnet_message_server.cpp:1220). `rn_message_object_kick` records the reason and calls `link.disconnect` (sdk/rocketnet_message_server.cpp:664), which on the server is `rocketnet_server_transport_disconnect_client` (sdk/rocketnet_server_transport.cpp:4316) and sends the connected slot its disconnect burst, so `sendDisc` is TRUE. The update returns before the message layer while stopped or stopping (sdk/rocketnet_api.cpp:3214) and a send with no running block is dropped, so the kick needs both the RUNNING state and a CONNECTED slot; the ghost `messageIn` holds the slot state of every message-layer end |
+| `MessageEnd(i)` | the message layer ends a CONNECTED slot while RUNNING, standing for both the update kick and the send kick: a delivery the application never took (`MESSAGE_NOT_RECEIVED`, `rn_message_object_update`, sdk/rocketnet_message_server.cpp) or an endpoint error (`CONFIG_MISMATCH`, `PROTOCOL_VIOLATION`, `RELIABLE_TIMED_OUT`, sdk/rocketnet_message_server.cpp), and a send whose connection exhausted its message memory (`MESSAGE_MEMORY_EXHAUSTED`, sdk/rocketnet_message_server.cpp). `rn_message_object_kick` records the reason and calls `link.disconnect` (sdk/rocketnet_message_server.cpp), which on the server is `rocketnet_server_transport_disconnect_client` (sdk/rocketnet_server_transport.cpp) and sends the connected slot its disconnect burst, so `sendDisc` is TRUE. The update returns before the message layer while stopped or stopping (sdk/rocketnet_api.cpp) and a send with no running block is dropped, so the kick needs both the RUNNING state and a CONNECTED slot; the ghost `messageIn` holds the slot state of every message-layer end |
 | `ServerDropSend(i)` | message start to a slot that is not CONNECTED, on a running, stopping or stopped server (`rocketnet_server_start_message` returns NULL and counts the `messages_dropped_not_connected` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`): no slot field changes, nothing is held; the ghost `droppedIn` is the slot's state after a drop and `{}` after any other step (RN-2 m1.5) |
 | `ClientSend(s)`, `Deliver(s)`, `Lose(s)` | the client of any session ever started sends (also after its connection ended); the packet arrives at that session's slot (the same address reconnecting into the same slot is the worst case) and opens only under the keys it was sealed with, into a connected slot |
 
@@ -151,20 +151,20 @@ send-state clause, while the drop actions constrain the drop-state ghost.
 | cfg | Defect | Expected | Counterexample, last state |
 |---|---|---|---|
 | `MCServerSessionUnresetSlot.cfg` | `Defect = "unresetslot"`, `UnresetField = "replay_window"`: `Reset(i)` skips the replay window | `SlotReuseObservesNothing`, exit 12 | 14 states: create, start, session 1 connects into slot 1 and sends (`link = {1}`) and is established, the datagram is read and then delivered (`replay_window = 1`), the slot times out (the reset leaves `replay_window = 1`), session 2 connects into slot 1 and sends and is established, its first datagram is read and then delivered: `slot[1].sess = 2`, `observed = {[slot \|-> 1, field \|-> "replay_window"]}`, the new client's first sequence checked against the old client's window |
-| `MCServerSessionStopLeavesClient.cfg` | `Defect = "stopleavesclient"`: stop skips the last slot | `NoClientWhileStopped`, exit 12 | create, start, session 1 opens a mapping into slot 2, stop: `state = "STOPPING"`, `slot[2].st = "HANDSHAKE"`, `slot[2].sess = 1`. The code resets every slot in stop (`sdk/rocketnet_api.cpp:1875`) |
-| `MCServerSessionDisconnectAllLeavesClient.cfg` | `Defect = "disconnectallleavesclient"`: `DisconnectAll` leaves slot 1 connected | `DisconnectAllIsAtomic`, exit 12 | 6 states: create, start, session 1 opens a mapping into slot 1 and is established, `DisconnectAll`: `slot[1].st = "CONNECTED"`, `slot[1].sess = 1`, `lastEnd[1] = "NONE"`, `allBefore` holds slot 1 CONNECTED. The code disconnects it in the same call (`sdk/rocketnet_api.cpp:1389-1401`) |
+| `MCServerSessionStopLeavesClient.cfg` | `Defect = "stopleavesclient"`: stop skips the last slot | `NoClientWhileStopped`, exit 12 | create, start, session 1 opens a mapping into slot 2, stop: `state = "STOPPING"`, `slot[2].st = "HANDSHAKE"`, `slot[2].sess = 1`. The code resets every slot in stop (`sdk/rocketnet_api.cpp`) |
+| `MCServerSessionDisconnectAllLeavesClient.cfg` | `Defect = "disconnectallleavesclient"`: `DisconnectAll` leaves slot 1 connected | `DisconnectAllIsAtomic`, exit 12 | 6 states: create, start, session 1 opens a mapping into slot 1 and is established, `DisconnectAll`: `slot[1].st = "CONNECTED"`, `slot[1].sess = 1`, `lastEnd[1] = "NONE"`, `allBefore` holds slot 1 CONNECTED. The code disconnects it in the same call (`sdk/rocketnet_api.cpp`) |
 | `MCServerSessionTouchesOtherSlot.cfg` | `Defect = "touchesotherslot"`: `Reset(i)` also clears slot i+1 | `ResetTouchesOnlyItsSlot`, exit 12 | 6 states: create, start, sessions 1 and 2 open mappings into slots 1 and 2, slot 1 is denied: both slots `FREE`, slot 1's reason `DENIED`, `collateral = {2}`: session 2 vanished with no reason and no reset path of its own |
 | `MCServerSessionResetClearsHistory.cfg` | `Defect = "resetclearshistory"`: `Reset(i)` empties the used-token history | `TokenAdmitsOnce`, exit 12 | 8 states: create, start, session 1 connects with token 1 and is established (`kept.used = {1}`), the slot times out and the reset empties the history, session 2 connects with token 1 and is established: `doubleTok = TRUE`, one token admitted twice in one run |
 | `MCServerSessionReadmitAfterStart.cfg` | `Defect = "none"`, `MaxStarts = 2`; invariant `NoReadmitAfterStart` (a reachability witness) | `NoReadmitAfterStart`, exit 12 | create, start, session 1 established with token 1, stop (STOPPING, then StopCompletes to STOPPED), start (`kept.used = {}`, `priorTokens = {1}`), session 2 connects with token 1 and is established: `readmitted = TRUE`, the fresh history at start reached |
 | `MCServerSessionSendBeforeConnected.cfg` | `Defect = "sendbeforeconnected"`: `ServerSend(i)` also runs for a slot that is not CONNECTED | `NoSendUnlessConnected`, exit 12 | 4 states: create, start, a send to a free slot: every slot `FREE`, `queuedIn = {"FREE"}`. In the code that is `rocketnet_server_start_message` to an index below max_clients with no client, which the message layer drops (`ServerDropSend`) |
-| `MCServerSessionBrokenMessageEnd.cfg` | `Defect = "messageendbeforeconnected"`: `MessageEnd(i)` also runs for a slot that is not CONNECTED | `MessageEndOnlyConnected`, exit 12 | 3 states: create, start, the message layer ends a free slot: every slot `FREE`, `messageIn = {"FREE"}`. In the code `rn_message_object_kick` returns at once unless the message connection is CONNECTED (`sdk/rocketnet_message_server.cpp:650`), and both its update and send call sites run only for a connected slot of a running server |
-| `MCServerSessionBrokenReasonAcrossRestart.cfg` | `Defect = "reasonacrossrestart"`, `MaxStarts = 2`: stop writes SERVER_STOPPED into each occupied slot and keeps a free slot's reason, and start keeps every reason (the rule this model held before it followed the code) | `ReasonKeptWithinRun`, exit 12 | create, start, session 1 opens a mapping into slot 1, stop: `state = "STOPPING"`, `slot[1].reason = "SERVER_STOPPED"`, `lastEnd[1] = "NONE"`. In the code the reason is NONE once stop has cleared the running block (`sdk/rocketnet_api.cpp:1875`) |
-| `MCServerSessionBrokenReceiveWhileStopping.cfg` | `Defect = "receivewhilestopping"`: Read runs while STOPPING | `NoReceiveUnlessRunning`, exit 12 | a datagram is read while `state = "STOPPING"`, so `readIn` holds STOPPING. The code returns before receive (`sdk/rocketnet_server_transport.cpp:2636`) |
+| `MCServerSessionBrokenMessageEnd.cfg` | `Defect = "messageendbeforeconnected"`: `MessageEnd(i)` also runs for a slot that is not CONNECTED | `MessageEndOnlyConnected`, exit 12 | 3 states: create, start, the message layer ends a free slot: every slot `FREE`, `messageIn = {"FREE"}`. In the code `rn_message_object_kick` returns at once unless the message connection is CONNECTED (`sdk/rocketnet_message_server.cpp`), and both its update and send call sites run only for a connected slot of a running server |
+| `MCServerSessionBrokenReasonAcrossRestart.cfg` | `Defect = "reasonacrossrestart"`, `MaxStarts = 2`: stop writes SERVER_STOPPED into each occupied slot and keeps a free slot's reason, and start keeps every reason (the rule this model held before it followed the code) | `ReasonKeptWithinRun`, exit 12 | create, start, session 1 opens a mapping into slot 1, stop: `state = "STOPPING"`, `slot[1].reason = "SERVER_STOPPED"`, `lastEnd[1] = "NONE"`. In the code the reason is NONE once stop has cleared the running block (`sdk/rocketnet_api.cpp`) |
+| `MCServerSessionBrokenReceiveWhileStopping.cfg` | `Defect = "receivewhilestopping"`: Read runs while STOPPING | `NoReceiveUnlessRunning`, exit 12 | a datagram is read while `state = "STOPPING"`, so `readIn` holds STOPPING. The code returns before receive (`sdk/rocketnet_server_transport.cpp`) |
 | `MCServerSessionBrokenConnIdPerRun.cfg` | `Defect = "connidperrun"`, `MaxStarts = 2`: the public id is the per-run transport id alone, with no base for earlier runs | `ConnIdNeverRepeats`, exit 12 | create, start, a session establishes with id 1, stop, start, the next session establishes with id 1 again. In the code `rn_server_finish_stop` adds the old run's `rocketnet_server_transport_connections_assigned` to `connection_id_base` (`sdk/rocketnet_api.cpp`); `test_server_connection_id_tracks_each_connection` fails the same way with the base removed |
 | `MCServerSessionBrokenAdmitWhileStopping.cfg` | `Defect = "admitwhilestopping"`: ClientConnects runs while STOPPING | `NoAdmitUnlessRunning`, exit 12 | a mapping opens while `state = "STOPPING"`, so `admitIn` holds STOPPING. Admission is inside the receive the transport skips while not RUNNING |
 | `MCServerSessionTwoClientsReachable.cfg` (module `MCServerSessionTwoClients.tla`) | `Defect = "none"`, the `MCServerSessionTwoClients.cfg` constants; invariant `NotTwoConnected` (a reachability witness) | `NotTwoConnected`, exit 12 | 7 states: create, start, session 1 opens a mapping into slot 1 with token 1 and is established, then session 2 into slot 2 with token 2 and is established: both slots CONNECTED. The two-client control's multi-client invariants are reached |
 
-The DisconnectAllLeavesClient trace, step by step against `sdk/rocketnet_api.cpp:1389-1401`:
+The DisconnectAllLeavesClient trace, step by step against `sdk/rocketnet_api.cpp`:
 state 1 is Init (NONE, every slot FREE), state 2 is Create (STOPPED), state 3 is Start
 (RUNNING), state 4 is `ClientConnects(1, 1)` (slot 1 HANDSHAKE, session 1), and state 5 is
 `Establish(1)` (slot 1 CONNECTED, token 1 in `kept.used`). State 6 is `DisconnectAll`: the
@@ -172,7 +172,7 @@ defect leaves slot 1 CONNECTED with session 1 and `lastEnd[1] = "NONE"`, while `
 holds the pre-state (slot 1 CONNECTED, slot 2 FREE). The code instead loops over every index
 below `max_clients`, kicks each slot the message layer holds and, when
 `rocketnet_server_transport_is_client_connected` is true
-(`sdk/rocketnet_server_transport.cpp:3000`), disconnects it at the transport in the same call,
+(`sdk/rocketnet_server_transport.cpp`), disconnects it at the transport in the same call,
 so slot 1 would be FREE with reason SERVER_DISCONNECTED. A slot still in the handshake makes
 that predicate false and is left as it is, which is the HANDSHAKE part of the invariant.
 

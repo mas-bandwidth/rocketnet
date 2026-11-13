@@ -13,8 +13,8 @@
 \* field holding a tag other than the current session's is state of an earlier
 \* connection. The one field deliberately kept across connections is `kept`
 \* (the config). The handle keeps no disconnect reason of its own: the public
-\* state names how the connection ended (sdk/rocketnet_api.cpp:1772-1783), and
-\* its one lifetime count (not-connected drops, sdk/rocketnet_api.cpp:619) is not
+\* state names how the connection ended (sdk/rocketnet_api.cpp (rn_client_state)), and
+\* its one lifetime count (not-connected drops, sdk/rocketnet_api.cpp) is not
 \* modelled.
 \*
 \* A message send outside CONNECTED is dropped (DropSend): it changes no
@@ -78,7 +78,7 @@ ASSUME HandshakeReads \cup SendReads \cup RecvReads = Fields
 HandshakeStates == {"REQUESTING_COOKIE", "SENDING_CONNECTION_REQUEST",
                     "SENDING_CONNECTION_RESPONSE"}
 \* The message layer's own ends of a CONNECTED connection, each read back as
-\* its own public state (sdk/rocketnet_api.cpp:1772-1783).
+\* its own public state (sdk/rocketnet_api.cpp (rn_client_state)).
 MessageErrors == {"RELIABLE_TIMED_OUT", "PROTOCOL_VIOLATION", "CONFIG_MISMATCH",
                   "MESSAGE_MEMORY_EXHAUSTED", "MESSAGE_NOT_RECEIVED"}
 Errors == {"CONNECTION_DENIED", "COOKIE_REQUEST_TIMED_OUT",
@@ -193,7 +193,7 @@ WorkerComplete ==
     /\ UNCHANGED <<st, cur, conn, kept, link, nextSess, creates,
                    ghosts, ownerGen, pending, refusedPending, badReuse>>
 
-\* connect(token), rn_client_connect (sdk/rocketnet_api.cpp:1462-1535), with
+\* connect(token), rn_client_connect (sdk/rocketnet_api.cpp), with
 \* its five outcomes. A live state is refused first (1326-1332). A string that
 \* is not one base64 token is refused next, before the terminal attempt or
 \* its worker is touched (1338-1343): nothing changes, whatever the old worker
@@ -338,7 +338,7 @@ StateReported ==
 \* The message layer ends a CONNECTED connection (rn_message_object_kick in
 \* sdk/rocketnet_message_server.cpp): the connection object stays, its
 \* transport reads DISCONNECTED, and rocketnet_client_state reads the reason's
-\* own error state (sdk/rocketnet_api.cpp:1772-1783). The worker keeps
+\* own error state (sdk/rocketnet_api.cpp). The worker keeps
 \* running, as after ServerDisconnect. The call that reaches it reports it:
 \* the update (rocketnet_client_update) with any of the five. Under the
 \* sendkick and silentexhaust defects a start (v1.0's

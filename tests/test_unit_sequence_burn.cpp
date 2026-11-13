@@ -4,8 +4,9 @@
 */
 
 // A client start_packet can refuse after spending its sequence: it takes
-// the sequence at sdk/rocketnet_client_transport.cpp:3729 and refuses after
-// at :3745 (payload ring full) and :3767 (lease table full). The
+// the sequence in sdk/rocketnet_client_transport.cpp
+// (rocketnet_client_transport_start_packet) and refuses after it
+// when the payload ring is full or the lease table is full. The
 // server assigns a sequence only when finish accepts the payload and reserves
 // every wire frame, so a server lease or ring refusal, an abort, or a
 // refused finish leaves no sequence gap.
@@ -23,7 +24,7 @@
 // none refused), and on the message layer the reliable channel's resends and
 // the resend delay estimate. The lease table is not driven here: on the loopback transport
 // a fill phase holds at most the payload ring's 256 frames, below its
-// refusal point (half its capacity, sdk/rocketnet_packet_lease.h:37). The server assigns the sequence
+// refusal point (half its capacity, sdk/rocketnet_packet_lease.h (rocketnet_packet_leases_t)). The server assigns the sequence
 // after lease insertion, so that refusal also leaves no gap.
 
 #include "unit_shutdown.h"
@@ -758,12 +759,12 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_refused_finish_does_not_count_as_l
 // in each of those fourth rounds the first start_packet the message layer
 // makes finds the transport's payload ring full: the test's seam (the
 // object's link.start_packet, the one transport call the layer starts frames
-// through, sdk/rocketnet_message_object.h:65) first claims every free ring
+// through, sdk/rocketnet_message_object.h) first claims every free ring
 // slot with a start it aborts, then makes the layer's own call, which the
 // transport refuses for real (SEND_RING_FULL). Client starts spend their
 // sequence before this refusal; server starts spend none until finish.
 // The layer's write pass then treats the frame as not started
-// (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1206) and writes the
+// (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp) and writes the
 // rest next update. The control run is the same traffic with no seam. Measured
 // on the burning side: reliable records resent on the resend delay (MESSAGE_RESENT),
 // the ordered window's srtt, rttvar and resend_delay; on the receiving side: every reliable

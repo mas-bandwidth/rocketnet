@@ -1416,7 +1416,7 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
 {
     // "<end>: <report>" fits the check state's detail[256] (dst_checks.h:120):
     // end is "server" or "clients" (dst_harness.h:1330-1331), and the report
-    // is one counter name and two u64 (sdk/rocketnet_counters.cpp:151). The
+    // is one counter name and two u64 (sdk/rocketnet_counters.cpp). The
     // precisions bound both pieces (16 + 2 + 237 + NUL = 256), so the
     // compiler can prove the line fits at every optimisation level.
 

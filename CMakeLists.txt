@@ -804,27 +804,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
     endif()
-    # The counter audit (test_unit_counter_classes.cpp) reads source files: the
-    # tests that must name every counter, and the sdk files that count them.
-    # Both lists reach it as compile definitions, relative to the source
-    # directory, so the audit never walks a directory itself.
-    file( GLOB ROCKETNET_COUNTER_TEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp" )
-    if(NOT ROCKETNET_DEV)
-        list(REMOVE_ITEM ROCKETNET_COUNTER_TEST_SOURCES
-            "tests/test_unit_connection_internal_error_counters.cpp")
-    endif()
-    list( APPEND ROCKETNET_COUNTER_TEST_SOURCES "sdk/rocketnet_tests.cpp" )
-    file( GLOB ROCKETNET_COUNTER_SDK_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.inc" )
-    list( REMOVE_ITEM ROCKETNET_COUNTER_SDK_SOURCES "sdk/rocketnet_tests.cpp"
-        "sdk/rocketnet_counters.h" "sdk/rocketnet_counters.cpp" )
-    string( REPLACE ";" "|" ROCKETNET_COUNTER_TEST_SOURCES_LIST "${ROCKETNET_COUNTER_TEST_SOURCES}" )
-    string( REPLACE ";" "|" ROCKETNET_COUNTER_SDK_SOURCES_LIST "${ROCKETNET_COUNTER_SDK_SOURCES}" )
+    # The counter ladder audit (source_audit_counter_classes.cpp) reads the sdk
+    # files it names, relative to the source directory. Which counters a test
+    # observes is tools/check_counter_observed.py, from the build's own file set.
     set_property( SOURCE tests/source_audit_counter_classes.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
-        "ROCKETNET_COUNTER_TEST_SOURCES=\"${ROCKETNET_COUNTER_TEST_SOURCES_LIST}\""
-        "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     # The source-audit binary runs the repository text audits that used to be
     # unit cases: they read source, header and doc files through
     # ROCKETNET_SOURCE_DIR. It is a static gate: it reads files only, opens no
@@ -863,8 +847,15 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_platform_text.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    # The empty-body audit reads every functional source, whatever binary or
+    # platform builds it: the glob, not a hand list, so a new file is read.
+    file( GLOB ROCKETNET_FUNCTIONAL_AUDIT_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.inc" )
+    string( REPLACE ";" "|" ROCKETNET_FUNCTIONAL_AUDIT_LIST "${ROCKETNET_FUNCTIONAL_AUDIT_SOURCES}" )
     set_property( SOURCE tests/source_audit_functional_integrity.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+        "ROCKETNET_FUNCTIONAL_SOURCES=\"${ROCKETNET_FUNCTIONAL_AUDIT_LIST}\"" )
     target_compile_features(source_audit PRIVATE cxx_std_11)
     rocketnet_warning_floor(source_audit)
     target_link_libraries(source_audit PRIVATE rocketnet_test_support Threads::Threads)
@@ -1552,3 +1543,42 @@ function(rocketnet_check_fp_floor)
     message(STATUS "Floating-point floor (${family}) on all ${checked} compiled targets")
 endfunction()
 rocketnet_check_fp_floor()
+
+# The source audit's public-API cast check (source_audit_client_counter_access.cpp)
+# reads every C/C++ source the build compiles into a program: every executable
+# but the white-box suites, which test the internals on purpose (the unit and
+# functional suites, the test_* programs, the source audit, the deterministic
+# simulation and the fuzz replays). No list of directories: a new tool,
+# example or benchmark is read the day it is added (VERIFY-3 W16). Read at the
+# end, once every target is defined.
+if(TARGET source_audit)
+    get_property( ROCKETNET_AUDIT_TARGETS DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY BUILDSYSTEM_TARGETS )
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt" AND ROCKETNET_BUILD_EXAMPLES)
+        get_property( ROCKETNET_AUDIT_EXAMPLE_TARGETS DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/examples" PROPERTY BUILDSYSTEM_TARGETS )
+        list( APPEND ROCKETNET_AUDIT_TARGETS ${ROCKETNET_AUDIT_EXAMPLE_TARGETS} )
+    endif()
+    set( ROCKETNET_PUBLIC_PROGRAM_SOURCES "" )
+    foreach( audit_target IN LISTS ROCKETNET_AUDIT_TARGETS )
+        get_target_property( audit_type ${audit_target} TYPE )
+        if(NOT audit_type STREQUAL "EXECUTABLE" OR audit_target MATCHES "^(test|test_.*|functional|source_audit|dst|fuzz_.*)$")
+            continue()
+        endif()
+        get_target_property( audit_dir ${audit_target} SOURCE_DIR )
+        get_target_property( audit_sources ${audit_target} SOURCES )
+        foreach( audit_source IN LISTS audit_sources )
+            if(NOT audit_source MATCHES "\\.(c|cpp)$")
+                continue()
+            endif()
+            get_filename_component( audit_path "${audit_source}" ABSOLUTE BASE_DIR "${audit_dir}" )
+            file( RELATIVE_PATH audit_relative "${CMAKE_CURRENT_SOURCE_DIR}" "${audit_path}" )
+            if(NOT audit_relative MATCHES "^(sdk/|\\.\\./)")
+                list( APPEND ROCKETNET_PUBLIC_PROGRAM_SOURCES "${audit_relative}" )
+            endif()
+        endforeach()
+    endforeach()
+    list( REMOVE_DUPLICATES ROCKETNET_PUBLIC_PROGRAM_SOURCES )
+    list( SORT ROCKETNET_PUBLIC_PROGRAM_SOURCES )
+    string( REPLACE ";" "|" ROCKETNET_PUBLIC_PROGRAM_SOURCES_LIST "${ROCKETNET_PUBLIC_PROGRAM_SOURCES}" )
+    set_property( SOURCE tests/source_audit_client_counter_access.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_PUBLIC_PROGRAM_SOURCES=\"${ROCKETNET_PUBLIC_PROGRAM_SOURCES_LIST}\"" )
+endif()
