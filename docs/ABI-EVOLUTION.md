@@ -119,12 +119,17 @@ refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
 | `rocketnet_client_config_t` | in | yes, `config_bytes` |
 | `rocketnet_server_config_t` | in | yes, `config_bytes` |
 | `rocketnet_connect_token_config_t` | in | yes, `config_bytes` |
+| `rocketnet_conditions_t` | out | yes, the call's `conditions_bytes` argument |
 | `rocketnet_client_stats_t` | out | no |
 | `rocketnet_server_stats_t` | out | no |
 | `rocketnet_server_client_stats_t` | out | no |
 | `rocketnet_receipt_t` | out, in an array | no |
 | `rocketnet_message_batch_t` | out | no |
 
+`rocketnet_conditions_t` only grows at its end: the caller passes the
+`sizeof` of its struct to `rocketnet_client_conditions` or
+`rocketnet_server_client_conditions`, and the library fills the fields that
+fit and zeroes any it does not know.
 The structs marked "no" carry no size, so a
 field added to one of them is an incompatible change and bumps the major
 version. `rocketnet_receipt_t` is also the element of an array
@@ -141,7 +146,10 @@ only `rocketnet_server_start_message` takes a `uint64_t` destination id, a
 client index today and a flow id (`ROCKETNET_FLOW_ID_BIT` set) later. Message
 calls use the verb-first names `start_message`, `finish_message`,
 `abort_message`, `receive_messages` and `send_packets`; the server's finish and
-abort act on its one pending start and take no destination. The endpoint-wide
+abort act on the one start pending on the whole server and take no
+destination, and `rocketnet_server_finish_client_message` and
+`rocketnet_server_abort_client_message`, which game threads use, take the
+client index. The endpoint-wide
 receive queue uses `rocketnet_message_batch_t` and needs no release call.
 
 `rocketnet_client_create( context, config, &status )` and
