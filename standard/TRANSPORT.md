@@ -3823,6 +3823,7 @@ The registry of counters, in index order, is:
 | `RIO_RECEIVE_REPOST_FAILED` | `refusal` | `none` |
 | `RIO_COMMITS` | `expected` | `none` |
 | `SEND_RESERVE_REFUSED` | `refusal` | `none` |
+| `RECEIVE_DROPPED_STOPPED` | `expected` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3978,6 +3979,7 @@ d7 01 00 00 1c 31 f2 57 00 00 00 d4 1f 4d 66 00
 2a 63 c3 16 00 00 00 6f 54 6f 12 00 00 00 62 5c
 63 05 00 00 00 a1 e9 0d d3 00 00 00 2c 79 8c cf
 01 00 00 83 0e ee 6b 00 00 00
+01 00 00 ad 33 2a 98 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

@@ -338,6 +338,7 @@ static const char * const counters_appended_names[] = {
     "RIO_RECEIVE_REPOST_FAILED",
     "RIO_COMMITS",
     "SEND_RESERVE_REFUSED",
+    "RECEIVE_DROPPED_STOPPED",
 };
 #endif // #if ROCKETNET_DEV
 
@@ -535,6 +536,7 @@ static void test_counters_every_counter_has_a_class()
         { "RIO_RECEIVE_REPOST_FAILED", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RIO_COMMITS", ROCKETNET_COUNTER_CLASS_EXPECTED },
         { "SEND_RESERVE_REFUSED", ROCKETNET_COUNTER_CLASS_REFUSAL },
+        { "RECEIVE_DROPPED_STOPPED", ROCKETNET_COUNTER_CLASS_EXPECTED },
     };
     for ( size_t row = 0; row < sizeof( counter_classes_by_name ) / sizeof( counter_classes_by_name[0] ); ++row )
     {

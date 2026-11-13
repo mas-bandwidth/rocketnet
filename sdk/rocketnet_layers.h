@@ -36,6 +36,7 @@ extern "C"
 #define ROCKETNET_SERVER_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, server_secret_key ) + ROCKETNET_SERVER_SECRET_KEY_BYTES, sizeof( void * ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, bind_ipv6_address ) + sizeof( const char * ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and payload limits.
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
@@ -367,7 +368,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * 
  * @param config [in] Optional full config; NULL selects defaults.
  * @param time [in] Finite, monotonic time in seconds for the initial update clock.
  * @param status [out] Optional status destination; receives OK on success or the specific failure code on every failure.
- * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
+ * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, NO_TRANSPORT_FOUND, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
  * @code
  * // token, context, config, time, and status are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
@@ -724,7 +725,7 @@ struct rocketnet_address_t
 // count from 1, the gso transport refuses past 32.
 //
 // public_address, empty by default, displaces the create call's address
-// parameter when set, so the address the transport ladder verifies, the
+// parameter when set, so the address the transport list verifies, the
 // address the transport binds and the address connect tokens validate
 // against are always the same one. It has no environment override.
 //
@@ -777,7 +778,36 @@ struct rocketnet_server_transport_config_t
     int handshakes_per_update;
     /** @brief The loopback hub the loopback transport serves through; NULL refuses the loopback transport. */
     struct rocketnet_loopback_hub_t * loopback_hub;
+    /** @brief The local IPv4 address the server binds, with no port; empty binds the IPv4 wildcard. */
+    char bind_ipv4_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    /** @brief The local IPv6 address the server binds, with no port; empty binds the IPv6 wildcard. */
+    char bind_ipv6_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
 };
+
+/** @brief Resolves the local address a server transport binds from its config and served address.
+ * @param[in] config The resolved config: bind_ipv4_address and bind_ipv6_address are read.
+ * @param[in] public_address The served address (the first family when the server serves both).
+ * @param[in] serves_both Nonzero when the server serves both families on one dual-stack socket.
+ * @param[out] bind_address Receives the address to bind, on the served port.
+ * @param[out] status Receives ROCKETNET_STATUS_INVALID_ADDRESS on a refusal; may be NULL.
+ * @return true resolved, logged as "server transport binds ..."; false refused, with one log line naming why.
+ * @details Unset binds the family's wildcard (both families: the IPv6 wildcard). Refused: an address that does not parse, of the other family, with a port, multicast or the IPv4 broadcast; a bind address for a family not served; any bind address when serves_both.
+ */
+bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_server_transport_config_t * config, const struct rocketnet_address_t * public_address,
+                                                      int serves_both, struct rocketnet_address_t * bind_address, int * status );
+
+/**
+ * @brief Drops a bind address the environment set for a family the server cannot bind specifically.
+ *
+ * @param[in,out] config The config after the environment pass.
+ * @param[in] ipv4_before bind_ipv4_address before the environment pass.
+ * @param[in] ipv6_before bind_ipv6_address before the environment pass.
+ * @param[in] binds_ipv4 Nonzero when the server serves IPv4 alone, so an IPv4 bind address applies.
+ * @param[in] binds_ipv6 Nonzero when the server serves IPv6 alone, so an IPv6 bind address applies.
+ * @details The environment is ambient, set once for a whole host or test run, so ROCKETNET_SERVER_BIND_IPV4_ADDRESS and ROCKETNET_SERVER_BIND_IPV6_ADDRESS apply only to a server of that one family: for another family, and for either on a server of both families, the field goes back to its value before the environment pass, with one log line. The environment never makes a server fail to start that way. A config field set there is still refused by rocketnet_server_transport_resolve_bind_address.
+ */
+void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int binds_ipv4,
+                                                     int binds_ipv6 );
 
 // a NULL config is a counted no-op
 /** @brief Fill a server transport config with its defaults.
@@ -902,7 +932,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, TEST_PACKET_FILTER_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, TEST_PACKET_FILTER_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, NO_TRANSPORT_FOUND, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );

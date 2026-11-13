@@ -776,7 +776,7 @@ static void rocketnet_platform_primitives_key_warning_environment()
 
     rocketnet_platform_primitives_capture_begin( "public and not for production", ROCKETNET_LOG_LEVEL_WARN );
     rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
-    rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+    rocketnet_check( status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
     rocketnet_check( rocketnet_platform_primitives_matching_lines == 0 );
     rocketnet_platform_primitives_capture_end();
 }
@@ -861,7 +861,7 @@ static void rocketnet_platform_primitives_production_status_environment()
         snprintf( config.transport, sizeof( config.transport ), "%s", transports[i] );
         status = -1;
         rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_check( status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
     }
 }
 
