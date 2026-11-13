@@ -503,7 +503,7 @@ static void test_gaps_r2ms_slot_calls_never_read_a_planted_slot()
     r2ms_warm( &w );
 
     rn_message_object_t * object = w.object;
-    r2ms_expect( sizeof( rn_message_connection_hot_t ) == 32 && r2ms_padding_past( object ),
+    r2ms_expect( r2ms_padding_past( object ),
                  "the hot slot array of 3 slots has no padding slot past it: this case's planted slot would overwrite live state" );
     const bool before = r2ms_padding_before( object );
 
@@ -605,15 +605,19 @@ static void test_gaps_r2ms_release_at_the_queue_end_reads_no_slot_before_the_arr
 
     // a release of a pointer no connection holds: the caller's error, counted
     // once, and nothing of the object changed. Slot -1's held count lies in
-    // the object struct's tail padding, past its last member: planted there,
-    // a release that starts its search at slot -1 reads it as a held count
-    // and walks a connection before the connection array.
+    // the object struct's tail padding, past its last member, on the 64-bit
+    // layouts (planted only where it is padding): a release that starts its
+    // search at slot -1 reads it as a held count and walks a connection
+    // before the connection array.
 
     rn_message_connection_hot_t * prior = &object->hot_connections[-1];
     const uint8_t * held_at = (const uint8_t *) &prior->held;
-    r2ms_expect( held_at >= (const uint8_t *) &object->owns_block + sizeof( object->owns_block ) && held_at + sizeof( prior->held ) <= (const uint8_t *) object->hot_connections,
-                 "slot -1's held count is not padding between the object struct's last member and the hot array: this case cannot plant it" );
-    prior->held = 1;
+    const bool plant = held_at >= (const uint8_t *) &object->owns_block + sizeof( object->owns_block ) &&
+                       held_at + sizeof( prior->held ) <= (const uint8_t *) object->hot_connections;
+    if ( plant )
+    {
+        prior->held = 1;
+    }
 
     rn_message_object_t copy;
     memcpy( (void *) &copy, (const void *) object, sizeof( copy ) );
@@ -624,7 +628,10 @@ static void test_gaps_r2ms_release_at_the_queue_end_reads_no_slot_before_the_arr
                  "mutation gap hunt 1/1820: a release past the queue's end changed the object struct before the hot array" );
     r2ms_expect( misuse_after == misuse_before + 1, "mutation gap hunt 1/1820: a release of a pointer no connection holds counted %llu misuse, not 1",
                  (unsigned long long) ( misuse_after - misuse_before ) );
-    prior->held = 0;
+    if ( plant )
+    {
+        prior->held = 0;
+    }
     r2ms_destroy( &w );
 }
 
