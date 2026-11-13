@@ -36,22 +36,87 @@
 #define UDP_GRO 104
 #endif // #ifndef UDP_GRO
 
-static void rocketnet_server_udp_set_socket_option( void * user, int level, int option_name, int value )
+// the system's own calls, for rocketnet_server_udp_open
+
+static int rocketnet_server_udp_system_socket( int domain, int type, int protocol )
 {
-    const int fd = *(const int *) user;
-    setsockopt( fd, level, option_name, &value, sizeof( value ) );
+    return socket( domain, type, protocol );
 }
+
+static int rocketnet_server_udp_system_getsockopt( int fd, int level, int option_name, void * value, socklen_t * length )
+{
+    return getsockopt( fd, level, option_name, value, length );
+}
+
+static int rocketnet_server_udp_system_bind( int fd, const struct sockaddr * address, socklen_t length )
+{
+    return bind( fd, address, length );
+}
+
+static int rocketnet_server_udp_system_getsockname( int fd, struct sockaddr * address, socklen_t * length )
+{
+    return getsockname( fd, address, length );
+}
+
+static int rocketnet_server_udp_system_get_flags( int fd )
+{
+    return fcntl( fd, F_GETFL, 0 );
+}
+
+static int rocketnet_server_udp_system_set_flags( int fd, int flags )
+{
+    return fcntl( fd, F_SETFL, flags );
+}
+
+static int rocketnet_server_udp_system_close( int fd )
+{
+    return close( fd );
+}
+
+static const rocketnet_server_udp_calls_t rocketnet_server_udp_system_calls = {
+    rocketnet_server_udp_system_socket,
+    setsockopt,
+    rocketnet_server_udp_system_getsockopt,
+    rocketnet_server_udp_system_bind,
+    rocketnet_server_udp_system_getsockname,
+    rocketnet_server_udp_system_get_flags,
+    rocketnet_server_udp_system_set_flags,
+    rocketnet_server_udp_system_close,
+};
 
 int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t * bind_address, int queue_index,
                                int max_clients, uint16_t * bound_port )
 {
+    return rocketnet_server_udp_open_with( &rocketnet_server_udp_system_calls, transport, bind_address, queue_index,
+                                           max_clients, bound_port );
+}
+
+// the don't-fragment options go through the same calls as the rest
+
+struct rocketnet_server_udp_option_target_t
+{
+    const rocketnet_server_udp_calls_t * calls;
+    int fd;
+};
+
+static void rocketnet_server_udp_set_socket_option( void * user, int level, int option_name, int value )
+{
+    const rocketnet_server_udp_option_target_t * target = (const rocketnet_server_udp_option_target_t *) user;
+    target->calls->set_option( target->fd, level, option_name, &value, sizeof( value ) );
+}
+
+int rocketnet_server_udp_open_with( const rocketnet_server_udp_calls_t * calls, const char * transport,
+                                    const rocketnet_address_t * bind_address, int queue_index, int max_clients,
+                                    uint16_t * bound_port )
+{
+    rocketnet_assert( calls );
     rocketnet_assert( transport );
     rocketnet_assert( bind_address );
     rocketnet_assert( bound_port );
 
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
-    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
+    int fd = calls->open_socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
     if ( fd < 0 )
     {
         rocketnet_error( "%s transport: failed to create socket: %s", transport, strerror( errno ) );
@@ -72,20 +137,20 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
     const bool first_queue = queue_index == 0;
 
     int one = 1;
-    if ( !first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
+    if ( !first_queue && calls->set_option( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
     {
         rocketnet_error( "%s transport: failed to set SO_REUSEPORT: %s", transport, strerror( errno ) );
-        close( fd );
+        calls->close_socket( fd );
         return -1;
     }
 
     if ( ipv6 )
     {
         int zero = 0;
-        if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) != 0 )
+        if ( calls->set_option( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) != 0 )
         {
             rocketnet_error( "%s transport: failed to clear socket ipv6 only: %s", transport, strerror( errno ) );
-            close( fd );
+            calls->close_socket( fd );
             return -1;
         }
     }
@@ -103,26 +168,26 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
     int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( transport, max_clients );
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
+    if ( calls->set_option( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
     {
         rocketnet_error( "%s transport: failed to set socket send buffer size: %s", transport, strerror( errno ) );
-        close( fd );
+        calls->close_socket( fd );
         return -1;
     }
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 0 )
+    if ( calls->set_option( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 0 )
     {
         rocketnet_error( "%s transport: failed to set socket receive buffer size: %s", transport, strerror( errno ) );
-        close( fd );
+        calls->close_socket( fd );
         return -1;
     }
 
     int granted_send = 0;
     int granted_receive = 0;
     socklen_t optlen = sizeof( int );
-    getsockopt( fd, SOL_SOCKET, SO_SNDBUF, &granted_send, &optlen );
+    calls->get_option( fd, SOL_SOCKET, SO_SNDBUF, &granted_send, &optlen );
     optlen = sizeof( int );
-    getsockopt( fd, SOL_SOCKET, SO_RCVBUF, &granted_receive, &optlen );
+    calls->get_option( fd, SOL_SOCKET, SO_RCVBUF, &granted_receive, &optlen );
     granted_send /= 2;
     granted_receive /= 2;
 
@@ -151,17 +216,17 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
     struct sockaddr_storage sockaddr;
     const int socklen = rocketnet_platform_sockaddr_for( ipv6, &addr, &sockaddr );
 
-    if ( socklen == 0 || bind( fd, (struct sockaddr *) &sockaddr, (socklen_t) socklen ) < 0 )
+    if ( socklen == 0 || calls->bind_socket( fd, (struct sockaddr *) &sockaddr, (socklen_t) socklen ) < 0 )
     {
         rocketnet_error( "%s transport: failed to bind socket (%s): %s", transport, ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
-        close( fd );
+        calls->close_socket( fd );
         return -1;
     }
 
-    if ( first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
+    if ( first_queue && calls->set_option( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
     {
         rocketnet_error( "%s transport: failed to set SO_REUSEPORT: %s", transport, strerror( errno ) );
-        close( fd );
+        calls->close_socket( fd );
         return -1;
     }
 
@@ -170,10 +235,10 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
         struct sockaddr_storage bound;
         memset( &bound, 0, sizeof( bound ) );
         socklen_t bound_length = sizeof( bound );
-        if ( getsockname( fd, (struct sockaddr *) &bound, &bound_length ) != 0 )
+        if ( calls->socket_name( fd, (struct sockaddr *) &bound, &bound_length ) != 0 )
         {
             rocketnet_error( "%s transport: failed to get bound socket port: %s", transport, strerror( errno ) );
-            close( fd );
+            calls->close_socket( fd );
             return -1;
         }
 
@@ -181,21 +246,22 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
         if ( !rocketnet_platform_sockaddr_to_address( &bound, ipv6, &bound_address ) )
         {
             rocketnet_error( "%s transport: could not read bound socket address", transport );
-            close( fd );
+            calls->close_socket( fd );
             return -1;
         }
 
         *bound_port = bound_address.port;
     }
 
-    if ( fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == -1 )
+    if ( calls->set_flags( fd, calls->get_flags( fd ) | O_NONBLOCK ) == -1 )
     {
         rocketnet_error( "%s transport: failed to set socket non-blocking: %s", transport, strerror( errno ) );
-        close( fd );
+        calls->close_socket( fd );
         return -1;
     }
 
-    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_udp_set_socket_option, &fd );
+    rocketnet_server_udp_option_target_t target = { calls, fd };
+    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_udp_set_socket_option, &target );
 
     return fd;
 }

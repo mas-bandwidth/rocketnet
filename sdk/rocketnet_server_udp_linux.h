@@ -38,6 +38,28 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
 // a unit case can answer it without a socket.
 typedef int ( *rocketnet_server_udp_setsockopt_t )( int fd, int level, int option_name, const void * value, socklen_t length );
 
+// The system calls the open makes, each a parameter so a unit case can answer
+// it without a socket: socket(2), setsockopt(2), getsockopt(2), bind(2),
+// getsockname(2), fcntl(2) F_GETFL and F_SETFL, close(2). Each returns what
+// the system call returns and leaves its reason in errno.
+struct rocketnet_server_udp_calls_t
+{
+    int ( *open_socket )( int domain, int type, int protocol );
+    rocketnet_server_udp_setsockopt_t set_option;
+    int ( *get_option )( int fd, int level, int option_name, void * value, socklen_t * length );
+    int ( *bind_socket )( int fd, const struct sockaddr * address, socklen_t length );
+    int ( *socket_name )( int fd, struct sockaddr * address, socklen_t * length );
+    int ( *get_flags )( int fd );
+    int ( *set_flags )( int fd, int flags );
+    int ( *close_socket )( int fd );
+};
+
+// rocketnet_server_udp_open over the given calls (rocketnet_server_udp_open
+// passes the system's own).
+int rocketnet_server_udp_open_with( const rocketnet_server_udp_calls_t * calls, const char * transport,
+                                    const rocketnet_address_t * bind_address, int queue_index, int max_clients,
+                                    uint16_t * bound_port );
+
 // The UDP_SEGMENT and UDP_GRO probes over the whole group, each all or
 // nothing. Sends rotate across the group and every socket receives, so a tier
 // claimed for the group must hold on every socket. The UDP_SEGMENT probe
