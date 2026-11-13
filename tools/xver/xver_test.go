@@ -14,8 +14,9 @@ import (
 // fixture cannot drift from what the harness prints.
 const (
 	fixtureStarted         = "SRV started 127.0.0.1:1 transport=%s max_message_bytes=262144"
-	fixtureVerify          = "SRV verify session=1 ok m0=300/300 m1=300/300 m2=300/300 m3=300/300 m4=300/300(last) m5=300/300 m6=300/300 m7=300/300  stats sent=10 received=10 rtt=0.10 loss=0.000"
-	fixtureVerifyFail      = "SRV FAIL verify session=1 m0=300/300 m1=300/300 m2=299/300 m3=300/300 m4=300/300(last) m5=300/300 m6=300/300 m7=300/300 "
+	fixtureVerify          = "SRV verify session=1 ok receipts=complete m5=300+0/300 m6=300/300 m7=300/300 rx m0=300/300 m1=300/300 m2=300/300 m3=300/300 m4=300/300(last) m5=300/300 m6=300/300 m7=300/300  stats sent=10 received=10 rtt=0.10 loss=0.000"
+	fixtureVerifyFail      = "SRV FAIL verify session=1 receipts=complete fin_sent=1 m5=300+0/300 m6=300/300 m7=300/300 rx m0=300/300 m1=300/300 m2=299/300 m3=300/300 m4=300/300(last) m5=300/300 m6=300/300 m7=300/300 "
+	fixtureReceiptsOpen    = "SRV FAIL verify session=1 receipts=open fin_sent=1 m5=300+0/300 m6=0/300 m7=300/300 rx m0=300/300 m1=300/300 m2=300/300 m3=300/300 m4=300/300(last) m5=300/300 m6=300/300 m7=300/300 "
 	fixtureEnd             = "SRV end slot=0 session=1 reason=%s(1) verdict_sent=1 t=1.000"
 	fixtureExit            = "SRV exit fails=0"
 	fixtureClientConnect   = "CLI connected session=1 attempts=1 after=0.010s transport=%s"
@@ -69,8 +70,8 @@ func TestFixturesAreXverFormats(t *testing.T) {
 	for _, format := range []string{
 		`"SRV key "`,
 		`"\nSRV started %s transport=%s max_message_bytes=%d\n"`,
-		`"SRV verify session=%x ok %s stats sent=%llu received=%llu rtt=%.2f loss=%.3f\n"`,
-		`"SRV FAIL verify session=%x %s\n"`,
+		`"SRV verify session=%x ok receipts=complete m5=%u+%u/%u m6=%u/%u m7=%u/%u rx %s stats sent=%llu received=%llu rtt=%.2f loss=%.3f\n"`,
+		`"SRV FAIL verify session=%x receipts=%s fin_sent=%d m5=%u+%u/%u m6=%u/%u m7=%u/%u rx %s\n"`,
 		`"SRV end slot=%d session=%x reason=%s(%d) verdict_sent=%d t=%.3f\n"`,
 		`"SRV exit fails=%llu\n"`,
 		`"CLI connected session=%x attempts=%d after=%.3fs transport=%s\n"`,
@@ -204,6 +205,26 @@ func TestGradeNamesEveryFault(t *testing.T) {
 	}
 	if len(reasons) != len(want) {
 		t.Errorf("%d reasons, want %d: %v", len(reasons), len(want), reasons)
+	}
+}
+
+// the server's verdict covers its own sends' receipts: a server whose
+// receipts never complete fails its verdict, and a verify line that does not
+// say receipts=complete is not a verified session
+func TestGradeRefusesServerReceiptsOpen(t *testing.T) {
+	lines := []string{"SRV key 00", fill(fixtureStarted, fixtureServerTransport), fixtureReceiptsOpen, fill(fixtureEnd, "CLIENT_DISCONNECTED"), "SRV exit fails=1"}
+	reasons := grade("basic", "main", fixtureServerTransport, 0, 1, passingClient(), lines)
+	joined := strings.Join(reasons, "\n")
+	for _, w := range []string{"server exited 1", "server: SRV FAIL verify session=1 receipts=open", "verified 0 sessions, want 1", "SRV exit fails=0"} {
+		if !strings.Contains(joined, w) {
+			t.Errorf("no reason mentions %q in %v", w, reasons)
+		}
+	}
+	unreceipted := strings.Replace(fixtureVerify, " ok receipts=complete ", " ok ", 1)
+	lines = []string{"SRV key 00", fill(fixtureStarted, fixtureServerTransport), unreceipted, fill(fixtureEnd, "CLIENT_DISCONNECTED"), fixtureExit}
+	reasons = grade("basic", "main", fixtureServerTransport, 0, 0, passingClient(), lines)
+	if len(reasons) != 1 || !strings.Contains(reasons[0], "without its own receipts complete") {
+		t.Fatalf("reasons = %v", reasons)
 	}
 }
 

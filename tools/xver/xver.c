@@ -27,9 +27,11 @@
     modes 1, 3, 4 and 7 and zero otherwise; no sequence twice in any mode;
     strictly in order for modes 3 and 7; strictly increasing for modes 1
     and 4. At the end of a session, against the sender's FIN totals: every
-    message of modes 2, 3, 6 and 7 delivered, and the last of mode 4. The
-    sender checks one ACKED receipt per send on modes 6 and 7 and one
-    terminal receipt per send on mode 5.
+    message of modes 2, 3, 6 and 7 delivered, and the last of mode 4. Each
+    end, as sender, checks one ACKED receipt per send on modes 6 and 7 and
+    one terminal receipt per send on mode 5: the client before it ends the
+    session, the server in its verdict ("SRV verify ... receipts=complete",
+    which the driver requires of every verified session).
 
     Cases (the client runs the case; the server reacts to control messages):
 
@@ -519,16 +521,20 @@ static void server_streams( struct rocketnet_server_t * server, int index, struc
         return;
     }
     const int complete = rx_complete( &s->rx, s->remote_totals );
-    if ( !complete && now - s->fin_at <= 120.0 )
+    // the server's own sends are graded as the client's are: every stream sent
+    // (its FIN out) and one receipt per send on modes 5, 6 and 7
+    const int receipts = s->fin_sent && tx_receipts_done( &s->tx );
+    if ( ( !complete || !receipts ) && now - s->fin_at <= 120.0 )
     {
         return;
     }
     char summary[512];
     rx_summary( summary, sizeof( summary ), &s->rx, s->remote_totals );
-    const uint32_t ok = ( complete && s->rx.bad == 0 ) ? 1u : 0u;
+    const uint32_t ok = ( complete && receipts && s->rx.bad == 0 ) ? 1u : 0u;
     if ( !ok )
     {
-        printf( "SRV FAIL verify session=%x %s\n", s->session, summary );
+        printf( "SRV FAIL verify session=%x receipts=%s fin_sent=%d m5=%u+%u/%u m6=%u/%u m7=%u/%u rx %s\n", s->session, receipts ? "complete" : "open", s->fin_sent, s->tx.acked[5],
+                s->tx.lost[5], s->tx.sent_with_receipt[5], s->tx.acked[6], s->tx.sent_with_receipt[6], s->tx.acked[7], s->tx.sent_with_receipt[7], summary );
         fail_line();
     }
     else
@@ -536,8 +542,9 @@ static void server_streams( struct rocketnet_server_t * server, int index, struc
         struct rocketnet_server_client_stats_t stats;
         memset( &stats, 0, sizeof( stats ) );
         rocketnet_server_client_stats( server, index, &stats );
-        printf( "SRV verify session=%x ok %s stats sent=%llu received=%llu rtt=%.2f loss=%.3f\n", s->session, summary, (unsigned long long) stats.packets_sent,
-                (unsigned long long) stats.packets_received, stats.rtt_ms, stats.packet_loss_percent );
+        printf( "SRV verify session=%x ok receipts=complete m5=%u+%u/%u m6=%u/%u m7=%u/%u rx %s stats sent=%llu received=%llu rtt=%.2f loss=%.3f\n", s->session, s->tx.acked[5],
+                s->tx.lost[5], s->tx.sent_with_receipt[5], s->tx.acked[6], s->tx.sent_with_receipt[6], s->tx.acked[7], s->tx.sent_with_receipt[7], summary,
+                (unsigned long long) stats.packets_sent, (unsigned long long) stats.packets_received, stats.rtt_ms, stats.packet_loss_percent );
     }
     uint32_t words[1 + XV_MODES];
     words[0] = ok;

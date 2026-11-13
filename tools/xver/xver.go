@@ -20,8 +20,9 @@
 // and the client says portable on every connect (a pin the build cannot
 // honour falls back to the library's auto order with only a warning),
 // neither prints a line holding " FAIL ", the server verified every session
-// the case has, and the server's end reasons are exactly the case's list
-// (expectedServerEnds). Every failure prints one line
+// the case has, each with its own sends' receipts complete, and the server's
+// end reasons are exactly the case's list (expectedServerEnds). Every failure
+// prints one line
 //
 //	XVER FAIL case=<case> client=<label> server=<label> transport=<t>: <reason>
 //
@@ -220,6 +221,12 @@ func grade(caseName, serverLabel, transport string, clientExit, serverExit int, 
 	}
 	if n, w := countPrefix(serverLines, "SRV verify "), expectedVerifies(caseName); n != w {
 		reasons = append(reasons, fmt.Sprintf("server verified %d sessions, want %d", n, w))
+	}
+	// the server's verdict covers its own sends' receipts, as the client's does
+	for _, line := range serverLines {
+		if strings.HasPrefix(line, "SRV verify ") && !strings.Contains(line, " ok receipts=complete ") {
+			reasons = append(reasons, "server verified a session without its own receipts complete: "+line)
+		}
 	}
 	if countPrefix(serverLines, "SRV exit fails=0") != 1 {
 		reasons = append(reasons, "server did not print SRV exit fails=0")
