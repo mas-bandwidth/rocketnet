@@ -665,6 +665,9 @@ static int rocketnet_uring_receive_queue_buffer( struct rocketnet_uring_receive_
         const enum rocketnet_receive_drop_t drop = queue->has_filter ? rocketnet_receive_prefilter( data, bytes, queue->packet_filter ) : ROCKETNET_RECEIVE_ACCEPT;
         if ( drop != ROCKETNET_RECEIVE_ACCEPT )
         {
+#if ROCKETNET_DEV
+            rocketnet_receive_drop_sample_record( (int) drop, &from, data, bytes );
+#endif // #if ROCKETNET_DEV
             rocketnet_receive_drop_tally_count( &queue->tally, drop );
             continue;
         }
