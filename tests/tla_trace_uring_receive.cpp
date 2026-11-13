@@ -12,19 +12,21 @@
 // socket; the fake kernel takes buffers from the queue's real buffer ring
 // (rocketnet_uring_receive_queue_test_take) and fills them as a multishot
 // receive does; the worker's calls are the code's own (needs_arm, arm, cqe,
-// stop) and main's are drain and the end of its update. After every step
-// it writes one record of the model's variables: the bank's indexes, slots
-// and counters and the buffer ring's tail and entries read from the code's
-// memory, the environment's choices from the walk. No socket, no clock, no
-// thread.
+// stop) and main's are drain and the end of its update. One record per step
+// (tla_step): the call, what it gave back, the action its own result says
+// it took, and every model variable after it: the bank's indexes, slots and
+// counters and the buffer ring's tail and entries read from the code's
+// memory, the environment's choices from the walk. The kernel's take is
+// KernelReceive(bid) with the buffer test_take returned; a completion is
+// Complete(n) with the datagrams cqe returned it banked; a drain is Drain(n)
+// with the count drain returned; an arm is Arm when arm returned true. No
+// socket, no clock, no thread.
 //
-//   tla_trace --layer receive --seed N --out DIR [--steps K]
-//
-// writes DIR/MCTraceReceiveSeed<seed>.tla and .cfg
-// (MCTraceReceivePlantSeed<seed> from the plant build, whose drain releases
-// the slots it hands main: ROCKETNET_URING_RECEIVE_QUEUE_PLANT). It prints
-// PLANT-FIRED n, the drains that released the slots they took: n > 0 from
-// the plant build, 0 from the clean one (the layer is quiet).
+// The plant binary's code is the queue with
+// ROCKETNET_URING_RECEIVE_QUEUE_PLANT (the drain releases the slots it hands
+// main). The walk reports (tla_report_t) the planted effect where it shows:
+// a drain that took datagrams and moved head past the drain before's end,
+// which the clean code never does.
 
 #if defined( ROCKETNET_TLA_PLANT )
 #define ROCKETNET_URING_RECEIVE_QUEUE_PLANT 1
@@ -57,12 +59,11 @@
 #define RECEIVE_MAX_ARRIVE 40
 #define RECEIVE_DATAGRAM_BYTES 64
 
-// the most steps one walk takes, whatever --steps asks: each record carries
-// the datagrams banked and delivered so far, so a record's size grows with
-// the walk, and TLC's time for a trace grows faster than its length cubed
-// (on amd-2: 201 records 5 s, 401 records 116 s, against a 110 s budget).
-// Coverage comes from more seeds, each inside the budget.
-#define RECEIVE_MAX_STEPS 200
+// each record carries the datagrams banked and delivered so far, so a
+// record's size grows with the walk, and TLC's time for a trace grows faster
+// than its length cubed (on amd-2: 201 records 5 s, 401 records 116 s,
+// against a 110 s budget): the row's steps is 200, and coverage comes from
+// more seeds, each inside the budget
 #define RECEIVE_BUFFER_BYTES ( 70 * 1024 )
 #define RECEIVE_TAIL_WRAP 65536
 
@@ -101,7 +102,6 @@ struct receive_walk_t
     bool spurious;
     bool dup;
     bool torn;
-    int early_releases;     // drains that released the slots they took: the plant firing
 };
 
 // a slot's datagram: the id the walk wrote at byte 20, 0 for a slot never written
@@ -270,14 +270,14 @@ static void receive_arrive( receive_walk_t & walk, tla_random_t & random )
 }
 
 // the fake kernel takes the socket's oldest receive into the buffer at its
-// head of the queue's real buffer ring
-static void receive_kernel_receive( receive_walk_t & walk )
+// head of the queue's real buffer ring; returns the buffer test_take gave
+static int receive_kernel_receive( receive_walk_t & walk )
 {
     const int bid = rocketnet_uring_receive_queue_test_take( walk.queue, &walk.br_head );
     if ( bid < 0 || bid >= RECEIVE_BUFFERS )
     {
         walk.dup = true;
-        return;
+        return bid;
     }
     if ( !walk.owner_ring[bid] )
     {
@@ -319,6 +319,7 @@ static void receive_kernel_receive( receive_walk_t & walk )
     completion.res = rocketnet_uring_receive_queue_test_write( walk.queue, bid, &name, (int) sizeof( struct sockaddr_in ), payload, payload_bytes,
                                                                segs.size() > 1 ? RECEIVE_DATAGRAM_BYTES : 0, 0, 0 );
     walk.cq.push_back( completion );
+    return bid;
 }
 
 static void receive_kernel_end( receive_walk_t & walk, int32_t res )
@@ -331,8 +332,9 @@ static void receive_kernel_end( receive_walk_t & walk, int32_t res )
     walk.cq.push_back( completion );
 }
 
-// the worker: one completion, oldest first
-static void receive_complete( receive_walk_t & walk )
+// the worker: one completion, oldest first; returns what cqe returned, the
+// datagrams it banked
+static int receive_complete( receive_walk_t & walk )
 {
     const receive_completion_t completion = walk.cq.front();
     walk.cq.erase( walk.cq.begin() );
@@ -343,12 +345,11 @@ static void receive_complete( receive_walk_t & walk )
 
     if ( completion.end )
     {
-        (void) rocketnet_uring_receive_queue_cqe( queue, completion.res, 0 );
-        return;
+        return rocketnet_uring_receive_queue_cqe( queue, completion.res, 0 );
     }
 
     const uint32_t flags = IORING_CQE_F_BUFFER | ( (uint32_t) completion.bid << IORING_CQE_BUFFER_SHIFT ) | IORING_CQE_F_MORE;
-    (void) rocketnet_uring_receive_queue_cqe( queue, completion.res, flags );
+    const int banked = rocketnet_uring_receive_queue_cqe( queue, completion.res, flags );
     walk.owner_ring[completion.bid] = true;
 
     // the datagrams the code banked, from its slots
@@ -362,9 +363,12 @@ static void receive_complete( receive_walk_t & walk )
     {
         walk.spurious = true;
     }
+    return banked;
 }
 
-static void receive_drain( receive_walk_t & walk )
+// main's drain; returns what drain returned, and in released whether it
+// moved head past the drain before's end with datagrams taken (the plant)
+static int receive_drain( receive_walk_t & walk, bool * released )
 {
     struct rocketnet_uring_receive_queue_t * queue = walk.queue;
     const uint64_t exposed_before = queue->exposed;
@@ -374,10 +378,7 @@ static void receive_drain( receive_walk_t & walk )
     uint8_t * data[RECEIVE_DRAIN_MAX];
     const int n = rocketnet_uring_receive_queue_drain( queue, RECEIVE_DRAIN_MAX, from, bytes, data );
 
-    if ( n > 0 && queue->head.load() != exposed_before )
-    {
-        walk.early_releases++;
-    }
+    *released = n > 0 && queue->head.load() != exposed_before;
 
     walk.vidx.clear();
     walk.view.clear();
@@ -389,6 +390,7 @@ static void receive_drain( receive_walk_t & walk )
         walk.pointers.push_back( data[i] );
     }
     walk.reading = true;
+    return n;
 }
 
 static void receive_done( receive_walk_t & walk )
@@ -437,11 +439,11 @@ static int trace_receive( uint64_t seed, int steps, const char * out )
     walk.spurious = false;
     walk.dup = false;
     walk.torn = false;
-    walk.early_releases = 0;
 
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
-    records.push_back( receive_record( walk ) );
+    tla_report_t report;
+    records.push_back( tla_step( "init", "init", "<<>>", receive_record( walk ) ) );
 
     enum
     {
@@ -456,8 +458,7 @@ static int trace_receive( uint64_t seed, int steps, const char * out )
         DONE
     };
 
-    const int walk_steps = steps < RECEIVE_MAX_STEPS ? steps : RECEIVE_MAX_STEPS;
-    for ( int step = 0; step < walk_steps; step++ )
+    for ( int step = 0; step < steps; step++ )
     {
         struct rocketnet_uring_receive_queue_t * queue = walk.queue;
         const uint16_t ring_count = (uint16_t) ( __atomic_load_n( &queue->buf_ring->tail, __ATOMIC_ACQUIRE ) - walk.br_head );
@@ -505,62 +506,83 @@ static int trace_receive( uint64_t seed, int steps, const char * out )
             enabled.push_back( DONE );
         }
 
+        const char * op = "";
+        const char * act = "";
+        std::string args = "<<>>";
+        bool released = false;
         switch ( enabled[(size_t) random.below( (int) enabled.size() )] )
         {
             case ARRIVE:
                 receive_arrive( walk, random );
+                op = "arrive";
+                act = "Arrive";
                 break;
             case KERNEL_RECEIVE:
-                receive_kernel_receive( walk );
+                args = tla_sequence( { tla_int( receive_kernel_receive( walk ) ) } );
+                op = "receive";
+                act = "KernelReceive";
                 break;
             case KERNEL_NO_BUFFERS:
                 receive_kernel_end( walk, -ENOBUFS );
+                op = "noBuffers";
+                act = "KernelNoBuffers";
                 break;
             case KERNEL_CANCEL:
                 receive_kernel_end( walk, -ECANCELED );
+                op = "cancel";
+                act = "KernelCancel";
                 break;
             case STOP:
                 rocketnet_uring_receive_queue_stop( queue );
+                op = "stop";
+                act = "Stop";
                 break;
             case ARM:
             {
                 struct io_uring_sqe sqe;
-                if ( rocketnet_uring_receive_queue_arm( queue, &sqe ) )
+                const bool armed = rocketnet_uring_receive_queue_arm( queue, &sqe );
+                if ( armed )
                 {
                     walk.karmed = true;
                 }
+                op = "arm";
+                act = armed ? "Arm" : "ArmRefused";
                 break;
             }
             case COMPLETE:
-                receive_complete( walk );
+                args = tla_sequence( { tla_int( receive_complete( walk ) ) } );
+                op = "cqe";
+                act = "Complete";
                 break;
             case DRAIN:
-                receive_drain( walk );
+                args = tla_sequence( { tla_int( receive_drain( walk, &released ) ) } );
+                op = "drain";
+                act = "Drain";
                 break;
             default:
                 receive_done( walk );
+                op = "done";
+                act = "Done";
                 break;
         }
-        records.push_back( receive_record( walk ) );
+        report.act( act );
+        records.push_back( tla_step( op, act, args, receive_record( walk ) ) );
+        if ( released )
+        {
+            report.planted( (int) records.size() );
+        }
     }
 
     rocketnet_uring_receive_queue_destroy( walk.queue );
 
-    // the plant build must fire for its trace to be a witness; the clean
-    // build never does
-    printf( "PLANT-FIRED %d\n", walk.early_releases );
+    report.print();
 
     char constants[1024];
     snprintf( constants, sizeof( constants ),
               "    S = %d\n    B = %d\n    TailWrap = %d\n    MaxArrive = %d\n    MaxSegs = %d\n    DrainMax = %d\n"
               "    RoomRule = \"refresh\"\n    SlotRule = \"mod\"\n    ReleaseRule = \"next\"\n    CounterWrap = 0\n",
               RECEIVE_SLOTS, RECEIVE_BUFFERS, RECEIVE_TAIL_WRAP, RECEIVE_MAX_ARRIVE, RECEIVE_MAX_SEGS, RECEIVE_DRAIN_MAX );
-#if defined( ROCKETNET_URING_RECEIVE_QUEUE_PLANT )
-    const std::string name = "MCTraceReceivePlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_URING_RECEIVE_QUEUE_PLANT )
-    const std::string name = "MCTraceReceiveSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_URING_RECEIVE_QUEUE_PLANT )
-    return tla_write_trace( out, name, "TraceRNUringQueueReceiveLayout", "", constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceReceive", seed, "TraceRNUringQueueReceiveLayout", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "receive", trace_receive );

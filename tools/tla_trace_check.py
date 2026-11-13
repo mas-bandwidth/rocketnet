@@ -94,7 +94,11 @@ LAYERS = {
     },
     "receive": {
         "modules": ["RNUringQueueReceiveLayout.tla", "TraceRNUringQueueReceiveLayout.tla"],
-        "quiet": True,
+        "untraced": {},
+        "reach": ["BankFull", "RingDry"],
+        # a record carries the datagrams banked and delivered so far, so TLC's
+        # time grows faster than the walk: 200 steps a seed stays in budget
+        "steps": 200,
     },
 }
 

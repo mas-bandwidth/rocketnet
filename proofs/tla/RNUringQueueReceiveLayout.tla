@@ -145,12 +145,13 @@ Arrive ==
     /\ UNCHANGED <<karmed, cq, armed, stopping>> /\ UNCHANGED RingVars
     /\ UNCHANGED BankVars /\ UNCHANGED MainVars
 
-KernelReceive ==
+\* the kernel takes buffer bid, the one at its head's entry
+KernelReceive(bid) ==
     /\ karmed /\ sock # <<>> /\ RingCount > 0
-    /\ LET bid == entries[Entry(brHead)] IN
-       /\ dup' = (dup \/ owner[bid] # "ring")
-       /\ owner' = [owner EXCEPT ![bid] = "cq"]
-       /\ cq' = Append(cq, [kind |-> "data", bid |-> bid, segs |-> Head(sock)])
+    /\ bid = entries[Entry(brHead)]
+    /\ dup' = (dup \/ owner[bid] # "ring")
+    /\ owner' = [owner EXCEPT ![bid] = "cq"]
+    /\ cq' = Append(cq, [kind |-> "data", bid |-> bid, segs |-> Head(sock)])
     /\ brHead' = (brHead + 1) % TailWrap
     /\ sock' = Tail(sock)
     /\ UNCHANGED <<arrived, nextId, karmed, armed, stopping, brTail, entries>>
@@ -204,18 +205,21 @@ BankOne(g, st) ==
 RECURSIVE BankAll(_, _)
 BankAll(segs, st) == IF segs = <<>> THEN st ELSE BankAll(Tail(segs), BankOne(Head(segs), st))
 
-\* rocketnet_uring_receive_queue_cqe: one completion, oldest first
-Complete ==
+\* rocketnet_uring_receive_queue_cqe: one completion, oldest first; it
+\* returned n, the datagrams it banked
+Complete(n) ==
     /\ cq # <<>>
     /\ LET c == Head(cq) IN
        /\ cq' = Tail(cq)
        /\ IF c.kind = "end"
-            THEN /\ armed' = FALSE
+            THEN /\ n = 0
+                 /\ armed' = FALSE
                  /\ UNCHANGED RingVars /\ UNCHANGED BankVars
             ELSE LET st == BankAll(c.segs, [slotD |-> slotD, tail |-> tail, headSeen |-> headSeen,
                                             banked |-> banked, named |-> named, full |-> full,
                                             spurious |-> spurious])
-                 IN /\ slotD' = st.slotD /\ tail' = st.tail /\ headSeen' = st.headSeen
+                 IN /\ n = Len(st.banked) - Len(banked)
+                    /\ slotD' = st.slotD /\ tail' = st.tail /\ headSeen' = st.headSeen
                     /\ banked' = st.banked /\ named' = st.named /\ full' = st.full
                     /\ spurious' = st.spurious
                     \* the buffer goes back, after every datagram in it
@@ -228,11 +232,12 @@ Complete ==
 -----------------------------------------------------------------------------
 \* main
 
-\* rocketnet_uring_receive_queue_drain
-Drain ==
+\* rocketnet_uring_receive_queue_drain; it returned n, the datagrams it
+\* exposed
+Drain(n) ==
     /\ ~reading
-    /\ LET n == Min(Diff(tail, exposed), DrainMax)
-           idx == [i \in 1..n |-> Wrap(exposed + i - 1) % S]
+    /\ n = Min(Diff(tail, exposed), DrainMax)
+    /\ LET idx == [i \in 1..n |-> Wrap(exposed + i - 1) % S]
        IN /\ head' = IF ReleaseRule = "next" THEN exposed ELSE Wrap(exposed + n)
           /\ exposed' = Wrap(exposed + n)
           /\ vidx' = idx
@@ -256,9 +261,9 @@ Done ==
 -----------------------------------------------------------------------------
 
 Next ==
-    \/ Arrive \/ KernelReceive \/ KernelNoBuffers \/ KernelCancel \/ Stop
-    \/ Arm \/ Complete
-    \/ Drain \/ Done
+    \/ Arrive \/ \E b \in Bufs : KernelReceive(b) \/ KernelNoBuffers \/ KernelCancel \/ Stop
+    \/ Arm \/ \E n \in 0..MaxSegs : Complete(n)
+    \/ \E n \in 0..DrainMax : Drain(n) \/ Done
 
 Spec == Init /\ [][Next]_vars
 

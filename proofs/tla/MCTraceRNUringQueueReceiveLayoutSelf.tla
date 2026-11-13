@@ -9,10 +9,12 @@
 (* record with the drain releasing what it takes (head 1 at record 6, the  *)
 (* plant's step) must be rejected at that record                           *)
 (* (MCTraceRNUringQueueReceiveLayoutSelfBrokenRelease.cfg,                 *)
-(* TraceConsistent).  The harness's traces are checked the same way, with  *)
-(* TraceLog from the module it writes.                                     *)
+(* TraceConsistent).  Each record is a call as the harness writes it: the  *)
+(* op, the action its result names, its arguments and every variable       *)
+(* after it (README-TraceCheck.md).  The harness's traces are checked the  *)
+(* same way, with TraceLog from the module it writes.                      *)
 (***************************************************************************)
-EXTENDS TraceRNUringQueueReceiveLayout
+EXTENDS TraceRNUringQueueReceiveLayout, TLC
 
 D1 == [d |-> 1, ok |-> TRUE]
 
@@ -47,17 +49,27 @@ S6 == [S5 EXCEPT !.exposed = 1, !.vidx = <<0>>, !.view = <<1>>, !.reading = TRUE
 \* Done
 S7 == [S6 EXCEPT !.delivered = <<1>>, !.reading = FALSE]
 
-GoodLog == << S1, S2, S3, S4, S5, S6, S7 >>
+R(op, act, args, state) == [op |-> op, act |-> act, args |-> args, state |-> state]
+
+GoodLog == << R("init", "init", <<>>, S1),
+              R("arrive", "Arrive", <<>>, S2),
+              R("arm", "Arm", <<>>, S3),
+              R("receive", "KernelReceive", <<0>>, S4),
+              R("cqe", "Complete", <<1>>, S5),
+              R("drain", "Drain", <<1>>, S6),
+              R("done", "Done", <<>>, S7) >>
 
 \* the drain releases what it takes: head 1 at record 6 is no model step
 S6Bad == [S6 EXCEPT !.head = 1]
 
-BadLog == << S1, S2, S3, S4, S5, S6Bad >>
+BadLog == << GoodLog[1], GoodLog[2], GoodLog[3], GoodLog[4], GoodLog[5],
+             R("drain", "Drain", <<1>>, S6Bad) >>
 
 \* an under-logged harness: record 3 leaves out torn, so it is no state of
 \* the model, however right its other fields
 S3Short == [f \in DOMAIN S3 \ {"torn"} |-> S3[f]]
 
-ShortLog == << S1, S2, S3Short, S4, S5, S6, S7 >>
+ShortLog == << GoodLog[1], GoodLog[2], R("arm", "Arm", <<>>, S3Short), GoodLog[4],
+               GoodLog[5], GoodLog[6], GoodLog[7] >>
 
 =============================================================================

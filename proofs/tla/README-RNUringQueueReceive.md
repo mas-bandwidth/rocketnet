@@ -27,12 +27,17 @@ The queues share nothing, so one queue is the machine. Two models cover it:
 
 `TraceRNUringQueueReceiveLayout.tla` binds the code to the layout model
 (README-TraceCheck.md). `tests/tla_trace_uring_receive.cpp` walks the real module with
-fake completions and logs every variable at every call. Its plant,
+fake completions and writes one record per call (tla_step): the call, what it gave
+back, the action its own result names, and every variable after it. The fake kernel's
+take is KernelReceive(bid) with the buffer test_take returned; a completion is
+Complete(n) with the datagrams cqe returned it banked; a drain is Drain(n) with drain's
+count; an arm is Arm when arm returned true. Its plant,
 `ROCKETNET_URING_RECEIVE_QUEUE_PLANT`, is the ReleaseAtTake witness in the code: the
 drain stores head as the end of what it takes. The plant build (`ROCKETNET_TLA_PLANT`)
-includes the module's .cpp with that define set. The walk prints `PLANT-FIRED N`, the
-drains that released the slots they took: N > 0 from the plant build and 0 from the
-clean one, so the layer is quiet.
+includes the module's .cpp with that define set. The walk reports the plant where it
+shows (PLANT-AT): a drain that took datagrams and moved head past the drain before's
+end, which the clean code never does. The plant trace must be rejected at the first of
+those records.
 
 ## The claims
 
@@ -61,10 +66,10 @@ The layout model (MCRNUringQueueReceiveLayout.tla) checks `InOrder`, `NoTornRead
 - **Layout:** 3 slots, 4 buffers, ring counters wrapping at 8, 4 receives of up to 2
   datagrams, drains of up to 2.
 - **Trace walk:** 3 slots, 4 buffers, the kernel's 65536 wrap, up to 40 receives in at
-  most 200 steps. Each record carries every datagram banked and delivered so far, so
-  TLC's time grows faster than the cube of the walk's length: on amd-2, 201 records
-  took 5 s and 401 took 116 s. The walk is capped to stay well inside the 110 s
-  budget, and more seeds give the coverage.
+  200 steps (the row's steps). Each record carries every datagram banked and delivered
+  so far, so TLC's time grows faster than the cube of the walk's length: on amd-2, 201
+  records took 5 s and 401 took 116 s. 200 steps stays well inside the 110 s budget,
+  and more seeds give the coverage.
 
 ## The reversed witnesses
 
@@ -89,7 +94,22 @@ Each witness changes one rule switch and must break one claim.
 
 ## Results
 
-The pinned tlacheck and jar give the counts. TLC writes them to this table, together
-with the witnesses as TLC printed them, each checked by hand against the code.
+The layout model and the trace self controls, on bench-nyc-5 (pinned jar 936a2620...,
+TLC 2.19, 2 workers, 2026-11-13). The layout's actions take what the code's calls
+return as arguments (KernelReceive(bid), Complete(n), Drain(n)); each argument is
+fixed by the state, so the control's distinct states are as before (378,694) and
+only the generated states grow.
 
-Records: the CASES.tsv, COVERAGE.tsv and RUNS.tsv rows go in with the runs.
+| cfg | result | states (distinct) |
+|---|---|---|
+| MCRNUringQueueReceiveLayout.cfg | pass | 2,305,441 (378,694), 11.8 s |
+| MCRNUringQueueReceiveLayoutBrokenStaleHead.cfg | FullOnlyWhenFull violated | 2,040,586 (382,422) |
+| MCRNUringQueueReceiveLayoutBrokenSlotPlusOne.cfg | InOrder violated | 91,087 (30,379) |
+| MCRNUringQueueReceiveLayoutBrokenReleaseAtTake.cfg | NoTornRead violated | 1,227,033 (246,098) |
+| MCRNUringQueueReceiveLayoutBrokenNarrowCounter.cfg | InOrder violated | 1,696,993 (276,342) |
+| MCRNUringQueueReceiveLayoutBrokenRingNotPow2.cfg | NoDoubleTake violated | 6,055 (2,888) |
+| MCTraceRNUringQueueReceiveLayoutSelf.cfg | pass: all 7 records accepted | 13 (7) |
+| MCTraceRNUringQueueReceiveLayoutSelfBrokenRelease.cfg | TraceConsistent violated | 9 (6) |
+| MCTraceRNUringQueueReceiveLayoutSelfBrokenShort.cfg | TraceConsistent violated | 6 (3) |
+
+Records: RUNS.tsv holds this run, merged through the pinned tlacheck.
