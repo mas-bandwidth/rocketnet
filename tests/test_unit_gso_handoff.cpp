@@ -47,7 +47,10 @@ static void test_server_gso_stop_counts_unreceived()
 REGISTER_UNIT_TEST( test_server_gso_stop_counts_unreceived );
 
 // A refused sendmmsg through the send-failure seam: an errno other than a
-// full socket's drops one message and sends the rest.
+// full socket's drops its own message only, and the flush still tries the
+// next. All three messages are refused here (three syscalls, three dropped,
+// none sent); a packet accepted after a refused one is
+// test_server_gso_plain_resend_failures's case.
 static void test_server_gso_send_refusals()
 {
     check( rocketnet_server_gso_test_send_refusals() );

@@ -3,25 +3,31 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// test_unit_address_and_base64_contracts.cpp -- the error arms' contracts.
-//
-// Two error arms at BASE, pinned here:
+// test_unit_address_and_base64_contracts.cpp -- the error arms' contracts
+// of the base64 and address helpers, and the Wycheproof vector reader.
 //
 //   * rocketnet_base64_decode_data never returns a negative value: every
 //     refusal is `return 0` and every success returns a non-negative
 //     length. The table below drives it over empty, valid, invalid,
 //     mis-padded and over-long inputs and asserts each result is >= 0.
 //
-//   * rocketnet_address_to_string tests
-//     snprintf's return `< 0` and logs "truncated". snprintf signals
-//     truncation by returning a value >= the buffer size; a negative
-//     return is a formatting or encoding error. The longest bracketed
-//     IPv6 rendering with a port is 47 characters against a
-//     ROCKETNET_MAX_ADDRESS_STRING_LENGTH of 256 (sdk/rocketnet_layers.h), so
-//     truncation is unreachable today -- but the arm must name what it
-//     checks. The longest rendering is asserted whole and in-bounds.
+//   * rocketnet_base64_encode_data refuses an input whose encoding is past
+//     INT_MAX characters with -1 and writes nothing.
 //
-// Both contracts hold at BASE, so both tests pass there; that is expected.
+//   * rocketnet_address_to_string's error arm takes both a negative snprintf
+//     return and a truncation (a return >= the buffer size). The longest
+//     bracketed IPv6 rendering with a port is 47 characters against a
+//     ROCKETNET_MAX_ADDRESS_STRING_LENGTH of 256 (sdk/rocketnet_layers.h), so
+//     the arm is unreachable from here; what is checked is that the longest
+//     rendering of each family comes back whole and in bounds, and the forms
+//     with and without a port.
+//
+//   * rocketnet_address_load_ipv4 round-trips through parse and
+//     rocketnet_address_ipv4.
+//
+//   * the Wycheproof files load with their counts, and the JSON reader
+//     refuses malformed input.
+//
 // No socket, no clock: the inputs are fixed and the functions are pure.
 
 #include "test_unit_registry.h"

@@ -49,8 +49,8 @@ static void test_platform_socket_hygiene_mapped_source_decision()
     rocketnet_unit_check( rocketnet_address_parse( &mapped, "[::ffff:1.2.3.4]:40000" ) );
     rocketnet_unit_check( rocketnet_address_is_ipv4_in_ipv6( &mapped ) );
 
-    // Demonstrates the bug at BASE:
-    // rocketnet_address_convert_ipv6_to_ipv4 unconditionally accepts mapped addresses.
+    // rocketnet_address_convert_ipv6_to_ipv4 converts any mapped address,
+    // whatever the socket: it is not the receive path's policy.
 
     struct rocketnet_address_t converted = mapped;
     rocketnet_address_convert_ipv6_to_ipv4( &converted );
@@ -78,8 +78,9 @@ static void test_platform_socket_hygiene_mapped_source_decision()
     memset( &from, 0, sizeof( from ) );
     bool accepted = rocketnet_platform_mmsg_read_sockaddr( &s, &storage, &from );
 
-    // At BASE, mmsg_read_sockaddr accepted the mapped source on a non-dual-stack socket (accepted == true).
-    // With the fix, it calls rocketnet_address_accept_received_source and refuses it (accepted == false).
+    // mmsg_read_sockaddr takes the receive path's policy,
+    // rocketnet_address_accept_received_source, and refuses the mapped source
+    // on a non-dual-stack socket.
 
     rocketnet_unit_check( !accepted );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
@@ -88,8 +89,7 @@ static void test_platform_socket_hygiene_mapped_source_decision()
 static void test_platform_socket_hygiene_descriptor_valid()
 {
     // File descriptor 0 is STDIN_FILENO, a legal socket descriptor if stdin was closed.
-    // At BASE, rocketnet_platform_socket_destroy checked `socket->handle != 0`,
-    // treating descriptor 0 as none/invalid and leaking it.
+    // A check of `handle != 0` would treat descriptor 0 as none and leak it.
     // Valid descriptors are >= 0 (POSIX) and != INVALID_SOCKET (Windows).
 
     rocketnet_unit_check( rocketnet_platform_socket_handle_is_valid( 0 ) );
