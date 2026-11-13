@@ -4693,3 +4693,52 @@ void rocketnet_client_transport_accept_payload( struct rocketnet_client_transpor
         rocketnet_client_protocol_accept_payload( &transport->protocol, batch->sequence[k] );
     }
 }
+
+// mutation gaps ct-memory begin
+#if ROCKETNET_DEV
+// Reads of private layout for the memory units
+// (tests/test_unit_gaps_ct_memory_*.cpp): the counts construction sets, the
+// legacy path's fault count, one slot's wire size, and where the bytes one
+// ring past payload_ring[] would land. They change nothing.
+
+void rocketnet_client_transport_counts_for_test( const rocketnet_client_transport_t * client_transport, uint64_t * ring_counts,
+                                                 int * received_num_packets, int * received_receive_index, int * buffer_counts,
+                                                 uint64_t * transport_faults )
+{
+    rocketnet_assert( client_transport && ring_counts && received_num_packets && received_receive_index && buffer_counts && transport_faults );
+
+    for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
+    {
+        ring_counts[ring] = client_transport->payload_ring[ring].num_packets;
+    }
+
+    *received_num_packets = client_transport->received_packets.num_packets;
+    *received_receive_index = client_transport->received_packets.receive_index;
+
+    for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+    {
+        buffer_counts[i] = client_transport->receive_buffer[i].num_packets;
+    }
+
+    *transport_faults = client_transport->client_io.transport_faults.load( std::memory_order_relaxed );
+}
+
+int rocketnet_client_transport_ring_wire_bytes_for_test( const rocketnet_client_transport_t * client_transport, int ring, int slot )
+{
+    rocketnet_assert( client_transport && ring >= 0 && ring < ROCKETNET_CLIENT_IO_NUM_RINGS && slot >= 0 && slot < ROCKETNET_CLIENT_PAYLOAD_RING_SIZE );
+
+    return client_transport->payload_ring[ring].info[slot].wire_bytes;
+}
+
+void rocketnet_client_transport_layout_for_test( size_t * past_rings_count_offset, size_t * stop_burst_offset, size_t * stop_burst_bytes )
+{
+    rocketnet_assert( past_rings_count_offset && stop_burst_offset && stop_burst_bytes );
+
+    *past_rings_count_offset = offsetof( rocketnet_client_transport_t, payload_ring ) +
+                               ROCKETNET_CLIENT_IO_NUM_RINGS * sizeof( struct rocketnet_client_payload_ring_t ) +
+                               offsetof( struct rocketnet_client_payload_ring_t, num_packets );
+    *stop_burst_offset = offsetof( rocketnet_client_transport_t, stop_burst );
+    *stop_burst_bytes = sizeof( ( (rocketnet_client_transport_t *) 0 )->stop_burst );
+}
+#endif // #if ROCKETNET_DEV
+// mutation gaps ct-memory end
