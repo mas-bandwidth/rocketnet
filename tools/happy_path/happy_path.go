@@ -2,8 +2,9 @@
 // real server and client binaries as separate processes over loopback on the
 // portable transport, watches their stdout, and passes only when a client
 // connects, one message of every reliability type arrives, the receipts for
-// the receipt types come back, the client disconnects cleanly, and the server
-// stops on its own.
+// the receipt types come back, the client disconnects cleanly (the server
+// reports the connection ended with CLIENT_DISCONNECTED, not a timeout), and
+// the server stops on its own.
 //
 // It is deliberately not exhaustive: no second channel, no large fragmented
 // message, no counters, no network simulator, no stress.
@@ -147,6 +148,33 @@ func countLine(text, want string) int {
 		}
 	}
 	return n
+}
+
+// cleanDisconnectReason is rocketnet_disconnect_reason_name of
+// ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED: the server received the
+// client's disconnect. A client that went silent instead ends its connection
+// with TIMED_OUT about 10 s later (the token's timeout), which also brings the
+// server's connected count to 0; only the reason tells the two apart.
+const cleanDisconnectReason = "CLIENT_DISCONNECTED"
+
+const disconnectReasonPrefix = "client disconnect reason "
+
+// checkDisconnectReason passes only when the server printed exactly one
+// disconnect reason and it is the clean one.
+func checkDisconnectReason(serverText string) error {
+	var reasons []string
+	for _, line := range strings.Split(serverText, "\n") {
+		if reason, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), disconnectReasonPrefix); ok {
+			reasons = append(reasons, reason)
+		}
+	}
+	if len(reasons) != 1 {
+		return fmt.Errorf("disconnect: the server printed %d disconnect reasons, want exactly 1", len(reasons))
+	}
+	if reasons[0] != cleanDisconnectReason {
+		return fmt.Errorf("disconnect: the server saw the connection end with %s, want %s (a client that timed out did not disconnect cleanly)", reasons[0], cleanDisconnectReason)
+	}
+	return nil
 }
 
 func lineIndex(text, want string) int {
@@ -400,11 +428,16 @@ func run() int {
 	if err := waitForLine(server, "client disconnected", deadline, seconds, "disconnect", "the server saw the client disconnect"); err != nil {
 		return fail(err)
 	}
-	fmt.Println("verifying disconnect ... OK")
-
+	// the server prints the reason beside "client disconnected" and only
+	// then "server stopped", so once that line is in, the reason is too
 	if err := waitForLine(server, "server stopped", deadline, seconds, "server stopped", "the server stopped"); err != nil {
 		return fail(err)
 	}
+	if err := checkDisconnectReason(server.buf.String()); err != nil {
+		return fail(err)
+	}
+	fmt.Println("verifying disconnect ... OK")
+
 	if err := waitForExit(client, deadline, seconds, "server stopped"); err != nil {
 		return fail(err)
 	}

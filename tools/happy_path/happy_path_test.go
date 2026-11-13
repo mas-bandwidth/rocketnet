@@ -133,3 +133,56 @@ func TestRealChildDeadlineAndFailureRemainDistinct(t *testing.T) {
 		})
 	}
 }
+
+// A connection the server ended on a timeout also brings its connected count
+// to 0 and prints "client disconnected"; only the reason line separates a
+// client that disconnected from one that went silent.
+func TestDisconnectReasonRequiresTheCleanDisconnect(t *testing.T) {
+	head := "server started\nclient connected\nclient disconnected\n"
+	if err := checkDisconnectReason(head + "client disconnect reason CLIENT_DISCONNECTED\nserver stopped\n"); err != nil {
+		t.Fatalf("clean disconnect refused: %v", err)
+	}
+	if err := checkDisconnectReason(head + "client disconnect reason CLIENT_DISCONNECTED\r\nserver stopped\r\n"); err != nil {
+		t.Fatalf("clean disconnect with CRLF refused: %v", err)
+	}
+	refused := map[string]string{
+		"timed out":     head + "client disconnect reason TIMED_OUT\nserver stopped\n",
+		"reliable":      head + "client disconnect reason RELIABLE_TIMED_OUT\nserver stopped\n",
+		"no reason":     head + "server stopped\n",
+		"two reasons":   head + "client disconnect reason CLIENT_DISCONNECTED\nclient disconnect reason TIMED_OUT\n",
+		"reason suffix": head + "client disconnect reason CLIENT_DISCONNECTED_LATE\n",
+	}
+	for name, text := range refused {
+		err := checkDisconnectReason(text)
+		if err == nil || !strings.HasPrefix(err.Error(), "disconnect: ") {
+			t.Fatalf("%s: accepted or unstaged: %v", name, err)
+		}
+	}
+	if err := checkDisconnectReason(head + "client disconnect reason TIMED_OUT\n"); err == nil || !strings.Contains(err.Error(), "TIMED_OUT") {
+		t.Fatalf("timeout not named: %v", err)
+	}
+}
+
+// The reason line the check reads is the one happy_server.c prints, from the
+// library's own reason names.
+func TestServerPrintsTheDisconnectReason(t *testing.T) {
+	server, err := os.ReadFile("happy_server.c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`printf( "` + disconnectReasonPrefix + `%s\n", rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, 0 ) ) );`,
+		"config.max_clients = 1;",
+	} {
+		if !strings.Contains(string(server), want) {
+			t.Fatalf("happy_server.c lacks %q", want)
+		}
+	}
+	api, err := os.ReadFile(filepath.Join("..", "..", "sdk", "rocketnet_api.cpp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(api), "case ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED:") || !strings.Contains(string(api), `return "`+cleanDisconnectReason+`";`) {
+		t.Fatalf("rocketnet_api.cpp no longer names CLIENT_DISCONNECTED as %q", cleanDisconnectReason)
+	}
+}

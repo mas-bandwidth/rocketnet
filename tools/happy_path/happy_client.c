@@ -104,15 +104,18 @@ int main( int argc, char ** argv )
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
-    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
-    {
-        rn_cli_client_stop_and_destroy( client, 1000.0 );
-        client = NULL;
-    }
-
     if ( !client )
     {
         printf( "error: failed to create client: %s\n", rocketnet_status_name( create_status ) );
+        rocketnet_term();
+        return 1;
+    }
+
+    const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, connect_token );
+    if ( connect_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "error: failed to connect client: %s\n", rocketnet_status_name( connect_status ) );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
         rocketnet_term();
         return 1;
     }

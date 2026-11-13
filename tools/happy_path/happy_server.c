@@ -5,7 +5,9 @@
     The happy_path server: the real server binary, on the portable transport
     over loopback, started with the address the tool chose. It prints one
     line per received message when the payload is exactly what the client
-    sent, stops once its only client has disconnected, and exits 0.
+    sent, stops once its only client has disconnected, prints why that
+    connection ended (the tool requires CLIENT_DISCONNECTED, so a client
+    that timed out is not a clean disconnect), and exits 0.
 
     This is a small functional test program, not an example. It is built
     beside client and server under ROCKETNET_BUILD_EXAMPLES.
@@ -63,15 +65,18 @@ int main( int argc, char ** argv )
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &create_status );
-    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
-    {
-        rn_cli_server_stop_and_destroy( server );
-        server = NULL;
-    }
-
     if ( !server )
     {
         printf( "error: failed to create server: %s\n", rocketnet_status_name( create_status ) );
+        rocketnet_term();
+        return 1;
+    }
+
+    const enum rocketnet_status_t start_status = rocketnet_server_start( server );
+    if ( start_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "error: failed to start server: %s\n", rocketnet_status_name( start_status ) );
+        rn_cli_server_stop_and_destroy( server );
         rocketnet_term();
         return 1;
     }
@@ -154,7 +159,10 @@ int main( int argc, char ** argv )
 
         if ( had_client && num_connected == 0 )
         {
+            // max_clients is 1, so the connection that ended was slot 0's;
+            // its reason stays until the slot's next connection
             printf( "client disconnected\n" );
+            printf( "client disconnect reason %s\n", rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, 0 ) ) );
             fflush( stdout );
             break;
         }
