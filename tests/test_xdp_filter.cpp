@@ -2090,7 +2090,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
 
     if ( isolated_cpu_count() < 2 )
     {
-        case_skip_reason = "fewer than 2 isolated cpus: two queues need a guest booted with --cpus 3 --append \"irqaffinity=0 isolcpus=1-2 nohz_full=1-2\"";
+        case_skip_reason = "fewer than 2 isolated cpus: two queues need a guest booted as tools/run_xdp_filter_guest.sh boots it, --cpus 4 --append \"irqaffinity=0 isolcpus=1-3 nohz_full=1-3\"";
         return true;
     }
 
