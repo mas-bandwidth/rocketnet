@@ -290,19 +290,22 @@ DetachXdp ==
                     deadmanAge, listened, crashed, faults, phase, cycle, wait,
                     lastWait, live, old, oldAge, denied, collected, wdKill >>
 
-\* teardown's next step finds ssh down: "stop server" fails without reaching
-\* the server, restore is skipped, and the script fails the run and exits
-\* (with the witness switch, it reports the run complete); the timers act
+\* teardown's next ssh step finds ssh down ("stop server", or restore after a
+\* stop that succeeded, or the collect after both): the step fails and the
+\* script exits 1 with no further step, so the timers act.  The script before
+\* MM206 also ended here, on the failed collect, so the witness switch does
+\* not change this action.  After a restore that succeeded the code has
+\* already stood the timers down; keeping them armed over-approximates it.
 TeardownLosesSsh ==
     /\ orch = "teardown" /\ ssh = "down"
-    /\ IF TeardownChecksStatus
-       THEN /\ orch' = "dead" /\ UNCHANGED collected
-       ELSE /\ orch' = "done" /\ collected' = TRUE
+    /\ orch' = "dead"
     /\ UNCHANGED << server, host, xdp, ssh, hbAge, orphan, watchdog, deadman,
                     deadmanAge, listened, crashed, faults, phase, cycle, wait,
-                    lastWait, live, old, oldAge, denied, wdKill >>
+                    lastWait, live, old, oldAge, denied, collected, wdKill >>
 
-\* confirm no program is attached, collect, cancel the timers, done
+\* confirm no program is attached, cancel the timers, collect, done.  The
+\* code stands the timers down inside restore and collects after it; this
+\* one step folds the two together (a collect that fails is TeardownLosesSsh)
 Finish ==
     /\ orch = "teardown" /\ ssh = "up" /\ ~ServerUp
     /\ \/ ~xdp
@@ -476,7 +479,11 @@ SshDrop ==
                     live, old, oldAge, denied, collected, wdKill >>
 
 \* the orchestrator is killed without its trap (SIGKILL, the coordinator's
-\* machine asleep or gone): no teardown, and no more heartbeats
+\* machine asleep or gone): no teardown, and no more heartbeats.  The loop
+\* notices at its next check, after the touch in flight (ssh's 10 s connect
+\* bound) and its 5 s sleep, so one more touch can land: in seconds the
+\* watchdog fires up to about 47 s after the kill, where the model's
+\* heartbeat stops at once
 OrchestratorDies ==
     /\ faults < MaxFaults
     /\ orch \in {"armed", "loading", "checked", "serving", "teardown"}

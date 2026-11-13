@@ -49,12 +49,17 @@ measured records in `proofs/tla/RUNS.tsv`.
     stays `built`.
   - `StopServer`: SIGINT. The server's destroy detaches.
   - `DetachXdp`: `ip link set dev <nic> xdp off`, whatever the server left.
-  - `TeardownLosesSsh`: the next teardown step finds ssh down. "stop server"
-    fails, restore is skipped, and the script fails the run and exits; the
-    watchdog and the dead-man timer act.
-  - `Finish`: confirm no program is attached, collect, and only then stop
-    the watchdog and cancel the dead-man timer. The script reaches it only
-    when both "stop server" and "restore" exited 0 (MM206).
+  - `TeardownLosesSsh`: the next ssh step of teardown ("stop server",
+    restore after a stop that succeeded, or the collect) finds ssh down; the
+    script exits 1 and the watchdog and the dead-man timer act. The script
+    before MM206 also ended here, on the failed collect. After a restore
+    that succeeded the timers are already down; the model keeps them armed,
+    an over-approximation.
+  - `Finish`: confirm no program is attached, stop the watchdog and cancel
+    the dead-man timer, and collect. The code stands the timers down inside
+    restore and collects after it; the model folds both into one step. The
+    script reaches it only when both "stop server" and "restore" exited 0
+    (MM206).
 - **The test server's side:**
   - `Listen`
   - `DisconnectArrives(c)`: the clean disconnect burst frees the slot early.
@@ -81,7 +86,10 @@ measured records in `proofs/tla/RUNS.tsv`.
   - `Interrupted`: the orchestrator exits, and its trap runs teardown.
   - `OrchestratorDies`: the orchestrator is killed without its trap; no
     teardown runs and the heartbeat stops (the heartbeat loop checks that
-    its parent is alive).
+    its parent is neither gone nor a zombie). The loop notices at its next
+    check, so in seconds the watchdog fires up to about 47 s after the kill
+    (one touch in flight, 10 s, plus the 5 s sleep, plus 30 s and the
+    watchdog's 2 s poll); the model stops the heartbeat at once.
   - `TeardownStepFails`: "stop server" or "restore" exits non-zero over a
     working ssh. The script fails the run and exits with its heartbeat
     stopped. After a failed stop it skips restore, so the timers stay
