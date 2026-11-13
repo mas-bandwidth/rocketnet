@@ -1868,7 +1868,7 @@ connection request and connection cookie are not sealed.
    implementation reports this end as protocol violation: on the client as
    the state protocol violation (-10) of
    [t11 Handshake: client](#t11), and on the server as the disconnect reason
-   `PROTOCOL_VIOLATION` of the slot.
+   `PROTOCOL_VIOLATION` of the slot, when the mapping holds one.
 
 The key that seals a sealed type:
 
@@ -3232,8 +3232,7 @@ as [t10 Receive processing](#t10) step 12 states, and does not mark it.
 Each endpoint MUST count, per connection and across all of that connection's
 keys, every sealed packet that fails to open, and MUST disconnect the
 connection on reaching the `AEAD integrity limit` of
-[t9 Packet protection](#t9), as its rule 8 states, with the end reason that
-rule names.
+[t9 Packet protection](#t9), as its rule 8 states.
 
 An implementation MAY drop session packets before decryption in a kernel
 prefilter that holds, per source address and port, a high-water mark written
@@ -4004,7 +4003,7 @@ frames. These rows alias, one event moving each named row once:
 |---|---|
 | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
 | `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW` |
-| `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `URING_RECEIVE_DROPPED_SOURCE` and `URING_RECEIVE_DROPPED_NO_BUFFER`; `RIO_RECEIVE_FAILED` |
+| `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `RIO_RECEIVE_FAILED` |
 | `SEND_FAILED` | `GSO_SEND_DROPPED`; `URING_SEND_DROPPED`; `IOCP_SEND_FAILED`; `RIO_SEND_FAILED` |
 | `SEND_RING_FULL` | `RIO_SEND_FULL` |
 
@@ -4013,9 +4012,13 @@ the protocol, whatever the reason, and each of those drops also moves the
 shared row of its reason: the size and prefilter rows, `RECEIVE_DROPPED_FULL`,
 `RECEIVE_FAILED` or `RECEIVE_DROPPED_STOPPED`. A shared row can count events
 its transport rows do not: on gso, `SEND_FAILED` also counts a frame whose
-send was refused before it was staged. `URING_RECEIVE_DROPPED_OVERFLOW` counts
-the datagrams of one coalesced receive past the most one receive takes, which
-no shared row counts, so it aliases no shared row.
+send was refused before it was staged, and on uring, `RECEIVE_FAILED` counts
+the receives the kernel refused, which no uring row counts.
+`URING_RECEIVE_DROPPED_OVERFLOW` counts the datagrams of one coalesced receive
+past the most one receive takes, and `URING_RECEIVE_DROPPED_SOURCE` and
+`URING_RECEIVE_DROPPED_NO_BUFFER` count datagrams dropped for an unreadable
+source address or a completion naming no buffer; no shared row counts these,
+so they alias no shared row.
 
 To count distinct events, sum the shared rows and leave out the aliasing
 transport rows and `IOCP_RECEIVE_DROPPED`; every other transport row aliases
