@@ -149,8 +149,9 @@ refusal drops them. A disconnected socket (`ENOTCONN`, `EPIPE`,
 `EDESTADDRREQ`) sends them one at a time through the shared socket. Any other
 error drops them. A packet with no client socket goes alone through the
 shared socket, where a full socket keeps it and any other error drops it.
-When the server stops, the workers retry what is still kept at most 100 times
-(`ROCKETNET_MSGX_SEND_RETRIES_AFTER_QUIT`), then drop it. When the transport closes it logs the dropped count
+Once the server is stopping, a worker retries each send bank it takes at
+most 100 times (`ROCKETNET_MSGX_SEND_RETRIES_AFTER_QUIT`; the count starts
+again for every bank), then drops what that bank still keeps. When the transport closes it logs the dropped count
 (`msgx transport stats:`).
 
 **portable** uses per-packet `sendto` / `recvmsg` calls
