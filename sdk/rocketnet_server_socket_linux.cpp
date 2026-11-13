@@ -283,6 +283,7 @@ struct rocketnet_server_xdp_socket_t
     std::atomic<int> send_flow_index{ -1 };
 
     uint8_t server_ethernet_address[ETH_ALEN];
+    uint16_t vlan_id;                       // 0 untagged, else the 802.1Q VLAN ID every frame is built with (rocketnet_xdp_frame_build_vlan)
     int link_mtu;                           // the interface MTU read at create, 0 when unknown (rocketnet_xdp_frame_fits_mtu)
     rocketnet_address_t server_address;     // the public address and port (host-order port): its family is the family this socket serves
     int serves_both;                        // 1: ipv4_address and ipv6_address are both live
@@ -310,6 +311,7 @@ struct rocketnet_server_socket_t
     rocketnet_address_t public_address;
 
     uint8_t server_ethernet_address[ETH_ALEN];
+    uint16_t vlan_id;                       // 0 untagged, else the VLAN ID of the VLAN device that owns the address (rocketnet_server_socket_xdp_device)
     int link_mtu;
     uint8_t gateway_ethernet_address[ETH_ALEN];
     bool gateway_known;
@@ -328,7 +330,8 @@ struct rocketnet_server_socket_t
     // commit scratch, the reply MAC entries, the process view and process_eth
     void * sized_storage;
     int max_clients;
-    bool * replay_forget_failed;            // the commit's per-forget and per-mark outcomes, replay_marks->capacity each
+    int xdp_interface_index;                // the device the program and sockets attach to: interface_index, or a VLAN device's parent (here, in max_clients' padding)
+    bool * replay_forget_failed;           // the commit's per-forget and per-mark outcomes, replay_marks->capacity each
     bool * replay_mark_applied;
 
     // the gateway refresh (rocketnet_xdp_frame.h GATEWAY REFRESH): main
@@ -345,11 +348,11 @@ struct rocketnet_server_socket_t
     bool gateway_address_known[2];
     char interface_name[IF_NAMESIZE];
 
-    int interface_index;
+    int interface_index;                // the interface that owns the address: routes, neighbours, the gateway refresh
+                                        // (xdp_interface_index, beside max_clients, is the device the program attaches to)
     struct bpf_object * program_object;  // opened from the embedded server_xdp.o; libxdp does not own it, so destroy closes it after the program
     rocketnet_xdp_program_t * program;
     bool attached_native;
-    bool attached_skb;
     char pin_root[160];                 // this INSTANCE's own bpffs directory, named by a random token with its identity metadata encoded: created by this create, adopted never
     bool pin_root_created;              // set only when this instance's mkdir succeeded -- destroy removes nothing it did not make
     int num_pinned;                     // the pin paths recorded BY CONSTRUCTION at mkdir (their names are deterministic) -- destroy unlinks exactly these
@@ -782,6 +785,75 @@ static bool rocketnet_server_socket_find_interface( const rocketnet_address_t * 
     freeifaddrs( addrs );
 
     return found;
+}
+
+// the device the XDP program, the AF_XDP sockets and the pre-flight's queue,
+// IRQ and busy-poll checks act on, for the interface that owns the address,
+// read from rtnetlink (rocketnet_xdp_link_classify): the interface itself,
+// vlan_id 0; or, for one 802.1Q VLAN device on a physical NIC (or veth), the
+// NIC, vlan_id the VLAN's ID, while routes, neighbours, the source MAC and
+// the MTU stay the VLAN device's. Any other stacking is refused here, by
+// name, with what is supported; false refuses the transport. Shared by the
+// pre-flight and create so they cannot disagree.
+
+static bool rocketnet_server_socket_xdp_device( const char * interface_name, unsigned int interface_index,
+                                                char * xdp_name, size_t xdp_name_size, unsigned int * xdp_index, int * vlan_id )
+{
+    struct rocketnet_gateway_netlink_link_t device;
+    struct rocketnet_gateway_netlink_link_t lower;
+    memset( &lower, 0, sizeof( lower ) );
+    int error = 0;
+
+    char error_text[128];
+    int result = rocketnet_gateway_netlink_link( (int) interface_index, &device, &error );
+    if ( result != ROCKETNET_GATEWAY_NETLINK_FOUND )
+    {
+        rocketnet_warn( "xdp transport refused: could not read the link of %s from rtnetlink: %s (%s) (R2)", interface_name,
+                        rocketnet_gateway_netlink_result_name( result ), strerror_r( error, error_text, sizeof( error_text ) ) );
+        return false;
+    }
+
+    bool have_lower = false;
+    if ( strcmp( device.kind, "vlan" ) == 0 && device.link_index > 0 && !device.link_netns )
+    {
+        result = rocketnet_gateway_netlink_link( device.link_index, &lower, &error );
+        if ( result != ROCKETNET_GATEWAY_NETLINK_FOUND )
+        {
+            rocketnet_warn( "xdp transport refused: could not read the link under VLAN device %s from rtnetlink: %s (%s) (R2)", interface_name,
+                            rocketnet_gateway_netlink_result_name( result ), strerror_r( error, error_text, sizeof( error_text ) ) );
+            return false;
+        }
+        have_lower = true;
+    }
+
+    const char * reason = NULL;
+    const int form = rocketnet_xdp_link_classify( &device, have_lower ? &lower : NULL, &reason );
+    if ( form == ROCKETNET_XDP_LINK_REFUSED )
+    {
+        rocketnet_warn( "xdp transport refused: the public address is on %s, %s (kind %s%s%s, vlan id %d, protocol 0x%04x). supported: an untagged interface, or one 802.1Q VLAN device on a physical NIC, where the transport attaches to the NIC (R2)",
+                        interface_name, reason, device.kind, have_lower ? ", on " : "", have_lower ? lower.name : "", device.vlan_id, device.vlan_protocol );
+        return false;
+    }
+
+    const char * attach_name = form == ROCKETNET_XDP_LINK_VLAN ? lower.name : interface_name;
+    const int written = snprintf( xdp_name, xdp_name_size, "%s", attach_name );
+    if ( written <= 0 || (size_t) written >= xdp_name_size )
+    {
+        rocketnet_warn( "xdp transport refused: the device name %s does not fit %zu bytes (R2)", attach_name, xdp_name_size );
+        return false;
+    }
+
+    if ( form == ROCKETNET_XDP_LINK_VLAN )
+    {
+        *xdp_index = (unsigned int) lower.index;
+        *vlan_id = device.vlan_id;
+        rocketnet_info( "xdp: %s is 802.1Q VLAN %d on %s: the transport attaches to %s and tags every frame it sends", interface_name, device.vlan_id, lower.name, lower.name );
+        return true;
+    }
+
+    *xdp_index = interface_index;
+    *vlan_id = 0;
+    return true;
 }
 
 // read one small sysfs value; returns false when the file does not exist
@@ -1252,6 +1324,27 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
     {
         rocketnet_warn( "xdp pre-flight: no UP interface carries the public address (R2 of scripts/rocketnet-provision)" );
         return false;
+    }
+
+    // R2: the device XDP attaches to: the interface itself, or the parent of
+    // a VLAN device. Every check below is of that device
+
+    {
+        char xdp_name[ROCKETNET_GATEWAY_NETLINK_NAME_BYTES];
+        unsigned int xdp_index = 0;
+        int vlan_id = 0;
+        if ( !rocketnet_server_socket_xdp_device( interface_name, interface_index, xdp_name, sizeof( xdp_name ), &xdp_index, &vlan_id ) )
+        {
+            return false;
+        }
+
+        const int written = snprintf( interface_name, sizeof( interface_name ), "%s", xdp_name );
+        if ( written <= 0 || written >= (int) sizeof( interface_name ) )
+        {
+            rocketnet_warn( "xdp pre-flight: the device name %s does not fit %zu bytes (R2)", xdp_name, sizeof( interface_name ) );
+            return false;
+        }
+        interface_index = xdp_index;
     }
 
     // R3: the exclusive xdp slot -- no program of anyone's attached to the
@@ -1795,6 +1888,25 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     server_socket->interface_index = (int) interface_index;
 
+    // the device the program and the sockets attach to, and the VLAN ID the
+    // frames carry: the pre-flight just read the same. The name is needed
+    // only during create (the attach and the socket binds); destroy detaches
+    // by index
+
+    char xdp_interface_name[IF_NAMESIZE] = { 0 };
+    {
+        unsigned int xdp_index = 0;
+        int vlan_id = 0;
+        if ( !rocketnet_server_socket_xdp_device( interface_name, interface_index, xdp_interface_name, sizeof( xdp_interface_name ), &xdp_index, &vlan_id ) )
+        {
+            rocketnet_server_socket_abort_create( server_socket );
+            return NULL;
+        }
+
+        server_socket->xdp_interface_index = (int) xdp_index;
+        server_socket->vlan_id = (uint16_t) vlan_id;
+    }
+
     if ( serves_both )
     {
         char second_interface_name[1024];
@@ -2139,28 +2251,25 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     rocketnet_info( "server_xdp loaded successfully." );
 
-    rocketnet_info( "attaching server_xdp to network interface %s", interface_name );
+    rocketnet_info( "attaching server_xdp to network interface %s", xdp_interface_name );
 
-    int ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->interface_index, false );
-    if ( ret == 0 )
+    // native (driver) mode only. Generic (skb) mode runs the program after
+    // the kernel has built an skb for every frame, the slow path this
+    // transport exists to avoid, so a device whose driver cannot attach
+    // natively refuses the create by name: "auto" falls to the next
+    // transport, a pin on xdp refuses the server start
+
+    const int ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->xdp_interface_index, false );
+    if ( ret != 0 )
     {
-        server_socket->attached_native = true;
+        char attach_error[128];
+        rocketnet_error( "xdp transport refused: server_xdp could not attach in native mode to %s (%s); generic (skb) mode is not used. use a NIC whose driver supports native XDP, or another transport", xdp_interface_name, strerror_r( ret < 0 ? -ret : ret, attach_error, sizeof( attach_error ) ) );
+        rocketnet_server_socket_abort_create( server_socket );
+        return NULL;
     }
-    else
-    {
-        rocketnet_info( "falling back to skb mode..." );
-        ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->interface_index, true );
-        if ( ret == 0 )
-        {
-            server_socket->attached_skb = true;
-        }
-        else
-        {
-            rocketnet_error( "failed to attach server_xdp program to interface %s", interface_name );
-            rocketnet_server_socket_abort_create( server_socket );
-            return NULL;
-        }
-    }
+
+    server_socket->attached_native = true;
+    rocketnet_info( "server_xdp attached in native mode to %s", xdp_interface_name );
 
     // allow unlimited locking of memory, so all memory needed for packet buffers can be locked
 
@@ -2251,6 +2360,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         config.public_port = rocketnet_platform_htons( public_address.port );
         memcpy( config.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
         config.filter_epoch = ROCKETNET_FILTER_EPOCH_UNKEYED;
+        config.vlan_id = rocketnet_platform_htons( server_socket->vlan_id );     // 0 untagged: the bytes an untagged server always wrote
 
         __u32 key = 0;
         if ( bpf_map_update_elem( server_socket->config_map_fd, &key, &config, BPF_ANY ) != 0 )
@@ -2344,7 +2454,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             struct xsk_socket_config xsk_config;
             rocketnet_xdp_socket_config( &xsk_config, ROCKETNET_XDP_RECV_QUEUE_SIZE, ROCKETNET_XDP_SEND_QUEUE_SIZE, zero_copy );
 
-            result = xsk_socket__create( &socket->xsk, interface_name, (__u32) queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
+            result = xsk_socket__create( &socket->xsk, xdp_interface_name, (__u32) queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
             if ( result == 0 )
             {
                 break;
@@ -2404,6 +2514,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         memcpy( socket->server_ethernet_address, server_socket->server_ethernet_address, ETH_ALEN );
         socket->link_mtu = server_socket->link_mtu;
+        socket->vlan_id = server_socket->vlan_id;
         socket->server_address = public_address;
         socket->serves_both = server_socket->serves_both;
         if ( server_socket->serves_both )
@@ -2498,15 +2609,15 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     if ( zero_copy_queues == num_queues )
     {
-        rocketnet_info( "server xdp sockets bound in zero copy mode on %s", interface_name );
+        rocketnet_info( "server xdp sockets bound in zero copy mode on %s", xdp_interface_name );
     }
     else if ( zero_copy_queues == 0 )
     {
-        rocketnet_info( "server xdp sockets bound in copy mode on %s", interface_name );
+        rocketnet_info( "server xdp sockets bound in copy mode on %s", xdp_interface_name );
     }
     else
     {
-        rocketnet_info( "server xdp sockets bound in zero copy mode on %d of %d queues and copy mode on the rest on %s", zero_copy_queues, num_queues, interface_name );
+        rocketnet_info( "server xdp sockets bound in zero copy mode on %d of %d queues and copy mode on the rest on %s", zero_copy_queues, num_queues, xdp_interface_name );
     }
 
     // the server has started successfully
@@ -2535,19 +2646,12 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
     {
         if ( server_socket->attached_native )
         {
-            const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, false );
+            const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->xdp_interface_index, false );
             if ( result != 0 )
             {
-                rocketnet_error( "could not detach server_xdp program (native) from interface %s (errno %d)", server_socket->interface_name, -result );
-            }
-        }
-
-        if ( server_socket->attached_skb )
-        {
-            const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, true );
-            if ( result != 0 )
-            {
-                rocketnet_error( "could not detach server_xdp program (skb) from interface %s (errno %d)", server_socket->interface_name, -result );
+                char xdp_interface_name[IF_NAMESIZE] = { 0 };
+                const bool named = if_indextoname( (unsigned int) server_socket->xdp_interface_index, xdp_interface_name ) != NULL;
+                rocketnet_error( "could not detach server_xdp program (native) from interface %s (index %d, errno %d)", named ? xdp_interface_name : "?", server_socket->xdp_interface_index, -result );
             }
         }
 
@@ -4426,7 +4530,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                 int payload_bytes = 0;
 
                 const int address_type = socket->serves_both ? -1 : socket->server_address.type;
-                if ( rocketnet_xdp_frame_receive( packet_data, (size_t) desc->len, address_type, &from, &payload_data, &payload_bytes, &socket->receive_drops ) )
+                if ( rocketnet_xdp_frame_receive_vlan( packet_data, (size_t) desc->len, address_type, socket->vlan_id, &from, &payload_data, &payload_bytes, &socket->receive_drops ) )
                 {
                     const int index = (int) receive_buffer->num_packets;
 
@@ -4570,13 +4674,13 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                             source = send_buffer->packet_info[i].to.type == ROCKETNET_ADDRESS_IPV4 ? &socket->ipv4_address : &socket->ipv6_address;
                         }
                         uint64_t refused_length = 0;
-                        const int copied_bytes = rocketnet_xdp_send_copy( packet_data, ROCKETNET_XDP_FRAME_SIZE, send_buffer->packet_info[i].to.type, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, send_buffer->packet_info[i].packet_bytes, &refused_length );
+                        const int copied_bytes = rocketnet_xdp_send_copy_vlan( packet_data, ROCKETNET_XDP_FRAME_SIZE, send_buffer->packet_info[i].to.type, socket->vlan_id, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, send_buffer->packet_info[i].packet_bytes, &refused_length );
                         if ( refused_length )
                         {
                             socket->send_refused_length.fetch_add( refused_length, std::memory_order_relaxed );
                         }
 
-                        const int frame_bytes = ( copied_bytes < 0 ) ? 0 : rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, source, &send_buffer->packet_info[i].to, copied_bytes );
+                        const int frame_bytes = ( copied_bytes < 0 ) ? 0 : rocketnet_xdp_frame_build_vlan( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, source, &send_buffer->packet_info[i].to, copied_bytes, socket->vlan_id );
 
                         if ( copied_bytes < 0 )
                         {
@@ -4587,7 +4691,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                             free_send_frame( socket, frame );
                             socket->send_refused_build.fetch_add( 1, std::memory_order_relaxed );
                         }
-                        else if ( !rocketnet_xdp_frame_fits_mtu( frame_bytes, socket->link_mtu ) )
+                        else if ( !rocketnet_xdp_frame_fits_mtu_vlan( frame_bytes, socket->link_mtu, socket->vlan_id ) )
                         {
                             // the kernel would hand it to the device, which
                             // drops it or sends it past the link's MTU: one
