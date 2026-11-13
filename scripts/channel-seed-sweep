@@ -139,8 +139,10 @@ set -u
 bin="$SWEEP_BIN"; timeout="$SWEEP_TIMEOUT"; runs_file="$RUNS_FILE"
 case_name=${1:-}; seed=${2:-}
 record=$( mktemp "$SWEEP_RECORDS/run.XXXXXX" ) || { printf "FAIL seed=%s case=%s reason=no_record_file\n" "$seed" "$case_name"; exit 0; }
-# the functional binary registers each case as test_<function>; a name given with the prefix runs unchanged
-out=$( ROCKETNET_CHANNEL_SEED=$seed ROCKETNET_CHANNEL_SEED_RECORD=$record timeout "$timeout" "$bin" --run "test_${case_name#test_}" 2>&1 )
+# the functional binary registers each case as test_<function>; a name given with
+# the prefix runs unchanged. The run and its measurement line use that name.
+registered="test_${case_name#test_}"
+out=$( ROCKETNET_CHANNEL_SEED=$seed ROCKETNET_CHANNEL_SEED_RECORD=$record timeout "$timeout" "$bin" --run "$registered" 2>&1 )
 status=$?
 printf "\n" >> "$runs_file"
 if [ $status -eq 0 ]; then
@@ -152,7 +154,7 @@ if [ $status -eq 124 ]; then
     reason="timeout_${timeout}s"
 else
     # the measurement line names the shape (budget_multiple, incomplete, ...)
-    reason=$( printf "%s\n" "$out" | sed -n -E "s/^${case_name}: ([a-z_]+) .*/\1/p" | head -1 )
+    reason=$( printf "%s\n" "$out" | sed -n -E "s/^${registered}: ([a-z_]+) .*/\1/p" | head -1 )
     if [ -z "$reason" ]; then
         reason=$( printf "%s\n" "$out" | sed -n -E -e "s/^check failed: \( (.*) \), function .*/\1/p" -e "s/^[a-z ]+ failed at line [0-9]+: (.*)/\1/p" | head -1 )
     fi
@@ -163,7 +165,8 @@ printf "FAIL seed=%s case=%s reason=%s\n" "$seed" "$case_name" "$reason"
 
 runs=$(( $( wc -l < "$runs_file" ) ))
 failures=$( grep -c '^FAIL ' "$report" )
-sort -k3,3 -k2.6,2n "$report"
+# fields split on single blanks: field 2 is "seed=<n>", so its number starts at char 6
+sort -t " " -k3,3 -k2.6,2n "$report"
 echo "sweep: $runs runs, $failures failures"
 if [ "$runs" -ne "$planned" ]; then
     echo "sweep: $runs runs of $planned planned (cases x seeds); a lane did not run"
