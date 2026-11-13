@@ -126,6 +126,7 @@ sdk/rocketnet_xdp_replay_marks.h	userspace buffer for the kernel replay map
 sdk/rocketnet_xdp_replay_sink.h	the replay writer's forget, mark and commit into the kernel map; writes no packet byte
 sdk/rocketnet_xdp_socket_config.h	AF_XDP socket bind config
 sdk/xdp/server_xdp.c	the kernel filter: :360-424 read header bytes at the offsets rocketnet_wire.h defines, write none
+sdk/rocketnet_receive_prefilter.h	the receive drop reasons and their counters, and the drop tallies; reads and writes no byte
 # Files a review named as defining wire bytes that the owner has not yet
 # ruled on. The check accepts them and names every one on every run; they
 # are not in the gate above until the owner moves each to a list.
