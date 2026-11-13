@@ -1211,7 +1211,7 @@ static void test_server_transport_counts_xdp_frames_dropped()
     g_frames_dropped_server = server;
     g_frames_dropped_reads = 0;
     rocketnet_unit_check( rocketnet_server_socket_test_receive_dropped( stop_spread_frames_dropped_read, rocketnet_server_transport_io_replay_counts,
-                                                                       xdp->backend->server ) );
+                                                                        xdp->backend->server ) );
     rocketnet_unit_check( g_frames_dropped_reads == 9 );
     g_frames_dropped_server = NULL;
 

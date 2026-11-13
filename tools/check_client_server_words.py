@@ -58,7 +58,7 @@ FILES_ALLOWED = {
 # it lies inside one of these spans and the file is one the span names.
 SPANS_ALLOWED = (
     (re.compile(r"\btype veth " + WORD + r" name\b"),
-     (".github/workflows/nightly-soak.yml", "scripts/netem-pair-soak", "scripts/outage-pair-real",
+     (".github/workflows/nightly-soak.yml", "scripts/harden-cell", "scripts/netem-pair-soak", "scripts/outage-pair-real",
       "tests/functional/posix_lifecycle_stress.cpp", "tests/functional/posix_socket_errors.cpp",
       "tests/functional/rocketnet_functional_tests.cpp", "tests/test_xdp_filter.cpp"),
      "iproute2 syntax: `ip link add A type veth " + WORD + " name B`"),

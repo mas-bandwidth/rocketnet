@@ -100,6 +100,8 @@ sdk/rocketnet_server_socket.h	server socket and XDP send staging
 sdk/rocketnet_server_socket_linux.cpp	server socket transport
 sdk/rocketnet_server_transport.cpp	server transport; :4104 calls protocol.cpp's sealed writer with protocol.cpp's ack block, composes no bytes
 sdk/rocketnet_server_uring.h	io_uring server transport
+sdk/rocketnet_server_udp_linux.cpp	the Linux UDP socket open the gso and io_uring server transports share
+sdk/rocketnet_server_udp_linux.h	the Linux UDP socket open the gso and io_uring server transports share
 sdk/rocketnet_server_uring_linux.cpp	io_uring server transport
 sdk/rocketnet_slots.cpp	server slot table
 sdk/rocketnet_slots.h	server slot table
