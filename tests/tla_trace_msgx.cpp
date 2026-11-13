@@ -372,10 +372,8 @@ struct msgx_op_t
 static const char * msgx_act( const char * op )
 {
     static const char * const table[][2] = {
-        { "mark", "Mark" }, { "forget", "ForgetCall" }, { "update", "BeginUpdate" }, { "sweep", "SweepCall" },
-        { "stamp", "Stamp" }, { "holder_begin", "HolderBegin" }, { "holder_end", "HolderEnd" }, { "report", "ReportDead" },
-        { "resolve", "TxResolve" }, { "send", "TxSend" }, { "poll", "RxPoll" }, { "rx_resolve", "RxResolve" },
-        { "rx_read", "RxRead" }, { "env_open", "EnvOpen" }, { "env_close", "EnvClose" }, { "disconnect", "Disconnect" } };
+        { "mark", "Mark" }, { "forget", "ForgetCall" }, { "update", "BeginUpdate" }, { "sweep", "SweepCall" }, { "stamp", "Stamp" }, { "holder_begin", "HolderBegin" }, { "holder_end", "HolderEnd" }, { "report", "ReportDead" }, { "resolve", "TxResolve" }, { "send", "TxSend" }, { "poll", "RxPoll" }, { "rx_resolve", "RxResolve" }, { "rx_read", "RxRead" }, { "env_open", "EnvOpen" }, { "env_close", "EnvClose" }, { "disconnect", "Disconnect" }
+    };
     for ( size_t k = 0; k < sizeof( table ) / sizeof( table[0] ); k++ )
     {
         if ( strcmp( table[k][0], op ) == 0 )
