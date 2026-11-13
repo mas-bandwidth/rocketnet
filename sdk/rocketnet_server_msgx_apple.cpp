@@ -290,7 +290,15 @@ static void rocketnet_server_msgx_set_socket_option( void * user, int level, int
 // a non-blocking UDP socket bound to the server's address and port with
 // SO_REUSEADDR and SO_REUSEPORT, so the shared socket and every client's
 // connected socket hold one port. -errno on failure.
-static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_address, bool ipv6, int buffer_bytes )
+//
+// The shared socket binds first with neither option and sets them after the
+// bind (as the Linux transports set SO_REUSEPORT): a bind with them set skips
+// the wildcard check, so an ephemeral port could be one another process holds
+// on another address or family, and an explicit port could join another
+// process's group; either way the more specific socket takes the datagrams.
+// Set after the bind, the port is this server's alone and its client sockets
+// still join it.
+static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_address, bool ipv6, int buffer_bytes, bool shared )
 {
     const int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     if ( fd < 0 )
@@ -302,8 +310,8 @@ static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_ad
     int zero = 0;
     bool ok = fcntl( fd, F_SETFD, FD_CLOEXEC ) == 0;
     ok = ok && fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == 0;
-    ok = ok && setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof( one ) ) == 0;
-    ok = ok && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) == 0;
+    ok = ok && ( shared || setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof( one ) ) == 0 );
+    ok = ok && ( shared || setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) == 0 );
     ok = ok && setsockopt( fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof( one ) ) == 0;
     ok = ok && ( !ipv6 || setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) == 0 );
     ok = ok && setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &buffer_bytes, sizeof( buffer_bytes ) ) == 0;
@@ -323,6 +331,14 @@ static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_ad
         return -error;
     }
 
+    if ( shared && ( setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof( one ) ) != 0 ||
+                     setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 ) )
+    {
+        const int error = errno;
+        close( fd );
+        return -error;
+    }
+
     struct rocketnet_server_msgx_option_socket_t option_socket = { fd };
     rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_msgx_set_socket_option, &option_socket );
     return fd;
@@ -336,7 +352,7 @@ static int rocketnet_server_msgx_table_open( void * user, const rocketnet_addres
 {
     struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) user;
 
-    const int fd = rocketnet_server_msgx_open_bound( &msgx->bind, msgx->ipv6, ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER );
+    const int fd = rocketnet_server_msgx_open_bound( &msgx->bind, msgx->ipv6, ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER, false );
     if ( fd < 0 )
     {
         return fd;
@@ -1448,7 +1464,7 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
     // the shared socket: handshakes, and every client without its own socket.
     // Its receive buffer takes a whole update's inbound at the full client
     // count, as every transport's does.
-    msgx->shared_fd = rocketnet_server_msgx_open_bound( bind_address, msgx->ipv6, ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
+    msgx->shared_fd = rocketnet_server_msgx_open_bound( bind_address, msgx->ipv6, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, true );
     if ( msgx->shared_fd < 0 )
     {
         if ( rocketnet_platform_bind_refused( -msgx->shared_fd ) )

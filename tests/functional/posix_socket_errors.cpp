@@ -2285,16 +2285,39 @@ void rocketnet_test_posix_msgx_retired_socket_counted()
         posix_check( sendto( client, datagram, sizeof( datagram ), 0, (const struct sockaddr *) &server_address, sizeof( server_address ) ) ==
                      (ssize_t) sizeof( datagram ) );
     }
-    rocketnet_platform_sleep( 0.01 );
 
-    // the sweep closes the retired socket once every worker is past it
+    // loopback input is queued and drained on its own thread, so a fixed sleep
+    // can close the socket before they land (a loaded host did). A barrier:
+    // one more datagram from the same client to a plain socket, sent after
+    // them on the same loopback queue; once it is read, they have landed.
+    const int barrier = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( barrier >= 0 );
+    struct sockaddr_in barrier_address;
+    memset( &barrier_address, 0, sizeof( barrier_address ) );
+    barrier_address.sin_family = AF_INET;
+    barrier_address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    posix_check( bind( barrier, (const struct sockaddr *) &barrier_address, sizeof( barrier_address ) ) == 0 );
+    socklen_t barrier_bytes = sizeof( barrier_address );
+    posix_check( getsockname( barrier, (struct sockaddr *) &barrier_address, &barrier_bytes ) == 0 );
+    struct timeval barrier_wait = { 5, 0 };
+    posix_check( setsockopt( barrier, SOL_SOCKET, SO_RCVTIMEO, &barrier_wait, sizeof( barrier_wait ) ) == 0 );
+    posix_check( sendto( client, datagram, 1, 0, (const struct sockaddr *) &barrier_address, sizeof( barrier_address ) ) == 1 );
+    uint8_t barrier_byte = 0;
+    posix_check( recv( barrier, &barrier_byte, sizeof( barrier_byte ), 0 ) == 1 );
+    close( barrier );
+
+    // the sweep closes the retired socket once every worker is past it: wait
+    // for the close itself (the open count fell at the retire)
+    struct rocketnet_server_msgx_stats_t stats;
+    rocketnet_server_msgx_stats( msgx, &stats );
     const double close_deadline = rocketnet_platform_time() + 5.0;
-    while ( rocketnet_server_msgx_test_sockets_open( msgx ) != 0 && rocketnet_platform_time() < close_deadline )
+    while ( stats.sockets_closed == 0 && rocketnet_platform_time() < close_deadline )
     {
         rocketnet_server_msgx_commit( msgx );
         rocketnet_platform_sleep( 0.001 );
+        rocketnet_server_msgx_stats( msgx, &stats );
     }
-    rocketnet_server_msgx_commit( msgx );
+    posix_check( stats.sockets_closed == 1 );
     posix_check( rocketnet_server_msgx_test_sockets_open( msgx ) == 0 );
 
     uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS];
