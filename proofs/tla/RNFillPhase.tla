@@ -29,17 +29,27 @@
 (*   fline[f]   the line f's call counted on, NoLine when it counts on none *)
 (*   mscan      the lines main_begin has still to look at                  *)
 (*   epoch      fill_phase->epoch (1 at init), advanced by main_end        *)
-(*   word[c]    clients[c].claim:       [ep |-> epoch, held |-> depth > 0,  *)
-(*              in |-> in bit]                                             *)
+(*   word[c]    clients[c].claim:       [ep |-> epoch, depth |-> depth,     *)
+(*              in |-> in bit]; depth runs to DepthMax                     *)
 (*   owner[c]   fill_phase->clients[c].owner; NoOwner is 0                *)
 (*   fepoch[f]  the epoch fill_begin loaded first                          *)
-(*   seen[f]    the word fill_begin's lock replaced (before)               *)
-(*   saved[f]   the owner fill_begin's decide replaced (owner_before)      *)
+(*   seen[f]    the word fill_begin's lock replaced, or the word its      *)
+(*              nested test loaded (before)                                *)
+(*   saved[f]   the owner fill_begin's decide loaded (owner_before)        *)
 (*   overlaps   the MAIN_THREAD_CALL_OVERLAP counter (overlap_counter)     *)
 (*   twoFillers the CLIENT_SEND_TWO_THREADS counter (two_fillers_counter)  *)
-(* Nesting (main_owner, main_depth, a word's depth above 1) and a client   *)
-(* index outside the server's range are not modelled: a nested call or     *)
-(* operation is the outer one's own work and checks nothing.               *)
+(* A fill call nests on its client: the call inside a fill call for the   *)
+(* same client on the same thread (the message layer's start calls the     *)
+(* transport's start_packet) loads the word (FillPeek), finds it in with   *)
+(* depth 1 or more, loads the owner and finds itself (FillNest), and only *)
+(* counts depth; its end takes the depth back (FillUnnest).  The same two  *)
+(* loads by a filler that is not inside refuse it, and the model lets any *)
+(* filler make them: NoFalseNest is that none takes itself as nested.  The *)
+(* depth is the code's 7 bits: a call nested DepthMax deep is refused as   *)
+(* API misuse, never carried into the epoch.  Nesting of main operations   *)
+(* (main_owner, main_depth) and a client index outside the server's range  *)
+(* are not modelled: a nested operation is the outer one's own work and    *)
+(* checks nothing.                                                         *)
 (*                                                                         *)
 (* What a step of the code gives back is an argument of its action: the   *)
 (* line a count took (FillCount's and TakeCount's l), whether a look, lock *)
@@ -66,14 +76,17 @@ CONSTANTS
     TakeUncounted,  \* TRUE: a take does not count itself in on a fills_in line (reversed witness)
     OptedAtStart,   \* TRUE: the game named a client before anything here (the armed check, as every case before the latch)
     ArmedAtCreate,  \* TRUE: the check is armed from create, whatever the game calls (reversed witness)
+    OwnerAtDecide,  \* TRUE: the decide stores the owner and the claim, and a refused look puts them back in three stores (reversed witness)
+    DepthMax,       \* ROCKETNET_FILL_PHASE_DEPTH_MAX: the deepest nesting the word holds
     Lines,          \* the fills_in lines, their indexes
     NoOwner         \* the owner of a client nobody claimed (0 in the code), not a filler
 
 ASSUME NoOwner \notin Fillers
 ASSUME Lines \subseteq Nat
+ASSUME DepthMax \in Nat /\ DepthMax >= 1
 
 Epochs == 0..(MaxMain + 1)
-Words == [ep : Epochs, held : BOOLEAN, in : BOOLEAN]
+Words == [ep : Epochs, depth : 0..DepthMax, in : BOOLEAN]
 Owners == Fillers \cup {NoOwner}
 Kinds == {"update", "other"}
 
@@ -84,12 +97,21 @@ LineChoice(f) == Lines
 \* a call that counts on no line
 NoLine == -1
 
-\* a filler's control states inside a fill call, and inside a take
-FillStates == {"begun", "loaded", "locked", "decided", "counted", "looked", "in", "unclaimed"}
+\* a filler's control states inside a fill call, and inside a take.
+\* "peeked": a call not inside found the word claimed and is to load the
+\* owner; "nbegun", "npeeked": a call nested inside f's own, before and
+\* after its word load; "nested": a
+\* call not inside took itself as nested (NoFalseNest); "unwind1",
+\* "unwind2": OwnerAtDecide's refused look between its stores
+FillStates == {"begun", "loaded", "locked", "decided", "counted", "looked", "in", "unclaimed",
+               "nbegun", "peeked", "npeeked", "nested", "unwind1", "unwind2"}
 TakeStates == {"tcounted", "tin"}
 
+\* the states of a fill call past its check
+PastCheck == {"in", "unclaimed", "nbegun", "npeeked", "nested"}
+
 \* the refusal steps, for the trace check's reach predicates
-Refusals == {"none", "MainLook", "MainIn", "FillLock", "FillDecide", "FillLook", "TakeLook"}
+Refusals == {"none", "MainLook", "MainIn", "FillLock", "FillDecide", "FillLook", "FillNest", "TakeLook"}
 
 VARIABLES
     mpc,            \* main: "idle", "announced" (scanning), "scan" (LookFirst: scanning before it announces), "in", "epoched"
@@ -129,7 +151,7 @@ vars == <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, windo
 View == <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner,
                armed, opted, fbroke, phaseIn, falseAlarm, mainsDone, fillsDone, takesDone>>
 
-NoWord == [ep |-> 0, held |-> FALSE, in |-> FALSE]
+NoWord == [ep |-> 0, depth |-> 0, in |-> FALSE]
 
 TypeOK ==
     /\ mpc \in {"idle", "announced", "scan", "in", "epoched"}
@@ -298,16 +320,17 @@ MainDrop ==
 
 (***************************************************************************)
 (* A filler: fill_begin is FillBegin (load the epoch), FillLock (one CAS   *)
-(* that sets the in bit, refused when it is set) or FillLoad then          *)
-(* FillStore, FillDecide (refused when another filler claimed the client   *)
-(* in this epoch, restoring the word; else the owner and the claim are     *)
-(* stored), FillCount (fills_in fetch_add on the line l the thread hashes  *)
-(* to), FillLook (load main_calls, the epoch and the window again;        *)
-(* refused, restoring the owner and the word, when a main operation is     *)
-(* running or ran since FillBegin, or the window is open).  fill_end is    *)
-(* FillUnclaim (clear in) then FillLeave (fills_in fetch_sub).  The        *)
-(* fetch_subs are on the line the call counted on (fline).  LookFirst      *)
-(* looks before it counts.                                                 *)
+(* that sets the in bit, refused when it is set with depth 0) or FillLoad  *)
+(* then FillStore, FillDecide (refused when another filler claimed the     *)
+(* client in this epoch, restoring the word), FillCount (fills_in          *)
+(* fetch_add on the line l the thread hashes to), FillLook (load           *)
+(* main_calls, the epoch and the window again; refused, restoring the      *)
+(* word, when a main operation is running or ran since FillBegin, or the   *)
+(* window is open; else the owner and the claim are stored).  A word in    *)
+(* with depth 1 or more is FillPeek then FillNest.  fill_end is FillUnnest *)
+(* for a nested call, else FillUnclaim (clear in) then FillLeave (fills_in *)
+(* fetch_sub).  The fetch_subs are on the line the call counted on         *)
+(* (fline).  LookFirst looks before it counts.                             *)
 (***************************************************************************)
 
 \* a fill step: the call meets the main operation in progress, if any
@@ -327,23 +350,34 @@ FillRefused(f) ==
     /\ fillsDone' = [fillsDone EXCEPT ![f] = @ + 1]
     /\ Alarm(Justified(f))
 
+\* the epoch loaded.  From "in", the call is one nested inside f's own for
+\* the same client ("nbegun"): it loads the epoch too, and has no use for it
 FillBegin(f, c) ==
     /\ armed
-    /\ fillsDone[f] < MaxFills
-    /\ fpc[f] = "idle"
-    /\ fpc' = [fpc EXCEPT ![f] = "begun"]
-    /\ fclient' = [fclient EXCEPT ![f] = c]
-    /\ fepoch' = [fepoch EXCEPT ![f] = epoch]
-    /\ fbroke' = [fbroke EXCEPT ![f] = MainBusy]
+    /\ \/ /\ fillsDone[f] < MaxFills
+          /\ fpc[f] = "idle"
+          /\ fpc' = [fpc EXCEPT ![f] = "begun"]
+          /\ fclient' = [fclient EXCEPT ![f] = c]
+          /\ fepoch' = [fepoch EXCEPT ![f] = epoch]
+          /\ fbroke' = [fbroke EXCEPT ![f] = MainBusy]
+       \/ /\ fpc[f] = "in"
+          /\ ~LookFirst
+          /\ c = fclient[f]
+          /\ fpc' = [fpc EXCEPT ![f] = "nbegun"]
+          /\ FillMeets(f)
+          /\ UNCHANGED <<fclient, fepoch>>
     /\ UNCHANGED <<mpc, mscan, mkind, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
     /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
-\* ok: the lock was taken (the in bit was clear); else the call is refused
+\* ok: the lock was taken (the in bit was clear); else, the word in with
+\* depth 0 (another call deciding), the call is refused.  A word in with
+\* depth 1 or more is FillPeek's
 FillLock(f, ok) ==
     LET c == fclient[f] IN
     /\ ~LoadStore
     /\ fpc[f] = "begun"
     /\ ok = ~word[c].in
+    /\ ok \/ word[c].depth = 0
     /\ FillMeets(f)
     /\ IF ~ok
           THEN /\ FillRefused(f)
@@ -381,8 +415,9 @@ FillStore(f) ==
     /\ UNCHANGED <<armed, opted, overlaps, refusal, takesDone>>
 
 \* the lock is held: only f writes the word and the owner until it clears in.
-\* ok: f claimed the client; else another filler holds it in this epoch and
-\* the call is refused
+\* ok: f may claim the client; else another filler holds it in this epoch and
+\* the call is refused.  The code stores the owner and the claim only once
+\* its look lets it in (FillLook); OwnerAtDecide stores them here
 FillDecide(f, ok) ==
     LET c == fclient[f] IN
     /\ fpc[f] = "locked"
@@ -395,8 +430,8 @@ FillDecide(f, ok) ==
                /\ word' = [word EXCEPT ![c] = seen[f]]
                /\ UNCHANGED <<saved, owner>>
           ELSE /\ saved' = [saved EXCEPT ![f] = owner[c]]
-               /\ owner' = [owner EXCEPT ![c] = f]
-               /\ word' = [word EXCEPT ![c] = [ep |-> fepoch[f], held |-> TRUE, in |-> TRUE]]
+               /\ owner' = IF OwnerAtDecide THEN [owner EXCEPT ![c] = f] ELSE owner
+               /\ word' = IF OwnerAtDecide THEN [word EXCEPT ![c] = [ep |-> fepoch[f], depth |-> 1, in |-> TRUE]] ELSE word
                /\ fpc' = [fpc EXCEPT ![f] = "decided"]
                /\ UNCHANGED <<falseAlarm, fillsDone, twoFillers, refusal>>
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, mainCalls, window, fillsIn, fline, epoch, phaseIn, mainsDone>>
@@ -415,17 +450,27 @@ FillCount(f, l) ==
     /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* a main operation running, or one that ran since this call loaded the
-\* epoch, or the window open: refused (ok FALSE)
+\* epoch, or the window open: refused (ok FALSE), and the word, the only
+\* store the call made, goes back.  Let in, the call claims the client: the
+\* owner, then the word [epoch, 1, in], both before the step's end (the
+\* hook), and no other filler reads the owner until the word shows the
+\* claim.  OwnerAtDecide's refusal is three stores, the word back to the
+\* lock's form, the owner back, the word back (FillLook, FillUnwind1,
+\* FillUnwind2), the old code's
 FillLook(f, ok) ==
     LET c == fclient[f] IN
     /\ \/ ~LookFirst /\ fpc[f] = "counted"
        \/ LookFirst /\ fpc[f] = "decided"
     /\ ok = ~(mainCalls > 0 \/ (~NoEpochLook /\ epoch # fepoch[f]) \/ (~NoWindow /\ window))
     /\ FillMeets(f)
-    /\ IF ~ok
+    /\ IF ~ok /\ OwnerAtDecide /\ ~NoRestore
+          THEN /\ fpc' = [fpc EXCEPT ![f] = "unwind1"]
+               /\ word' = [word EXCEPT ![c] = [seen[f] EXCEPT !.in = TRUE]]
+               /\ UNCHANGED <<falseAlarm, fillsDone, owner, fillsIn, fline, overlaps, refusal, phaseIn>>
+       ELSE IF ~ok
           THEN /\ FillRefused(f)
-               /\ word' = [word EXCEPT ![c] = IF NoRestore THEN [ep |-> fepoch[f], held |-> FALSE, in |-> FALSE] ELSE seen[f]]
-               /\ owner' = IF NoRestore THEN owner ELSE [owner EXCEPT ![c] = saved[f]]
+               /\ word' = [word EXCEPT ![c] = IF NoRestore THEN [ep |-> fepoch[f], depth |-> 0, in |-> FALSE] ELSE seen[f]]
+               /\ UNCHANGED owner
                /\ fillsIn' = IF LookFirst THEN fillsIn ELSE [fillsIn EXCEPT ![fline[f]] = @ - 1]
                /\ fline' = IF LookFirst THEN fline ELSE [fline EXCEPT ![f] = NoLine]
                /\ overlaps' = overlaps + 1
@@ -433,15 +478,98 @@ FillLook(f, ok) ==
                /\ UNCHANGED phaseIn
           ELSE /\ fpc' = [fpc EXCEPT ![f] = IF LookFirst THEN "looked" ELSE "in"]
                /\ phaseIn' = IF LookFirst THEN phaseIn ELSE [phaseIn EXCEPT ![c] = @ \cup {f}]
-               /\ UNCHANGED <<falseAlarm, fillsDone, word, owner, fillsIn, fline, overlaps, refusal>>
+               /\ owner' = IF OwnerAtDecide THEN owner ELSE [owner EXCEPT ![c] = f]
+               /\ word' = IF OwnerAtDecide THEN word ELSE [word EXCEPT ![c] = [ep |-> fepoch[f], depth |-> 1, in |-> TRUE]]
+               /\ UNCHANGED <<falseAlarm, fillsDone, fillsIn, fline, overlaps, refusal>>
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, mainsDone>>
     /\ UNCHANGED <<armed, opted, twoFillers, takesDone>>
+
+\* OwnerAtDecide's refused look, its second store: the owner put back
+FillUnwind1(f) ==
+    LET c == fclient[f] IN
+    /\ fpc[f] = "unwind1"
+    /\ fpc' = [fpc EXCEPT ![f] = "unwind2"]
+    /\ owner' = [owner EXCEPT ![c] = saved[f]]
+    /\ FillMeets(f)
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
+
+\* its third: the word put back, then the count dropped and the refusal counted
+FillUnwind2(f) ==
+    LET c == fclient[f] IN
+    /\ fpc[f] = "unwind2"
+    /\ FillRefused(f)
+    /\ word' = [word EXCEPT ![c] = seen[f]]
+    /\ fillsIn' = [fillsIn EXCEPT ![fline[f]] = @ - 1]
+    /\ fline' = [fline EXCEPT ![f] = NoLine]
+    /\ overlaps' = overlaps + 1
+    /\ refusal' = "FillLook"
+    /\ FillMeets(f)
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, owner, phaseIn, mainsDone>>
+    /\ UNCHANGED <<armed, opted, twoFillers, takesDone>>
+
+\* fill_begin's first load found the word in with depth 1 or more: a call
+\* not inside one for the client ("begun") and a call nested inside f's own
+\* ("nbegun") take the same step; the owner is loaded next (FillNest)
+FillPeek(f) ==
+    LET c == fclient[f] IN
+    /\ \/ fpc[f] = "begun" /\ ~LoadStore
+       \/ fpc[f] = "nbegun"
+    /\ word[c].in
+    /\ word[c].depth > 0
+    /\ fpc' = [fpc EXCEPT ![f] = IF @ = "begun" THEN "peeked" ELSE "npeeked"]
+    /\ seen' = IF fpc[f] = "begun" THEN [seen EXCEPT ![f] = word[c]] ELSE seen
+    /\ FillMeets(f)
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
+
+\* the owner loaded.  ok: it is f and the depth is under DepthMax: the call is
+\* nested, and the word's depth grows by one from the word it loaded.  Not
+\* f: refused, counted CLIENT_SEND_TWO_THREADS.  At DepthMax: refused, API
+\* misuse (a count outside the check).  A call not inside that is let in
+\* ("nested") counted nothing and claimed nothing: NoFalseNest
+FillNest(f, ok) ==
+    LET c == fclient[f]
+        mine == owner[c] = f
+        from == IF fpc[f] = "peeked" THEN seen[f] ELSE word[c]
+    IN
+    /\ fpc[f] \in {"peeked", "npeeked"}
+    /\ ok = (mine /\ from.depth < DepthMax)
+    /\ FillMeets(f)
+    /\ twoFillers' = IF mine THEN twoFillers ELSE twoFillers + 1
+    /\ IF ok
+          THEN /\ word' = [word EXCEPT ![c] = [ep |-> from.ep, depth |-> from.depth + 1, in |-> TRUE]]
+               /\ UNCHANGED refusal
+          ELSE /\ refusal' = "FillNest"
+               /\ UNCHANGED word
+    /\ IF fpc[f] = "peeked"
+          THEN IF ok
+                  THEN /\ fpc' = [fpc EXCEPT ![f] = "nested"]
+                       /\ UNCHANGED <<falseAlarm, fillsDone>>
+                  ELSE FillRefused(f)
+          ELSE /\ fpc' = [fpc EXCEPT ![f] = "in"]
+               \* a nested call refused for another owner would be a false alarm
+               /\ Alarm(mine)
+               /\ UNCHANGED fillsDone
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, takesDone>>
+
+\* a nested call's end: the depth back by one
+FillUnnest(f) ==
+    LET c == fclient[f] IN
+    /\ fpc[f] = "in"
+    /\ word[c].depth > 1
+    /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.depth = @ - 1]]
+    /\ FillMeets(f)
+    /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 FillUnclaim(f) ==
     LET c == fclient[f] IN
     /\ fpc[f] = "in"
+    /\ word[c].depth <= 1
     /\ fpc' = [fpc EXCEPT ![f] = "unclaimed"]
-    /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.held = FALSE, !.in = FALSE]]
+    /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.depth = 0, !.in = FALSE]]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
     /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
@@ -556,9 +684,10 @@ Next ==
     \/ MainDrop
     \/ \E l \in Lines, ok \in BOOLEAN : MainLook(l, ok)
     \/ \E f \in Fillers, c \in Clients : FillBegin(f, c)
-    \/ \E f \in Fillers, ok \in BOOLEAN : FillLock(f, ok) \/ FillDecide(f, ok) \/ FillLook(f, ok) \/ TakeLook(f, ok)
+    \/ \E f \in Fillers, ok \in BOOLEAN : FillLock(f, ok) \/ FillDecide(f, ok) \/ FillLook(f, ok) \/ FillNest(f, ok) \/ TakeLook(f, ok)
     \/ \E f \in Fillers : \E l \in LineChoice(f) : FillCount(f, l) \/ TakeCount(f, l)
     \/ \E f \in Fillers : FillLoad(f) \/ FillStore(f) \/ FillUnclaim(f) \/ FillLeave(f) \/ FillSkip(f) \/ TakeLeave(f) \/ TakeSkip(f)
+    \/ \E f \in Fillers : FillPeek(f) \/ FillUnnest(f) \/ FillUnwind1(f) \/ FillUnwind2(f)
     \/ Arm
     \/ Done
 
@@ -569,14 +698,14 @@ Spec == Init /\ [][Next]_vars
 (***************************************************************************)
 
 \* a main operation and a fill call are never both past their checks
-Sound == ~(mpc \in {"in", "epoched"} /\ \E f \in Fillers : fpc[f] \in {"in", "unclaimed"})
+Sound == ~(mpc \in {"in", "epoched"} /\ \E f \in Fillers : fpc[f] \in PastCheck)
 
 \* a main operation and a take are never both past their checks
 TakeSound == ~(mpc \in {"in", "epoched"} /\ \E f \in Fillers : fpc[f] = "tin")
 
 \* with the window open no fill call and no main operation but an update
 \* call is past its check
-WindowShut == window => /\ \A f \in Fillers : fpc[f] \notin {"in", "unclaimed"}
+WindowShut == window => /\ \A f \in Fillers : fpc[f] \notin PastCheck
                         /\ ~(mpc \in {"in", "epoched"} /\ mkind = "other")
 
 \* in one fill phase, the calls on a client that pass the check are one filler's
@@ -584,6 +713,18 @@ OneFiller == \A c \in Clients : Cardinality(phaseIn[c]) <= 1
 
 \* every refusal is of a call or operation that broke the contract or met a break
 NoFalseAlarm == ~falseAlarm
+
+\* a fill call not inside one for its client is never taken as nested: the
+\* nested test's two loads never pair a claim's word with the caller's own
+\* id as owner (MCRNFillPhaseBrokenOwnerAtDecide)
+NoFalseNest == \A f \in Fillers : fpc[f] # "nested"
+
+\* a client's word shows a claim (depth 1 or more) only while its owner is
+\* inside a fill call for it
+ClaimHasOwner == \A c \in Clients : word[c].depth > 0 =>
+                     /\ owner[c] \in Fillers
+                     /\ fclient[owner[c]] = c
+                     /\ fpc[owner[c]] \in {"decided", "counted", "looked", "in", "nbegun", "npeeked", "unwind1"}
 
 \* before the game opts in no call is inside the check, so none is refused or counted
 NoCheckBeforeOptIn == ~opted => (mpc = "idle" /\ \A f \in Fillers : fpc[f] = "idle")

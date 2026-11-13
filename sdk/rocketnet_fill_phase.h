@@ -52,10 +52,11 @@
 //   - fill_begin loads the epoch (FillBegin), sets in with one
 //     compare-and-swap (FillLock), then decides (FillDecide): it refuses when
 //     another thread claimed the client in this epoch, restoring the word.
-//     Otherwise it stores itself as owner and the word [epoch, 1, in]. It
-//     then increments its fills_in line (FillCount) and loads main_calls and
-//     the epoch again (FillLook), refusing, and restoring the owner and the
-//     word, when a main operation is running or ran since FillBegin.
+//     It then increments its fills_in line (FillCount) and loads main_calls,
+//     the epoch and the window again (FillLook), refusing, and restoring the
+//     word, when a main operation is running or ran since FillBegin. A call
+//     the look lets in stores itself as owner, then the word [epoch, 1, in]:
+//     the owner is never written by a call that is refused.
 //     fill_end clears the word's in (FillUnclaim), then decrements its
 //     fills_in line (FillLeave).
 //   - main_begin increments main_calls (MainAnnounce), refusing when another
@@ -72,13 +73,22 @@
 //     moved to another thread in the next phase); the look reads the epoch
 //     again (MCRNFillPhaseBrokenNoEpochLook lets a call that a main
 //     operation ran inside pass with the old stamp, and a second filler in
-//     the new phase with it); a refused look puts the owner and the word
-//     back (MCRNFillPhaseBrokenNoRestore leaves the refused claim, and the
+//     the new phase with it); a refused look puts the word back
+//     (MCRNFillPhaseBrokenNoRestore leaves the refused call's stamp, and the
 //     client's next filler, honest, is refused).
 //   - Calls nest. The message layer's start calls the transport's
 //     start_packet on the same thread for the same client: a fill call that
-//     finds the client's word in, with depth 1 or more, and itself as owner,
-//     is the outer call's own work and only counts depth. A fill call made by
+//     finds the client's word in, with depth 1 or more (FillPeek), then
+//     loads the owner and finds itself (FillNest), is the outer call's own
+//     work and only counts depth; another thread's call is refused there.
+//     The two loads are one decision because the owner is stored only by a
+//     call the look let in, before its word: a word that shows a claim is
+//     read with that claim's owner or a later one, never a thread's own id
+//     put back (MCRNFillPhaseBrokenOwnerAtDecide stores the owner at the
+//     decide and puts it back at a refused look, and a refused thread's
+//     next call takes another's claim as its own: NoFalseNest). The depth
+//     has 7 bits: a call nested ROCKETNET_FILL_PHASE_DEPTH_MAX deep is
+//     refused as API misuse, never carried into the epoch. A fill call made by
 //     the thread inside a main operation (a send made from a callback of
 //     update) is that operation's own work and skips the check; so does a
 //     nested main operation (main_depth). A main operation made from inside a
@@ -105,7 +115,7 @@
 //     own exchange gives each client one taker.
 //
 // Cost per fill call: one CAS, two loads and two stores on the client's own
-// cache line; one add and one subtract on the calling thread's fills_in line;
+// cache line (a refused look: one store); one add and one subtract on the calling thread's fills_in line;
 // two loads of main_calls and the epoch, which main writes twice a frame. A
 // filler writes nothing another client's filler writes, except where two
 // threads' ids hash to one fills_in line. Per main operation: two adds, two
@@ -115,10 +125,12 @@
 // The check is armed or not (rocketnet_fill_phase_arm; armed after init;
 // proofs/tla/RNFillPhase.tla Arm, and FillSkip, TakeSkip and MainSkip for a
 // scope that begins not armed; the trace check walks both sides of the
-// latch). The server disarms it at create and arms it, for good, at the
-// game's first call that names a client (rocketnet_server_finish_client_message
-// or rocketnet_server_abort_client_message) or its first
-// rocketnet_server_update_receive. Until then the game makes today's
+// latch). The server transport disarms it at create; the server arms it, for
+// good, at the game's first call that names a client
+// (rocketnet_server_finish_client_message or
+// rocketnet_server_abort_client_message) or its first
+// rocketnet_server_update_receive, and arms each later transport at the
+// start that creates it, so a stop and a start keep it armed. Until then the game makes today's
 // calls only, one thread at a time, as before this check existed, and the
 // call sites' scopes below do nothing: one relaxed load and a branch, no
 // thread id, no write. A scope remembers whether it began armed, so a call

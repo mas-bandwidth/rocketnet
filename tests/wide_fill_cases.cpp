@@ -40,6 +40,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -660,6 +662,410 @@ static void test_wide_fill_check_steps()
 
     rocketnet_assert_function( NULL );
 }
+
+// the nesting depth has 7 bits: a fill call nested
+// ROCKETNET_FILL_PHASE_DEPTH_MAX deep on one client is refused, counted as
+// API misuse, and leaves the word as it was; one more would have carried
+// into the epoch. The calls below it end as nested calls do, and the check
+// is whole after them
+
+static void test_wide_fill_check_depth_bound()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    rocketnet_quiet( 1 );
+    g_wide_fill_asserts = 0;
+
+    uint64_t overlap = 0;
+    uint64_t two = 0;
+    static rocketnet_fill_phase_t phase;
+    rocketnet_fill_phase_init( &phase, 1, &overlap, &two );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    const uint64_t epoch = phase.epoch.load();
+
+    int entered = 0;
+    for ( int i = 0; i < ROCKETNET_FILL_PHASE_DEPTH_MAX; i++ )
+    {
+        entered += rocketnet_fill_phase_fill_begin( &phase, 0 ) ? 1 : 0;
+    }
+    check( entered == ROCKETNET_FILL_PHASE_DEPTH_MAX );
+    const uint64_t held = phase.clients[0].claim.load();
+    check( ( ( held & ROCKETNET_FILL_PHASE_DEPTH_MASK ) >> ROCKETNET_FILL_PHASE_DEPTH_SHIFT ) == ROCKETNET_FILL_PHASE_DEPTH_MAX );
+    check( g_wide_fill_asserts == 0 );
+
+    const bool deeper = rocketnet_fill_phase_fill_begin( &phase, 0 );
+    check( !deeper );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( phase.clients[0].claim.load() == held );
+    check( ( held >> ROCKETNET_FILL_PHASE_EPOCH_SHIFT ) == epoch );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 1 ) );
+    check( overlap == 0 && two == 0 );
+    if ( deeper )
+    {
+        rocketnet_fill_phase_fill_end( &phase, 0 );
+    }
+
+    for ( int i = 0; i < entered; i++ )
+    {
+        rocketnet_fill_phase_fill_end( &phase, 0 );
+    }
+    const uint64_t left = phase.clients[0].claim.load();
+    check( ( left & ROCKETNET_FILL_PHASE_IN ) == 0 );
+    check( ( left >> ROCKETNET_FILL_PHASE_EPOCH_SHIFT ) == epoch );
+    uint64_t lines = 0;
+    for ( int l = 0; l < ROCKETNET_FILL_PHASE_FILL_LINES; l++ )
+    {
+        lines += phase.lines[l].fills_in.load();
+    }
+    check( lines == 0 );
+    check( rocketnet_fill_phase_main_begin( &phase ) );
+    rocketnet_fill_phase_main_end( &phase );
+    check( overlap == 0 );
+
+    rocketnet_assert_function( NULL );
+}
+
+// the check runs from the server's first call that opts in (rocketnet.h,
+// rocketnet_server_t): a stop and a start make a new transport, whose check
+// the start arms again, so a breach after the restart is refused and counted
+// as one before it is
+
+static void test_wide_fill_check_armed_across_restart()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    g_wide_fill_asserts = 0;
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 0 );
+
+    rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) ) );
+    check( phase != NULL );
+    check( !rocketnet_fill_phase_armed( phase ) );
+
+    // a run that never opted in leaves the next one not armed
+
+    rocketnet_server_stop( world.server );
+    rn_test_server_wait_stopped( world.server );
+    check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
+    phase = rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) ) );
+    check( phase != NULL );
+    check( !rocketnet_fill_phase_armed( phase ) );
+
+    rocketnet_server_update_receive( world.server, world.time );
+    rocketnet_server_update_finish( world.server );
+    check( rocketnet_fill_phase_armed( phase ) );
+
+    rocketnet_server_stop( world.server );
+    rn_test_server_wait_stopped( world.server );
+    check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
+
+    phase = rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) ) );
+    check( phase != NULL );
+    check( rocketnet_fill_phase_armed( phase ) );
+
+    // a main operation's scope as the call sites take it (held by hand) and
+    // a fill call from another thread inside it: refused, counted on the
+    // new transport
+
+    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
+    {
+        rocketnet_fill_phase_main_scope_t held( phase );
+        check( held.fill_phase == phase && held.entered );
+        bool entered = true;
+        std::thread tf( [&]
+                        {
+            entered = rocketnet_fill_phase_fill_begin( phase, 0 );
+            if ( entered )
+            {
+                rocketnet_fill_phase_fill_end( phase, 0 );
+            } } );
+        tf.join();
+        check( !entered );
+    }
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 1 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 1 ) );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
+#if ROCKETNET_DEV
+
+// Two rule breaches at once must leave the check whole (the header's
+// promise: a refused call does nothing). The interleaving, driven by the
+// check's own trace hook: thread B fills the client in one phase and stays
+// alive (the owner it left is B); after a main operation thread A claims the
+// client in the next and is held after its count; the window opens, so A's
+// look will refuse; B's next call finds the client in and is held after its
+// first load; A's look refuses; B goes on. Had A stored the owner before its
+// look and put B back at its refusal, B would read the word A's claim left
+// and the owner A put back, take itself as nested in a call it never made,
+// count nothing, and its end would take one off a fills_in line it never
+// counted on: every main operation refused from then on. Taken back to that
+// order (with the FillPeek hook between its two loads) this test fails at
+// !b_second; as the code is, A holds the client's word in its lock form
+// until its look, so B is refused at its lock and never parks at FillPeek.
+
+struct wide_fill_park_t
+{
+    std::mutex mutex;
+    std::condition_variable changed;
+    const char * park_at[2];                // the step each role parks at once, NULL: none
+    bool parked[2];
+    bool release[2];
+    bool go[2];
+    bool waiting[2];
+    bool done[2];
+};
+
+static thread_local int g_wide_fill_role = -1;
+
+static void wide_fill_park_hook( void * context, const char * action, int, uint64_t, bool )
+{
+    wide_fill_park_t * park = (wide_fill_park_t *) context;
+    const int role = g_wide_fill_role;
+    if ( role < 0 )
+    {
+        return;
+    }
+    std::unique_lock<std::mutex> lock( park->mutex );
+    if ( !park->park_at[role] || strcmp( action, park->park_at[role] ) != 0 )
+    {
+        return;
+    }
+    park->park_at[role] = NULL;
+    park->parked[role] = true;
+    park->changed.notify_all();
+    park->changed.wait( lock, [&]
+                        { return park->release[role]; } );
+}
+
+// role waits for the test's go
+static void wide_fill_park_gate( wide_fill_park_t * park, int role )
+{
+    std::unique_lock<std::mutex> lock( park->mutex );
+    park->waiting[role] = true;
+    park->changed.notify_all();
+    park->changed.wait( lock, [&]
+                        { return park->go[role]; } );
+}
+
+static void wide_fill_park_set( wide_fill_park_t * park, bool * flag )
+{
+    std::unique_lock<std::mutex> lock( park->mutex );
+    *flag = true;
+    park->changed.notify_all();
+}
+
+static void wide_fill_park_wait( wide_fill_park_t * park, const bool * a, const bool * b )
+{
+    std::unique_lock<std::mutex> lock( park->mutex );
+    park->changed.wait( lock, [&]
+                        { return *a || *b; } );
+}
+
+static void test_wide_fill_check_nested_never_torn()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    rocketnet_quiet( 1 );
+    g_wide_fill_asserts = 0;
+
+    uint64_t overlap = 0;
+    uint64_t two = 0;
+    static rocketnet_fill_phase_t phase;
+    rocketnet_fill_phase_init( &phase, 1, &overlap, &two );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+
+    static wide_fill_park_t park;
+    park.park_at[0] = park.park_at[1] = NULL;
+    for ( int r = 0; r < 2; r++ )
+    {
+        park.parked[r] = park.release[r] = park.go[r] = park.waiting[r] = park.done[r] = false;
+    }
+    rocketnet_fill_phase_set_trace( wide_fill_park_hook, &park );
+
+    // B: one whole call, then the held one
+
+    bool b_first = false;
+    bool b_second = false;
+    std::thread tb( [&]
+                    {
+        g_wide_fill_role = 1;
+        b_first = rocketnet_fill_phase_fill_begin( &phase, 0 );
+        if ( b_first )
+        {
+            rocketnet_fill_phase_fill_end( &phase, 0 );
+        }
+        wide_fill_park_gate( &park, 1 );
+        b_second = rocketnet_fill_phase_fill_begin( &phase, 0 );
+        if ( b_second )
+        {
+            rocketnet_fill_phase_fill_end( &phase, 0 );
+        }
+        wide_fill_park_set( &park, &park.done[1] ); } );
+    wide_fill_park_wait( &park, &park.waiting[1], &park.done[1] );
+    check( b_first );
+
+    // a main operation: the next phase
+
+    check( rocketnet_fill_phase_main_begin( &phase ) );
+    rocketnet_fill_phase_main_end( &phase );
+
+    // A: claims the client, held after its count
+
+    {
+        std::unique_lock<std::mutex> lock( park.mutex );
+        park.park_at[0] = "FillCount";
+    }
+    bool a_entered = true;
+    std::thread ta( [&]
+                    {
+        g_wide_fill_role = 0;
+        a_entered = rocketnet_fill_phase_fill_begin( &phase, 0 );
+        if ( a_entered )
+        {
+            rocketnet_fill_phase_fill_end( &phase, 0 );
+        }
+        wide_fill_park_set( &park, &park.done[0] ); } );
+    wide_fill_park_wait( &park, &park.parked[0], &park.done[0] );
+    check( park.parked[0] );
+
+    // the window opens (an update_receive's work): A's look will refuse
+
+    rocketnet_fill_phase_window( &phase, true );
+
+    // B's second call, held after it loads the word, if it gets that far
+
+    {
+        std::unique_lock<std::mutex> lock( park.mutex );
+        park.park_at[1] = "FillPeek";
+        park.go[1] = true;
+        park.changed.notify_all();
+    }
+    wide_fill_park_wait( &park, &park.parked[1], &park.done[1] );
+
+    // A's look refuses; then B goes on
+
+    wide_fill_park_set( &park, &park.release[0] );
+    wide_fill_park_wait( &park, &park.done[0], &park.done[0] );
+    wide_fill_park_set( &park, &park.release[1] );
+    wide_fill_park_wait( &park, &park.done[1], &park.done[1] );
+    ta.join();
+    tb.join();
+    rocketnet_fill_phase_set_trace( NULL, NULL );
+    rocketnet_fill_phase_window( &phase, false );
+
+    // both refused, each counted once, and the check whole
+
+    check( !a_entered );
+    check( !b_second );
+    check( overlap == 1 );
+    check( two == 1 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 2 ) );
+    check( rocketnet_api_misuse_count() == misuse );
+    uint64_t lines = 0;
+    for ( int l = 0; l < ROCKETNET_FILL_PHASE_FILL_LINES; l++ )
+    {
+        lines += phase.lines[l].fills_in.load();
+    }
+    check( lines == 0 );
+    check( ( phase.clients[0].claim.load() & ROCKETNET_FILL_PHASE_IN ) == 0 );
+    check( phase.main_calls.load() == 0 );
+    check( rocketnet_fill_phase_main_begin( &phase ) );
+    rocketnet_fill_phase_main_end( &phase );
+    check( rocketnet_fill_phase_fill_begin( &phase, 0 ) );
+    rocketnet_fill_phase_fill_end( &phase, 0 );
+
+    rocketnet_assert_function( NULL );
+}
+
+// A call a game thread may make reads the running server once, before its
+// check, and keeps that copy: a stop that runs whole between its check and
+// the rest of the call (here the stop runs after finish_message's hand-over,
+// held by the trace hook) leaves the copy alive, retiring, and the call ends
+// as it would after the stop. Read twice, the second read found the server
+// stopped and the call counted API misuse for a NULL it never passed.
+
+static void test_wide_fill_check_running_read_once()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    g_wide_fill_asserts = 0;
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 1 );
+    wide_fill_connect_all( &world );
+    wide_fill_opt_in( &world );
+    rocketnet_server_send_packets( world.server );      // a main thread call: the opt-in's claim ends
+    const int slot = rocketnet_client_index( world.clients[0] );
+    check( slot >= 0 );
+
+    static wide_fill_park_t park;
+    park.park_at[0] = park.park_at[1] = NULL;
+    for ( int r = 0; r < 2; r++ )
+    {
+        park.parked[r] = park.release[r] = park.go[r] = park.waiting[r] = park.done[r] = false;
+    }
+    rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) ) );
+    check( phase != NULL );
+    rocketnet_fill_phase_set_trace( wide_fill_park_hook, &park );
+
+    // B starts a message on the client and stays alive, holding its claim
+
+    bool b_started = false;
+    std::thread tb( [&]
+                    {
+        g_wide_fill_role = 1;
+        b_started = rocketnet_server_start_message( world.server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 ) != NULL;
+        wide_fill_park_gate( &park, 1 ); } );
+    wide_fill_park_wait( &park, &park.waiting[1], &park.waiting[1] );
+    check( b_started );
+
+    // A finishes it with the one-thread form: the hand-over's main operation
+    // ends B's claim, and A is held as that operation ends
+
+    {
+        std::unique_lock<std::mutex> lock( park.mutex );
+        park.park_at[0] = "MainDrop";
+    }
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
+    const int asserts = g_wide_fill_asserts;
+    uint32_t serial = 1;
+    std::thread ta( [&]
+                    {
+        g_wide_fill_role = 0;
+        serial = rocketnet_server_finish_message( world.server, 8 );
+        wide_fill_park_set( &park, &park.done[0] ); } );
+    wide_fill_park_wait( &park, &park.parked[0], &park.done[0] );
+    check( park.parked[0] );
+
+    // the stop runs whole on this thread, then A goes on
+
+    rocketnet_server_stop( world.server );
+    check( !rocketnet_server_running( world.server ) );
+    wide_fill_park_set( &park, &park.release[0] );
+    ta.join();
+    rocketnet_fill_phase_set_trace( NULL, NULL );
+    {
+        std::unique_lock<std::mutex> lock( park.mutex );
+        park.go[1] = true;
+        park.changed.notify_all();
+    }
+    tb.join();
+
+    // the call ran to its end on the copy, as it would after the stop: the
+    // message went with the stop's kick, so the finish found nothing open (its
+    // one debug assert), queued nothing, and nothing was refused or misused
+
+    check( serial == 0 );
+    check( rocketnet_api_misuse_count() == misuse );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap );
+    check( g_wide_fill_asserts == asserts + wide_fill_expected_asserts( 1 ) );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
+#endif // #if ROCKETNET_DEV
 
 // the public server: refusals reach the server's counters, and a refused
 // fill call does nothing
@@ -1750,6 +2156,12 @@ REGISTER_UNIT_TEST( test_wide_fill_four_threads );
 REGISTER_UNIT_TEST( test_wide_fill_eight_threads_large );
 REGISTER_UNIT_TEST( test_wide_fill_update_in_three_calls );
 REGISTER_UNIT_TEST( test_wide_fill_check_steps );
+REGISTER_UNIT_TEST( test_wide_fill_check_depth_bound );
+REGISTER_UNIT_TEST( test_wide_fill_check_armed_across_restart );
+#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_wide_fill_check_nested_never_torn );
+REGISTER_UNIT_TEST( test_wide_fill_check_running_read_once );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_wide_fill_check_public );
 REGISTER_UNIT_TEST( test_wide_fill_open_per_client );
 REGISTER_UNIT_TEST( test_wide_fill_main_refused_during_fill );

@@ -288,8 +288,11 @@ bool rocketnet_fill_phase_hand_over( struct rocketnet_fill_phase_t * fill_phase,
     return true;
 }
 
-// proofs/tla/RNFillPhase.tla FillBegin, FillLock, FillDecide, FillCount, FillLook. The lock is one
-// compare-and-swap; the reversed witness LoadStore takes it as a load (FillLoad) and a store (FillStore).
+// proofs/tla/RNFillPhase.tla FillBegin, FillLock, FillDecide, FillCount, FillLook, and for a word
+// already claimed FillPeek and FillNest. The lock is one compare-and-swap; the reversed witness
+// LoadStore takes it as a load (FillLoad) and a store (FillStore). The reversed witness
+// OwnerAtDecide stores the owner at the decide and puts it back at a refused look in three stores
+// (FillLook, FillUnwind1, FillUnwind2), the code before the owner moved after the look.
 bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index )
 {
     rocketnet_assert( fill_phase );
@@ -308,7 +311,6 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
     RN_FILL_PHASE_TRACE( "FillBegin", client_index, epoch, false );
 
     uint64_t before = 0;                        // the word before the lock, restored on a refusal
-    uint64_t owner_before = 0;
 
     if ( claims )
     {
@@ -321,22 +323,52 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
             if ( rn_fill_phase_word_in( before ) )
             {
                 // inside a fill call for this client already: this thread's
-                // own when it finished deciding (depth 1 or more, stored after
-                // the owner) and named itself owner; otherwise another thread
-                // is inside, or deciding
+                // own when the word shows a claim (depth 1 or more) and the
+                // owner is this thread; otherwise another thread is inside,
+                // or deciding (depth 0). The owner is loaded after the word:
+                // a claim's word is stored after its owner, by a call that
+                // has passed its look, and no other store of the owner
+                // follows while the claim stands, so a word that shows a
+                // claim is never read with an owner that is not its
+                // claimer's (FillPeek, FillNest). The depth stores below are
+                // relaxed: only the claimer writes them, after its seq_cst
+                // claim store, so a reader that loads one is coherence-ordered
+                // after that store
 
                 const uint64_t depth = rn_fill_phase_word_depth( before );
-                if ( depth > 0 && owner->load() == me )
+                if ( depth == 0 )
                 {
-                    rocketnet_assert( depth < ROCKETNET_FILL_PHASE_DEPTH_MAX );
-                    word->store( rn_fill_phase_word( rn_fill_phase_word_epoch( before ), depth + 1, true ), std::memory_order_relaxed );
-                    return true;
+                    rn_fill_phase_count( fill_phase->two_fillers_counter );
+                    RN_FILL_PHASE_TRACE( "FillLock", client_index, before, true );
+                    rocketnet_error( "server fill call refused: client %d is filled by another thread in this fill phase", client_index );
+                    rocketnet_assert( false && "two fillers on one client in one fill phase" );
+                    return false;
                 }
-                rn_fill_phase_count( fill_phase->two_fillers_counter );
-                RN_FILL_PHASE_TRACE( "FillLock", client_index, before, true );
-                rocketnet_error( "server fill call refused: client %d is filled by another thread in this fill phase", client_index );
-                rocketnet_assert( false && "two fillers on one client in one fill phase" );
-                return false;
+                RN_FILL_PHASE_TRACE( "FillPeek", client_index, before, false );
+                if ( owner->load() != me )
+                {
+                    rn_fill_phase_count( fill_phase->two_fillers_counter );
+                    RN_FILL_PHASE_TRACE( "FillNest", client_index, before, true );
+                    rocketnet_error( "server fill call refused: client %d is filled by another thread in this fill phase", client_index );
+                    rocketnet_assert( false && "two fillers on one client in one fill phase" );
+                    return false;
+                }
+
+                // a nested call: only the depth counts. The depth has 7 bits,
+                // and one more past its top would carry into the epoch, so a
+                // call nested that deep is refused, as misuse
+                if ( depth >= ROCKETNET_FILL_PHASE_DEPTH_MAX )
+                {
+                    rocketnet_api_misuse_record();
+                    RN_FILL_PHASE_TRACE( "FillNest", client_index, before, true );
+                    rocketnet_error( "server fill call refused: fill calls for client %d nested %d deep", client_index, (int) depth );
+                    rocketnet_assert( false && "fill calls nested past ROCKETNET_FILL_PHASE_DEPTH_MAX" );
+                    return false;
+                }
+                const uint64_t nested = rn_fill_phase_word( rn_fill_phase_word_epoch( before ), depth + 1, true );
+                word->store( nested, std::memory_order_relaxed );
+                RN_FILL_PHASE_TRACE( "FillNest", client_index, nested, false );
+                return true;
             }
             if ( word->compare_exchange_weak( before, before | ROCKETNET_FILL_PHASE_IN ) )
             {
@@ -348,11 +380,13 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         // the lock is held: only this thread writes the word and the owner
         // until it clears in. Another thread's claim of this call's epoch
         // refuses. A call that loaded an older epoch (stale: a main operation
-        // ran inside it) may claim over a newer one: its look refuses it and
-        // puts the owner and the word back, and while it holds the lock any
-        // other filler of the client is refused at FillLock
+        // ran inside it) may go on over a newer one: its look refuses it.
+        // The owner and the claim are stored only after the look lets the
+        // call in, so a refusal puts back the word alone and never the
+        // owner: an owner put back over a claim that a nested test already
+        // read would let that test take another thread's claim as its own
 
-        owner_before = owner->load();
+        const uint64_t owner_before = owner->load();
         if ( owner_before != 0 && owner_before != me && rn_fill_phase_word_epoch( before ) == epoch )
         {
             word->store( before );
@@ -362,10 +396,7 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
             rocketnet_assert( false && "two fillers on one client in one fill phase" );
             return false;
         }
-
-        owner->store( me );
-        word->store( rn_fill_phase_word( epoch, 1, true ) );
-        RN_FILL_PHASE_TRACE( "FillDecide", client_index, rn_fill_phase_word( epoch, 1, true ), false );
+        RN_FILL_PHASE_TRACE( "FillDecide", client_index, before | ROCKETNET_FILL_PHASE_IN, false );
     }
 
     const int line = rn_fill_phase_line( me );
@@ -382,24 +413,17 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
     if ( fill_phase->main_calls.load() != 0 || fill_phase->epoch.load() != epoch || fill_phase->window.load() != 0 )
     {
         // a refused call leaves no claim: the client's next filler in this
-        // phase, honest, must not be refused for it (NoFalseAlarm)
+        // phase, honest, must not be refused for it (NoFalseAlarm). The owner
+        // was never written: the word alone goes back, out
 
         if ( claims )
         {
 #if defined( ROCKETNET_FILL_PHASE_PLANT )
             // the trace check's plant (tests/tla_trace_fill_phase.cpp): the
-            // refused claim stays, out, in place of the word it replaced
+            // refused call leaves a word, out, stamped with its epoch, in
+            // place of the word it replaced
             fill_phase->clients[client_index].claim.store( rn_fill_phase_word( epoch, 0, false ) );
 #else  // #if defined( ROCKETNET_FILL_PHASE_PLANT )
-
-            // the word goes back to the lock's own form (in, depth 0: a
-            // claim being decided) before the owner does: with the word
-            // still [epoch, 1, in] and the owner already the thread it was,
-            // that thread's next call for the client would read itself as
-            // nested in a call it never made, and its end would then leave
-            // a fills_in line it never entered
-            fill_phase->clients[client_index].claim.store( before | ROCKETNET_FILL_PHASE_IN );
-            fill_phase->clients[client_index].owner.store( owner_before );
             fill_phase->clients[client_index].claim.store( before );
 #endif // #if defined( ROCKETNET_FILL_PHASE_PLANT )
         }
@@ -411,11 +435,20 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         return false;
     }
 
+    // the call is in: its claim, the owner first and then the word. Until the
+    // word's store a nested test of another thread reads depth 0 and is
+    // refused; from it on the owner it reads is this thread
+    if ( claims )
+    {
+        fill_phase->clients[client_index].owner.store( me );
+        fill_phase->clients[client_index].claim.store( rn_fill_phase_word( epoch, 1, true ) );
+    }
+
     RN_FILL_PHASE_TRACE( "FillLook", client_index, 0, false );
     return true;
 }
 
-// proofs/tla/RNFillPhase.tla FillUnclaim, FillLeave: only this thread writes the word while its in bit is set
+// proofs/tla/RNFillPhase.tla FillUnnest, FillUnclaim, FillLeave: only this thread writes the word while its in bit is set
 void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, int client_index )
 {
     rocketnet_assert( fill_phase );
@@ -437,7 +470,10 @@ void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, 
         rocketnet_assert( depth > 0 );
         if ( depth > 1 )
         {
-            word->store( rn_fill_phase_word( rn_fill_phase_word_epoch( held ), depth - 1, true ), std::memory_order_relaxed );
+            // proofs/tla/RNFillPhase.tla FillUnnest
+            const uint64_t outer = rn_fill_phase_word( rn_fill_phase_word_epoch( held ), depth - 1, true );
+            word->store( outer, std::memory_order_relaxed );
+            RN_FILL_PHASE_TRACE( "FillUnnest", client_index, outer, false );
             return;                                 // a nested call: the outer call still holds the client
         }
 

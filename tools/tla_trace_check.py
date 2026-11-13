@@ -145,6 +145,10 @@ LAYERS = {
             "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
             "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",
             "FillStore": "a reversed witness's step (LoadStore); the code locks by one CAS",
+            "FillUnwind1": "a reversed witness's step (OwnerAtDecide: a refused look puts the owner back); the code "
+                           "never writes the owner before its look lets it in",
+            "FillUnwind2": "a reversed witness's step (OwnerAtDecide: the refused look's last store); the code's "
+                           "refused look is one store, in FillLook",
             "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
                     "so it never gets there",
         },
@@ -152,7 +156,7 @@ LAYERS = {
                              "and the counts it does keep (overlaps, twoFillers) are compared"},
         "reach": ["RefusedMainLook", "RefusedMainIn", "RefusedFillLock", "RefusedFillDecide", "RefusedFillLookByMain",
                   "RefusedFillLookInWindow", "RefusedTakeLook", "TakeInWindow", "TwoTakesInWindow",
-                  "RefusedMainBesideTake", "WindowOpened"],
+                  "RefusedMainBesideTake", "WindowOpened", "RefusedFillNest", "NestedCall"],
         # each record carries the 64 fills_in lines, and a TLC run's time is the size of the log it reads: 400 steps
         # ran 35 to 53 s a run on a shared bench slot (vision, 2026-11-13) against the 100 s budget; a main call is 66
         # steps (one look a line), so a walk much shorter than this finishes none

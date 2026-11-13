@@ -969,6 +969,7 @@ MCRNFillPhaseTakes.cfg	MCRNFillPhase.tla	pass	-	check	rnfillphase	required	-
 MCRNFillPhaseBrokenNoWindow.cfg	MCRNFillPhase.tla	invariant	WindowShut	check	rnfillphase	required	-
 MCRNFillPhaseBrokenNoMainWindow.cfg	MCRNFillPhase.tla	invariant	WindowShut	check	rnfillphase	required	-
 MCRNFillPhaseBrokenTakeUncounted.cfg	MCRNFillPhase.tla	invariant	TakeSound	check	rnfillphase	required	-
+MCRNFillPhaseBrokenOwnerAtDecide.cfg	MCRNFillPhase.tla	invariant	NoFalseNest	check	rnfillphase	required	-
 MCRNSendReserveCalls.cfg	MCRNSendReserveCalls.tla	pass	-	check	rnsendreserve	required	-
 MCRNSendReserveCallsBrokenRoomOnly.cfg	MCRNSendReserveCalls.tla	invariant	ReserveKept	check	rnsendreserve	required	-
 MCRNSendReserveCallsBrokenNoRefresh.cfg	MCRNSendReserveCalls.tla	invariant	NeverStarved	check	rnsendreserve	required	-

@@ -2686,8 +2686,13 @@ void rocketnet_server_acks_settle( struct rocketnet_server_acks_t * acks, int cl
     }
 
     // proofs/tla/RNAckApplyPhase.tla Settle: only main settles, and never
-    // while the clients are open to the jobs
-    rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_RECEIVING );
+    // while the clients are open to the jobs: a settle then is refused in
+    // every build, the blocks left queued and claimed for the client's job
+    if ( acks->phase != ROCKETNET_SERVER_ACKS_RECEIVING )
+    {
+        rocketnet_assert( false && "ack settle while the clients are open to the jobs" );
+        return;
+    }
 
     (void) rocketnet_server_acks_apply_queued( acks, client_index );
 }
