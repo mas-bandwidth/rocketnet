@@ -26,7 +26,7 @@
 // Driving the real bank and receive path is a roadmap entry.
 //
 // The plant (ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT) is the capacity check
-// first, the order the blast row measured: garbage then meets the capacity
+// first, the order the code replaced: garbage then meets the capacity
 // check, and is banked or refused BANK_FULL where the clean code refuses it
 // by its prefilter reason. That verdict on garbage is the planted effect.
 //
