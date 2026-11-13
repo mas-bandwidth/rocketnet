@@ -31,14 +31,10 @@ struct harden_chain_t
     // cut). 0 where no counter was read. Never more than arrived_noports
     int64_t arrived_noports_strays = 0;
     int64_t library_received = 0;
-    // refused by the receiving server transport before its protocol counts the
-    // packet received: a server transport's own receive drops (too short or
-    // too large) land in PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE, outside
-    // PACKETS_RECEIVED; the protocol's prefilter counts into the same two
-    // inside it, so a transport that passes short datagrams up makes this
-    // term too large and the chain red (library_gap < 0), never green
+    // refused by the receiving server before the library counts the packet
+    // received: harden_refused_before_received below
     int64_t library_refused_before_received = 0;
-    const char * refused_source = "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE"; // where that term comes from, printed with the chain
+    const char * refused_source = "transport PACKETS_RECEIVED - library received + the receive path's size drops"; // printed with the chain
     // the receiving device's discard delta includes the stop window (a Windows adapter's counter): up to that many
     // more packets than the library lost are named, so the library gap may be that far below zero
     int64_t device_overlap = 0;
@@ -61,6 +57,26 @@ struct harden_chain_result_t
     int64_t gso_slack;
     bool ok;
 };
+
+// The datagrams the receiving server refused before its library counted them
+// received, as two disjoint parts:
+//  - transport_received - library_received: a worker's prefilter (off the
+//    main thread) counts each refusal into the transport's PACKETS_RECEIVED
+//    and its reason, and main's stats never see it. Main's own prefilter
+//    counts into both, so its refusals are in neither part of the difference.
+//    Every sender's datagrams are in it, the hostile role's included (the
+//    chain's library_sent counts hostile.sent).
+//  - outside_size_drops: the receive path's own size drops (io_uring's
+//    URING_RECEIVE_DROPPED_SIZE, IOCP_ and RIO_RECEIVE_TOO_SHORT/TOO_LARGE),
+//    which the transport folds into PREFILTER_TOO_SHORT/TOO_LARGE outside
+//    PACKETS_RECEIVED. The other transports count their size drops inside it.
+// PREFILTER_TOO_SHORT/TOO_LARGE are never added whole: they mix both parts.
+// A difference below zero is not clamped: it is a counter defect, and the
+// chain shows it red.
+static inline int64_t harden_refused_before_received( int64_t transport_received, int64_t library_received, int64_t outside_size_drops )
+{
+    return ( transport_received - library_received ) + outside_size_drops;
+}
 
 static inline harden_chain_result_t harden_chain_judge( const harden_chain_t & c, int duplicates_expected )
 {

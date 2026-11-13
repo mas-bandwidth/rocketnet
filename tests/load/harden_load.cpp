@@ -107,6 +107,7 @@
 #include "tests/process_resources.h"
 #include "tests/load/thread_pool.h"
 #include "tests/load/harden_chain.h"
+#include "tests/load/harden_stream.h"
 
 #include <algorithm>
 #include <atomic>
@@ -155,12 +156,6 @@ typedef int harden_socket_t;
 #define HARDEN_PROTOCOL_ID UINT64_C( 0x48415244454e3031 )
 #define HARDEN_MAGIC UINT32_C( 0x4844524e )
 #define HARDEN_HEADER_BYTES 28
-#define HARDEN_KIND_BURST 0
-#define HARDEN_KIND_RELIABLE 1
-#define HARDEN_KIND_BIG 2
-#define HARDEN_KIND_INPUT 3
-#define HARDEN_KIND_INPUT_RELIABLE 4
-#define HARDEN_KINDS 5
 #define HARDEN_CHANNEL_UNRELIABLE 0
 #define HARDEN_MAX_FILL_JOBS 64
 #define HARDEN_CHANNEL_RELIABLE 1
@@ -226,15 +221,6 @@ static uint64_t harden_pattern_word( uint64_t client_id, uint32_t connection, ui
 }
 
 // ---------------------------------------------------------------- the message format
-
-struct harden_message_t
-{
-    uint32_t kind;
-    uint64_t client_id;
-    uint32_t connection;
-    uint32_t sequence;
-    uint32_t bytes;
-};
 
 // --payload copy: every message's body is one pre-built pattern, copied in
 // behind the header, so the writer costs a memcpy (a game copying its own
@@ -319,108 +305,7 @@ static int harden_read_message( const uint8_t * p, int bytes, struct harden_mess
     return 1;
 }
 
-// one receive stream. Reliable ordered kinds must arrive exactly in order.
-// Unreliable kinds promise neither delivery nor order, only at most once
-// (rocketnet.h): a gap is counted lost until its message arrives late, a late
-// arrival is counted reordered, and a second arrival of a sequence still in
-// the window is a duplicate, an error
-
-#define HARDEN_WINDOW 1024
 #define HARDEN_FLUSH_SECONDS 0.1
-
-struct harden_stream_t
-{
-    uint32_t connection = 0;
-    uint32_t expected = 0;
-    bool started = false;
-    uint64_t seen[HARDEN_WINDOW / 64] = {};
-};
-
-struct harden_verify_t
-{
-    uint64_t delivered[HARDEN_KINDS] = {};
-    uint64_t lost[HARDEN_KINDS] = {};
-    uint64_t head[HARDEN_KINDS] = {};
-    uint64_t reordered[HARDEN_KINDS] = {};
-    uint64_t late_past_window[HARDEN_KINDS] = {};
-    uint64_t errors = 0;
-    uint64_t wrong_owner = 0;
-    uint64_t reliable_gaps = 0;
-    uint64_t back = 0;
-    uint64_t duplicates = 0;
-};
-
-static bool harden_stream_seen( const harden_stream_t * stream, uint32_t sequence )
-{
-    return ( stream->seen[( sequence % HARDEN_WINDOW ) / 64] >> ( sequence % 64 ) ) & 1;
-}
-
-static void harden_stream_mark( harden_stream_t * stream, uint32_t sequence, bool seen )
-{
-    const uint64_t bit = UINT64_C( 1 ) << ( sequence % 64 );
-    uint64_t & word = stream->seen[( sequence % HARDEN_WINDOW ) / 64];
-    word = seen ? ( word | bit ) : ( word & ~bit );
-}
-
-static void harden_stream_take( harden_stream_t * stream, const harden_message_t * m, bool reliable, harden_verify_t * v )
-{
-    if ( !stream->started || stream->connection != m->connection )
-    {
-        // a new connection's first message: sequences start at 0, so what
-        // came before it was sent before this end could take it
-        *stream = harden_stream_t();
-        stream->started = true;
-        stream->connection = m->connection;
-        v->head[m->kind] += m->sequence;
-        stream->expected = m->sequence;
-    }
-    if ( m->sequence < stream->expected )
-    {
-        if ( reliable )
-        {
-            v->back++;
-            v->errors++;
-            return;
-        }
-        if ( stream->expected - m->sequence > HARDEN_WINDOW )
-        {
-            // older than the window: no record of whether it came before
-            v->late_past_window[m->kind]++;
-            v->lost[m->kind]--;
-            v->delivered[m->kind]++;
-            return;
-        }
-        if ( harden_stream_seen( stream, m->sequence ) )
-        {
-            v->duplicates++;
-            v->errors++;
-            return;
-        }
-        harden_stream_mark( stream, m->sequence, true );
-        v->reordered[m->kind]++;
-        v->lost[m->kind]--;
-        v->delivered[m->kind]++;
-        return;
-    }
-    if ( m->sequence > stream->expected )
-    {
-        if ( reliable )
-        {
-            v->reliable_gaps++;
-            v->errors++;
-        }
-        v->lost[m->kind] += m->sequence - stream->expected;
-    }
-    // every sequence the window moves past is cleared, this one is seen
-    const uint32_t clear = m->sequence - stream->expected < HARDEN_WINDOW ? m->sequence - stream->expected : HARDEN_WINDOW;
-    for ( uint32_t i = 0; i < clear; i++ )
-    {
-        harden_stream_mark( stream, stream->expected + i, false );
-    }
-    harden_stream_mark( stream, m->sequence, true );
-    stream->expected = m->sequence + 1;
-    v->delivered[m->kind]++;
-}
 
 // ---------------------------------------------------------------- options
 
@@ -2454,6 +2339,8 @@ static int harden_server_main( const harden_options_t & o )
     std::vector<double> all_work;
     all_work.reserve( (size_t) ( o.seconds * o.hz ) + 16 );
     double all_work_max = 0.0;
+    std::vector<double> second_p99s; // each second's p99 of all_work's frames in that second
+    second_p99s.reserve( (size_t) o.seconds + 16 );
 
     const double step = 1.0 / o.hz;
     const double started = harden_now();
@@ -2533,10 +2420,17 @@ static int harden_server_main( const harden_options_t & o )
             const double f = w.frames ? (double) w.frames : 1.0;
             const uint64_t ring_full = transport ? rocketnet_counter_value( rocketnet_server_transport_counters( transport ), ROCKETNET_COUNTER_SEND_RING_FULL ) : 0;
             std::vector<double> work_copy = w.work;
+            // this second's p99, kept so the end can print their mean beside
+            // the run's own p99 (a mean of per-second p99s is not a p99)
+            const double second_p99 = harden_percentile( work_copy, 0.99 );
+            if ( !w.work.empty() )
+            {
+                second_p99s.push_back( second_p99 );
+            }
             printf( "harden_tick: t=%.1f conn=%d frames=%" PRIu64 " overruns=%" PRIu64 " work_ms avg=%.3f p99=%.3f max=%.3f update=%.3f/%.3f receive=%.3f/%.3f write=%.3f/%.3f send=%.3f/%.3f"
                     " jobs_core_ms=%.3f msgs_ps=%.0f pkts_ps=%.0f in_msgs_ps=%.0f start_refused=%" PRIu64 " send_ring_full_total=%" PRIu64 "\n",
                     t_now - started, rocketnet_server_num_connected_clients( server ), w.frames, w.overruns,
-                    1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f, 1e3 * harden_percentile( work_copy, 0.99 ), 1e3 * harden_percentile( work_copy, 1.0 ),
+                    1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f, 1e3 * second_p99, 1e3 * harden_percentile( work_copy, 1.0 ),
                     1e3 * w.update_sum / f, 1e3 * w.update_max, 1e3 * w.receive_sum / f, 1e3 * w.receive_max, 1e3 * w.write_sum / f, 1e3 * w.write_max,
                     1e3 * w.send_sum / f, 1e3 * w.send_max, 1e3 * w.jobs_busy_sum / f, (double) w.messages / span, (double) ( stats.packets_sent - last_packets_sent ) / span,
                     (double) w.received / span, w.start_refused, ring_full );
@@ -2560,7 +2454,7 @@ static int harden_server_main( const harden_options_t & o )
                 const double rn_core_ms = 1e3 * ( w.update_core_sum + w.receive_sum + w.write_sum + w.send_sum + net_all ) / f;
                 printf( "harden_frame: t=%.1f shape=%s threads=%d pinned=%d realtime=%d main_rn_ms p99=%.3f max=%.3f join_ms avg=%.3f max=%.3f task_ms avg=%.3f max=%.3f late=%" PRIu64
                         " task_core_ms avg=%.3f max=%.3f commit_ms avg=%.3f max=%.3f world_ms avg=%.3f max=%.3f game_core_ms=%.3f rn_core_ms=%.3f leftover_core_ms=%.3f latency_ms avg=%.3f max=%.3f input_age_ms avg=%.3f max=%.3f\n",
-                        t_now - started, o.space_shape ? "space" : "blocking", o.game_threads, harden_pin.pinned.load(), harden_pin.realtime.load(), 1e3 * harden_percentile( work_copy, 0.99 ),
+                        t_now - started, o.space_shape ? "space" : "blocking", o.game_threads, harden_pin.pinned.load(), harden_pin.realtime.load(), 1e3 * second_p99,
                         1e3 * harden_percentile( work_copy, 1.0 ), 1e3 * w.join_sum / f, 1e3 * w.join_max, 1e3 * w.task_sum / tf, 1e3 * w.task_max, w.task_late, 1e3 * w.task_core_sum / tf,
                         1e3 * w.task_core_max, 1e3 * w.commit_sum / tf, 1e3 * w.commit_max, 1e3 * w.world_sum / f, 1e3 * w.world_max, 1e3 * w.game_core_sum / f, rn_core_ms,
                         frame_core_ms - rn_core_ms - 1e3 * w.game_core_sum / f - o.world_ms, 1e3 * w.latency_sum / lf, 1e3 * w.latency_max, 1e3 * w.input_age_sum / ( w.input_age_frames ? (double) w.input_age_frames : 1.0 ),
@@ -3147,6 +3041,22 @@ static int harden_server_main( const harden_options_t & o )
     harden_print_term( role, "work_p99_us", (int64_t) ( 1e6 * harden_percentile( all_work, 0.99 ) ) );
     harden_print_term( role, "work_p999_us", (int64_t) ( 1e6 * harden_percentile( all_work, 0.999 ) ) );
     harden_print_term( role, "work_max_us", (int64_t) ( 1e6 * all_work_max ) );
+    {
+        // the whole run's p99 is over every frame; the harden_tick and
+        // harden_frame lines' p99 is each second's own. The mean of those
+        // per-second p99s is printed beside it, named as what it is
+        double second_sum = 0.0;
+        double second_max = 0.0;
+        for ( double v : second_p99s )
+        {
+            second_sum += v;
+            second_max = std::max( second_max, v );
+        }
+        const double second_mean = second_p99s.empty() ? 0.0 : second_sum / (double) second_p99s.size();
+        printf( "harden_frame_run: main_rn_ms run_p99=%.3f run_p999=%.3f run_max=%.3f frames=%zu per_second_p99 mean=%.3f max=%.3f seconds=%zu\n",
+                1e3 * harden_percentile( all_work, 0.99 ), 1e3 * harden_percentile( all_work, 0.999 ), 1e3 * all_work_max, all_work.size(), 1e3 * second_mean, 1e3 * second_max,
+                second_p99s.size() );
+    }
     for ( int k = HARDEN_KIND_INPUT; k <= HARDEN_KIND_INPUT_RELIABLE; k++ )
     {
         char name[64];
@@ -4610,27 +4520,15 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.receiver_counters = t.get( "server.c2s_kernel_read" ) != 0;
     up.device_overlap = t.get( "server.c2s_dev_rx_inexact" ) != 0 ? std::max<int64_t>( up.arrived_device_dropped, 0 ) : 0;
     up.library_received = t.get( "server.c2s_packets_received" );
-    // a transport that prefilters off the main thread (IOCP's completion
-    // workers, for one) counts each datagram it refuses into the public
-    // PACKETS_RECEIVED and its reason, and main's stats never see it: the
-    // difference is the refusals before main. A transport that drops on its
-    // own receive path counts the drop in PREFILTER_TOO_SHORT/TOO_LARGE and
-    // in neither received count. The transport's PACKETS_RECEIVED can also count
-    // datagrams no client sent (the hostile role's), so that difference is a
-    // named drop only in a cell with no hostile role; its source is printed
-    const int64_t refused_off_main = t.get( "server.c2s_transport_PACKETS_RECEIVED" ) - up.library_received;
-    const bool hostile_present = t.get( "hostile.sent" ) != 0;
-    if ( refused_off_main > 0 && !hostile_present )
-    {
-        up.library_refused_before_received = refused_off_main;
-        up.refused_source = "transport PACKETS_RECEIVED less the library's received (refused off the main thread)";
-    }
-    else
-    {
-        up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
-        up.refused_source = refused_off_main > 0 ? "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE (the off-main difference is not applied: a hostile role is present)"
-                                                 : "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE";
-    }
+    // the refusals before the library's received count, both parts on every
+    // transport and with or without a hostile role (harden_chain.h,
+    // harden_refused_before_received). One transport serves the cell, so the
+    // size drop counters of the others read 0
+    const int64_t outside_size_drops = t.get( "server.c2s_transport_URING_RECEIVE_DROPPED_SIZE" )
+                                     + t.get( "server.c2s_transport_IOCP_RECEIVE_TOO_SHORT" ) + t.get( "server.c2s_transport_IOCP_RECEIVE_TOO_LARGE" )
+                                     + t.get( "server.c2s_transport_RIO_RECEIVE_TOO_SHORT" ) + t.get( "server.c2s_transport_RIO_RECEIVE_TOO_LARGE" );
+    up.library_refused_before_received = harden_refused_before_received( t.get( "server.c2s_transport_PACKETS_RECEIVED" ), up.library_received, outside_size_drops );
+    up.refused_source = "transport PACKETS_RECEIVED - library received (refused off the main thread) + the receive path's size drops (URING_RECEIVE_DROPPED_SIZE, IOCP_/RIO_RECEIVE_TOO_SHORT/TOO_LARGE)";
 
     harden_chain_t down;
     down.library_sent = t.get( "server.s2c_packets_sent" );

@@ -187,6 +187,96 @@ static void test_harden_chain_duplicates_row()
     check( !harden_chain_judge( c, 1 ).ok );
 }
 
+// the refusals before received, with a hostile role: the clients sent 1000,
+// the hostile role 10 (2 too short, 1 too large, 7 the gso workers' prefilter
+// refused for another reason); the server's library received the clients'
+// 1000. The workers count all 10 into the transport's PACKETS_RECEIVED, the 3
+// size refusals into PREFILTER_TOO_SHORT/TOO_LARGE as well
+static harden_chain_t harden_chain_test_hostile_gso()
+{
+    harden_chain_t c;
+    c.library_sent = 1010;
+    c.kernel_out = 1010;
+    c.arrived_in = 1010;
+    c.library_received = 1000;
+    return c;
+}
+
+static void test_harden_chain_refused_hostile_worker_prefilter()
+{
+    harden_chain_t c = harden_chain_test_hostile_gso();
+    c.library_refused_before_received = harden_refused_before_received( 1010, 1000, 0 );
+    check( c.library_refused_before_received == 10 );
+    harden_chain_result_t r = harden_chain_judge( c, 0 );
+    check( r.ok );
+    check( r.library_gap == 0 );
+    check( r.receive_gap == 0 );
+
+    // the size counters alone (the term with a hostile role before this fix)
+    // leave the 7 other refusals unnamed: the chain fails a cell that lost nothing
+
+    c.library_refused_before_received = 2 + 1;
+    r = harden_chain_judge( c, 0 );
+    check( !r.ok );
+    check( r.library_gap == 7 );
+
+    // a datagram lost after the workers counted it is still caught
+
+    c = harden_chain_test_hostile_gso();
+    c.library_received = 999;
+    c.library_refused_before_received = harden_refused_before_received( 1010, 1000, 0 );
+    r = harden_chain_judge( c, 0 );
+    check( !r.ok );
+    check( r.library_gap == 1 );
+}
+
+static void test_harden_chain_refused_both_parts_io_uring()
+{
+    // io_uring, 7 hostile datagrams and no client traffic: 3 dropped for size on
+    // the receive path (URING_RECEIVE_DROPPED_SIZE, outside PACKETS_RECEIVED), 4
+    // refused by the workers' prefilter (inside it). The term is both parts; either
+    // part alone (the two branches before this fix) leaves a gap
+
+    harden_chain_t c;
+    c.library_sent = 7;
+    c.kernel_out = 7;
+    c.arrived_in = 7;
+    c.library_received = 0;
+    c.library_refused_before_received = harden_refused_before_received( 4, 0, 3 );
+    check( c.library_refused_before_received == 7 );
+    harden_chain_result_t r = harden_chain_judge( c, 0 );
+    check( r.ok );
+    check( r.library_gap == 0 );
+
+    c.library_refused_before_received = 4;
+    check( !harden_chain_judge( c, 0 ).ok );
+    c.library_refused_before_received = 3;
+    check( !harden_chain_judge( c, 0 ).ok );
+
+    // gso counts its size drops inside PACKETS_RECEIVED: the same 7 are the
+    // difference alone, with no outside part
+
+    check( harden_refused_before_received( 7, 0, 0 ) == 7 );
+}
+
+static void test_harden_chain_refused_negative_difference_is_red()
+{
+    // the library counting more received than the transport is a counter
+    // defect: the term is not clamped, and the chain fails
+
+    harden_chain_t c;
+    c.library_sent = 100;
+    c.kernel_out = 100;
+    c.arrived_in = 100;
+    c.library_received = 100;
+    c.library_refused_before_received = harden_refused_before_received( 95, 100, 0 );
+    check( c.library_refused_before_received == -5 );
+    check( !harden_chain_judge( c, 0 ).ok );
+}
+
+REGISTER_UNIT_TEST( test_harden_chain_refused_hostile_worker_prefilter );
+REGISTER_UNIT_TEST( test_harden_chain_refused_both_parts_io_uring );
+REGISTER_UNIT_TEST( test_harden_chain_refused_negative_difference_is_red );
 REGISTER_UNIT_TEST( test_harden_chain_strays_named_pass );
 REGISTER_UNIT_TEST( test_harden_chain_unnamed_strays_fail );
 REGISTER_UNIT_TEST( test_harden_chain_planted_loss_fails );
