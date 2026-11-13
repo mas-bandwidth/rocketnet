@@ -58,7 +58,7 @@ enum rocketnet_server_transport_io_flags_t
 // rocketnet_create_status (sdk/rocketnet_internal.h), which never replaces an
 // OUT_OF_MEMORY already written; the platform socket, wake and thread creates
 // take the status for this. A NULL that leaves it OK is a refusal, and the
-// transport ladder falls to the next candidate; OUT_OF_MEMORY ends the ladder
+// transport list falls to the next candidate; OUT_OF_MEMORY ends the ladder
 // and the create (sdk/rocketnet_server_transport.cpp,
 // sdk/rocketnet_client_transport.cpp).
 struct rocketnet_server_transport_io_config_t
@@ -167,6 +167,19 @@ struct rocketnet_server_transport_io_operations_t
     // buffered backend may switch retained sends to its terminal attempt.
     // stop still follows the final flush and send_idle.
     void ( *begin_shutdown )( void * transport );
+
+    // optional; main thread only. Writes ROCKETNET_RECEIVE_NUM_DROPS values
+    // in rocketnet_receive_drop_t order (sdk/rocketnet_receive_prefilter.h):
+    // the datagrams the transport's own receive dropped, by reason,
+    // cumulative for the transport's life, ACCEPT written as 0. The server
+    // adds each value's growth since its last read to the counters
+    // rocketnet_receive_drop_counters names, so a datagram the transport
+    // refused reads exactly as main would have counted it, and a datagram
+    // with no room in the receive bank reads RECEIVE_DROPPED_FULL. The
+    // builtins read these from the rows their own receive already counts
+    // (sdk/rocketnet_driver_builtin.cpp); the reasons a builtin does not feed
+    // yet are named in tools/check_counter_observed.py (OWED_TRANSPORT_FEEDS).
+    void ( *receive_drop_totals )( void * transport, uint64_t * values );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination

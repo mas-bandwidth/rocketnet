@@ -97,7 +97,7 @@ holds its red and green controls.
 
 Nightly, `nightly-bigendian-system.yml` in an s390x guest under
 qemu-system-s390x: `./bin/test` (the XDP filter cases included, compiled
-natively), `./bin/functional` on the auto ladder and with portable pinned, then
+natively), `./bin/functional` on the automatic transport order and with portable pinned, then
 `tools/bigendian/run_interop.sh`: `bigendian_interop`
 (`tools/bigendian/interop.c`) over real sockets, a big-endian server with
 three little-endian clients on the x86-64 runner, then a little-endian server

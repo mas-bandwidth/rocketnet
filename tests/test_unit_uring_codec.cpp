@@ -823,13 +823,13 @@ static void test_uring_segment_refusal_is_per_destination()
         rocketnet_server_uring_send_packets( uring );
     }
 
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
 
     rocketnet_unit_check( fake.refusals == 1 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 3 * rounds ) );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] == (uint64_t) ( 3 * rounds ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_GSO_FALLBACKS] == 0 );
     rocketnet_unit_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) != 0 );
     rocketnet_unit_check( rocketnet_server_uring_test_send_idle( uring ) );
 
@@ -842,8 +842,8 @@ static void test_uring_segment_refusal_is_per_destination()
     rocketnet_server_uring_counters( uring, counters );
     rocketnet_unit_check( fake.segmented == segmented_before + 1 );
     rocketnet_unit_check( fake.refusals == 1 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 3 * rounds + 4 ) );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] == (uint64_t) ( 3 * rounds + 4 ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 0 );
 
     uring_segment_close( uring );
 }
@@ -872,20 +872,20 @@ static void test_uring_segment_refused_everywhere_turns_off()
         rocketnet_server_uring_send_packets( uring );
     }
 
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
     rocketnet_unit_check( fake.refusals == ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD );
     rocketnet_unit_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) == 0 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS] == 1 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD ) );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_GSO_FALLBACKS] == 1 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] == (uint64_t) ( 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 0 );
 
     // a new destination: two plain SENDMSGs, no refusal
     uring_segment_stage( uring, 42000, 2 );
     rocketnet_server_uring_send_packets( uring );
     rocketnet_server_uring_counters( uring, counters );
     rocketnet_unit_check( fake.refusals == ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD + 2 ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] == (uint64_t) ( 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD + 2 ) );
 
     uring_segment_close( uring );
 }
@@ -931,11 +931,11 @@ static void uring_segment_many_refusers( int D, int * refusals_per_update, int *
         rocketnet_server_uring_send_packets( uring );
     }
 
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
     rocketnet_unit_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) != 0 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 2 * ( D + 1 ) * ( warm + measured ) ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] == (uint64_t) ( 2 * ( D + 1 ) * ( warm + measured ) ) );
 
     *refusals_per_update = ( fake->refusals - refusals_before ) / measured;
     *sends_per_update = ( fake->refusals + fake->segmented + fake->plain - sends_before ) / measured;
