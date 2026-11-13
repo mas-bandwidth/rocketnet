@@ -65,7 +65,12 @@
     leave and a later rejoin, a silent stop (the client is not updated past
     its token's timeout, so both ends time out) and a rejoin, or an
     immediate reconnect. The rest are stable: one that disconnects is a
-    failure. Each client sends --messages unreliable 64-byte inputs a tick and
+    failure. On Linux, with an IPv4 --address, --client-bind A,B,... (IPv4
+    addresses of this host) makes the clients send from those addresses,
+    round robin in the order their sockets bind, so the server sees many
+    source addresses rather than one (a client that rejoins may come back
+    from another of them); the default sends from the address the route
+    picks. Each client sends --messages unreliable 64-byte inputs a tick and
     a reliable ordered one every --reliable-every ticks. Every connection's
     transport counters are read once its transport has stopped, so the sum is
     every packet that client object ever received.
@@ -146,6 +151,7 @@ typedef int harden_socket_t;
 #include <net/if.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
+#include <sys/syscall.h>
 #endif // #if defined( __linux__ )
 
 #if !ROCKETNET_DEV
@@ -435,6 +441,7 @@ struct harden_options_t
     std::string stray_table; // --stray-table NAME: the nftables table (inet NAME) whose counter "strays" counts this host's no-port UDP from outside the cell
     std::string kinds = "garbage,prefixed,truncated,badsig,expired,reqreplay";
     std::string capture_dev;
+    std::string client_bind; // --client-bind A,B,...: the clients' local IPv4 addresses, round robin (Linux)
     int max_clients = 1000;
     int clients = 1000;
     int threads = 8;
@@ -608,6 +615,10 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--capture-dev" ) == 0 )
         {
             o->capture_dev = v;
+        }
+        else if ( strcmp( a, "--client-bind" ) == 0 )
+        {
+            o->client_bind = v;
         }
         else if ( strcmp( a, "--max-clients" ) == 0 )
         {
@@ -3740,9 +3751,153 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
     }
 }
 
+// ---------------------------------------------------------------- client bind (Linux, clients role)
+//
+// --client-bind gives the clients many source addresses from one host. The
+// library binds each client socket to the wildcard with port 0 (IPv4, or a
+// dual-stack IPv6 socket) and has no local-address option, so this process
+// defines bind(): while the list is set, a wildcard port-0 bind takes the next
+// listed address instead (as a v4-mapped address on an IPv6 socket), round
+// robin in the order the sockets bind. Every other bind, and every bind in the
+// other roles, passes through unchanged. The list is filled before the client
+// threads start and never changes after.
+
+#if defined( __linux__ )
+
+static const int HARDEN_CLIENT_BIND_MAX = 256;
+static in_addr harden_client_bind_addresses[HARDEN_CLIENT_BIND_MAX];
+static int harden_client_bind_count = 0;
+static std::atomic<uint64_t> harden_client_bind_next{ 0 };
+static std::atomic<uint64_t> harden_client_bind_sockets[HARDEN_CLIENT_BIND_MAX];
+
+extern "C" int bind( int fd, const struct sockaddr * address, socklen_t bytes ) __THROW
+{
+    if ( harden_client_bind_count > 0 && address )
+    {
+        if ( address->sa_family == AF_INET && bytes >= (socklen_t) sizeof( sockaddr_in ) )
+        {
+            sockaddr_in in4;
+            memcpy( &in4, address, sizeof( in4 ) );
+            if ( in4.sin_addr.s_addr == htonl( INADDR_ANY ) && in4.sin_port == 0 )
+            {
+                const int i = (int) ( harden_client_bind_next.fetch_add( 1, std::memory_order_relaxed ) % (uint64_t) harden_client_bind_count );
+                in4.sin_addr = harden_client_bind_addresses[i];
+                const int result = (int) syscall( SYS_bind, fd, &in4, (socklen_t) sizeof( in4 ) );
+                if ( result == 0 )
+                {
+                    harden_client_bind_sockets[i].fetch_add( 1, std::memory_order_relaxed );
+                }
+                return result;
+            }
+        }
+        else if ( address->sa_family == AF_INET6 && bytes >= (socklen_t) sizeof( sockaddr_in6 ) )
+        {
+            sockaddr_in6 in6;
+            memcpy( &in6, address, sizeof( in6 ) );
+            if ( memcmp( &in6.sin6_addr, &in6addr_any, sizeof( in6addr_any ) ) == 0 && in6.sin6_port == 0 )
+            {
+                const int i = (int) ( harden_client_bind_next.fetch_add( 1, std::memory_order_relaxed ) % (uint64_t) harden_client_bind_count );
+                uint8_t * a = in6.sin6_addr.s6_addr;
+                memset( a, 0, 10 );
+                a[10] = 0xff;
+                a[11] = 0xff;
+                memcpy( a + 12, &harden_client_bind_addresses[i], 4 );
+                const int result = (int) syscall( SYS_bind, fd, &in6, (socklen_t) sizeof( in6 ) );
+                if ( result == 0 )
+                {
+                    harden_client_bind_sockets[i].fetch_add( 1, std::memory_order_relaxed );
+                }
+                return result;
+            }
+        }
+    }
+    return (int) syscall( SYS_bind, fd, address, bytes );
+}
+
+// every listed address must be a local IPv4 address: each is bound once here
+// (a specific address passes the bind above unchanged) so a wrong one is
+// refused before any client starts, not in the middle of the run
+
+static bool harden_client_bind_setup( const std::string & server_address, const std::string & list )
+{
+    const size_t colon = server_address.rfind( ':' );
+    in_addr server_ipv4;
+    if ( colon == std::string::npos || inet_pton( AF_INET, server_address.substr( 0, colon ).c_str(), &server_ipv4 ) != 1 )
+    {
+        fprintf( stderr, "harden_load clients: --client-bind needs an IPv4 --address (\"%s\")\n", server_address.c_str() );
+        return false;
+    }
+    size_t at = 0;
+    while ( at <= list.size() && !list.empty() )
+    {
+        const size_t comma = list.find( ',', at );
+        const std::string one = list.substr( at, comma == std::string::npos ? std::string::npos : comma - at );
+        if ( harden_client_bind_count >= HARDEN_CLIENT_BIND_MAX )
+        {
+            fprintf( stderr, "harden_load clients: --client-bind takes at most %d addresses\n", HARDEN_CLIENT_BIND_MAX );
+            harden_client_bind_count = 0;
+            return false;
+        }
+        sockaddr_in check;
+        memset( &check, 0, sizeof( check ) );
+        check.sin_family = AF_INET;
+        if ( inet_pton( AF_INET, one.c_str(), &check.sin_addr ) != 1 )
+        {
+            fprintf( stderr, "harden_load clients: --client-bind: \"%s\" is not an IPv4 address\n", one.c_str() );
+            harden_client_bind_count = 0;
+            return false;
+        }
+        const int s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+        const bool local = s >= 0 && bind( s, (const sockaddr *) &check, (socklen_t) sizeof( check ) ) == 0;
+        if ( s >= 0 )
+        {
+            close( s );
+        }
+        if ( !local )
+        {
+            fprintf( stderr, "harden_load clients: --client-bind: cannot bind %s (%s): not an address of this host?\n", one.c_str(), strerror( errno ) );
+            harden_client_bind_count = 0;
+            return false;
+        }
+        harden_client_bind_addresses[harden_client_bind_count] = check.sin_addr;
+        harden_client_bind_count++;
+        if ( comma == std::string::npos )
+        {
+            break;
+        }
+        at = comma + 1;
+    }
+    return true;
+}
+
+static void harden_client_bind_print()
+{
+    for ( int i = 0; i < harden_client_bind_count; i++ )
+    {
+        char text[INET_ADDRSTRLEN];
+        inet_ntop( AF_INET, &harden_client_bind_addresses[i], text, sizeof( text ) );
+        printf( "harden_term: role=clients client_bind=%s sockets=%" PRIu64 "\n", text, harden_client_bind_sockets[i].load( std::memory_order_relaxed ) );
+    }
+}
+
+#endif // #if defined( __linux__ )
+
 static int harden_clients_main( const harden_options_t & o )
 {
     const char * role = "clients";
+    if ( !o.client_bind.empty() )
+    {
+#if defined( __linux__ )
+        if ( !harden_client_bind_setup( o.address, o.client_bind ) )
+        {
+            return 2;
+        }
+        printf( "harden_clients: client_bind addresses=%d\n", harden_client_bind_count );
+#else // #if defined( __linux__ )
+        fprintf( stderr, "harden_load clients: --client-bind is Linux only\n" );
+        return 2;
+#endif // #if defined( __linux__ )
+    }
     uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     if ( !harden_parse_key( o.key_hex, key ) )
     {
@@ -3878,6 +4033,9 @@ static int harden_clients_main( const harden_options_t & o )
     }
     harden_print_term( role, "packets_sent", (int64_t) totals.counters[HARDEN_SLOT_PACKETS_SENT] );
     harden_print_term( role, "packets_received", (int64_t) totals.counters[HARDEN_SLOT_PACKETS_RECEIVED] );
+#if defined( __linux__ )
+    harden_client_bind_print();
+#endif // #if defined( __linux__ )
     const bool failed = v.errors != 0 || totals.stable_ends != 0 || totals.connects == 0;
     printf( "harden_verdict: role=clients verdict=%s errors=%" PRIu64 " stable_ends=%" PRIu64 " connects=%" PRIu64 "\n", failed ? "FAIL" : "PASS", v.errors,
             totals.stable_ends, totals.connects );
