@@ -118,9 +118,12 @@ and not compared: its range rolls each night and differs per OS.
 
 `.github/workflows/nightly-dst.yml` runs every night (and by
 `workflow_dispatch`) on the fleet's Linux, macOS and Windows runners, for each
-ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
-Release `dst` and `test`, runs the `test_dst_` unit cases by `--run`,
-runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
+ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. A fourth leg,
+Linux with Clang, builds Release with `ROCKETNET_DEV=ON` and runs only the
+whole unit suite. Each DST leg (Linux with GCC, macOS, Windows) builds
+Release `dst` and `test`, runs the `test_dst_` unit cases by `--run` (the
+Linux and macOS legs then run the whole unit suite, with no `--run` filter;
+Windows does not), runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
 requires every check to pass over the fixed range `--seeds 1-2050`, then runs
 one named short step per fault schedule (`clock-back`, `seq-gap`,
 `seq-wrap-31`, `seq-wrap-32`, `burst`, `dup-storm`, `outage`, `outage-past` and
@@ -148,8 +151,9 @@ passed in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
     PASS seeds=2051-4050 runs=2000 trace=a89d7fe691fe9216  421.72 s
     PASS seeds=4051-6000 runs=1950 trace=b9551ab88eec7cbd  418.88 s
 
-Each leg's `timeout-minutes: 50` covers the sweep, the fixed range 1-2050
-and the build with room to spare.
+The nightly legs are exempt from the two-minute rule: each job's
+`timeout-minutes` is 7200, the self-hosted platform's ceiling. The seed
+counts above size the work; they do not cap how long a night may take.
 
 ## Outage scenarios
 

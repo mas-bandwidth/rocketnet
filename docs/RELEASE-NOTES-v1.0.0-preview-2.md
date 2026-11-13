@@ -55,7 +55,9 @@ entries. Passing a NULL output with zero capacity queries the available count.
 If the count exceeds capacity, read again into a larger buffer before the
 next update; reads do not consume outcomes. The signatures and receipt layout
 are unchanged, but preview-1 callers must adopt this return-value contract.
-See [receipt reads after preview-1](ABI-EVOLUTION.md#receipt-reads-after-preview-1).
+See [receipt reads after preview-1](https://github.com/mas-bandwidth/rocketnet/blob/v1.0.0-preview-2/docs/ABI-EVOLUTION.md#receipt-reads-after-preview-1)
+(ABI-EVOLUTION.md as it stood at the tag; the section is no longer in the
+current file).
 
 ### Recheck client quality thresholds
 

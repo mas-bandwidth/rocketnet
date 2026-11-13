@@ -11,10 +11,12 @@
 # The base log is tests/soak/fixtures/soak-gso-stalled-refusal.log, the gso
 # cell of nightly-soak run 43187852822 (2026-11-12, main) cut to the lines the
 # verdict reads: SEND_RING_FULL = 1560 on a clean run, the main loop's largest
-# gap 544.3 ms at t=1313, 1557194 iterations by t=1794 (868 iterations/s, so
-# the bound is a tenth of 4096 / 868 s = 472 ms). That night every cell ran
+# gap 544.3 ms at t=1313, 1557194 iterations by t=1794 (868 iterations/s).
+# The bound is a tenth of ROCKETNET_GSO_SEND_QUEUE_SIZE / 868 s: 16384
+# packets a bank gives 1888 ms, so the legs read a copy whose largest gap is
+# raised to 2044.3 ms, a stall past that bound. That night every cell ran
 # the portable client; the cells now pin the gso client (all but the portable
-# control), so the legs read a copy whose client_transport_io line says gso.
+# control), so the copy's client_transport_io line says gso.
 # Each leg edits a copy.
 #
 # Prints one line per leg and nothing else on success; a leg that misbehaves
@@ -30,8 +32,8 @@
 #                               UNMEASURED, one FAIL, no annotation, exit 1
 #   6  stalled pass          -- soak exited 0 with the stall: PASS, exit 0
 #   7  no iteration count    -- the bound cannot be derived: FAIL
-#   8  bound scales          -- half the iterations, so the bound is ~944 ms
-#                               and 544.3 ms is under it: FAIL
+#   8  bound scales          -- half the iterations, so the bound is ~3775 ms
+#                               and 2044.3 ms is under it: FAIL
 #   9  wrong client          -- leg 6's passing run, but the client granted
 #                               portable where the gso cell pins gso: FAIL
 #  10  portable control      -- leg 6's passing run with portable at both
@@ -49,9 +51,12 @@ BASE=tests/soak/fixtures/soak-gso-stalled-refusal.log
 WORK="$( mktemp -d "${TMPDIR:-/tmp}/$NAME.XXXXXX" )"
 trap 'rm -rf "$WORK"' EXIT
 
-# the recorded night ran the portable client; the gso cell now pins gso
-sed 's/^soak summary: client_transport_io portable$/soak summary: client_transport_io gso/' "$BASE" > "$WORK/base.log"
+# the recorded night ran the portable client; the gso cell now pins gso; the
+# recorded gap is raised past the bound of a 16384-packet bank
+sed -e 's/^soak summary: client_transport_io portable$/soak summary: client_transport_io gso/' \
+    -e 's/iteration_gap_max_ms=544\.3 /iteration_gap_max_ms=2044.3 /' "$BASE" > "$WORK/base.log"
 grep -qx 'soak summary: client_transport_io gso' "$WORK/base.log" || { echo "$NAME: $BASE has no client_transport_io portable line" >&2; exit 1; }
+grep -q 'iteration_gap_max_ms=2044\.3 ' "$WORK/base.log" || { echo "$NAME: $BASE has no iteration_gap_max_ms=544.3 line" >&2; exit 1; }
 BASE="$WORK/base.log"
 
 failures=0
@@ -104,13 +109,13 @@ expect()
 # 1 stalled refusal
 status=$(judge "$WORK/1.out" gso "$BASE" 1)
 expect 1 "$WORK/1.out" "$status" 1 \
-    '^SOAK cell=gso UNMEASURED stalled: iteration_gap_max_ms=544\.3 at t=1313, bound 472 ms .*SEND_RING_FULL = 1560' \
-    '^::warning title=UNMEASURED::soak per transport: gso main loop stalled 544\.3 ms at t=1313, bound 472 ms' \
+    '^SOAK cell=gso UNMEASURED stalled: iteration_gap_max_ms=2044\.3 at t=1313, bound 1888 ms .*SEND_RING_FULL = 1560' \
+    '^::warning title=UNMEASURED::soak per transport: gso main loop stalled 2044\.3 ms at t=1313, bound 1888 ms' \
     ! 'FAIL'
 echo "leg 1 stalled refusal: UNMEASURED with the annotation"
 
 # 2 refusal, no stall
-sed 's/iteration_gap_max_ms=544\.3 /iteration_gap_max_ms=54.3 /' "$BASE" > "$WORK/2.log"
+sed 's/iteration_gap_max_ms=2044\.3 /iteration_gap_max_ms=54.3 /' "$BASE" > "$WORK/2.log"
 status=$(judge "$WORK/2.out" gso "$WORK/2.log" 1)
 expect 2 "$WORK/2.out" "$status" 1 '^SOAK cell=gso FAIL soak exited 1: soak: REFUSAL on a clean run at server: SEND_RING_FULL = 1560' \
     ! 'UNMEASURED'
@@ -129,7 +134,7 @@ expect 4 "$WORK/4.out" "$status" 1 '^SOAK cell=gso FAIL ' ! 'UNMEASURED'
 echo "leg 4 stall and a conservation failure: FAIL"
 
 # 5 one UNMEASURED and one FAIL
-sed -e 's/iteration_gap_max_ms=544\.3 /iteration_gap_max_ms=54.3 /' -e 's/ server gso$/ server portable/' \
+sed -e 's/iteration_gap_max_ms=2044\.3 /iteration_gap_max_ms=54.3 /' -e 's/ server gso$/ server portable/' \
     -e 's/^soak summary: server_transport_io gso$/soak summary: server_transport_io portable/' "$BASE" > "$WORK/5.log"
 status=$(judge "$WORK/5.out" gso "$BASE" 1 portable "$WORK/5.log" 1)
 expect 5 "$WORK/5.out" "$status" 1 '^SOAK cell=gso UNMEASURED stalled' '^SOAK cell=portable FAIL soak exited 1' \
@@ -153,7 +158,7 @@ sed 's/^soak: 1557194 iterations,/soak: 778597 iterations,/' "$BASE" > "$WORK/8.
 grep -q '^soak: 778597 iterations,' "$WORK/8.log" || fail 8 "the base log's last iteration count is not 1557194"
 status=$(judge "$WORK/8.out" gso "$WORK/8.log" 1)
 expect 8 "$WORK/8.out" "$status" 1 '^SOAK cell=gso FAIL ' ! 'UNMEASURED'
-echo "leg 8 half the iteration rate, bound ~944 ms: FAIL"
+echo "leg 8 half the iteration rate, bound ~3775 ms: FAIL"
 
 # 9 the client transport the cell does not pin
 grep -v '^soak: REFUSAL' "$BASE" | sed 's/^soak summary: client_transport_io gso$/soak summary: client_transport_io portable/' > "$WORK/9.log"

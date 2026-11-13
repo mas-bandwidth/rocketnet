@@ -88,12 +88,12 @@ stales every case. Do not replace fingerprints to silence a stale result.
 
 Use `groups --stale` to identify affected groups. Run each group's cases as
 individual shards so each receives its own 110-second budget. For example,
-the 11 Link cases use shards 0 through 10:
+the 22 Link cases use shards 0 through 21:
 
 ```sh
-for i in $(seq 0 10); do
+for i in $(seq 0 21); do
   "$job/tlacheck" run --root proofs --jar "$jar" --java "$java" \
-    --group link --shards 11 --shard "$i" --workers 2 --timeout 110s \
+    --group link --shards 22 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/link-$i"
 done
 "$job/tlacheck" merge --root proofs --keep proofs/tla/RUNS.tsv \
@@ -115,15 +115,30 @@ Use fresh output directories for every attempt and preserve earlier evidence.
 
 The model checks run nightly, not per commit
 ([tlc.yml](../../.github/workflows/tlc.yml), daily and on workflow_dispatch).
-The nightly job builds the same pinned runner on a self-hosted Linux runner.
-It selects every case of every stale group, plus each declared `bench` debt
-case whose committed record is `FAIL` with exit `124`. Their union runs once:
-healthy siblings of a current debt case are not rerun. Each selected case keeps
-its index and cardinality within the full group, using the pinned JAR from
-`/opt/tla/tla2tools.jar` (one shard per case, two workers, the runner's
-110-second per-case limit). Any case that does not reach its declared result
-fails the night, including a debt case that times out again. A missing,
-mismatched or incomplete case plan is also a failure. It then checks the committed records (`tools/check_tla_records.py`): exact
+The workflow builds the same pinned runner on a self-hosted Linux runner and
+uses the pinned JAR from `/opt/tla/tla2tools.jar`. It has two parts.
+
+- `Model records are current` runs every case of a stale group that is not
+  timeout debt (`tools/plan_tlc_nightly.py --select stale`), with no
+  elapsed-time cutoff. Each selected case keeps its index and cardinality
+  within the full group. Any case that does not reach its declared result
+  fails the night. Per-commit CI refuses a stale record, so on `main` this
+  part normally runs no model.
+- `TLC re-run slice K/N` re-runs one slice of every case that is not timeout
+  debt each night (N = 3, so the whole inventory every three nights;
+  `TLC re-run full` on a dispatch with `full` re-runs every such case). The
+  timeout debt listed in `NIGHTLY-DEBT.tsv` runs in every slice, under its
+  own budget. `tools/compare_tlc_rerun.py` holds each fresh result to an
+  expected record and fails by case name on any difference. For a case that
+  is not timeout debt, that is its `RUNS.tsv` record. For a
+  `NIGHTLY-DEBT.tsv` case, whose `RUNS.tsv` record stays the bounded
+  `FAIL`/124, it is that record with the result set to `PASS`, the exit code
+  to the declared one for its expected result, and the state counts to the
+  completed counts in its `NIGHTLY-DEBT.tsv` row.
+
+Neither part runs any other timeout-debt case; those run in
+[tlc-debt.yml](../../.github/workflows/tlc-debt.yml), a weekly watch that is
+not a release gate. The first part then checks the committed records (`tools/check_tla_records.py`): exact
 `(config, module)` bijection with `CASES.tsv`, matching `expected` and
 `property`, the pinned JAR and bounded mode, the declared TLC exit code on
 every `PASS` record (`0` for `pass`, `12` for `invariant`, `13` for `action`
@@ -166,7 +181,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnriodriver` | Historical caller-driven RIO transport design (README-RNRioDriver.md); current worker behavior is RNRioWorker. |
 | `rnlivefleetrun` | Live fleet run lifecycle (docs/LIVE-XDP.md). |
 | `rnoutgoingbuild` | The outgoing build (docs/OUTGOING-BUILD.md). |
-| `rnsimfaults` | The DST fault injector for crash, restart and clock skew (docs/DST.md section 7). |
+| `rnsimfaults` | A crash, restart and clock-skew fault injector for the DST world. `./bin/dst` has no such fault kinds ([docs/DST.md](../../docs/DST.md), "Fault kinds"): its clock faults are the `clock-back` schedule and its restarts are the client churn the core draws. |
 | `serversession` | Server lifecycle, slot reuse, stopping and public connection identity. |
 | `rnclientreceivequit` | The client receive thread's quit-and-wake handshake with destroy. |
 | `rnserversendfair` | The server send pass under a payload-frame cap. |

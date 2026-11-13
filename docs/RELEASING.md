@@ -181,9 +181,12 @@ Every per-commit job carries a two-minute `timeout-minutes`
 (`tools/check_ci_budget.py`, in the lint job, refuses one without it); a job
 past it concludes `cancelled`, which stops nothing by itself.
 `python3 tools/land.py <pr>` merges a pull request only when its head is up
-to date with `main`'s current head and every per-commit job on exactly that
-head is `success` (the `pull_request` rows of the same gates file, and every
-required name of `.github/rulesets/main.json`). A job cancelled at the
+to date with `main`'s current head and every light per-commit job on exactly
+that head is `success` (the `pull_request` rows of the same gates file, and
+every required name of `.github/rulesets/main.json`). The jobs a `full` row
+names still run on the pull request and are printed with their result, but
+they do not hold the landing; `--full` holds them too (the landing of a minor
+or major release or a pre-release). The nightly tier runs them again on `main`. A job cancelled at the
 two-minute cap on a run's first attempt is re-run once, by the tool, with a
 printed line and a pull request comment; a second cancel refuses. A job
 cancelled before the cap (superseded or by hand), a failure, a missing job or
@@ -207,9 +210,13 @@ makes the same checks required on `main` itself.
 2. Run `python3 tools/check_release_doc.py`. It exits 0 when this document
    names every version site that `release-check.yml`'s `version-consistency`
    job reads, and exits 1 naming any site this document omits.
-3. Land the release pull request with `python3 tools/land.py <pr>`.
-4. For a minor or major release, dispatch the nightly tier on the merged
-   commit once it is `main`'s head (a point release skips this step):
+3. Land the release pull request with `python3 tools/land.py <pr>`. `land.py`
+   does not read the version: add `--full` for a minor or major release or a
+   pre-release, so that it holds the jobs the `full` rows name too.
+4. For a minor or major release or a pre-release, dispatch the nightly tier
+   on the merged commit once it is `main`'s head; `tools/release.py` requires
+   every tier for these (`is_point_release` in `tools/release_gates.py`). A
+   point release skips this step:
    `gh workflow run nightly-ci.yml --ref main`, and the same for `nightly.yml`,
    `cbmc.yml`, `tlc.yml` (a dispatched run is never replaced by a scheduled
    one) and `msan.yml`. Resolve the analyzer evidence limitation above before
