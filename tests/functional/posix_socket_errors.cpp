@@ -3214,7 +3214,7 @@ void rocketnet_test_linux_uring_socket_hygiene()
 
 // the xdp transport's staging entry with its queue and destination MAC named
 // (sdk/rocketnet_server_socket_linux.cpp:2261)
-uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t * packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 #include <sched.h>
 #include <sys/vfs.h>
 
@@ -4101,7 +4101,7 @@ static void posix_xdp_weather( int ipv6 )
         posix_check( rocketnet_address_parse( &other_family, ipv6 ? "10.77.3.2:40412" : "[2001:db8:78::2]:40412" ) );
 
         static const uint8_t other_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
-        uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, 0, 0, &other_family, other_mac );
+        uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, NULL, 0, &other_family, other_mac );
         posix_check( frame != NULL );
         memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, 0x77, 64 );
         rocketnet_server_socket_finish_packet( xdp, 0, frame, 64 );

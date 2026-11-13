@@ -270,6 +270,21 @@ struct rocketnet_server_xdp_socket_t
 
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> receive_handoff;
+
+    // send_handoff.ready_count as of the last change, stored under send_mutex
+    // by the publish (main) and the claim (this queue's xdp thread). The xdp
+    // thread reads it outside the lock and takes send_mutex to claim only
+    // when a buffer is ready, so its busy-poll pass does not hold the lock
+    // main needs to publish (rocketnet_xdp_handoff_lock)
+    std::atomic<int> send_ready{ 0 };
+
+    // publishes main put off because send_mutex stayed held through every
+    // try (rocketnet_xdp_handoff_lock): the producer stays staged and the
+    // next send_packets publishes it; main only, read by the counters
+    std::atomic<uint64_t> send_publish_deferred{ 0 };
+
+    // receive drains main put off the same way; main only
+    std::atomic<uint64_t> receive_drain_deferred{ 0 };
     int receive_held_index = -1; // game view; returned at the next receive call
     uint32_t receive_read_index = 0;
 
@@ -283,6 +298,14 @@ struct rocketnet_server_xdp_socket_t
     int num_free_send_frames;
     uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES / 2];
     std::atomic<int> send_flow_index{ -1 };
+
+    // the producer buffers this queue has published: main adds one at each
+    // publish, before it stores the new send_flow_index (release). A packet
+    // id is ( turn * ROCKETNET_XDP_SEND_QUEUE_SIZE + slot ) * queues + queue
+    // (rocketnet_xdp_send_packet_id), so a fill shares no counter with the
+    // fills of other queues. It starts at 1, so no started packet's id is 0,
+    // the ack window's empty mark (rocketnet_window_ack.cpp)
+    std::atomic<uint64_t> send_turn{ 1 };
 
     uint8_t server_ethernet_address[ETH_ALEN];
     int link_mtu;                           // the interface MTU read at create, 0 when unknown (rocketnet_xdp_frame_fits_mtu)
@@ -365,8 +388,6 @@ struct rocketnet_server_socket_t
     bool replay_zero_mark_refused;                          // a zero mark the buffer refused since the last commit
     bool replay_hold_all_greetings;                         // the last commit had one: hold every keep-alive
     uint64_t replay_greetings_held;                         // keep-alives held for a mark not yet applied
-
-    std::atomic<uint64_t> packet_id{ 0 };
 
     int num_queues;
     int receive_start_queue; // the next receive_packets call starts at this queue
@@ -2737,11 +2758,19 @@ int rocketnet_server_socket_send_queue( const rocketnet_address_t * to, int num_
 }
 
 // proofs/tla/RNDriverSendStaging.tla XdpStart: stages a packet in the producer buffer
-// being filled, or refuses it (NULL) when no producer buffer is filling
+// being filled, or refuses it (NULL) when no producer buffer is filling.
+// packet_id (may be NULL) gets the start's id from this queue's turn and
+// the claimed slot (rocketnet_xdp_send_packet_id); a refused start's id
+// names the queue and is never ROCKETNET_TRANSPORT_PACKET_UNREACHABLE
 
-uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t /* packet_id */, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac )
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t * packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac )
 {
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+    if ( packet_id )
+    {
+        *packet_id = rocketnet_xdp_send_packet_id( 0, 0, ROCKETNET_XDP_SEND_QUEUE_SIZE, server_socket->num_queues, queue );
+    }
 
     const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
     if ( flow_index < 0 )
@@ -2756,6 +2785,12 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     if ( packet_index < 0 )
     {
         return NULL;
+    }
+
+    if ( packet_id )
+    {
+        const uint64_t turn = socket->send_turn.load( std::memory_order_relaxed );
+        *packet_id = rocketnet_xdp_send_packet_id( turn, packet_index, ROCKETNET_XDP_SEND_QUEUE_SIZE, server_socket->num_queues, queue );
     }
 
     // proofs/tla/RNXdpGatewayRefresh.tla ReadHigh and ReadLow: a fill copies
@@ -2890,9 +2925,7 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
 
     const int queue = rocketnet_server_socket_send_queue( to, server_socket->num_queues );
 
-    *packet_id = server_socket->packet_id.fetch_add( 1 ) * (uint64_t) server_socket->num_queues + (uint64_t) queue;
-
-    return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to, destination_mac );
+    return rocketnet_server_socket_start_packet_internal( server_socket, packet_id, queue, to, destination_mac );
 }
 
 // proofs/tla/RNDriverSendStaging.tla XdpStart: finish writes the byte count of the packet slot start_packet staged in the producer buffer
@@ -3033,8 +3066,16 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
             continue;
         }
         rocketnet_server_socket_hold_greetings( server_socket, &socket->send_buffer[index] );
-        if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
+
+        // a few tries, never a wait: the xdp thread takes this lock only to
+        // claim a ready buffer or recycle a sent one. A publish put off is
+        // counted, and the producer stays staged for the next call; the
+        // fills of the next frame share its room
+        // (rocketnet_xdp_handoff_lock)
+
+        if ( !rocketnet_xdp_handoff_lock( [socket]() { return rocketnet_platform_mutex_try_acquire( &socket->send_mutex ); }, ROCKETNET_XDP_HANDOFF_TRIES ) )
         {
+            socket->send_publish_deferred.fetch_add( 1, std::memory_order_relaxed );
             continue;
         }
         // proofs/tla/RNDriverSendStaging.tla Publish (PublishWith, retaining the
@@ -3045,13 +3086,17 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         if ( socket->send_handoff.publish() )
         {
             const int replacement = socket->send_handoff.producer;
+            socket->send_ready.store( socket->send_handoff.ready_count, std::memory_order_release );
             rocketnet_platform_mutex_release( &socket->send_mutex );
 
             // This newly acquired buffer has no other owner. Reset work
             // stays outside the handoff lock, before publication to fills.
+            // The turn moves before the new buffer is published, so every
+            // fill of it reads the new turn (rocketnet_xdp_send_packet_id)
 
             socket->send_buffer[replacement].num_packets.store( 0, std::memory_order_relaxed );
             socket->send_buffer[replacement].packet_start_index = 0;
+            socket->send_turn.fetch_add( 1, std::memory_order_relaxed );
             socket->send_flow_index.store( replacement, std::memory_order_release );
             continue;
         }
@@ -4105,6 +4150,20 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
     }
 }
 
+// main takes a queue's receive lock in a few tries, never a wait
+// (rocketnet_xdp_handoff_lock); a drain put off is counted and the queue's
+// staged packets wait for the next call
+
+static bool rocketnet_server_socket_receive_lock( rocketnet_server_xdp_socket_t * socket )
+{
+    if ( rocketnet_xdp_handoff_lock( [socket]() { return rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ); }, ROCKETNET_XDP_HANDOFF_TRIES ) )
+    {
+        return true;
+    }
+    socket->receive_drain_deferred.fetch_add( 1, std::memory_order_relaxed );
+    return false;
+}
+
 // proofs/tla/RNXdpReceiveRing.tla Drain: the application takes the buffer the XDP
 // worker staged, claimed under the receive mutex
 
@@ -4139,7 +4198,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
              socket->receive_read_index >= socket->receive_buffer[socket->receive_held_index].num_packets )
         {
             socket->receive_buffer[socket->receive_held_index].num_packets = 0;
-            if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
+            if ( !rocketnet_server_socket_receive_lock( socket ) )
             {
                 continue;
             }
@@ -4150,7 +4209,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         }
         else if ( socket->receive_held_index < 0 )
         {
-            if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
+            if ( !rocketnet_server_socket_receive_lock( socket ) )
             {
                 continue;
             }
@@ -4386,10 +4445,15 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
         if ( num_batch_packets == 0 )
         {
-            if ( send_worker_index < 0 )
+            // the lock only when main has published a buffer: an idle pass
+            // reads one atomic, so the busy poll does not hold the lock
+            // main publishes under (send_ready)
+
+            if ( send_worker_index < 0 && socket->send_ready.load( std::memory_order_acquire ) > 0 )
             {
                 rocketnet_platform_mutex_acquire( &socket->send_mutex );
                 send_worker_index = socket->send_handoff.claim();
+                socket->send_ready.store( socket->send_handoff.ready_count, std::memory_order_relaxed );
                 rocketnet_platform_mutex_release( &socket->send_mutex );
             }
 
