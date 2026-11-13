@@ -3,12 +3,15 @@
 # scripts/harden-cell (one machine, two namespaces) and scripts/harden-pair
 # (two machines). harden_row <row> sets server_shape, client_shape, netem,
 # hostile, duplicates and min_delivery, reading burst_clients and fill_jobs
-# (--fill-jobs: the unreliable writes on that many job threads, 0 = main);
+# (--fill-jobs: the unreliable writes on that many job threads, 0 = main)
+# and payload (pattern, the verifying writer; copy, a pre-built body copied
+# in: the bar row's default, the rest default to pattern);
 # it returns 1 for a row it does not know.
 
 harden_row()
 {
     local row=$1
+    local row_payload=pattern
     server_shape=(--base 1 --burst 15 --burst-clients 0 --reliable-every 1 --big-every 60 --big-bytes 3000)
     client_shape=(--messages 1 --reliable-every 1 --join-rate 100)
     netem=""
@@ -24,6 +27,7 @@ harden_row()
             # 17 a client a frame and 18 on a rotating third (333 of 1000):
             # (667 x 17 + 333 x 18) x 60 Hz = 1,039,980 messages a second
             server_shape=(--base 17 --burst 18 --burst-clients "${burst_clients:-333}" --sizes 1200 --reliable-every 0 --big-every 0)
+            row_payload=copy
             ;;
         space)
             # the space shape at the transport's per-frame cap: burst clients
@@ -59,5 +63,6 @@ harden_row()
             return 1
             ;;
     esac
-    server_shape+=(--fill-jobs "${fill_jobs:-0}")
+    server_shape+=(--fill-jobs "${fill_jobs:-0}" --payload "${payload:-$row_payload}")
+    client_shape+=(--payload "${payload:-$row_payload}")
 }

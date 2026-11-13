@@ -1330,6 +1330,9 @@ if(ROCKETNET_BUILD_TOOLS)
     # The server transport hardening load (docs/HARDEN_LOAD.md): a bench tool.
     add_executable(harden_load tests/load/harden_load.cpp)
     target_compile_features(harden_load PRIVATE cxx_std_11)
+    if(WIN32)
+        target_compile_definitions(harden_load PRIVATE ROCKETNET_SERVER_RIO_TEST_LANES_MADE=1)
+    endif()
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
     add_executable(dst tests/dst.cpp)
