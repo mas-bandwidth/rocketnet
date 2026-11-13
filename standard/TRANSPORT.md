@@ -4016,8 +4016,9 @@ send was refused before it was staged, and on uring, `RECEIVE_FAILED` counts
 the receives the kernel refused, which no uring row counts.
 `URING_RECEIVE_DROPPED_OVERFLOW` counts the datagrams of one coalesced receive
 past the most one receive takes, and `URING_RECEIVE_DROPPED_SOURCE` and
-`URING_RECEIVE_DROPPED_NO_BUFFER` count datagrams dropped for an unreadable
-source address or a completion naming no buffer; no shared row counts these,
+`URING_RECEIVE_DROPPED_NO_BUFFER` count the receives dropped for an unreadable
+source address or a completion naming no buffer, one for each receive however
+many datagrams it held; no shared row counts these,
 so they alias no shared row.
 
 To count distinct events, sum the shared rows and leave out the aliasing
