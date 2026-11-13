@@ -548,7 +548,8 @@ REGISTER_UNIT_TEST( test_gaps_ct_memory_plan_seam_batch_receive_is_empty );
 //
 // A seam client created with a link simulator setting runs the BASE path,
 // which reads one datagram at a time: the seam's receive reports nothing, so
-// a receive step and an update store nothing and count nothing.
+// an update (which receives, in the caller-stepped mode) takes nothing and
+// counts nothing.
 
 static void test_gaps_ct_memory_plan_seam_receive_is_empty()
 {
@@ -576,30 +577,18 @@ static void test_gaps_ct_memory_plan_seam_receive_is_empty()
         const uint64_t too_short = values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT];
         const uint64_t foreign = values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE];
 
-        rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
-
-        uint64_t rings[ROCKETNET_CLIENT_IO_NUM_RINGS];
-        int received_num_packets = 0, received_receive_index = 0;
-        int buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS];
-        uint64_t faults = 0;
-        rocketnet_client_transport_counts_for_test( transport, rings, &received_num_packets, &received_receive_index, buffers, &faults );
-        int stored = 0;
-        for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
-        {
-            stored += buffers[i];
-        }
+        // the caller-stepped mode (config step_driven): the update itself receives on the BASE path, stamped with the update time
 
         rocketnet_client_transport_update( transport, 1000.0 );
 
         const uint64_t received = ct_rings_packets_received( transport );
-        if ( stored != 0 || received != 0 || values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] != too_short ||
+        if ( received != 0 || values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] != too_short ||
              values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] != foreign )
         {
-            printf( "mutation gap hunt 2/7117: a memory plan seam client with no socket stored %d datagram(s) in one receive step and the update took %llu (PREFILTER_TOO_SHORT +%llu, FOREIGN_SOURCE +%llu)\n",
-                    stored, (unsigned long long) received, (unsigned long long) ( values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] - too_short ),
+            printf( "mutation gap hunt 2/7117: a memory plan seam client with no socket received %llu datagram(s) in one update (PREFILTER_TOO_SHORT +%llu, FOREIGN_SOURCE +%llu)\n",
+                    (unsigned long long) received, (unsigned long long) ( values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] - too_short ),
                     (unsigned long long) ( values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] - foreign ) );
         }
-        check( stored == 0 );
         check( received == 0 );
         check( values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] == too_short );
         check( values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] == foreign );
