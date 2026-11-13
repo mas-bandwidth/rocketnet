@@ -46,7 +46,12 @@ func main() {
 			loads++
 		}
 	}()
-	time.Sleep(3 * time.Second) // let the load get going
+	warm := 3
+	if s, err := strconv.Atoi(os.Getenv("REPEAT_WARMUP")); err == nil && s >= 0 {
+		warm = s
+	}
+	time.Sleep(time.Duration(warm) * time.Second) // let the load get going
+	fmt.Printf("WARMED %d s load1=%s\n", warm, loadavg())
 
 	pass, fail := 0, 0
 	for i := 1; i <= n; i++ {
