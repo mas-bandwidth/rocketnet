@@ -1629,8 +1629,6 @@ jobs:
         env:
           ROCKETNET_SERVER_TRANSPORT: rio
           ROCKETNET_TEST_RIO_LANES: "4"
-          ROCKETNET_SERVER_BIND_IPV4_ADDRESS: 127.0.0.1
-          ROCKETNET_SERVER_BIND_IPV6_ADDRESS: "::1"
         run: |
           set -euo pipefail
           set +e -uo pipefail

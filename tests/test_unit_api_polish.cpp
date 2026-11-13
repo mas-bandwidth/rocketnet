@@ -279,7 +279,7 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -35 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -36 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
