@@ -4,8 +4,9 @@
 Every fenced C block that follows a citation of the form
 ``[examples/<file>](../examples/<file>), lines A to B [and C to D]``
 must be exactly the cited lines of that example file, including indentation
-and cleanup lines. A citation with no following block before the next heading
-(a prose line reference) is checked only that its range lies inside the file.
+and cleanup lines. A citation with no following block before the next "## "
+heading or the next citation (a prose line reference) is checked only that
+its range lies inside the file.
 
 Prints one OK line per checked block; exits 1 naming the guide line, the
 citation, and the first differing line for a refusal.
@@ -73,11 +74,15 @@ def check_guide(GUIDE):
         source = source_path.read_text(encoding="utf-8").splitlines()
 
         # A block belongs to this citation only when it starts after the
-        # citation and before the next heading or the next citation.
+        # citation and before the next "## " section heading or the next
+        # citation, so a prose-only citation never claims a later block.
         end_of_region = len(text)
         heading = re.search(r"^## ", text[match.end():], re.M)
         if heading:
             end_of_region = match.end() + heading.start()
+        later = CITATION.search(text, match.end())
+        if later:
+            end_of_region = min(end_of_region, later.start())
         following = [b for b in blocks
                      if b[0] > guide_line
                      and _offset_of_line(text, b[0]) < end_of_region]

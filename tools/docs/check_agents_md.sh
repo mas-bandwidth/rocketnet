@@ -1,5 +1,6 @@
 #!/bin/sh
-# check_agents_md.sh: verify docs/AGENTS.md identifiers against sdk/rocketnet.h,
+# check_agents_md.sh: verify docs/AGENTS.md identifiers against sdk/rocketnet.h
+# and docs/ENVIRONMENT.md,
 # verify the user-facing guides' identifiers against the SDK and the
 # documented environment/example authorities, and compile + run the marked
 # complete programs in docs/INTEGRATION-EXAMPLE.md.
@@ -44,15 +45,15 @@ run_identifiers() {
         # docs/AGENTS.md names public identifiers from sdk/rocketnet.h; the one
         # other authority it may name is a documented environment variable.
         if ! grep -q -w "$id" "$HEADER" && ! grep -q -w "$id" "$ENVIRONMENT_MD"; then
-            echo "missing in sdk/rocketnet.h: $id"
+            echo "missing in sdk/rocketnet.h and docs/ENVIRONMENT.md: $id"
             missing=$((missing + 1))
         fi
     done
     if [ "$missing" -ne 0 ]; then
-        echo "error: $missing of $count identifiers missing from sdk/rocketnet.h" >&2
+        echo "error: $missing of $count identifiers missing from sdk/rocketnet.h and docs/ENVIRONMENT.md" >&2
         exit 1
     fi
-    echo "checked $count identifiers in docs/AGENTS.md against sdk/rocketnet.h"
+    echo "checked $count identifiers in docs/AGENTS.md against sdk/rocketnet.h and docs/ENVIRONMENT.md"
 }
 
 run_guide_identifiers() {
@@ -132,6 +133,7 @@ case "$MODE" in
         ;;
     example)
         run_example "$EXAMPLES_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
+        run_example "$EXAMPLES_MD" check_readme readme
         ;;
     all)
         run_identifiers
