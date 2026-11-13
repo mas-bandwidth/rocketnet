@@ -8425,7 +8425,7 @@ void rocketnet_test_server_gso_receive_overflow_counted()
     }
     rocketnet_check( queued == 0 );
 
-    // claim everything: the ready buffer, then the full one
+    // read everything: the buffer main shares with the worker, then the full one
 
     const uint64_t expected_received = 2 + (uint64_t) ( sends * segments - 1 );
     uint64_t counters[ROCKETNET_NUM_COUNTERS];

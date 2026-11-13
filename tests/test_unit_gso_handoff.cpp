@@ -198,6 +198,15 @@ static void test_server_gso_drain_budget()
 
 REGISTER_UNIT_TEST( test_server_gso_drain_budget );
 
+// The kernel's drops at a queue socket (SO_RXQ_OVFL, cumulative, 32-bit)
+// are counted in the overflow tally, across a wrap, through the receive seam.
+static void test_server_gso_socket_overflow_counted()
+{
+    check( rocketnet_server_gso_test_socket_overflow_counted() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_socket_overflow_counted );
+
 // a drain asks recvmmsg only for messages whose every segment fits the
 // buffer, so nothing it reads is dropped as overflow
 static void test_server_gso_drain_room()

@@ -515,4 +515,9 @@
    :title "After a cut receive call, the next call does not reach the worker's newer buffer"
    :text "In sdk/rocketnet_receive_handoff.h main moves on to the worker's buffer (rocketnet_receive_handoff_begin) only at the start of a call whose tail is finished. After a call the per-update budget cut, the next call reads the tail and main's own buffer and leaves what the worker committed into its newer buffer for the call after, even with budget left: one more update for those datagrams, only after an overloaded update. A second try-acquire once the tail is drained within the call would close it; it needs RNReceiveHandoff to drop the backlog exemption from DeliveredByNextCall, and its trace walk to cover the second try."
    :date "2026-11-13" :origin "Receive handoff latency fix, cold read finding 4")
+
+  (item "gso-receive-dropped-socket-row" :group "after-v1-1-landing" :area "sdk"
+   :title "A gso row of its own for the kernel's drops at a queue socket"
+   :text "Since 2026-11-13 the gso drain counts the kernel's drops at a full queue socket (SO_RXQ_OVFL) in GSO_RECEIVE_DROPPED_OVERFLOW, so that row no longer aliases RECEIVE_DROPPED_FULL exactly (standard/TRANSPORT.md says so). io_uring keeps the same drops in its own URING_RECEIVE_DROPPED_SOCKET. A GSO_RECEIVE_DROPPED_SOCKET row would restore the alias and match io_uring; counter rows are ABI, so it waits for a release that may append rows."
+   :date "2026-11-13" :origin "gso flood drops counted by no counter (W2-121); the existing row was chosen for the point release")
  ))

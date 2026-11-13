@@ -61,9 +61,11 @@ struct rocketnet_server_gso_t;
 // receive staging per queue per buffer: twice the send staging, gso's own
 // size (the shared per-update receive budget does not size it). One update
 // takes at most that budget from the queues into the process array; the rest
-// waits in the queue buffers, so a single flooded queue fills its pair
-// between drains and drops counted -- correct behaviour under flood, ample
-// at design load where the reuseport hash spreads flows
+// waits in the queue buffers. A single flooded queue fills its buffers
+// between drains; its worker then stops reading and the kernel drops at the
+// queue's socket, counted from SO_RXQ_OVFL in GSO_RECEIVE_DROPPED_OVERFLOW --
+// correct behaviour under flood, ample at design load where the reuseport
+// hash spreads flows
 
 #define ROCKETNET_GSO_RECV_QUEUE_SIZE                                    32768
 
@@ -416,6 +418,7 @@ bool rocketnet_server_gso_test_send_retry_quit();
 bool rocketnet_server_gso_test_send_queues();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
+bool rocketnet_server_gso_test_socket_overflow_counted();
 bool rocketnet_server_gso_test_drain_room();
 // Receives whose UDP_GRO control is truncated reach the GRO_CMSG_FAULTS
 // counter once each, through the drain, the publish and main's fold.
