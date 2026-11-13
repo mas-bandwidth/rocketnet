@@ -59,7 +59,7 @@ base64_key_32="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 # --- the config parses (sdk/rocketnet_config.cpp, sdk/rocketnet_drivers.inc) ---
 
-# the transport names the ladder knows, and the order the registry lists
+# the transport names the transport order knows, and the order the registry lists
 transport_portable="portable"
 transport_gso="gso"
 transport_xdp="xdp"
@@ -69,7 +69,7 @@ transport_loopback="loopback"
 transport_io_uring="io_uring"
 transport_rio="rio"
 
-# the ladder's separator, and the one name that stands alone
+# the transport order's separator, and the one name that stands alone
 transport_order="xdp,gso,portable"
 transport_auto="auto"
 

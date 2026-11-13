@@ -3,15 +3,15 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The family fallback of the client ladder (proofs/tla/RNClientLadder.tla).
+// The family fallback of the client transport order (proofs/tla/RNClientTransportOrder.tla).
 // A token naming 203.0.113.10:40000 and [2001:db8::1]:40000 on a host with
 // IPv6 (the unit suite's network lookup answers true) selects the IPv6
 // server. When a candidate's IPv6 socket is refused, at open or at connect,
 // the same candidate is opened again for the IPv4 server, bound IPv4,
-// before the ladder falls to the next candidate; the client then connects
+// before the transport order falls to the next candidate; the client then connects
 // over IPv4 and races nothing. A refused IPv4 socket with a granted IPv6 one
 // races nothing and connects over IPv6. Both refused on every candidate
-// exhausts the ladder, and a refusal for want of memory on either family
+// exhausts the transport order, and a refusal for want of memory on either family
 // ends the create with OUT_OF_MEMORY. The transport runs step-driven on the
 // fake client driver with per-family refusal: no socket, no thread, and the
 // clock is an argument.
@@ -87,7 +87,7 @@ struct family_fallback_case_t
 };
 
 // creates a client on the fake with the case's refusals already set on
-// fake; transport (pinned) is NULL for the default ladder
+// fake; transport (pinned) is NULL for the default transport order
 
 static void family_fallback_create( family_fallback_case_t * c, uint8_t address_flags, const char * transport )
 {
@@ -264,7 +264,7 @@ static void test_client_family_fallback_ipv4_refused_keeps_ipv6()
     delete c.fake;
 }
 
-// both families refused on every candidate: the ladder exhausts, every
+// both families refused on every candidate: the transport order exhausts, every
 // opened socket is closed and nothing is sent. A token naming IPv6 alone
 // never dials an IPv4 server.
 

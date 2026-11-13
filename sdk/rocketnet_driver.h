@@ -58,7 +58,7 @@ enum rocketnet_server_transport_io_flags_t
 // rocketnet_create_status (sdk/rocketnet_internal.h), which never replaces an
 // OUT_OF_MEMORY already written; the platform socket, wake and thread creates
 // take the status for this. A NULL that leaves it OK is a refusal, and the
-// transport list falls to the next candidate; OUT_OF_MEMORY ends the ladder
+// transport list falls to the next candidate; OUT_OF_MEMORY ends the transport order
 // and the create (sdk/rocketnet_server_transport.cpp,
 // sdk/rocketnet_client_transport.cpp).
 struct rocketnet_server_transport_io_config_t
@@ -313,7 +313,7 @@ const char * rocketnet_transport_names();
 const char * rocketnet_transport_discovering_names();
 bool rocketnet_transport_discovers_bound_port( int transport );
 
-// pin-only on the server side (a server's ladder, and the one-argument form)
+// pin-only on the server side (a server's transport order, and the one-argument form)
 bool rocketnet_transport_pin_only( int transport );
 
 // pin-only for that endpoint: its own column of the registry row, so a

@@ -5556,16 +5556,16 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 // refuses loudly here so a pinned rung refuses rather than
 // silently degrading. The first real batch call is the functional probe;
 // its own live-refusal pause-and-reprobe discipline remains the
-// transport's internal behavior below the ladder.
+// transport's internal behavior below the transport order.
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump, int * status )
 {
     const bool require_msgx = pump && strcmp( pump, "msgx" ) == 0;
 
     // refusals here log at WARN, not ERROR: this call sits under the transport
-    // ladder, whose own summary decides whether a refusal was a fall (warn)
+    // transport order, whose own summary decides whether a refusal was a fall (warn)
     // or a create failure (error) -- an msgx refusal on a falling auto
-    // ladder is normal operation, not an error line in every log
+    // transport order is normal operation, not an error line in every log
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC
 

@@ -765,7 +765,7 @@ static void rocketnet_platform_primitives_key_warning_environment()
     memset( config.server_secret_key, 0x44, 32 );
     config.protocol_id = 1;
 
-    // a private filter: DEV=0 refuses the published test filter before the ladder
+    // a private filter: DEV=0 refuses the published test filter before the transport order
     {
         const uint8_t private_filter[4] = { 0xA1, 0xB2, 0xC3, 0xD4 };
         memcpy( config.packet_filter, private_filter, sizeof( private_filter ) );

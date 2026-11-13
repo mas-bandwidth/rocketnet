@@ -12,10 +12,10 @@ table_message_server="\x03"
 table_budget_client="\x04"
 table_budget_server="\x05"
 
-# mode bits: retired process-wide name, ladder check
+# mode bits: retired process-wide name, transport order check
 mode_endpoint="\x00"
 mode_retired="\x01"
-mode_ladder="\x02"
+mode_order="\x02"
 
 # the strict integer parse: an optional leading minus, digits only
 int_minus="-"
@@ -32,13 +32,13 @@ b64_pad2="=="
 b64_test_filter="t1kBAA=="
 
 # the transport list: comma-separated names, "auto" (sdk/rocketnet_drivers.inc)
-ladder_sep=","
-ladder_auto="auto"
-ladder_portable="portable"
-ladder_loopback="loopback"
-ladder_msgx="msgx"
-ladder_gso="gso"
-ladder_io_uring="io_uring"
-ladder_iocp="iocp"
-ladder_rio="rio"
-ladder_xdp="xdp"
+order_sep=","
+order_auto="auto"
+order_portable="portable"
+order_loopback="loopback"
+order_msgx="msgx"
+order_gso="gso"
+order_io_uring="io_uring"
+order_iocp="iocp"
+order_rio="rio"
+order_xdp="xdp"

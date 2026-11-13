@@ -74,16 +74,16 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES >= ROCKETNET_RECEIV
 // The transport is selected at RUNTIME: one build carries
 // every transport its platform has, and create walks the config's ordered
 // candidate list -- config->transport, overridden by ROCKETNET_SERVER_TRANSPORT --
-// left to right, first grant wins. On linux that is the runtime ladder:
+// left to right, first grant wins. On linux that is the runtime transport order:
 // probe XDP (privilege and NIC support), fall to the non-root GSO transport
 // (SO_REUSEPORT sharding + sendmmsg/recvmmsg + UDP GSO/GRO, per the
-// measurements), floor at portable. "auto" walks the ladder; ANY explicit
+// measurements), floor at portable. "auto" walks the transport order; ANY explicit
 // list is exactly that list, so a one-element list is a pin -- that transport
 // or loud failure, never a silent fall that would mask a provisioning
 // error. The granted tier is reported request-vs-granted style:
 // rocketnet_server_transport_io_name plus one log line naming the grant and
 // why each earlier candidate refused. The GSO transport's own feature probing
-// and degradation remains runtime inside the transport, below this ladder.
+// and degradation remains runtime inside the transport, below this transport order.
 
 #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
 #error transport selection is runtime now: drop ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO and select with config transport or ROCKETNET_SERVER_TRANSPORT
@@ -324,7 +324,7 @@ struct rocketnet_server_transport_t
     rocketnet_address_t bind_address;
     rocketnet_address_t public_address;
 
-    // the granted transport (ROCKETNET_TRANSPORT_*), decided by the ladder at
+    // the granted transport (ROCKETNET_TRANSPORT_*), decided by the transport order at
     // create and constant for the transport's life -- the runtime fork
     // every seam function below branches on, one predictable branch
 
@@ -2401,17 +2401,17 @@ uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_serve
 
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
-    struct rocketnet_transport_order_t ladder;
-    if ( !rocketnet_transport_order_parse( config->transport, available, num_available, &ladder ) )
+    struct rocketnet_transport_order_t transport_order;
+    if ( !rocketnet_transport_order_parse( config->transport, available, num_available, &transport_order ) )
     {
         return 0;
     }
     uint64_t most = 0;
 
-    for ( int i = 0; i < ladder.num_candidates; ++i )
+    for ( int i = 0; i < transport_order.num_candidates; ++i )
     {
         rocketnet_server_memory_plan_t plan;
-        if ( rocketnet_server_transport_memory_plan( config, rocketnet_transport_name( ladder.candidates[i] ), plan ) && plan.allocator_bytes > most )
+        if ( rocketnet_server_transport_memory_plan( config, rocketnet_transport_name( transport_order.candidates[i] ), plan ) && plan.allocator_bytes > most )
         {
             most = plan.allocator_bytes;
         }
@@ -2618,7 +2618,7 @@ struct rocketnet_server_transport_resolved_t
     rocketnet_address_t bind_address;
     int serves_both;
     int max_clients;
-    struct rocketnet_transport_order_t ladder;
+    struct rocketnet_transport_order_t transport_order;
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
 };
 
@@ -2840,7 +2840,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
 
     // the config's public_address, when set, displaces the create call's
     // address parameter here, before anything reads it. The address the
-    // ladder verifies, the address the transport binds and the address
+    // transport order verifies, the address the transport binds and the address
     // connect tokens validate against are then the same one. The field has
     // no environment override. The public create reads the served
     // addresses from ROCKETNET_SERVER_IPV4_ADDRESS and
@@ -2891,8 +2891,8 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     int num_available_transports = 0;
     const int * available_transports = rocketnet_server_transport_io_availability( &num_available_transports );
 
-    struct rocketnet_transport_order_t ladder;
-    if ( !rocketnet_transport_order_parse( config->transport, available_transports, num_available_transports, &ladder ) )
+    struct rocketnet_transport_order_t transport_order;
+    if ( !rocketnet_transport_order_parse( config->transport, available_transports, num_available_transports, &transport_order ) )
     {
         if ( status )
         {
@@ -2974,7 +2974,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     // the operator memory budget: each candidate's pre-allocation plan
     // is compared to the budget before any allocation, and a candidate whose
     // plan exceeds it is refused exactly as a refusing transport is -- logged with
-    // the plan and the budget, and skipped so the ladder falls to the next
+    // the plan and the budget, and skipped so the transport order falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
 
@@ -2994,9 +2994,9 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     int budget_refused_total = 0;
     int budget_allowed = 0;
 
-    for ( int i = 0; i < ladder.num_candidates; ++i )
+    for ( int i = 0; i < transport_order.num_candidates; ++i )
     {
-        const int candidate = ladder.candidates[i];
+        const int candidate = transport_order.candidates[i];
         const char * name = rocketnet_transport_name( candidate );
         rocketnet_server_memory_plan_t plan;
         if ( rocketnet_server_transport_memory_plan( config, name, plan ) )
@@ -3040,7 +3040,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     out->bind_address = bind_address;
     out->serves_both = serves_both;
     out->max_clients = max_clients;
-    out->ladder = ladder;
+    out->transport_order = transport_order;
     memcpy( out->budget_refused, budget_refused, sizeof( out->budget_refused ) );
 
     return true;
@@ -3062,10 +3062,10 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
     return resolved;
 }
 
-// THE LADDER: opens the resolved candidates in order until one grants,
+// THE TRANSPORT ORDER: opens the resolved candidates in order until one grants,
 // into server_transport->io. Returns the granted transport, with bind_address
 // holding what it bound; -1 when none granted, with *status saying why (an
-// open that ran out of memory ends the ladder rather than falling).
+// open that ran out of memory ends the transport order rather than falling).
 
 static int rocketnet_server_transport_open_in_order( struct rocketnet_server_transport_t * server_transport, void * context,
                                                      const struct rocketnet_server_transport_resolved_t * resolved,
@@ -3074,7 +3074,7 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
     const struct rocketnet_server_transport_config_t * config = &resolved->config;
     const char * public_address_string = resolved->public_address_string;
     const rocketnet_address_t * public_address = &resolved->public_address;
-    const struct rocketnet_transport_order_t * ladder = &resolved->ladder;
+    const struct rocketnet_transport_order_t * transport_order = &resolved->transport_order;
     const bool * budget_refused = resolved->budget_refused;
 
     // candidates tried left to right, first grant wins.
@@ -3091,7 +3091,7 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
     bool refused_seen[ROCKETNET_NUM_TRANSPORTS];
     memset( refused_seen, 0, sizeof( refused_seen ) );
 
-    // WHICH rungs the port-zero rule refused, so an exhausted ladder
+    // WHICH rungs the port-zero rule refused, so an exhausted transport order
     // can restate the rule at the level the failure itself is reported.
     // The names are collected rather than a bare flag because a mixed list
     // -- say "xdp,gso" where gso refused for its own queue geometry --
@@ -3120,9 +3120,9 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
     int xdp_refusals = 0;
     int invalid_address_refusals = 0;
 
-    for ( int i = 0; i < ladder->num_candidates && granted_transport < 0; i++ )
+    for ( int i = 0; i < transport_order->num_candidates && granted_transport < 0; i++ )
     {
-        const int candidate = ladder->candidates[i];
+        const int candidate = transport_order->candidates[i];
 
         // a candidate whose memory plan the operator budget refused was logged
         // and refused in the plan loop above; record it for the exhausted
@@ -3162,7 +3162,7 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
         if ( public_address->port == 0 && !rocketnet_transport_discovers_bound_port( candidate ) )
         {
             // named once however many times the operator listed it: the
-            // ladder parse does not deduplicate, and "xdp, xdp" in an
+            // transport order parse does not deduplicate, and "xdp, xdp" in an
             // error reads as a bug in the error rather than a repeat in
             // the list.
             //
@@ -3242,7 +3242,7 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
         if ( granted_transport < 0 )
         {
             rocketnet_warn( "server transport %s refused%s", rocketnet_transport_name( candidate ),
-                            i + 1 < ladder->num_candidates ? ". trying the next candidate" : "" );
+                            i + 1 < transport_order->num_candidates ? ". trying the next candidate" : "" );
 
             // deduped on the same rule as the port-zero list below it: a
             // repeated name in the operator's list is a repeat in the
@@ -3265,10 +3265,10 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
         char skipped_names[128];
         skipped_names[0] = '\0';
 
-        for ( int i = 0; i < ladder->num_skipped; i++ )
+        for ( int i = 0; i < transport_order->num_skipped; i++ )
         {
             const size_t used = strlen( skipped_names );
-            snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( ladder->skipped[i] ) );
+            snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( transport_order->skipped[i] ) );
         }
 
         rocketnet_error( "server transport: no transport found. refused: %s. skipped for platform: %s",
@@ -3950,7 +3950,7 @@ uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * 
     return server_transport->bind_address.port;
 }
 
-// the granted-tier report: the transport that won the ladder at create, by
+// the granted-tier report: the transport that won the transport order at create, by
 // name -- what performance claims and operator errands attach to
 
 const char * rocketnet_server_transport_io_name( struct rocketnet_server_transport_t * server_transport )
@@ -5871,7 +5871,7 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
 
     // the drops the transport's receive workers made before banking
     // (sdk/rocketnet_receive_prefilter.h): each reason's growth lands on the
-    // counters main's ladder adds for the same datagram
+    // counters main's check sequence adds for the same datagram
 
     if ( server_transport->io.operations && server_transport->io.operations->receive_drop_totals )
     {

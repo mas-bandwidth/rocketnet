@@ -19,7 +19,7 @@ transport (ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT):
   portable-impaired       portable-clean        server portable, client portable
   msgx-impaired           msgx-clean            server msgx, client msgx
   msgx-degraded-impaired  msgx-degraded-clean   ROCKETNET_PUMP=portable, both
-                          ends auto: each ladder absorbs the forced pump as an
+                          ends auto: each transport order absorbs the forced pump as an
                           msgx refusal and grants its degraded rung (a pinned
                           msgx under the forced pump is refused loudly)
 The impaired cells run first, then the clean ones.
@@ -89,9 +89,9 @@ IMPAIRMENT = {
 }
 
 # (cell label, server transport, client transport, ROCKETNET_PUMP). The
-# degraded cell forces the portable pump: the server ladder absorbs it as an
+# degraded cell forces the portable pump: the server transport order absorbs it as an
 # msgx refusal (a pinned msgx is refused loudly, never falls), so the server
-# runs the automatic transport order and lands on its degraded grant; the client ladder
+# runs the automatic transport order and lands on its degraded grant; the client transport order
 # does the same, so the client runs auto too.
 TRANSPORTS = [
     ("portable", "portable", "portable", None),

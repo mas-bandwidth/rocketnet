@@ -4,8 +4,8 @@
 */
 
 // Table-driven receive tests, one row per counter that no test named: the
-// client's whole receive ladder and the session-type refusals the server's
-// ladder was only ever summed over. Every row crafts one packet with the
+// client's whole receive check sequence and the session-type refusals the server's
+// check sequence was only ever summed over. Every row crafts one packet with the
 // wire's own sealing under a live session's keys, hands it to the one end,
 // and asserts the exact delta: the packet entry's PACKETS_RECEIVED, the
 // type's RECEIVED, the one outcome, and nothing else moved. Conservation of
@@ -650,7 +650,7 @@ static void test_client_and_server_session_receive_counters_move_exactly()
 REGISTER_UNIT_TEST( test_client_and_server_session_receive_counters_move_exactly );
 
 // ---------------------------------------------------------------------------
-// the client's handshake ladder: cookie, challenge, denied
+// the client's handshake check sequence: cookie, challenge, denied
 // ---------------------------------------------------------------------------
 
 // the exact-delta check for one delivery, naming the case on failure
@@ -798,7 +798,7 @@ static void test_client_handshake_receive_counters_move_exactly()
 REGISTER_UNIT_TEST( test_client_handshake_receive_counters_move_exactly );
 
 // ---------------------------------------------------------------------------
-// the server's response ladder, and the counters only a hooked server reaches
+// the server's response check sequence, and the counters only a hooked server reaches
 // ---------------------------------------------------------------------------
 
 static void test_server_response_and_slot_counters_move_exactly()
