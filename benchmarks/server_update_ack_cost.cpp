@@ -184,7 +184,12 @@ int main( int argc, char ** argv )
     server_config.transport = "loopback";
     server_config.loopback_hub = hub;
 
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    if ( !server )
+    {
+        fprintf( stderr, "server create: %s\n", rocketnet_status_name( create_status ) );
+    }
     CHECK( server );
     CHECK( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
