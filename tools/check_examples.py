@@ -42,6 +42,9 @@ ALLOWED_HEADERS = {
 # native lock across callback threads and, on Linux, maps its arena
 HARNESS_HEADERS = {
     "soak.c": {"windows.h", "pthread.h", "sys/mman.h"},
+    # thread.h is the server examples' stand-in for a game's job system: the
+    # platform's own threads and locks, and nothing of rocketnet
+    "thread.h": {"windows.h", "pthread.h"},
     # config_env.c runs itself again with one variable set, spawned from its
     # executable path with an explicit environment, never through a shell
     "config_env.c": {"windows.h", "wchar.h", "spawn.h", "sys/wait.h"},
@@ -83,7 +86,7 @@ def main(argv=None):
     root = args.root.resolve()
     examples = root / "examples"
     header = root / "sdk" / "rocketnet.h"
-    sources = sorted(examples.glob("*.c"))
+    sources = sorted(examples.glob("*.c")) + sorted(examples.glob("thread.h"))
     if not sources:
         print(f"FAIL: 0 files match {examples}/*.c", file=sys.stderr)
         return 1
@@ -101,7 +104,7 @@ def main(argv=None):
         source_failed = False
 
         includes = list(INCLUDE.finditer(source))
-        if not any(m.group(2) == "rocketnet.h" for m in includes):
+        if source_path.suffix == ".c" and not any(m.group(2) == "rocketnet.h" for m in includes):
             print(f'{rel}:1: does not include "rocketnet.h"', file=sys.stderr)
             source_failed = True
 

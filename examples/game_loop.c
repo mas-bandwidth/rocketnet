@@ -40,6 +40,14 @@
 #define FRAME_DT        ( 1.0 / 60.0 )
 #define BUDGET_US       100.0
 #define BINS            10000       // 0.1 us bins up to 1 ms, then one overflow bin
+// A message a game thread finishes leaves in its packet from that call, and
+// the loopback transport's send room is one place per client slot (at least
+// 256): a start is given a place only while the room left exceeds the
+// connected clients, so with game threads this example holds the loopback
+// run to this many clients, all of whose state updates are given a place. A
+// real transport's send room is far larger.
+#define MAX_SPLIT_CLIENTS 128
+
 #define MESSAGE_BYTES   12          // the frame it was queued in, and a position (two floats)
 
 struct latency_t
@@ -134,6 +142,7 @@ struct server_frame_t
     int game_threads;   // 1: every call on the main thread; more: the second half is split off
     uint32_t frame;     // every client's state update this frame carries its frame number
     double now;         // the game clock for this frame's update
+    struct rn_cli_pool_t * pool;     // the game threads, NULL with one
     int send;           // 0 until every client is connected and the run is measured
     double network_us;  // written by the thread that ran the second half, read by the main thread after the join
 };
@@ -173,28 +182,25 @@ static void update_range( void * data, int begin, int end )
 }
 
 // The second half of the server's network update: queue every client's state
-// update, send, then update. With one game thread it runs on the main
-// thread. With more it is split off to run on another thread in parallel
-// with the main thread, which does not touch the server until the join; the
-// calls the game threads make are joined before the thread's next call.
+// update, send, then (split off only) update. With one game thread it runs
+// on the main thread, after the update the frame began with. With more it is
+// split off to run on another thread in parallel with the main thread, which
+// does not touch the server until the join; the calls the game threads make
+// are joined before the thread's next call.
 
 static void network_half( void * data )
 {
     struct server_frame_t * f = (struct server_frame_t *) data;
     const double start = rocketnet_time();
 
-    rn_cli_run_ranges( f->game_threads, f->num_clients, queue_range, f );
+    rn_cli_pool_run( f->pool, f->num_clients, queue_range, f );
     rocketnet_server_send_packets( f->server );
 
     if ( f->game_threads > 1 )
     {
         rocketnet_server_update_receive( f->server, f->now );
-        rn_cli_run_ranges( f->game_threads, f->num_clients, update_range, f );
+        rn_cli_pool_run( f->pool, f->num_clients, update_range, f );
         rocketnet_server_update_finish( f->server );
-    }
-    else
-    {
-        rocketnet_server_update( f->server, f->now );
     }
 
     f->network_us = ( rocketnet_time() - start ) * 1e6;
@@ -247,9 +253,9 @@ int main( int argc, char ** argv )
         }
     }
 
-    if ( num_clients < 1 || num_clients > ROCKETNET_MAX_CLIENTS || seconds < 1 || seconds > 3600 || game_threads < 1 || game_threads > RN_CLI_MAX_GAME_THREADS )
+    if ( num_clients < 1 || num_clients > ROCKETNET_MAX_CLIENTS || seconds < 1 || seconds > 3600 || game_threads < 1 || game_threads > RN_CLI_MAX_GAME_THREADS || ( game_threads > 1 && num_clients > MAX_SPLIT_CLIENTS ) )
     {
-        printf( "usage: example_game_loop [--clients <1..1000>] [--seconds <1..3600>] [--game-threads <1..64>] [--wrong-order]\n" );
+        printf( "usage: example_game_loop [--clients <1..1000>] [--seconds <1..3600>] [--game-threads <1..64>] [--wrong-order]\n       (more than 1 game thread: at most %d clients)\n", MAX_SPLIT_CLIENTS );
         return 1;
     }
 
@@ -424,6 +430,11 @@ int main( int argc, char ** argv )
     struct server_frame_t * split_off = NULL;     // the frame the other thread is sending from, until the join
     struct rn_cli_thread_t network;
     memset( &network, 0, sizeof( network ) );
+    static struct rn_cli_pool_t pool;     // the stand-in game threads, started once
+    if ( game_threads > 1 )
+    {
+        rn_cli_pool_start( &pool, game_threads );
+    }
 
     for ( uint32_t frame = 0; !failure && ( measure_from == UINT32_MAX || frame < measure_from + frames ); frame++ )
     {
@@ -537,8 +548,16 @@ int main( int argc, char ** argv )
             split_off = NULL;
         }
 
-        // 2. a bit of networking on the main thread: read each message the
+        // 2. a bit of networking on the main thread. By default, the update
+        // the frame begins with, in the order of the integration guide: update,
+        // receive, queue, then send last. With game threads the update is in
+        // the split-off half, so the main thread only reads each message the
         // last update left into the game's state, before the next update
+
+        if ( game_threads == 1 )
+        {
+            rocketnet_server_update( server, now );
+        }
 
         const struct rocketnet_message_batch_t * batch;         // one queue across every client
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
@@ -562,6 +581,7 @@ int main( int argc, char ** argv )
         f->game_threads = game_threads;
         f->frame = frame;
         f->now = now;
+        f->pool = game_threads > 1 ? &pool : NULL;
         f->send = measuring;
         f->network_us = 0.0;
 
@@ -615,13 +635,20 @@ int main( int argc, char ** argv )
         tally_network_half( split_off );
     }
 
-    // clients run their frames before the server's, and the server's update
-    // runs in the second half of its frame, so a client message is taken in
-    // by the update of the frame it was sent in and read by the main thread
-    // at the start of the next frame: no earlier than 1 frame after it was
-    // queued (1). A state update the server's frame F queues goes on the wire
-    // in the same second half, after that frame's clients ran, so a client
-    // reads it no earlier than frame F + 1 (1). Both directions also pass
+    if ( game_threads > 1 )
+    {
+        rn_cli_pool_stop( &pool );
+    }
+
+    // clients run their frames before the server's, so the server reads a
+    // client's message no earlier than the frame it was sent (0). By default
+    // the update that takes it in is the first thing in the server's frame;
+    // with game threads the update runs in the split-off half, which can run
+    // after the next frame's clients have sent, so the main thread can read
+    // a message the frame it was sent too (0), and the check is no stricter.
+    // A state update the server's frame F queues goes on the wire in the
+    // same frame, after that frame's clients ran, so a client reads it no
+    // earlier than frame F + 1 (1). Both directions also pass
     // through a background handoff (the client never blocks on its send),
     // which can add frames: that cost is reported, not capped. With game
     // threads the second half runs in parallel with the main thread, so it
@@ -637,7 +664,7 @@ int main( int argc, char ** argv )
         failure = "no messages measured";
     }
 
-    const uint32_t order_frames = wrong_order ? 2u : 1u;
+    const uint32_t order_frames = wrong_order ? 1u : 0u;
 
     if ( !failure )
     {

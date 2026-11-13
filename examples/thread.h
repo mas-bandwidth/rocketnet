@@ -19,6 +19,7 @@
 #else // #ifdef _WIN32
 #include <pthread.h>
 #endif // #ifdef _WIN32
+#include <string.h>
 
 typedef void ( *rn_cli_thread_fn )( void * data );
 
@@ -35,14 +36,14 @@ struct rn_cli_thread_t
 };
 
 #ifdef _WIN32
-static DWORD WINAPI rn_cli_thread_entry( LPVOID object )
+static inline DWORD WINAPI rn_cli_thread_entry( LPVOID object )
 {
     struct rn_cli_thread_t * thread = (struct rn_cli_thread_t *) object;
     thread->function( thread->data );
     return 0;
 }
 #else  // #ifdef _WIN32
-static void * rn_cli_thread_entry( void * object )
+static inline void * rn_cli_thread_entry( void * object )
 {
     struct rn_cli_thread_t * thread = (struct rn_cli_thread_t *) object;
     thread->function( thread->data );
@@ -84,73 +85,203 @@ static inline void rn_cli_thread_join( struct rn_cli_thread_t * thread )
 
 typedef void ( *rn_cli_range_fn )( void * data, int begin, int end );
 
-struct rn_cli_range_t
+// The stand-in job system: a small pool of persistent game threads, started
+// once, that runs a function over [0, count) in contiguous ranges, one range
+// per thread, the calling thread taking the first, and returns when every
+// range is done. The wait is the barrier the server's threading rules ask
+// for between the game threads' calls and the next call the main thread
+// (or the thread that took its place) makes. One thread at a time calls
+// rn_cli_pool_run.
+
+struct rn_cli_pool_t;
+
+struct rn_cli_worker_t
 {
-    rn_cli_range_fn function;
-    void * data;
-    int begin, end;
+    struct rn_cli_pool_t * pool;
+    int index;
+    struct rn_cli_thread_t thread;
 };
 
-static void rn_cli_range_entry( void * object )
+struct rn_cli_pool_t
 {
-    struct rn_cli_range_t * range = (struct rn_cli_range_t *) object;
-    range->function( range->data, range->begin, range->end );
+    int workers;        // threads started besides the caller
+    int count;
+    rn_cli_range_fn function;
+    void * data;
+    int generation, pending, stop;
+    struct rn_cli_worker_t worker[RN_CLI_MAX_GAME_THREADS];
+#ifdef _WIN32
+    CRITICAL_SECTION lock;
+    CONDITION_VARIABLE work, done;
+#else  // #ifdef _WIN32
+    pthread_mutex_t lock;
+    pthread_cond_t work, done;
+#endif // #ifdef _WIN32
+};
+
+static inline void rn_cli_pool_lock( struct rn_cli_pool_t * pool )
+{
+#ifdef _WIN32
+    EnterCriticalSection( &pool->lock );
+#else  // #ifdef _WIN32
+    pthread_mutex_lock( &pool->lock );
+#endif // #ifdef _WIN32
 }
 
-// The stand-in job system: runs function over [0, count) in at most
-// game_threads contiguous ranges, one range per thread, the calling thread
-// taking the first, and returns when every range is done. The join is the
-// barrier the server's threading rules ask for between the game threads'
-// calls and the next call the main thread makes. A range whose thread
-// could not start runs on the calling thread, so no range is skipped.
-static inline void rn_cli_run_ranges( int game_threads, int count, rn_cli_range_fn function, void * data )
+static inline void rn_cli_pool_unlock( struct rn_cli_pool_t * pool )
 {
-    struct rn_cli_range_t ranges[RN_CLI_MAX_GAME_THREADS];
-    struct rn_cli_thread_t threads[RN_CLI_MAX_GAME_THREADS];
+#ifdef _WIN32
+    LeaveCriticalSection( &pool->lock );
+#else  // #ifdef _WIN32
+    pthread_mutex_unlock( &pool->lock );
+#endif // #ifdef _WIN32
+}
 
-    if ( count < 1 )
+static inline void rn_cli_pool_wait( struct rn_cli_pool_t * pool, int for_work )
+{
+#ifdef _WIN32
+    SleepConditionVariableCS( for_work ? &pool->work : &pool->done, &pool->lock, INFINITE );
+#else  // #ifdef _WIN32
+    pthread_cond_wait( for_work ? &pool->work : &pool->done, &pool->lock );
+#endif // #ifdef _WIN32
+}
+
+static inline void rn_cli_pool_wake( struct rn_cli_pool_t * pool, int for_work )
+{
+#ifdef _WIN32
+    WakeAllConditionVariable( for_work ? &pool->work : &pool->done );
+#else  // #ifdef _WIN32
+    pthread_cond_broadcast( for_work ? &pool->work : &pool->done );
+#endif // #ifdef _WIN32
+}
+
+static inline void rn_cli_pool_worker( void * object )
+{
+    struct rn_cli_worker_t * worker = (struct rn_cli_worker_t *) object;
+    struct rn_cli_pool_t * pool = worker->pool;
+    int seen = 0;
+
+    rn_cli_pool_lock( pool );
+    for ( ;; )
     {
-        return;
+        while ( pool->generation == seen && !pool->stop )
+        {
+            rn_cli_pool_wait( pool, 1 );
+        }
+
+        if ( pool->stop )
+        {
+            break;
+        }
+
+        seen = pool->generation;
+        const int threads = pool->workers + 1;
+        const int begin = pool->count * worker->index / threads;
+        const int end = pool->count * ( worker->index + 1 ) / threads;
+        rn_cli_range_fn function = pool->function;
+        void * data = pool->data;
+        rn_cli_pool_unlock( pool );
+
+        function( data, begin, end );
+
+        rn_cli_pool_lock( pool );
+        if ( --pool->pending == 0 )
+        {
+            rn_cli_pool_wake( pool, 0 );
+        }
     }
+
+    rn_cli_pool_unlock( pool );
+}
+
+// Starts game_threads - 1 workers; the caller is the first game thread. A
+// worker that cannot start is not counted: its range goes to the others.
+static inline void rn_cli_pool_start( struct rn_cli_pool_t * pool, int game_threads )
+{
+    memset( pool, 0, sizeof( *pool ) );
+#ifdef _WIN32
+    InitializeCriticalSection( &pool->lock );
+    InitializeConditionVariable( &pool->work );
+    InitializeConditionVariable( &pool->done );
+#else  // #ifdef _WIN32
+    pthread_mutex_init( &pool->lock, NULL );
+    pthread_cond_init( &pool->work, NULL );
+    pthread_cond_init( &pool->done, NULL );
+#endif // #ifdef _WIN32
 
     if ( game_threads > RN_CLI_MAX_GAME_THREADS )
     {
         game_threads = RN_CLI_MAX_GAME_THREADS;
     }
 
-    if ( game_threads > count )
-    {
-        game_threads = count;
-    }
-
-    if ( game_threads < 1 )
-    {
-        game_threads = 1;
-    }
-
-    for ( int i = 0; i < game_threads; i++ )
-    {
-        ranges[i].function = function;
-        ranges[i].data = data;
-        ranges[i].begin = count * i / game_threads;
-        ranges[i].end = count * ( i + 1 ) / game_threads;
-        threads[i].running = 0;
-    }
-
+    // the worker count is fixed before any worker runs, so each reads the same range sizes
+    int started = 0;
     for ( int i = 1; i < game_threads; i++ )
     {
-        if ( !rn_cli_thread_start( &threads[i], rn_cli_range_entry, &ranges[i] ) )
+        pool->worker[started].pool = pool;
+        pool->worker[started].index = started + 1;
+        if ( !rn_cli_thread_start( &pool->worker[started].thread, rn_cli_pool_worker, &pool->worker[started] ) )
         {
-            rn_cli_range_entry( &ranges[i] );
+            break;
         }
+
+        started++;
     }
 
-    rn_cli_range_entry( &ranges[0] );
+    rn_cli_pool_lock( pool );
+    pool->workers = started;
+    rn_cli_pool_unlock( pool );
+}
 
-    for ( int i = 1; i < game_threads; i++ )
+// Runs function over [0, count) on the pool's threads and returns when all are done.
+static inline void rn_cli_pool_run( struct rn_cli_pool_t * pool, int count, rn_cli_range_fn function, void * data )
+{
+    if ( !pool || pool->workers == 0 )
     {
-        rn_cli_thread_join( &threads[i] );
+        function( data, 0, count );
+        return;
     }
+
+    rn_cli_pool_lock( pool );
+    pool->count = count;
+    pool->function = function;
+    pool->data = data;
+    pool->pending = pool->workers;
+    pool->generation++;
+    rn_cli_pool_wake( pool, 1 );
+    const int threads = pool->workers + 1;
+    rn_cli_pool_unlock( pool );
+
+    function( data, 0, count / threads );
+
+    rn_cli_pool_lock( pool );
+    while ( pool->pending > 0 )
+    {
+        rn_cli_pool_wait( pool, 0 );
+    }
+
+    rn_cli_pool_unlock( pool );
+}
+
+static inline void rn_cli_pool_stop( struct rn_cli_pool_t * pool )
+{
+    rn_cli_pool_lock( pool );
+    pool->stop = 1;
+    rn_cli_pool_wake( pool, 1 );
+    rn_cli_pool_unlock( pool );
+
+    for ( int i = 0; i < pool->workers; i++ )
+    {
+        rn_cli_thread_join( &pool->worker[i].thread );
+    }
+
+#ifdef _WIN32
+    DeleteCriticalSection( &pool->lock );
+#else  // #ifdef _WIN32
+    pthread_cond_destroy( &pool->done );
+    pthread_cond_destroy( &pool->work );
+    pthread_mutex_destroy( &pool->lock );
+#endif // #ifdef _WIN32
 }
 
 #endif // ROCKETNET_EXAMPLES_THREAD_H

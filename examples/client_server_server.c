@@ -48,6 +48,7 @@ struct echo_frame_t
     int game_threads;   // 1: every call on the main thread; more: the second half is split off
     int max_clients;
     double now;         // the game clock for this frame's update
+    struct rn_cli_pool_t * pool;     // the game threads, NULL with one
     int num_messages;
     int client_index[MAX_ECHOES];
     int bytes[MAX_ECHOES];
@@ -96,27 +97,26 @@ static void update_range( void * data, int begin, int end )
 }
 
 // The second half of the network update: queue this frame's echoes, send,
-// then update. With one game thread it runs on the main thread. With more
-// it is split off to run on another thread in parallel with the main
-// thread, which does not touch the server until the join; the calls the
-// game threads make are joined before the thread's next call.
+// then (split off only) update. With one game thread it runs on the main
+// thread, after the update the frame began with. With more it is split off
+// to run on another thread in parallel with the main thread, which does not
+// touch the server until the join; the calls the game threads make are
+// joined before the thread's next call. This server has one client slot
+// (MAX_CLIENTS), so the ranges below give all the work to one thread; a game
+// with many clients spreads them across its game threads.
 
 static void network_half( void * data )
 {
     struct echo_frame_t * frame = (struct echo_frame_t *) data;
 
-    rn_cli_run_ranges( frame->game_threads, frame->max_clients, queue_range, frame );
+    rn_cli_pool_run( frame->pool, frame->max_clients, queue_range, frame );
     rocketnet_server_send_packets( frame->server );
 
     if ( frame->game_threads > 1 )
     {
         rocketnet_server_update_receive( frame->server, frame->now );
-        rn_cli_run_ranges( frame->game_threads, frame->max_clients, update_range, frame );
+        rn_cli_pool_run( frame->pool, frame->max_clients, update_range, frame );
         rocketnet_server_update_finish( frame->server );
-    }
-    else
-    {
-        rocketnet_server_update( frame->server, frame->now );
     }
 }
 
@@ -282,6 +282,12 @@ int main( int argc, char ** argv )
     struct echo_frame_t * split_off = NULL;     // the frame the other thread is sending from, until the join
     struct rn_cli_thread_t network;
     memset( &network, 0, sizeof( network ) );
+    static struct rn_cli_pool_t pool;     // the stand-in game threads, started once
+    if ( game_threads > 1 )
+    {
+        rn_cli_pool_start( &pool, game_threads );
+    }
+
     int had_client = 0, echoed = 0, thread_failed = 0;
     const double start = rocketnet_time();
     double frame_end = start + FRAME_DT;
@@ -307,7 +313,16 @@ int main( int argc, char ** argv )
         frame->max_clients = MAX_CLIENTS;
         frame->now = 1000.0 + rocketnet_time() - start;
         frame->num_messages = 0;
+        frame->pool = game_threads > 1 ? &pool : NULL;
         memset( frame->echoed, 0, sizeof( frame->echoed ) );
+
+        // by default the update comes first, in the order of the integration
+        // guide: update, receive, queue, then send last
+
+        if ( game_threads == 1 )
+        {
+            rocketnet_server_update( server, frame->now );
+        }
 
         // one queue across every client, each message naming its sender
 
@@ -377,6 +392,11 @@ int main( int argc, char ** argv )
     if ( split_off )
     {
         echoed |= any_echoed( split_off );
+    }
+
+    if ( game_threads > 1 )
+    {
+        rn_cli_pool_stop( &pool );
     }
 
     if ( thread_failed )
