@@ -4,12 +4,9 @@
 Every tracked .h in the repository must be classified into either:
   - OWNED_GLOBS: repository-owned headers across benchmarks, examples, proofs, sdk, tests, and tools.
   - EXCLUDED_HEADERS: vendored or mirrored kernel/BPF headers with explicit
-    provenance. The excluded files are sodium/sodium.h,
-    tests/xdp_host/bpf/bpf_endian.h, tests/xdp_host/bpf/bpf_helpers.h, tests/xdp_host/linux/bpf.h,
-    tests/xdp_host/linux/if_ether.h, tests/xdp_host/linux/if_packet.h,
-    tests/xdp_host/linux/if_vlan.h, tests/xdp_host/linux/in.h,
-    tests/xdp_host/linux/ip.h, tests/xdp_host/linux/ipv6.h, and
-    tests/xdp_host/linux/udp.h. tests/xdp_host/server_xdp_host.h is owned.
+    provenance, listed in the table below (a passing run prints each). An
+    entry no longer tracked is stale and fails. tests/xdp_host/server_xdp_host.h
+    is owned.
 
 Every repository-owned .h file must:
   1. Begin with `#pragma once` as its first preprocessing directive, with no
@@ -239,7 +236,7 @@ def check_header_text(rel_path: str, text: str) -> list:
         )
         return errors
 
-    # 3. Third non-empty item must be `#define <guard>` on the next line.
+    # 3. Third non-empty item (blank and comment-only lines skipped) must be `#define <guard>`.
     _, define_line, _, define_masked, _ = non_empty[2]
     if re.sub(r"\s+", " ", define_masked) != f"#define {guard}":
         errors.append(
@@ -260,17 +257,14 @@ def check_header_text(rel_path: str, text: str) -> list:
                 return errors
             continue
 
-        # Check for duplicate `#pragma once`
-        if item_idx > 0 and re.sub(r"\s+", " ", m_str) == "#pragma once":
+        # Check for duplicate `#pragma once` (the walk starts after the first)
+        if re.sub(r"\s+", " ", m_str) == "#pragma once":
             errors.append(f"{rel_path}:{line_no}: duplicate '#pragma once'")
             return errors
 
+        # a directive after the guard's closing #endif is refused where the
+        # #endif closes (below), so depth is never 0 past the #ifndef here
         if IF_DIRECTIVE_RE.match(m_str):
-            if depth == 0 and item_idx > 1:
-                errors.append(
-                    f"{rel_path}:{line_no}: directive appears after '#ifndef {guard}' closed"
-                )
-                return errors
             depth += 1
         elif ENDIF_DIRECTIVE_RE.match(m_str):
             depth -= 1
@@ -306,7 +300,12 @@ def check_header_text(rel_path: str, text: str) -> list:
     return errors
 
 
-def check_repository(root: Path, headers=None) -> list:
+def check_repository(root: Path, headers=None, whole_tree=None) -> list:
+    """Errors for the headers (default: every tracked .h). whole_tree says the
+    list is every tracked header (the default when headers is None), so an
+    EXCLUDED_HEADERS entry missing from it is stale; a fixture subset is not."""
+    if whole_tree is None:
+        whole_tree = headers is None
     if headers is None:
         headers = tracked_headers(root)
 
@@ -348,13 +347,16 @@ def check_repository(root: Path, headers=None) -> list:
         text = full_path.read_text(encoding="utf-8")
         errors.extend(check_header_text(rel_path, text))
 
-    # Ensure every entry in EXCLUDED_HEADERS is still present in the tracked list when checking full repo.
+    # Every entry in EXCLUDED_HEADERS is still tracked when the whole tree is
+    # checked: a deleted or untracked file's entry is stale, whether or not
+    # something is left on disk.
     header_set = set(headers)
     for ex_path, reason in sorted(EXCLUDED_HEADERS.items()):
         if not reason.strip():
             errors.append(f"{ex_path}:1: excluded header has empty provenance reason")
-        if ex_path not in header_set and (root / ex_path).exists():
-            errors.append(f"{ex_path}:1: excluded header is not in tracked header list")
+        if whole_tree and ex_path not in header_set:
+            errors.append(f"{ex_path}:1: excluded header is not in the tracked header list; "
+                          "remove its EXCLUDED_HEADERS entry")
 
     return errors
 
@@ -492,6 +494,24 @@ class HeaderGuardCheckTests(unittest.TestCase):
             self.assertEqual(len(errs), 1)
             self.assertIn("guard collision on 'ROCKETNET_SDK_A_B_H'", errs[0])
 
+    def test_a_stale_exclusion_fails_whether_or_not_it_is_on_disk(self):
+        # one excluded header untracked but left on disk, one deleted outright:
+        # each is a stale entry when the whole tree is checked
+        excluded = sorted(EXCLUDED_HEADERS)
+        on_disk_untracked, deleted = excluded[0], excluded[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in excluded:
+                if rel != deleted:
+                    (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (root / rel).write_text("/* mirrored */\n", encoding="utf-8")
+            tracked = [rel for rel in excluded if rel not in (on_disk_untracked, deleted)]
+            errs = check_repository(root, tracked, whole_tree=True)
+            self.assertEqual(sorted(errs), sorted(
+                f"{rel}:1: excluded header is not in the tracked header list; remove its EXCLUDED_HEADERS entry"
+                for rel in (on_disk_untracked, deleted)))
+            self.assertEqual(check_repository(root, tracked), [])
+
     def test_zero_headers_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             errs = check_repository(Path(tmp), [])
@@ -522,7 +542,7 @@ def main():
         headers = tracked_headers(args.root)
     except subprocess.CalledProcessError:
         headers = []
-    errors = check_repository(args.root, headers)
+    errors = check_repository(args.root, headers, whole_tree=True)
     if errors:
         for err in errors:
             print(f"FAIL: {err}", file=sys.stderr)
