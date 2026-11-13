@@ -910,8 +910,9 @@ static void channels_test_round_trip_and_never_overreads()
 
 // Armed for the soak. While armed, the first call to any allocation function
 // ends the process with a line naming it. Three nets: the rocketnet allocator
-// hooks (installed before init), the global operator new and delete, and on
-// glibc without a sanitizer the C allocation functions themselves.
+// hooks (installed before init), the global operator new and delete (where no
+// sanitizer runtime defines them, RN_TEST_TRAP_NEW), and on glibc without a
+// sanitizer the C allocation functions themselves.
 
 #if defined( __SANITIZE_ADDRESS__ ) || defined( __SANITIZE_THREAD__ ) || defined( __SANITIZE_MEMORY__ )
 #define RN_TEST_SANITIZED 1
@@ -926,6 +927,26 @@ static void channels_test_round_trip_and_never_overreads()
 #else
 #define RN_TEST_TRAP_LIBC 0
 #endif // #if defined( __GLIBC__ ) && !defined( RN_TEST_SANITIZED ) && !defined( __clang_analyzer__ )
+
+// clang's thread sanitizer links its runtime statically off Apple and Windows,
+// and that runtime's tsan_new_delete defines the global operator new and
+// delete itself: bin/test did not link beside these (multiple definition). There
+// the sanitizer owns them and the trap keeps its other nets. gcc's runtime is a
+// shared library, which these definitions interpose as they do glibc's; the
+// other clang sanitizers keep these (MSan links its runtime without the C++ part)
+#if defined( __SANITIZE_THREAD__ )
+#define RN_TEST_TSAN 1
+#elif defined( __has_feature )
+#if __has_feature( thread_sanitizer )
+#define RN_TEST_TSAN 1
+#endif // #if __has_feature( thread_sanitizer )
+#endif // #if defined( __SANITIZE_THREAD__ )
+
+#if defined( RN_TEST_TSAN ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
+#define RN_TEST_TRAP_NEW 0
+#else
+#define RN_TEST_TRAP_NEW 1
+#endif // #if defined( RN_TEST_TSAN ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
 
 static volatile int rn_trap_armed = 0;
 static const char * volatile rn_trap_phase = "idle";
@@ -1080,6 +1101,8 @@ extern "C" int posix_memalign( void ** out, size_t alignment, size_t bytes )
 
 #endif // #if RN_TEST_TRAP_LIBC
 
+#if RN_TEST_TRAP_NEW
+
 void * operator new( size_t bytes )
 {
     if ( rn_trap_armed )
@@ -1165,6 +1188,8 @@ void operator delete[]( void * p, size_t ) noexcept
     }
     free( p );
 }
+
+#endif // #if RN_TEST_TRAP_NEW
 
 // ----------------------------------------------------------------
 //                           test plumbing
@@ -1931,7 +1956,7 @@ static void test_channels_allocator_trap_witness()
 
     for ( int net = 0; net < 4; net++ )
     {
-        if ( net == 2 && !RN_TEST_TRAP_LIBC )
+        if ( ( net == 1 && !RN_TEST_TRAP_NEW ) || ( net == 2 && !RN_TEST_TRAP_LIBC ) )
         {
             continue;
         }

@@ -2001,15 +2001,16 @@ randombytes(unsigned char * const buf, const unsigned long long buf_len)
 #include <time.h>
 #ifdef _WIN32
 # include <windows.h>
-#elif defined(HAVE_PTHREAD)
+#else
 # include <pthread.h>
+# ifndef HAVE_PTHREAD
+#  define HAVE_PTHREAD 1
+# endif
 #endif
 
 
 static volatile int initialized;
-#ifdef _WIN32
 static volatile int locked;
-#endif // #ifdef _WIN32
 
 int
 sodium_init(void)
@@ -2073,6 +2074,7 @@ sodium_crit_leave(void)
 #elif defined(HAVE_PTHREAD) && !defined(__EMSCRIPTEN__)
 
 static pthread_mutex_t _sodium_lock = PTHREAD_MUTEX_INITIALIZER;
+static __thread int    _sodium_lock_held;
 
 int
 sodium_crit_enter(void)
@@ -2082,6 +2084,7 @@ sodium_crit_enter(void)
     if ((ret = pthread_mutex_lock(&_sodium_lock)) == 0) {
         assert(locked == 0);
         locked = 1;
+        _sodium_lock_held = 1;
     }
     return ret;
 }
@@ -2089,12 +2092,13 @@ sodium_crit_enter(void)
 int
 sodium_crit_leave(void)
 {
-    if (locked == 0) {
+    if (_sodium_lock_held == 0 || locked == 0) {
 # ifdef EPERM
         errno = EPERM;
 # endif
         return -1;
     }
+    _sodium_lock_held = 0;
     locked = 0;
 
     return pthread_mutex_unlock(&_sodium_lock);

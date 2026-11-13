@@ -76,6 +76,13 @@ done in jobs, the game threads' minimum, mean and maximum, their ratio, and what
 frame (`leftover_ms`: the frame less its share of the game jobs less its mean network work). `harden_thread_net_ms:`
 lists each thread's network milliseconds a frame by thread index, to see how even the split is.
 
+The p99 in `harden_tick:` and `harden_frame:` is that second's own, over that second's frames. At the end the server
+prints `harden_frame_run:`, the whole run's `main_rn_ms` over every frame (`run_p99`, `run_p999`, `run_max`, `frames`),
+beside the mean and the maximum of the per-second p99s (`per_second_p99 mean`, `max`), over the seconds the server
+reported (the last partial second is in `run_p99`, not in the mean). The mean of per-second p99s is not a p99 of the
+run: a slow stretch inside one second moves that second's p99 alone. The reconcile's
+`harden_frame: work_p99_us` is the whole run's, the same as `run_p99`.
+
 With the three flags set, every number a row prints leads with what rocketnet takes from the main thread (`main_rn_ms`). The main thread's wait to join the task at the top of a frame is not in it: it is in `join_ms` and counted in `late`. `rn_core_ms` counts the update's range jobs once, in the threads that run them, and the main thread's own serial calls only. `harden_threads:` names the modes (`send_mode`, `update_mode`, `net_mode`) and prints the task's send and update milliseconds (`task_send_ms`, `task_update_ms`), the serial part that is left. The flags are the owner's layout one step at a time: each changes where one piece of rocketnet's work runs and uses only the public API (`sdk/rocketnet.h`).
 
 `scripts/space-frame-row` runs one such row on the XDP transport in the layout the game runs (all three flags set), over two
@@ -95,7 +102,18 @@ before the frame shape, so every existing row that does not name `--input-bytes`
 - the receiver's UDP receive errors, the cell's no-port drops (below) and IP discards;
 - the qdisc's drops;
 - the device's tx and rx drops;
-- the datagrams the server transport refused before counting them received (PREFILTER_TOO_SHORT and TOO_LARGE).
+- the datagrams the server refused before its library counted them received, on every transport and with or without
+  a hostile role, each part from its own count: the receive workers' prefilter refusals, from the workers' own
+  per-reason totals (`c2s_worker_refused`, printed by the server at its cut), plus the size drops the receive path
+  counts outside PACKETS_RECEIVED (URING_RECEIVE_DROPPED_SIZE, IOCP_ and RIO_RECEIVE_TOO_SHORT and TOO_LARGE).
+  PREFILTER_TOO_SHORT and TOO_LARGE are not added whole: they count drops inside PACKETS_RECEIVED and outside it.
+  The term is never PACKETS_RECEIVED less the library's received: that difference would cancel the received count
+  out of the equation, which would then judge PACKETS_RECEIVED alone, and a datagram the transport counted that the
+  library's received count missed would read as refused.
+
+The up chain also judges the transport's PACKETS_RECEIVED against the library's received plus the workers' refusals
+(`handoff_gap`, printed with its own verdict): every datagram the transport counts there is one a worker refused or one
+main took, so a handoff_gap other than 0 names a datagram one side counted and the other did not, and fails the chain.
 
 Each step is also printed beside the equation: send_gap, path_gap, receive_gap and wire_gap. The kernel counts an skb,
 so a GSO send of N datagrams counts as one, and UDP GRO does the same on receive. A qdisc drop of a GSO skb names one
@@ -154,7 +172,10 @@ ports land after both cuts and are in neither.
 server's datagrams in nftables on the players' machine before its UDP sees them: a real loss that no counter the chain
 reads names. The row must fail on chains with a positive `library_gap` and the line `library gap with no named drop`.
 `tests/test_unit_harden_chain.cpp` holds the same rows as a table (clean, unnamed strays, planted loss, strays that try
-to cover a loss, duplicates) for the unit suite.
+to cover a loss, duplicates, the refusals with a hostile role) for the unit suite, and
+`tests/test_unit_harden_stream.cpp` plants late, reordered and duplicate sequences on one receive stream
+(`tests/load/harden_stream.h`): a late arrival takes back the lost or head count it was given, one older than the
+window is counted `late_past_window` only, and no count goes below zero.
 
 ## Scripts
 
