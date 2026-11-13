@@ -255,3 +255,38 @@ updates and the invariant fails. Against the C: the inner loop of
 `rn_message_object_send_packets` writes one frame for a connection, moves
 `send_next_connection` past it and goes on to the next connection before
 any connection gets a second frame, so client 1 is served at the next update.
+
+## Revision 1.2: the capacity is read live (RNServerSendFair)
+
+`rn_message_send_admit` asks `send_capacity_available` before each visit,
+and the transport answers from live state
+(`rocketnet_server_transport_send_capacity_available`): on the ring, the
+slots left after the in-place frames started between flushes (those start
+only while more than `send_connected_count` is left,
+`rn_message_object_start`); on a staged transport, the smaller of the io
+send room and the fill budget left, where the room is what in-flight sends
+left and can grow inside the flush as sends complete. `RNServerSendFair`
+had a fixed `K` frames a flush. It now has `room`, the first queue's
+capacity this flush: `BeginFlush` picks it in `RoomMin..K` and the
+environment action `Grow` adds one unit once inside the flush. `RoomMin`
+defaults to `K` (the fixed capacity), so every earlier case is unchanged.
+
+`FairService` keeps its bound, `ceil(|Conn on q| / Kq)`, over the flushes
+that had the full capacity: a flush with less room serves fewer slots and
+is not counted (`CountsAllFlushes = FALSE`), and the cursor it leaves is
+still the walk's, so it never sends a waiting slot back to the end. No
+bound in flushes is owed under a live room: a transport whose room stays at
+0 sends nothing.
+
+| Case | Expected | Distinct | Seconds |
+|---|---|---:|---:|
+| `MCRNServerSendFairLive.cfg` (N 5, K 2, `RoomMin` 0) | pass | 218,836 | 23.4 |
+| `MCRNServerSendFairBrokenFixedWindow.cfg` (every flush counted) | `FairService` | 274,779 | 11.8 |
+
+Witness trace, read by hand (7 states): five slots, slot 4 with one frame
+of work. Each of three flushes begins with `room = 0`; the first visit finds
+no capacity and the flush ends, and slot 4 has waited 3 flushes,
+past `ceil(5 / 2)`. Against the C: with `send_capacity_available` at 0,
+`rn_message_send_admit` answers 0 at the first visit and
+`rn_message_object_send_packets` goes to the flush having written nothing,
+as often as the transport's room stays spent.
