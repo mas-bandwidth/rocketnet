@@ -99,5 +99,9 @@ placement, SMT and channel configuration, interface access, and memlock
 headroom. Follow the provision-and-verify procedure in [DEPLOYING.md](DEPLOYING.md).
 A managed-fleet permission to install software does not establish those
 requirements. Size the workload with [MEMORY.md](MEMORY.md) and qualify it on
-the target fleet. GSO and io_uring stage sends per queue, so more workers add
-send room; see [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
+the target fleet. GSO and io_uring stage sends per queue, and a destination
+always stages in its own queue. Each GSO queue has a fixed size, so more GSO
+workers add send staging. io_uring sizes its queues at create from
+`max_clients`: at 1000 clients the total stays about the same from 2 to 8
+workers, and each queue gets smaller, so what more io_uring workers add is
+send work in parallel. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).

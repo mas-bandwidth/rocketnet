@@ -269,7 +269,12 @@ refused pin is warned, counted in `URING_PIN_REFUSALS`, asks for no
 `SCHED_RR`, and the worker is confined to the cpus from `num_os_cpus` up when
 cpu 0 is reserved (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`). A destination hashes to one queue
-and is staged in that queue's send banks, so more workers add send room. See
+and is staged in that queue's send banks. Create sizes each queue's banks
+from `max_clients`: twice the queue's share of 18 packets a client, at least
+4096 and at most 32768 slots (`rocketnet_server_uring_send_slots`). So at 1000
+clients the total stays about the same from 2 to 8 workers and each queue,
+the room behind any one destination, gets smaller; what more workers add is
+send work in parallel. See
 [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
 before sizing a large server.
 
@@ -762,8 +767,10 @@ creation (`OUT_OF_MEMORY`).
 Linux reports an ICMP error (port unreachable, host unreachable) to a UDP
 socket only when the socket is connected or has `IP_RECVERR` set (Linux
 `net/ipv4/udp.c` and `net/ipv6/udp.c`, `__udp4_lib_err` and
-`__udp6_lib_err`). rocketnet's server sockets are never connected and never
-set `IP_RECVERR`: they are created at `sdk/rocketnet_platform.cpp`,
+`__udp6_lib_err`). On Linux, rocketnet's server sockets (`portable`, `gso`
+and `io_uring`) are never connected and never set `IP_RECVERR` (the macOS
+`msgx` server, which this guide does not cover, does connect a socket per
+client): they are created at `sdk/rocketnet_platform.cpp`,
 `sdk/rocketnet_server_gso_linux.cpp` and
 `sdk/rocketnet_server_uring_linux.cpp`, and send with `sendto`,
 `sendmmsg` or `SENDMSG` to an address per packet. So a dead or unreachable

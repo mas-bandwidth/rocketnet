@@ -76,7 +76,11 @@ See [the implementation reference](TRANSPORT-INTERNALS.md#server-capabilities-an
 ## Per-update send and receive budgets
 
 GSO and io_uring stage sends per queue: each worker has its own send banks,
-so more workers add send room. Under staging pressure the message-layer rotation and the
+and a destination always stages in its own queue. A GSO queue has a fixed
+size, so more GSO workers add send staging. io_uring sizes its queues at
+create from `max_clients`, so at 1000 clients its total stays about the same
+from 2 to 8 workers and each queue gets smaller; more io_uring workers add
+send work in parallel, not room. Under staging pressure the message-layer rotation and the
 disconnect bursts spread across updates as the transport's send room reports.
 Receive drains bound work spent on both kept and discarded datagrams using
 backend-specific budgets. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds),
