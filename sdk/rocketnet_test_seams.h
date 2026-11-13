@@ -101,6 +101,23 @@ void rocketnet_dev_seed_hash_key( uint8_t * key, size_t key_bytes, int table_kin
 
 void rocketnet_dev_fail_disconnect_sealed_writes( int count );
 
+// The client I/O stop-wait hold. While set, the I/O core's exit
+// (rocketnet_client_io_discard_at_stop, sdk/rocketnet_client_io.h) calls this once per
+// poll of its stop_woken wait instead of sleeping, so a unit case can run the
+// exit inside stop's wake call on one thread and see that no close happens
+// while the wake is still to return. The function stores stop_woken itself
+// when it lets the wait end, and fails at its own poll ceiling, so the wait
+// cannot hang the suite and does not sleep. NULL, the default, leaves the
+// sleep. Per process. Defined in sdk/rocketnet_client_transport.cpp.
+
+typedef void rocketnet_dev_client_io_stop_wait_function_t( void * context );
+
+void rocketnet_dev_set_client_io_stop_wait_hook( rocketnet_dev_client_io_stop_wait_function_t * function, void * context );
+
+// called by the wait: runs the hook and returns true when one is set, else
+// returns false and the wait sleeps
+bool rocketnet_dev_client_io_stop_wait_poll( void );
+
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H

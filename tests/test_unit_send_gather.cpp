@@ -82,10 +82,20 @@ static void test_send_gather_refuses_bad_arguments()
     check( rocketnet_send_gather_scratch_bytes( 0 ) == 0 );
     check( rocketnet_send_gather_scratch_bytes( -1 ) == 0 );
 
+    // the upper bound, 1 << 24 slots, is sized; one past it is refused
+    const int most = 1 << 24;
+    check( rocketnet_send_gather_scratch_bytes( most ) == ( (size_t) 2 * most + 3 * (size_t) most ) * sizeof( int ) );
+    check( rocketnet_send_gather_scratch_bytes( most + 1 ) == 0 );
+
     struct rocketnet_send_gather_scratch_t scratch;
     int memory[64];
     check( !rocketnet_send_gather_scratch_init( &scratch, NULL, 4 ) );
     check( !rocketnet_send_gather_scratch_init( &scratch, memory, 0 ) );
+    check( !rocketnet_send_gather_scratch_init( &scratch, memory, -1 ) );
+
+    // one past the upper bound is refused before the memory is used; the
+    // bound itself is not initialized here, as it needs 80 MiB of scratch
+    check( !rocketnet_send_gather_scratch_init( &scratch, memory, most + 1 ) );
     check( rocketnet_send_gather_scratch_init( &scratch, memory, 4 ) );
     check( scratch.buckets == 8 );
     check( rocketnet_send_gather_scratch_bytes( 4 ) == ( 8 + 3 * 4 ) * sizeof( int ) );

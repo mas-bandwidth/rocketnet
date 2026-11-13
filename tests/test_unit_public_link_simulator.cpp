@@ -18,6 +18,7 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
@@ -124,19 +125,35 @@ static void live_link_pair_teardown( struct live_link_pair_t * pair )
     rn_test_server_transport_stop_and_destroy( pair->server );
 }
 
-static int live_link_server_payload_count( struct live_link_pair_t * pair )
+// every payload the server hands over must be the one the case sent, whole:
+// a cut or changed payload fails the case rather than counting
+
+static int live_link_server_payload_count( struct live_link_pair_t * pair, const uint8_t * expected, int expected_bytes )
 {
     const int * indices = NULL;
     uint8_t * const * data = NULL;
 
     const int * bytes = NULL;
-    return rocketnet_server_transport_payloads( pair->server, &indices, &data, &bytes );
+    const int count = rocketnet_server_transport_payloads( pair->server, &indices, &data, &bytes );
+    for ( int i = 0; i < count; i++ )
+    {
+        check( indices[i] == 0 );
+        check( bytes[i] == expected_bytes );
+        check( bytes[i] != expected_bytes || memcmp( data[i], expected, (size_t) expected_bytes ) == 0 );
+    }
+    return count;
 }
 
-static int live_link_client_receive( struct live_link_pair_t * pair )
+static int live_link_client_receive( struct live_link_pair_t * pair, const uint8_t * expected, int expected_bytes )
 {
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    return rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof( packet ) );
+    const int bytes = rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof( packet ) );
+    if ( bytes > 0 )
+    {
+        check( bytes == expected_bytes );
+        check( bytes != expected_bytes || memcmp( packet, expected, (size_t) expected_bytes ) == 0 );
+    }
+    return bytes;
 }
 
 // The server's payload list and the client's delivery cursor both hold one
@@ -145,29 +162,29 @@ static int live_link_client_receive( struct live_link_pair_t * pair )
 // client's cursor is drained at every step, which is also what the API asks
 // of an application (take every message before the next update).
 
-static int live_link_server_payloads_seen( struct live_link_pair_t * pair, int steps )
+static int live_link_server_payloads_seen( struct live_link_pair_t * pair, int steps, const uint8_t * expected, int expected_bytes )
 {
     int seen = 0;
     for ( int i = 0; i < steps; i++ )
     {
         live_link_pair_step( pair, 0.01 );
-        seen += live_link_server_payload_count( pair );
+        seen += live_link_server_payload_count( pair, expected, expected_bytes );
     }
 
     return seen;
 }
 
-static int live_link_client_bytes_seen( struct live_link_pair_t * pair, int steps )
+static int live_link_client_bytes_seen( struct live_link_pair_t * pair, int steps, const uint8_t * expected, int expected_bytes )
 {
     int seen = 0;
     for ( int i = 0; i < steps; i++ )
     {
         live_link_pair_step( pair, 0.01 );
-        int bytes = live_link_client_receive( pair );
+        int bytes = live_link_client_receive( pair, expected, expected_bytes );
         while ( bytes > 0 )
         {
             seen += bytes;
-            bytes = live_link_client_receive( pair );
+            bytes = live_link_client_receive( pair, expected, expected_bytes );
         }
     }
 
@@ -192,7 +209,7 @@ static void test_public_link_simulator_applies_to_live_connection()
 
     uint8_t payload[4] = { 1, 2, 3, 4 };
     rocketnet_client_transport_send_packet( pair.client, payload, sizeof( payload ) );
-    check( live_link_server_payloads_seen( &pair, 20 ) == 0 );
+    check( live_link_server_payloads_seen( &pair, 20, payload, (int) sizeof( payload ) ) == 0 );
 
     rocketnet_client_transport_stats( pair.client, &after );
     check( after.packets_sent > before.packets_sent );
@@ -208,7 +225,7 @@ static void test_public_link_simulator_applies_to_live_connection()
     check( rocketnet_client_transport_network_simulator( pair.client, 0, 0, 0, 0 ) );
 
     rocketnet_client_transport_send_packet( pair.client, payload, sizeof( payload ) );
-    check( live_link_server_payloads_seen( &pair, 20 ) > 0 );
+    check( live_link_server_payloads_seen( &pair, 20, payload, (int) sizeof( payload ) ) > 0 );
 
     live_link_pair_teardown( &pair );
 }
@@ -231,7 +248,7 @@ static void test_public_link_simulator_server_applies_to_live_start()
 
     uint8_t payload[4] = { 5, 6, 7, 8 };
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
-    check( live_link_client_bytes_seen( &pair, 20 ) == 0 );
+    check( live_link_client_bytes_seen( &pair, 20, payload, (int) sizeof( payload ) ) == 0 );
 
     rocketnet_server_transport_stats( pair.server, &after );
     check( after.packets_sent > before.packets_sent );
@@ -241,7 +258,7 @@ static void test_public_link_simulator_server_applies_to_live_start()
     check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
 
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
-    check( live_link_client_bytes_seen( &pair, 20 ) > 0 );
+    check( live_link_client_bytes_seen( &pair, 20, payload, (int) sizeof( payload ) ) > 0 );
 
     live_link_pair_teardown( &pair );
 }
@@ -265,10 +282,10 @@ static void test_public_link_simulator_server_switch_off_delivers_held()
         rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
     }
 
-    check( live_link_client_bytes_seen( &pair, 1 ) == 0 );
+    check( live_link_client_bytes_seen( &pair, 1, payload, (int) sizeof( payload ) ) == 0 );
 
     check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
-    check( live_link_client_bytes_seen( &pair, 40 ) == num_payloads * (int) sizeof( payload ) );
+    check( live_link_client_bytes_seen( &pair, 40, payload, (int) sizeof( payload ) ) == num_payloads * (int) sizeof( payload ) );
     check( rocketnet_server_transport_is_client_connected( pair.server, 0 ) );
 
     live_link_pair_teardown( &pair );
@@ -317,7 +334,7 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     check( after.bytes_sent > before.bytes_sent );
     check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before );
     check( rocketnet_server_transport_link_lock_misses_for_test( pair.server ) == misses_before + 1 );
-    check( live_link_client_bytes_seen( &pair, 20 ) == (int) sizeof( payload ) );
+    check( live_link_client_bytes_seen( &pair, 20, payload, (int) sizeof( payload ) ) == (int) sizeof( payload ) );
 
     live_link_pair_teardown( &pair );
 }
@@ -828,28 +845,63 @@ static void test_public_link_simulator_jitter()
         public_link_wire_send( &wire, (uint8_t) i );
     }
 
-    int delivered = 0;
-    while ( wire.time < 1000.009 )
+    // each packet's arrival step (whole milliseconds after the send), or -1
+    // before it arrives; each arrives once, within latency .. latency +
+    // jitter (10 .. 30 ms), and the delays spread over that range
+
+    int arrived_ms[64];
+    for ( int i = 0; i < 64; i++ )
     {
-        wire.time += 0.001;
-        while ( public_link_wire_receive( &wire ) > 0 )
-        {
-            delivered++;
-        }
+        arrived_ms[i] = -1;
     }
 
-    check( delivered == 0 );
-
-    while ( wire.time < 1000.031 )
+    int delivered = 0;
+    int reordered = 0;
+    int last_value = -1;
+    for ( int step = 1; step <= 31; step++ )
     {
-        wire.time += 0.001;
+        wire.time = 1000.0 + 0.001 * step;
         while ( public_link_wire_receive( &wire ) > 0 )
         {
+            const int value = wire.received[0];
+            check( value >= 0 && value < 64 );
+            if ( value < 0 || value >= 64 )
+            {
+                continue;
+            }
+            check( arrived_ms[value] == -1 );
+            arrived_ms[value] = step;
+            reordered += value < last_value ? 1 : 0;
+            last_value = value;
             delivered++;
         }
     }
 
     check( delivered == 64 );
+
+    int earliest = 1000;
+    int latest = -1;
+    bool seen[32] = {};
+    int distinct = 0;
+    for ( int i = 0; i < 64; i++ )
+    {
+        check( arrived_ms[i] >= 10 && arrived_ms[i] <= 31 );
+        if ( arrived_ms[i] < 0 || arrived_ms[i] > 31 )
+        {
+            continue;
+        }
+        earliest = arrived_ms[i] < earliest ? arrived_ms[i] : earliest;
+        latest = arrived_ms[i] > latest ? arrived_ms[i] : latest;
+        distinct += seen[arrived_ms[i]] ? 0 : 1;
+        seen[arrived_ms[i]] = true;
+    }
+
+    // 64 uniform delays over 20 ms: a simulator that ignored jitter would put
+    // them all at 10 ms, in send order
+
+    check( earliest <= 15 && latest >= 25 );
+    check( distinct >= 10 );
+    check( reordered > 0 );
 
     public_link_wire_end( &wire );
 }
@@ -899,6 +951,14 @@ static void test_public_link_simulator_same_seed_same_schedule()
         public_link_wire_send( &b, (uint8_t) i );
     }
 
+    // the two schedules match packet for packet, and the schedule is not the
+    // trivial one: some packets are lost, some duplicated, some reordered,
+    // so the equality is of a schedule the seed drew
+
+    int received = 0;
+    int reordered = 0;
+    int last_value = -1;
+    int count[64] = {};
     for ( int step = 0; step < 40; step++ )
     {
         a.time += 0.001;
@@ -914,8 +974,26 @@ static void test_public_link_simulator_same_seed_same_schedule()
                 break;
             }
             check( memcmp( a.received, b.received, (size_t) a_bytes ) == 0 );
+            const int value = a.received[0];
+            if ( value >= 0 && value < 64 )
+            {
+                count[value]++;
+            }
+            reordered += value < last_value ? 1 : 0;
+            last_value = value;
+            received++;
         }
     }
+
+    int lost = 0;
+    int duplicated = 0;
+    for ( int i = 0; i < 64; i++ )
+    {
+        lost += count[i] == 0 ? 1 : 0;
+        duplicated += count[i] > 1 ? 1 : 0;
+    }
+    check( received > 0 );
+    check( lost > 0 && duplicated > 0 && reordered > 0 );
 
     public_link_wire_end( &a );
     public_link_wire_end( &b );
@@ -923,16 +1001,64 @@ static void test_public_link_simulator_same_seed_same_schedule()
 
 #include "rocketnet_platform.h"
 
+#if !defined( _WIN32 )
+#include <sys/mman.h>
+#include <unistd.h>
+#endif // #if !defined( _WIN32 )
+
 extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );
 extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
 extern bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
 
 // An inactive simulator (every setting zero, nothing handed over) costs the
-// send path no lock: the test holds the simulator's mutex while it asks, so
-// a take that locked would block here instead of answering. A handed-over
-// setting is still taken under the lock, on and off.
+// send path no lock. A take with nothing handed over is first asked with a
+// mutex that was never created: the answer comes from the setting word alone,
+// so it never reaches the mutex, where a try-lock would assert that the mutex
+// is not a created one. Then with the real mutex held, as a send would meet
+// it. A handed-over setting is still taken under the lock, on and off.
+
+static int public_link_simulator_lock_asserts = 0;
+
+static void public_link_simulator_lock_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    public_link_simulator_lock_asserts++;
+}
+
 static void test_public_link_simulator_inactive_takes_no_lock()
 {
+    {
+        struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 64, 1 );
+        check( simulator != NULL );
+
+        struct rocketnet_platform_mutex_t never_created;
+        memset( &never_created, 0, sizeof( never_created ) );
+
+        void ( *saved_assert )( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
+        public_link_simulator_lock_asserts = 0;
+        rocketnet_assert_function( public_link_simulator_lock_assert_hook );
+
+        // inactive, nothing handed over: false, from the word
+
+        rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 0.0f );
+        check( !rocketnet_network_simulator_take_setting( simulator, &never_created ) );
+
+        // active, nothing handed over: true, from the word, still no lock
+
+        rocketnet_network_simulator_config( simulator, 0.1, 0.0, 0.0f, 0.0f );
+        check( rocketnet_network_simulator_take_setting( simulator, &never_created ) );
+
+        rocketnet_assert_function( saved_assert );
+#if ROCKETNET_ASSERTS
+        check( public_link_simulator_lock_asserts == 0 );
+#endif // #if ROCKETNET_ASSERTS
+
+        rocketnet_network_simulator_destroy( simulator );
+    }
+
     struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 64, 1 );
     check( simulator != NULL );
 
@@ -977,7 +1103,7 @@ static void test_public_link_simulator_server_inactive_passes_straight_through()
 
     uint8_t payload[4] = { 13, 14, 15, 16 };
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
-    check( live_link_client_bytes_seen( &pair, 2 ) == (int) sizeof( payload ) );
+    check( live_link_client_bytes_seen( &pair, 2, payload, (int) sizeof( payload ) ) == (int) sizeof( payload ) );
 
     live_link_pair_teardown( &pair );
 }
@@ -990,10 +1116,39 @@ static void test_public_link_simulator_server_inactive_passes_straight_through()
 // move through every ring. Then three fills with it on, each drained before
 // the next: five payloads and an aborted slot, then one (the earlier fill's
 // later slots still hold sealed frames), then more starts than the ring
-// holds. Every payload reaches the server exactly once and the server sees no
-// replay or unopenable packet. Time is an argument.
+// holds. Every payload reaches the server exactly once, whole, by its own
+// identity in the ledger below, and the server sees no replay or unopenable
+// packet. Time is an argument.
 
-static int live_link_client_fill( struct live_link_pair_t * pair, int payloads, int abort_at )
+// The ledger: every payload the fill writes carries its own identity, a 32-bit
+// number in its first four bytes and the number's complement in the other
+// four, so a payload that arrives cut, changed, twice, from an aborted slot or
+// from a stale slot is named. An entry is OWED from its finish and RECEIVED
+// once the server hands it over.
+
+#define LIVE_LINK_LEDGER_MAX 4096
+
+enum live_link_ledger_state_t
+{
+    LIVE_LINK_UNSENT = 0,
+    LIVE_LINK_OWED = 1,
+    LIVE_LINK_RECEIVED = 2
+};
+
+struct live_link_ledger_t
+{
+    uint32_t next;
+    uint8_t state[LIVE_LINK_LEDGER_MAX];
+};
+
+static void live_link_ledger_write( uint8_t * frame, uint32_t id )
+{
+    const uint32_t inverse = ~id;
+    memcpy( frame, &id, sizeof( id ) );
+    memcpy( frame + 4, &inverse, sizeof( inverse ) );
+}
+
+static int live_link_client_fill( struct live_link_pair_t * pair, struct live_link_ledger_t * ledger, int payloads, int abort_at )
 {
     int finished = 0;
     for ( int i = 0; i < payloads; i++ )
@@ -1004,16 +1159,69 @@ static int live_link_client_fill( struct live_link_pair_t * pair, int payloads, 
         {
             continue;
         }
-        memset( frame, i & 0xFF, 8 );
+        const uint32_t id = ++ledger->next;
+        check( id < LIVE_LINK_LEDGER_MAX );
+        live_link_ledger_write( frame, id );
         if ( i == abort_at )
         {
             rocketnet_client_transport_abort_packet( pair->client, &context );
             continue;
         }
         check( rocketnet_client_transport_finish_packet( pair->client, &context, 8 ) > 8 );
+        if ( id < LIVE_LINK_LEDGER_MAX )
+        {
+            ledger->state[id] = LIVE_LINK_OWED;
+        }
         finished++;
     }
     return finished;
+}
+
+// steps the pair, checks each payload the server hands over against the
+// ledger (8 bytes, a whole identity, owed and not yet received), and returns
+// how many arrived; every entry owed must have arrived by the last step
+
+static int live_link_server_ledger( struct live_link_pair_t * pair, struct live_link_ledger_t * ledger, int steps )
+{
+    int arrived = 0;
+    for ( int s = 0; s < steps; s++ )
+    {
+        live_link_pair_step( pair, 0.01 );
+
+        const int * indices = NULL;
+        uint8_t * const * data = NULL;
+        const int * bytes = NULL;
+        const int count = rocketnet_server_transport_payloads( pair->server, &indices, &data, &bytes );
+        for ( int i = 0; i < count; i++ )
+        {
+            check( indices[i] == 0 );
+            check( bytes[i] == 8 );
+            if ( bytes[i] != 8 )
+            {
+                continue;
+            }
+            uint32_t id = 0;
+            uint32_t inverse = 0;
+            memcpy( &id, data[i], sizeof( id ) );
+            memcpy( &inverse, data[i] + 4, sizeof( inverse ) );
+            check( inverse == ~id );
+            check( id > 0 && id < LIVE_LINK_LEDGER_MAX );
+            if ( id == 0 || id >= LIVE_LINK_LEDGER_MAX )
+            {
+                continue;
+            }
+            check( ledger->state[id] == LIVE_LINK_OWED );
+            ledger->state[id] = LIVE_LINK_RECEIVED;
+            arrived++;
+        }
+    }
+
+    for ( uint32_t id = 1; id <= ledger->next && id < LIVE_LINK_LEDGER_MAX; id++ )
+    {
+        check( ledger->state[id] != LIVE_LINK_OWED );
+    }
+
+    return arrived;
 }
 
 static void test_public_link_simulator_client_hold_sends_each_committed_frame_once()
@@ -1032,22 +1240,30 @@ static void test_public_link_simulator_client_hold_sends_each_committed_frame_on
     // these fills land in every ring in turn: each finish and abort finds the
     // ring its frame lives in
 
+    struct live_link_ledger_t * ledger = (struct live_link_ledger_t *) calloc( 1, sizeof( struct live_link_ledger_t ) );
+    check( ledger != NULL );
+    if ( !ledger )
+    {
+        live_link_pair_teardown( &pair );
+        return;
+    }
+
     for ( int round = 0; round < 6; round++ )
     {
-        const int sent = live_link_client_fill( &pair, 3, 1 );
+        const int sent = live_link_client_fill( &pair, ledger, 3, 1 );
         check( sent == 2 );
-        check( live_link_server_payloads_seen( &pair, 2 ) == sent );
+        check( live_link_server_ledger( &pair, ledger, 2 ) == sent );
     }
 
     check( rocketnet_client_transport_network_simulator( pair.client, 10, 0, 0, 0 ) );
 
-    const int first = live_link_client_fill( &pair, 6, 4 );
+    const int first = live_link_client_fill( &pair, ledger, 6, 4 );
     check( first == 5 );
-    check( live_link_server_payloads_seen( &pair, 10 ) == first );
+    check( live_link_server_ledger( &pair, ledger, 10 ) == first );
 
-    const int second = live_link_client_fill( &pair, 1, -1 );
+    const int second = live_link_client_fill( &pair, ledger, 1, -1 );
     check( second == 1 );
-    check( live_link_server_payloads_seen( &pair, 10 ) == second );
+    check( live_link_server_ledger( &pair, ledger, 10 ) == second );
 
     // the ring takes its size less what the update commits in it, and every
     // start past that is refused and counted; the refused starts leave the
@@ -1055,15 +1271,16 @@ static void test_public_link_simulator_client_hold_sends_each_committed_frame_on
 
     const int ring_size = 256; // ROCKETNET_CLIENT_PAYLOAD_RING_SIZE, private to sdk/rocketnet_client_transport.cpp
     const int starts = ring_size + 1024;
-    const int third = live_link_client_fill( &pair, starts, -1 );
+    const int third = live_link_client_fill( &pair, ledger, starts, -1 );
     check( third > 0 && third <= ring_size );
     check( client_counters[ROCKETNET_COUNTER_SEND_RING_FULL] - ring_full >= (uint64_t) ( starts - ring_size ) );
-    check( live_link_server_payloads_seen( &pair, 10 ) == third );
+    check( live_link_server_ledger( &pair, ledger, 10 ) == third );
 
     check( server_counters[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] == replays );
     check( server_counters[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == unopened );
     check( rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
+    free( ledger );
     live_link_pair_teardown( &pair );
 }
 #endif // #if ROCKETNET_DEV
@@ -1085,6 +1302,48 @@ REGISTER_UNIT_TEST( test_public_link_simulator_staged_commit_reads_setting_once 
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
+
+#if !defined( _WIN32 )
+
+// Two pages, the second neither readable nor writable, and a region of the
+// asked size that ends exactly where the first page ends: a touch of one byte
+// past the region faults.
+struct revision_tail_t
+{
+    uint8_t * map;
+    size_t map_bytes;
+    uint8_t * bytes;
+};
+
+static bool revision_tail_open( struct revision_tail_t * tail, size_t bytes, size_t align )
+{
+    const long page = sysconf( _SC_PAGESIZE );
+    if ( page <= 0 || bytes > (size_t) page )
+    {
+        return false;
+    }
+    tail->map_bytes = 2 * (size_t) page;
+    void * map = mmap( NULL, tail->map_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0 );
+    if ( map == MAP_FAILED )
+    {
+        return false;
+    }
+    tail->map = (uint8_t *) map;
+    if ( mprotect( tail->map + page, (size_t) page, PROT_NONE ) != 0 )
+    {
+        munmap( map, tail->map_bytes );
+        return false;
+    }
+    tail->bytes = tail->map + page - bytes;
+    return ( (uintptr_t) tail->bytes % align ) == 0;
+}
+
+static void revision_tail_close( struct revision_tail_t * tail )
+{
+    munmap( tail->map, tail->map_bytes );
+}
+
+#endif // #if !defined( _WIN32 )
 
 // A revision-1 config is read only to its own end: the sized defaults and the
 // sized creates leave the guard bytes past it untouched. Revision 1 ends
@@ -1156,6 +1415,31 @@ static void test_public_link_simulator_revision_1_prefixes()
     {
         check( server.guard[i] == 0x5a );
     }
+
+#if !defined( _WIN32 )
+    // The guard bytes above prove a later field's value is not used and not
+    // written, not that it is never read. Here each prefix ends exactly at a
+    // page that can be neither read nor written, so a read one byte past the
+    // revision faults at once, in every build.
+
+    struct revision_tail_t client_tail;
+    check( revision_tail_open( &client_tail, sizeof( client.bytes ), alignof( rocketnet_client_transport_config_t ) ) );
+    check( rocketnet_client_transport_default_config_sized( (rocketnet_client_transport_config_t *) client_tail.bytes, sizeof( client.bytes ) ) == 1 );
+    memcpy( client_tail.bytes, &client_current, sizeof( client.bytes ) );
+#if ROCKETNET_DEV
+    check( rocketnet_client_transport_create_sized( NULL, token, (const rocketnet_client_transport_config_t *) client_tail.bytes,
+                                                    sizeof( client.bytes ), 1000.0 ) == NULL );
+#endif // #if ROCKETNET_DEV
+    revision_tail_close( &client_tail );
+
+    struct revision_tail_t server_tail;
+    check( revision_tail_open( &server_tail, sizeof( server.bytes ), alignof( rocketnet_server_transport_config_t ) ) );
+    check( rocketnet_server_transport_default_config_sized( (rocketnet_server_transport_config_t *) server_tail.bytes, sizeof( server.bytes ) ) == 1 );
+    memcpy( server_tail.bytes, &server_current, sizeof( server.bytes ) );
+    check( rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", (const rocketnet_server_transport_config_t *) server_tail.bytes,
+                                                    sizeof( server.bytes ) ) == NULL );
+    revision_tail_close( &server_tail );
+#endif // #if !defined( _WIN32 )
 }
 
 REGISTER_UNIT_TEST( test_public_link_simulator_revision_1_prefixes );
