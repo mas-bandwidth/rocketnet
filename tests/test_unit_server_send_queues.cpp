@@ -488,7 +488,54 @@ static void test_server_first_update_sweep_serves_past_a_full_queue()
     sq_teardown( &rig );
 }
 
+// Stop with the link simulator holding packets (a second of latency) and
+// queue 0 jammed: the stop's drain of the simulator sends the held packets of
+// the queues with room, and discards those of the jammed queue, counted as a
+// full staging, once nothing is in flight; the simulator is left empty and
+// the stop finishes (proofs/tla/RNServerLinkStop.tla). Before, the drain
+// stopped at the fewest free frames of any queue, so the simulator kept its
+// packets and the stop waited on it until destroy.
+static void test_server_stop_finishes_with_held_link_packets_past_a_jammed_queue()
+{
+    struct sq_rig_t rig;
+    sq_setup( &rig, true );
+
+    // every client is sent keep-alives that the simulator holds for a second
+    check( rocketnet_server_transport_network_simulator( rig.transport, 1000, 0, 0, 0 ) );
+    for ( int i = 0; i < 30; i++ )
+    {
+        sq_tick( &rig );
+    }
+
+    sq_set_rooms( 0, SQ_ROOM, SQ_ROOM );
+    uint64_t before[SQ_CLIENTS];
+    memcpy( before, sq.finished, sizeof( before ) );
+    const uint64_t ring_full = rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    for ( int c = 0; c < SQ_CLIENTS; c++ )
+    {
+        rocketnet_server_transport_disconnect_client_shutdown( rig.transport, c );
+    }
+    rocketnet_server_transport_stop( rig.transport );
+    bool stopped = false;
+    for ( int step = 0; step < 4 * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS && !stopped; step++ )
+    {
+        stopped = rocketnet_server_transport_stopped( rig.transport );
+    }
+    check( stopped );
+    check( sq.finished[0] - before[0] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[1] - before[1] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[3] - before[3] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( sq.finished[2] == before[2] );
+    check( sq.refused[0] == 0 );
+    // the jammed queue's burst and at least one held keep-alive
+    check( rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL] - ring_full >= 2 );
+
+    sq_set_rooms( SQ_ROOM, SQ_ROOM, SQ_ROOM );
+    sq_teardown( &rig );
+}
+
 REGISTER_UNIT_TEST( test_server_stop_finishes_past_a_jammed_queue );
+REGISTER_UNIT_TEST( test_server_stop_finishes_with_held_link_packets_past_a_jammed_queue );
 REGISTER_UNIT_TEST( test_server_stop_before_any_update_finishes_past_a_jammed_queue );
 REGISTER_UNIT_TEST( test_server_first_update_sweep_serves_past_a_full_queue );
 REGISTER_UNIT_TEST( test_server_send_pass_continues_past_a_full_queue );

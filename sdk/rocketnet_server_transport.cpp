@@ -2054,7 +2054,19 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 // stay held for the next update's drain, so none is refused and lost
 // (proofs/tla/ServerStopSpread.tla Room).  A busy simulator lock leaves the
 // held packets for the next drain.  This path does not wait, except for the
-// stop's one window flush, which must not leave packets outside the slots.
+// stop's one window flush, which must not leave packets outside the slots,
+// and the stop's hold of one packet back (below).
+//
+// The stop's drain (shutdown) judges room by each packet's own send queue,
+// as the stop step judges a burst's (proofs/tla/RNServerLinkStop.tla): it
+// goes on while any queue has room, a packet whose queue has room leaves, and
+// a packet whose queue has none is held back and ends this step's drain while
+// a send staged or in flight could still free room; with nothing in flight
+// (send_idle) no packet for that queue can ever leave, so it is discarded and
+// counted as a start refused for a full staging (SEND_RING_FULL), as an
+// abandoned burst is, and the drain goes on. So a queue that stays full
+// through the stop no longer keeps the simulator holding packets, which the
+// I/O stop waits for (link_empty), and stopped() turns true.
 static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport, bool shutdown = false )
 {
     if ( !transport->link_simulator )
@@ -2074,7 +2086,8 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
     const double cutoff_time = shutdown ? DBL_MAX : transport->time;
     for ( ;; )
     {
-        if ( rocketnet_server_transport_io_send_room( transport ) <= 0 )
+        if ( shutdown ? rocketnet_server_transport_io_send_room_total( transport ) <= 0 && !rocketnet_server_transport_io_send_idle( transport )
+                      : rocketnet_server_transport_io_send_room( transport ) <= 0 )
         {
             break;
         }
@@ -2092,6 +2105,20 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
         rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
         if ( packet_bytes <= 0 )
         {
+            break;
+        }
+        if ( shutdown && rocketnet_server_transport_queue_room( transport, rocketnet_server_transport_send_queue_of( transport, &to ) ) <= 0 )
+        {
+            if ( rocketnet_server_transport_io_send_idle( transport ) &&
+                 rocketnet_server_transport_queue_room( transport, rocketnet_server_transport_send_queue_of( transport, &to ) ) <= 0 )
+            {
+                rocketnet_server_transport_io_count_refused_judged( transport, 0, true );
+                continue;
+            }
+            const uint8_t * held = packet;
+            rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+            rocketnet_network_simulator_deliver_packets( transport->link_simulator, &from, &to, &held, &packet_bytes, 1, transport->time );
+            rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
             break;
         }
         if ( rocketnet_server_transport_staged( transport ) )
