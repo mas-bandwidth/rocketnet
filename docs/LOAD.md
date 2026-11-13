@@ -789,8 +789,9 @@ directions:
    - **AF_XDP UMEM and kernel rings**: Each AF_XDP queue allocates a 98,304-frame,
      page-aligned `402,653,184`-byte (384 MiB raw) UMEM buffer via `mmap` plus
      kernel fill/completion/RX/TX rings (`786,432` bytes of RX and TX descriptors per queue;
-     `2,818,572,288` bytes UMEM + `5,505,024` bytes rings across 7 default
-     queues). UMEM is counted against `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`
+     `2,818,572,288` bytes UMEM + `5,505,024` bytes of RX and TX descriptors
+     across 7 default queues; the fill and completion rings are not in that
+     figure). UMEM is counted against `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`
      and `-DROCKETNET_XDP_MEMORY_MIB`, but is not allocated from
      `rocketnet_allocator_t`.
    - **`io_uring` mapped rings**: One server-wide submission/completion ring
