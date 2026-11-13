@@ -14524,8 +14524,7 @@ static void rocketnet_test_sync_remote_answer( struct rocketnet_test_sync_remote
         rocketnet_check( rocketnet_server_protocol_start_payload( &test->server, 0, &to, &sequence ) );
 
         uint8_t frame[ROCKETNET_RECEIVE_CEILING];
-        uint8_t * w = frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET;
-        rocketnet_write_uint64( &w, r );
+        memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );
 
         const int wire = rocketnet_server_protocol_seal_payload_frame( &test->server, 0, sequence, (uint64_t) ( 1000000 + r ), frame, 8, g_rocketnet_test_sync_remote_clock );
         rocketnet_check( wire > 0 );
@@ -14773,8 +14772,8 @@ static void rocketnet_test_reply_opens_a_later_update_on( const rocketnet_client
                     continue;
                 }
 
-                const uint8_t * q = payload;
-                const uint64_t r = rocketnet_read_uint64( &q );
+                uint64_t r = 0;
+                memcpy( &r, payload, 8 );
                 rocketnet_check( r >= 1 && r <= (uint64_t) sent_requests );
                 rocketnet_check( reply_seen[r] == 0 );
                 reply_seen[r] = pass;
