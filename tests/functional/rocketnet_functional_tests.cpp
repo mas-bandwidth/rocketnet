@@ -10685,7 +10685,7 @@ const char * rocketnet_xdp_veth_netns_path()
 }
 
 // the case's near (server) or far (client) host, bare: 10.79.<slot>.1 or
-// 2001:db8:79:<slot>::2
+// 2001:db8:79:<slot + 1>::2
 const char * rocketnet_xdp_veth_host( bool ipv6, bool far )
 {
     if ( ipv6 )
@@ -11444,7 +11444,7 @@ static void rocketnet_xdp_serves_both_families( const char * case_name )
     // the lo address is the case's own, from its slot, as lo is shared by
     // every case in the kernel (tests/functional/xdp_test_net.h)
     char lo_address[64];
-    snprintf( lo_address, sizeof( lo_address ), "2001:db8:78:%x::1", (unsigned) net.slot );
+    snprintf( lo_address, sizeof( lo_address ), "2001:db8:78:%x::1", (unsigned) ( net.slot + 1 ) );
     char other_interface[256];
     snprintf( other_interface, sizeof( other_interface ), "[%s]:%d", lo_address, ROCKETNET_XDP_VETH_PORT );
     char wrong_port[256];
