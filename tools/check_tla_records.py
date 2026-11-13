@@ -62,6 +62,7 @@ DECLARED_DEBT = frozenset(
         "MCReplayWindowMid.cfg",
         "MCRNClientIoDecrypt.cfg",
         "MCRNFillPhaseN3.cfg",
+        "MCRNGsoQueueBankLayoutFlush3.cfg",
         "MCSessionAcksLive.cfg",
     }
 )
