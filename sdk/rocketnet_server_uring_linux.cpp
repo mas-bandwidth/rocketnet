@@ -975,6 +975,27 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
     return uring;
 }
 
+// proofs/tla/RNUringQueueWorker.tla BeginStop, for every queue: shutdown,
+// then the wake. The builtin transport's begin_shutdown hook: main thread,
+// once, when the server starts stopping and before its last disconnect
+// batches. The server asks the stop only once send_idle is true, so from here
+// a socket that stays full gets its queue worker's bounded retries and the
+// worker then abandons what waits (counted) instead of holding the bank
+// forever (ShutdownDrains).
+
+void rocketnet_server_uring_begin_shutdown( rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+
+    for ( int i = 0; i < uring->num_queues; i++ )
+    {
+        if ( uring->queues[i].worker_ready )
+        {
+            rocketnet_uring_queue_worker_begin_shutdown( &uring->queues[i].worker );
+        }
+    }
+}
+
 // no bank is published or kept after the workers exit: the server stops this
 // transport only after its final flush and send_idle (the driver's stop
 // follows begin_shutdown, sdk/rocketnet_driver.h), starts no packet after the
@@ -982,9 +1003,9 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 // update, never after stop. What the workers still hold at the stop they
 // send within bounded retries or count abandoned (SEND_DROPPED).
 //
-// proofs/tla/RNUringQueueWorker.tla Stop, for every queue: quit, then the
-// wake. Each worker keeps sending what was published, cancels its receive
-// and exits once nothing of its is in the kernel.
+// proofs/tla/RNUringQueueWorker.tla Stop, for every queue: shutdown and quit,
+// then the wake. Each worker keeps sending what was published, cancels its
+// receive and exits once nothing of its is in the kernel.
 
 void rocketnet_server_uring_stop( rocketnet_server_uring_t * uring )
 {
@@ -1487,6 +1508,7 @@ int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring )
     return 0;
 }
 
+void rocketnet_server_uring_begin_shutdown( struct rocketnet_server_uring_t * ) {}
 void rocketnet_server_uring_stop( struct rocketnet_server_uring_t * ) {}
 bool rocketnet_server_uring_stopped( struct rocketnet_server_uring_t * ) { return true; }
 

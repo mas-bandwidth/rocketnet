@@ -258,12 +258,20 @@ int rocketnet_server_uring_send_queue_size( const struct rocketnet_server_uring_
 
 int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring );
 
+// begin_shutdown (the driver's begin_shutdown hook: main thread, when the
+// server starts stopping, before its last disconnect batches) tells every
+// queue worker shutdown has begun: from then on a socket that stays full
+// gets bounded retries, each after the worker's retry wait, and what it
+// never takes is abandoned and counted (SEND_DROPPED), so send_idle turns
+// true and the server can ask the stop.
+//
 // stop tells every queue worker to stop: each keeps sending what was
 // published, retries a full socket a bounded number of times, cancels its
 // receive and exits once nothing of its is in the kernel. stopped is true
 // once every worker has exited; it never waits. What the workers banked and
 // main never took is counted RECEIVE_DROP_STOPPED then.
 
+void rocketnet_server_uring_begin_shutdown( struct rocketnet_server_uring_t * uring );
 void rocketnet_server_uring_stop( struct rocketnet_server_uring_t * uring );
 bool rocketnet_server_uring_stopped( struct rocketnet_server_uring_t * uring );
 
