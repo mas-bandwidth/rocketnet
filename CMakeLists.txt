@@ -257,6 +257,10 @@ endif()
 function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_link_libraries(${target} PRIVATE RocketNet::Sodium)
+        # every source of the target then takes the system <sodium.h> and its
+        # unprefixed names (the vendored header prefixes them for the bundled
+        # build): the test, tool and fuzz sources test this macro
+        target_compile_definitions(${target} PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
     else()
         # Only this build owns the privately prefixed RNG state in sodium.c.
         # The lifecycle source must never close an application's system sodium.
@@ -385,6 +389,18 @@ endif()
 # stays as the place a target names the floor it is checked against; it adds
 # nothing the directory scope has not already given the target.
 function(rocketnet_warning_floor target)
+endfunction()
+
+# The suites' stack. A case keeps internal objects on its stack: the client
+# protocol is 1.4 MB at ROCKETNET_HISTORY_PACKETS=32768, and some 150 test
+# frames hold one or more. MSVC links an executable with a 1 MB stack, where
+# Linux and macOS start the main thread on 8 MB, so the suites link with the
+# same 8 MB on Windows. The library's own frames stay small (none over 64 KB
+# at that history), so nothing outside the suites is given more.
+function(rocketnet_suite_stack target)
+    if(MSVC)
+        target_link_options(${target} PRIVATE /STACK:8388608)
+    endif()
 endfunction()
 
 # The public include directory: rocketnet.h alone, copied from sdk/ at
@@ -654,6 +670,7 @@ void rocketnet_unit_prepare() {}
 int rocketnet_unit_run_named( const char * name ) { fprintf( stderr, \"unknown unit test %s\\n\", name ); return 2; }
 int rocketnet_channels_test_count() { return 0; }
 const char * rocketnet_channels_test_name( int index ) { (void)index; return 0; }
+const char * rocketnet_channels_test_skipped_by( int index ) { (void)index; return 0; }
 const char * rocketnet_channels_test_resolve( const char * name ) { return name; }
 int rocketnet_channels_run_named( const char * name ) { (void)name; return 2; }
 void rocketnet_channels_prepare( const char * name, void * (**malloc_function)( void * context, size_t bytes ), void (**free_function)( void * context, void * p ) ) { (void)name; (void)malloc_function; (void)free_function; }
@@ -862,6 +879,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     rocketnet_warning_floor(test)
+    rocketnet_suite_stack(test)
     # The promotion case exercises the WIDE channel header (an index of 256 or
     # more) on channel 300, past the default build's cap, so this binary
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
@@ -881,6 +899,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_compile_options(test_wide PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
     rocketnet_use_sodium(test_wide)
     rocketnet_warning_floor(test_wide)
+    rocketnet_suite_stack(test_wide)
     target_link_libraries(test_wide PRIVATE Threads::Threads)
     # The SDK sources link their platform libraries, as the library targets do.
     if(APPLE)
@@ -939,9 +958,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_DEV)
         target_link_options(test PRIVATE "-Wl,--wrap=rocketnet_platform_time")
     endif()
-    if(ROCKETNET_USE_SYSTEM_SODIUM)
-        target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
-    endif()
     # The key-wipe witness compiles the SDK key schedule, including <sodium.h>.
     # Give it the same selected sodium headers as the library on every OS.
     rocketnet_use_sodium(test)
@@ -972,9 +988,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_link_libraries(connect_token_vectors PRIVATE rocketnet_dev)
     target_compile_features(connect_token_vectors PRIVATE cxx_std_11)
     rocketnet_use_sodium(connect_token_vectors)
-    if(ROCKETNET_USE_SYSTEM_SODIUM)
-        target_compile_definitions(connect_token_vectors PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
-    endif()
     rocketnet_warning_floor(connect_token_vectors)
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
     # which includes <sodium.h>: the vendored header, as the transport's own
@@ -1162,6 +1175,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
+    rocketnet_suite_stack(functional)
     add_dependencies(functional rocketnet_shared rocketnet_shared_dev)
     target_compile_definitions(functional PRIVATE
         "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\""
@@ -1297,6 +1311,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
         rocketnet_use_sodium(functional_production)
         rocketnet_warning_floor(functional_production)
+        rocketnet_suite_stack(functional_production)
         target_compile_features(functional_production PRIVATE cxx_std_11)
         if(MSVC)
             target_compile_options(functional_production PRIVATE "/FI${ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER}")
@@ -1424,7 +1439,6 @@ if(ROCKETNET_BUILD_TOOLS)
         target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEV=1)
         target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)
         target_include_directories(fuzz_replay_${harness} PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/sodium"
             "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         rocketnet_use_sodium(fuzz_replay_${harness})

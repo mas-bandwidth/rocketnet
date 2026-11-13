@@ -741,7 +741,7 @@ static void test_io_uring_transport_send_completions_pass_a_full_fill_bank()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, queues, &source );
     rocketnet_unit_check( uring );
 
-    const int receives = 9000;
+    const int receives = URING_TEST_BANK_SIZE * 9 / 16;      // 9000 at the default 1000 clients; the flood scales with the bank
     const int sends = 256;
     const int updates = 7;
 

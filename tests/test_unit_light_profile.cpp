@@ -11,6 +11,7 @@
 #include "msan_scale_allocator.h"
 #include "rocketnet.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_history.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -341,6 +342,11 @@ static void test_light_profile_server_1000_required_memory()
 
 REGISTER_UNIT_TEST( test_light_profile_server_1000_required_memory );
 
+// the pins are read at the default history (ROCKETNET_HISTORY_PACKETS 4096): a
+// longer history sizes every connection's records above them, and no figure
+// is read there to check against, so that build skips and reports the case
+UNIT_TEST_SKIPPED_UNLESS( test_light_profile_server_1000_required_memory, ROCKETNET_HISTORY_PACKETS == 4096 );
+
 static void test_light_profile_client_required_memory()
 {
     struct rocketnet_client_config_t config;
@@ -355,6 +361,7 @@ static void test_light_profile_client_required_memory()
 }
 
 REGISTER_UNIT_TEST( test_light_profile_client_required_memory );
+UNIT_TEST_SKIPPED_UNLESS( test_light_profile_client_required_memory, ROCKETNET_HISTORY_PACKETS == 4096 );     // the history pin, as above
 
 static void test_light_profile_configs_create()
 {

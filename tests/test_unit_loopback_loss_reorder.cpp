@@ -525,7 +525,7 @@ static void loopback_transport_reliable_ordered_survives_loss_and_reorder_leg( i
 
     struct rocketnet_message_config_t message_config;
     rocketnet_message_default_config( &message_config );
-    message_config.num_channels = 4;
+    message_config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     message_config.reliable_messages_in_flight = 64;
     message_config.receive_message_buffer_bytes = 65536;
     message_config.max_message_bytes = 16384;

@@ -148,6 +148,7 @@ void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * serve
 void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed );
 void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac );
 const char * rocketnet_xdp_veth_netns_path();
+const char * rocketnet_xdp_veth_host( bool ipv6, bool far );
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 
 static struct rocketnet_server_transport_t * posix_hk_xdp_server = NULL;
@@ -163,6 +164,15 @@ static void posix_hk_xdp_up( const posix_hk_cell_t & cell )
 static void posix_hk_xdp_down( struct rocketnet_server_transport_t * destroyed )
 {
     rocketnet_xdp_veth_pair_down( destroyed );
+}
+
+// the far end's host, bracketed for IPv6: the case's own address
+// (tests/functional/xdp_test_net.h)
+static const char * posix_hk_xdp_far_host( bool ipv6 )
+{
+    static char host[64];
+    snprintf( host, sizeof( host ), ipv6 ? "[%s]" : "%s", rocketnet_xdp_veth_host( ipv6, true ) );
+    return host;
 }
 
 static void posix_hk_enter_far( int * self_ns, int * far_ns )
@@ -799,11 +809,11 @@ int rocketnet_posix_hard_killed_child_main( int argc, char ** argv )
 #if defined( __linux__ ) && ROCKETNET_XDP
     int self_ns = -1;
 
-    if ( argc >= 5 && strcmp( argv[4], "--xdp-far-netns" ) == 0 )
+    if ( argc >= 6 && strcmp( argv[4], "--xdp-far-netns" ) == 0 )
     {
         self_ns = open( "/proc/self/ns/net", O_RDONLY );
 
-        const int far_ns = open( rocketnet_xdp_veth_netns_path(), O_RDONLY );
+        const int far_ns = open( argv[5], O_RDONLY );
         if ( self_ns < 0 || far_ns < 0 || setns( far_ns, CLONE_NEWNET ) != 0 )
         {
             if ( self_ns >= 0 )
@@ -895,13 +905,22 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     arg0.push_back( '\0' );
 
     char flag[] = POSIX_HK_CHILD_FLAG;
-    char far_flag[] = "--xdp-far-netns";
-    char * child_argv[] = { arg0.data(), flag, server_address, client_id_text, NULL, NULL };
+    char * child_argv[] = { arg0.data(), flag, server_address, client_id_text, NULL, NULL, NULL };
 
+    // the far namespace is the parent case's own (tests/functional/xdp_test_net.h),
+    // so its path goes to the child, which takes no network of its own
+
+    std::vector<char> far_netns_path;
+#if defined( __linux__ ) && ROCKETNET_XDP
+    static char far_flag[] = "--xdp-far-netns";
     if ( posix_hk_is_xdp( cell ) )
     {
+        const char * path = rocketnet_xdp_veth_netns_path();
+        far_netns_path.assign( path, path + strlen( path ) + 1 );
         child_argv[4] = far_flag;
+        child_argv[5] = far_netns_path.data();
     }
+#endif // #if defined( __linux__ ) && ROCKETNET_XDP
 
     pid_t child = 0;
     posix_hard_killed_require( posix_spawn( &child, self.c_str(), NULL, NULL, child_argv, environ ) == 0 );
@@ -1084,7 +1103,7 @@ static int posix_hk_closed_port( const posix_hk_cell_t & cell )
 #if defined( __linux__ ) && ROCKETNET_XDP
     if ( posix_hk_is_xdp( cell ) )
     {
-        host = cell.ipv6 ? "[2001:db8:77::2]" : "10.77.2.2";
+        host = posix_hk_xdp_far_host( cell.ipv6 );
     }
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
     for ( int attempt = 0; attempt < 1000; attempt++ )
@@ -1279,10 +1298,11 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     posix_hk_wire_mark( server, live );
 
     rocketnet_address_t closed;
-    rocketnet_address_parse( &closed, posix_hk_is_xdp( cell ) ? ( cell.ipv6 ? "[2001:db8:77::2]" : "10.77.2.2" ) : ( cell.ipv6 ? "[::1]" : "127.0.0.1" ) );
+    rocketnet_address_parse( &closed, cell.ipv6 ? "[::1]" : "127.0.0.1" );
 #if defined( __linux__ ) && ROCKETNET_XDP
     if ( posix_hk_is_xdp( cell ) )
     {
+        rocketnet_address_parse( &closed, posix_hk_xdp_far_host( cell.ipv6 ) );
         rocketnet_xdp_veth_copy_far_mac( posix_hk_xdp_far_mac );
     }
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP

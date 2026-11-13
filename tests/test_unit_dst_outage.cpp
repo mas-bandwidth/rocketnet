@@ -147,5 +147,10 @@ REGISTER_UNIT_TEST( test_dst_outage_t2_at_600_ms );
 REGISTER_UNIT_TEST( test_dst_outage_past_t_ends_by_the_timeout );
 REGISTER_UNIT_TEST( test_dst_outage_opted_in_reliable_timeout );
 REGISTER_UNIT_TEST( test_dst_outage_at_each_handshake_stage );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_outage_at_each_handshake_stage, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
+
+// the survivable outages send the large message on DST_OUTAGE_LARGE_CHANNEL (tests/dst_outage.h)
+UNIT_TEST_SKIPPED_UNLESS( test_dst_outage_t_minus_one_each_direction, ROCKETNET_MAX_CHANNELS > DST_OUTAGE_LARGE_CHANNEL );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_outage_t2_at_600_ms, ROCKETNET_MAX_CHANNELS > DST_OUTAGE_LARGE_CHANNEL );
 
 #endif // #if ROCKETNET_DEV

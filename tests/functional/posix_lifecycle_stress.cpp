@@ -203,6 +203,23 @@ static int posix_threads()
 #endif // #if defined( __APPLE__ )
 }
 
+// A sanitizer (address, memory, thread) replaces malloc with its own
+// allocator, which glibc's mallinfo2 does not see: it reads 0 however much
+// is held, so a live xdp server never moves it. Under one, the heap in use
+// is the sanitizer's own count.
+#if defined( __SANITIZE_ADDRESS__ ) || defined( __SANITIZE_THREAD__ )
+#define POSIX_SANITIZER_HEAP 1
+#elif defined( __has_feature )
+#if __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer ) || __has_feature( thread_sanitizer )
+#define POSIX_SANITIZER_HEAP 1
+#endif // #if __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer ) || __has_feature( thread_sanitizer )
+#endif // #if defined( __SANITIZE_ADDRESS__ ) || defined( __SANITIZE_THREAD__ )
+#if defined( POSIX_SANITIZER_HEAP ) && defined( __GLIBC__ ) && ROCKETNET_XDP
+// the sanitizer runtimes export it (sanitizer/allocator_interface.h, a header
+// not every toolchain installs)
+extern "C" size_t __sanitizer_get_current_allocated_bytes( void );
+#endif // #if defined( POSIX_SANITIZER_HEAP ) && defined( __GLIBC__ ) && ROCKETNET_XDP
+
 // The heap in use in whole xdp umems (see the header): a leaked umem is a
 // difference, and the few MB the cells hold besides it never reach one. Zero
 // without glibc or xdp, and on macOS.
@@ -213,8 +230,12 @@ static const unsigned long long posix_umem_bytes = (unsigned long long) ROCKETNE
 static long posix_heap_umems()
 {
 #if defined( __GLIBC__ ) && ROCKETNET_XDP
+#if defined( POSIX_SANITIZER_HEAP )
+    return (long) ( (unsigned long long) __sanitizer_get_current_allocated_bytes() / posix_umem_bytes );
+#else
     const struct mallinfo2 info = mallinfo2();
     return (long) ( ( (unsigned long long) info.uordblks + info.hblkhd ) / posix_umem_bytes );
+#endif // #if defined( POSIX_SANITIZER_HEAP )
 #else
     return 0;
 #endif // #if defined( __GLIBC__ ) && ROCKETNET_XDP
@@ -385,14 +406,41 @@ static const int posix_cell_count = (int) ( sizeof( posix_cells ) / sizeof( posi
 
 // The xdp cell's pair: the server on the near end, the clients in the far
 // end's namespace. Made once per process when the first xdp cell begins, and
-// removed at exit.
+// removed at exit. Its names and addresses are the process's own
+// (tests/functional/xdp_test_net.h), so two cases in one kernel never share
+// them.
 
-#define POSIX_XDP_NETNS       "rnxdplc"
-#define POSIX_XDP_NEAR        "rnxdplc0"
-#define POSIX_XDP_FAR         "rnxdplc1"
-#define POSIX_XDP_HOST        "10.77.3.1"
-#define POSIX_XDP_FAR_HOST    "10.77.3.2"
 #define POSIX_XDP_PORT        40421
+
+#if defined( __linux__ ) && ROCKETNET_XDP
+
+#include "xdp_test_net.h"
+
+static struct rocketnet_xdp_test_net_t posix_xdp_net;
+
+#endif // #if defined( __linux__ ) && ROCKETNET_XDP
+
+// the xdp cell's near host: empty where no xdp cell runs
+static const char * posix_xdp_host()
+{
+#if defined( __linux__ ) && ROCKETNET_XDP
+    return posix_xdp_net.near4;
+#else
+    return "";
+#endif // #if defined( __linux__ ) && ROCKETNET_XDP
+}
+
+#if defined( __linux__ )
+// the xdp cell's far namespace: empty where no xdp cell runs
+static const char * posix_xdp_netns_path()
+{
+#if ROCKETNET_XDP
+    return posix_xdp_net.netns_path;
+#else
+    return "";
+#endif // #if ROCKETNET_XDP
+}
+#endif // #if defined( __linux__ )
 
 #if defined( __linux__ ) && ROCKETNET_XDP
 
@@ -404,7 +452,9 @@ static void posix_xdp_teardown()
     {
         // deleting the namespace takes the far end, and with it the pair
 
-        if ( system( "ip netns del " POSIX_XDP_NETNS " 2>/dev/null; ip link del " POSIX_XDP_NEAR " 2>/dev/null" ) != 0 )
+        char command[256];
+        snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", posix_xdp_net.netns, posix_xdp_net.near_name );
+        if ( system( command ) != 0 )
         {
             // already gone
         }
@@ -457,7 +507,6 @@ void rocketnet_functional_require_xdp_case( const char * fixture );
 
 static void posix_xdp_setup()
 {
-    rocketnet_functional_require_xdp_case( POSIX_XDP_NETNS );
     if ( posix_xdp_made )
     {
         return;
@@ -471,25 +520,49 @@ static void posix_xdp_setup()
         posix_xdp_run( "mount -t bpf bpf /sys/fs/bpf" );
     }
 
-    if ( system( "ip netns del " POSIX_XDP_NETNS " 2>/dev/null; ip link del " POSIX_XDP_NEAR " 2>/dev/null" ) != 0 )
+    char reason[512];
+    if ( !rocketnet_xdp_test_net_take( "posix_lifecycle_stress_xdp", &posix_xdp_net, reason, sizeof( reason ) ) )
+    {
+        printf( "%s\n", reason );
+        fflush( stdout );
+        const bool test_network_taken = false;
+        posix_check( test_network_taken );
+    }
+
+    const struct rocketnet_xdp_test_net_t & net = posix_xdp_net;
+    rocketnet_functional_require_xdp_case( net.netns );
+
+    char command[1024];
+    snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", net.netns, net.near_name );
+    if ( system( command ) != 0 )
     {
         // nothing left from an earlier run
     }
 
     posix_xdp_made = true;
-    posix_xdp_run( "ip netns add " POSIX_XDP_NETNS );
-    posix_xdp_run( "ip link add " POSIX_XDP_NEAR " mtu 1500 type veth peer name " POSIX_XDP_FAR " mtu 1500" );
-    posix_xdp_run( "ip link set " POSIX_XDP_FAR " netns " POSIX_XDP_NETNS );
-    posix_xdp_run( "ip addr add " POSIX_XDP_HOST "/24 dev " POSIX_XDP_NEAR );
-    posix_xdp_run( "ip -n " POSIX_XDP_NETNS " addr add " POSIX_XDP_FAR_HOST "/24 dev " POSIX_XDP_FAR );
-    posix_xdp_run( "ip link set " POSIX_XDP_NEAR " up" );
+    snprintf( command, sizeof( command ), "ip netns add %s", net.netns );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip link add %s mtu 1500 type veth peer name %s mtu 1500", net.near_name, net.far_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip link set %s netns %s", net.far_name, net.netns );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip addr add %s/24 dev %s", net.near4, net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s addr add %s/24 dev %s", net.netns, net.far4, net.far_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip link set %s up", net.near_name );
+    posix_xdp_run( command );
 
     // the busy-poll pair the xdp pre-flight verifies
 
-    posix_xdp_run( "echo 2 > /sys/class/net/" POSIX_XDP_NEAR "/napi_defer_hard_irqs" );
-    posix_xdp_run( "echo 200000 > /sys/class/net/" POSIX_XDP_NEAR "/gro_flush_timeout" );
-    posix_xdp_run( "ip -n " POSIX_XDP_NETNS " link set lo up" );
-    posix_xdp_run( "ip -n " POSIX_XDP_NETNS " link set " POSIX_XDP_FAR " up" );
+    snprintf( command, sizeof( command ), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs", net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "echo 200000 > /sys/class/net/%s/gro_flush_timeout", net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set lo up", net.netns );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set %s up", net.netns, net.far_name );
+    posix_xdp_run( command );
 
 #if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
@@ -604,7 +677,7 @@ static const char * posix_bind_address( const posix_cell_t * cell )
     if ( cell->xdp )
     {
         static char xdp_address[64];
-        snprintf( xdp_address, sizeof( xdp_address ), "%s:%d", POSIX_XDP_HOST, POSIX_XDP_PORT );
+        snprintf( xdp_address, sizeof( xdp_address ), "%s:%d", posix_xdp_host(), POSIX_XDP_PORT );
         return xdp_address;
     }
 
@@ -664,9 +737,9 @@ static void posix_cell_end( const posix_env_guard_t * server_guard, const posix_
     posix_env_restore( server_guard, "ROCKETNET_SERVER_TRANSPORT" );
 #if defined( __linux__ ) && ROCKETNET_XDP
     // the suite runner ends a case's process with _exit, so atexit never
-    // removes the pair: an xdp cell removes it here, or its 10.77.3.0/24
-    // pair outlives the case and takes the route a later case in the same
-    // guest needs
+    // removes the pair: an xdp cell removes it here, or the pair outlives
+    // the case until the next holder of its slot removes it
+    // (tests/functional/xdp_test_net.h)
     if ( posix_xdp_made )
     {
         posix_xdp_teardown();
@@ -765,7 +838,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
         // the two namespace descriptors close before any count is read
 
         const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
-        const int far_ns = open( "/var/run/netns/" POSIX_XDP_NETNS, O_RDONLY );
+        const int far_ns = open( posix_xdp_netns_path(), O_RDONLY );
         posix_check( self_ns >= 0 && far_ns >= 0 );
         posix_check( setns( far_ns, CLONE_NEWNET ) == 0 );
         client = rocketnet_client_transport_create_internal( clock, token, &config, posix_client_clock_now( clock ), &status );
@@ -791,7 +864,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
 
 static const char * posix_server_address( const posix_cell_t * cell, rocketnet_server_transport_t * server, char * buffer, size_t buffer_bytes )
 {
-    snprintf( buffer, buffer_bytes, "%s:%u", cell->xdp ? POSIX_XDP_HOST : "127.0.0.1", (unsigned) rocketnet_server_transport_port( server ) );
+    snprintf( buffer, buffer_bytes, "%s:%u", cell->xdp ? posix_xdp_host() : "127.0.0.1", (unsigned) rocketnet_server_transport_port( server ) );
     return buffer;
 }
 
@@ -1244,7 +1317,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
         posix_check( fixed_port != 0 );
 
         char fixed_address[64];
-        snprintf( fixed_address, sizeof( fixed_address ), "%s:%u", cell->xdp ? POSIX_XDP_HOST : "127.0.0.1", fixed_port );
+        snprintf( fixed_address, sizeof( fixed_address ), "%s:%u", cell->xdp ? posix_xdp_host() : "127.0.0.1", fixed_port );
 
         const double start = posix_now_seconds();
 
@@ -1499,14 +1572,14 @@ static void posix_heap_keep( bool keep )
 #if defined( __SANITIZE_ADDRESS__ )
     (void) keep;
 #elif defined( __has_feature )
-#if __has_feature( address_sanitizer )
-    (void) keep;
+#if __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer )
+    (void) keep;                            // the sanitizer owns the heap: its mallopt sets nothing and returns 0
 #elif defined( __GLIBC__ )
     posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
     posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
 #else
     (void) keep;
-#endif // #if __has_feature( address_sanitizer )
+#endif // #if __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer )
 #elif defined( __GLIBC__ )
     posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
     posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );

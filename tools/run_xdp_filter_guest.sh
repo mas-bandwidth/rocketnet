@@ -277,7 +277,7 @@ host_snapshot()
     local label=$1
     echo "=== host_$label ==="
     echo "loadavg: $(cat /proc/loadavg 2>/dev/null || echo unknown)"
-    echo "test_interfaces: $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp)' | tr '\n' ' ')"
+    echo "test_interfaces: $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp|x[0-9]+[0-9a-f]{2}[ab])' | tr '\n' ' ')"
     echo "netns: $(ip netns list 2>/dev/null | tr '\n' ' ')"
     echo "xdp_links: $(ip link show 2>/dev/null | grep -E 'xdp|prog/xdp' | tr '\n' ' ')"
     echo "processes: $(ps -eo pid=,comm=,args= 2>/dev/null | grep -E '(/bin/test_xdp_filter|/bin/server|/bin/client)' | grep -v grep | grep -v "$NAME")"
@@ -319,7 +319,7 @@ echo "guest_test_exit=\$rc" > "$GUEST_STATUS"
 
 {
     echo "=== guest_after ==="
-    echo "guest_test_interfaces: \$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp)' | tr '\n' ' ')"
+    echo "guest_test_interfaces: \$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -E '^(rnzc|rnxsk|rnonlink|rnteardown|rnxdp|x[0-9]+[0-9a-f]{2}[ab])' | tr '\n' ' ')"
     echo "guest_netns: \$(ip netns list 2>/dev/null | tr '\n' ' ')"
     echo "guest_xdp_links: \$(ip link show 2>/dev/null | grep -E 'xdp|prog/xdp' | tr '\n' ' ')"
     echo "guest_bpf_pins: \$(find /sys/fs/bpf -mindepth 1 \\( -type f -o -name 'rocketnet*' \\) 2>/dev/null | tr '\n' ' ')"

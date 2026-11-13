@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -180,7 +181,13 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 static char rocketnet_test_log_ring[ROCKETNET_FUNCTIONAL_LOG_RING_LINES][ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES];
 static int rocketnet_test_log_ring_lines;
 static rocketnet_log_function_t rocketnet_test_suite_log_function = NULL;
+static char rocketnet_test_captured_log_read_copy[16384];
 static char rocketnet_test_captured_log[16384];
+
+// the library may call a log callback on a network thread (sdk/rocketnet.h,
+// rocketnet_log_function): the ring and the captured log are written and
+// read under this lock
+static std::mutex rocketnet_test_log_lock;
 
 static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
@@ -201,6 +208,7 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
         return;
     }
 
+    std::lock_guard<std::mutex> guard( rocketnet_test_log_lock );
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_FUNCTIONAL_LOG_RING_LINES];
     const int slot_length = snprintf( slot, ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
     if ( slot_length < 0 || (size_t) slot_length >= ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES )
@@ -212,11 +220,13 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
 
 static void rocketnet_test_log_ring_clear()
 {
+    std::lock_guard<std::mutex> guard( rocketnet_test_log_lock );
     rocketnet_test_log_ring_lines = 0;
 }
 
 static void rocketnet_test_log_ring_dump()
 {
+    std::lock_guard<std::mutex> guard( rocketnet_test_log_lock );
     const int lines = rocketnet_test_log_ring_lines < ROCKETNET_FUNCTIONAL_LOG_RING_LINES ? rocketnet_test_log_ring_lines : ROCKETNET_FUNCTIONAL_LOG_RING_LINES;
     const int first = rocketnet_test_log_ring_lines - lines;
     for ( int i = 0; i < lines; i++ )
@@ -284,8 +294,24 @@ static void rocketnet_test_capture_log( void * context, enum rocketnet_log_level
     char line[1024];
     snprintf( line, sizeof( line ), "%s", message );
 
+    std::lock_guard<std::mutex> guard( rocketnet_test_log_lock );
     const size_t used = strlen( rocketnet_test_captured_log );
     snprintf( rocketnet_test_captured_log + used, sizeof( rocketnet_test_captured_log ) - used, "%s\n", line );
+}
+
+// the captured log emptied, and a copy of it to search, both under the lock
+
+static void rocketnet_test_captured_log_reset()
+{
+    std::lock_guard<std::mutex> guard( rocketnet_test_log_lock );
+    rocketnet_test_captured_log[0] = '\0';
+}
+
+static const char * rocketnet_test_captured_log_read()
+{
+    std::lock_guard<std::mutex> guard( rocketnet_test_log_lock );
+    memcpy( rocketnet_test_captured_log_read_copy, rocketnet_test_captured_log, sizeof( rocketnet_test_captured_log_read_copy ) );
+    return rocketnet_test_captured_log_read_copy;
 }
 
 class rocketnet_test_environment_t

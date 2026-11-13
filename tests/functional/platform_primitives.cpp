@@ -15,6 +15,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_config.h"
 #include "rocketnet_base64.h"
+#include "../loopback_hub.h"
 #include <time.h>
 
 #include <stdio.h>
@@ -135,6 +136,11 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
             rocketnet_client_config_t config;
             rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
 
+            // a transport pin may name loopback, whose create refuses a NULL
+            // hub; the hub is released before the term below
+
+            config.loopback_hub = rocketnet_test_loopback_hub();
+
             rocketnet_status_t status = ROCKETNET_STATUS_OK;
             rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
             rocketnet_check( client != NULL && status == ROCKETNET_STATUS_OK );
@@ -144,6 +150,7 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
             rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
             rocketnet_check( rng_lifecycle_fd_count() == with_client );
             rocketnet_client_destroy( client );
+            rocketnet_check( rocketnet_test_loopback_hub_release() );
         }
 
         rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );

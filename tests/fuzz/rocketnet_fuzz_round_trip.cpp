@@ -544,7 +544,10 @@ static void fuzz_write_seed( const char * dir, const char * name, uint8_t select
 
 static void fuzz_write_seeds( const char * dir )
 {
-    static uint8_t body[2048];
+    // room for seed 4, which carries the whole replay window: 512 bytes at the
+    // default history, 4096 at ROCKETNET_HISTORY_PACKETS 32768
+
+    static uint8_t body[2048 + sizeof( ( (struct rocketnet_replay_protection_t *) 0 )->window )];
     memset( body, 0, sizeof( body ) );
 
     // 0, 1, 6: the fields at their defaults

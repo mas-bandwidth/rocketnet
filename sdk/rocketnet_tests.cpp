@@ -9799,7 +9799,13 @@ void rocketnet_test_ack_endpoint_processing()
     block.largest = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
     block.first_range_length = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4;       // the newer quarter of the older half
 
-    for ( int drain = 0; drain < 100; drain++ )
+    // a batch admits at most 64 of the ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4
+    // acknowledged sequences: one drain per sequence is room at any history,
+    // and the block is drained before the bound
+
+    const int max_drains = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4 + 1;
+    int drain = 0;
+    for ( ; drain < max_drains; drain++ )
     {
         acked_count = 0;                    // each drained batch admits more; overflow defers to the next
         if ( rocketnet_ack_endpoint_process_block( endpoint, &block, 110.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 )
@@ -9807,6 +9813,7 @@ void rocketnet_test_ack_endpoint_processing()
             break;
         }
     }
+    rocketnet_check( drain < max_drains );
 
     rocketnet_ack_endpoint_update_stats( endpoint );
     rocketnet_check( endpoint->packet_loss > 40.0f );           // half the older half unacknowledged
@@ -10756,12 +10763,18 @@ void rocketnet_test_send_history_lossy_long_path()
     rocketnet_check( path );
     rocketnet_test_lossy_path_setup( path, 0x11057ULL );
 
-    const int total_payloads = 12000;
-    const int burst_start = 6000;
+    // about three laps of the history: 12000 payloads, every 100th lost, at
+    // the default 4096; a larger history spaces both by the same factor, so
+    // the losses and the laps stay the same
+
+    const int lap_scale = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4096;
+    const int total_payloads = 12000 * lap_scale;
+    const int burst_start = 6000 * lap_scale;
+    const int loss_period = 100 * lap_scale;
 
     for ( int i = 0; i < total_payloads; i++ )
     {
-        const int lose = ( i % 100 ) == 99 || ( i >= burst_start && i < burst_start + 3 );
+        const int lose = ( i % loss_period ) == loss_period - 1 || ( i >= burst_start && i < burst_start + 3 );
         rocketnet_test_lossy_path_step( path, 1, lose ? ROCKETNET_TEST_PATH_LOSE : ROCKETNET_TEST_PATH_CARRY );
     }
 
@@ -11736,6 +11749,15 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
                 memcpy( &current, (uint8_t *) config + field->offset, sizeof( current ) );
 
                 expected_int = field->min_value != (int64_t) current ? field->min_value : field->min_value + 1;
+                if ( expected_int > field->max_value )
+                {
+                    // one legal value in this build (num_channels when ROCKETNET_MAX_CHANNELS
+                    // is 1): the env carries it, and the field starts one below it, so the
+                    // read back still proves the env was applied
+                    expected_int = field->min_value;
+                    const int start = (int) ( field->min_value - 1 );
+                    memcpy( (uint8_t *) config + field->offset, &start, sizeof( start ) );
+                }
                 rocketnet_check( expected_int <= field->max_value );
 
                 snprintf( value_string, sizeof( value_string ), "%" PRId64, expected_int );
@@ -12078,10 +12100,10 @@ void rocketnet_test_public_config_resolve()
     // NULL is the defaults
 
     rocketnet_check( rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == ROCKETNET_DEFAULT_NUM_CHANNELS && strcmp( client_transport.transport, "auto" ) == 0 );
 
     rocketnet_check( rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 ) && server_transport.public_address[0] == '\0' );
 
     // every client field lands
 
@@ -12924,7 +12946,7 @@ void rocketnet_test_config_validation()
     rocketnet_log_level( empty_saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
-    rocketnet_check( config.max_clients == 1000 );
+    rocketnet_check( config.max_clients == ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 ) );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
 
     rocketnet_test_env_restore( &guard );
@@ -13343,7 +13365,9 @@ void rocketnet_test_config_override_logging()
     // key is untouched and its encoding appears nowhere in the log
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_MAX_CLIENTS=77" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 1000)" ) != NULL );
+    char displaced[32];
+    snprintf( displaced, sizeof( displaced ), "(displaces %d)", ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, displaced ) != NULL );
     rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) != 0 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) == NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
