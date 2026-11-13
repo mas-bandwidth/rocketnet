@@ -45,7 +45,7 @@ static inline int rocketnet_server_iocp_receive_queue_size( int max_clients )
 
 // The receive budget twice send, at the smallest sizing count: the send queue
 // is the staging (at most four packets per sized client) and the process
-// batch holds sixteen per sized client, so the relation holds at every count.
+// batch holds sixty-four per sized client, so the relation holds at every count.
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ),
                          "receive budget twice send: server process batch holds at least twice the IOCP send queue" );
 

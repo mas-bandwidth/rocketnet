@@ -53,7 +53,7 @@
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
 
 // A whole bank fits the process view: a bank holds twice the staging (at most
-// four packets per sized client) and the view sixteen per sized client, so
+// four packets per sized client) and the view sixty-four per sized client, so
 // it holds at every count from the smallest.
 static_assert( 2 * ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ) <= ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE,
                "a whole bank fits the process view" );
