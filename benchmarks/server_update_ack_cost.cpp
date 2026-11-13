@@ -182,6 +182,8 @@ int main( int argc, char ** argv )
     server_config.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x3c, 0x91, 0x5e, 0xa7 };
+    memcpy( server_config.packet_filter, packet_filter, sizeof( packet_filter ) );
     server_config.loopback_hub = hub;
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -213,6 +215,7 @@ int main( int argc, char ** argv )
         rocketnet_client_config_t client_config;
         rocketnet_client_default_config( &client_config );
         client_config.transport = "loopback";
+        memcpy( client_config.packet_filter, packet_filter, sizeof( packet_filter ) );
         client_config.loopback_hub = hub;
         client_config.step_driven = true;
         client_config.time_callback = ack_cost_clock;
