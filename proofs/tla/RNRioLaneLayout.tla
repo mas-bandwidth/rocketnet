@@ -180,7 +180,7 @@ PostOrder(n) == IF Mode = "Reverse" THEN [k \in 1..n |-> n - k] ELSE [k \in 1..n
 \* aborted
 Send(lane) ==
     /\ next[lane] > 0
-    /\ \A i \in Slots : slot[lane][i] = Empty \/ slot[lane][i][3] # "res"
+    /\ ~\E i \in Slots : slot[lane][i] # Empty /\ slot[lane][i][3] = "res"
     /\ LET walk == [k \in 1..next[lane] |-> slot[lane][PostOrder(next[lane])[k]]]
            live == SelectSeq(walk, LAMBDA e : e # Empty /\ e[3] = "live")
        IN posted' = [d \in Dests |-> posted[d] \o
