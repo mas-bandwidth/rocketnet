@@ -865,10 +865,13 @@ void rocketnet_test_transport_ring_exhaustion()
         completion_capacity = rocketnet_server_iocp_send_queue_size( server_config.max_clients );
 #if !ROCKETNET_DEV
         // the production library has no test reads: the reserve from the
-        // constants that bound it (rocketnet_server_transport_send_reserves),
-        // the client's queue holding the whole-server allowances and one
-        // frame a slot; the own frame is given only once the client's
-        // keep-alive is acknowledged, so the fill may take one more
+        // constants that bound it (rocketnet_server_transport_send_reserves).
+        // The fill goes to one client, so it is the pool of that client's
+        // lane (the send queue size is one lane's) less that lane's reserve:
+        // the whole-server allowances, the connected client's own slot, and
+        // every slot not connected (counted in every lane), so one frame a
+        // slot. The own frame is given only once the client's keep-alive is
+        // acknowledged, so the fill may take one more
         completion_capacity -= server_config.handshakes_per_update + server_config.disconnect_packets_per_update + server_config.max_clients;
         completion_own = 1;
 #else
