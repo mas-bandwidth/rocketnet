@@ -103,6 +103,27 @@ names these settings; a larger count asked for on the wildcard is refused.
 [WINDOWS.md](WINDOWS.md#to-reach-10-gbs-on-windows-set-a-bind-address) has
 the warning's text.
 
+The measured rows also steered the NIC's receive-side scaling to the lanes'
+processors, the only machine setting they changed. For RIO:
+
+1. Choose the lane count, or take the default of 5. Lane `l` is on processor
+   `2l` and its worker on `2l + 1` (two logical processors a core), from core
+   0; keep the main thread and game threads above processor `2 x lanes - 1`.
+2. Set a specific bind address:
+   `set ROCKETNET_SERVER_BIND_IPV4_ADDRESS=10.0.0.5`.
+3. Steer receive to the lanes' processors, one queue a lane (elevated
+   PowerShell; 5 lanes):
+
+   ```powershell
+   Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 0 -MaxProcessorNumber 8 -MaxProcessors 5 -NumberOfReceiveQueues 5
+   ```
+
+4. Start the server, and check the processors its log names for each lane
+   against `Get-NetAdapterRss`.
+
+IOCP's rows set RSS on its two completion workers' processors the same way;
+[WINDOWS.md](WINDOWS.md#iocp-at-10-gbs) has the form and what was measured.
+
 ## Deploying the XDP transport: provision, then verify-and-bind
 
 The library does not perform host provisioning. `rocketnet_server_start( server )`

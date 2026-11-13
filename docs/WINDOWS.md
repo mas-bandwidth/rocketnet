@@ -118,9 +118,55 @@ rio transport: running 1 lane because the bind address is the wildcard or IPv4-m
 
 A count above 1 asked for on the wildcard (`num_rio_lanes` or
 `num_iocp_completion_workers`) is refused with `INVALID_ADDRESS`, never run on
-one. No machine setting has to match these counts: the NIC's receive queues
-need not equal the lanes (a flow whose processor has no lane reaches the first
-lane bound).
+one. The server starts whatever the NIC's receive queues are (a flow whose
+processor has no lane reaches the first lane bound), but the rows that measured
+the defaults steered the NIC's receive-side scaling (RSS) to the processors the
+lanes or workers sit on, and that was the only machine setting they changed.
+Do the same.
+
+### Worked example: RIO at 10 Gb/s
+
+1. Choose the lane count, or take the default of 5. Lane `l` sits on the first
+   logical processor of core `l` from core 0 and its I/O worker on the other
+   processor of that core; on a machine with two logical processors a core,
+   lane `l` is on processor `2l` and its worker on `2l + 1`, and the lanes use
+   processors 0 to `2 x lanes - 1`. Keep the main thread and game threads
+   above them (the measured rows ran the main thread on processor
+   `2 x lanes`).
+2. Set a specific bind address (above):
+
+   ```bat
+   set ROCKETNET_SERVER_BIND_IPV4_ADDRESS=10.0.0.5
+   set ROCKETNET_SERVER_NUM_RIO_LANES=5
+   ```
+
+3. Steer receive to the lanes' processors, one RSS queue a lane, from an
+   elevated PowerShell (the adapter name is the one `Get-NetAdapter` lists for
+   that address). For 5 lanes on a machine with two logical processors a core:
+
+   ```powershell
+   Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 0 -MaxProcessorNumber 8 -MaxProcessors 5 -NumberOfReceiveQueues 5
+   Get-NetAdapterRss -Name "Ethernet 2"
+   ```
+
+   For `L` lanes: `-BaseProcessorNumber 0 -MaxProcessorNumber (2L - 2)
+   -MaxProcessors L -NumberOfReceiveQueues L`. The 6-lane rows used
+   `-MaxProcessorNumber 10 -MaxProcessors 6 -NumberOfReceiveQueues 6`.
+4. Start the server. Its log names each lane's processors (socket on `2l`,
+   worker on `2l + 1`); check them against the RSS processors read back in
+   step 3.
+
+### IOCP at 10 Gb/s
+
+IOCP completion worker `w` sits on the first logical processor of core `w`
+(processor `2w` with two a core), and its send threads take the cores after the
+workers. Its rows (2 completion workers, 2 send threads) also ran with RSS on
+the workers' processors, one queue a worker, set with `Set-NetAdapterRss` as
+above: `-NumberOfReceiveQueues 2 -MaxProcessors 2`, base and maximum on the two
+workers' processors. Those rows placed the workers with a development layout
+(RSS on processors 2 and 4, workers on 3 and 5) rather than the built-in
+placement, so the built-in form, `-BaseProcessorNumber 0 -MaxProcessorNumber 2`,
+follows from the placement rather than from a measured row.
 
 Without a bind address, every Windows server transport binds the wildcard
 address on the server's port with `SO_EXCLUSIVEADDRUSE`, so a second process
