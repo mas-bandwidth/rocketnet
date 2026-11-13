@@ -670,6 +670,7 @@ void rocketnet_unit_prepare() {}
 int rocketnet_unit_run_named( const char * name ) { fprintf( stderr, \"unknown unit test %s\\n\", name ); return 2; }
 int rocketnet_channels_test_count() { return 0; }
 const char * rocketnet_channels_test_name( int index ) { (void)index; return 0; }
+const char * rocketnet_channels_test_skipped_by( int index ) { (void)index; return 0; }
 const char * rocketnet_channels_test_resolve( const char * name ) { return name; }
 int rocketnet_channels_run_named( const char * name ) { (void)name; return 2; }
 void rocketnet_channels_prepare( const char * name, void * (**malloc_function)( void * context, size_t bytes ), void (**free_function)( void * context, void * p ) ) { (void)name; (void)malloc_function; (void)free_function; }
