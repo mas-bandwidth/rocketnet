@@ -92,7 +92,7 @@ before the frame shape, so every existing row that does not name `--input-bytes`
 
 `named_drops` is the sum of:
 - the sender's kernel send-buffer errors;
-- the receiver's UDP receive errors, no-port drops and IP discards;
+- the receiver's UDP receive errors, the cell's no-port drops (below) and IP discards;
 - the qdisc's drops;
 - the device's tx and rx drops;
 - the datagrams the server transport refused before counting them received (PREFILTER_TOO_SHORT and TOO_LARGE).
@@ -129,6 +129,29 @@ summed over the jobs, because the game needs those cores too.
 post-warmup sample to the end.
 
 Host-wide kernel counters include traffic that is not the cell's. Run cells on hosts that carry nothing else.
+
+**Strays.** A machine with a public address takes datagrams from the internet at closed ports all day (scanners), and
+the kernel's NoPorts counts them with the cell's. On the X710 pair on 2026-11-13 the XDP rows counted one to seven a
+row while the library sent and received exactly the same count, so the chain read them as drops the library never had
+and failed with a negative gap; the row captured with a log of the ICMP port unreachables each machine sent had one at
+each machine, both from one internet host to the machine's public address, inside the measured window. `scripts/harden-pair` therefore installs on each Linux machine an nftables table (`inet
+harden_cell`, through `sudo -n`, removed at the end) whose counter `strays` counts the IPv4 UDP datagrams that reach a
+local address, find no socket and come from any host but the other end's test address; each role reads it at its cuts
+(`harden_load --stray-table harden_cell`). The chain prints
+
+    arrived_udp_noports = cell_noports + stray_noports
+
+and judges only `cell_noports`. A datagram from the other end is never a stray, so the cell's own no-port drops (a
+player's socket closed while the server still sent to it) stay in the equation; a stray count above the host's NoPorts
+is a broken counter, not applied, and fails the chain. Where no counter could be installed (no nftables or no sudo, a
+Windows server) the stray count is 0 and the chain is what it was. The teardown's datagrams to the players' closed
+ports land after both cuts and are in neither.
+
+**Checking the check.** `scripts/harden-pair --plant-loss N` (also on `scripts/space-frame-row`) drops one in N of the
+server's datagrams in nftables on the players' machine before its UDP sees them: a real loss that no counter the chain
+reads names. The row must fail on chains with a positive `library_gap` and the line `library gap with no named drop`.
+`tests/test_unit_harden_chain.cpp` holds the same rows as a table (clean, unnamed strays, planted loss, strays that try
+to cover a loss, duplicates) for the unit suite.
 
 ## Scripts
 

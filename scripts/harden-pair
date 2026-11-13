@@ -19,7 +19,14 @@
 # machine's --server-dev and --client-dev for the run and takes it off after,
 # and needs sudo there; the hostile row's capture needs sudo on the client
 # machine. Each machine's kernel counters are the whole host's, so the
-# machines should carry nothing else while the cell runs.
+# machines should carry nothing else while the cell runs. A machine with a
+# public address still takes datagrams from the internet (scanners) at closed
+# ports, and its NoPorts counts them: on each Linux machine the cell installs
+# an nftables table (inet harden_cell, sudo -n) whose counter "strays" counts
+# the IPv4 UDP datagrams that reach a local address, find no socket and come
+# from any host but the other end's test address. Each role reads it at its
+# cuts (harden_load --stray-table), and the chain names those as
+# stray_noports, outside its equation. The table is removed at the end.
 #
 # Options:
 #   --server-dev D / --client-dev D   each machine's interface (default ens5)
@@ -47,6 +54,11 @@
 #                                     detached child with the session), netem goes on the
 #                                     client machine only, and the tool reads no kernel
 #                                     counters there, so the chain stands on library terms
+#   --plant-loss N                    plant a real loss the chain must catch: the players'
+#                                     machine drops one in N of the server's datagrams in
+#                                     nftables before its UDP sees them, so no counter the
+#                                     chain reads names them (a check of the check: the
+#                                     row must FAIL on chains)
 #   --local-bin DIR                   this machine's harden_load (default ./bin)
 #   --ssh "CMD"                       the ssh command (default "ssh -o BatchMode=yes")
 #
@@ -82,6 +94,7 @@ warm_seconds=""
 xdp_queues=0
 quiet=1.5
 port=40000
+plant_loss=0
 local_bin=./bin
 ssh_command="ssh -o BatchMode=yes"
 
@@ -122,6 +135,7 @@ while [ $# -gt 0 ]; do
         --xdp-queues) xdp_queues="$2"; shift 2 ;;
         --quiet-seconds) quiet="$2"; shift 2 ;;
         --port) port="$2"; shift 2 ;;
+        --plant-loss) plant_loss="$2"; shift 2 ;;
         --local-bin) local_bin="$2"; shift 2 ;;
         --ssh) ssh_command="$2"; shift 2 ;;
         *) usage ;;
@@ -193,6 +207,50 @@ cleanup()
         on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
         on_shell "$client_host" "sudo -n tc qdisc del dev $client_dev root 2>/dev/null; true" || true
     fi
+    if [ "$server_os" = linux ]; then
+        on_shell "$server_host" "sudo -n nft delete table inet harden_cell 2>/dev/null; true" || true
+    fi
+    on_shell "$client_host" "sudo -n nft delete table inet harden_cell 2>/dev/null; true" || true
+}
+
+# stray_table <dest> <peer address> [plant N]: the cell's nftables table on one
+# Linux machine (the header says why). Counter "strays": IPv4 UDP for a local
+# address, no socket found, not from <peer address>, counted at the last
+# input priority so a datagram an earlier rule drops is not in it. With
+# plant N, chain "plant" drops one in N of the server's datagrams first
+# (--plant-loss). Prints the table's name, or nothing when it cannot be
+# installed (no nft or no sudo): the roles then read no strays and the chain
+# names none
+stray_table()
+{
+    local dest=$1 peer=$2 plant=${3:-0}
+    local rules
+    rules="table inet harden_cell {
+    counter strays {
+    }
+    chain input {
+        type filter hook input priority 1000; policy accept;
+        meta nfproto ipv4 meta l4proto udp fib daddr type local ip saddr != $peer jump nosocket
+    }
+    chain nosocket {
+        socket wildcard 0 return
+        socket wildcard 1 return
+        counter name strays
+    }
+}"
+    if [ "$plant" -gt 0 ]; then
+        rules="$rules
+table inet harden_cell {
+    chain plant {
+        type filter hook input priority -1000; policy accept;
+        ip saddr $server_ip udp sport $port numgen inc mod $plant == 0 drop
+    }
+}"
+    fi
+    on_shell "$dest" "sudo -n nft delete table inet harden_cell 2>/dev/null; true" < /dev/null > /dev/null 2>&1 || true
+    if on_shell "$dest" "sudo -n nft -f -" <<< "$rules" > /dev/null 2>&1; then
+        echo harden_cell
+    fi
 }
 trap cleanup EXIT
 
@@ -238,16 +296,39 @@ if [ -n "$netem" ]; then
     done
 fi
 
+# the stray counters (the header says why): the players' end counts every
+# no-port datagram not from the server's address; the server's end every one
+# not from the players' (the address the players' machine reaches the server
+# from)
+client_ip=$(on_shell "$client_host" "ip -o -4 route get $server_ip" < /dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p') || client_ip=""
+client_strays=""
+server_strays=""
+if [ -n "$client_ip" ]; then
+    client_strays=$(stray_table "$client_host" "$server_ip" "$plant_loss")
+    if [ "$server_os" = linux ]; then
+        server_strays=$(stray_table "$server_host" "$client_ip")
+    fi
+fi
+if [ "$plant_loss" -gt 0 ] && [ -z "$client_strays" ]; then
+    echo "harden-pair: --plant-loss needs nftables and sudo -n on the players' machine" >&2
+    exit 1
+fi
+client_stray_args=""
+server_stray_args=""
+[ -n "$client_strays" ] && client_stray_args="--stray-table $client_strays"
+[ -n "$server_strays" ] && server_stray_args="--stray-table $server_strays"
+
 {
     echo "harden_pair: transport=$transport row=$row seconds=$seconds clients=$clients threads=$threads netem=\"$netem\" hostile=$hostile hostile_pps=$hostile_pps server_env=\"${server_env# }\" server_tool=$tool utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "harden_pair: server=$server_host ($(on "$server_host" uname -r), $(on "$server_host" nproc) cpus, dev $server_dev) clients=$client_host ($(on "$client_host" uname -r), $(on "$client_host" nproc) cpus, dev $client_dev) address=$address"
+    echo "harden_pair: stray_counters server=${server_strays:-none} clients=${client_strays:-none} clients_address=${client_ip:-unknown} plant_loss=$plant_loss"
 } | tee "$out/cell.txt"
 
 xdp_args=""
 if [ "$xdp_queues" -gt 0 ]; then
     xdp_args="--num-xdp-queues $xdp_queues"
 fi
-xdp_args="$xdp_args $server_extra"
+xdp_args="$xdp_args $server_extra $server_stray_args"
 server_runner="env"
 if [ "$server_sudo" = 1 ]; then
     server_runner="sudo -n env"
@@ -280,7 +361,7 @@ if [ -z "$key" ]; then
 fi
 
 on_shell "$client_host" "ulimit -n 65536; cd $(printf '%q' "$client_run_dir") && nohup $(printf '%q ' "$client_tool" clients --address "$address" --key "$key" \
-    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") $client_extra > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
+    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") $client_extra $client_stray_args > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
 
 if [ "$hostile" = "1" ]; then
     # after the players are on: the replay kind needs their packets on the wire
