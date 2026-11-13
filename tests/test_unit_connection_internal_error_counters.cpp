@@ -312,7 +312,63 @@ static void test_connection_response_internal_error_counter_executes()
     internal_error_server_teardown( &test );
 }
 
+// the first keep-alive cannot be written after the response took a slot: the
+// client is connected (the slot is assigned, CLIENT_CONNECTED counts it), and
+// the response takes one outcome, INTERNAL_ERROR, never CONNECTED as well
+
+static void test_connection_response_keep_alive_internal_error_is_one_outcome()
+{
+    struct internal_error_server_t test;
+    internal_error_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    internal_error_build_request( request, ROCKETNET_TEST_CLIENT_ID );
+    internal_error_pass_cookie( &test, request );
+
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int challenge_bytes = 0;
+    check( internal_error_process( &test, request, sizeof( request ), challenge, &challenge_bytes ) ==
+           ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    struct rocketnet_connection_keys_t keys;
+    internal_error_derive_keys( challenge, challenge_bytes, &keys );
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    internal_error_build_response( client_response, &keys );
+
+    const int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    check( mapping_index >= 0 );
+    struct rocketnet_encryption_mapping_t * mapping =
+        rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+
+    struct rocketnet_counters_t before = test.counters;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    memset( response, 0x3C, sizeof( response ) );
+    int response_bytes = 99;
+    test.server.test_fail_fixed_writer = ROCKETNET_SERVER_TEST_FAIL_KEEP_ALIVE_WRITER;
+    internal_error_begin_assert_capture( "rocketnet_server_process_connection_response" );
+    const int result = internal_error_process( &test, client_response, sizeof( client_response ),
+                                               response, &response_bytes );
+    internal_error_end_assert_capture();
+
+    check( result == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    check( response_bytes == 0 );
+    internal_error_check_sentinel( response, sizeof( response ), 0x3C );
+    check( mapping->control->client_index == 0 );
+    check( mapping->control->established );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] ==
+           before.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR] ==
+           before.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR] + 1 );
+    rocketnet_counters_expect( &before, &test.counters,
+                               { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
+                                 { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, 1 },
+                                 { ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR, 1 },
+                                 { ROCKETNET_COUNTER_CLIENT_CONNECTED, 1 } } );
+
+    internal_error_server_teardown( &test );
+}
+
 REGISTER_UNIT_TEST( test_connection_request_internal_error_counter_executes );
 REGISTER_UNIT_TEST( test_connection_response_internal_error_counter_executes );
+REGISTER_UNIT_TEST( test_connection_response_keep_alive_internal_error_is_one_outcome );
 
 #endif // #if ROCKETNET_DEV

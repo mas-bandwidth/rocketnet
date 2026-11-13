@@ -512,6 +512,77 @@ static void test_client_gso_send_falls_back_on_live_refusal()
 }
 REGISTER_UNIT_TEST( test_client_gso_send_falls_back_on_live_refusal );
 
+// the I/O core's send (send_batch_progress): a full socket consumes only what
+// went, and the unsent rest is neither counted a failure nor reported consumed,
+// so the core keeps it for a retry, as the portable progress does
+
+static void test_client_gso_send_progress_keeps_unsent_on_full_socket()
+{
+    // EAGAIN on the first call: nothing consumed, nothing counted
+
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    test_socket.refuse_segment_errno = EAGAIN;
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+
+    const int two_bytes[] = { 300, 300 };
+    fake_gso_batch( &test_batch, two_bytes, 2, 50 );
+    rocketnet_unit_check( rocketnet_client_gso_send_batch_progress( &test_gso, test_batch.sends, 2 ) == 0 );
+    rocketnet_unit_check( test_socket.sendmmsg_calls == 1 );
+    rocketnet_unit_check( test_socket.num_messages == 0 );
+    rocketnet_unit_check( test_gso.segment );
+    rocketnet_unit_check( test_gso.packets_sent == 0 );
+    rocketnet_unit_check( test_gso.packet_send_failures.load() == 0 );
+
+    // EAGAIN after a partial take: a plain 100 goes, the run of three 300s
+    // behind it is refused, so one datagram is consumed and three stay
+
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    test_socket.max_messages_per_call = 1;
+    test_socket.refuse_segment_errno = EAGAIN;
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+
+    const int four_bytes[] = { 100, 300, 300, 300 };
+    fake_gso_batch( &test_batch, four_bytes, 4, 60 );
+    rocketnet_unit_check( rocketnet_client_gso_send_batch_progress( &test_gso, test_batch.sends, 4 ) == 1 );
+    rocketnet_unit_check( test_socket.sendmmsg_calls == 2 );
+    rocketnet_unit_check( test_socket.num_messages == 1 );
+    rocketnet_unit_check( test_socket.messages[0].first_byte[0] == 60 );
+    rocketnet_unit_check( test_gso.packets_sent == 1 );
+    rocketnet_unit_check( test_gso.packet_send_failures.load() == 0 );
+
+    // the retry of the kept suffix, once the socket drains, sends it whole
+
+    test_socket.refuse_segment_errno = 0;
+    test_socket.max_messages_per_call = 0;
+    rocketnet_unit_check( rocketnet_client_gso_send_batch_progress( &test_gso, test_batch.sends + 1, 3 ) == 3 );
+    rocketnet_unit_check( test_socket.num_messages == 2 );
+    rocketnet_unit_check( test_socket.messages[1].num_packets == 3 );
+    rocketnet_unit_check( test_socket.messages[1].first_byte[0] == 61 );
+    rocketnet_unit_check( test_gso.packets_sent == 4 );
+    rocketnet_unit_check( test_gso.packet_send_failures.load() == 0 );
+
+    // past one chunk: the first chunk is 64 datagrams of rising size (each
+    // larger one starts a run of its own, so 64 plain messages that go), the
+    // second is a run of six 300s that is refused, so 64 of 70 are consumed
+
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    test_socket.refuse_segment_errno = EAGAIN;
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+
+    int many_bytes[70];
+    for ( int i = 0; i < 70; i++ )
+    {
+        many_bytes[i] = i < ROCKETNET_CLIENT_GSO_SEND_BATCH ? 100 + i : 300;
+    }
+    fake_gso_batch( &test_batch, many_bytes, 70, 0 );
+    rocketnet_unit_check( rocketnet_client_gso_send_batch_progress( &test_gso, test_batch.sends, 70 ) == ROCKETNET_CLIENT_GSO_SEND_BATCH );
+    rocketnet_unit_check( test_socket.sendmmsg_calls == 2 );
+    rocketnet_unit_check( test_socket.num_messages == ROCKETNET_CLIENT_GSO_SEND_BATCH );
+    rocketnet_unit_check( test_gso.packets_sent == ROCKETNET_CLIENT_GSO_SEND_BATCH );
+    rocketnet_unit_check( test_gso.packet_send_failures.load() == 0 );
+}
+REGISTER_UNIT_TEST( test_client_gso_send_progress_keeps_unsent_on_full_socket );
+
 // a sendmmsg a signal interrupted sent nothing: it is called again, as the
 // platform batch does, and no datagram is counted a failure
 

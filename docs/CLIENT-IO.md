@@ -86,12 +86,12 @@ The `gso` transport
 equal-sized datagrams as one `UDP_SEGMENT` message and falls back to plain
 messages without loss when the kernel refuses (TRANSPORTS.md, UDP
 coalescing). It owns GSO send state (`rocketnet_client_gso_t`) and registers
-`send_batch_progress` (`rocketnet_client_gso_send_batch_progress`): when the
-socket is connected, `rocketnet_client_gso_send_batch` completes synchronously
-in one call, whereas an unconnected socket delegates to
-`rocketnet_platform_socket_send_packets_mmsg_progress`, which can return a
-consumed prefix and leave the unsent suffix at the I/O core's `send_slot`
-cursor.
+`send_batch_progress` (`rocketnet_client_gso_send_batch_progress_operation`):
+when the socket is connected, `rocketnet_client_gso_send_batch_progress` sends
+the runs and, on a full socket (`EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`), returns
+the consumed prefix; an unconnected socket delegates to
+`rocketnet_platform_socket_send_packets_mmsg_progress`. Either way the unsent
+suffix stays at the I/O core's `send_slot` cursor for a retry.
 On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`. On Windows, `iocp`
 (`sdk/rocketnet_client_iocp_windows.cpp`, the Windows `auto` choice) waits on a completion
 port of its own: wait is `GetQueuedCompletionStatusEx`, wake posts one wake
