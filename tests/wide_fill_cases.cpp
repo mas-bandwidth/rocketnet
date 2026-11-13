@@ -948,7 +948,7 @@ static void writer_finish_job( writer_finish_fill_t * f, int thread )
             }
             wide_fill_write( p, bytes, k, slot, s->sent[k], (uint32_t) f->frame );
             const uint32_t serial = f->mode == WRITER_FINISH_SERIAL ? rocketnet_server_finish_message( f->server, bytes )
-                                                                     : rocketnet_server_finish_client_message( f->server, slot, bytes );
+                                                                    : rocketnet_server_finish_client_message( f->server, slot, bytes );
             if ( serial == 0 )
             {
                 f->refused[thread]++;

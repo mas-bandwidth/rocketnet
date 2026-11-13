@@ -1363,6 +1363,7 @@ static int rn_message_send_transport_max( const struct rn_message_object_t * obj
     return unreliable && object->link.max_payload_bytes ? object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
+// proofs/tla/RNWriterFinish.tla Start: in place when the update has capacity, otherwise marked as having none.
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
 {
     // proofs/tla/RNSlots.tla Request: reserves room for one message and returns the pointer the application writes.
@@ -1671,6 +1672,7 @@ uint32_t rn_message_object_finish_client( struct rn_message_object_t * object, i
     return rn_message_object_finish_as( object, index, bytes, true );
 }
 
+// proofs/tla/RNWriterFinish.tla Finish: with writer set, the packet is sealed in the call or the start with no capacity refused.
 static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object, int index, int bytes, bool writer )
 {
     // RNChannel Enqueue's second half: the message joins its channel's queue
@@ -2032,6 +2034,7 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
 
 // proofs/tla/RNSendRotation.tla BeginFlush and Visit: the first round over every connection, later rounds over the last round's writers, the capacity test, the cursor at i + 1.
 // proofs/tla/RNServerSendFair.tla BeginFlush, FirstVisit and LaterVisit: the same rounds at this loop's index arithmetic (send_writers, count, kept, previous, the stored cursors).
+// proofs/tla/RNWriterFinish.tla SendPackets: the main thread's walk finds nothing a writer's finish left.
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL );
@@ -2664,6 +2667,7 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
     return server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call ? (rocketnet_server_transport_t *) server->object.link.transport : NULL;
 }
 
+// proofs/tla/RNWriterFinish.tla BeginFill: after this main thread call the game threads may start and finish messages.
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
