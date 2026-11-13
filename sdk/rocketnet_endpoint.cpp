@@ -513,7 +513,7 @@ bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, 
 {
     // the room query: rn_endpoint_start's route, then the region's decision
     // (rn_region_send_fit) that its allocation acts on. Pure and
-    // allocation-free; the store lookup scans a class's chunks.
+    // allocation-free; the store lookup is O(1) (rn_send_store_find).
 
     int type = reliability;
     const int route = rn_endpoint_send_route( endpoint, channel, reliability, bytes, transport_max_payload_bytes, &type );
@@ -535,6 +535,41 @@ bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, 
     }
 
     return rn_region_send_fit( endpoint->region, bytes ) == RN_SEND_FIT_OK;
+}
+
+// finish applies start's record-size rule to the bytes actually committed:
+// true when an unreliable message's pending start took the channel route (its
+// reservation over one record) and these bytes are still over one record, so
+// it stays promoted
+static bool rn_endpoint_finish_promoted( const rn_endpoint_t * endpoint, int bytes )
+{
+    if ( endpoint->ordered.channels.pending == RN_DESCRIPTOR_NONE || !rn_endpoint_unreliable_type( endpoint->pending_type ) )
+    {
+        return false;
+    }
+
+    const uint32_t channel = endpoint->ordered.channels.pending_channel;
+    const int transport_max = endpoint->max_payload_bytes > 0 ? endpoint->max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    const int record_capacity = transport_max < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    return rn_endpoint_unreliable_over_record_capacity( endpoint->pending_type, (int) channel, bytes, record_capacity );
+}
+
+const uint8_t * rn_endpoint_short_unreliable( const struct rn_endpoint_t * endpoint, int bytes, int * channel )
+{
+    // proofs/tla/RNWriterFinish.tla FinishRestart: a start reserved over one record
+    // on the channel route, finished with bytes one record carries, is a
+    // small unreliable message, which rn_endpoint_finish would queue. The
+    // writer's finish asks first, and starts it again at its size instead
+
+    if ( endpoint->pending_type == -1 || endpoint->pending_in_place || bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes ||
+         endpoint->ordered.channels.pending == RN_DESCRIPTOR_NONE || !rn_endpoint_unreliable_type( endpoint->pending_type ) ||
+         rn_endpoint_finish_promoted( endpoint, bytes ) )
+    {
+        return NULL;
+    }
+
+    *channel = (int) endpoint->ordered.channels.pending_channel;
+    return rn_region_send_write_pointer( endpoint->region, endpoint->ordered.channels.pending );
 }
 
 // proofs/tla/RNSentRingLayout.tla IssueSerial: the serial steps to 1, never 0.
@@ -570,18 +605,7 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
     // start reserves for its requested capacity; finish decides promotion
     // from the actual byte count and can downgrade a short reservation.
 
-    const bool reserved_reliable = endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE;
-    const uint32_t channel = reserved_reliable ? endpoint->ordered.channels.pending_channel : endpoint->region->send_descriptors[endpoint->pending_descriptor].channel;
-    const int transport_max = endpoint->max_payload_bytes > 0 ? endpoint->max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
-    const int record_capacity = transport_max < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
-
-    // finish applies the same record-size rule to the bytes actually committed
-
-    const bool actual_over_record = rn_endpoint_unreliable_over_record_capacity( endpoint->pending_type, (int) channel, bytes, record_capacity );
-    const bool unreliable_source = endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE ||
-                                   endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
-                                   endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
-    const bool promoted = reserved_reliable && unreliable_source && actual_over_record;
+    const bool promoted = rn_endpoint_finish_promoted( endpoint, bytes );
     if ( rn_endpoint_reliable_path( endpoint->pending_type ) || promoted )
     {
         const uint32_t d = endpoint->ordered.channels.pending;

@@ -28,6 +28,7 @@ naming `<struct>.<member>`.
 | | handshake/session sequences | wire sequence spaces | RESET | fresh sequence spaces start at one |
 | | replay windows, `integrity_failures` | receive security state | RESET | old traffic must not affect a new session |
 | | attempt, send, receive and total deadlines | attempt clocks | RESET | token and session clocks |
+| | `handshake_early_send` | the one early send armed by a handshake advance (TRANSPORT.md t11 rule 7) | RESET | an arm belongs to the attempt that advanced; a new attempt starts unarmed |
 | | RTT sample state and received sequence | quality state | RESET | per-session inputs |
 | | `ack`, `num_acked`, `acked_packet_ids` | ack bitfields, packet rings and receipt batch | RESET | packet ids and measurements belong to one session |
 | | key publication hooks and context | transport hooks | KEEP | transport wiring |
