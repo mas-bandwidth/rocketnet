@@ -538,7 +538,10 @@ before any other field. Its size is the row named prefilter header in
    named receive ceiling in [t3 Constants and registries](#t3), as too large.
 6. A receiver MUST refuse a packet whose filter epoch is not the unkeyed
    filter epoch, the row named unkeyed filter epoch in
-   [t3 Constants and registries](#t3), as a wrong epoch.
+   [t3 Constants and registries](#t3), as a wrong epoch. A receiver that
+   implements [t5.1 Keyed epochs (optional extension)](#t5.1) applies the
+   epoch and filter value rules of that subsection in place of this rule and
+   rule 7.
 7. A receiver MUST refuse a packet whose filter value does not equal the
    receiver's unkeyed filter value as a wrong value.
 8. A receiver MUST return the packet type byte of a packet that passes every
@@ -584,7 +587,10 @@ Every constant this section states is a row of the table below.
 ### t5.1. Keyed epochs (optional extension)
 
 This subsection is an optional extension. It is not part of conformance: an
-implementation that omits it conforms to this standard.
+implementation that omits it conforms to this standard. The reference
+implementation does not implement it: it writes the unkeyed filter epoch and
+refuses every keyed epoch as a wrong epoch by rule 6 of
+[t5 Prefilter header](#t5). No vector covers this subsection.
 
 An implementation MAY accept filter epochs from the row named first keyed
 filter epoch through the row named last keyed filter epoch in the table above.
@@ -3596,17 +3602,17 @@ an input ([t1.4 Conventions](#t1.4)).
     recorded against its source as a failure, exactly as a failed
     verification is. A request refused because its client id already holds a
     slot, or denied because the server is full, MUST NOT be recorded.
- 13. A server MUST refuse a request whose token identifier is claimed by a
-     different source address, and one that finds no free
-     encryption mapping slot, before any signature, seal or keypair work. The
-     first valid request for a token records its claim for the source address;
-     the claim ends at the handshake deadline, when its half-open mapping is
-     removed before that deadline, when a response binds the token, or
-     immediately when processing the request refuses it without retaining a
-     mapping. A full mapping table refuses with no reply and is counted as a
-     refusal. The request-claim table and the response-binding table are
-     independent capacities: claim pressure cannot consume or evict a still
-     live response binding.
+13. A server MUST refuse a request whose token identifier is claimed by a
+    different source address, and one that finds no free
+    encryption mapping slot, before any signature, seal or keypair work. The
+    first valid request for a token records its claim for the source address;
+    the claim ends at the handshake deadline, when its half-open mapping is
+    removed before that deadline, when a response binds the token, or
+    immediately when processing the request refuses it without retaining a
+    mapping. A full mapping table refuses with no reply and is counted as a
+    refusal. The request-claim table and the response-binding table are
+    independent capacities: claim pressure cannot consume or evict a still
+    live response binding.
 
 The values this section introduces are:
 
@@ -4319,7 +4325,8 @@ This appendix is informative. It records implementation choices that the wire
 format does not require; a conforming implementation may choose otherwise.
 Each note points to the section whose rule it serves.
 
-### Transport selection
+<a id="tc.1"></a>
+### tc.1. Transport selection
 
 An implementation offers a set of transports for one endpoint role on one
 platform, and `auto` expands to its documented order for that role and
@@ -4331,7 +4338,8 @@ candidate's skip or refusal. A transport never changes a byte on the wire, so
 transport selection is a deployment and diagnosis surface rather than a
 protocol one. See [t2.4 Transport selection](#t2.4).
 
-### Segmented sends
+<a id="tc.2"></a>
+### tc.2. Segmented sends
 
 A Linux server transport may coalesce a run of one destination's packets into
 one UDP segmented send. A route that cannot carry one (an IPsec policy, or a
@@ -4343,7 +4351,8 @@ only when a threshold of destinations refused and no segmented send was ever
 accepted, which is a kernel that cannot segment. See
 [t2.4 Transport selection](#t2.4), rule 7.
 
-### Kernel prefilter and XDP
+<a id="tc.3"></a>
+### tc.3. Kernel prefilter and XDP
 
 A Linux server may place the prefilter and an early replay check in an XDP
 program so that traffic the connection layer would refuse is dropped before
@@ -4388,7 +4397,8 @@ taken from: a reply to a handshake goes to that address, as it would to a
 spoofed one, and the protocol's defences against spoofed sources apply to it
 unchanged.
 
-### Check placement
+<a id="tc.4"></a>
+### tc.4. Check placement
 
 Every check this standard specifies is defined by what it rejects and in what
 order, never by where it runs. A transport may perform any prefix of the
@@ -4398,7 +4408,8 @@ reduces the volume that reaches userspace rather than removing the check from
 it, which keeps one implementation of the logic rather than one per transport.
 See [t10 Receive processing](#t10).
 
-### Configuration surface
+<a id="tc.5"></a>
+### tc.5. Configuration surface
 
 Each configuration field is declared once with its type, default and valid
 range, and the environment variable name derives from the field name. The
@@ -4408,7 +4419,8 @@ unparsable value refuses the create rather than being clamped or corrected.
 The message layer's fields follow the same surface in the section that owns
 each one. See [t2.3 Configuration surface](#t2.3).
 
-### Counters per execution context
+<a id="tc.6"></a>
+### tc.6. Counters per execution context
 
 A multithreaded implementation keeps a counter block per execution context,
 padded and aligned so that no two contexts share a cache line, and sums the
@@ -4418,7 +4430,8 @@ by differencing two reads and a zero still means that the event never
 happened. See [t18 Error handling and counters](#t18).
 
 
-### Create-time maximum-resend delay message reserve
+<a id="tc.7"></a>
+### tc.7. Create-time maximum-resend delay message reserve
 
 Each connection adds a local payload reserve to its configured message-region
 headroom at CREATE. Let `R = ceil(send_kbps * 125 * message_resend_delay_max_ms / 1000)` bytes.
