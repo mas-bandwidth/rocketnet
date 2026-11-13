@@ -11952,7 +11952,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_clients ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, packet_filter ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, backend_public_key ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_xdp_queues ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_xdp_threads ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_os_cpus ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_timeout_seconds ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshake_deadline_seconds ),
@@ -11980,6 +11980,12 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, token_epoch_unix_seconds ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, bind_ipv4_address ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, bind_ipv6_address ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_gso_workers ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_io_uring_workers ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_rio_lanes ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_iocp_completion_workers ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_iocp_send_threads ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_msgx_transmit_workers ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -12216,7 +12222,13 @@ void rocketnet_test_public_config_resolve()
     server.protocol_id = 0x1122334455667788ULL;
     server.max_clients = 5;
     memcpy( server.packet_filter, filter, 4 );
-    server.num_xdp_queues = 2;
+    server.num_xdp_threads = 2;
+    server.num_gso_workers = 3;
+    server.num_io_uring_workers = 4;
+    server.num_rio_lanes = 5;
+    server.num_iocp_completion_workers = 6;
+    server.num_iocp_send_threads = 7;
+    server.num_msgx_transmit_workers = 8;
     server.num_os_cpus = 3;
     server.max_timeout_seconds = 30;
     server.handshake_deadline_seconds = 7;
@@ -12231,7 +12243,10 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
     rocketnet_check( memcmp( server_transport.packet_filter, filter, 4 ) == 0 );
     rocketnet_check( memcmp( server_transport.backend_public_key, dev.backend_public_key, 32 ) == 0 );
-    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 );
+    rocketnet_check( server_transport.num_xdp_threads == 2 && server_transport.num_os_cpus == 3 );
+    rocketnet_check( server_transport.num_gso_workers == 3 && server_transport.num_io_uring_workers == 4 );
+    rocketnet_check( server_transport.num_rio_lanes == 5 && server_transport.num_iocp_completion_workers == 6 );
+    rocketnet_check( server_transport.num_iocp_send_threads == 7 && server_transport.num_msgx_transmit_workers == 8 );
     rocketnet_check( server_transport.max_timeout_seconds == 30 && server_transport.handshake_deadline_seconds == 7 );
     rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 );
     rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_message_timeout_ms == 6000 );
@@ -12750,8 +12765,20 @@ void rocketnet_test_config_env_round_trip()
     rocketnet_check( rocketnet_config_env_var_name_for( "client", "transport", derived, sizeof( derived ) ) );
     rocketnet_check( strcmp( derived, "ROCKETNET_CLIENT_TRANSPORT" ) == 0 );
 
-    rocketnet_check( rocketnet_config_env_var_name_for( "server", "num_xdp_queues", derived, sizeof( derived ) ) );
-    rocketnet_check( strcmp( derived, "ROCKETNET_SERVER_NUM_XDP_QUEUES" ) == 0 );
+    // each transport's network thread count has its own variable
+    {
+        const char * fields[] = { "num_xdp_threads", "num_gso_workers", "num_io_uring_workers", "num_rio_lanes",
+                                  "num_iocp_completion_workers", "num_iocp_send_threads", "num_msgx_transmit_workers" };
+        const char * names[] = { "ROCKETNET_SERVER_NUM_XDP_THREADS", "ROCKETNET_SERVER_NUM_GSO_WORKERS",
+                                 "ROCKETNET_SERVER_NUM_IO_URING_WORKERS", "ROCKETNET_SERVER_NUM_RIO_LANES",
+                                 "ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS", "ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS",
+                                 "ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS" };
+        for ( int i = 0; i < 7; ++i )
+        {
+            rocketnet_check( rocketnet_config_env_var_name_for( "server", fields[i], derived, sizeof( derived ) ) );
+            rocketnet_check( strcmp( derived, names[i] ) == 0 );
+        }
+    }
 
     int num_client_fields = 0;
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
@@ -12900,16 +12927,41 @@ void rocketnet_test_config_validation()
     config.max_clients = ROCKETNET_MAX_CLIENTS;
     rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
 
-    // the table's num_xdp_queues range is structural; the per-transport
-    // bounds live at the transport rungs (the gso pin test proves the gso
-    // rung's refusal at 33)
+    // each network thread count's range is its transport's own: zero (the
+    // default) and 1 .. the limit pass, one past the limit and below zero
+    // are refused
 
-    rocketnet_server_transport_default_config_current( &config );
-    config.num_xdp_queues = 33;
-    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
-
-    config.num_xdp_queues = 1025;
-    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    {
+        struct rn_test_thread_range_t
+        {
+            int * field;
+            int max;
+        };
+        rocketnet_server_transport_default_config_current( &config );
+        const rn_test_thread_range_t ranges[] = {
+            { &config.num_xdp_threads, ROCKETNET_XDP_MAX_THREADS },
+            { &config.num_gso_workers, ROCKETNET_GSO_MAX_WORKERS },
+            { &config.num_io_uring_workers, ROCKETNET_IO_URING_MAX_WORKERS },
+            { &config.num_rio_lanes, ROCKETNET_RIO_MAX_LANES },
+            { &config.num_iocp_completion_workers, ROCKETNET_IOCP_MAX_COMPLETION_WORKERS },
+            { &config.num_iocp_send_threads, ROCKETNET_IOCP_MAX_SEND_THREADS },
+            { &config.num_msgx_transmit_workers, ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS },
+        };
+        for ( const rn_test_thread_range_t & range : ranges )
+        {
+            rocketnet_server_transport_default_config_current( &config );
+            for ( int value : { 0, 1, range.max } )
+            {
+                *range.field = value;
+                rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+            }
+            for ( int value : { -1, range.max + 1 } )
+            {
+                *range.field = value;
+                rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+            }
+        }
+    }
 
     // an unterminated transport string is refused, not read past
 
@@ -14515,21 +14567,20 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
     rocketnet_check( estimated >= 1 );
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    // The socket requests and transport stacks scale with the configured
-    // queue count; the GSO transmit worker contributes one additional fixed
-    // stack.
+    // The socket requests and transport stacks scale with num_gso_workers:
+    // a worker and a socket per queue, nothing else
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
-        config.num_xdp_queues = 8;
+        config.num_gso_workers = 8;
 
         struct rocketnet_host_memory_estimate_t estimate;
         rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
 
-        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 9 );
+        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 8 );
         rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
         rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) 8 * (uint64_t) rocketnet_server_receive_buffer_request( config.max_clients ) );
-        rocketnet_check( estimate.thread_stack_bytes == 9ull * estimate.thread_stack_bytes_per_thread );
+        rocketnet_check( estimate.thread_stack_bytes == 8ull * estimate.thread_stack_bytes_per_thread );
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

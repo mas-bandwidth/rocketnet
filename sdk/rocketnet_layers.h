@@ -37,6 +37,7 @@ extern "C"
 #define ROCKETNET_CLIENT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, bind_ipv6_address ) + sizeof( const char * ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_7 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, num_msgx_transmit_workers ) + sizeof( int ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and payload limits.
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
@@ -727,13 +728,13 @@ struct rocketnet_address_t
 // how every deployment of a protocol ends up sharing one identity.
 // rocketnet_server_transport_dev_config fills the published
 // development keys and test filter for local work, loudly. NULL config is
-// the default shape. num_xdp_queues is the staged transports' queue count -- XDP
-// queues on the xdp transport, reuseport sockets on the gso transport -- kept under
-// its historic name for ABI stability with the language bindings; num_os_cpus
-// configures the XDP transport's core layout. zero means the transport default, and
-// the portable transport ignores both. The tighter num_xdp_queues bounds are per
-// transport and refused loudly at create, never clamped: the xdp transport takes any
-// count from 1, the gso transport refuses past 32.
+// the default shape. Each server transport has its own network thread count
+// (num_xdp_threads, num_gso_workers, num_io_uring_workers, num_rio_lanes,
+// num_iocp_completion_workers, num_iocp_send_threads,
+// num_msgx_transmit_workers; sdk/rocketnet_network_threads.h): zero is that
+// transport's measured default, a value outside its range is refused loudly at
+// create, never clamped, and the portable transport has none. num_os_cpus
+// configures the Linux transports' core layout (cpu 0 is always the OS's).
 //
 // public_address, empty by default, displaces the create call's address
 // parameter when set, so the address the transport list verifies, the
@@ -762,8 +763,8 @@ struct rocketnet_server_transport_config_t
     uint8_t server_public_key[32];
     /** @brief 32-byte server secret key; override logs redact it. */
     uint8_t server_secret_key[32];                  // secret: logged redacted
-    /** @brief Requested XDP/GSO queue count; zero selects the transport default, otherwise 1 through 1024. */
-    int num_xdp_queues;                             // 1 .. 1024; 0 is the transport default
+    /** @brief XDP threads, one per NIC queue; zero selects ROCKETNET_XDP_DEFAULT_THREADS, otherwise 1 through 1024. */
+    int num_xdp_threads;                            // 1 .. 1024; 0 is the default (sdk/rocketnet_network_threads.h)
     /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the transport default
     /** @brief Ordered transport candidate list; defaults to auto. */
@@ -793,6 +794,18 @@ struct rocketnet_server_transport_config_t
     char bind_ipv4_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     /** @brief The local IPv6 address the server binds, with no port; empty binds the IPv6 wildcard. */
     char bind_ipv6_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    /** @brief gso queue workers; zero selects ROCKETNET_GSO_DEFAULT_WORKERS, otherwise 1 through 32. */
+    int num_gso_workers;
+    /** @brief io_uring workers; zero selects ROCKETNET_IO_URING_DEFAULT_WORKERS, otherwise 1 through 32. */
+    int num_io_uring_workers;
+    /** @brief RIO lanes; zero selects ROCKETNET_RIO_DEFAULT_LANES (one on a wildcard bind), otherwise 1 through 32. */
+    int num_rio_lanes;
+    /** @brief IOCP completion workers; zero selects ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS (one on a wildcard bind), otherwise 1 through 32. */
+    int num_iocp_completion_workers;
+    /** @brief IOCP send threads; zero selects ROCKETNET_IOCP_DEFAULT_SEND_THREADS (at most the send lanes), otherwise 1 through 16 and at most the send lanes. */
+    int num_iocp_send_threads;
+    /** @brief macOS msgx transmit workers; zero selects ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS, otherwise 1 through 16. */
+    int num_msgx_transmit_workers;
 };
 
 /** @brief Resolves the local address a server transport binds from its config and served address.

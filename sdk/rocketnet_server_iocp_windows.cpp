@@ -1969,12 +1969,21 @@ static bool rocketnet_iocp_sized_layout( int max_clients, int workers, rocketnet
 
 uint64_t rocketnet_server_iocp_allocation_bytes( int workers, int max_clients )
 {
+    return rocketnet_server_iocp_allocation_bytes_threads( workers, 0, max_clients );
+}
+
+uint64_t rocketnet_server_iocp_allocation_bytes_threads( int workers, int asked_send_threads, int max_clients )
+{
     if ( workers < 1 || workers > ROCKETNET_IOCP_MAX_WORKERS )
     {
         return 0;
     }
     rocketnet_iocp_sized_layout_t layout;
     if ( !rocketnet_iocp_sized_layout( max_clients, workers, &layout ) )
+    {
+        return 0;
+    }
+    if ( !rocketnet_server_iocp_send_threads_for( asked_send_threads, layout.num_lanes ) )
     {
         return 0;
     }
@@ -1986,7 +1995,7 @@ uint64_t rocketnet_server_iocp_allocation_bytes( int workers, int max_clients )
                                                      (uint64_t) workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * sizeof( rocketnet_iocp_operation_t ),
                                                      (uint64_t) workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * ROCKETNET_IOCP_URO_BUFFER_BYTES } );
     const uint64_t lanes = (uint64_t) layout.num_lanes;
-    const uint64_t send_threads = (uint64_t) rocketnet_server_iocp_send_threads( layout.num_lanes );
+    const uint64_t send_threads = (uint64_t) rocketnet_server_iocp_send_threads_for( asked_send_threads, layout.num_lanes );
     if ( !bytes || !rocketnet_memory_add( bytes, lanes, sizeof( rocketnet_iocp_lane_t ) + rocketnet_allocation_overhead() ) ||
          !rocketnet_memory_add( bytes, (uint64_t) workers + send_threads, rocketnet_platform_thread_allocation_bytes() ) ||
          !rocketnet_memory_add( bytes, send_threads, rocketnet_platform_wake_allocation_bytes() ) )
@@ -2360,6 +2369,22 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
                                                         int * status )
 {
 #if ROCKETNET_DEV
+    return rocketnet_server_iocp_create_threads( context, bind_address, num_workers, 0, max_clients, fail_stage, flags, status );
+#else  // #if ROCKETNET_DEV
+    return rocketnet_server_iocp_create_threads( context, bind_address, num_workers, 0, max_clients, status );
+#endif // #if ROCKETNET_DEV
+}
+
+rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, rocketnet_address_t * bind_address, int num_workers,
+                                                                int num_send_threads, int max_clients
+#if ROCKETNET_DEV
+                                                                ,
+                                                                int fail_stage, int flags
+#endif // #if ROCKETNET_DEV
+                                                                ,
+                                                                int * status )
+{
+#if ROCKETNET_DEV
     flags |= rocketnet_iocp_test_forced_flags.load( std::memory_order_relaxed );
 #endif // #if ROCKETNET_DEV
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) )
@@ -2380,6 +2405,15 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_iocp_sized_layout_t layout;
     if ( !rocketnet_iocp_sized_layout( max_clients, num_workers, &layout ) )
     {
+        return NULL;
+    }
+    const int send_threads = rocketnet_server_iocp_send_threads_for( num_send_threads, layout.num_lanes );
+    if ( !send_threads )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+        rocketnet_warn( "iocp transport refused: num_iocp_send_threads %d is outside 1..%d, the send lanes of a %d-client server "
+                        "(ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS; 0 selects the default)",
+                        num_send_threads, layout.num_lanes, max_clients );
         return NULL;
     }
     // More than one worker shares the port by SIO_CPU_AFFINITY, which has no
@@ -2432,7 +2466,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     iocp->owner_epoch = rocketnet_iocp_next_owner_epoch.fetch_add( 1, std::memory_order_relaxed );
     iocp->send_queue_size = layout.send_queue_size;
     iocp->num_lanes = layout.num_lanes;
-    iocp->num_send_threads = rocketnet_server_iocp_send_threads( layout.num_lanes );
+    iocp->num_send_threads = send_threads;
 #if ROCKETNET_DEV
     iocp->test_refuse_worker_pins = ( flags & ROCKETNET_IOCP_REFUSE_WORKER_PINS ) != 0;
 #endif // #if ROCKETNET_DEV

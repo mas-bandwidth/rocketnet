@@ -205,12 +205,12 @@ bounded per receive call by the read budget below.
 
 ### Staging and drain bounds
 
-GSO's three send banks are shared across all sockets. Only its current
-producer bank can be filled; the transmit worker consumes published banks.
-io_uring likewise has two shared 2048-slot send phases, and an incomplete send
-continues to occupy its phase. `num_xdp_queues` adds receive queues and changes socket
-rotation; it does not multiply the 16384-slot GSO or 2048-slot io_uring send
-capacity (`sdk/rocketnet_server_gso_linux.cpp`,
+Each GSO queue has its own three send banks (`ROCKETNET_GSO_TX_BANKS`). Only
+a queue's current producer bank can be filled; that queue's worker consumes its
+published banks. Each io_uring queue likewise has its own three send banks
+(`ROCKETNET_URING_SEND_BANKS`), and an incomplete send continues to occupy its
+bank. `num_gso_workers` and `num_io_uring_workers` each add queues, and with
+them send staging (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
 
 Every built-in server transport but loopback reports the frames it takes before its next
@@ -295,12 +295,15 @@ the create log line names each feature as yes or no.
   frame of a run stays owned until that one completion retires the run. A live
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
   resends the run frame by frame, counted in `ROCKETNET_COUNTER_IOCP_USO_FALLBACKS`.
-  `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is the socket
-  count of the Windows rio and iocp transports. IOCP reads it as its completion workers: more than one is that many
-  (at most `ROCKETNET_IOCP_MAX_WORKERS`), each with its own `SIO_CPU_AFFINITY`
-  socket and completion port, else one. IOCP sends in lanes: each lane has its
+  `num_iocp_completion_workers` (`ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS`,
+  default `ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS`, at most
+  `ROCKETNET_IOCP_MAX_WORKERS`) is IOCP's completion worker count, each with its
+  own `SIO_CPU_AFFINITY` socket and completion port; on a wildcard or
+  IPv4-mapped bind the default runs one, with a warning, and an explicit count
+  above one is refused. IOCP sends in lanes: each lane has its
   own operations, free queue and three staging banks, and the
-  `ROCKETNET_IOCP_SEND_THREADS` send threads post them, each its own lanes
+  `num_iocp_send_threads` send threads (`ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS`,
+  default `ROCKETNET_IOCP_DEFAULT_SEND_THREADS`, at most the lanes) post them, each its own lanes
   (lane `l` belongs to thread `l % threads`, a thread's lanes `t`, `t + threads`,
   ...; `rocketnet_server_iocp_send_thread_of_lane`), each thread pinned by the
   transport to a core after the completion workers' cores (a refused pin is
@@ -451,12 +454,13 @@ transport creates, from the creating thread right after the create
 
 | Transport | Network threads it creates | What the library sets |
 |---|---|---|
-| GSO (Linux) | one receive worker per queue plus one transmit worker | `SCHED_RR`, minimum priority, after each create |
-| XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
-| IOCP (Windows) | `num_xdp_queues` completion workers (one by default) plus `ROCKETNET_IOCP_SEND_THREADS` send threads | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
-| RIO (Windows) | one I/O worker a lane (`num_xdp_queues`) | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
-| portable/msgx socket | one receive worker and one transmit worker | nothing |
-| io_uring | none | nothing |
+| GSO (Linux) | one worker per queue (`num_gso_workers`), receiving and sending | on itself at thread start: pinned to cpu `num_os_cpus + queue`; `SCHED_RR`, minimum priority, after each create |
+| io_uring (Linux) | one worker per ring (`num_io_uring_workers`) | on itself at thread start: pinned to cpu `num_os_cpus + queue`, then `SCHED_RR` at the minimum priority |
+| XDP (Linux) | one thread per queue (`num_xdp_threads`, `sdk/rocketnet_server_socket_linux.cpp`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
+| IOCP (Windows) | `num_iocp_completion_workers` completion workers plus `num_iocp_send_threads` send threads | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
+| RIO (Windows) | one I/O worker a lane (`num_rio_lanes`) | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
+| msgx (macOS) | one receive worker and `num_msgx_transmit_workers` transmit workers | nothing |
+| portable socket | one receive worker and one transmit worker | nothing |
 
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.

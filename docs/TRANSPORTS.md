@@ -16,8 +16,8 @@ does not have the transport.
 | Transport | Platform | Server rank | Client rank | What it needs from the host |
 | --- | --- | --- | --- | --- |
 | `xdp` | Linux | 10 | - | effective UID 0, permission to raise `RLIMIT_MEMLOCK` for the 4096-byte UMEM frames, a NIC driver with AF_XDP, a real port (not 0), and a build with XDP compiled in; see [docs/LINUX.md](LINUX.md), section 6 |
-| `gso` | Linux | 20 | 10 | nothing privileged; uses UDP GSO and GRO where the kernel has them, plain `sendmmsg`/`recvmmsg` where it does not; `num_xdp_queues` at most 32 |
-| `io_uring` | Linux | 25 | - | a build configured with liburing, and a kernel that allows io_uring; `num_xdp_queues` at most 32 |
+| `gso` | Linux | 20 | 10 | nothing privileged; uses UDP GSO and GRO where the kernel has them, plain `sendmmsg`/`recvmmsg` where it does not; `num_gso_workers` at most 32 |
+| `io_uring` | Linux | 25 | - | a build configured with liburing, and a kernel that allows io_uring; `num_io_uring_workers` at most 32 |
 | `msgx` | macOS | 10 | 10 | the Darwin `sendmsg_x`/`recvmsg_x` batch calls; see [docs/MACOS.md](MACOS.md) |
 | `portable` | every platform | development 30, production 50 | 30 | UDP sockets only |
 | `iocp` | Windows | 40 | 10 | Winsock overlapped I/O; uses UDP send and receive offload where the stack has them; see [docs/WINDOWS.md](WINDOWS.md) |
@@ -73,9 +73,8 @@ See [the implementation reference](TRANSPORT-INTERNALS.md#server-capabilities-an
 
 ## Per-update send and receive budgets
 
-GSO has 4096 slots in its current shared send bank; io_uring has 2048 shared
-send slots, including outstanding sends. More receive queues do not increase
-these capacities; under staging pressure the message-layer rotation and the
+GSO and io_uring stage sends per queue: each worker has its own send banks,
+so more workers add send room. Under staging pressure the message-layer rotation and the
 disconnect bursts spread across updates as the transport's send room reports.
 Receive drains bound work spent on both kept and discarded datagrams using
 backend-specific budgets. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds),
@@ -97,7 +96,55 @@ See [the implementation reference](TRANSPORT-INTERNALS.md#icmp-errors).
 
 ## Server network threads and their priority
 
-See [the implementation reference](TRANSPORT-INTERNALS.md#server-network-threads-and-their-priority).
+Plan cores in this order: the operating system first, then the transport's
+network threads, then the main thread and the game threads. Each transport
+that has a count to choose has its own config field and environment variable
+([ENVIRONMENT.md](ENVIRONMENT.md#network-threads-per-transport)); the default,
+with nothing set, is the count that held 1000 players at 10 Gb/s on a good
+machine.
+
+| Transport | Network threads (default) | Where they run | Machine setting that must match |
+| --- | --- | --- | --- |
+| `xdp` | `num_xdp_threads` (1), one per NIC queue | thread `q` on cpu `num_os_cpus + q`, never cpu 0 | the NIC's combined queue count: [below](#xdp-match-the-nic-queues-to-the-threads) |
+| `gso` | `num_gso_workers` (1), one per socket | worker `q` on cpu `num_os_cpus + q`, never cpu 0 | none |
+| `io_uring` | `num_io_uring_workers` (2), one per socket and ring | worker `q` on cpu `num_os_cpus + q`, never cpu 0 | none |
+| `iocp` | `num_iocp_completion_workers` (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` (2) | worker `w` on the first processor of core `w`, the send threads on the cores after | none; a bind address for more than one worker ([WINDOWS.md](WINDOWS.md#to-reach-10-gbs-on-windows-set-a-bind-address)) |
+| `rio` | `num_rio_lanes` (5 on a bind address, 1 on the wildcard), one worker a lane | lane `l` on core `l` from core 0 | none; a bind address for more than one lane |
+| `msgx` | `num_msgx_transmit_workers` (3) and one receive worker | where macOS puts them | none |
+| `portable` | 2, fixed | where the OS puts them | none |
+
+A value past a transport's limit is refused at create, never clamped. The
+priorities each thread takes are in
+[the implementation reference](TRANSPORT-INTERNALS.md#server-network-threads-and-their-priority).
+
+### XDP: match the NIC queues to the threads
+
+`xdp` runs one thread per NIC queue, so the NIC's combined queue count must
+equal `num_xdp_threads`; the library checks and never changes it.
+`scripts/rocketnet-provision` sets it, and given no count it takes the
+server's: `ROCKETNET_SERVER_NUM_XDP_THREADS` from its environment, or the
+default, 1.
+
+1. Choose the thread count, or take the default of 1:
+   `ROCKETNET_SERVER_NUM_XDP_THREADS=2` (or `num_xdp_threads = 2`).
+2. Provision the NIC with the same count, before the server starts:
+   `sudo scripts/rocketnet-provision eth0 2`, then
+   `sudo scripts/rocketnet-provision eth0 2 verify`.
+3. Start the server: it runs 2 XDP threads, on cpus 1 and 2 with the default
+   `num_os_cpus` of 1.
+4. When the counts differ the server does not start `xdp`; the log says
+
+   ```text
+   xdp pre-flight: eth0 has 4 combined queues and the server runs 2 XDP threads (num_xdp_threads; R7): provision the NIC with `sudo scripts/rocketnet-provision eth0 2`, or set num_xdp_threads (ROCKETNET_SERVER_NUM_XDP_THREADS) to 4
+   ```
+
+   and `auto` falls to `gso` (with `xdp` alone, start returns
+   `NO_TRANSPORT_FOUND`).
+5. Read the NIC's current count with `ethtool -l eth0`: the `Combined` line
+   under "Current hardware settings".
+
+The full condition list and a worked machine layout are in
+[docs/LINUX.md](LINUX.md), section 6.
 
 ## Adding a backend without editing the transport
 

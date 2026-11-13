@@ -119,7 +119,7 @@ status code and the accompanying `ERROR` log line:
      Linux, preserve the pinned geometry: 4,096-byte frames, a 16,384-entry send
      queue, 32,768-entry receive queue and fill set, a 65,536-entry fill ring,
      and 98,304 UMEM frames per queue. Use only the supported runtime controls
-     (`num_xdp_queues`, `num_os_cpus`, and
+     (`num_xdp_threads`, `num_os_cpus`, and
      `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`). The XDP data plane requires
      effective UID 0; Linux capabilities alone do not satisfy that preflight.
      Then verify provisioning (`CAP_NET_ADMIN`, `CAP_BPF`, `RLIMIT_MEMLOCK`),

@@ -279,7 +279,7 @@ remote_path="~/rocketnet-live/live-xdp-fleet-remote"
 server_results="~/rocketnet-live/results/$run_id/server.tsv"
 server_status="~/rocketnet-live/results/$run_id/server.status"
 
-server_command="ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_PRINT_COUNTERS=1 ~/rocketnet-live/$commit/bin/server --matrix --transport xdp --address $server_address --label $server_label --seed $seed --send-kbps $min_each --max-clients 1000 --update-hz 1000 --counters-every 60 --num-xdp-queues $server_queues --results $server_results --status $server_status"
+server_command="ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_PRINT_COUNTERS=1 ~/rocketnet-live/$commit/bin/server --matrix --transport xdp --address $server_address --label $server_label --seed $seed --send-kbps $min_each --max-clients 1000 --update-hz 1000 --counters-every 60 --num-xdp-threads $server_queues --results $server_results --status $server_status"
 
 client_command()
 {

@@ -153,7 +153,7 @@ echo "harden_cell: cpus server=$server_cpus clients=$client_cpus" | tee -a "$out
 # the server first; its ready line carries the key the players need
 xdp_args=()
 if [ "$xdp_queues" -gt 0 ]; then
-    xdp_args=(--num-xdp-queues "$xdp_queues")
+    xdp_args=(--num-xdp-threads "$xdp_queues")
 fi
 # the end is a wall time every role shares: joins take clients/100 seconds,
 # then the measured run

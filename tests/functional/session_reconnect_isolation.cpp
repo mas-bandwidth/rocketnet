@@ -574,7 +574,7 @@ static void session_run_isolation_pair( const char * server_transport, const cha
 #if ROCKETNET_DEV
             rocketnet_server_socket_allow_commit();
 #endif // #if ROCKETNET_DEV
-            server_config_b.num_xdp_queues = 1;
+            server_config_b.num_xdp_threads = 1;
             server_config_b.num_os_cpus = 1;
         }
 #endif
@@ -765,9 +765,9 @@ void rocketnet_test_session_reconnect_isolation_xdp()
 #if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
 #endif // #if ROCKETNET_DEV
-    session_env_guard_t env_xdp_queues( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
+    session_env_guard_t env_xdp_threads( "ROCKETNET_SERVER_NUM_XDP_THREADS" );
     session_env_guard_t env_os_cpus( "ROCKETNET_SERVER_NUM_OS_CPUS" );
-    session_check( setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "1", 1 ) == 0 );
+    session_check( setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "1", 1 ) == 0 );
     session_check( setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 ) == 0 );
 
     const char * near_host = rocketnet_xdp_veth_host( false, false );

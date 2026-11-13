@@ -2104,7 +2104,7 @@ static void test_xdp_transport_host_udp_length_drops()
 #endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
 // The xdp transport's default queue rule: create and the memory plan take the
-// same count when num_xdp_queues is zero or negative. The xdp branch of
+// same count when num_xdp_threads is zero. The xdp branch of
 // rocketnet_builtin_server_memory_plan exists on Linux only.
 
 #if defined( ROCKETNET_XDP ) && ROCKETNET_XDP
@@ -2120,12 +2120,12 @@ static void test_xdp_transport_queue_default_matches_memory_plan()
 
     rocketnet_server_memory_plan_t plan;
 
-    config.num_xdp_queues = 0;
+    config.num_xdp_threads = 0;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
     rocketnet_unit_check( plan.worker_threads == ROCKETNET_XDP_DEFAULT_QUEUES );
     rocketnet_unit_check( plan.sockets == ROCKETNET_XDP_DEFAULT_QUEUES );
 
-    config.num_xdp_queues = 3;
+    config.num_xdp_threads = 3;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
     rocketnet_unit_check( plan.worker_threads == 3 );
     rocketnet_unit_check( plan.sockets == 3 );

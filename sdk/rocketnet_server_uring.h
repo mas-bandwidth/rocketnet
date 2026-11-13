@@ -14,6 +14,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_uring_pin.h"
+#include "rocketnet_network_threads.h"
 #include "rocketnet_uring_send_queue.h"
 
 // The io_uring server transport, the XDP shape: one worker thread per queue,
@@ -51,11 +52,10 @@ struct rocketnet_server_uring_t;
 
 // the transport's geometry, all compile time:
 
-#ifndef ROCKETNET_URING_DEFAULT_QUEUES
-#define ROCKETNET_URING_DEFAULT_QUEUES                                       4
-#endif // #ifndef ROCKETNET_URING_DEFAULT_QUEUES
-
-#define ROCKETNET_URING_MAX_QUEUES                                          32
+// a queue per worker: the counts are the server's num_io_uring_workers
+// (sdk/rocketnet_network_threads.h)
+#define ROCKETNET_URING_DEFAULT_QUEUES                                       ROCKETNET_IO_URING_DEFAULT_WORKERS
+#define ROCKETNET_URING_MAX_QUEUES                                           ROCKETNET_IO_URING_MAX_WORKERS
 
 // each queue's ring: submission queue entries; the completion queue is
 // twice this

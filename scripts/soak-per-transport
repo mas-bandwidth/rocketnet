@@ -22,7 +22,7 @@
 #              /proc/sys/kernel/io_uring_disabled is not 0 the cell prints
 #              SKIP naming why, and does not pass
 #   xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=gso
-#              ROCKETNET_SERVER_NUM_XDP_QUEUES=1
+#              ROCKETNET_SERVER_NUM_XDP_THREADS=1
 #              ROCKETNET_SERVER_NUM_OS_CPUS=1, run as root inside a virtme-ng
 #              guest of this machine's own kernel (~/vm-kernels/vmlinuz-$(uname -r)),
 #              the shape of nightly-soak.yml's many-client xdp cell: a veth
@@ -336,7 +336,7 @@ run_xdp_cell()
         echo 'ip -n rnxdpsoak link set rnxdpsoak1 up'
         printf 'env'
         printf ' %q' ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=gso \
-            ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 ROCKETNET_LOG_LEVEL=2 \
+            ROCKETNET_SERVER_NUM_XDP_THREADS=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 ROCKETNET_LOG_LEVEL=2 \
             SOAK_SERVER_ADDRESS=10.77.4.1:40412 SOAK_CLIENT_NETNS=/var/run/netns/rnxdpsoak \
             "${IMPAIRMENT[@]}" "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat
         printf ' > %q 2>&1\n' "$log"

@@ -114,19 +114,46 @@ def transport_queue_bound(header, name):
     return int(match.group(1)) if match else None
 
 
+# each server transport's network thread count: the public field, its
+# default and maximum macros (sdk/rocketnet_network_threads.h, the one place
+# they are written). The field's text must state both numbers, and the
+# environment table must list its variable.
+NETWORK_THREAD_FIELDS = [
+    ("num_xdp_threads", "ROCKETNET_XDP_DEFAULT_THREADS", "ROCKETNET_XDP_MAX_THREADS"),
+    ("num_gso_workers", "ROCKETNET_GSO_DEFAULT_WORKERS", "ROCKETNET_GSO_MAX_WORKERS"),
+    ("num_io_uring_workers", "ROCKETNET_IO_URING_DEFAULT_WORKERS", "ROCKETNET_IO_URING_MAX_WORKERS"),
+    ("num_rio_lanes", "ROCKETNET_RIO_DEFAULT_LANES", "ROCKETNET_RIO_MAX_LANES"),
+    ("num_iocp_completion_workers", "ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS", "ROCKETNET_IOCP_MAX_COMPLETION_WORKERS"),
+    ("num_iocp_send_threads", "ROCKETNET_IOCP_DEFAULT_SEND_THREADS", "ROCKETNET_IOCP_MAX_SEND_THREADS"),
+    ("num_msgx_transmit_workers", "ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS", "ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS"),
+]
+
+
+def network_thread_facts(text, environment):
+    facts = []
+    for field, default_name, max_name in NETWORK_THREAD_FIELDS:
+        default = transport_queue_bound("rocketnet_network_threads.h", default_name)
+        maximum = transport_queue_bound("rocketnet_network_threads.h", max_name)
+        variable = "ROCKETNET_SERVER_" + field.upper()
+        where = doc_before(text, r"\bint %s;" % field)
+        facts.append(("%s states its variable, default %s and range 1 .. %s" % (field, default, maximum),
+                      r"%s\b.*Default is %s \(zero selects it.*Range is 1 \.\. %s\b" % (variable, default, maximum)
+                      if default is not None and maximum is not None else r"(?!)", where))
+        facts.append(("docs/ENVIRONMENT.md lists %s" % variable, r"`%s`" % variable, environment))
+    # the NIC's queue count and the server's XDP threads are set from one
+    # number: scripts/rocketnet-provision's default is the library's
+    script = (ROOT / "scripts" / "rocketnet-provision").read_text()
+    match = re.search(r"^ROCKETNET_XDP_DEFAULT_THREADS=(\d+)", script, flags=re.M)
+    default = transport_queue_bound("rocketnet_network_threads.h", "ROCKETNET_XDP_DEFAULT_THREADS")
+    facts.append(("scripts/rocketnet-provision's queue count default is the library's XDP thread default (%s)" % default,
+                  r"^%s$" % default, match.group(1) if match else None))
+    return facts
+
+
 def check_contract_sentences(text):
-    gso = transport_queue_bound("rocketnet_server_gso.h", "ROCKETNET_GSO_MAX_QUEUES")
-    uring = transport_queue_bound("rocketnet_server_uring.h", "ROCKETNET_URING_MAX_QUEUES")
-    if gso is None or uring is None or gso != uring:
-        report(False, "(f) the gso and io_uring queue bounds read from their headers are %s and %s, not one value" % (gso, uring))
-        return
-    environment = (ROOT / "docs" / "ENVIRONMENT.md").read_text()
+    environment = " ".join((ROOT / "docs" / "ENVIRONMENT.md").read_text().split())
     error_line_blocks = [block for block in re.findall(r"(?:^[ \t]*///[^\n]*\n)+", text, flags=re.M) if "one error line" in block]
-    facts = [
-        ("num_xdp_queues states the gso and io_uring bound of %d" % gso,
-         r"gso and io_uring refuse a value above %d\b" % gso, doc_before(text, r"\bint num_xdp_queues;")),
-        ("docs/ENVIRONMENT.md states the gso and io_uring bound of %d" % gso,
-         r"`gso` and `io_uring` refuse a value above `%d`" % gso, " ".join(environment.split())),
+    facts = network_thread_facts(text, environment) + [
         ("rocketnet_generate_backend_keypair returns CRYPTO_INIT_FAILED",
          r"ROCKETNET_STATUS_CRYPTO_INIT_FAILED", doc_before(text, r"rocketnet_generate_backend_keypair\(")),
         ("rocketnet_generate_server_keypair returns CRYPTO_INIT_FAILED",

@@ -309,7 +309,7 @@ cmd_start_server()
         "$bin" --matrix --transport xdp --address "$address" --label "$label" \
         --seed "$seed" --send-kbps "$kbps" --max-clients "$max_clients" \
         --update-hz "$update_hz" --counters-every "$counters_every" \
-        --num-xdp-queues "$queues" --results "$results" --status "$status" \
+        --num-xdp-threads "$queues" --results "$results" --status "$status" \
         || fail "start server: systemd-run rn-live-server failed"
 
     echo "started: rn-live-server with transport pinned to xdp"

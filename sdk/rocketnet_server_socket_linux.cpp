@@ -1797,7 +1797,9 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
             {
                 if ( (int) channels.combined_count != num_queues )
                 {
-                    rocketnet_warn( "xdp pre-flight: combined queue count is %u, want %d (R7): run scripts/rocketnet-provision %s %d", channels.combined_count, num_queues, interface_name, num_queues );
+                    rocketnet_warn( "xdp pre-flight: %s has %u combined queues and the server runs %d XDP threads (num_xdp_threads; R7): provision the NIC with "
+                                    "`sudo scripts/rocketnet-provision %s %d`, or set num_xdp_threads (ROCKETNET_SERVER_NUM_XDP_THREADS) to %u",
+                                    interface_name, channels.combined_count, num_queues, interface_name, num_queues, channels.combined_count );
                     provisioned = false;
                 }
             }

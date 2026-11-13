@@ -271,6 +271,11 @@ static bool rn_transport_env( const char * side, void * transport, const struct 
                               uint64_t * memory_budget, enum rocketnet_status_t * failure )
 {
     uint64_t budget = 0;
+    if ( strcmp( side, "server" ) == 0 )
+    {
+        rocketnet_config_warn_retired_server_env();
+    }
+
     if ( !rocketnet_config_apply_env( side, transport, fields, num_fields ) ||
          !rocketnet_config_apply_env_uint64( side, "memory_budget_bytes", &budget ) )
     {
@@ -431,8 +436,14 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     memcpy( transport->packet_filter, config->packet_filter, sizeof( transport->packet_filter ) );
     memcpy( transport->backend_public_key, config->backend_public_key, sizeof( transport->backend_public_key ) );
     memcpy( transport->server_secret_key, config->server_secret_key, sizeof( transport->server_secret_key ) );
-    transport->num_xdp_queues = config->num_xdp_queues;
+    transport->num_xdp_threads = config->num_xdp_threads;
     transport->num_os_cpus = config->num_os_cpus;
+    transport->num_gso_workers = config->num_gso_workers;
+    transport->num_io_uring_workers = config->num_io_uring_workers;
+    transport->num_rio_lanes = config->num_rio_lanes;
+    transport->num_iocp_completion_workers = config->num_iocp_completion_workers;
+    transport->num_iocp_send_threads = config->num_iocp_send_threads;
+    transport->num_msgx_transmit_workers = config->num_msgx_transmit_workers;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
     transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
@@ -772,7 +783,7 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_clients ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, packet_filter ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, backend_public_key ),
-    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_xdp_queues ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_xdp_threads ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_os_cpus ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_timeout_seconds ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, handshake_deadline_seconds ),
@@ -801,6 +812,12 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, token_epoch_unix_seconds ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, bind_ipv4_address ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, bind_ipv6_address ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_gso_workers ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_io_uring_workers ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_rio_lanes ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_iocp_completion_workers ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_iocp_send_threads ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_msgx_transmit_workers ),
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 
@@ -2427,8 +2444,14 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->max_clients = transport->max_clients;
     memcpy( config->packet_filter, transport->packet_filter, sizeof( config->packet_filter ) );
     memcpy( config->backend_public_key, transport->backend_public_key, sizeof( config->backend_public_key ) );
-    config->num_xdp_queues = transport->num_xdp_queues;
+    config->num_xdp_threads = transport->num_xdp_threads;
     config->num_os_cpus = transport->num_os_cpus;
+    config->num_gso_workers = transport->num_gso_workers;
+    config->num_io_uring_workers = transport->num_io_uring_workers;
+    config->num_rio_lanes = transport->num_rio_lanes;
+    config->num_iocp_completion_workers = transport->num_iocp_completion_workers;
+    config->num_iocp_send_threads = transport->num_iocp_send_threads;
+    config->num_msgx_transmit_workers = transport->num_msgx_transmit_workers;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
     config->disconnect_packets_per_update = transport->disconnect_packets_per_update;

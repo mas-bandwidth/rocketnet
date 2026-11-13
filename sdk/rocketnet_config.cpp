@@ -142,6 +142,7 @@ struct rocketnet_server_transport_config_table_t
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V1( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     struct rocketnet_loopback_hub_t * loopback_hub;
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V3( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
 
 struct rocketnet_message_config_table_t
@@ -808,6 +809,23 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         }
     }
 
+    return true;
+}
+
+bool rocketnet_config_warn_retired_server_env( void )
+{
+    char value[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    const int found = rocketnet_platform_getenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", value, sizeof( value ) );
+    sodium_memzero( value, sizeof( value ) );
+    if ( found == 0 )
+    {
+        return false;
+    }
+
+    rocketnet_warn( "server config: ROCKETNET_SERVER_NUM_XDP_QUEUES is no longer read and has no effect. Each transport has its own network thread count: "
+                    "ROCKETNET_SERVER_NUM_XDP_THREADS, ROCKETNET_SERVER_NUM_GSO_WORKERS, ROCKETNET_SERVER_NUM_IO_URING_WORKERS, "
+                    "ROCKETNET_SERVER_NUM_RIO_LANES, ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS, ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS, "
+                    "ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS (docs/ENVIRONMENT.md)" );
     return true;
 }
 
