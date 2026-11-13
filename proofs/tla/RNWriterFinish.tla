@@ -5,11 +5,11 @@
 (* rn_message_object_start, rn_message_object_finish_client behind        *)
 (* rocketnet_server_finish_client_message, rn_message_object_abort).      *)
 (*                                                                         *)
-(* A frame alternates a main-thread operation (send_packets, which walks   *)
-(* every client) with a fill phase in which writers start, finish and     *)
-(* abort messages on clients. In a fill phase a client's send state (its  *)
-(* open start, its packet build, its queues) is touched by one writer     *)
-(* only: the first to start on it owns it until the phase ends            *)
+(* A frame alternates a main-thread operation (send_packets, the send      *)
+(* pass over the clients) with a fill phase in which writers start,       *)
+(* finish and abort messages on clients. In a fill phase a client's send  *)
+(* state (its open start, its packet build, its queues) is touched by one *)
+(* writer only: the first to start on it owns it until the phase ends     *)
 (* (RNFillPhase OneFiller; the code refuses a second filler).             *)
 (*                                                                         *)
 (* A start is of one of three kinds, the caller's choice:                 *)
@@ -53,11 +53,23 @@
 (* So send_packets, the main thread's walk, carries only what the header  *)
 (* says it carries (sdk/rocketnet.h, rocketnet_server_finish_client_message): *)
 (* a reliable or larger message, one held behind a queued message, one   *)
-(* the ring had no slot for. On a staged transport no unreliable message *)
-(* is ever queued (StagedQueuesNothing), no packet is left open           *)
+(* the ring had no slot for. On a staged transport no plain unreliable    *)
+(* message is ever queued (StagedQueuesNothing), no packet is left open   *)
 (* (SealedInCall), and every start is sent, refused, carried, cancelled   *)
 (* or lost once (Accounted). The walk carries what the update's capacity, *)
 (* the ring and the bucket allow; the rest waits for the next walk.       *)
+(* "walked" is what left the queues for the send pass, not what reached   *)
+(* the client: Accounted is the writers' settlement, not delivery.        *)
+(*                                                                         *)
+(* Scope: the model's unreliable messages are plain                       *)
+(* ROCKETNET_RELIABILITY_UNRELIABLE, the trace walk's workload, and the   *)
+(* one cause of "behind" it holds is an unreliable message already queued *)
+(* on the client. An UNRELIABLE_SEQUENCED message is also held behind its *)
+(* channel's queued reliable work or the ordered resend list              *)
+(* (rn_endpoint_in_place_header, behind_queue in rn_message_object_start) *)
+(* and so queued on a staged transport, as the header's order exception   *)
+(* allows, including after a short finish's restart. That cause is not    *)
+(* modelled or traced, and StagedQueuesNothing does not cover it.         *)
 (*                                                                         *)
 (* Buffered: the transport sends through the server's own ring, sized one  *)
 (* slot a client, all of it the round the main thread's send keeps. There  *)
@@ -302,9 +314,10 @@ OneWriter == \A c \in Clients : Cardinality(touched[c]) <= 1
 \* the writer's finish leaves no packet open for the walk
 SealedInCall == \A c \in Clients : build[c] = 0
 
-\* on a staged transport no unreliable message waits for the walk: a small
-\* one is sealed or refused in the call, and nothing starts the queue a
-\* message would be held behind
+\* on a staged transport no plain unreliable message waits for the walk: a
+\* small one is sealed or refused in the call, and nothing starts the queue
+\* a message would be held behind (a sequenced message held behind its
+\* channel's reliable work is out of this model's scope, above)
 StagedQueuesNothing == ~Buffered => \A c \in Clients : queued[c] = 0
 
 \* on a buffered transport the ring holds one round, the main thread's: a
