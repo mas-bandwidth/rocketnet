@@ -119,8 +119,9 @@ entry leaves only when it is acknowledged or when the map records the
 `packets_in_flight`-th tracked packet sent after it; acknowledged entries behind an
 older unacknowledged one keep their places until it leaves. So no entry leaves
 before its acknowledgement lands while the map holds every tracked packet, of
-both kinds and resends included, sent between any packet's send and the
-processing of its acknowledgement.
+both kinds and resends included, sent from any packet's send, that packet
+included, until the processing of its acknowledgement: fewer than
+`packets_in_flight` later tracked packets.
 Past that, the oldest entry can be evicted while its acknowledgement is on its
 way: the late acknowledgement is ignored, a reliable message in it is resent
 and can hold back the reliable window until a later send is acknowledged, and
@@ -129,8 +130,11 @@ can stop reliable progress until `reliable_message_timeout_ms`, when set, ends
 the connection. Size `packets_in_flight` for the most tracked packets the
 connection sends over its longest delay from a send to the processing of its
 acknowledgement, counting update and queue delay and bursts, not an average
-rate (for example 60 Hz with up to 4 tracked packets an update and a 1 s
-delay needs 240).
+rate. For example, at 60 Hz with up to 4 tracked packets an update and each
+acknowledgement processed at the start of the update 1 s after its send,
+before that update's sends, a packet and the packets after it before its
+acknowledgement fill at most 60 updates of 4: 240 entries. If an update's sends
+can come before the acknowledgement is processed, count that update too.
 
 Receipt reads return the number available and copy only what fits. Iterate
 up to `min(returned_count, capacity)`; rereading returns the same list rather

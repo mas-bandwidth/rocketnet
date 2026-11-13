@@ -2856,10 +2856,13 @@ resend queues.
 
 Every tracked send shares the map's entries: a send carrying reliable numbers,
 and a receipt-only send, one carrying unreliable receipt serials and no
-reliable number. `W` bounds only the first kind. No entry whose
-acknowledgement can still arrive is dropped while the map holds every tracked
-send, of both kinds and resends included, written between any send and the
-processing of its acknowledgement. Past that, the dropped entry can be one whose
+reliable number. `W` bounds the reliable-number window, not the number of
+tracked sends. No entry whose acknowledgement can still arrive is dropped while
+the map holds every tracked send, of both kinds and resends included, written
+from any send, that send included, until the processing of its
+acknowledgement: a map of `P` entries keeps an entry through the first `P - 1`
+tracked sends written after it, and the `P`-th drops it unless its
+acknowledgement was processed first. Past that, the dropped entry can be one whose
 acknowledgement is on its way: that acknowledgement is ignored; a reliable
 number the entry carried is resent and can hold back the lowest
 unacknowledged number until a later send of it is acknowledged; and a

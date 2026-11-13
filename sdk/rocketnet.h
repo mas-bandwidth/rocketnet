@@ -1502,8 +1502,10 @@ struct rocketnet_client_config_t
     /// and at least reliable_messages_in_flight. Packets with reliable
     /// messages and packets with only unreliable receipt sends share it.
     /// No entry is evicted before its ack lands while it holds every tracked
-    /// packet, of both kinds and resends included, sent between any packet's
-    /// send and the processing of its ack. Past that the
+    /// packet, of both kinds and resends included, sent from any packet's
+    /// send, that packet included, until the processing of its ack: the
+    /// packets_in_flight-th tracked packet sent after an entry evicts it
+    /// unless its ack was processed first. Past that the
     /// oldest entry can be evicted with its ack on the way: the late ack is
     /// ignored, a reliable entry's messages are resent, and a receipt-only
     /// entry's unreliable receipts report LOSS early. Default is 1024.
@@ -1753,8 +1755,10 @@ struct rocketnet_server_config_t
     /// and at least reliable_messages_in_flight. Packets with reliable
     /// messages and packets with only unreliable receipt sends share it.
     /// No entry is evicted before its ack lands while it holds every tracked
-    /// packet, of both kinds and resends included, sent between any packet's
-    /// send and the processing of its ack. Past that the
+    /// packet, of both kinds and resends included, sent from any packet's
+    /// send, that packet included, until the processing of its ack: the
+    /// packets_in_flight-th tracked packet sent after an entry evicts it
+    /// unless its ack was processed first. Past that the
     /// oldest entry can be evicted with its ack on the way: the late ack is
     /// ignored, a reliable entry's messages are resent, and a receipt-only
     /// entry's unreliable receipts report LOSS early. Default is 1024.
