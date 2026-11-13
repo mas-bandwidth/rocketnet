@@ -163,10 +163,10 @@ TailsOn(l) == tail[l] + SumOver([g \in Fillers |-> IF LineOf(g) = l THEN ChunkHo
 \* another filler's hold on the room: the claim it has added and not taken
 \* back, its granted frame not yet staged, the frame it staged and has not
 \* counted (the budget's reads miss it), the claims it is giving back, its
-\* own frame taken and not yet staged.  A filler with no claim added holds
+\* own frame taken and not yet staged or counted.  A filler with no claim holds
 \* nothing: what it claims after a read is counted then (Acquired)
 Held(g) == CASE pc[g] \in {"claimed", "read1", "read2", "read3", "raise", "test", "refused"} -> size[g]
-             [] pc[g] \in {"granted", "counting", "ownio"} -> 1
+             [] pc[g] \in {"granted", "counting", "ownio", "owncount"} -> 1
              [] pc[g] = "returning" -> ret[g]
              [] OTHER -> 0
 
