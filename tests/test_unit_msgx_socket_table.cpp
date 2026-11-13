@@ -303,6 +303,7 @@ static void test_rocketnet_msgx_socket_table_dead_report()
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &a ) );
     uint32_t generation = 0;
     const int slot = rocketnet_msgx_socket_table_stamp( test.table, &a, &generation );
+    rocketnet_unit_check( slot >= 0 );
     const int fd = test.table->slots[slot].fd;
 
     // a report about an older generation of the slot is ignored
@@ -436,7 +437,7 @@ static void test_rocketnet_msgx_socket_table_refused_and_full()
     // every open call is opened or counted refused
     rocketnet_unit_check( (uint64_t) ( test.kernel->opens + test.kernel->refused ) ==
                           msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPENED ) +
-                          msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED ) );
+                              msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED ) );
 
     // the quarantine ends: a's socket is closed and its slot free again
     rocketnet_msgx_socket_table_holder_end( test.table, 0 );

@@ -9,7 +9,7 @@
 #define ROCKETNET_SDK_ROCKETNET_MSGX_SEND_RUNS_H
 
 // The macOS batched server transport's send path over one taken bank
-// (sdk/rocketnet_server_msgx_darwin.cpp): the bank sorted by fill phase and
+// (sdk/rocketnet_server_msgx_apple.cpp): the bank sorted by fill phase and
 // socket slot, the runs of one slot and one generation, and the cursor a
 // send result moves.
 //

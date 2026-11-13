@@ -178,6 +178,7 @@ struct rocketnet_server_msgx_receiver_t
     struct rocketnet_server_msgx_recv_bank_t * main_bank;
     struct rocketnet_server_msgx_recv_bank_t * free_bank;
     uint32_t main_cursor;           // main only: the retained tail of main_bank
+    uint64_t main_stopped = 0;      // main only: the main bank's tail left at stop, RECEIVE_DROP_STOPPED
 
     uint8_t padding_2[4096];
 
@@ -792,8 +793,7 @@ static int rocketnet_server_msgx_run_send_shared( void * user, int i )
         return ROCKETNET_MSGX_SHARED_DROPPED;
     }
     context->worker->send_calls.fetch_add( 1, std::memory_order_relaxed );
-    const ssize_t result = rocketnet_server_msgx_test_send_fails( msgx ) ? -1 : sendto( msgx->shared_fd, bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bank->info[i].packet_bytes, 0,
-                                   (const struct sockaddr *) &sockaddr, socklen );
+    const ssize_t result = rocketnet_server_msgx_test_send_fails( msgx ) ? -1 : sendto( msgx->shared_fd, bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bank->info[i].packet_bytes, 0, (const struct sockaddr *) &sockaddr, socklen );
     if ( result >= 0 )
     {
         return ROCKETNET_MSGX_SHARED_SENT;
@@ -1049,6 +1049,22 @@ static void rocketnet_server_msgx_receive_worker( rocketnet_platform_thread_t *,
         }
     }
 
+    // every datagram this worker read and main will not take is counted:
+    // the bank it was filling and a published bank main has not claimed
+    rocketnet_platform_mutex_acquire( &receiver->mutex );
+    uint64_t left = receiver->worker_bank->num_packets;
+    receiver->worker_bank->num_packets = 0;
+    if ( receiver->ready_bank )
+    {
+        left += receiver->ready_bank->num_packets;
+        receiver->ready_bank->num_packets = 0;
+    }
+    rocketnet_platform_mutex_release( &receiver->mutex );
+    if ( left > 0 )
+    {
+        rocketnet_receive_drop_tally_count( &receiver->tally, ROCKETNET_RECEIVE_DROP_STOPPED, left );
+    }
+
     receiver->stopped.store( true, std::memory_order_release );
 }
 
@@ -1116,6 +1132,7 @@ void rocketnet_server_msgx_receive_drop_totals( struct rocketnet_server_msgx_t *
     rocketnet_assert( msgx );
     memset( values, 0, sizeof( uint64_t ) * ROCKETNET_RECEIVE_NUM_DROPS );
     rocketnet_receive_drop_tally_sum( &msgx->receiver->tally, 1, values );
+    values[ROCKETNET_RECEIVE_DROP_STOPPED] += msgx->receiver->main_stopped;
     values[ROCKETNET_RECEIVE_ACCEPT] = 0;
 }
 
@@ -1287,7 +1304,7 @@ static void rocketnet_server_msgx_abort_create( struct rocketnet_server_msgx_t *
 }
 
 struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, struct rocketnet_address_t * bind_address, int num_workers,
-                                                             int max_clients, const uint8_t * packet_filter, int * status )
+                                                               int max_clients, const uint8_t * packet_filter, int * status )
 {
     rocketnet_assert( bind_address );
     rocketnet_assert( packet_filter );
@@ -1372,6 +1389,7 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
         receiver->free_bank = &receiver->banks[2];
         receiver->ready_bank = NULL;
         receiver->main_cursor = 0;
+        receiver->main_stopped = 0;
         for ( int b = 0; b < 3; b++ )
         {
             receiver->banks[b].num_packets = 0;
@@ -1536,7 +1554,14 @@ void rocketnet_server_msgx_stop( struct rocketnet_server_msgx_t * msgx )
     }
     if ( msgx->receiver )
     {
-        msgx->receiver->quit.store( true, std::memory_order_release );
+        // main's own bank: a tail main has not processed is never processed
+        struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
+        if ( receiver->main_bank && receiver->main_cursor < receiver->main_bank->num_packets )
+        {
+            receiver->main_stopped += receiver->main_bank->num_packets - receiver->main_cursor;
+            receiver->main_cursor = receiver->main_bank->num_packets;
+        }
+        receiver->quit.store( true, std::memory_order_release );
     }
 }
 

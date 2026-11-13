@@ -66,7 +66,7 @@ set(ROCKETNET_SDK_SOURCES_LINUX
 
 # The macOS batched server (msgx), staged; iOS uses the common sources.
 set(ROCKETNET_SDK_SOURCES_APPLE
-    sdk/rocketnet_server_msgx_darwin.cpp)
+    sdk/rocketnet_server_msgx_apple.cpp)
 
 set(ROCKETNET_SDK_SOURCES_WINDOWS
     sdk/rocketnet_client_iocp_windows.cpp
