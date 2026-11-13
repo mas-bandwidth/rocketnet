@@ -18,8 +18,6 @@
 (***************************************************************************)
 EXTENDS RNXdpReceiveRing
 
-CONSTANTS F1, F2, F3
-
 PeekStagingRoomBroken == FALSE
 
 RefusedRefilledBroken == TRUE
