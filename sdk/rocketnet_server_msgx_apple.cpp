@@ -29,6 +29,7 @@
 #include "rocketnet_server_msgx.h"
 #include "rocketnet_msgx_socket_table.h"
 #include "rocketnet_msgx_send_runs.h"
+#include "rocketnet_msgx_receive_fill.h"
 #include "rocketnet_buffer_handoff.h"
 #include "rocketnet_receive_prefilter.h"
 #include "rocketnet_constants.h"
@@ -167,14 +168,12 @@ struct rocketnet_server_msgx_receiver_t
 
     uint8_t padding_1[4096];
 
-    // the receive_mutex guards ownership only (the gso transport's receive
-    // triple buffer, proofs/tla/RNGsoHandoff.tla RxPublish and RxClaim at 5a2dbf403)
+    // the mutex guards ownership only: which of banks[] the worker fills, which
+    // is ready, main's and the free one (sdk/rocketnet_msgx_receive_fill.h,
+    // proofs/tla/RNMsgxReceiveFill.tla Publish and Claim)
     rocketnet_platform_mutex_t mutex = {};
-    struct rocketnet_server_msgx_recv_bank_t * worker_bank;
-    struct rocketnet_server_msgx_recv_bank_t * ready_bank;
-    struct rocketnet_server_msgx_recv_bank_t * main_bank;
-    struct rocketnet_server_msgx_recv_bank_t * free_bank;
-    uint32_t main_cursor;           // main only: the retained tail of main_bank
+    struct rocketnet_msgx_receive_banks_t hand;
+    uint32_t main_cursor;           // main only: the retained tail of main's bank
     uint64_t main_stopped = 0;      // main only: the main bank's tail left at stop, RECEIVE_DROP_STOPPED
     uint64_t main_retired = 0;      // main only: datagrams read off a retired socket at its close, RECEIVE_DROP_RETIRED
 
@@ -223,6 +222,12 @@ struct rocketnet_server_msgx_t
     uint64_t packets_received;
     uint64_t receive_calls;
     uint64_t receive_refused;
+    int shared_receive_buffer;                  // SO_RCVBUF the kernel granted the shared socket
+
+    // finishes refused: a pointer that names no slot of the producer bank, or
+    // a finish after stop. Each is a packet lost, folded into SEND_FAILED as
+    // the gso transport folds its own (rocketnet_server_gso_send_finish_refused)
+    std::atomic<uint64_t> finish_refused{ 0 };
 
 #if ROCKETNET_DEV
     // rocketnet_server_msgx_test_fail_sends: the next count send calls
@@ -325,7 +330,10 @@ static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_ad
     ok = ok && ( shared || setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) == 0 );
     ok = ok && setsockopt( fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof( one ) ) == 0;
     ok = ok && ( !ipv6 || setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) == 0 );
-    ok = ok && setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &buffer_bytes, sizeof( buffer_bytes ) ) == 0;
+    // Darwin refuses a buffer above kern.ipc.maxsockbuf's share outright: the
+    // platform's halving walk takes the most it grants (the shared socket
+    // warns with what was asked and granted)
+    ok = ok && rocketnet_platform_set_socket_buffer_size( fd, SO_SNDBUF, buffer_bytes, "send", shared );
     if ( !ok )
     {
         const int error = errno;
@@ -386,8 +394,7 @@ static int rocketnet_server_msgx_table_open( void * user, const rocketnet_addres
         return fd;
     }
 
-    int receive_bytes = ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER;
-    setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_bytes, sizeof( receive_bytes ) );
+    rocketnet_platform_set_socket_buffer_size( fd, SO_RCVBUF, ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER, "receive", false );
 
     struct sockaddr_storage sockaddr;
     const socklen_t socklen = rocketnet_server_msgx_address_to_sockaddr( address, msgx->ipv6, &sockaddr );
@@ -402,11 +409,29 @@ static int rocketnet_server_msgx_table_open( void * user, const rocketnet_addres
 
 // the descriptor of a retired socket is closed here, on main. The poller forgot
 // it at the retire, so what the kernel queued for it since reaches no one:
-// every datagram it still holds is read and counted (RECEIVE_DROP_RETIRED)
-// before the close. Later datagrams of that address reach the shared socket.
+// every datagram it still holds is counted (RECEIVE_DROP_RETIRED) before the
+// close. Later datagrams of that address reach the shared socket. The count
+// is one syscall, getsockopt (SO_NUMRCVPKT, the datagrams in the receive
+// buffer), not a read of each on main (R70); the kernel still walks the
+// queued records to answer it, so it is not constant time. It is a count
+// taken once before the close, not accounting atomic with concurrent arrivals: a
+// datagram the kernel queues between the count and the close goes uncounted,
+// the same boundary the bounded drain had. Only if the kernel refuses the
+// option are they read and counted, bounded
 static void rocketnet_server_msgx_table_close( void * user, int fd )
 {
     struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) user;
+    int queued = 0;
+    socklen_t queued_bytes = sizeof( queued );
+    if ( getsockopt( fd, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 && queued >= 0 )
+    {
+        if ( msgx && msgx->receiver )
+        {
+            msgx->receiver->main_retired += (uint64_t) queued;
+        }
+        close( fd );
+        return;
+    }
     uint8_t scratch[ROCKETNET_FRAME_STRIDE];
     uint64_t drained = 0;
     for ( int i = 0; i < ROCKETNET_MSGX_RETIRED_DRAIN_LIMIT; i++ )
@@ -579,12 +604,14 @@ void rocketnet_server_msgx_finish_packet( struct rocketnet_server_msgx_t * msgx,
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
     if ( msgx->stopping )
     {
+        msgx->finish_refused.fetch_add( 1, std::memory_order_relaxed );
         return;
     }
     struct rocketnet_server_msgx_send_bank_t * bank = NULL;
     const int slot = rocketnet_server_msgx_slot_of( msgx, packet_id, packet_data, &bank );
     if ( slot < 0 )
     {
+        msgx->finish_refused.fetch_add( 1, std::memory_order_relaxed );
         return;
     }
     bank->info[slot].packet_bytes = packet_bytes;
@@ -768,28 +795,6 @@ struct rocketnet_server_msgx_send_context_t
     struct rocketnet_server_msgx_send_bank_t * bank;
 };
 
-static bool rocketnet_server_msgx_dead_error( int error )
-{
-    return error == ENOTCONN || error == EPIPE || error == EDESTADDRREQ;
-}
-
-static int rocketnet_server_msgx_send_error_kind( int error )
-{
-    if ( error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS )
-    {
-        return ROCKETNET_MSGX_SEND_FULL;
-    }
-    if ( error == ECONNREFUSED )
-    {
-        return ROCKETNET_MSGX_SEND_REFUSED;
-    }
-    if ( rocketnet_server_msgx_dead_error( error ) )
-    {
-        return ROCKETNET_MSGX_SEND_DEAD;
-    }
-    return ROCKETNET_MSGX_SEND_ERROR;
-}
-
 static int rocketnet_server_msgx_run_resolve( void * user, int table_slot, uint32_t generation )
 {
     struct rocketnet_server_msgx_send_context_t * context = (struct rocketnet_server_msgx_send_context_t *) user;
@@ -824,7 +829,7 @@ static int rocketnet_server_msgx_run_send( void * user, int fd, const int * pack
     {
         return result > num_packets ? num_packets : (int) result;
     }
-    return rocketnet_server_msgx_send_error_kind( errno );
+    return rocketnet_msgx_send_error_kind( errno );
 }
 
 // one packet on the shared socket
@@ -845,7 +850,7 @@ static int rocketnet_server_msgx_run_send_shared( void * user, int i )
     {
         return ROCKETNET_MSGX_SHARED_SENT;
     }
-    return rocketnet_server_msgx_send_error_kind( errno ) == ROCKETNET_MSGX_SEND_FULL ? ROCKETNET_MSGX_SHARED_FULL : ROCKETNET_MSGX_SHARED_DROPPED;
+    return rocketnet_msgx_send_error_kind( errno ) == ROCKETNET_MSGX_SEND_FULL ? ROCKETNET_MSGX_SHARED_FULL : ROCKETNET_MSGX_SHARED_DROPPED;
 }
 
 // Sends the sorted bank from *cursor (sdk/rocketnet_msgx_send_runs.h,
@@ -945,116 +950,159 @@ static void rocketnet_server_msgx_worker( rocketnet_platform_thread_t *, void * 
 // receive
 // ---------------------------------------------------------------------------
 
-// proofs/tla/RNGsoHandoff.tla RxPublish (at 5a2dbf403): the filled bank becomes ready only
-// when none waits and a free bank exists; otherwise the worker keeps it
+static struct rocketnet_server_msgx_recv_bank_t * rocketnet_server_msgx_bank( struct rocketnet_server_msgx_receiver_t * receiver, int index )
+{
+    return index >= 0 && index < 3 ? &receiver->banks[index] : NULL;
+}
+
+// what one drain of rocketnet_msgx_receive_drain works on: the callbacks'
+// user of sdk/rocketnet_msgx_receive_fill.h
+struct rocketnet_server_msgx_drain_context_t
+{
+    struct rocketnet_server_msgx_t * msgx;
+    struct rocketnet_server_msgx_receiver_t * receiver;
+    int slot;                       // the socket's table slot, -1 for the shared socket
+    uint32_t generation;
+};
+
+// the receive worker's bank: written by the worker alone between publishes,
+// and the worker is the only thread that moves hand.worker
+static struct rocketnet_server_msgx_recv_bank_t * rocketnet_server_msgx_worker_bank( struct rocketnet_server_msgx_receiver_t * receiver )
+{
+    return rocketnet_server_msgx_bank( receiver, receiver->hand.worker );
+}
+
+static int rocketnet_server_msgx_fill_banked( void * user )
+{
+    struct rocketnet_server_msgx_drain_context_t * context = (struct rocketnet_server_msgx_drain_context_t *) user;
+    return (int) rocketnet_server_msgx_worker_bank( context->receiver )->num_packets;
+}
+
+// one recvmsg_x of at most want datagrams into the scratch
+static int rocketnet_server_msgx_fill_read( void * user, int fd, int want )
+{
+    struct rocketnet_server_msgx_drain_context_t * context = (struct rocketnet_server_msgx_drain_context_t *) user;
+    struct rocketnet_server_msgx_receiver_t * receiver = context->receiver;
+    rocketnet_assert( want >= 1 && want <= ROCKETNET_MSGX_RECV_BATCH );
+    for ( int i = 0; i < want; i++ )
+    {
+        receiver->iovecs[i].iov_base = receiver->scratch[i];
+        receiver->iovecs[i].iov_len = sizeof( receiver->scratch[i] );
+        memset( &receiver->messages[i], 0, sizeof( receiver->messages[i] ) );
+        receiver->messages[i].msg_name = &receiver->names[i];
+        receiver->messages[i].msg_namelen = sizeof( struct sockaddr_storage );
+        receiver->messages[i].msg_iov = &receiver->iovecs[i];
+        receiver->messages[i].msg_iovlen = 1;
+    }
+    rocketnet_server_msgx_worker_bank( receiver )->receive_calls++;
+    const ssize_t count = context->msgx->recvmsg_x( fd, receiver->messages, (u_int) want, MSG_DONTWAIT );
+    if ( count < 0 )
+    {
+        const int error = errno;
+        return error > 0 ? -error : -EIO;
+    }
+    return count > want ? want : (int) count;
+}
+
+// datagram i of the last read: banked, or counted by name (the prefilter's
+// reasons, TOO_LARGE, RECEIVE_FAILED for a source it cannot read). The drain
+// asked for no more than the bank has room for
+static void rocketnet_server_msgx_fill_take( void * user, int i )
+{
+    struct rocketnet_server_msgx_drain_context_t * context = (struct rocketnet_server_msgx_drain_context_t *) user;
+    struct rocketnet_server_msgx_t * msgx = context->msgx;
+    struct rocketnet_server_msgx_receiver_t * receiver = context->receiver;
+    struct rocketnet_server_msgx_recv_bank_t * bank = rocketnet_server_msgx_worker_bank( receiver );
+    const struct rocketnet_server_msgx_msghdr_x_t * message = &receiver->messages[i];
+    const int bytes = (int) message->msg_datalen;
+
+    if ( message->msg_flags & MSG_TRUNC )
+    {
+        rocketnet_receive_drop_tally_count( &receiver->tally, ROCKETNET_RECEIVE_DROP_TOO_LARGE );
+        return;
+    }
+
+    const enum rocketnet_receive_drop_t drop = rocketnet_receive_prefilter( receiver->scratch[i], bytes, msgx->packet_filter );
+    if ( drop != ROCKETNET_RECEIVE_ACCEPT )
+    {
+        rocketnet_receive_drop_tally_count( &receiver->tally, drop );
+        return;
+    }
+
+    rocketnet_address_t from;
+    if ( message->msg_namelen == 0 || !rocketnet_server_msgx_sockaddr_to_address( &receiver->names[i], msgx->ipv6, &from ) )
+    {
+        rocketnet_receive_drop_tally_count( &receiver->tally, ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED );
+        return;
+    }
+
+    rocketnet_assert( bank->num_packets < ROCKETNET_MSGX_RECV_QUEUE_SIZE );
+    const uint32_t index = bank->num_packets++;
+    bank->from[index] = from;
+    bank->packet_bytes[index] = bytes;
+    memcpy( bank->packet_data[index], receiver->scratch[i], (size_t) bytes );
+}
+
+// proofs/tla/RNMsgxReceiveFill.tla Publish: the worker's bank becomes ready
+// only when none waits and a free bank exists; otherwise the worker keeps it
 static bool rocketnet_server_msgx_publish_receive( struct rocketnet_server_msgx_receiver_t * receiver )
 {
     rocketnet_platform_mutex_acquire( &receiver->mutex );
-    const bool published = !receiver->ready_bank && receiver->free_bank;
-    if ( published )
-    {
-        receiver->ready_bank = receiver->worker_bank;
-        receiver->worker_bank = receiver->free_bank;
-        receiver->free_bank = NULL;
-    }
+    const bool published = rocketnet_msgx_receive_publish( &receiver->hand );
     rocketnet_platform_mutex_release( &receiver->mutex );
     return published;
 }
 
-// one socket drained into the worker's bank: every datagram read is banked
-// or counted by name (the prefilter's reasons, BANK_FULL, RECEIVE_FAILED)
-static void rocketnet_server_msgx_drain( struct rocketnet_server_msgx_t * msgx, struct rocketnet_server_msgx_receiver_t * receiver, int fd,
-                                         int slot, uint32_t generation, int budget )
+static bool rocketnet_server_msgx_fill_publish( void * user )
 {
-    struct rocketnet_server_msgx_recv_bank_t * bank = receiver->worker_bank;
-    int reads = 0;
-    while ( reads < budget )
+    struct rocketnet_server_msgx_drain_context_t * context = (struct rocketnet_server_msgx_drain_context_t *) user;
+    return rocketnet_server_msgx_publish_receive( context->receiver );
+}
+
+// a failed read (rocketnet_msgx_receive_error_kind): an ICMP error queued for
+// the client is counted beside ECONNREFUSED in receive_refused and read past;
+// ENOBUFS is read past and counted RECEIVE_FAILED, as before; EINTR is read
+// past uncounted (a signal, nothing lost); a dead connected socket is
+// reported to the table; a dead or failed read counts RECEIVE_FAILED
+static void rocketnet_server_msgx_fill_failed( void * user, int fd, int kind, int error )
+{
+    (void) fd;
+    struct rocketnet_server_msgx_drain_context_t * context = (struct rocketnet_server_msgx_drain_context_t *) user;
+    struct rocketnet_server_msgx_receiver_t * receiver = context->receiver;
+    if ( kind == ROCKETNET_MSGX_RECEIVE_WEATHER )
     {
-        const int want = ROCKETNET_MSGX_RECV_BATCH;
-        for ( int i = 0; i < want; i++ )
+        if ( error == ENOBUFS )
         {
-            receiver->iovecs[i].iov_base = receiver->scratch[i];
-            receiver->iovecs[i].iov_len = sizeof( receiver->scratch[i] );
-            memset( &receiver->messages[i], 0, sizeof( receiver->messages[i] ) );
-            receiver->messages[i].msg_name = &receiver->names[i];
-            receiver->messages[i].msg_namelen = sizeof( struct sockaddr_storage );
-            receiver->messages[i].msg_iov = &receiver->iovecs[i];
-            receiver->messages[i].msg_iovlen = 1;
-        }
-
-        bank->receive_calls++;
-        const ssize_t count = msgx->recvmsg_x( fd, receiver->messages, (u_int) want, MSG_DONTWAIT );
-        if ( count < 0 )
-        {
-            const int error = errno;
-            if ( error == EINTR )
-            {
-                continue;
-            }
-            if ( error == EAGAIN || error == EWOULDBLOCK )
-            {
-                return;
-            }
-            if ( error == ECONNREFUSED )
-            {
-                bank->refused++;
-                continue;                       // the pending ICMP error is cleared by this read
-            }
-            if ( slot >= 0 && rocketnet_server_msgx_dead_error( error ) )
-            {
-                rocketnet_msgx_socket_table_report_dead( msgx->table, slot, generation );
-            }
             rocketnet_receive_drop_tally_count( &receiver->tally, ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED );
-            return;
         }
-        if ( count == 0 )
+        else if ( error != EINTR )
         {
-            return;
+            rocketnet_server_msgx_worker_bank( receiver )->refused++;
         }
-        reads += (int) count;
-
-        for ( int i = 0; i < (int) count; i++ )
-        {
-            const struct rocketnet_server_msgx_msghdr_x_t * message = &receiver->messages[i];
-            const int bytes = (int) message->msg_datalen;
-
-            if ( message->msg_flags & MSG_TRUNC )
-            {
-                rocketnet_receive_drop_tally_count( &receiver->tally, ROCKETNET_RECEIVE_DROP_TOO_LARGE );
-                continue;
-            }
-
-            const enum rocketnet_receive_drop_t drop = rocketnet_receive_prefilter( receiver->scratch[i], bytes, msgx->packet_filter );
-            if ( drop != ROCKETNET_RECEIVE_ACCEPT )
-            {
-                rocketnet_receive_drop_tally_count( &receiver->tally, drop );
-                continue;
-            }
-
-            rocketnet_address_t from;
-            if ( message->msg_namelen == 0 || !rocketnet_server_msgx_sockaddr_to_address( &receiver->names[i], msgx->ipv6, &from ) )
-            {
-                rocketnet_receive_drop_tally_count( &receiver->tally, ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED );
-                continue;
-            }
-
-            if ( bank->num_packets >= ROCKETNET_MSGX_RECV_QUEUE_SIZE )
-            {
-                rocketnet_receive_drop_tally_count( &receiver->tally, ROCKETNET_RECEIVE_DROP_BANK_FULL );
-                continue;
-            }
-
-            const uint32_t index = bank->num_packets++;
-            bank->from[index] = from;
-            bank->packet_bytes[index] = bytes;
-            memcpy( bank->packet_data[index], receiver->scratch[i], (size_t) bytes );
-        }
-
-        if ( count < want )
-        {
-            return;
-        }
+        return;
     }
+    if ( kind == ROCKETNET_MSGX_RECEIVE_DEAD && context->slot >= 0 )
+    {
+        rocketnet_msgx_socket_table_report_dead( context->msgx->table, context->slot, context->generation );
+    }
+    rocketnet_receive_drop_tally_count( &receiver->tally, ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED );
+}
+
+// one ready socket drained into the worker's bank, into room only
+// (sdk/rocketnet_msgx_receive_fill.h): false when the bank is full and main
+// has not taken the last one, so the round stops and the kernel keeps the rest
+static bool rocketnet_server_msgx_drain( struct rocketnet_server_msgx_t * msgx, struct rocketnet_server_msgx_receiver_t * receiver, int fd,
+                                         int slot, uint32_t generation )
+{
+    struct rocketnet_server_msgx_drain_context_t context = { msgx, receiver, slot, generation };
+    struct rocketnet_msgx_receive_io_t io;
+    io.user = &context;
+    io.banked = rocketnet_server_msgx_fill_banked;
+    io.read = rocketnet_server_msgx_fill_read;
+    io.take = rocketnet_server_msgx_fill_take;
+    io.publish = rocketnet_server_msgx_fill_publish;
+    io.failed = rocketnet_server_msgx_fill_failed;
+    return rocketnet_msgx_receive_drain( &io, fd, ROCKETNET_MSGX_RECV_QUEUE_SIZE, ROCKETNET_MSGX_RECV_BATCH, ROCKETNET_MSGX_RECV_SOCKET_BUDGET );
 }
 
 static void rocketnet_server_msgx_receive_worker( rocketnet_platform_thread_t *, void * context )
@@ -1069,9 +1117,10 @@ static void rocketnet_server_msgx_receive_worker( rocketnet_platform_thread_t *,
         // closed until the pass ends (proofs/tla/RNMsgxSocketTable.tla RxResolve)
         rocketnet_msgx_socket_table_holder_begin( msgx->table, holder );
 
+        bool held = false;
         struct timespec timeout = { 0, 1000000 };
         const int ready = kevent( msgx->kq, NULL, 0, receiver->events, ROCKETNET_MSGX_RECV_EVENTS, &timeout );
-        for ( int e = 0; e < ready; e++ )
+        for ( int e = 0; e < ready && !held; e++ )
         {
             const struct kevent * event = &receiver->events[e];
             if ( event->filter != EVFILT_READ )
@@ -1090,32 +1139,42 @@ static void rocketnet_server_msgx_receive_worker( rocketnet_platform_thread_t *,
             }
             // a bounded read per socket per round, so one flooded socket
             // (the shared one under a blast) cannot hold the others back;
-            // what it leaves stays readable for the next round
-            rocketnet_server_msgx_drain( msgx, receiver, (int) event->ident, slot, generation, ROCKETNET_MSGX_RECV_SOCKET_BUDGET );
+            // what it leaves stays readable for the next round. A full bank
+            // main has not made room for ends the round (RNMsgxReceiveFill
+            // HoldFull): every socket keeps what it holds
+            held = !rocketnet_server_msgx_drain( msgx, receiver, (int) event->ident, slot, generation );
         }
 
         rocketnet_msgx_socket_table_holder_end( msgx->table, holder );
 
-        struct rocketnet_server_msgx_recv_bank_t * bank = receiver->worker_bank;
-        if ( bank->num_packets > 0 || bank->receive_calls > 0 || bank->refused > 0 )
+        // RNMsgxReceiveFill RoundPublish and RoundKeep: the round's bank goes
+        // to main when main has taken the last one
+        struct rocketnet_server_msgx_recv_bank_t * bank = rocketnet_server_msgx_worker_bank( receiver );
+        if ( !held && ( bank->num_packets > 0 || bank->receive_calls > 0 || bank->refused > 0 ) )
         {
-            const bool published = rocketnet_server_msgx_publish_receive( receiver );
-            if ( !published && bank->num_packets >= ROCKETNET_MSGX_RECV_QUEUE_SIZE )
-            {
-                rocketnet_platform_sleep( 0.0005 );
-            }
+            rocketnet_server_msgx_publish_receive( receiver );
+        }
+
+        // RNMsgxReceiveFill Sleep: a held round reads nothing until main
+        // takes the ready bank; the sockets stay readable, so the worker
+        // waits instead of polling them again at once
+        if ( held )
+        {
+            rocketnet_platform_sleep( ROCKETNET_MSGX_RECV_HOLD_SECONDS );
         }
     }
 
     // every datagram this worker read and main will not take is counted:
     // the bank it was filling and a published bank main has not claimed
     rocketnet_platform_mutex_acquire( &receiver->mutex );
-    uint64_t left = receiver->worker_bank->num_packets;
-    receiver->worker_bank->num_packets = 0;
-    if ( receiver->ready_bank )
+    struct rocketnet_server_msgx_recv_bank_t * worker_bank = rocketnet_server_msgx_bank( receiver, receiver->hand.worker );
+    struct rocketnet_server_msgx_recv_bank_t * ready_bank = rocketnet_server_msgx_bank( receiver, receiver->hand.ready );
+    uint64_t left = worker_bank->num_packets;
+    worker_bank->num_packets = 0;
+    if ( ready_bank )
     {
-        left += receiver->ready_bank->num_packets;
-        receiver->ready_bank->num_packets = 0;
+        left += ready_bank->num_packets;
+        ready_bank->num_packets = 0;
     }
     rocketnet_platform_mutex_release( &receiver->mutex );
     if ( left > 0 )
@@ -1139,28 +1198,25 @@ void rocketnet_server_msgx_receive_packets( struct rocketnet_server_msgx_t * msg
     msgx->process_packets.num_packets = 0;
     struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
 
-    // proofs/tla/RNGsoHandoff.tla RxClaim and RxConsume (at 5a2dbf403): a retained tail is
-    // consumed before a newer ready bank is claimed
-    if ( receiver->main_cursor >= receiver->main_bank->num_packets )
+    // proofs/tla/RNMsgxReceiveFill.tla Claim (RNGsoHandoff.tla RxClaim and
+    // RxConsume at 5a2dbf403): a retained tail is consumed before a newer
+    // ready bank is claimed. Only main moves hand.main
+    struct rocketnet_server_msgx_recv_bank_t * held = rocketnet_server_msgx_bank( receiver, receiver->hand.main );
+    if ( receiver->main_cursor >= held->num_packets )
     {
-        receiver->main_bank->num_packets = 0;
+        held->num_packets = 0;
         receiver->main_cursor = 0;
         if ( !rocketnet_platform_mutex_try_acquire( &receiver->mutex ) )
         {
             return;
         }
-        struct rocketnet_server_msgx_recv_bank_t * ready = receiver->ready_bank;
-        if ( ready )
-        {
-            receiver->ready_bank = NULL;
-            receiver->free_bank = receiver->main_bank;
-            receiver->main_bank = ready;
-        }
+        const bool claimed = rocketnet_msgx_receive_claim( &receiver->hand );
         rocketnet_platform_mutex_release( &receiver->mutex );
-        if ( !ready )
+        if ( !claimed )
         {
             return;
         }
+        struct rocketnet_server_msgx_recv_bank_t * ready = rocketnet_server_msgx_bank( receiver, receiver->hand.main );
         msgx->packets_received += ready->num_packets;
         msgx->receive_calls += ready->receive_calls;
         msgx->receive_refused += ready->refused;
@@ -1168,7 +1224,7 @@ void rocketnet_server_msgx_receive_packets( struct rocketnet_server_msgx_t * msg
         ready->refused = 0;
     }
 
-    struct rocketnet_server_msgx_recv_bank_t * bank = receiver->main_bank;
+    struct rocketnet_server_msgx_recv_bank_t * bank = rocketnet_server_msgx_bank( receiver, receiver->hand.main );
     while ( receiver->main_cursor < bank->num_packets && msgx->process_packets.num_packets < msgx->process_packets.capacity )
     {
         const uint32_t source = receiver->main_cursor++;
@@ -1429,6 +1485,7 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
     msgx->packets_received = 0;
     msgx->receive_calls = 0;
     msgx->receive_refused = 0;
+    msgx->shared_receive_buffer = 0;
     memset( &msgx->process_packets, 0, sizeof( msgx->process_packets ) );
 
     bool ok = rocketnet_server_process_packets_create( context, &msgx->process_packets, rocketnet_server_receive_packets_per_update( max_clients ) );
@@ -1448,10 +1505,7 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
         new ( msgx->receiver ) rocketnet_server_msgx_receiver_t();
         struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
         receiver->thread = NULL;
-        receiver->worker_bank = &receiver->banks[0];
-        receiver->main_bank = &receiver->banks[1];
-        receiver->free_bank = &receiver->banks[2];
-        receiver->ready_bank = NULL;
+        rocketnet_msgx_receive_banks_init( &receiver->hand );
         receiver->main_cursor = 0;
         receiver->main_stopped = 0;
         receiver->main_retired = 0;
@@ -1505,11 +1559,16 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
         rocketnet_server_msgx_free( msgx );
         return NULL;
     }
-    int receive_request = rocketnet_server_transport_receive_buffer_request( "msgx", max_clients );
-    setsockopt( msgx->shared_fd, SOL_SOCKET, SO_RCVBUF, &receive_request, sizeof( receive_request ) );
+    // Darwin refuses a request above its limit (kern.ipc.maxsockbuf, 8 MiB
+    // stock, of which about 7.1 MiB is grantable) with ENOBUFS and keeps its
+    // default (about 768 KiB): the platform's halving walk takes the most it
+    // grants, and the log line says what was asked and what was granted
+    const int receive_request = rocketnet_server_transport_receive_buffer_request( "msgx", max_clients );
+    rocketnet_platform_set_socket_buffer_size( msgx->shared_fd, SO_RCVBUF, receive_request, "receive", false );
     int granted_receive = 0;
     socklen_t optlen = sizeof( granted_receive );
     getsockopt( msgx->shared_fd, SOL_SOCKET, SO_RCVBUF, &granted_receive, &optlen );
+    msgx->shared_receive_buffer = granted_receive;
     rocketnet_server_receive_buffer_granted( "msgx", receive_request, granted_receive );
 
     if ( bind_address->port == 0 )
@@ -1625,11 +1684,17 @@ void rocketnet_server_msgx_stop( struct rocketnet_server_msgx_t * msgx )
     {
         // main's own bank: a tail main has not processed is never processed
         struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
-        if ( receiver->main_bank && receiver->main_cursor < receiver->main_bank->num_packets )
+        struct rocketnet_server_msgx_recv_bank_t * held = rocketnet_server_msgx_bank( receiver, receiver->hand.main );
+        if ( held && receiver->main_cursor < held->num_packets )
         {
-            receiver->main_stopped += receiver->main_bank->num_packets - receiver->main_cursor;
-            receiver->main_cursor = receiver->main_bank->num_packets;
+            receiver->main_stopped += held->num_packets - receiver->main_cursor;
+            receiver->main_cursor = held->num_packets;
         }
+        // RNMsgxReceiveFill MainStop: main claims nothing more. A bank ready
+        // now or published later stays the worker's, counted at its exit;
+        // claimed, its tail would be read by no later update and counted by
+        // nobody (R69)
+        rocketnet_msgx_receive_stop( &receiver->hand );
         receiver->quit.store( true, std::memory_order_release );
     }
 }
@@ -1751,6 +1816,7 @@ void rocketnet_server_msgx_stats( struct rocketnet_server_msgx_t * msgx, struct 
     stats->sockets_retired_dead = table->retired_dead;
     stats->socket_cooldown = table->cooldown;
     stats->sockets_in_quarantine = (uint64_t) msgx->table->num_retired;
+    stats->shared_receive_buffer = (uint64_t) msgx->shared_receive_buffer;
 }
 
 uint64_t rocketnet_server_msgx_send_failures( struct rocketnet_server_msgx_t * msgx )
@@ -1764,6 +1830,8 @@ uint64_t rocketnet_server_msgx_send_failures( struct rocketnet_server_msgx_t * m
             dropped += msgx->workers[w]->dropped.load( std::memory_order_relaxed );
         }
     }
+    // and the frames a refused finish never staged
+    dropped += msgx->finish_refused.load( std::memory_order_relaxed );
     return dropped;
 }
 

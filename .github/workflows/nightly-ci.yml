@@ -46,6 +46,15 @@ defaults:
 
 jobs:
   full:
+    # A called workflow cannot hold more than its caller job grants: the shard summary
+    # jobs of ci.yml read the run job list (actions: read), and every checkout needs
+    # contents: read.
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/ci.yml
     with:
       full: true
+      # The API lists every job of ci.yml here as "full / <name>", this job id and " / ":
+      # the shard summary jobs look their shards up under it. Renaming this job changes it.
+      job_name_prefix: "full / "

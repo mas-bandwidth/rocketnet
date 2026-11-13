@@ -244,7 +244,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Each server transport's own network thread count, six int fields appended
 // to the transport config, crosses one 64-byte rounding: actual=1625576995
 // (studio, Apple clang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624528419 )
+// The msgx receive bank holds one update's whole receive budget
+// (ROCKETNET_MSGX_RECV_QUEUE_SIZE, 16000 at 1000 clients, was 8192; review
+// E3): three banks of 7808 more entries add 35042248 to the server: actual=
+// 1660619243 (mini-m5, Apple clang, Debug, DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1659570667 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).

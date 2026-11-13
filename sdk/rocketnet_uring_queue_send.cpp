@@ -426,7 +426,9 @@ int rocketnet_uring_queue_send_result( int res, bool segmented )
     {
         return ROCKETNET_URING_QUEUE_SEND_OK;
     }
-    if ( res == -EAGAIN )
+    // no room now, nothing wrong with the run: sent again after the
+    // worker's wait, as gso retries these (rocketnet_server_gso_linux.cpp)
+    if ( res == -EAGAIN || res == -EINTR || res == -ENOBUFS || res == -ENOMEM )
     {
         return ROCKETNET_URING_QUEUE_SEND_AGAIN;
     }
