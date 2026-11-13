@@ -1318,8 +1318,10 @@ jobs:
     if: always()
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
     permissions:
       actions: read
+      contents: read
     steps:
       # Only the checker script is fetched, not the tree.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
