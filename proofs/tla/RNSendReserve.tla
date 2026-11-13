@@ -164,25 +164,28 @@ TailsOn(l) == tail[l] + SumOver([g \in Fillers |-> IF LineOf(g) = l THEN ChunkHo
 Held(g) == IF pc[g] = "idle" THEN 0
            ELSE Max(1, ChunkHold(g) + ret[g] + (IF pc[g] = "counting" THEN 1 ELSE 0))
 
-\* the room read (Read2) and, at that same step, the own frames taken, every
-\* other filler's hold and the lines' tails: frames a filler held then are
-\* inside that room, so the ghosts below judge the room against them
-Snap(f) == [r |-> free, o |-> ownTaken, t |-> Tails,
-            h |-> [g \in Fillers |-> IF g = f THEN 0 ELSE Held(g)]]
-NoSnap == [r |-> 0, o |-> 0, t |-> 0, h |-> [g \in Fillers |-> 0]]
+\* the room read (Read2) and, at that same step, the own frames taken, the
+\* other fillers in flight and their holds, and the lines' tails: frames
+\* held then are inside that room.  a counts the frames the other fillers
+\* claimed since (a claim's add, an own frame taken), up to MaxFree + 1,
+\* past which no room read can have them
+Snap(f) == [r |-> free, o |-> ownTaken, b |-> Busy(f), t |-> Tails, a |-> 0,
+            h |-> SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE Held(g)], Fillers)]
+NoSnap == [r |-> 0, o |-> 0, b |-> 0, t |-> 0, a |-> 0, h |-> 0]
+Window == {"read1", "read3", "raise", "test"}   \* after the room read, before the decision
+Acquired(g, n) == [f \in Fillers |-> IF f /= g /\ pc[f] \in Window
+                                        THEN [seenR[f] EXCEPT !.a = IF @ + n > MaxFree THEN MaxFree + 1 ELSE @ + n]
+                                        ELSE seenR[f]]
 
 \* a decision on the room s.r read with s: that room was above what the
 \* protocol still needed (the reserve less the own frames taken), with a
-\* frame for f and one for every other filler in flight at the read or now
-RoomFor(f, s) ==
-    s.r + s.o > Reserve + Cardinality({g \in Fillers \ {f} : s.h[g] > 0 \/ pc[g] /= "idle"})
-\* the same, past every other filler's hold and the lines' tails, each the
-\* larger of its value at the read and now: a hold taken after the read
-\* (a filler claiming since) is no starvation, nor is one given up since
-\* (its frames were inside the room read)
-RoomPastTails(f, s) ==
-    s.r + s.o > Reserve + SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE Max(s.h[g], Held(g))], Fillers)
-                        + Max(s.t, Tails)
+\* frame for f, one for every other filler in flight at the read, and one
+\* for every frame claimed since
+RoomFor(f, s) == s.r + s.o > Reserve + s.b + s.a
+\* the same, past every other filler's hold and the lines' tails at the
+\* read and every frame claimed since: room given back after the read is
+\* no starvation, nor is room a filler claiming since takes
+RoomPastTails(f, s) == s.r + s.o > Reserve + s.h + s.t + s.a
 
 TypeOK ==
     /\ free \in 0..MaxFree
@@ -203,7 +206,7 @@ TypeOK ==
     /\ racc \in [Fillers -> Nat]
     /\ seenS \in [Fillers -> Nat]
     /\ seenO \in [Fillers -> Nat]
-    /\ seenR \in [Fillers -> [r : Nat, o : Nat, h : [Fillers -> Nat], t : Nat]]
+    /\ seenR \in [Fillers -> [r : Nat, o : Nat, b : Nat, t : Nat, a : Nat, h : Nat]]
     /\ roomy \in [Fillers -> BOOLEAN]
     /\ starved \in BOOLEAN
     /\ unnamed \in BOOLEAN
@@ -281,8 +284,9 @@ OwnClaim(f) ==
     /\ ownUsed' = IF OwnCountFirst THEN ownUsed + 1 ELSE ownUsed
     /\ pc' = [pc EXCEPT ![f] = "ownio"]
     /\ claimsDone' = [claimsDone EXCEPT ![f] = @ + 1]
+    /\ seenR' = Acquired(f, 1)
     /\ UNCHANGED <<free, claims, budget, tail, size, claim, ret, ld, rpos, racc, seenS,
-                   seenO, seenR, roomy, starved, unnamed, retired, phases>>
+                   seenO, roomy, starved, unnamed, retired, phases>>
 
 \* staged; or the transport refuses it (no room, or its own reason): the
 \* client's keep-alive stays due and its frame stays in the reserve
@@ -361,8 +365,9 @@ Claim(f) ==
                /\ UNCHANGED claims
           ELSE /\ pc' = [pc EXCEPT ![f] = "claimed"]
                /\ claims' = claims + size[f]
+    /\ seenR' = Acquired(f, size[f])
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, tail, size, ret,
-                   uncounted, ld, rpos, racc, seenS, seenO, seenR, roomy, starved,
+                   uncounted, ld, rpos, racc, seenS, seenO, roomy, starved,
                    unnamed, claimsDone, retired, phases>>
 
 ClaimStore(f) ==
