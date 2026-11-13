@@ -60,6 +60,7 @@
 #include "rocketnet_uring_queue_send.h"
 #include "rocketnet_uring_queue_worker.h"
 #include "rocketnet_uring_receive_queue.h"
+#include "rocketnet_uring_counters.h"
 
 #include <pthread.h>
 #include <sched.h>
@@ -1229,23 +1230,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
         const uint64_t dropped = rocketnet_uring_queue_send_counter( uring->send, i, ROCKETNET_URING_QUEUE_SEND_COUNTER_DROPPED );
         const uint64_t abandoned = rocketnet_uring_queue_send_counter( uring->send, i, ROCKETNET_URING_QUEUE_SEND_COUNTER_ABANDONED );
 
-        counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] += sent;
-        counters[ROCKETNET_COUNTER_URING_PACKETS_RECEIVED] += receive[ROCKETNET_URING_RECEIVE_COUNTER_BANKED];
-        counters[ROCKETNET_COUNTER_URING_SUBMIT_SYSCALLS] += worker[ROCKETNET_URING_WORKER_COUNTER_SUBMITS];
-        counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] += dropped + abandoned;
-        counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE] += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE];
-        counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW] += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_OVERFLOW];
-        counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE] += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOURCE];
-        counters[ROCKETNET_COUNTER_URING_RECEIVE_NO_BUFFERS] += receive[ROCKETNET_URING_RECEIVE_COUNTER_NO_BUFFERS];
-        counters[ROCKETNET_COUNTER_URING_RECEIVE_REARMS] += receive[ROCKETNET_URING_RECEIVE_COUNTER_REARMS];
-        counters[ROCKETNET_COUNTER_URING_REAP_DEFERRED] += worker[ROCKETNET_URING_WORKER_COUNTER_REAP_DEFERRED];
-        counters[ROCKETNET_COUNTER_URING_SEND_DEFERRED] += worker[ROCKETNET_URING_WORKER_COUNTER_SOCKET_FULL];
-        counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER] += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_NO_BUFFER];
-        counters[ROCKETNET_COUNTER_URING_RECEIVE_REARM_FAILED] += receive[ROCKETNET_URING_RECEIVE_COUNTER_REARM_FAILED];
-        counters[ROCKETNET_COUNTER_URING_GSO_SENDS] += worker[ROCKETNET_URING_WORKER_COUNTER_GSO_SENDS];
-        counters[ROCKETNET_COUNTER_URING_GSO_FALLBACKS] += worker[ROCKETNET_URING_WORKER_COUNTER_GSO_FALLBACKS];
-        counters[ROCKETNET_COUNTER_URING_GRO_BATCHES] += receive[ROCKETNET_URING_RECEIVE_COUNTER_GRO_BATCHES];
-        counters[ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS] += receive[ROCKETNET_URING_RECEIVE_COUNTER_GRO_CMSG_FAULTS];
+        rocketnet_uring_counters_add_queue( counters, receive, worker, sent, dropped, abandoned );
 
         // a run the socket family cannot name is dropped by the worker
         // without a send: rocketnet_uring_queue_send_complete( FAILED )

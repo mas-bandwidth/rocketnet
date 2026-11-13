@@ -119,6 +119,7 @@ sdk/rocketnet_socket_buffer.cpp	the socket buffer size request, its step and its
 sdk/rocketnet_socket_buffer.h	declarations for socket_buffer.cpp; writes no byte
 sdk/rocketnet_token_tables.h	server token tables
 sdk/rocketnet_uring_codec.h	io_uring completion codec
+sdk/rocketnet_uring_counters.h	how the queue modules' counts sum into the public rows; no packet byte
 sdk/rocketnet_uring_pin.h	the io_uring queue workers' cpu placement and its refusals; no packet byte
 sdk/rocketnet_uring_queue_send.cpp	the io_uring queue's send handoff between the game threads, main and the worker: claims, publishes, retires banks; reads each slot's destination and byte count; writes no packet byte
 sdk/rocketnet_uring_queue_send.h	declarations for uring_queue_send.cpp; writes no byte
