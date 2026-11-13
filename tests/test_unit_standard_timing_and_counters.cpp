@@ -180,7 +180,7 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] = {
                         "787af1000000f662a5c4010000b1a18538000000989fb0ca000000d96dc232000000d60807de0000"
                         "009608d9fc0100009ccefc4d010000c651bf7f01000000b0c89c000000da8a2b5101000037df03d7"
                         "0100001c31f257000000d41f4d66000000697daed0010000054cede00000002a63c3160000006f54"
-                        "6f12000000625c6305000000f9e30187000000a1e90dd30000002c798ccf010000dd5b1fd0000000" ),
+                        "6f12000000625c6305000000a1e90dd30000002c798ccf010000dd5b1fd0000000" ),
 };
 
 static void test_standard_timing_and_counters_vectors()

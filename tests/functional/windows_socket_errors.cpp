@@ -839,7 +839,7 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
 // The rio backend's failed receive completions reach the server's own
 // RECEIVE_FAILED through its receive_drop_totals, one for one with the
 // transport's RIO_RECEIVE_FAILED at the same site; nothing reads as a full
-// bank that the transport did not drop past its bank.
+// bank: rio never drops for one.
 static void windows_server_rio_failed_receives_reach_the_server_case()
 {
     windows_socket_errors_transport_t transport = { "rio", false };
@@ -879,17 +879,16 @@ static void windows_server_rio_failed_receives_reach_the_server_case()
     rocketnet_server_rio_counters( rio, rio_after );
 
     const uint64_t rio_failed = rio_after[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED] - rio_before[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED];
-    const uint64_t rio_overflow = rio_after[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW] - rio_before[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW];
     const uint64_t full = rocketnet_counter_value( &after, ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL ) -
                           rocketnet_counter_value( &before, ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL );
 
-    printf( "windows_server_rio_failed_receives_reach_the_server: failed %llu at the server, %llu at the transport; full %llu at the server, %llu at the transport\n",
-            (unsigned long long) failed, (unsigned long long) rio_failed, (unsigned long long) full, (unsigned long long) rio_overflow );
+    printf( "windows_server_rio_failed_receives_reach_the_server: failed %llu at the server, %llu at the transport; full %llu at the server\n",
+            (unsigned long long) failed, (unsigned long long) rio_failed, (unsigned long long) full );
     fflush( stdout );
 
     windows_socket_errors_require( failed == (uint64_t) failures );
     windows_socket_errors_require( rio_failed == (uint64_t) failures );
-    windows_socket_errors_require( full == rio_overflow );
+    windows_socket_errors_require( full == 0 );
     windows_socket_errors_session_finish( &session );
 }
 

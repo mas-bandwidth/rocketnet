@@ -2382,7 +2382,6 @@ static void test_rio_completion_queue_full()
     // idle, then polls until every datagram the worker received has been
     // exposed: nothing is dropped as overflow, each exposure fits the view.
 
-    const uint64_t overflow = rio_counter( rio, ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW );
     const uint64_t received = rio_counter( rio, ROCKETNET_COUNTER_RIO_PACKETS_RECEIVED );
     fault_client_send( client, &bind, 0xEE, rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) + 256 );
     rocketnet_platform_sleep( 0.1 );
@@ -2396,7 +2395,6 @@ static void test_rio_completion_queue_full()
         exposed += (uint64_t) n;
         return n == 0 && exposed > 0 && exposed == rio_counter(rio, ROCKETNET_COUNTER_RIO_PACKETS_RECEIVED) - received; } );
     CHECK( exposed >= (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    CHECK( rio_counter( rio, ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW ) == overflow );
     rio_settle( rio );
     rio_exchange( rio, &bind, client, &client_address, 64 );
     rio_finish( rio, client );

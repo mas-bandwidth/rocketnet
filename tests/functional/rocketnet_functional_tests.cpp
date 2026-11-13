@@ -5442,7 +5442,6 @@ void rocketnet_test_server_rio_wire_ipv4()
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_SEND_FULL] == refused );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_SIZE] == 0 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_RECEIVE_REPOST_FAILED] == 0 );
 
     // the worker counts a completion before it re-posts or retires the request

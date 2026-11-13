@@ -1645,10 +1645,9 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         else if ( bank->num_packets >= bank->capacity )
         {
             // the dequeue takes at most the bank's room, so this cannot
-            // happen; if it ever does, the datagram is counted and dropped,
-            // never written past the bank
+            // happen (no counter row: nothing can drive it); if it ever does,
+            // the datagram is dropped, never written past the bank
             rocketnet_assert( bank->num_packets < bank->capacity );
-            rocketnet_rio_count( rio, ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW );
         }
         else
         {
@@ -2273,7 +2272,6 @@ bool rocketnet_server_rio_test_worker_handoff()
              rio->banks[rio->fill_bank].num_packets == rio->receives;
     const int dequeues = state.receive_dequeues;
     valid &= !rocketnet_rio_worker_pass( rio ) && state.receive_dequeues == dequeues;
-    valid &= rio->counters[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW - ROCKETNET_SERVER_RIO_FIRST_COUNTER].load() == 0;
     valid &= rio->posted_receives.load() == rio->receives && state.reposts == ROCKETNET_RIO_RECEIVE_BANKS * rio->receives;
 
     // Main exposes the ready banks that fit the process view, oldest first.

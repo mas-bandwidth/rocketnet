@@ -36,7 +36,6 @@ static void test_rio_transport_overflow_seam()
 
     check( packet_counts[0] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( counters[ROCKETNET_COUNTER_RIO_PACKETS_RECEIVED] == (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    check( counters[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW] == 0 );
     check( counters[ROCKETNET_COUNTER_RIO_RECEIVE_REPOST_FAILED] == 0 );
     check( pending_receives == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 

@@ -2641,15 +2641,15 @@ static uint64_t rio_send_failures( void * transport )
 
 static void rio_receive_drop_totals( void * transport, uint64_t * values )
 {
-    // read from the rio rows the I/O worker already counts, at the same sites,
-    // so each pair agrees: a datagram past the fill bank (BANK_FULL is
-    // RIO_RECEIVE_DROPPED_OVERFLOW) and a receive completed with an error
-    // status or an unreadable source (RECEIVE_FAILED is RIO_RECEIVE_FAILED).
+    // read from the rio row the I/O worker already counts, at the same site,
+    // so the pair agrees: a receive completed with an error status or an
+    // unreadable source (RECEIVE_FAILED is RIO_RECEIVE_FAILED). rio never
+    // drops for a full bank: the dequeue takes at most the bank's room, and
+    // with every bank full the worker stops dequeuing.
 
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, counters );
     memset( values, 0, ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) );
-    values[ROCKETNET_RECEIVE_DROP_BANK_FULL] = counters[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW];
     values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] = counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED];
 }
 
