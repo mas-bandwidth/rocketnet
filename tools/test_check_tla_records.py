@@ -131,15 +131,31 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("MCEx.cfg: stale record", text)
 
-    def delivery_fixture(self, witness_property="Eventually", witness=True):
-        """A property config in a module with an anonymous delivery implication."""
+    INLINE_FAIRNESS = "Fairness == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+    NAMED_FAIRNESS = (
+        "SendFair == WF_vars(Send)\n"
+        "AcksLand ==\n"
+        "    ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+        "Fairness      == SendFair /\\ AcksLand\n"
+    )
+
+    def delivery_fixture(self, witness_property="Eventually", witness=True,
+                         fairness=INLINE_FAIRNESS, header="", extra=None):
+        """A property config in a module with a delivery implication.
+
+        `fairness` is the module's Fairness text (inline by default); `header`
+        goes after the MODULE line (an EXTENDS or INSTANCE); `extra` maps more
+        module file names to their text."""
         with tempfile.TemporaryDirectory() as tmp:
             tla = Path(tmp)
+            for name, text in (extra or {}).items():
+                (tla / name).write_text(text, encoding="utf-8")
             (tla / "MCDelivery.tla").write_text(
                 "---- MODULE MCDelivery ----\n"
+                + header +
                 "VARIABLE x\nvars == <<x>>\n"
                 "Send == x' = x\nRecv == x' = x\n"
-                "Fairness == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+                + fairness +
                 "Spec == TRUE /\\ [][Send \\/ Recv]_vars /\\ Fairness\n"
                 "SpecSafety == TRUE /\\ [][Send \\/ Recv]_vars\n"
                 "Eventually == <>TRUE\n"
@@ -178,6 +194,47 @@ class CheckTlaRecordsTest(unittest.TestCase):
 
     def test_property_with_reversed_liveness_witness_passes(self):
         code, text = self.delivery_fixture()
+        self.assertEqual(code, 0, text)
+
+    def test_named_conjunct_delivery_needs_a_witness(self):
+        # RNWindow's form: the implication sits in AcksLand, a conjunct of Fairness
+        code, text = self.delivery_fixture(witness=False, fairness=self.NAMED_FAIRNESS)
+        self.assertEqual(code, 1, text)
+        self.assertIn("MCPass.cfg: property Eventually has no reversed liveness witness", text)
+
+    def test_named_conjunct_with_witness_passes(self):
+        code, text = self.delivery_fixture(fairness=self.NAMED_FAIRNESS)
+        self.assertEqual(code, 0, text)
+
+    def test_named_conjunct_in_an_extended_module_needs_a_witness(self):
+        base = ("---- MODULE Base ----\n"
+                "AcksLand == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+                "====\n")
+        code, text = self.delivery_fixture(
+            witness=False, header="EXTENDS Base\n",
+            fairness="Fairness == WF_vars(Send) /\\ AcksLand\n",
+            extra={"Base.tla": base})
+        self.assertEqual(code, 1, text)
+        self.assertIn("MCPass.cfg: property Eventually has no reversed liveness witness", text)
+
+    def test_named_conjunct_two_levels_down_needs_a_witness(self):
+        fairness = ("Inner == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+                    "Middle == WF_vars(Recv) /\\ Inner\n"
+                    "Fairness == WF_vars(Send) /\\ Middle\n")
+        code, text = self.delivery_fixture(witness=False, fairness=fairness)
+        self.assertEqual(code, 1, text)
+
+    def test_an_instance_fairness_named_conjunct_is_not_the_case_fairness(self):
+        # Link's form: an INSTANCE'd module states its own Fairness through a named
+        # conjunct; the case's Fairness is its own and states no implication
+        link = ("---- MODULE Lossy ----\n"
+                "EventualDelivery == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+                "Fairness == WF_vars(Send) /\\ EventualDelivery\n"
+                "====\n")
+        code, text = self.delivery_fixture(
+            witness=False, header="L == INSTANCE Lossy\n",
+            fairness="Fairness == WF_vars(Send)\n",
+            extra={"Lossy.tla": link})
         self.assertEqual(code, 0, text)
 
     def test_property_without_delivery_implication_needs_no_witness(self):

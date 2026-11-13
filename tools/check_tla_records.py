@@ -25,6 +25,11 @@ Rules enforced:
     (honest declared timeout debt).
   - Each row's input_sha256 and input_files are the fingerprint its case has
     now (the pinned tlacheck's): a record of other inputs is stale and refused.
+  - Every PROPERTY a case checks under a Fairness that states a delivery
+    assumption ([]<>A => []<>B) has a reversed liveness witness: a temporal
+    case of the same module and property. The assumption counts written
+    inline in Fairness, in any module the case reaches, or in an operator
+    Fairness names (resolved by name through the case module's EXTENDS).
 """
 
 import argparse
@@ -209,32 +214,115 @@ def cfg_properties(config_path):
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prop)]
 
 
+DEFINITION_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*==")
+DEFINITION_END_RE = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?\s*==|={4,}|-{4,}|"
+    r"(?:THEOREM|ASSUME|ASSUMPTION|VARIABLES?|CONSTANTS?|LOCAL|INSTANCE|EXTENDS)\b)")
+DELIVERY_RE = re.compile(r"\[\]\s*<>.{0,400}?=>.{0,400}?\[\]\s*<>", re.DOTALL)
+FAIRNESS_EXPANSION_DEPTH = 6
+
+
+def module_definitions(text):
+    """Top-level operator definitions of a module: name -> body text (right of ==)."""
+    lines = strip_comments(text).splitlines()
+    definitions = {}
+    for i, line in enumerate(lines):
+        match = DEFINITION_RE.match(line)
+        if not match:
+            continue
+        body = [line[line.index("==") + 2:]]
+        for nxt in lines[i + 1:]:
+            if DEFINITION_END_RE.match(nxt):
+                break
+            body.append(nxt)
+        definitions.setdefault(match.group(1), "\n".join(body))
+    return definitions
+
+
+def states_delivery_assumption(name, definitions):
+    """Whether a definition, or one it names, states []<>A => []<>B in its own text.
+
+    The walk follows operator names from `name` through their definitions, to
+    FAIRNESS_EXPANSION_DEPTH levels, so a conjunct written as a named operator
+    (for example `Fairness == SendFair /\\ AcksLand`, with the implication in
+    AcksLand) counts the same as one written inline.
+    """
+    token = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+    seen, frontier = {name}, [name]
+    for _ in range(FAIRNESS_EXPANSION_DEPTH + 1):
+        following = []
+        for current in frontier:
+            body = definitions.get(current, "")
+            if DELIVERY_RE.search(body):
+                return True
+            for word in token.findall(body):
+                if word in definitions and word not in seen:
+                    seen.add(word)
+                    following.append(word)
+        frontier = following
+    return False
+
+
 def delivery_assumption_modules(tla_dir):
     """Modules whose Fairness states an inline []<>... => []<>... assumption.
 
     Such an antecedent can be vacuous, so each PROPERTY case in the module
     needs a reversed liveness witness: a temporal case that fails the same
-    property, showing the property is not a tautology.
+    property, showing the property is not a tautology. A case whose module
+    reaches one of these (EXTENDS or INSTANCE) is held to that rule; the
+    assumption written in a named conjunct is found by fairness_by_name.
     """
     modules = set()
     for path in Path(tla_dir).glob("*.tla"):
         try:
-            lines = strip_comments(path.read_text(encoding="latin-1")).splitlines()
+            definitions = module_definitions(path.read_text(encoding="latin-1"))
         except OSError:
             continue
-        for i, line in enumerate(lines):
-            if not re.match(r"^Fairness\b[^\n]*==", line):
-                continue
-            body = [line]
-            for nxt in lines[i + 1:]:
-                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?\s*==", nxt):
-                    break
-                body.append(nxt)
-            fairness = "\n".join(body)
-            if re.search(r"\[\]<>.{0,400}?=>.{0,400}?\[\]<>", fairness, re.DOTALL):
-                modules.add(path.name)
-                break
+        if DELIVERY_RE.search(definitions.get("Fairness", "")):
+            modules.add(path.name)
     return modules
+
+
+EXTENDS_RE = re.compile(r"\bEXTENDS\b\s*((?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)*[A-Za-z_][A-Za-z0-9_]*)")
+
+
+def extends_chain(module, tla_dir):
+    """A module and the local modules its EXTENDS reach, nearest first."""
+    tla_dir = Path(tla_dir)
+    order, queue = [], [module]
+    while queue:
+        name = queue.pop(0)
+        if name in order:
+            continue
+        order.append(name)
+        try:
+            text = strip_comments((tla_dir / name).read_text(encoding="latin-1"))
+        except OSError:
+            continue
+        for match in EXTENDS_RE.finditer(text):
+            for ref in re.split(r"\s*,\s*", match.group(1).strip()):
+                if (tla_dir / (ref + ".tla")).exists():
+                    queue.append(ref + ".tla")
+    return order
+
+
+def fairness_by_name(module, tla_dir):
+    """Whether the Fairness a module sees states []<>A => []<>B, resolved by name.
+
+    Fairness and the operators it names are looked up in the module and the
+    modules it EXTENDS (an INSTANCE's definitions are its own, reached only as
+    Prefix!Name, so they are not this module's Fairness), and the assumption
+    counts when any of those definitions states it (states_delivery_assumption).
+    """
+    definitions = {}
+    for name in extends_chain(module, tla_dir):
+        try:
+            text = (Path(tla_dir) / name).read_text(encoding="latin-1")
+        except OSError:
+            continue
+        for key, body in module_definitions(text).items():
+            definitions.setdefault(key, body)
+    return "Fairness" in definitions and states_delivery_assumption("Fairness", definitions)
 
 
 def module_closure(module, tla_dir):
@@ -273,7 +361,8 @@ def check_property_witnesses(cases, tla_dir):
             continue
         module_missing = not (tla_dir / case["module"]).exists()
         module_files = module_closure(case["module"], tla_dir)
-        if has_tla and not module_missing and not (module_files & delivery_modules):
+        if (has_tla and not module_missing and not (module_files & delivery_modules)
+                and not fairness_by_name(case["module"], tla_dir)):
             continue
         for prop in props:
             if (case["module"], prop) in witnesses:

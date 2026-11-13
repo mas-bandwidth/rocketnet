@@ -30,13 +30,19 @@ functions, which cite it by name:
 `tests/test_unit_window_sequences.cpp` drives the same operation sequences against
 those functions (below).
 
-`proofs/tla/MCRNWindow.tla` holds the instance, and there are seven committed cases, each one
+`proofs/tla/MCRNWindow.tla` holds the instance, and there are eight committed cases, each one
 inside tlacheck's 110 s budget:
 - `proofs/tla/MCRNWindow.cfg`: `W = 2`, numbers 0..4 wrapping at `NumMod = 4`, Link capacity 2,
   the `"alternate"` loss pattern both ways, every invariant and the liveness property.
 - `proofs/tla/MCRNWindowSafety.cfg`: numbers 0..5, `"arbitrary"` loss, safety only.
-- The five reversed witnesses, `proofs/tla/MCRNWindowBroken*.cfg`, each `MCRNWindow.cfg` with one
-  constant flipped (`diff` shows one line).
+- The five reversed safety witnesses, `proofs/tla/MCRNWindowBroken*.cfg`, each `MCRNWindow.cfg`
+  with one constant flipped (`diff` shows one line).
+- The reversed liveness witness, `proofs/tla/MCRNWindowBrokenLiveness.cfg`: `MCRNWindow.cfg`
+  with `BlockUPrime = FALSE` and no invariants, so TLC checks `EveryReliableAckedAndDelivered`
+  alone under the fair `Spec` and must find it violated (Witness 6 below). `Fairness` holds the
+  delivery assumption `AcksLand` (`[]<> A => []<> B`), and this case shows the property is not
+  a tautology under it; tools/check_tla_records.py requires such a witness for every property
+  checked under a `Fairness` that states the assumption, inline or in a named conjunct.
 
 The `"arbitrary"` loss run with liveness takes 14 minutes. It is a bench run, listed under
 "Every run", and not a committed case.
@@ -220,6 +226,7 @@ Committed cases:
 | `MCRNWindowBrokenHalfRange.cfg` | every invariant | 176 | 107 | 8 | 1 s | fail as expected: `WireNumberReconstructs` |
 | `MCRNWindowBrokenHoldOrdered.cfg` | every invariant | 1,431 | 741 | 19 | 2 s | fail as expected: `OrderedDeliveredInOrder` |
 | `MCRNWindowBrokenDropDuplicates.cfg` | every invariant | 173 | 105 | 8 | 1 s | fail as expected: `DeliveredOnce` |
+| `MCRNWindowBrokenLiveness.cfg` (`BlockUPrime = FALSE`, no invariants; tlacheck on bench-nyc-1, 2026-11-13) | `EveryReliableAckedAndDelivered` | 311,317 | 122,314 | 70 | 46 s | fail as expected: temporal, `EveryReliableAckedAndDelivered` |
 
 Bench runs (each is `MCRNWindow.cfg` with the changes named):
 
@@ -321,6 +328,30 @@ TLC: `Invariant DeliveredOnce is violated`, 8 states.
 1. `0`'s first write is lost; `1{0}` is opened: `0` delivered, `R = 1`.
 2. The next write is lost; `0{0}` gets through and is opened: `0 < R`, a duplicate under
    6.5, but the witness takes it as fresh and delivers it again: `dup = TRUE`.
+
+### Witness 6: a refused number acked and never delivered (`MCRNWindowBrokenLiveness.cfg`)
+
+TLC: `Temporal properties were violated` (`EveryReliableAckedAndDelivered`), a 70-state
+lasso, tlacheck on bench-nyc-1, 2026-11-13. The cfg is `MCRNWindow.cfg` with
+`BlockUPrime = FALSE` and no invariants, under the fair `Spec`, `AcksLand` included. Replayed by
+hand through `NumberRecord`, `Accept`, `OpenPacket` and `ReceiveAck`:
+
+1. States 1-30: as in Witness 1, `0` is delivered and acked, the block takes `1` and `2`,
+   `0{1}` is opened (`R = 2`, `1` **held**, `desc[1] = [1, live]`) and its ack lands:
+   `acked = {0, 1}`, `U = 2`.
+2. State 31: with the witness `U' = U = 2`, so `3` is numbered (`3 < 2 + 2`). Under the
+   design `U' = 1` and `3 < 1 + 2` is false.
+3. State 33: `0{3}` is opened. `3 < R + W = 4`, but `desc[3 % 2 = 1]` is live with `1`, so the
+   slot check fires (`violations = {"slot"}`) and nothing of the packet is accepted, yet its id
+   goes into `pending` (P2). States 40-43: `1{3}` is refused the same way and its ack `{1}`
+   lands: `acked = {0, 1, 3}`. `3` is acked, so it is never written again.
+4. States 44-69: `2` arrives (`R = 3`, `1` and `2` delivered), `4` is numbered, written,
+   delivered and acked. `acked = {0, 1, 2, 3, 4}` and `everDelivered = {0, 1, 2, 4}`.
+5. States 69-70 loop: `FixBatch` and `EndUpdate` turn forever with nothing to write (no unacked
+   number) and nothing to ack, so every fairness condition holds and `3` is never delivered.
+
+Acks flow and land through the trace (five `ReceiveAck` steps), so the counterexample is a
+behaviour of `Spec` with `AcksLand` in force, not one that escapes it.
 
 ### Wraparound under reordering: the half range rests on the transport's replay window
 
