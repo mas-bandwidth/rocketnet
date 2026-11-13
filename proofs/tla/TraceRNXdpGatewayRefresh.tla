@@ -31,12 +31,12 @@ CONSTANT TraceLog
 \* the log through a definition of no arguments: TLC evaluates that once and
 \* keeps it, where every reference to the overridden constant itself builds
 \* the whole log again (a 400-record log with its staged sets: over 110 s and
-\* not done, against 2 s through Log0)
-Log0 == TraceLog
+\* not done, against 2 s through Records)
+Records == TraceLog
 
 \* checked once, when TLC starts
-ASSUME /\ Len(Log0) >= 2
-       /\ \A n \in DOMAIN Log0 : DOMAIN Log0[n] = {"op", "act", "args", "state"}
+ASSUME /\ Len(Records) >= 2
+       /\ \A n \in DOMAIN Records : DOMAIN Records[n] = {"op", "act", "args", "state"}
 
 VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
@@ -69,12 +69,12 @@ Matches(r) == DOMAIN r.state = {} \/ VarsRec' = r.state
 TraceInit ==
     /\ Init
     /\ ti = 1
-    /\ rejected = (Log0[1].op # "init" \/ Log0[1].act # "init" \/ VarsRec # Log0[1].state)
+    /\ rejected = (Records[1].op # "init" \/ Records[1].act # "init" \/ VarsRec # Records[1].state)
 
 TraceStep ==
     /\ ~rejected
-    /\ ti < Len(Log0)
-    /\ LET r == Log0[ti + 1]
+    /\ ti < Len(Records)
+    /\ LET r == Records[ti + 1]
        IN /\ r.op \in DOMAIN OpActs
           /\ r.act \in OpActs[r.op]
           /\ Act(r.act, r.args)
@@ -84,13 +84,13 @@ TraceStep ==
 
 TraceReject ==
     /\ ~rejected
-    /\ ti < Len(Log0)
+    /\ ti < Len(Records)
     /\ ~ENABLED TraceStep
     /\ rejected' = TRUE
     /\ UNCHANGED <<vars, ti>>
 
 TraceDone ==
-    /\ rejected \/ ti = Len(Log0)
+    /\ rejected \/ ti = Len(Records)
     /\ UNCHANGED <<vars, ti, rejected>>
 
 TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, rejected>>
