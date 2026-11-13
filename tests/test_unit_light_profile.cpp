@@ -263,7 +263,15 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client (measured on its own
 // branch; summed here with the lines above, not re-measured on this merge).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110680491ULL )
+// The XDP send queue back at 16384 per queue (two queues at 60 Hz start
+// twice 10 GbE line rate) with the receive side raised to keep the receive
+// budget twice the send: each queue's receive staging and fill frames 32768,
+// the UMEM 98304 frames (384 MiB), and the per-update receive budget 64 a
+// client (the process views, payload batch, io_uring banks, loopback queue
+// and cookie reply bitmap follow it), adding 2642136320 bytes on v1.1.9
+// (measured on space2, gcc, Release, ROCKETNET_DEV=ON); summed here with
+// the figure above.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5752816811ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137698 )
 #endif // #if defined( _WIN32 )
 
