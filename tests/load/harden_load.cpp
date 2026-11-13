@@ -91,6 +91,13 @@
 #include "rocketnet_read_write.h"
 #include "tests/portable_crt.h"
 #include "tests/process_resources.h"
+#if defined( _WIN32 )
+#include "rocketnet_server_iocp.h"
+#include "rocketnet_receive_prefilter.h"
+#if ROCKETNET_DEV
+void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
+#endif
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -1772,6 +1779,30 @@ static int harden_server_main( const harden_options_t & o )
     char report[256] = { 0 };
     const int conserved = transport ? rocketnet_counters_conserved( rocketnet_server_transport_counters( transport ), report, (int) sizeof( report ) ) : 0;
     printf( "harden_term: role=server conserved=%d report=%s\n", conserved, conserved ? "ok" : report );
+#if defined( _WIN32 ) && ROCKETNET_DEV
+    // the IOCP transport's own counters and lanes, for the IOCP after-rows'
+    // reading (harden_iocp lines, not terms: the reconcile does not read them)
+    if ( transport && o.transport == "iocp" )
+    {
+        static const char * const iocp_names[ROCKETNET_IOCP_NUM_COUNTERS] = {
+            "SEND_COMPLETED",     "SEND_FAILED", "RECEIVE_COMPLETED", "RECEIVE_DROPPED", "RECEIVE_TOO_SHORT", "RECEIVE_TOO_LARGE",
+            "RECEIVE_REPOST_FAILED", "COMPLETION_BATCHES", "USO_SENDS", "URO_BATCHES", "USO_FALLBACKS" };
+        rocketnet_server_iocp_t * iocp = (rocketnet_server_iocp_t *) rocketnet_server_transport_io_name_for_testing( transport );
+        uint64_t iocp_values[ROCKETNET_IOCP_NUM_COUNTERS] = {};
+        rocketnet_server_iocp_counters( iocp, iocp_values );
+        for ( int i = 0; i < ROCKETNET_IOCP_NUM_COUNTERS; ++i )
+        {
+            printf( "harden_iocp: %s=%" PRIu64 "\n", iocp_names[i], iocp_values[i] );
+        }
+        uint64_t drops[ROCKETNET_RECEIVE_NUM_DROPS] = {};
+        rocketnet_server_iocp_receive_drop_totals( iocp, drops );
+        for ( int i = ROCKETNET_RECEIVE_ACCEPT + 1; i < ROCKETNET_RECEIVE_NUM_DROPS; ++i )
+        {
+            printf( "harden_iocp: drop_reason_%d=%" PRIu64 "\n", i, drops[i] );
+        }
+        printf( "harden_iocp: lanes=%d lane_size=%d\n", rocketnet_server_iocp_send_lane_count( iocp ), rocketnet_server_iocp_send_queue_size( o.max_clients ) );
+    }
+#endif // #if defined( _WIN32 ) && ROCKETNET_DEV
 
     bool flat = true;
     if ( resources_started && end_read )
