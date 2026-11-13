@@ -49,10 +49,14 @@ lookup and time calls are thread-safe, and client and server objects are not.
   else is called on the server. The game joins its game threads before the
   main thread's next call. The server checks these rules from its first
   finish or abort client message or its first `update_receive`, in every
-  build: a call that breaks one does nothing, asserts in a debug build and is
-  counted (`MAIN_THREAD_CALL_OVERLAP` for calls at once or a call between
-  receive and finish, `CLIENT_SEND_TWO_THREADS` for a second thread on one
-  client). `rocketnet_server_t` in `sdk/rocketnet.h` gives the whole contract.
+  build: a checked call that breaks one does nothing, logs an error and
+  asserts in a debug build. The checked calls are the three send calls,
+  `update_client`, and the main thread calls that change the server (update,
+  the split update's receive and finish, send packets, receive, receipts, a
+  client's send rate, the disconnects and stop). The calls that only read the
+  server, and `rocketnet_server_destroy`, are not checked: one made while game
+  threads send is not refused and not safe, so join the game threads first.
+  `rocketnet_server_t` in `sdk/rocketnet.h` gives the whole contract.
 - **The caller may move an object between threads** with its own handoff, for
   example a mutex, a queue or a thread join, so that the last call on the old
   thread happens before the first call on the new one. The library adds no
@@ -253,7 +257,9 @@ error: it asserts in a debug build and returns `0` in a release build. Abort
 message (`rocketnet_client_abort_message`, `rocketnet_server_abort_message`)
 cancels the open start and gives the room back; with no start open it does
 nothing.
-One start message is pending per object at a time. To send one message to every
+A client keeps one start message pending at a time. A server keeps at most one
+pending per client index, and a server used from one thread keeps one pending
+on the whole server at a time. To send one message to every
 connected client, loop over the slots with `rocketnet_server_client_connected`
 and start message and finish message for each. Every server per-client call
 takes an `int` client index; only `rocketnet_server_start_message` takes a
@@ -261,7 +267,10 @@ takes an `int` client index; only `rocketnet_server_start_message` takes a
 `ROCKETNET_FLOW_ID_BIT` set reserved for flows: a start to such an id returns
 `NULL` and logs `FLOW_ID_RESERVED` (`ROCKETNET_STATUS_FLOW_ID_RESERVED`, which
 no call returns). Server finish message and abort
-message take no destination: they act on the one pending start. A finish whose
+message take no destination: they act on the one start pending on the whole
+server. Game threads that each hold a start on their own clients finish and
+abort by client index with `rocketnet_server_finish_client_message` and
+`rocketnet_server_abort_client_message` (see [Threads](#threads)). A finish whose
 `bytes_written` is outside 1 to the bytes started returns `0` and aborts the
 pending start, so the next start is never blocked.
 
@@ -410,7 +419,10 @@ state, a server slot with no CONNECTED client, a stopped server) each returns
 return the next `rocketnet_message_batch_t` from one endpoint-wide queue. A
 batch contains up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` (`65536`) entries. Each
 entry names `client_index`, `channel`, `reliability`, `bytes`, and `data`; the
-client's entries use client index 0. Keep calling until the function returns
+client's entries use client index 0. An entry's `reliability` is the mode the
+message arrived as: a receipt mode arrives without its receipt (for example
+`RELIABLE_WITH_ACK_RECEIPT` as `RELIABLE`), and an unreliable message promoted
+for its size arrives as its reliable type. Keep calling until the function returns
 `NULL`. A data pointer is valid until the next receive call or the next update
 on that endpoint, whichever comes first. Process or copy every entry first;
 there is no release call.
@@ -419,7 +431,7 @@ The application must take every message before the next update. The transport
 has already acknowledged each delivered message to its sender, so a message
 left in the queue cannot be kept or delivered again. An update that finds a
 message still in the queue treats it as API misuse: it asserts in a debug
-build, counts `MESSAGE_NOT_RECEIVED`, and ends that connection. The server
+build, logs an error, counts in `api_misuses`, and ends that connection. The server
 disconnects each client with a message left with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED`, and the client ends its own
 connection in `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED`. Nothing is dropped
@@ -529,8 +541,17 @@ state says how the last attempt or connection ended and stays until disconnect
 or the next connect.
 
 `rocketnet_server_create( context, ipv4_address, ipv6_address, config, &status )`
-takes the IPv4 and IPv6 bind addresses, the config and a nullable status
-out-parameter. Either address may be NULL, but not both. It returns a stopped server
+takes the IPv4 and IPv6 addresses to serve, the config and a nullable status
+out-parameter. Either address may be NULL, but not both. Each address is the
+advertised address: the one clients reach the server at, which a connect token
+must name exactly, port included. It is not the bind address: by default every
+transport except `xdp` binds the wildcard address of the family on the given
+port, the config's `bind_ipv4_address` and `bind_ipv6_address` bind one local
+address instead (behind NAT, the private address the public one reaches), and
+`xdp` attaches to the interface that carries the address. A server
+created at `0.0.0.0:40000` advertises `0.0.0.0:40000` and accepts only tokens
+that name that address, so pass the address your clients reach, and mint
+tokens with it. It returns a stopped server
 with `ROCKETNET_STATUS_OK`, or NULL with the specific refusal status, and binds
 nothing. `rocketnet_server_start` binds the
 transport and accepts clients; `rocketnet_server_stop` disconnects every
@@ -832,7 +853,7 @@ void configure( struct rocketnet_client_config_t * client, struct rocketnet_serv
     rocketnet_server_default_config( server );
     server->protocol_id = 0x1122334455667788ULL;
     server->max_clients = 64;
-    server->transport = "portable";
+    server->transport = "portable"; /* a fallback: production servers use "auto" or a native transport */
     server->num_channels = 8;
 }
 ```
@@ -867,7 +888,7 @@ that port with `IPV6_V6ONLY` off and advertises both named addresses.
 two interfaces, and `portable` where `IPV6_V6ONLY` cannot be cleared, refuse
 with `TRANSPORT_FAMILIES_UNSUPPORTED` and the next transport is tried. A connect
 token is accepted when its address of the arrival family is one the server
-advertises (`TokenAddressAdvertised`).
+advertises.
 
 `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS`, when set,
 override the create arguments for every server created, with a log line.
@@ -989,8 +1010,7 @@ send, receive and ack updates in O(1) (the rtt minimum in O(log n)), so RTT,
 jitter, loss and bandwidth equal a full recompute over the retained history at
 every read, and an idle slot costs nothing. The per-client API call copies
 those values; server update does no statistics pass and runs no statistics
-thread. Reset clears that slot's quality values immediately
-(sdk/rocketnet_ack.cpp, proofs/tla/RNServerStats.tla).
+thread. Reset clears that slot's quality values immediately.
 
 Watch jitter and loss when conditions worsen; the rtt figure is the minimum
 over the retained history, so it cannot track latency upward until every lower

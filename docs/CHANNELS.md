@@ -19,7 +19,10 @@ Each endpoint uses the same bounded frame order:
 
 One `rocketnet_message_batch_t` contains parallel arrays for client index,
 channel, reliability, bytes and data. Server entries identify the sending
-client; client entries use client index 0. Data pointers remain valid until the
+client; client entries use client index 0. An entry's reliability is the mode
+the message arrived as: a receipt mode arrives without its receipt, and an
+unreliable message promoted for its size arrives as its reliable type. Data
+pointers remain valid until the
 next receive call or update on the same endpoint, whichever comes first.
 There is no release call and no per-channel receive call.
 
@@ -27,8 +30,10 @@ There is no release call and no per-channel receive call.
 
 `start_message` reserves up to the declared byte count. The caller checks that
 the returned pointer is non-NULL, writes into the returned storage, and calls
-`finish_message` with the number written, or `abort_message`. Only one
-reservation may be open on an endpoint object. Finishing returns a nonzero
+`finish_message` with the number written, or `abort_message`. A client keeps
+one reservation open at a time. A server keeps at most one open per client
+index, and a server used from one thread keeps one open at a time. Finishing
+returns a nonzero
 receipt serial. A refused start returns NULL; calling `finish_message` without
 a live reservation (including after `start_message` returned NULL or after a
 disconnect or slot reset cancelled the reservation) is an application error
@@ -38,7 +43,10 @@ returns zero and aborts the pending reservation, so the next start is never
 blocked.
 
 The server start call takes a `uint64_t` destination id; the server finish and
-abort calls take none, acting on the one pending start. Values below
+abort calls take none, acting on the one start pending on the whole server.
+Game threads that each hold a reservation on their own clients finish and abort
+by client index with `rocketnet_server_finish_client_message` and
+`rocketnet_server_abort_client_message` ([threads](USAGE.md#threads)). Values below
 `max_clients` name a connected client slot. Values with `ROCKETNET_FLOW_ID_BIT` are reserved for the
 flow layer. Broadcast is an application loop over connected slots.
 
@@ -134,8 +142,11 @@ the connection's send memory full is refused: `start_message` returns `NULL`,
 the refusal is counted in that connection's `send_refused`
 (`struct rocketnet_conditions_t`), and the connection stays up, for unreliable
 sends too; a later start succeeds once acknowledgements return room. A send
-never ends a connection. Only the receive side's broken bound (a delivery table
-with no room) ends one with `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`
+never ends a connection. A reliable message the receiver has no delivery room
+for in this update does not end it either: the packet is left unacknowledged,
+the sender resends it, and it is delivered once room returns
+([receive pressure](RECEIVE-PRESSURE.md)). Only a broken internal bound on the
+receive side ends a connection with `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`
 (client state `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`). Unreliable work may be
 dropped at its documented bounded queues; queued reliable work is retained
 while the connection survives. Use `can_send_message` to defer discretionary
@@ -170,15 +181,7 @@ its config and build inputs.
 
 ## Verification
 
-The executable message invariants are split by concern:
-
-- `proofs/tla/RNChannel.tla` and `proofs/tla/RNChannelTypes.tla`: ordering, sequencing and
-  exactly-once delivery;
-- `proofs/tla/RNBlocks.tla`: bounded block fragmentation and reassembly;
-- `proofs/tla/RNReceipts.tla` and `proofs/tla/RNSentHistory.tla`: receipt and sent-history
-  behavior;
-- unit and functional suites: public calls, all reliability values, reset,
-  capacity and cross-endpoint behavior.
-
-The model configurations and `proofs/tla/RUNS.tsv` are the maintained execution
-inventory.
+Ordering, sequencing, block fragmentation and reassembly, and receipts are
+checked by the TLA+ models listed in the [model inventory](TLA-INVENTORY.md),
+and the public calls, every reliability value, reset, capacity and
+cross-endpoint behavior by the unit and functional suites.
