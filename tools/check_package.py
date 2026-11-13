@@ -249,11 +249,19 @@ def check_exported_settings(installed, root, command, config, native_build_optio
         run("cmake", "--build", build, "--config", config, *native_build_options)
         commands = build / "compile_commands.json"
         if commands.exists():
-            for entry in json.loads(commands.read_text()):
+            entries = json.loads(commands.read_text())
+            for entry in entries:
                 text = entry.get("command") or " ".join(entry.get("arguments", []))
                 for option in FLOATING_POINT_OPTIONS:
                     if option in text:
                         failures.append(f"consumer compile line carries {option}: {text}")
+            print(f"Consumer compile lines: {len(entries)} checked for {' and '.join(FLOATING_POINT_OPTIONS)}")
+        else:
+            # Visual Studio and Xcode write no compile_commands.json; the
+            # INTERFACE_COMPILE_OPTIONS check above still covers what the
+            # package hands the consumer, but its compile lines go unread.
+            print(f"SKIP consumer compile-line check: the {command[command.index('-G') + 1]} generator "
+                  f"wrote no {commands.name}")
     if not shared_enabled:
         neg_probe = root / "p_neg"
         neg_probe.mkdir()

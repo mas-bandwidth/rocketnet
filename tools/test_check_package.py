@@ -12,7 +12,11 @@ for them, so nothing is built:
                                  RocketNetConfig.cmake embed B
   cmake -S S -B B ...            creates B, records FAKE_TESTS (default 2) as
                                  the number of tests registered, and prints the
-                                 settings-probe lines the real probe prints
+                                 settings-probe lines the real probe prints;
+                                 with FAKE_COMMAND_LINE set, a probe configure
+                                 (CMAKE_EXPORT_COMPILE_COMMANDS=ON) writes that
+                                 one line to compile_commands.json, and without
+                                 it none is written, as Visual Studio writes none
   cmake --build ...              succeeds
   ctest --test-dir B ...         like ctest: with 0 tests it exits 8 under
                                  --no-tests=error and 0 otherwise
@@ -29,7 +33,7 @@ from pathlib import Path
 TOOL = Path(__file__).resolve().parent / "check_package.py"
 
 FAKE_CMAKE = """#!{python}
-import os, sys
+import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
 if args and args[0] == "--install":
@@ -48,6 +52,10 @@ elif "-S" in args:
     build = Path(args[args.index("-B") + 1])
     build.mkdir(parents=True, exist_ok=True)
     (build / "fake-tests").write_text(os.environ.get("FAKE_TESTS", "2"))
+    if "FAKE_COMMAND_LINE" in os.environ and "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON" in args:
+        line = os.environ["FAKE_COMMAND_LINE"]
+        (build / "compile_commands.json").write_text(
+            json.dumps([dict(command=line)]))
     print("probe rocketnet options=[] definitions=[ROCKETNET_DEV=1;ROCKETNET_MAX_CLIENTS=1000]")
     print("probe rocketnet_shared options=[] definitions=[ROCKETNET_SHARED;ROCKETNET_DEV=1;ROCKETNET_MAX_CLIENTS=1000]")
 else:
@@ -97,6 +105,7 @@ class CheckPackageTest(unittest.TestCase):
         env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
         env.pop("FAKE_LEAK", None)
         env.pop("FAKE_TESTS", None)
+        env.pop("FAKE_COMMAND_LINE", None)
         env.update(fake)
         return subprocess.run([sys.executable, str(TOOL), str(build), "--config", "Release"],
                               capture_output=True, text=True, env=env)
@@ -105,6 +114,25 @@ class CheckPackageTest(unittest.TestCase):
         result = self.run_tool(self.build)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Relocated SDK: C/C++ static/shared consumers passed", result.stdout)
+
+    def test_no_compile_commands_prints_a_skip_line(self):
+        # a generator that writes no compile_commands.json (Visual Studio) leaves
+        # the consumer compile lines unread, and says so
+        result = self.run_tool(self.build)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SKIP consumer compile-line check: the Unix Makefiles generator wrote no compile_commands.json",
+                      result.stdout)
+
+    def test_clean_consumer_compile_lines_are_counted(self):
+        result = self.run_tool(self.build, FAKE_COMMAND_LINE="cc -O2 -c probe.c")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Consumer compile lines: 1 checked", result.stdout)
+        self.assertNotIn("SKIP consumer compile-line check", result.stdout)
+
+    def test_a_floating_point_option_on_a_consumer_compile_line_is_refused(self):
+        result = self.run_tool(self.build, FAKE_COMMAND_LINE="cc -O2 -ffp-contract=off -c probe.c")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("consumer compile line carries -ffp-contract", result.stdout + result.stderr)
 
     def test_a_package_embedding_the_build_path_is_refused(self):
         result = self.run_tool(self.build, FAKE_LEAK="1")
