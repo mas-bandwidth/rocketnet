@@ -182,7 +182,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Together (integration/v1.1.55: the refused-token table and the send
 // store's free stack): actual=1533264287 and 15398892 (aws-win-ci-2, MSVC,
 // Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1532215711 )
+// With the receive handoff's three IOCP banks as well
+// (integration/v1.1.55-hot): actual=1509328231 and 15398892 (aws-win-ci-2,
+// MSVC, Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508279655 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350316 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -277,7 +280,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Together (integration/v1.1.55: the refused-token table and the send
 // store's free stack): actual=1665268659 and 15046410 (studio, Apple clang,
 // Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664220083 )
+// With the placement branch's three *_reserve_cpu_0 config fields, the
+// send_capacity_to pointer and counter 291 (integration/v1.1.55-hot): 64
+// more to the server, the client unchanged: actual=1665268723 and 15046410
+// (studio, Apple clang, Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664220147 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997834 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
