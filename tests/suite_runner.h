@@ -24,7 +24,8 @@
     its own bound, its plan's peak plus a fixed slack (tests/plan_rss.h), and
     is held to that instead. Every registered name is test_ lowercase snake_case,
     or the suite fails before running anything. ROCKETNET_TEST_REPORT=1 prints
-    the slowest cases and the peak resident sets after the results.
+    the job count before the cases, and the slowest cases and the peak
+    resident sets after the results.
     ROCKETNET_TEST_NIGHTLY=1 adds the nightly tier: the cases group_of marks
     with SUITE_GROUP_NIGHTLY, which a per-commit run leaves out.
 */
@@ -69,6 +70,10 @@
 #include <mach-o/dyld.h>
 #include <sys/sysctl.h>
 #endif // #if defined( __APPLE__ )
+
+#if defined( __linux__ )
+#include <sched.h>
+#endif // #if defined( __linux__ )
 
 #if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
@@ -204,6 +209,7 @@ struct suite_exec
     const char * file;
     const char * argument;
     bool check_rss;
+    double limit_s; // the row's own limit before the environment's scale; 0: the suite's
 };
 
 struct suite_case
@@ -212,6 +218,7 @@ struct suite_case
     std::string exec_path; // empty: re-exec this binary with --run name
     std::string exec_argument;
     bool check_rss;
+    double limit_s; // 0: the suite's limit
     int group; // suite_main's group_of: cases of different groups never run at once
 };
 
@@ -227,8 +234,15 @@ struct suite_result
     long plan_rss_mb; // the bound the case process reported from its plan (tests/plan_rss.h); -1: none
     bool rss_over_bound;
     bool check_rss;
+    double limit_s; // after the environment's scale (suite_main); 0: the suite's limit
     std::string output;
 };
+
+// a result's limit: its row's own when it has one, else the suite's
+inline double suite_result_limit( const suite_result & result, double suite_limit_s )
+{
+    return result.limit_s > 0 ? result.limit_s : suite_limit_s;
+}
 
 // The bound in MiB, or 0 when it is not enforced (a sanitizer build with no
 // environment override: sanitizer shadow memory is not the case's footprint).
@@ -802,8 +816,87 @@ inline int suite_job_count_for( unsigned cores, uint64_t budget, int requested, 
     return (int) jobs;
 }
 
-// The job count on this host for a requested count (0: none): this host's
-// cores and memory budget, and this platform's ceiling.
+// The cpus a mask holds: one bit a cpu, in 64-bit words.
+inline unsigned suite_cpus_in_mask( const uint64_t * words, size_t count )
+{
+    unsigned cpus = 0;
+    for ( size_t i = 0; i < count; i++ )
+    {
+        for ( uint64_t word = words[i]; word != 0; word &= word - 1 )
+        {
+            cpus++;
+        }
+    }
+    return cpus;
+}
+
+// The cpus this process may run on, never 0: the host's count when the mask
+// cannot be read. std::thread::hardware_concurrency() counts the host's
+// online cpus, not the process's:
+// on glibc 2.43 a run held to 5 cpus (nova-reserve, taskset, a cgroup cpuset)
+// read 48 on a 48-cpu bench and ran 48 jobs on 5 cpus. Linux reads the
+// affinity mask. Windows reads the process affinity mask, which covers one
+// processor group: it is the count on a one-group host (at most 64 logical
+// processors), and on a host with more groups when it is narrower than its
+// group's system mask (start /affinity, a job held to some processors). An
+// unrestricted process on a many-group host may run in every group, and
+// GetProcessAffinityMask reports zero for a process with threads in several
+// groups, so there the count stays the host's. macOS has no affinity mask to
+// read (thread affinity there is only a hint), so its count is the host's.
+inline unsigned suite_usable_cpus()
+{
+#if defined( __linux__ )
+    cpu_set_t set;
+    CPU_ZERO( &set );
+    if ( sched_getaffinity( 0, sizeof( set ), &set ) == 0 )
+    {
+        uint64_t words[sizeof( set ) / sizeof( uint64_t )];
+        std::memcpy( words, &set, sizeof( words ) );
+        const unsigned cpus = suite_cpus_in_mask( words, sizeof( words ) / sizeof( words[0] ) );
+        if ( cpus > 0 )
+        {
+            return cpus;
+        }
+    }
+#elif defined( _WIN32 )
+    DWORD_PTR process_mask = 0;
+    DWORD_PTR system_mask = 0;
+    if ( GetProcessAffinityMask( GetCurrentProcess(), &process_mask, &system_mask ) && process_mask != 0 &&
+         ( GetActiveProcessorGroupCount() == 1 || process_mask != system_mask ) )
+    {
+        const uint64_t word = (uint64_t) process_mask;
+        return suite_cpus_in_mask( &word, 1 );
+    }
+#endif // #if defined( __linux__ )
+    return std::thread::hardware_concurrency();
+}
+
+// Jobs planned for each cpu this process may use. Most unit cases wait more
+// than they compute, so the wall keeps falling past one job a cpu. Measured in
+// a 4-cpu nova-reserve slot on 48-cpu bench-nyc-1 (2026-11-12), two runs at
+// each ROCKETNET_TEST_JOBS:
+// - Debug unit suite: 66/70 s at 4 jobs, 44/44 s at 8, 34/36 s at 12,
+//   36/32 s at 16, 35/34 s at 24, 35/37 s at 48;
+// - peak load average: about 10 at 12 jobs, 29-32 at 48.
+// Past 3 jobs a cpu the wall stops falling and only the load grows.
+#define SUITE_JOBS_PER_USABLE_CPU 3
+
+// The cpus the job count is planned on: SUITE_JOBS_PER_USABLE_CPU for each
+// usable cpu, never more than the host's count (host 0: unknown, the usable
+// count). A process free to use the whole host plans the host's count, as
+// before; only a run held to part of it plans fewer.
+inline unsigned suite_planned_cpus( unsigned usable, unsigned host )
+{
+    const unsigned spread = usable * SUITE_JOBS_PER_USABLE_CPU;
+    if ( host == 0 )
+    {
+        return usable;
+    }
+    return ( std::min )( spread, host );
+}
+
+// The job count for a requested count (0: none): the cpus this process may
+// run on, this host's memory budget, and this platform's ceiling.
 inline int suite_job_count_requested( int requested )
 {
 #if defined( _WIN32 )
@@ -812,7 +905,8 @@ inline int suite_job_count_requested( int requested )
     const int ceiling = 0;
 #endif // #if defined( _WIN32 )
 
-    return suite_job_count_for( std::thread::hardware_concurrency(), suite_memory_budget_bytes(), requested, ceiling );
+    const unsigned planned = suite_planned_cpus( suite_usable_cpus(), std::thread::hardware_concurrency() );
+    return suite_job_count_for( planned, suite_memory_budget_bytes(), requested, ceiling );
 }
 
 inline int suite_job_count()
@@ -1210,6 +1304,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         suite_case & item = pending[first + (size_t) kept++];
         item.name = name_at( i );
         item.check_rss = true;
+        item.limit_s = 0;
         item.group = 0;
     }
 
@@ -1220,6 +1315,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         item.exec_path = dir + "/" + execs[i].file + exe_suffix;
         item.exec_argument = execs[i].argument ? execs[i].argument : "";
         item.check_rss = execs[i].check_rss;
+        item.limit_s = execs[i].limit_s;
         item.group = 0;
         if ( !suite_file_exists( item.exec_path ) )
         {
@@ -1301,6 +1397,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         result.plan_rss_mb = -1;
         result.rss_over_bound = false;
         result.check_rss = pending[i].check_rss;
+        result.limit_s = pending[i].limit_s;
         results.push_back( result );
     }
 
@@ -1899,10 +1996,22 @@ inline int suite_main( int argc, char ** argv,
     suite_keep_shard( pending, results, shard_index, shards );
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
+    if ( suite_env_is_set( "ROCKETNET_TEST_REPORT" ) )
+    {
+        printf( "jobs: %d (cpus this run may use: %u)\n", jobs, suite_usable_cpus() );
+    }
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
     {
         return 1;
+    }
+    for ( suite_result & result : results )
+    {
+        // a row with a limit of its own takes the same environment scale
+        if ( result.limit_s > 0 && !suite_case_limit( result.limit_s, &result.limit_s ) )
+        {
+            return 1;
+        }
     }
 
     int uring_slots = jobs;
@@ -2079,7 +2188,7 @@ inline int suite_main( int argc, char ** argv,
             {
                 suite_drain( running[i].out_fd, result.output );
 
-                if ( !running[i].killed && seconds > limit_s )
+                if ( !running[i].killed && seconds > suite_result_limit( result, limit_s ) )
                 {
                     kill( -running[i].pid, SIGKILL );
                     kill( running[i].pid, SIGKILL );
@@ -2103,10 +2212,10 @@ inline int suite_main( int argc, char ** argv,
                 result.failed = true;
                 result.detail = result.name + " wait failed";
             }
-            else if ( running[i].killed || seconds > limit_s )
+            else if ( running[i].killed || seconds > suite_result_limit( result, limit_s ) )
             {
                 result.failed = true;
-                snprintf( text, sizeof( text ), " exceeded %.0fs", limit_s );
+                snprintf( text, sizeof( text ), " exceeded %.0fs", suite_result_limit( result, limit_s ) );
                 result.detail = result.name + text;
             }
             else if ( WIFEXITED( status ) && WEXITSTATUS( status ) != 0 )
@@ -2349,10 +2458,22 @@ inline int suite_main( int argc, char ** argv,
     suite_keep_shard( pending, results, shard_index, shards );
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
+    if ( suite_env_is_set( "ROCKETNET_TEST_REPORT" ) )
+    {
+        printf( "jobs: %d (cpus this run may use: %u)\n", jobs, suite_usable_cpus() );
+    }
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
     {
         return 1;
+    }
+    for ( suite_result & result : results )
+    {
+        // a row with a limit of its own takes the same environment scale
+        if ( result.limit_s > 0 && !suite_case_limit( result.limit_s, &result.limit_s ) )
+        {
+            return 1;
+        }
     }
     (void) bound_io_uring; // no io_uring on Windows
 
@@ -2511,7 +2632,7 @@ inline int suite_main( int argc, char ** argv,
             const DWORD wait = WaitForSingleObject( running[i].process, 0 );
             if ( wait == WAIT_TIMEOUT )
             {
-                if ( !running[i].killed && seconds > limit_s )
+                if ( !running[i].killed && seconds > suite_result_limit( result, limit_s ) )
                 {
                     TerminateProcess( running[i].process, 124 );
                     running[i].killed = true;
@@ -2542,10 +2663,10 @@ inline int suite_main( int argc, char ** argv,
 
             char text[64];
 
-            if ( running[i].killed || seconds > limit_s )
+            if ( running[i].killed || seconds > suite_result_limit( result, limit_s ) )
             {
                 result.failed = true;
-                snprintf( text, sizeof( text ), " exceeded %.0fs", limit_s );
+                snprintf( text, sizeof( text ), " exceeded %.0fs", suite_result_limit( result, limit_s ) );
                 result.detail = result.name + text;
             }
             else if ( code != 0 )

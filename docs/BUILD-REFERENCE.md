@@ -75,7 +75,11 @@ and `tests/wycheproof/*_test.json`) are compiled into it at build time by
 `cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
 regenerated only by the tool `./bin/connect_token_vectors <path>`
 (tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel:
-one job per core, as many as the 1.6 GiB-per-job memory budget allows
+three jobs per cpu the run may use, never more than the host has (the
+unit cases mostly wait; past 3 a cpu the wall stops falling), read from its
+affinity mask on Linux and on a one-group Windows host, so a run held to 4 of
+48 cpus runs 12 jobs and an unrestricted run 48 (the host's cpus on macOS),
+as many as the 1.6 GiB-per-job memory budget allows
 (`SUITE_JOB_MEMORY_BYTES` in `tests/suite_runner.h`; at most 64 on Windows).
 `ROCKETNET_TEST_JOBS` sets the count outright. In a Release
 build a test over 120 seconds is killed and the suite fails. Debug and

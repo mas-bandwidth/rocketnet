@@ -466,6 +466,19 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
     mass_disconnect_connect_all( &population );
     rocketnet_server_transport_t * transport = mass_disconnect_server_transport( population.server );
 
+    // the slot each kicked client holds, read from the client: client i is
+    // not always in slot i. A first cookie request whose source address
+    // shares its bit of the server's per-update cookie reply bitmap with an
+    // earlier client's (a SipHash under a key drawn at create) is dropped
+    // unanswered; that client connects one send interval later and takes a
+    // later slot (CI run 43290229994)
+    int kicked_slot[kicked];
+    for ( int i = 0; i < kicked; i++ )
+    {
+        kicked_slot[i] = rocketnet_client_index( population.clients[i] );
+        check( kicked_slot[i] >= 0 && rocketnet_server_client_connected( population.server, kicked_slot[i] ) );
+    }
+
     for ( int i = 0; i < kicked; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( population.clients[i], 0,
@@ -507,7 +520,7 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
     check( rocketnet_server_num_connected_clients( population.server ) == MASS_DISCONNECT_CLIENTS - kicked );
     for ( int i = 0; i < kicked; i++ )
     {
-        check( !rocketnet_server_client_connected( population.server, i ) );
+        check( !rocketnet_server_client_connected( population.server, kicked_slot[i] ) );
     }
 
     int remaining = -1;

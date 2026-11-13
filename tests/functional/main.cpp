@@ -295,8 +295,8 @@ int main( int argc, char ** argv )
 #elif defined( _WIN32 )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
-        { "test_transport_control", "test_transport_control", NULL, true },
-        { "test_iocp", "test_iocp", NULL, true },
+        { "test_transport_control", "test_transport_control", NULL, true, 0 },
+        { "test_iocp", "test_iocp", NULL, true, 0 },
     };
     // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
     const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
@@ -304,8 +304,8 @@ int main( int argc, char ** argv )
 #elif defined( __APPLE__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
-        { "test_transport_control", "test_transport_control", NULL, true },
-        { "test_msgx", "test_msgx", NULL, true },
+        { "test_transport_control", "test_transport_control", NULL, true, 0 },
+        { "test_msgx", "test_msgx", NULL, true, 0 },
     };
     // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
     const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
@@ -313,9 +313,9 @@ int main( int argc, char ** argv )
 #elif defined( __linux__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
-        { "test_transport_control", "test_transport_control", NULL, true },
+        { "test_transport_control", "test_transport_control", NULL, true, 0 },
 #if ROCKETNET_XDP
-        { "test_xdp", "test_xdp", NULL, true },
+        { "test_xdp", "test_xdp", NULL, true, 0 },
 #endif // #if ROCKETNET_XDP
     };
     // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
@@ -329,7 +329,7 @@ int main( int argc, char ** argv )
 #else
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
-        { "test_transport_control", "test_transport_control", NULL, true },
+        { "test_transport_control", "test_transport_control", NULL, true, 0 },
     };
     // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
     const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
