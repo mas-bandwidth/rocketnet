@@ -14500,6 +14500,7 @@ void rocketnet_test_posix_client_drops_foreign_sources();
 void rocketnet_test_posix_platform_send_seam();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void rocketnet_test_posix_msgx_retired_socket_counted();
+void rocketnet_test_posix_msgx_dual_stack_client_sockets_open();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void rocketnet_test_posix_transport_send_seam();
 void rocketnet_test_posix_send_burst();
@@ -15540,6 +15541,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_msgx_retired_socket_counted", rocketnet_test_posix_msgx_retired_socket_counted, NULL },
+    { "test_posix_msgx_dual_stack_client_sockets_open", rocketnet_test_posix_msgx_dual_stack_client_sockets_open, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam, NULL },
     { "test_posix_send_burst", rocketnet_test_posix_send_burst, NULL },

@@ -2342,6 +2342,54 @@ void rocketnet_test_posix_msgx_retired_socket_counted()
     posix_check( rocketnet_server_msgx_stopped( msgx ) );
     rocketnet_server_msgx_destroy( msgx );
 }
+
+// A dual-stack server ("[::]") opens a connected socket for an IPv4 client
+// and for an IPv6 client on its own port: its shared socket sets
+// SO_REUSEADDR and SO_REUSEPORT after its bind, the client sockets before
+// theirs. The open count is read, so a client socket that failed to open and
+// fell back to the shared socket is red. Skipped where the host has no IPv6.
+// Real sockets: the server's transport directly, no datagram sent.
+
+void rocketnet_test_posix_msgx_dual_stack_client_sockets_open()
+{
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );
+    uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
+    memset( packet_filter, 0x5a, sizeof( packet_filter ) );
+    int status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_msgx_t * msgx = rocketnet_server_msgx_create( NULL, &bind_address, 2, 8, packet_filter, &status );
+    if ( !msgx )
+    {
+        return;
+    }
+
+    rocketnet_address_t clients[2];
+    posix_check( rocketnet_address_parse( &clients[0], "127.0.0.1:40001" ) );
+    posix_check( rocketnet_address_parse( &clients[1], "[::1]:40002" ) );
+    for ( int i = 0; i < 2; i++ )
+    {
+        const double open_deadline = rocketnet_platform_time() + 5.0;
+        while ( rocketnet_server_msgx_test_sockets_open( msgx ) != i + 1 && rocketnet_platform_time() < open_deadline )
+        {
+            rocketnet_server_msgx_mark( msgx, &clients[i] );
+            rocketnet_server_msgx_commit( msgx );
+            rocketnet_platform_sleep( 0.001 );
+        }
+        posix_check( rocketnet_server_msgx_test_sockets_open( msgx ) == i + 1 );
+    }
+    struct rocketnet_server_msgx_stats_t stats;
+    rocketnet_server_msgx_stats( msgx, &stats );
+    posix_check( stats.socket_open_failed == 0 );
+
+    rocketnet_server_msgx_stop( msgx );
+    const double stop_deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_msgx_stopped( msgx ) && rocketnet_platform_time() < stop_deadline )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+    posix_check( rocketnet_server_msgx_stopped( msgx ) );
+    rocketnet_server_msgx_destroy( msgx );
+}
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 void rocketnet_test_posix_transport_send_seam()
