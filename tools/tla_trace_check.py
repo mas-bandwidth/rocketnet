@@ -79,6 +79,13 @@ LAYERS = {
             "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
         },
     },
+    "xdp-replay": {
+        "modules": ["RNXdpReplay.tla", "TraceRNXdpReplay.tla"],
+        "kind": "steps",
+        "untraced": {
+            "Seqs": "not an action: the set of sequences Next's Forge ranges over",
+        },
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"

@@ -1352,6 +1352,12 @@ if(ROCKETNET_BUILD_TOOLS)
             add_dependencies(${target} rocketnet_xdp_header)
         endif()
         target_link_libraries(${target} PRIVATE rocketnet_dev)
+        # the XDP filter as host C, where it is built: the xdp-replay layer
+        # runs its packets through the shipped filter
+        if(TARGET rocketnet_xdp_filter_host)
+            target_link_libraries(${target} PRIVATE rocketnet_xdp_filter_host)
+            target_compile_definitions(${target} PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
+        endif()
         rocketnet_use_sodium(${target})
         rocketnet_warning_floor(${target})
         target_compile_features(${target} PRIVATE cxx_std_11)

@@ -175,6 +175,27 @@ void rocketnet_xdp_host_set_replay_entry( const struct rocketnet_server_xdp_repl
     server_xdp_host_replay_count++;
 }
 
+int rocketnet_xdp_host_delete_replay_entry( const struct rocketnet_server_xdp_replay_key_t * key )
+{
+    struct rocketnet_server_xdp_replay_value_t * entry = server_xdp_host_replay_find( key );
+    if ( entry == NULL )
+    {
+        return 0;
+    }
+
+    // the last entry takes the deleted one's place
+
+    const int index = (int) ( entry - server_xdp_host_replay_values );
+    const int last = server_xdp_host_replay_count - 1;
+    if ( index != last )
+    {
+        __builtin_memcpy( &server_xdp_host_replay_keys[index], &server_xdp_host_replay_keys[last], sizeof( struct rocketnet_server_xdp_replay_key_t ) );
+        server_xdp_host_replay_values[index] = server_xdp_host_replay_values[last];
+    }
+    server_xdp_host_replay_count = last;
+    return 1;
+}
+
 int rocketnet_xdp_host_get_replay_entry( const struct rocketnet_server_xdp_replay_key_t * key, uint32_t * high_water )
 {
     struct rocketnet_server_xdp_replay_value_t * entry = server_xdp_host_replay_find( key );
