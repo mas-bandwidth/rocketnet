@@ -245,6 +245,12 @@ int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_recei
 // seeded.
 int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt );
 
+// rn_window_ack_seed_rtt with the transport's figure read through rtt( transport,
+// client_index ) only while the estimator has no sample: once it has one the
+// seed would ignore the figure, so it is not read. Returns as
+// rn_window_ack_seed_rtt.
+int rn_window_ack_seed_rtt_from( rn_window_ack_t * ack, double ( *rtt )( void * transport, int client_index ), void * transport, int client_index );
+
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
 // proofs/tla/RNRttFilter.tla Ack).
