@@ -19,6 +19,9 @@
 #include "rocketnet_rio_layout.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_receive_prefilter.h"
+#if ROCKETNET_DEV
+#include "rocketnet_receive_delivery_check.h"
+#endif // #if ROCKETNET_DEV
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <mstcpip.h>
@@ -2770,6 +2773,112 @@ bool rocketnet_server_rio_test_worker_handoff()
     rocketnet_rio_handoff_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
 
+    return valid;
+}
+
+// The receive delivery rig (sdk/rocketnet_receive_delivery_check.h): a fake
+// kernel whose receive queue holds exactly the datagrams the script lets
+// arrive before a worker pass, each carrying its id in its first bytes.
+struct rocketnet_rio_delivery_test_t
+{
+    rocketnet_rio_lane_t * rio;
+    uint32_t first;
+    int count;
+};
+
+static rocketnet_rio_delivery_test_t * rocketnet_rio_delivery_test = NULL;
+
+static ULONG WINAPI rocketnet_rio_delivery_test_dequeue( RIO_CQ cq, PRIORESULT results, ULONG max_results )
+{
+    rocketnet_rio_delivery_test_t * fixture = rocketnet_rio_delivery_test;
+    if ( !fixture || cq != (RIO_CQ) (uintptr_t) 1 )
+    {
+        return 0;
+    }
+    rocketnet_rio_lane_t * rio = fixture->rio;
+    ULONG taken = 0;
+    while ( taken < max_results && fixture->count > 0 )
+    {
+        const uint32_t id = fixture->first++;
+        const int slice = (int) ( id % (uint32_t) rio->receives );
+        uint8_t * data = rio->region + rocketnet_rio_receive_slice_offset( &rio->layout, slice );
+        memset( data, 0, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+        memcpy( data, &id, sizeof( id ) );
+        results[taken].Status = 0;
+        results[taken].BytesTransferred = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+        results[taken].RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice );
+        fixture->count--;
+        taken++;
+    }
+    return taken;
+}
+
+static BOOL WINAPI rocketnet_rio_delivery_test_receive( RIO_RQ, PRIO_BUF, ULONG, PRIO_BUF, PRIO_BUF, PRIO_BUF, PRIO_BUF, DWORD, PVOID )
+{
+    return TRUE;
+}
+
+static const rocketnet_rio_test_function_table_t rocketnet_rio_delivery_test_functions = {
+    rocketnet_rio_delivery_test_dequeue,
+    rocketnet_rio_delivery_test_receive,
+    NULL,
+    NULL
+};
+
+// one worker pass that banks the datagrams first .. first + count - 1
+static bool rocketnet_rio_delivery_test_pass( void * user, uint32_t first, int count )
+{
+    rocketnet_rio_delivery_test_t * fixture = (rocketnet_rio_delivery_test_t *) user;
+    fixture->first = first;
+    fixture->count = count;
+    rocketnet_rio_worker_pass( fixture->rio );
+    return fixture->count == 0;
+}
+
+// one receive call of main over the lane
+static int rocketnet_rio_delivery_test_call( void * user, uint32_t * ids, int capacity )
+{
+    rocketnet_rio_delivery_test_t * fixture = (rocketnet_rio_delivery_test_t *) user;
+    rocketnet_rio_test_receive( fixture->rio );
+    const rocketnet_server_socket_process_packets_t * view = fixture->rio->view;
+    if ( view->num_packets > capacity )
+    {
+        return -1;
+    }
+    for ( int i = 0; i < view->num_packets; ++i )
+    {
+        memcpy( &ids[i], view->packet_data[i], sizeof( ids[i] ) );
+    }
+    return view->num_packets;
+}
+
+static bool rocketnet_rio_delivery_test_reset( void * user )
+{
+    rocketnet_rio_delivery_test_t * fixture = (rocketnet_rio_delivery_test_t *) user;
+    if ( fixture->rio )
+    {
+        rocketnet_rio_test_fixture_free( fixture->rio );
+    }
+    fixture->rio = rocketnet_rio_test_fixture();
+    rocketnet_rio_test_functions = &rocketnet_rio_delivery_test_functions;
+    return fixture->rio != NULL;
+}
+
+// proofs/tla/RNReceiveHandoff.tla DeliveredByNextCall on the rio lane: every
+// receive call returns every datagram a worker pass banked before the call
+// began, stepped on this thread with a fake kernel (no socket, no worker
+// thread, no clock), over every shared script.
+bool rocketnet_server_rio_test_receive_delivery()
+{
+    rocketnet_rio_delivery_test_t fixture = { NULL, 0, 0 };
+    rocketnet_rio_delivery_test = &fixture;
+    const struct rocketnet_receive_delivery_rig_t rig = { &fixture, rocketnet_rio_delivery_test_pass, rocketnet_rio_delivery_test_call };
+    const bool valid = rocketnet_receive_delivery_check_all( &rig, "rio server", rocketnet_rio_delivery_test_reset );
+    if ( fixture.rio )
+    {
+        rocketnet_rio_test_fixture_free( fixture.rio );
+    }
+    rocketnet_rio_delivery_test = NULL;
     return valid;
 }
 

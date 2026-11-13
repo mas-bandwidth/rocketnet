@@ -19,6 +19,9 @@
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_receive_prefilter.h"
+#if ROCKETNET_DEV
+#include "rocketnet_receive_delivery_check.h"
+#endif // #if ROCKETNET_DEV
 #include <atomic>
 #include <new>
 #include <stddef.h>
@@ -4223,6 +4226,256 @@ bool rocketnet_server_iocp_test_stop_post_race( int mode, int * exit_at_admitted
     rocketnet_free( NULL, operations );
     rocketnet_free( NULL, storage );
 
+    return true;
+}
+// The receive fixture: a transport of workers completion workers with their
+// banks (ROCKETNET_IOCP_TEST_BANK datagrams each), their mutexes, drop
+// tallies and a process view of ROCKETNET_IOCP_TEST_VIEW, but no socket, no
+// port and no thread. The seams below step the real worker banking, the real
+// end of a completion batch and main's real receive call on this thread.
+#define ROCKETNET_IOCP_TEST_BANK 16
+#define ROCKETNET_IOCP_TEST_VIEW 64
+
+struct rocketnet_iocp_receive_fixture_t
+{
+    rocketnet_server_iocp_t * iocp;
+    void * storage;
+    void * worker_storage;
+    void * tally_storage;
+    uint8_t * arrays;
+};
+
+static void rocketnet_iocp_receive_fixture_free( rocketnet_iocp_receive_fixture_t * fixture )
+{
+    rocketnet_server_iocp_t * iocp = fixture->iocp;
+    if ( iocp )
+    {
+        for ( int w = 0; w < iocp->num_workers; ++w )
+        {
+            if ( iocp->workers[w].mutex.ok )
+            {
+                rocketnet_platform_mutex_destroy( &iocp->workers[w].mutex );
+            }
+            iocp->workers[w].~rocketnet_iocp_worker_t();
+        }
+        iocp->~rocketnet_server_iocp_t();
+    }
+    rocketnet_free( NULL, fixture->arrays );
+    rocketnet_free( NULL, fixture->tally_storage );
+    rocketnet_free( NULL, fixture->worker_storage );
+    rocketnet_free( NULL, fixture->storage );
+    memset( fixture, 0, sizeof( *fixture ) );
+}
+
+static bool rocketnet_iocp_receive_fixture( rocketnet_iocp_receive_fixture_t * fixture, int workers, int bank, int view )
+{
+    memset( fixture, 0, sizeof( *fixture ) );
+    if ( workers < 1 || workers > ROCKETNET_IOCP_MAX_WORKERS || bank < 1 || view < 1 )
+    {
+        return false;
+    }
+    const size_t bank_bytes = (size_t) bank * ( ROCKETNET_FRAME_STRIDE + sizeof( rocketnet_address_t ) + sizeof( int ) );
+    const size_t view_bytes = (size_t) view * ( sizeof( rocketnet_address_t ) + sizeof( int ) + sizeof( uint8_t * ) );
+    fixture->storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_iocp_t ) );
+    fixture->worker_storage = rocketnet_malloc( NULL, sizeof( rocketnet_iocp_worker_t ) * (size_t) workers );
+    fixture->tally_storage = rocketnet_malloc( NULL, sizeof( rocketnet_receive_drop_tally_t ) * (size_t) workers );
+    fixture->arrays = (uint8_t *) rocketnet_malloc( NULL, bank_bytes * ROCKETNET_IOCP_RECEIVE_BANKS * (size_t) workers + view_bytes );
+    if ( !fixture->storage || !fixture->worker_storage || !fixture->tally_storage || !fixture->arrays )
+    {
+        rocketnet_iocp_receive_fixture_free( fixture );
+        return false;
+    }
+
+    rocketnet_server_iocp_t * iocp = new ( fixture->storage ) rocketnet_server_iocp_t();
+    fixture->iocp = iocp;
+    iocp->num_workers = workers;
+    iocp->workers = (rocketnet_iocp_worker_t *) fixture->worker_storage;
+    iocp->drop_tallies = (rocketnet_receive_drop_tally_t *) fixture->tally_storage;
+    uint8_t * p = fixture->arrays;
+    bool valid = true;
+    for ( int w = 0; w < workers; ++w )
+    {
+        rocketnet_iocp_worker_t * worker = new ( &iocp->workers[w] ) rocketnet_iocp_worker_t();
+        worker->owner = iocp;
+        for ( int b = 1; b < ROCKETNET_IOCP_RECEIVE_BANKS; ++b ) { worker->free_banks[b - 1] = b; }
+        new ( &iocp->drop_tallies[w] ) rocketnet_receive_drop_tally_t();
+        rocketnet_receive_drop_tally_reset( &iocp->drop_tallies[w] );
+        for ( int b = 0; b < ROCKETNET_IOCP_RECEIVE_BANKS; ++b )
+        {
+            rocketnet_iocp_receive_buffer_t * buffer = &worker->buffers[b];
+            buffer->data = ( uint8_t( * )[ROCKETNET_FRAME_STRIDE] ) p;
+            p += (size_t) bank * ROCKETNET_FRAME_STRIDE;
+            buffer->from = (rocketnet_address_t *) p;
+            p += (size_t) bank * sizeof( rocketnet_address_t );
+            buffer->packet_bytes = (int *) p;
+            p += (size_t) bank * sizeof( int );
+            buffer->num_packets = 0;
+            buffer->capacity = bank;
+        }
+        valid = rocketnet_platform_mutex_create( &worker->mutex ) && valid;
+    }
+    iocp->process.num_packets = 0;
+    iocp->process.capacity = view;
+    iocp->process.from = (rocketnet_address_t *) p;
+    p += (size_t) view * sizeof( rocketnet_address_t );
+    iocp->process.packet_bytes = (int *) p;
+    p += (size_t) view * sizeof( int );
+    iocp->process.packet_data = (uint8_t **) p;
+
+    if ( !valid )
+    {
+        rocketnet_iocp_receive_fixture_free( fixture );
+    }
+    return valid;
+}
+
+// one completion batch of worker w: datagrams first .. first + count - 1, each
+// carrying its id in its first bytes, banked as the worker loop banks them,
+// then the batch ended as the worker loop ends it
+static void rocketnet_iocp_test_batch( rocketnet_server_iocp_t * iocp, int w, uint32_t first, int count )
+{
+    rocketnet_iocp_worker_t * worker = &iocp->workers[w];
+    rocketnet_iocp_batch_t batch;
+    batch.filter_state = 0;
+    memset( batch.tally, 0, sizeof( batch.tally ) );
+    batch.drops = &iocp->drop_tallies[w];
+
+
+    rocketnet_address_t from;
+    memset( &from, 0, sizeof( from ) );
+    from.type = ROCKETNET_ADDRESS_IPV4;
+    from.data.ipv4[0] = 127;
+    from.data.ipv4[3] = 1;
+    from.port = (uint16_t) ( 40000 + w );
+
+    for ( int i = 0; i < count; ++i )
+    {
+        uint8_t datagram[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES] = {};
+        const uint32_t id = first + (uint32_t) i;
+        memcpy( datagram, &id, sizeof( id ) );
+        rocketnet_iocp_bank_datagram( &batch, &worker->buffers[worker->fill_index], from, datagram, (int) sizeof( datagram ) );
+    }
+
+    for ( int c = 0; c < ROCKETNET_SERVER_IOCP_COUNTER_ROWS; ++c ) { iocp->counters[c].fetch_add( batch.tally[c] ); }
+    rocketnet_iocp_publish_receive_bank( worker );
+}
+
+// the ids main's last receive call returned, in the view's order
+static int rocketnet_iocp_test_view_ids( rocketnet_server_iocp_t * iocp, uint32_t * ids, int capacity )
+{
+    const rocketnet_server_socket_process_packets_t * view = &iocp->process;
+    if ( view->num_packets > capacity )
+    {
+        return -1;
+    }
+    for ( int i = 0; i < view->num_packets; ++i )
+    {
+        memcpy( &ids[i], view->packet_data[i], sizeof( ids[i] ) );
+    }
+    return view->num_packets;
+}
+
+struct rocketnet_iocp_delivery_test_t
+{
+    rocketnet_iocp_receive_fixture_t fixture;
+    int workers;
+    int passes;
+};
+
+// one worker pass of the script is one completion batch; the passes are
+// dealt to the workers in turn
+static bool rocketnet_iocp_delivery_test_pass( void * user, uint32_t first, int count )
+{
+    rocketnet_iocp_delivery_test_t * test = (rocketnet_iocp_delivery_test_t *) user;
+    rocketnet_iocp_test_batch( test->fixture.iocp, test->passes++ % test->workers, first, count );
+    return true;
+}
+
+// one receive call of main. With several workers the order across workers is
+// the walk's, not the arrival's (each worker's own datagrams stay in order),
+// so the ids are sorted before the check compares them.
+static int rocketnet_iocp_delivery_test_call( void * user, uint32_t * ids, int capacity )
+{
+    rocketnet_iocp_delivery_test_t * test = (rocketnet_iocp_delivery_test_t *) user;
+    rocketnet_server_iocp_receive_packets( test->fixture.iocp );
+    const int returned = rocketnet_iocp_test_view_ids( test->fixture.iocp, ids, capacity );
+    for ( int i = 1; i < returned; ++i )
+    {
+        const uint32_t id = ids[i];
+        int j = i;
+        while ( j > 0 && ids[j - 1] > id )
+        {
+            ids[j] = ids[j - 1];
+            j--;
+        }
+        ids[j] = id;
+    }
+    return returned;
+}
+
+static bool rocketnet_iocp_delivery_test_reset( void * user )
+{
+    rocketnet_iocp_delivery_test_t * test = (rocketnet_iocp_delivery_test_t *) user;
+    rocketnet_iocp_receive_fixture_free( &test->fixture );
+    test->passes = 0;
+    return rocketnet_iocp_receive_fixture( &test->fixture, test->workers, ROCKETNET_IOCP_TEST_BANK, ROCKETNET_IOCP_TEST_VIEW );
+}
+
+// proofs/tla/RNReceiveHandoff.tla DeliveredByNextCall on the iocp transport:
+// every receive call returns every datagram a completion batch banked before
+// the call began, over every shared script, with workers completion workers
+// (1 to 4) and no socket, no port, no thread and no clock.
+bool rocketnet_server_iocp_test_receive_delivery( int workers )
+{
+    if ( workers < 1 || workers > 4 )
+    {
+        return false;
+    }
+    rocketnet_iocp_delivery_test_t test;
+    memset( &test, 0, sizeof( test ) );
+    test.workers = workers;
+    const struct rocketnet_receive_delivery_rig_t rig = { &test, rocketnet_iocp_delivery_test_pass, rocketnet_iocp_delivery_test_call };
+    const bool valid = rocketnet_receive_delivery_check_all( &rig, workers == 1 ? "iocp server" : "iocp server, several workers",
+                                                             rocketnet_iocp_delivery_test_reset );
+    rocketnet_iocp_receive_fixture_free( &test.fixture );
+    return valid;
+}
+
+// The walk's rotation, with no socket, no port, no thread and no clock: two
+// workers, banks and a process view of 8 datagrams. Each frame worker 0
+// completes a batch of 8 and worker 1 a batch of 1, then main's call runs.
+// *longest_wait is the most calls in a row that ended with worker 1 holding
+// committed datagrams main had not returned, and *dropped the datagrams the
+// workers refused BANK_FULL. frames is at most 32.
+bool rocketnet_server_iocp_test_receive_rotation( int frames, int * longest_wait, uint64_t * dropped )
+{
+    if ( frames < 1 || frames > 32 || !longest_wait || !dropped )
+    {
+        return false;
+    }
+    rocketnet_iocp_receive_fixture_t fixture;
+    if ( !rocketnet_iocp_receive_fixture( &fixture, 2, 8, 8 ) )
+    {
+        return false;
+    }
+    rocketnet_server_iocp_t * iocp = fixture.iocp;
+
+    uint32_t next = 1;
+    int wait = 0;
+    *longest_wait = 0;
+    for ( int f = 0; f < frames; ++f )
+    {
+        rocketnet_iocp_test_batch( iocp, 0, next, 8 );
+        next += 8;
+        rocketnet_iocp_test_batch( iocp, 1, next, 1 );
+        next += 1;
+        rocketnet_server_iocp_receive_packets( iocp );
+        wait = rocketnet_server_iocp_test_ready_banks( iocp, 1 ) > 0 ? wait + 1 : 0;
+        *longest_wait = wait > *longest_wait ? wait : *longest_wait;
+    }
+
+    *dropped = iocp->drop_tallies[0].values[ROCKETNET_RECEIVE_DROP_BANK_FULL].load() + iocp->drop_tallies[1].values[ROCKETNET_RECEIVE_DROP_BANK_FULL].load();
+    rocketnet_iocp_receive_fixture_free( &fixture );
     return true;
 }
 #endif // #if ROCKETNET_DEV
