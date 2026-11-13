@@ -480,6 +480,16 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
 
     report.print();
 
+    // the model's bound on a block's number: the highest the walk used
+    int max_block = 1;
+    for ( int c = 0; c < AA_CLIENTS; c++ )
+    {
+        if ( next_block[c] - 1 > max_block )
+        {
+            max_block = next_block[c] - 1;
+        }
+    }
+
     char constants[512];
     snprintf( constants, sizeof( constants ),
               "    Clients = {0, 1, 2}\n"
@@ -495,7 +505,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
               "    SettleOnlyReceiving = TRUE\n"
               "    GatherWhenFull = TRUE\n"
               "    AdvanceTail = TRUE\n",
-              blocks, AA_MAX_RANGES, acks->pending_capacity, acks->ranges_capacity );
+              max_block, AA_MAX_RANGES, acks->pending_capacity, acks->ranges_capacity );
     const bool written = !fault && tla_write_trace( out, "MCTraceAckApply", seed, "TraceRNAckApplyPhase", "", constants, records );
 
     for ( int g = 0; g < AA_GAME_THREADS; g++ )
