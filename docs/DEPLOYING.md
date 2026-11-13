@@ -185,9 +185,17 @@ after the interface name for more):
     #    on, the parent would hand the filter every VLAN's frames untagged,
     #    and the pre-flight refuses xdp (auto falls to the next rung). The
     #    setting does not survive a reboot or a driver reload: re-run this
-    #    script after either. QinQ, 802.1ad and VLANs on bonds or bridges are
-    #    refused by name (LINUX.md section 6, "A VLAN"). Native XDP only: a
-    #    NIC without it refuses an xdp pin, and auto falls to the next rung.
+    #    script after either. Give the script the VLAN device (eth0.300),
+    #    never the bare parent: only then does it check the offload, in
+    #    provision and in verify. A passed check is not a guarantee of VLAN
+    #    isolation (a veth parent, 802.1ad stripping and untagged frames on
+    #    the parent's segment are not covered), and an untagged server on a
+    #    NIC that carries other VLANs with the offload on takes their frames
+    #    for its address and port: LINUX.md section 6, "A VLAN" and "An
+    #    untagged server on a trunk". QinQ, 802.1ad and VLANs on bonds or
+    #    bridges are refused by name (LINUX.md section 6, "A VLAN"). Native
+    #    XDP only: a NIC without it refuses an xdp pin, and auto falls to the
+    #    next rung.
     #    The socket transports pay for connection tracking under a stateful
     #    firewall; LINUX.md section 6 gives the notrack rule and what the
     #    ruleset must accept with it.
@@ -224,8 +232,8 @@ after the interface name for more):
     #    to cpu num_os_cpus + k (the cpu XDP worker k pins itself to; give the
     #    script the server's ROCKETNET_SERVER_NUM_OS_CPUS when it is not 1),
     #    moves any other vector of the port off the worker cpus, and reads
-    #    back every vector it pinned or moved. It writes only smp_affinity_list, so it runs beside the
-    #    live server. Provision itself runs R7 (channels) before R4 (IRQs), so
+    #    back every vector it pinned or moved. It writes only
+    #    smp_affinity_list, so it runs beside the live server. Provision itself runs R7 (channels) before R4 (IRQs), so
     #    a port left with many channels provisions on the first run.
     #
     #    On such a NIC the order is always: provision, start the server,

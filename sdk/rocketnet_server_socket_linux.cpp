@@ -1387,8 +1387,10 @@ bool rocketnet_server_socket_preflight_irqs( const char * root, const char * int
 
     char path[1024];
     char isolated[1024];
+
+    // an isolated set that is not a cpu list counts as none (B2 names it)
     const bool have_isolated = rocketnet_server_socket_root_path( path, sizeof( path ), root, "/sys/devices/system/cpu/isolated" ) &&
-                               rocketnet_server_socket_read_sysfs( path, isolated, sizeof( isolated ) ) && isolated[0] != '\0';
+                               rocketnet_server_socket_read_sysfs( path, isolated, sizeof( isolated ) ) && rocketnet_xdp_cpu_list_has( isolated, 0 ) != -1;
 
     char command[512];
     rocketnet_server_socket_provision_command( command, sizeof( command ), interface_name, num_queues, num_os_cpus, "" );
@@ -1425,6 +1427,14 @@ bool rocketnet_server_socket_preflight_irqs( const char * root, const char * int
     for ( int i = 0; i < num_vectors; i++ )
     {
         named_queues = named_queues || vectors[i].queue >= 0;
+    }
+
+    // the rule by count pins each vector to its own isolated cpu: with no
+    // isolated set there is nothing to pin to, as in the script
+    if ( !named_queues && !have_isolated )
+    {
+        rocketnet_warn( "xdp pre-flight: cannot pin %s's IRQs (R4): no isolated cpus (B1/B2 first)", interface_name );
+        return false;
     }
 
     const int first_worker = rocketnet_xdp_thread_cpu( num_os_cpus, 0 );
@@ -2104,13 +2114,20 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
 
     // B2: the isolated cpu set exists and is non-empty -- isolcpus= taken
     // effect. an absent file is the same errand as an empty one, in both
-    // this check and the script.
+    // this check and the script. A set that is not a cpu list is unmet
+    // and counts as none for R4, in both.
 
     char isolated[1024];
     bool have_isolated = rocketnet_server_socket_read_sysfs( "/sys/devices/system/cpu/isolated", isolated, sizeof( isolated ) ) && isolated[0] != '\0';
     if ( !have_isolated )
     {
         rocketnet_warn( "xdp pre-flight: no isolated cpus (B2): B1's isolcpus= has not taken effect (grub + reboot, per scripts/rocketnet-provision)" );
+        provisioned = false;
+    }
+    else if ( rocketnet_xdp_cpu_list_has( isolated, 0 ) == -1 )
+    {
+        rocketnet_warn( "xdp pre-flight: the isolated cpu set '%s' is not a cpu list (B2)", isolated );
+        have_isolated = false;
         provisioned = false;
     }
 

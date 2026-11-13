@@ -433,12 +433,28 @@ parent, which leaves a tag that the sender's `tx-vlan-offload` put beside the
 frame outside the frame, so the program sees that frame untagged whatever the
 parent's flag (on a veth the sender must put the tag in the frame, which the
 library cannot read from here); and a NIC that also strips 802.1ad outer tags
-(`rx-vlan-stag-hw-parse` on), which this flag does not cover. Reading the
-stripped tag from the receive metadata is on the roadmap
+(`rx-vlan-stag-hw-parse` on), which this flag does not cover. A passed flag
+check is that observation, not a guarantee of VLAN isolation: on these paths
+the server's VLAN is not an isolation boundary, and one that matters needs it
+enforced upstream (the switch port) or a NIC that carries only that VLAN.
+Reading the stripped tag from the receive metadata is on the roadmap
 (`xdp-vlan-stripped-tags`).
 
-Run the provisioning script on either name: given `eth0.300` it
-says `R3 to R7 act on eth0` and provisions the parent (R2). These are refused by
+**An untagged server on a trunk.** The same holds without a VLAN device: an
+untagged server whose NIC also carries tagged VLANs and has `rx-vlan-offload`
+on sees their frames untagged, and takes any addressed to its address and
+port. Neither the pre-flight nor the script refuses this (there is no VLAN to
+check for). Give such a server a port that carries no other VLAN, turn the
+offload off by hand (`ethtool -K eth0 rxvlan off`, after which other VLANs'
+frames reach the filter tagged and pass up the stack), or enforce the
+separation upstream.
+
+Run the provisioning script on the VLAN device: given `eth0.300` it says
+`R3 to R7 act on eth0`, provisions the parent (R2) and checks the parent's
+`rx-vlan-offload` for VLAN 300. Given the bare parent `eth0` it does the same
+parent work but has no VLAN to check for, so it neither turns the offload off
+nor reports it; `verify` on a VLAN server is run on the VLAN device too, and
+its retry line names the device it was given. These are refused by
 name, by the pre-flight and by the script: an 802.1ad (QinQ outer) tag, a VLAN
 on a VLAN, a VLAN on a bond, bridge, team, macvlan or other stacked device, a
 parent in another network namespace, and an address on a bond, bridge, team,

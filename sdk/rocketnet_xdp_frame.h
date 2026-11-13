@@ -1060,9 +1060,9 @@ static inline int rocketnet_xdp_cpu_list_has( const char * list, int cpu )
 }
 
 // IRQAFFINITY (B1 of scripts/rocketnet-provision): the kernel command line's
-// irqaffinity=<cpu-list>, left-bounded (start or a space before it) like every
-// other B1 token; the last one when there are several, as the kernel applies
-// them in order. It keeps the machine's interrupts off the isolated cpus the
+// irqaffinity=<cpu-list>, left-bounded (start, space, tab or newline before
+// it) like every other B1 token; the last one before any bare "--" when
+// there are several, as the kernel applies them in order. It keeps the machine's interrupts off the isolated cpus the
 // xdp threads spin on, so any well-formed list with no cpu in the isolated set
 // is met: irqaffinity=0 for the default num_os_cpus of 1, irqaffinity=0-1 for
 // num_os_cpus 2. An isolated list that is NULL or empty judges the form only
@@ -1090,9 +1090,21 @@ static inline int rocketnet_xdp_cmdline_irqaffinity( const char * cmdline, const
 
     // left-bounded by the line start or a blank (a space or a tab, the
     // script's word split). The last such token: the kernel runs the
-    // irqaffinity= handler for each one in order, so a later one wins
+    // irqaffinity= handler for each one in order, so a later one wins. A
+    // bare "--" ends the kernel's parameters (the rest go to init)
+    const char * limit = NULL;
+    for ( const char * dash = strstr( cmdline, "--" ); dash && !limit; dash = strstr( dash + 1, "--" ) )
+    {
+        const bool left = dash == cmdline || dash[-1] == ' ' || dash[-1] == '\t' || dash[-1] == '\n';
+        const bool right = dash[2] == '\0' || dash[2] == ' ' || dash[2] == '\t' || dash[2] == '\n';
+        if ( left && right )
+        {
+            limit = dash;
+        }
+    }
+
     const char * match = NULL;
-    for ( const char * found = strstr( cmdline, token ); found; found = strstr( found + 1, token ) )
+    for ( const char * found = strstr( cmdline, token ); found && ( !limit || found < limit ); found = strstr( found + 1, token ) )
     {
         if ( found == cmdline || found[-1] == ' ' || found[-1] == '\t' || found[-1] == '\n' )
         {

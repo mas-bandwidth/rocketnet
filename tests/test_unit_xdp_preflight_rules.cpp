@@ -139,6 +139,11 @@ static void test_xdp_transport_preflight_irqaffinity_list()
     rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0 xirqaffinity=2", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
     rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0 irqaffinity=0,", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MALFORMED );
 
+    // a bare "--" ends the kernel's parameters: what follows goes to init
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=2 -- irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "ro -- irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ABSENT );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "a=--b irqaffinity=2 x-- irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+
     // the value's bound: 255 characters is a value, 256 is not
     {
         char line[300] = "irqaffinity=0";
@@ -418,6 +423,19 @@ static void test_xdp_transport_preflight_irq_unnamed_queues_keep_isolated_rule()
     rocketnet_unit_check( !rocketnet_server_socket_preflight_irqs( root, "eth0", 2, 1 ) );
     preflight_irq( root, 31, "0\n" );
     rocketnet_unit_check( !rocketnet_server_socket_preflight_irqs( root, "eth0", 2, 1 ) );
+
+    // no isolated set, or one that is not a cpu list: nothing to pin to, unmet
+    // even with the vectors on distinct cpus (the script's "cannot pin")
+
+    preflight_irq( root, 31, "2\n" );
+    rocketnet_unit_check( rocketnet_server_socket_preflight_irqs( root, "eth0", 2, 1 ) );
+    const char * no_set[] = { "\n", "1-3,\n", "1-x\n" };
+    for ( size_t i = 0; i < sizeof( no_set ) / sizeof( no_set[0] ); i++ )
+    {
+        preflight_root_write( root, "/sys/devices/system/cpu/isolated", no_set[i] );
+        rocketnet_unit_check( !rocketnet_server_socket_preflight_irqs( root, "eth0", 2, 1 ) );
+    }
+    preflight_root_write( root, "/sys/devices/system/cpu/isolated", "1-3\n" );
 
     // no vector names the interface: R4 cannot be checked by name, and says so
 
