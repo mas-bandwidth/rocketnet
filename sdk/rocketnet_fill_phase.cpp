@@ -89,6 +89,7 @@ void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int 
     rocketnet_assert( num_clients >= 0 && num_clients <= ROCKETNET_MAX_CLIENTS );
 
     fill_phase->main_calls.store( 0 );
+    fill_phase->window.store( 0 );
     fill_phase->epoch.store( 1 );
     fill_phase->main_owner.store( 0 );
     fill_phase->armed.store( 1 );
@@ -108,7 +109,8 @@ void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int 
 }
 
 // proofs/tla/RNFillPhase.tla MainAnnounce, MainLook (one per fills_in line), MainIn
-bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase )
+// (refused for an operation other than an update call while the window is open)
+bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase, bool update_call )
 {
     rocketnet_assert( fill_phase );
 
@@ -149,10 +151,78 @@ bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase
         RN_FILL_PHASE_TRACE( "MainLook", i, fills, false );
     }
 
+    // the window of the update in three calls: only update_client and the
+    // update calls run in it. Only a main operation writes window, and none
+    // runs now but this one, so the load sees the last one's store
+    if ( !update_call && fill_phase->window.load() != 0 )
+    {
+        fill_phase->main_calls.fetch_sub( 1 );
+        rn_fill_phase_count( fill_phase->overlap_counter );
+        RN_FILL_PHASE_TRACE( "MainIn", -1, 1, true );
+        rocketnet_error( "server main-thread operation refused: the update is open (update_receive called, update_finish not yet)" );
+        rocketnet_assert( false && "a main-thread operation between update_receive and update_finish" );
+        return false;
+    }
+
     fill_phase->main_owner.store( me, std::memory_order_relaxed );
     fill_phase->main_depth = 1;
     RN_FILL_PHASE_TRACE( "MainIn", -1, 0, false );
     return true;
+}
+
+// proofs/tla/RNFillPhase.tla MainEpoch: the window's store is the work of the
+// receive or finish operation that MainEpoch ends
+void rocketnet_fill_phase_window( struct rocketnet_fill_phase_t * fill_phase, bool open )
+{
+    rocketnet_assert( fill_phase );
+    fill_phase->window.store( open ? 1 : 0 );
+}
+
+// proofs/tla/RNFillPhase.tla TakeCount, TakeLook: update_client counts itself
+// in, then looks for a main operation; the main side's MainLook sees the count
+bool rocketnet_fill_phase_take_begin( struct rocketnet_fill_phase_t * fill_phase )
+{
+    rocketnet_assert( fill_phase );
+
+    const uint64_t me = rocketnet_platform_thread_id();
+    if ( fill_phase->main_owner.load( std::memory_order_relaxed ) == me )
+    {
+        return true;                                // a main operation's own work
+    }
+
+    const int line = rn_fill_phase_line( me );
+    std::atomic<uint32_t> * fills_in = &fill_phase->lines[line].fills_in;
+    fills_in->fetch_add( 1 );
+    RN_FILL_PHASE_TRACE( "TakeCount", -1, (uint64_t) line, false );
+
+    if ( fill_phase->main_calls.load() != 0 )
+    {
+        fills_in->fetch_sub( 1 );
+        rn_fill_phase_count( fill_phase->overlap_counter );
+        RN_FILL_PHASE_TRACE( "TakeLook", -1, (uint64_t) line, true );
+        rocketnet_error( "server update_client refused: a main-thread operation is running" );
+        rocketnet_assert( false && "update_client inside a main-thread operation" );
+        return false;
+    }
+
+    RN_FILL_PHASE_TRACE( "TakeLook", -1, 0, false );
+    return true;
+}
+
+// proofs/tla/RNFillPhase.tla TakeLeave
+void rocketnet_fill_phase_take_end( struct rocketnet_fill_phase_t * fill_phase )
+{
+    rocketnet_assert( fill_phase );
+
+    const uint64_t me = rocketnet_platform_thread_id();
+    if ( fill_phase->main_owner.load( std::memory_order_relaxed ) == me )
+    {
+        return;
+    }
+
+    const int line = rn_fill_phase_line( me );
+    fill_phase->lines[line].fills_in.fetch_sub( 1 );
+    RN_FILL_PHASE_TRACE( "TakeLeave", -1, (uint64_t) line, false );
 }
 
 // proofs/tla/RNFillPhase.tla MainEpoch, MainDrop: the epoch moves, so the next fill phase begins with every client unclaimed
@@ -176,8 +246,9 @@ void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
 }
 
 // proofs/tla/RNFillPhase.tla Arm: the latch arms at the game's first call
-// that names a client. Until then the call sites' scopes
-// (rocketnet_fill_phase.h) do nothing: FillSkip and MainSkip.
+// that names a client, or its first update_receive. Until then the call
+// sites' scopes (rocketnet_fill_phase.h) do nothing: FillSkip, TakeSkip and
+// MainSkip.
 void rocketnet_fill_phase_arm( struct rocketnet_fill_phase_t * fill_phase, bool armed )
 {
     rocketnet_assert( fill_phase );
@@ -305,9 +376,10 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
     // the epoch is read again after the look: a main operation that began and
     // ended between the epoch load and the count left this call deciding with
     // the old phase, which a second filler in the new phase would not see
-    // (proofs/tla/RNFillPhase.tla FillLook)
+    // (proofs/tla/RNFillPhase.tla FillLook). The window is read too: between
+    // update_receive and update_finish no fill call runs
 
-    if ( fill_phase->main_calls.load() != 0 || fill_phase->epoch.load() != epoch )
+    if ( fill_phase->main_calls.load() != 0 || fill_phase->epoch.load() != epoch || fill_phase->window.load() != 0 )
     {
         // a refused call leaves no claim: the client's next filler in this
         // phase, honest, must not be refused for it (NoFalseAlarm)
@@ -334,8 +406,8 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         fills_in->fetch_sub( 1 );
         rn_fill_phase_count( fill_phase->overlap_counter );
         RN_FILL_PHASE_TRACE( "FillLook", client_index, before, true );
-        rocketnet_error( "server fill call refused: a main-thread operation is running" );
-        rocketnet_assert( false && "a fill call inside a main-thread operation" );
+        rocketnet_error( "server fill call refused: a main-thread operation is running, or the update is open" );
+        rocketnet_assert( false && "a fill call inside a main-thread operation or an open update" );
         return false;
     }
 

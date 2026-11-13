@@ -8,8 +8,11 @@
 //
 // The code under test is sdk/rocketnet_fill_phase.cpp, driven the way the
 // transport drives it: one main thread makes main-thread operations
-// (main_begin, then main_end when it entered) and filler threads make fill
-// calls (fill_begin on a client, then fill_end when it entered). Each actor
+// (main_begin, then main_end when it entered), each an update call that
+// opens the window (update_receive) or shuts it (update_finish) or another
+// operation (a send, a stop), and filler threads make fill calls (fill_begin
+// on a client, then fill_end when it entered) and takes (update_client:
+// take_begin, then take_end when it entered). Each actor
 // is a real thread, because the check names a thread by its id
 // (rocketnet_platform_thread_id). The walk is the scheduler: every actor
 // parks in the code's own trace hook at the end of each step the model names
@@ -25,8 +28,9 @@
 // named (the action), its arguments with what the step gave back (the line
 // a look read or a count took, ok for a look, lock or decide that let the
 // call go on), and every model variable after it: the code's own state
-// (main_calls, each fills_in line, the epoch, each client's word and owner)
-// read from the fill phase, the control state, the line each call counted
+// (main_calls, the window, each fills_in line, the epoch, each client's word
+// and owner, the two refusal counters) read from the fill phase, the control
+// state and the kind of the main operation, the line each call counted
 // on and the words a call saved from the steps the hook names, and the
 // contract's ghost (who passed on what in this phase, which calls met a main
 // operation, whether a refusal was of an honest call) by the model's own
@@ -97,6 +101,18 @@ enum fp_pc_t
     FP_UNCLAIMED,
     FP_ANNOUNCED,
     FP_EPOCHED,
+    FP_TCOUNTED,
+    FP_TIN,
+};
+
+// a main operation's kind: what the walk's main thread calls next, and the
+// model's mkind ("update" for the update calls, "other" for the rest)
+enum fp_main_kind_t
+{
+    FP_KIND_NONE,
+    FP_KIND_RECEIVE,                                // an update call whose work opens the window
+    FP_KIND_FINISH,                                 // an update call whose work shuts it
+    FP_KIND_OTHER,                                  // send_packets, stop ...: refused while the window is open
 };
 
 struct fp_step_t
@@ -122,6 +138,8 @@ struct fp_walk_t
     fp_actor_state_t state[FP_ACTORS];
     int running;
     int next_client[FP_ACTORS];
+    bool next_take[FP_ACTORS];                      // a filler's next call is a take
+    fp_main_kind_t next_kind;                       // the main thread's next operation
     uint64_t id[FP_ACTORS];
     fp_step_t step[FP_ACTORS];
 
@@ -136,6 +154,7 @@ struct fp_walk_t
 
     // the model's view, kept by the walk from the steps the hook names
     fp_pc_t mpc;
+    fp_main_kind_t mkind;
     bool mscan[FP_LINES];
     fp_pc_t fpc[FP_FILLERS];
     int fclient[FP_FILLERS];
@@ -148,6 +167,7 @@ struct fp_walk_t
     bool false_alarm;
     int mains_done;
     int fills_done[FP_FILLERS];
+    int takes_done[FP_FILLERS];
 
     // the latch's ghost: the game has named a client (the walk's own arm step)
     bool opted;
@@ -177,9 +197,28 @@ static std::string fp_pc_text( fp_pc_t pc )
         case FP_UNCLAIMED: return "\"unclaimed\"";
         case FP_ANNOUNCED: return "\"announced\"";
         case FP_EPOCHED:   return "\"epoched\"";
+        case FP_TCOUNTED:  return "\"tcounted\"";
+        case FP_TIN:       return "\"tin\"";
         case FP_IDLE:      break;
     }
     return "\"idle\"";
+}
+
+static std::string fp_kind_text( fp_main_kind_t kind )
+{
+    switch ( kind )
+    {
+        case FP_KIND_RECEIVE:
+        case FP_KIND_FINISH:  return "\"update\"";
+        case FP_KIND_OTHER:   return "\"other\"";
+        case FP_KIND_NONE:    break;
+    }
+    return "\"none\"";
+}
+
+static bool fp_window( const fp_walk_t * walk )
+{
+    return walk->phase->window.load() != 0;
 }
 
 static fp_word_t fp_word( uint64_t word )
@@ -239,7 +278,7 @@ static tla_record_t fp_state( fp_walk_t * walk )
     }
     mscan += "}";
 
-    std::vector<std::string> fpc, fclient, fepoch, seen, saved, fline, fbroke, fills;
+    std::vector<std::string> fpc, fclient, fepoch, seen, saved, fline, fbroke, fills, takes;
     for ( int f = 0; f < FP_FILLERS; f++ )
     {
         fpc.push_back( fp_pc_text( walk->fpc[f] ) );
@@ -250,6 +289,7 @@ static tla_record_t fp_state( fp_walk_t * walk )
         fline.push_back( tla_int( walk->fline[f] ) );
         fbroke.push_back( tla_bool( walk->fbroke[f] ) );
         fills.push_back( tla_int( walk->fills_done[f] ) );
+        takes.push_back( tla_int( walk->takes_done[f] ) );
     }
 
     std::vector<std::string> words, owners, phase_in;
@@ -272,24 +312,30 @@ static tla_record_t fp_state( fp_walk_t * walk )
     tla_record_t record;
     record.add( "mpc", fp_pc_text( walk->mpc ) );
     record.add( "mscan", mscan );
+    record.add( "mkind", fp_kind_text( walk->mkind ) );
     record.add( "fpc", tla_function( fillers, fpc ) );
     record.add( "fclient", tla_function( fillers, fclient ) );
     record.add( "fepoch", tla_function( fillers, fepoch ) );
     record.add( "seen", tla_function( fillers, seen ) );
     record.add( "saved", tla_function( fillers, saved ) );
     record.add( "mainCalls", tla_int( walk->phase->main_calls.load() ) );
+    record.add( "window", tla_bool( fp_window( walk ) ) );
     record.add( "fillsIn", tla_function( lines, fills_in ) );
     record.add( "fline", tla_function( fillers, fline ) );
     record.add( "epoch", tla_int( (int64_t) walk->phase->epoch.load() ) );
     record.add( "word", tla_function( clients, words ) );
     record.add( "owner", tla_function( clients, owners ) );
     record.add( "armed", tla_bool( rocketnet_fill_phase_armed( walk->phase ) ) );
+    // the counters the check counts its refusals on (overlap_counter, two_fillers_counter)
+    record.add( "overlaps", tla_int( (int64_t) walk->overlaps ) );
+    record.add( "twoFillers", tla_int( (int64_t) walk->two_fillers ) );
     record.add( "opted", tla_bool( walk->opted ) );
     record.add( "fbroke", tla_function( fillers, fbroke ) );
     record.add( "phaseIn", tla_function( clients, phase_in ) );
     record.add( "falseAlarm", tla_bool( walk->false_alarm ) );
     record.add( "mainsDone", tla_int( walk->mains_done ) );
     record.add( "fillsDone", tla_function( fillers, fills ) );
+    record.add( "takesDone", tla_function( fillers, takes ) );
     return record;
 }
 
@@ -305,17 +351,24 @@ static bool fp_fill_busy( const fp_walk_t * walk )
     return false;
 }
 
-// RNFillPhase Justified(f), on the state before the step
+// a filler inside a fill call (RNFillPhase FillStates), not idle and not in a take
+static bool fp_in_fill( const fp_walk_t * walk, int g )
+{
+    return walk->fpc[g] != FP_IDLE && walk->fpc[g] != FP_TCOUNTED && walk->fpc[g] != FP_TIN;
+}
+
+// RNFillPhase Justified(f), on the state before the step (a filler's step
+// leaves the window as it was)
 static bool fp_justified( const fp_walk_t * walk, int f )
 {
-    if ( walk->fbroke[f] || walk->mpc != FP_IDLE )
+    if ( walk->fbroke[f] || walk->mpc != FP_IDLE || fp_window( walk ) )
     {
         return true;
     }
     const int c = walk->fclient[f];
     for ( int g = 0; g < FP_FILLERS; g++ )
     {
-        if ( g != f && ( walk->phase_in[c][g] || ( walk->fpc[g] != FP_IDLE && walk->fclient[g] == c ) ) )
+        if ( g != f && ( walk->phase_in[c][g] || ( fp_in_fill( walk, g ) && walk->fclient[g] == c ) ) )
         {
             return true;
         }
@@ -347,6 +400,7 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
         if ( action == "MainAnnounce" && !step->refused )
         {
             walk->mpc = FP_ANNOUNCED;
+            walk->mkind = walk->next_kind;
             for ( int l = 0; l < FP_LINES; l++ )
             {
                 walk->mscan[l] = true;
@@ -356,12 +410,19 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
         {
             walk->false_alarm = walk->false_alarm || !fp_fill_busy( walk );
             walk->mpc = FP_IDLE;
+            walk->mkind = FP_KIND_NONE;
             memset( walk->mscan, 0, sizeof( walk->mscan ) );
             walk->mains_done++;
         }
         else if ( action == "MainLook" && step->client_index >= 0 && step->client_index < FP_LINES )
         {
             walk->mscan[step->client_index] = false;
+        }
+        else if ( action == "MainIn" && step->refused )
+        {
+            walk->mpc = FP_IDLE;
+            walk->mkind = FP_KIND_NONE;
+            walk->mains_done++;
         }
         else if ( action == "MainIn" )
         {
@@ -375,6 +436,7 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
         else if ( action == "MainDrop" )
         {
             walk->mpc = FP_IDLE;
+            walk->mkind = FP_KIND_NONE;
             walk->mains_done++;
         }
         else
@@ -390,6 +452,13 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
         walk->fpc[f] = FP_BEGUN;
         walk->fclient[f] = step->client_index;
         walk->fepoch[f] = step->word;
+        walk->fbroke[f] = main_busy;
+        return true;
+    }
+    if ( action == "TakeCount" )
+    {
+        walk->fpc[f] = FP_TCOUNTED;
+        walk->fline[f] = (int) step->word;
         walk->fbroke[f] = main_busy;
         return true;
     }
@@ -439,6 +508,23 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
         walk->fpc[f] = FP_IDLE;
         walk->fline[f] = FP_NO_LINE;
         walk->fills_done[f]++;
+    }
+    else if ( action == "TakeLook" && step->refused )
+    {
+        walk->false_alarm = walk->false_alarm || !broke;
+        walk->fpc[f] = FP_IDLE;
+        walk->fline[f] = FP_NO_LINE;
+        walk->takes_done[f]++;
+    }
+    else if ( action == "TakeLook" )
+    {
+        walk->fpc[f] = FP_TIN;
+    }
+    else if ( action == "TakeLeave" )
+    {
+        walk->fpc[f] = FP_IDLE;
+        walk->fline[f] = FP_NO_LINE;
+        walk->takes_done[f]++;
     }
     else
     {
@@ -492,10 +578,22 @@ static void fp_actor( fp_walk_t * walk, int me )
     {
         fp_park_ready( walk, me );
         // the call sites' own scopes: not armed, a scope does nothing and
-        // the call takes no step of the check (RNFillPhase MainSkip, FillSkip)
+        // the call takes no step of the check (RNFillPhase MainSkip,
+        // FillSkip, TakeSkip). An update call's work stores the window, as
+        // the transport's update_receive and update_finish do, between
+        // main_begin's last step and main_end's first (RNFillPhase MainEpoch)
         if ( me == 0 )
         {
-            rocketnet_fill_phase_main_scope_t scope( walk->phase );
+            const fp_main_kind_t kind = walk->next_kind;
+            rocketnet_fill_phase_main_scope_t scope( walk->phase, kind != FP_KIND_OTHER );
+            if ( scope.entered && kind != FP_KIND_OTHER )
+            {
+                rocketnet_fill_phase_window( walk->phase, kind == FP_KIND_RECEIVE );
+            }
+        }
+        else if ( walk->next_take[me] )
+        {
+            rocketnet_fill_phase_take_scope_t scope( walk->phase );
         }
         else
         {
@@ -514,26 +612,48 @@ static void fp_assert( const char *, const char *, const char *, int )
 }
 
 // the call a step is part of: main_begin (announce, the looks, in), main_end
-// (epoch, drop), fill_begin (begin to look), fill_end (unclaim, leave)
+// (epoch, drop), fill_begin (begin to look), fill_end (unclaim, leave),
+// take_begin (count, look), take_end (leave)
 static const char * fp_op( int actor, const std::string & action )
 {
     if ( actor == 0 )
     {
         return action == "MainEpoch" || action == "MainDrop" ? "main_end" : "main_begin";
     }
+    if ( action == "TakeCount" || action == "TakeLook" )
+    {
+        return "take_begin";
+    }
+    if ( action == "TakeLeave" )
+    {
+        return "take_end";
+    }
     return action == "FillUnclaim" || action == "FillLeave" ? "fill_end" : "fill_begin";
 }
 
 // the step's arguments in the model's order, what it gave back among them:
-// the line a look read or a count took, and ok, the step let the call or
-// operation go on
-static std::string fp_args( int actor, const fp_step_t * step )
+// the line a look read or a count took, ok, the step let the call or
+// operation go on, and the window an update call's work left (read from the
+// check). An announce names the operation's kind, the walk's own choice
+static std::string fp_args( const fp_walk_t * walk, int actor, const fp_step_t * step )
 {
     const std::string action = step->action;
     const std::string ok = tla_bool( !step->refused );
     if ( action == "MainLook" )
     {
         return tla_sequence( { tla_int( step->client_index ), ok } );
+    }
+    if ( action == "MainAnnounce" )
+    {
+        return tla_sequence( { fp_kind_text( walk->next_kind ) } );
+    }
+    if ( action == "MainIn" )
+    {
+        return tla_sequence( { ok } );
+    }
+    if ( action == "MainEpoch" )
+    {
+        return tla_sequence( { tla_bool( fp_window( walk ) ) } );
     }
     if ( actor == 0 )
     {
@@ -544,11 +664,11 @@ static std::string fp_args( int actor, const fp_step_t * step )
     {
         return tla_sequence( { f, tla_int( step->client_index ) } );
     }
-    if ( action == "FillCount" )
+    if ( action == "FillCount" || action == "TakeCount" )
     {
         return tla_sequence( { f, tla_int( (int64_t) step->word ) } );
     }
-    if ( action == "FillLock" || action == "FillDecide" || action == "FillLook" )
+    if ( action == "FillLock" || action == "FillDecide" || action == "FillLook" || action == "TakeLook" )
     {
         return tla_sequence( { f, ok } );
     }
@@ -625,6 +745,11 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     int hold[FP_ACTORS] = {};
     int then = -1;                                  // the actor the steering picks next
 
+    // an odd seed's main thread mostly opens the window (update_receive), an
+    // even seed's mostly makes other operations: a walk has room for few
+    // main operations, and the fill calls that pass need the window shut
+    const bool window_walk = ( seed & 1 ) != 0;
+
     {
         std::unique_lock<std::mutex> lock( walk->mutex );
         walk->changed.wait( lock, [&]
@@ -682,9 +807,31 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
             }
             hold[a] = 0;
 
+            // the next call: a filler's client, and whether it is a take (more
+            // often with the window open, where takes are the game threads'
+            // work); the main thread's operation, mostly an update_receive
+            // with the window shut (window_walk) and another operation
+            // (refused) or an update_finish with it open
             if ( a > 0 && walk->state[a] == FP_READY )
             {
                 walk->next_client[a] = random.below( FP_CLIENTS );
+                walk->next_take[a] = random.below( fp_window( walk ) ? 2 : 4 ) == 0;
+            }
+            if ( a == 0 && walk->state[0] == FP_READY )
+            {
+                const int pick = random.below( 4 );
+                if ( fp_window( walk ) && window_walk )
+                {
+                    walk->next_kind = pick < 2 ? FP_KIND_OTHER : ( pick == 2 ? FP_KIND_FINISH : FP_KIND_RECEIVE );
+                }
+                else if ( fp_window( walk ) )
+                {
+                    walk->next_kind = pick < 2 ? FP_KIND_FINISH : ( pick == 2 ? FP_KIND_OTHER : FP_KIND_RECEIVE );
+                }
+                else
+                {
+                    walk->next_kind = pick < ( window_walk ? 3 : 1 ) ? FP_KIND_RECEIVE : FP_KIND_OTHER;
+                }
             }
 
             const bool was_ready = walk->state[a] == FP_READY;
@@ -703,7 +850,13 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                     {
                         walk->mains_done++;
                         report.act( "MainSkip" );
-                        records.push_back( tla_step( "main_scope", "MainSkip", "<<>>", fp_state( walk ) ) );
+                        records.push_back( tla_step( "main_scope", "MainSkip", tla_sequence( { tla_bool( fp_window( walk ) ) } ), fp_state( walk ) ) );
+                    }
+                    else if ( walk->next_take[a] )
+                    {
+                        walk->takes_done[a - 1]++;
+                        report.act( "TakeSkip" );
+                        records.push_back( tla_step( "take_scope", "TakeSkip", tla_sequence( { fp_filler_name( a - 1 ) } ), fp_state( walk ) ) );
                     }
                     else
                     {
@@ -740,7 +893,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
             refused += step->refused ? 1 : 0;
             mains += action == "MainDrop" ? 1 : 0;
 
-            const std::string args = fp_args( a, step );
+            const std::string args = fp_args( walk, a, step );
             if ( !fp_apply( walk, a, step ) )
             {
                 unknown = true;
@@ -756,23 +909,49 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
             {
                 hold[a] = 8 + random.below( 16 );
             }
-            if ( a == 0 && action == "MainDrop" )
+            if ( a == 0 && ( action == "MainDrop" || ( step->refused && ( action == "MainLook" || action == "MainIn" ) ) ) )
             {
-                hold[0] = 32 + random.below( 64 );  // fillers' whole calls with no main operation in
+                // after an operation ends, done or refused, fillers' whole
+                // calls with no main operation in; with the
+                // window open, one time in two the main thread's next
+                // operation comes soon, so an operation other than an update
+                // call meets the window in a walk that has room for few
+                hold[0] = fp_window( walk ) && ( window_walk || random.below( 2 ) == 0 ) ? 4 + random.below( 8 ) : 32 + random.below( 64 );
             }
-            if ( a > 0 && action == "FillCount" && ( chances == 0 || random.below( 2 ) == 0 ) )
+            if ( a > 0 && action == "FillCount" && ( chances == 0 || ( hold[0] == 0 && random.below( 2 ) == 0 ) ) )
             {
-                then = 0;                           // the main thread, then this filler's look
+                // the main thread, then this filler's look; once the plant has
+                // had its chance, only when the main thread is not held back
+                then = 0;
+            }
+            else if ( a > 0 && action == "TakeCount" && hold[0] == 0 && random.below( 2 ) == 0 )
+            {
+                then = 0;                           // the main thread announces, then this take's look finds it
+            }
+            else if ( a > 0 && action == "TakeLook" && !step->refused && random.below( 2 ) == 0 )
+            {
+                // a take held in while other takes come to it, and now and
+                // then the main thread's look (an update_finish before the
+                // game threads are done)
+                hold[a] = 72 + random.below( 32 );
+                then = hold[0] == 0 && random.below( 2 ) == 0 ? 0 : -1;
             }
             else if ( a == 0 && action == "MainAnnounce" )
             {
                 for ( int f = 0; f < FP_FILLERS; f++ )
                 {
-                    if ( walk->fpc[f] == FP_COUNTED )
+                    if ( walk->fpc[f] == FP_COUNTED || walk->fpc[f] == FP_TCOUNTED )
                     {
                         then = 1 + f;
                     }
                 }
+            }
+            if ( then < 0 && a == 0 && window_walk && walk->mpc != FP_IDLE )
+            {
+                // an odd seed's main operation, once in, runs straight to its
+                // end: a walk has room for the two operations, a receive
+                // and then one the window refuses, only so
+                then = 0;
             }
         }
     }
@@ -834,8 +1013,10 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 
     const std::string constants = "    Fillers = " + fillers + "\n" + "    Clients = " + clients + "\n" + "    NoOwner = \"none\"\n" +
                                   "    MaxMain = " + tla_int( walk->calls ) + "\n" + "    MaxFills = " + tla_int( walk->calls ) + "\n" +
+                                  "    MaxTakes = " + tla_int( walk->calls ) + "\n" +
                                   "    LookFirst = FALSE\n    LoadStore = FALSE\n    ResetOnLeave = TRUE\n    NoEpochLook = FALSE\n" +
-                                  "    NoRestore = FALSE\n    ScanOne = FALSE\n    OptedAtStart = FALSE\n    ArmedAtCreate = FALSE\n" + "    Lines = " + lines + "\n";
+                                  "    NoRestore = FALSE\n    ScanOne = FALSE\n    NoWindow = FALSE\n    NoMainWindow = FALSE\n" +
+                                  "    TakeUncounted = FALSE\n    OptedAtStart = FALSE\n    ArmedAtCreate = FALSE\n" + "    Lines = " + lines + "\n";
     const bool written = tla_write_trace( out, "MCTraceFillPhase", seed, "TraceRNFillPhase", "", constants, records );
 
     walk->phase->~rocketnet_fill_phase_t();

@@ -62,7 +62,7 @@ id are one filler to the check.
 
 | Config | Expect | Defect restored |
 | --- | --- | --- |
-| `MCRNFillPhase.cfg` | pass (292,929 distinct states) | none, at 2 fillers, 2 clients, 2 main operations |
+| `MCRNFillPhase.cfg` | pass (791,977 distinct states) | none, at 2 fillers, 2 clients, 2 main operations |
 | `MCRNFillPhaseN3.cfg` (bench) | pass | none, at 3 fillers, 2 clients and 3 main operations |
 | `MCRNFillPhaseBrokenLookFirst.cfg` | `Sound` fails | each side looks before it announces |
 | `MCRNFillPhaseBrokenLoadStore.cfg` | `OneFiller` fails | the lock is a load then a store, not a CAS |
@@ -71,6 +71,41 @@ id are one filler to the check.
 | `MCRNFillPhaseBrokenNoRestore.cfg` | `NoFalseAlarm` fails | a refused look leaves its claim |
 | `MCRNFillPhaseLatch.cfg` | pass | none, with the check not armed at create and armed by the game's first call that names a client |
 | `MCRNFillPhaseBrokenArmedAtCreate.cfg` | `NoCheckBeforeOptIn` fails | the check is armed from create: the calls of a game that names no client enter it |
+| `MCRNFillPhaseTakes.cfg` | pass | none, with takes (`update_client`) beside one fill call per filler, from not armed |
+| `MCRNFillPhaseBrokenNoWindow.cfg` | `WindowShut` fails | a fill call's look does not read the window |
+| `MCRNFillPhaseBrokenNoMainWindow.cfg` | `WindowShut` fails | `main_begin` does not read the window |
+| `MCRNFillPhaseBrokenTakeUncounted.cfg` | `TakeSound` fails | a take does not count itself on a `fills_in` line |
+
+Every run lets the main thread's update calls open and shut the window of
+the split update (`MainEpoch(w)`; `update_receive` opens it, `update_finish`
+and `update` shut it) and its other operations meet it (`MainIn`).
+
+## The window of the split update (found in review by Stella)
+
+Between `rocketnet_server_update_receive` and `rocketnet_server_update_finish`
+nothing but `update_client` and the update calls may run. Before this change
+the check knew nothing of that window: `update_finish` took no main-thread
+scope, `update_client` took none either, and a send, a stop or a fill call in
+the window ran unrefused. The check now keeps `window` (stored by the
+transport's receive and finish, inside their main operation), `main_begin`
+refuses any operation but an update call while it is set (`MainIn`), a fill
+call's look refuses while it is set (`FillLook`), and `update_client` is a
+take: it counts itself on its `fills_in` line, then looks at `main_calls`
+(`TakeCount`, `TakeLook`), so `update_finish`'s look sees a take still
+running. The three witnesses' traces, checked against the code by hand:
+
+- `BrokenTakeUncounted`: `TakeCount`, `TakeLook` (`main_calls` 0), then
+  `MainAnnounce` and a `MainLook` per line that each read 0, and `MainIn` with
+  the take still in. In the code `rocketnet_fill_phase_take_begin`'s
+  `fetch_add` on the line is what `main_begin`'s loop reads; without it the
+  loop finds every line 0.
+- `BrokenNoWindow`: an update call opens the window (`MainEpoch(TRUE)`,
+  `MainDrop`), then a fill call passes `FillLook` with `main_calls` 0 and the
+  epoch unchanged. The code's look reads `window` beside `main_calls` and the
+  epoch; without that read nothing else refuses it.
+- `BrokenNoMainWindow`: an update call opens the window, then an `other`
+  operation's `MainAnnounce`, looks and `MainIn` pass. The code's `main_begin`
+  reads `window` after the looks for any call not begun with `update_call`.
 
 ## What TLC found, checked against the code by hand
 

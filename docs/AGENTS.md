@@ -123,9 +123,16 @@ each call's own result. A refused send is not automatically API misuse.
 
 ## Threading rules
 
-One caller thread at a time owns an endpoint; an application handoff must
-serialize access. Allocator and logging callbacks may run on I/O threads.
-Follow the complete [threading contract](USAGE.md#threads).
+By default one caller thread at a time owns an endpoint; an application
+handoff must serialize access. A server may opt in to game threads: the main
+thread makes the server's calls, game threads may start, finish and abort
+client messages between two main thread calls (one thread per client index),
+and the split update runs `update_receive` on the main thread, then
+`update_client` on game threads, then `update_finish` on the main thread with
+nothing else called between receive and finish. A call that breaks these rules
+is refused and counted in every build once the server has opted in. Allocator
+and logging callbacks may run on I/O threads. Follow the complete
+[threading contract](USAGE.md#threads).
 
 ## Testing an integration
 

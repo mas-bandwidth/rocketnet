@@ -13,8 +13,9 @@ So every VIEW named in proofs/tla/*.cfg must be one this file classifies:
   SafetyView    the config sets FwdPattern and RevPattern to "arbitrary"
   MCSafetyView  its definition in MCRNEndpoint.tla falls back to `vars`
                 unless ABPattern and BAPattern are both "arbitrary"
-  View          a layout module's dead-value view; the config declares no
-                loss pattern
+  View          a dead-value view (a layout module's, or RNFillPhase's, which
+                drops the refusal counts and the last refusal no step
+                reads); the config declares no loss pattern
 A new view is refused until it is classified here with its reason.
 
 Usage: check_tla_views.py [--self-test | --root DIR]
