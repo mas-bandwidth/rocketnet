@@ -1241,7 +1241,9 @@ int rn_message_object_update_end( struct rn_message_object_t * object )
         }
     }
 
-    for ( int i = 0; i < object->num_connections; i++ )
+    // connections is carved with hot_connections, so it is set whenever there
+    // are connections to walk; the test names that for the reads below
+    for ( int i = 0; object->connections && i < object->num_connections; i++ )
     {
         if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
         {
