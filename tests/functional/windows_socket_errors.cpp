@@ -413,13 +413,15 @@ static int windows_socket_errors_pending( windows_socket_errors_session_t * sess
 }
 
 // the posted operations of a server at rest: every receive posted and no send
-// outstanding. The server transport creates iocp with the default worker count
-// (sdk/rocketnet_driver_builtin.cpp); -1 for portable, as pending reads.
+// outstanding. The session sets no bind address, so the server transport
+// binds the wildcard and creates iocp with one completion worker
+// (sdk/rocketnet_driver_builtin.cpp, iocp_workers); -1 for portable, as
+// pending reads.
 static int windows_socket_errors_full_pending( windows_socket_errors_session_t * session )
 {
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
-        return ROCKETNET_IOCP_DEFAULT_WORKERS * ROCKETNET_IOCP_RECEIVES_PER_WORKER;
+        return 1 * ROCKETNET_IOCP_RECEIVES_PER_WORKER;
     }
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
     {

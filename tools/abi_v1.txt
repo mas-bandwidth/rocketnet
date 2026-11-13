@@ -263,7 +263,7 @@ fieldtype rocketnet_server_config_t protocol_id uint64_t
 fieldtype rocketnet_server_config_t max_clients int
 fieldtype rocketnet_server_config_t packet_filter uint8_t[ROCKETNET_PACKET_FILTER_BYTES]
 fieldtype rocketnet_server_config_t backend_public_key uint8_t[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES]
-fieldtype rocketnet_server_config_t num_xdp_queues int
+fieldtype rocketnet_server_config_t num_xdp_threads int
 fieldtype rocketnet_server_config_t num_os_cpus int
 fieldtype rocketnet_server_config_t max_timeout_seconds int
 fieldtype rocketnet_server_config_t handshake_deadline_seconds int
@@ -291,6 +291,12 @@ fieldtype rocketnet_server_config_t server_secret_key uint8_t[ROCKETNET_SERVER_S
 fieldtype rocketnet_server_config_t token_epoch_unix_seconds uint64_t
 fieldtype rocketnet_server_config_t bind_ipv4_address const char*
 fieldtype rocketnet_server_config_t bind_ipv6_address const char*
+fieldtype rocketnet_server_config_t num_gso_workers int
+fieldtype rocketnet_server_config_t num_io_uring_workers int
+fieldtype rocketnet_server_config_t num_rio_lanes int
+fieldtype rocketnet_server_config_t num_iocp_completion_workers int
+fieldtype rocketnet_server_config_t num_iocp_send_threads int
+fieldtype rocketnet_server_config_t num_msgx_transmit_workers int
 fieldtype rocketnet_receipt_t serial uint32_t
 fieldtype rocketnet_receipt_t status enum rocketnet_receipt_status_t
 fieldtype rocketnet_connect_token_config_t config_bytes size_t
@@ -400,13 +406,13 @@ field rocketnet_client_config_t loopback_hub 96 8
 field rocketnet_client_config_t time_callback 104 8
 field rocketnet_client_config_t step_driven 112 1
 field rocketnet_client_config_t token_epoch_unix_seconds 120 8
-struct rocketnet_server_config_t 216
+struct rocketnet_server_config_t 240
 field rocketnet_server_config_t config_bytes 0 8
 field rocketnet_server_config_t protocol_id 8 8
 field rocketnet_server_config_t max_clients 16 4
 field rocketnet_server_config_t packet_filter 20 4
 field rocketnet_server_config_t backend_public_key 24 32
-field rocketnet_server_config_t num_xdp_queues 56 4
+field rocketnet_server_config_t num_xdp_threads 56 4
 field rocketnet_server_config_t num_os_cpus 60 4
 field rocketnet_server_config_t max_timeout_seconds 64 4
 field rocketnet_server_config_t handshake_deadline_seconds 68 4
@@ -434,6 +440,12 @@ field rocketnet_server_config_t server_secret_key 160 32
 field rocketnet_server_config_t token_epoch_unix_seconds 192 8
 field rocketnet_server_config_t bind_ipv4_address 200 8
 field rocketnet_server_config_t bind_ipv6_address 208 8
+field rocketnet_server_config_t num_gso_workers 216 4
+field rocketnet_server_config_t num_io_uring_workers 220 4
+field rocketnet_server_config_t num_rio_lanes 224 4
+field rocketnet_server_config_t num_iocp_completion_workers 228 4
+field rocketnet_server_config_t num_iocp_send_threads 232 4
+field rocketnet_server_config_t num_msgx_transmit_workers 236 4
 struct rocketnet_receipt_t 8
 field rocketnet_receipt_t serial 0 4
 field rocketnet_receipt_t status 4 4

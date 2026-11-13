@@ -1525,10 +1525,21 @@ jobs:
   # under load against the 120 s cap; at four shards, shard 3/4 (fillphase,
   # xdp-gateway-refresh, xdp-reply-macs: about 31 s a reply-macs case) ran 95 to 104 s
   # in its check step on loaded runners and was cancelled at the cap three times
-  # running (PR #1082, run 43436280125), so six (two of the twelve layers each). A shard is the build and tlacheck (about 30 s) plus
+  # running (PR #1082, run 43436280125), so six (two of the twelve layers each). At six of
+  # 21 layers, shard 2/6 held both heavy layers, msgx and xdp-reply-macs (their sorted places
+  # are 12 apart, and 6 divides 12): its check step ran 88 to 114 s on main and was cancelled
+  # at the cap three times on a8cf53bc8 (run 43457339643). Measured one layer at a time
+  # (bench-nyc-5, ccacc2a0b, seeds 1-4, --jobs 8, loaded): xdp-reply-macs 87 s, msgx 64 s,
+  # xdp-replay 34 s, gso 26 s, every other layer 3 to 23 s; a CI check step ran at about
+  # 0.55 to 0.7 of the bench sum. Nine shards part the two (9 does not divide 12) and put
+  # xdp-reply-macs with only example and queue-worker, within 8% of that layer alone, the
+  # floor of any partition; no other shard sums past 75 s on the bench (about 45 s on a
+  # runner). A shard is the build and tlacheck (about 30 s) plus
   # its layers (about 2.6 s per example-sized layer, more for a real one). Adding a layer
-  # needs no change here: it falls into the shard its sorted place picks, so the shards
-  # stay within one layer of each other. When any shard's check step passes 45 s, add a
+  # needs no change here: it falls into the shard its sorted place picks, so every shard
+  # holds two or three layers; a new layer can shift the heavy two back together, which the
+  # step times show. A shard past the layer count is an error in the tool, never green.
+  # When any shard's check step passes 45 s, add a
   # shard rather than a layer's worth of time: a matrix entry "K/N+1" for every shard (N
   # becomes N+1 in all of them), the ruleset's shard names, the summary job's name list and
   # its plant rows, in the same change. The required check "TLA+ trace check (fixed seeds)"
@@ -1541,7 +1552,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ['0/6', '1/6', '2/6', '3/6', '4/6', '5/6']
+        shard: ['0/9', '1/9', '2/9', '3/9', '4/9', '5/9', '6/9', '7/9', '8/9']
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1621,7 +1632,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - name: All six trace check shards succeeded
+      - name: All nine trace check shards succeeded
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: trace-shard-jobs.json
@@ -1631,7 +1642,7 @@ jobs:
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/6)" "TLA+ trace check (fixed seeds, shard 1/6)" "TLA+ trace check (fixed seeds, shard 2/6)" "TLA+ trace check (fixed seeds, shard 3/6)" "TLA+ trace check (fixed seeds, shard 4/6)" "TLA+ trace check (fixed seeds, shard 5/6)"
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/9)" "TLA+ trace check (fixed seeds, shard 1/9)" "TLA+ trace check (fixed seeds, shard 2/9)" "TLA+ trace check (fixed seeds, shard 3/9)" "TLA+ trace check (fixed seeds, shard 4/9)" "TLA+ trace check (fixed seeds, shard 5/9)" "TLA+ trace check (fixed seeds, shard 6/9)" "TLA+ trace check (fixed seeds, shard 7/9)" "TLA+ trace check (fixed seeds, shard 8/9)"
 
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a

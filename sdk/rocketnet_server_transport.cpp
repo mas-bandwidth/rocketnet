@@ -2290,7 +2290,7 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     }
 
     const int clients = config->max_clients;
-    if ( clients < 1 || clients > ROCKETNET_MAX_CLIENTS || config->num_xdp_queues < 0 || config->num_xdp_queues > 1024 )
+    if ( clients < 1 || clients > ROCKETNET_MAX_CLIENTS || config->num_xdp_threads < 0 || config->num_xdp_threads > ROCKETNET_XDP_MAX_THREADS )
     {
         return false;
     }
@@ -2799,6 +2799,11 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     char bind_before[2][ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     rocketnet_copy_string( bind_before[0], effective_config.bind_ipv4_address, sizeof( bind_before[0] ) );
     rocketnet_copy_string( bind_before[1], effective_config.bind_ipv6_address, sizeof( bind_before[1] ) );
+
+    if ( env_pass )
+    {
+        rocketnet_config_warn_retired_server_env();
+    }
 
     if ( env_pass && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
     {

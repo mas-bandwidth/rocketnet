@@ -698,7 +698,7 @@ def tlc_failure(kind, exit_code):
 
 
 def check_seed(args, name, layer, plant_binary, seed, facts):
-    """(name, seed, log, failures, clean report)"""
+    """(name, seed, log, failures, clean report, plant reruns)"""
     log, failures = [], []
     base = args.dir / f"{name}-{seed}"
     if base.exists():
@@ -713,10 +713,10 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
             said = [line for chunk in log for line in chunk.splitlines() if line.startswith("tla_trace: ")]
             failures.append(f"{kind} harness failed, timed out or printed no CONFIG, TRACE, ACTS, PLANT-FIRED and PLANT-AT lines"
                             + (" (it said: " + "; ".join(line[len("tla_trace: "):] for line in said[:3]) + ")" if said else ""))
-            return name, seed, log, failures, None
+            return name, seed, log, failures, None, 0
         if not same_walk(first, second, base / kind / "walk", base / kind / "again"):
             failures.append(f"{kind} walk is nondeterministic: two runs of one seed differ")
-            return name, seed, log, failures, None
+            return name, seed, log, failures, None, 0
         if first["records"] != steps + 1 or len(first["lines"]) != steps + 1:
             failures.append(f"{kind} trace has {first['records']} records, not steps + 1 = {steps + 1}")
         if first["acts"] != first["logged"]:
@@ -746,7 +746,7 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
     if changed is not None and changed not in reports["plant"]["at"]:
         failures.append(f"the plant first changed record {changed}, where the walk does not say the plant fired")
     if failures:
-        return name, seed, log, failures, reports["clean"]
+        return name, seed, log, failures, reports["clean"], 0
 
     expected = {"clean": "pass\t-", "plant": "invariant\tTraceConsistent"}
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -795,7 +795,7 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
         elif int(values[-1]) + 1 != changed:
             failures.append(f"plant trace rejected at record {int(values[-1]) + 1}, not at record {changed}, "
                             "the first the plant changed")
-    return name, seed, log, failures, reports["clean"]
+    return name, seed, log, failures, reports["clean"], attempts - 1
 
 
 def reached(args, name, layer, predicate, log):
@@ -880,9 +880,13 @@ def main():
     shard = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", args.shard)
     if not shard or int(shard.group(1)) >= int(shard.group(2)):
         parser.error(f"--shard must be I/N with I < N: {args.shard}")
-    if not names:
-        parser.error(f"--shard {args.shard} holds no layer: nothing would be checked")
+    count = len(names)
     names = names[int(shard.group(1))::int(shard.group(2))]
+    # tested after the slice: a shard past the layer count holds no layer and
+    # would otherwise print TRACE-CHECK OK having checked nothing
+    if not names:
+        parser.error(f"--shard {args.shard} holds no layer: {count} layers fill shards 0 to "
+                     f"{min(count, int(shard.group(2))) - 1} only, so nothing would be checked")
     if args.library_config is None:
         failed.append(f"no {args.bin / 'tla_trace_config.txt'}: the library's definitions are not known")
 
@@ -947,12 +951,17 @@ def main():
         return 1
 
     taken = {n: {} for n in names}
+    # plant TLC runs past each seed's first, over the whole run: a layer whose
+    # plant needs reruns on every seed shows in the summary line, not only in
+    # each seed's own PLANT-ATTEMPTS line
+    reruns = 0
     jobs = [(n, seed) for n in names for seed in args.seeds]
     # each seed runs its two TLC runs at once
     with ThreadPoolExecutor(max_workers=max(1, args.jobs // 2)) as pool:
         futures = [pool.submit(check_seed, args, n, LAYERS[n], plants[n], seed, facts[n]) for n, seed in jobs]
         for future in as_completed(futures):
-            n, seed, log, failures, clean = future.result()
+            n, seed, log, failures, clean, reran = future.result()
+            reruns += reran
             print(f"== layer {n} seed {seed}")
             sys.stdout.write("".join(log))
             sys.stdout.flush()
@@ -984,8 +993,9 @@ def main():
     for line in failed:
         print(f"TRACE-CHECK FAIL {line}")
     if failed:
+        print(f"TRACE-CHECK FAILED reruns={reruns}")
         return 1
-    print(f"TRACE-CHECK OK layers={','.join(names)} seeds={args.seeds.start}-{args.seeds.stop - 1}")
+    print(f"TRACE-CHECK OK layers={','.join(names)} seeds={args.seeds.start}-{args.seeds.stop - 1} reruns={reruns}")
     return 0
 
 

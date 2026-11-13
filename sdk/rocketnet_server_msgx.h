@@ -11,6 +11,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_packet_batch.h"
+#include "rocketnet_network_threads.h"
 
 // The macOS batched server transport (msgx), staged. macOS spends about 12 us
 // of kernel time per datagram sent on an unconnected socket to many
@@ -43,15 +44,13 @@
 
 struct rocketnet_server_msgx_t;
 
-// the send threads (one transmit worker each; one more thread receives):
-// space game's peak row holds at 3 and not at 2 (measured on the 10 GbE pair,
-// peak with a game load failed at 2). Read by msgx only
+// the send threads (one transmit worker each; one more thread receives): the
+// server's num_msgx_transmit_workers, its default and limit written in
+// sdk/rocketnet_network_threads.h (space game's peak row holds at 3 and not
+// at 2: peak with a game load failed at 2). Read by msgx only
 // (tests/test_unit_msgx_default_workers.cpp)
-#ifndef ROCKETNET_MSGX_DEFAULT_WORKERS
-#define ROCKETNET_MSGX_DEFAULT_WORKERS                                   3
-#endif // #ifndef ROCKETNET_MSGX_DEFAULT_WORKERS
-
-#define ROCKETNET_MSGX_MAX_WORKERS                                      16
+#define ROCKETNET_MSGX_DEFAULT_WORKERS                                   ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS
+#define ROCKETNET_MSGX_MAX_WORKERS                                       ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS
 
 // per worker per flush: 10 Gb/s of 1200 B at 60 Hz is about 17,400 starts a
 // frame across the workers, so one worker's bank holds the frame's whole

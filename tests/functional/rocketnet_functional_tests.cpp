@@ -5792,7 +5792,10 @@ void rocketnet_test_server_rio_unroutable_takes_no_slot()
 }
 
 #if ROCKETNET_DEV
-// The public server on RIO lanes, through the driver: with num_xdp_queues 4
+// The public server on RIO lanes, through the driver: with nothing asked, the
+// wildcard runs one lane and a bind address runs the default
+// ROCKETNET_RIO_DEFAULT_LANES (ROCKETNET_TEST_RIO_LANES in its place when set,
+// as the transport reads it). With num_rio_lanes 4
 // and no bind address the server binds the wildcard, so start refuses with
 // INVALID_ADDRESS and no lane is made; with bind_ipv4_address set on a port
 // another socket holds, start refuses with TRANSPORT_BIND_REFUSED and no lane
@@ -5811,7 +5814,32 @@ void rocketnet_test_server_rio_lanes_through_the_server()
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     server_config.max_clients = num_clients;
     server_config.transport = "rio";
-    server_config.num_xdp_queues = 4;
+
+    // nothing asked: one lane on the wildcard (with a warning), the default
+    // on a bind address
+    {
+        const uint64_t before = rocketnet_server_rio_test_lanes_made();
+        struct rocketnet_server_t * wildcard = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+        rocketnet_check( wildcard );
+        rocketnet_check( rocketnet_server_start( wildcard ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( rocketnet_server_rio_test_lanes_made() - before == 1 );
+        rn_cli_server_stop_and_destroy( wildcard );
+
+        rocketnet_address_t specific;
+        rocketnet_check( rocketnet_address_parse( &specific, "127.0.0.1" ) );
+        const int knob = rocketnet_test_rio_expected_lanes( &specific );
+        const uint64_t expected = knob > 1 ? (uint64_t) knob : (uint64_t) ROCKETNET_RIO_DEFAULT_LANES;
+        server_config.bind_ipv4_address = "127.0.0.1";
+        const uint64_t before_specific = rocketnet_server_rio_test_lanes_made();
+        struct rocketnet_server_t * by_default = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+        rocketnet_check( by_default );
+        rocketnet_check( rocketnet_server_start( by_default ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( rocketnet_server_rio_test_lanes_made() - before_specific == expected );
+        rn_cli_server_stop_and_destroy( by_default );
+        server_config.bind_ipv4_address = NULL;
+    }
+
+    server_config.num_rio_lanes = 4;
 
     {
         const uint64_t before = rocketnet_server_rio_test_lanes_made();
@@ -6305,7 +6333,7 @@ void rocketnet_test_server_transport_io_pin_gso()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.transport, sizeof( config.transport ), "gso" );
-    config.num_xdp_queues = ROCKETNET_GSO_MAX_QUEUES + 1;
+    config.num_gso_workers = ROCKETNET_GSO_MAX_QUEUES + 1;
 
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config ) == NULL );
 
@@ -6341,7 +6369,7 @@ void rocketnet_test_server_transport_io_pin_io_uring()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.transport, sizeof( config.transport ), "io_uring" );
-    config.num_xdp_queues = ROCKETNET_URING_MAX_QUEUES + 1;
+    config.num_io_uring_workers = ROCKETNET_URING_MAX_QUEUES + 1;
 
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config ) == NULL );
 
@@ -7866,7 +7894,7 @@ void rocketnet_test_server_gso_pin_refusals_reach_server_counters()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
-    server_config.num_xdp_queues = 2;
+    server_config.num_gso_workers = 2;
     server_config.num_os_cpus = 256; // the config's largest: no machine here has that many cpus online, so every pin is refused
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
@@ -9498,7 +9526,7 @@ void rocketnet_test_server_uring_rows_reach_the_server()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 4;
-    config.num_xdp_queues = queues;
+    config.num_io_uring_workers = queues;
     config.num_os_cpus = 200;
     snprintf( config.transport, sizeof( config.transport ), "io_uring" );
 
@@ -11650,7 +11678,7 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
-    server_config.num_xdp_queues = veth_queues;
+    server_config.num_xdp_threads = veth_queues;
     server_config.num_os_cpus = 1;
     snprintf( server_config.transport, sizeof( server_config.transport ), "xdp" );
     if ( rocketnet_xdp_veth_both )
@@ -12591,7 +12619,9 @@ static struct rocketnet_server_transport_t * rocketnet_xdp_link_create( const ch
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 4;
-    config.num_xdp_queues = 1;
+    config.num_xdp_threads = 1;
+    config.num_gso_workers = 1;
+    config.num_io_uring_workers = 1;
     config.num_os_cpus = 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
 
@@ -16097,6 +16127,9 @@ extern void rocketnet_test_server_bind_refused_portable();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 extern void rocketnet_test_server_bind_refused_msgx();
+extern void rocketnet_test_server_bind_dual_stack_ipv4_held();
+extern void rocketnet_test_server_bind_dual_stack_port_zero();
+extern void rocketnet_test_server_msgx_dual_stack_both_families_connect();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_server_bind_refused_gso();
@@ -16703,6 +16736,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, NULL },
+    { "test_server_bind_dual_stack_ipv4_held", rocketnet_test_server_bind_dual_stack_ipv4_held, NULL },
+    { "test_server_bind_dual_stack_port_zero", rocketnet_test_server_bind_dual_stack_port_zero, NULL },
+#if ROCKETNET_DEV
+    { "test_server_msgx_dual_stack_both_families_connect", rocketnet_test_server_msgx_dual_stack_both_families_connect, NULL },
+#endif // production excludes dev-key cases
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, NULL },

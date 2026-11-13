@@ -759,14 +759,15 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
 
     if ( num_queues > 0 )
     {
-        config.num_xdp_queues = num_queues;
+        config.num_gso_workers = num_queues;
+        config.num_io_uring_workers = num_queues;
     }
 
     if ( cell->xdp )
     {
         // one queue, on the pair's one channel
 
-        config.num_xdp_queues = POSIX_XDP_QUEUES;
+        config.num_xdp_threads = POSIX_XDP_QUEUES;
         config.num_os_cpus = 1;
     }
 

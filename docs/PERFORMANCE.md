@@ -1,542 +1,357 @@
 # Performance
 
-These measurements use work-in-progress builds, not a released version of RocketNet.
+**1000 players at 60 Hz, sending about 900,000 packets/s at peak.** XDP,
+GSO, io_uring, IOCP and RIO reached that rate on the measured machines,
+including with simulated game work. Their main-thread network work averaged
+0.19–0.93 ms across the per-second p99 readings.
 
-## Workload
+macOS is being measured separately and will be added later.
 
-Each run uses separate server and client machines, 1000 players, a 60 Hz tick,
-and a nominal 60-second load. The measured windows are listed below; startup,
-joining, and draining are outside the steady-window timing figures.
+These are measurements of commits on `main` on November 13, 2026, using
+Release development builds. They qualify the workloads, machines and commits
+below. They do not establish the same capacity on every machine or qualify a
+production build.
+
+| Server transport and machine | Smallest measured network count reaching peak | Peak packets/s, no game work / with game work | Main p99 range (ms/frame) | Result across the four workloads |
+| --- | --- | --- | --- | --- |
+| XDP, EPYC 9254 / Intel X710 | 1 XDP thread | 900.3k / 900.3k | 0.493–0.586 at 1 thread | All four reach rate; 100% delivery both ways |
+| GSO, EPYC 9254 / Intel X710 | 1 worker | 900.3k / 900.2k | 0.495–0.661 | All four reach rate; 100% delivery both ways |
+| io_uring, EPYC 9254 / Intel X710 | 1 worker in the two peak rows; 2 in the four-row set | 900.3k / 900.2k at either count | 0.504–0.671 at 2 workers | All four reach rate at 2; small server queue drops in unloaded peak |
+| IOCP, AWS m7i.16xlarge | 2 completion workers + 2 send threads | 900.3k / 900.3k | 0.189–0.270 | All four reach rate; input delivery 99.973–100% |
+| RIO, AWS m7i.16xlarge | 5 lanes | 900.3k / 900.2k | 0.583–0.899 at 5 lanes | All four reach rate; 100% delivery both ways |
+
+Here and below, **main p99 is the mean of the per-second p99 readings**,
+not a percentile calculated over all frames. It measures elapsed network
+work on the main thread, not the whole frame or all networking CPU cost.
+The detailed rows include maxima, game-thread work, delivery and refusals.
+
+The peak workload offers 900,000 unreliable messages/s plus a small reliable
+and protocol overhead. At the report's assumed 1304 wire bytes per packet,
+900.3k packets/s is approximately **9.39 Gb/s**, about 94% of a 10 Gb/s link.
+This conversion is an estimate from packet rate, not a measured byte counter.
+It is not a claim that 10.00 Gb/s of application data reached the clients.
+
+## Workload and measurement
+
+Separate machines run the server and 1000 client players at 60 Hz. Each row
+has a nominal 60-second load, with joining and draining around it.
 
 | Traffic | Peak | Average |
 | --- | --- | --- |
 | Server to each client, every tick | 15 unreliable messages of 1200 bytes | 8 unreliable messages of 1200 bytes |
-| Target server packet rate | About 900,000 packets/s | About 480,000 packets/s |
+| Target server message rate | 900,000/s | 480,000/s |
 | Server to each client, every 3 seconds | One reliable message of 100 bytes | One reliable message of 100 bytes |
 | Each client to server, every tick | One input message of 256 bytes | One input message of 256 bytes |
 
-Each unreliable server message occupies one packet. There are no large messages.
-Peak server traffic is about 10 Gb/s; client input is about 140 kbps per player
-including packet overhead. Packet rates include protocol traffic, so they need
-not equal the target message rate exactly.
+Each unreliable server message occupies one packet. There are no large
+messages. Packet rates include protocol traffic, so they need not equal the
+message rate exactly. Average traffic is approximately 5.01 Gb/s at the
+reported 480.3k packets/s and the same wire-size assumption.
 
-## Machines and threads
+The four workloads are peak and average traffic, each with and without
+simulated game work. In the loaded rows, `--game-load 0.5` requests half a
+frame of work per game thread, while `--world-ms 10` requests 10 ms of world
+work on the main thread. The unloaded rows set both to zero. These are test
+jobs, not a game simulation.
 
-For the baseline Linux rows, CPU 0 is reserved for the OS, CPUs 1–2 for the two
-network threads, and CPU 3 for the main thread. The game threads follow on
-separate CPUs. They write each client's packets as jobs over contiguous
-ranges of clients. The test uses
-enkiTS for these jobs; RocketNet does not create the game threads.
+The game owns the thread pool. The test uses enkiTS to split clients among
+game threads, which update their clients and write their messages directly.
+`--space-send wide --space-update split --space-net task --space-split top`
+starts the network task at the top of the frame, overlapping world work.
+`--game-threads` counts the main thread as well as the game workers.
 
-| Server transport | Server | Client machine and network | Thread layout |
-| --- | --- | --- | --- |
-| XDP | Latitude m4.metal.large, AMD EPYC 9254, 24 cores | Second m4.metal.large, 48 logical CPUs; Intel X710 10 GbE | Two XDP threads on CPUs 1–2, or one on CPU 1 in the scaling run; main thread on CPU 3; 20 game threads on CPUs 4–23; all 21 pool threads at real-time priority |
-| io_uring | AWS c6in.8xlarge, 32 vCPUs, x86, Linux 7.0 | AWS c7gn.8xlarge, 32 vCPUs, arm64; same placement, private network | Two network threads on CPUs 1–2; main thread on CPU 3; 28 game threads on CPUs 4–31, real-time priority |
-| GSO | AWS c8gn.8xlarge, Graviton4, arm64, 32 vCPUs; Ubuntu 26.04, GCC 15.2 | AWS c6gn.16xlarge, 64 vCPUs; same placement, private network | Two network threads on CPUs 1–2, or one on CPU 1 in the scaling run; main thread on CPU 3; 28 game threads on CPUs 4–31; no real-time priority |
-| IOCP | AWS m7i.16xlarge, 64 vCPUs, Windows Server 2025; MSVC Release | AWS c8gn.8xlarge, 32 vCPUs, Linux; private network | Receive sockets on processors 2 and 4; receive threads on 3 and 5; send threads on 6 and 8; main thread on 10; 53 game threads on 11–63; all 54 pool threads at real-time priority |
-| RIO | AWS m7i.16xlarge, Windows Server 2025 | AWS c8gn.8xlarge, 32 vCPUs | Six lanes: receive processors 2,4,6,8,10,12 and worker processors 3,5,7,9,11,13; main processor 14; 49 game threads on 15–63; all 50 pool threads at real-time priority |
-| macOS `msgx` | Owned Mac mini M5 Pro, 18 cores (6 super + 12 performance); Release | Separate 16-CPU Linux machine, 12 client threads; direct 10 GbE LAN; receive steering enabled on its single receive queue | Three send + one receive thread and a 13-thread pool (main + 12 game threads); two-send comparison uses a 14-thread pool (main + 13 game threads); affinity is advisory |
+The row summarizer selects server reports with `25 <= t <= 55` seconds.
+It averages packet-rate, frame-count, game-thread and per-second p99 fields;
+its main maximum is the largest reported maximum in that window. Frame
+rates below are the report's mean frame counts per approximately one-second
+report interval. They are not evidence of an exact 60 Hz clock. Game-thread
+min/mean/max entries average the respective per-report values, rather than
+reporting the single worst game thread over the whole run.
 
-For io_uring, CPU 0 also handles NIC interrupts. The library pins each network
-thread to the number of OS CPUs plus its queue index: CPUs 1–2 in these runs.
-XDP also pins its own network threads. GSO does the same in `ebdce1ca4`:
-queue q pins itself to CPU `num_os_cpus + q`. The new GSO loaded-peak
-measurements use library-owned pinning; earlier GSO rows retain their
-original build provenance below. XDP and io_uring clients run 32 unpinned threads;
-GSO uses 32 client threads, with affinity confirmation pending.
+Delivery percentages and lost-message totals come from the drained player
+report and can cover more than the steady timing window. “1000 players”
+means all 1000 connected; it does not mean zero packet loss. The measurement
+acceptance used a 99.9% player-delivery bound, with offered rate and frame
+rate checked separately. A reconciliation PASS alone cannot establish that
+all offered traffic was sent: the failing four-lane RIO row is an example.
 
-The profiled XDP server ran kernel `7.0.0-43`, booted with `nosmt irqaffinity=0
-isolcpus=1-2 nohz_full=1-2`. These settings are part of that measured
-environment; retain them when comparing its profile with another run.
+## Results by transport
 
-The final IOCP rows use four network threads: two receive/completion threads,
-each with its own socket, and two send threads. The transport pins all four;
-the measured development layout selects the receive processors, and the
-send threads take separate cores after them. The baseline Linux rows use two
-network threads each; XDP and GSO also hold peak with one, as detailed below.
-IOCP clients use 16 threads. Client affinity confirmation remains pending.
-The macOS logs report `pinned=0` and affinity refusal code 46 for every pool
-thread, with user-interactive QoS accepted for all 13 pool threads (14 in the
-two-send comparison). The recorded sessions paused competing CI jobs on
-both machines and set the client receive queue
-`/sys/class/net/enp173s0/queues/rx-0/rps_cpus` to `ffff`. The run owner
-reports restoring the jobs and original receive-steering setting afterward.
-The `realtime` log field counts QoS acceptance on macOS; it does not establish
-hard CPU placement or the Linux/Windows real-time scheduling policy.
+In these tables, **game work** is `none` or `half` as defined above. Main and
+game times are milliseconds per frame. `s2c` means server to client; `c2s`
+means client to server. Network workers are separate from the game pool.
 
-## Results
+### XDP
 
-### No simulated game-thread work
+One XDP thread reaches both peak and average rate, with and without game
+work. All eight rows, including the two-thread comparison, delivered 100%
+in both directions with no message-start refusals.
 
-Delivery is the percentage of unreliable messages delivered out of delivered
-plus lost, reported separately in each direction by `harden_load reconcile`.
-It is not the percentage of players that connected. The rows below report
-1000 players.
-
-| Transport | Load | Server packets/s | Frames/s | Server → client delivery | Client → server delivery |
-| --- | --- | ---: | ---: | ---: | ---: |
-| XDP | Peak | 895,000 | 60.5 | 100% | 100% |
-| XDP | Average | 480,000 | 60.5 | 100% | 100% |
-| io_uring | Peak | 900,316 | 60.60 | 100% | 100% |
-| io_uring | Average | 480,317 | 60.56 | 100% | 100% |
-| GSO | Peak | 900,000 | 60.7 | 100% | 100% |
-| GSO | Average | 480,000 | 60.5 | 100% | 100% |
-| IOCP | Peak | 900,300 | 60.7 | 100% | 99.990% |
-| IOCP | Average | 480,300 | 60.8 | 100% | 99.996% |
-| RIO, eight lanes | Peak | 900,000 | 60.6 | 100% | 100% |
-| RIO, six lanes | Peak | 900,319 | 60.7 | 100% | 100% |
-| RIO, six lanes | Average | 480,318 | 60.7 | 100% | 100% |
-| macOS `msgx`, three send threads | Peak | 892,000 | 60.6 | 99.9971% | 99.9998% |
-| macOS `msgx`, three send threads | Average | 472,000 | 60.6 | 99.9496% | 99.9997% |
-
-IOCP's no-game peak and average rows lost 470 and 174 client inputs,
-respectively; server-to-client delivery had no reported loss. These rows
-meet the reported rate/frame targets, but their overall reconciliation
-verdict is `FAIL`: packet accounting did not close. The final IOCP section
-below records this distinction and the separate failed handle-count check.
-The final macOS rows reach 60 Hz and pass the player-delivery threshold
-after changes to the test setup, with nonzero loss and failed packet
-reconciliation still recorded. The dedicated section gives the measured
-packet rates, remaining checks, and two-send comparison.
-
-Network work is reported in milliseconds per frame. The main-thread average
-is elapsed time in its network calls, including waits inside those calls.
-Game-thread min/mean/max compares the per-frame network work across game
-threads; these are not frame-latency percentiles. The ratio is main-thread
-average divided by mean game-thread network work. These times exclude the
-dedicated network threads and do not describe the whole frame's duration.
-
-| Transport | Load | Main average | Main p99 | Main max | Game threads min / mean / max | Main / mean game thread |
-| --- | --- | ---: | ---: | ---: | --- | ---: |
-| XDP | Peak | 0.417 | 0.484 | 1.062 | 3.14 / 3.37 / 4.24 | 0.12 |
-| XDP | Average | 0.398 | 0.467 | 0.606 | 1.72 / 1.94 / 2.81 | 0.21 |
-| io_uring | Peak | 0.157 | 0.176 | 0.210 | 3.04 / 3.20 / 4.80 | 0.05 |
-| io_uring | Average | 0.147 | 0.164 | 0.237 | 1.65 / 1.81 / 3.35 | ≈0.08 (derived) |
-| GSO | Peak | 0.26 | 0.27 | 0.29 | 2.52 / 2.72 / 3.16 | 0.095 |
-| GSO | Average | 0.24 | 0.25 | 0.27 | 1.29 / 1.48 / 1.89 | 0.16 |
-| IOCP | Peak | 0.17 | 0.20 | 0.34 | 2.91 / 3.05 / 8.5 | ≈0.056 (derived) |
-| IOCP | Average | 0.15 | 0.18 | 0.30 | 1.47 / 1.59 / 6.9 | ≈0.094 (derived) |
-| RIO, eight lanes | Peak | 0.46 | 0.57 | 0.79 | 3.1 / 3.3 / 5.4 | 0.14 |
-| RIO, six lanes | Peak | 0.45 | 0.48 | 0.87 | 2.72 / 2.91 / 5.2 | ≈0.15 (derived) |
-| RIO, six lanes | Average | 0.45 | 0.51 | 0.85 | 1.43 / 1.59 / 3.7 | ≈0.28 (derived) |
-| macOS `msgx`, three send threads | Peak | 0.116 | Pending | Pending | 4.49 / 4.67 / 4.88 | ≈0.025 (derived) |
-| macOS `msgx`, three send threads | Average | 0.120 | Pending | Pending | 2.23 / 2.40 / 2.59 | 0.050 (derived) |
-
-The io_uring average-load ratio is calculated from the reported rounded means:
-0.147 / 1.81. RIO's six-lane ratios are likewise derived from 0.45 / 2.91
-and 0.45 / 1.59; IOCP's are derived from 0.17 / 3.05 and 0.15 / 1.59.
-The macOS ratios are derived from 0.116 / 4.67 and 0.120 / 2.40.
-Its full-run main-work p99/max values are in the dedicated section below;
-steady-window percentile aggregation remains unconfirmed.
-The other ratios were supplied with their measurement rows.
-For the XDP rows above, the p99 column is the mean of the per-second p99s
-in the steady window, not a p99 computed over all frames in that window.
-
-| Rows | Build | Steady window | Simulated game work |
-| --- | --- | --- | --- |
-| XDP peak / average | [79888a398](https://github.com/mas-bandwidth/rocketnet/commit/79888a3980a42db26fa0d84c22b1df6f4e1ee3f9), measurement branch, server binary | t=25–55 s | `--world-ms 0 --game-load 0` |
-| io_uring peak / average | [6db162421](https://github.com/mas-bandwidth/rocketnet/commit/6db1624212079133de226fe08cb8111bd70e352d), `tests/v1.2/goal-uring`, both machines | t=25–75 s, after joining and warm-up | `--world-ms 0 --game-load 0` |
-| GSO peak / average | [d9110a19f](https://github.com/mas-bandwidth/rocketnet/commit/d9110a19fedf098a15068ce9a4cb9106f4ee603d), `tests/v1.2/goal-gso` | t=30–60 s | `--world-ms 10 --game-load 0` |
-| IOCP peak / average | [1afaabe69](https://github.com/mas-bandwidth/rocketnet/commit/1afaabe6977eaad6db4ce778ebdf10f07787eeda), `tests/v1.2/goal-iocp-send` | Rate/timing boundaries pending; overrun counts cover the complete run | `--world-ms 0 --game-load 0`; earlier frame order |
-| RIO peak / average, six lanes | [27ede60b2](https://github.com/mas-bandwidth/rocketnet/commit/27ede60b21d2407a6d5c760b48a075e8128fab87), `tests/v1.2/goal-rio` | Pending | `--world-ms 0 --game-load 0`; earlier frame order |
-| RIO earlier peak, eight lanes | Build pending; earlier frame order | Pending | No game work reported; exact world-work setting pending |
-| macOS peak / average, three send threads | [d02703aa9](https://github.com/mas-bandwidth/rocketnet/commit/d02703aa924f21fee9f5afa3590b94c8bab7f79f), `tests/v1.2/goal-macos`, both machines | Rate/timing boundaries pending | `--world-ms 0 --game-load 0 --space-split top` |
-
-The io_uring rows use the earlier frame order with no simulated game work.
-GSO starts its network task before the world update with `--space-split top`.
-Its main thread performs 10 ms of simulated world work per frame while its
-game threads carry only network work. XDP and io_uring have no simulated
-world work in the rows above.
-The GSO rates are means over its steady window. Its server requested a 25 MB
-socket receive buffer and the OS granted 4 MB, limited by `net.core.rmem_max`.
-There was no reported loss at this load; check the requested and granted
-values in the transport log when configuring another machine.
-
-The final RIO, IOCP, and macOS server and reconciliation logs were inspected;
-other raw result logs remain pending.
-The timing percentiles are reported values, not recomputed here. Confirmation
-of the io_uring, GSO, IOCP, and RIO percentile aggregation is pending. Different machines, builds, and
-sampling windows make these workload results unsuitable for ranking transports
-against one another.
-
-### Game threads half busy with game work
-
-These rows use `--game-load 0.5 --world-ms 10 --space-split top`. The game
-jobs request work equal to half a 60 Hz frame per game thread, while the main
-thread performs 10 ms of simulated world work. The job scheduler distributes
-that work across the pool; these settings do not prove identical utilization
-on every thread. The builds below correct the earlier serial world-work
-stand-in: game jobs run alongside the main thread's world work.
-
-The network task operates on the preceding world state while the next world
-update runs. This adds state-to-send delay: approximately one frame in the
-ordering, measured around 10 ms here. The latency figures below measure the
-time from the world state to the test's send call, not network transit time
-or a separately measured increase over a baseline. Input age is measured
-from the server's network update completing until the main thread takes its
-inputs for the world update.
-
-Hardware, pool size, and thread placement match each transport's rows above.
-All six rows report 1000 players and 100% delivery in both directions.
-
-| Transport | Load | Server packets/s | Frames/s | Main average | Main p99 | Main max | Game threads min / mean / max | Main / mean game thread |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| XDP | Peak | 900,000 | 60.4 | 0.424 | 0.620 | 0.696 | 2.68 / 3.12 / 4.05 | ≈0.14 (derived) |
-| XDP | Average | 480,000 | 60.6 | 0.384 | 0.490 | 0.626 | 0.97 / 1.70 / 4.63 | ≈0.23 (derived) |
-| io_uring | Peak | 900,318 | 60.40 | 0.158 | 0.205 | 0.286 | 2.37 / 2.76 / 3.36 | 0.057 |
-| io_uring | Average | 480,316 | 60.64 | 0.154 | 0.168 | 0.234 | 1.35 / 1.64 / 2.03 | 0.094 |
-| GSO | Peak | 900,000 | 60.6 | 0.26 | 0.32 | 0.35 | 2.30 / 2.68 / 3.12 | 0.098 |
-| GSO | Average | 480,000 | 60.5 | 0.24 | 0.30 | 0.32 | 1.14 / 1.47 / 2.0 | 0.165 |
-
-Network times remain milliseconds per frame. The two XDP ratios are derived
-from the reported rounded means: 0.424 / 3.12 and 0.384 / 1.70. The other
-ratios were supplied with the rows. Percentile aggregation for these loaded
-rows is awaiting confirmation.
-
-The earlier builds' `leftover_core_ms` field is excluded because it omitted
-game-thread network work and overstated the time available. Corrected XDP
-reruns are recorded separately below.
-
-| Rows | Build | Steady window |
-| --- | --- | --- |
-| XDP peak / average | [186a4f364](https://github.com/mas-bandwidth/rocketnet/commit/186a4f3646632119d64633e9e9404cd93e61c4ee), measurement branch | t=25–55 s |
-| io_uring peak / average | [c154d7971](https://github.com/mas-bandwidth/rocketnet/commit/c154d7971ab3e6e57c12c4e2012fe9442d7534bb), `tests/v1.2/goal-uring` | t=25–75 s |
-| GSO peak, two network threads | [ebdce1ca4](https://github.com/mas-bandwidth/rocketnet/commit/ebdce1ca4ab6c083f7b4887b3ea8cc0ee16d2e4a), `tests/v1.2/goal-gso`, library-owned pinning | Pending confirmation |
-| GSO average | [aad649f62](https://github.com/mas-bandwidth/rocketnet/commit/aad649f624690c21ec34a8eba07da6903f3b4ef3), `tests/v1.2/goal-gso` | Pending confirmation |
-
-| Transport | Load | State-to-send latency mean / max (ms) | Input age mean / max (ms) | Main join wait mean (ms) | World update mean (ms) |
-| --- | --- | --- | --- | ---: | ---: |
-| XDP | Peak | 10.1 / 13.5 | 4.7 / 8.0 | 0.003 | 11.84 |
-| XDP | Average | 10.5 / 15.5 | 6.2 / 8.1 | 0.003 | 10.44 |
-| io_uring | Peak | 9.9 / Pending | 5.2 / Pending | Pending | Pending |
-| io_uring | Average | 9.1 / Pending | 6.8 / Pending | Pending | Pending |
-
-The XDP loaded rows reported no frame overruns. In GSO's earlier loaded peak
-run at `aad649f62`, the world update took 11.4 ms and the network task finished in
-11.2 ms; these operations overlap. Its reported state-to-send delay was
-about 10 ms; exact per-row latency and input-age summaries are pending.
-
-#### XDP rerun with corrected remaining-time accounting
-
-The calculation was fixed in [03a29f651](https://github.com/mas-bandwidth/rocketnet/commit/03a29f651a83c47aac92134c0bc321c9ddfbb352)
-and in measurement-branch [f46d820ba](https://github.com/mas-bandwidth/rocketnet/commit/f46d820ba851bb09db3a488c7bcd9ff36b8ad2c0).
-The run owner supplied these reruns with game threads half busy and the
-corrected frame order. Both report 100% delivery in each direction and no
-frame overruns. Packet rates, steady windows, and confirmation of which
-fixed binary produced the rows are pending.
-
-| XDP load | Frames/s | Main mean / p99 / max (ms) | Game threads min / mean / max (ms) | Pool network work (core-ms/frame) | Mean game-thread time left (ms/frame) |
-| --- | ---: | --- | --- | ---: | ---: |
-| Peak | 60.6 | 0.422 / 0.481 / 0.659 | 2.64 / 3.09 / 4.06 | 62.5 | 5.23 |
-| Average | 60.5 | 0.403 / 0.526 / 0.651 | 0.92 / 1.68 / 4.43 | 33.9 | 6.66 |
-
-The remaining-time column is calculated as `16.67 ms − measured game work
-per game thread − mean network work per game thread`, using the unrounded
-measurements. It is an average frame-budget estimate, not a guaranteed
-contiguous idle interval on every thread. The pool network total sums
-instrumented main/game-thread work; it excludes the two dedicated XDP
-threads and is not the wall duration of a frame.
-
-For the reported old-order comparison, starting network work after the world
-update reached 797,000 packets/s at 53.7 frames/s with 1,611 late frames at
-peak, and 467,000 packets/s at 58.9 frames/s at average load.
-
-#### IOCP with two receive and two send threads
-
-The final four rows use `1afaabe69`, incorporating transport change
-[caf3552ec](https://github.com/mas-bandwidth/rocketnet/commit/caf3552ecf7b57f40f3d6e97ce789b92d455421d).
-They reach the reported rate, frame, and player-delivery targets with the
-small client-to-server losses shown below. The loaded rows use
-`--game-load 0.5 --world-ms 10 --space-split top`; the no-game rows use
-zero work and omit `--space-split`.
-
-| IOCP load | Game work | Server packets/s | Frames/s | Server → client delivery | Client → server delivery | Complete-run overruns / frames |
-| --- | --- | ---: | ---: | ---: | ---: | --- |
-| Peak | None | 900,300 | 60.7 | 100% | 99.990% | 166 / 4,936 |
-| Average | None | 480,300 | 60.8 | 100% | 99.996% | 1 / 4,967 |
-| Peak | Game threads half busy | 900,100 | 60.7 | 100% | 99.997% | 5 / 4,974 |
-| Average | Game threads half busy | 480,200 | 60.6 | 100% | 99.995% | 3 / 4,970 |
-
-| IOCP load | Game work | Main mean / p99 / max (ms) | Game threads min / mean / max (ms) | Four network threads, total % of one core |
-| --- | --- | --- | --- | ---: |
-| Peak | None | 0.17 / 0.20 / 0.34 | 2.91 / 3.05 / 8.5 | 221 |
-| Average | None | 0.15 / 0.18 / 0.30 | 1.47 / 1.59 / 6.9 | 148.5 |
-| Peak | Game threads half busy | 0.17 / 0.26 / 0.51 | 1.85 / 2.35 / 6.8 | 216 |
-| Average | Game threads half busy | 0.16 / 0.27 / 0.39 | 0.91 / 1.26 / 4.8 | 145 |
-
-Network CPU is the sum across all four network threads, not a per-thread
-percentage or whole-server utilization: 221% means about 2.21 core-equivalents.
-The supplied thread profiles cover 20 seconds. The precise rate/timing
-window remains pending. Overruns are frames whose work exceeded 16.67 ms
-across the complete run, including joins and warm-up. The separate per-second
-`late` field counts reaching the join before the network task ends; it is
-not a frame-budget overrun and is not used in the table.
-
-All four raw reconciliation reports say `verdict=FAIL chains=FAIL
-players=PASS frame_aim=MET`. Packet accounting did not close. The Windows
-server does not expose kernel counters to this tool; zero placeholders for
-those unavailable terms do not mean zero packets. The library also reports
-client-to-server packet gaps of 490 / 178 / 136 / 248. These are packet
-counts, distinct from the lost player-input messages below.
-
-On a repeat, the run owner measured 5,616 ENA `ReceivedDiscardedPackets`,
-zero UDP receive errors, and zero library receive-drop counters, attributing
-the loss to the NIC's receive ring with 1,024 buffers per queue. This is
-evidence of loss below the transport; it does not turn the original open
-accounting chains into passes.
-
-The server's separate handle-count check failed (`flat=0`) in these profiled
-runs: handles grew by 11 each time. The run owner attributed this to the
-profiler's symbol loading and reported flat counts without profiling
-(224→224, 268→268, 262→262, and 200→200). The failed profiled-run check is
-retained as a tool artifact rather than a library-leak claim.
-
-| IOCP cell | Client inputs lost | Profiled-run handle count, start → end |
-| --- | ---: | --- |
-| f01, peak without game work | 470 | 233 → 244 |
-| f02, average without game work | 174 | 227 → 238 |
-| f03, peak with game work | 130 | 227 → 238 |
-| f04, average with game work | 246 | 227 → 238 |
-
-The complete-run counts include startup and other intervals outside a
-selected steady window. These measurements establish reported performance
-targets, not complete reconciliation or resource-stability acceptance.
-
-#### RIO at six lanes
-
-RIO's four final rows use `27ede60b2`, 1000 players, and a 60 Hz target on
-the machines listed above. All four report 100% delivery in both directions.
-The run owner reports each row passing, including loaded peak on repetition;
-the nonzero counts of frames over 16.67 ms remain visible below.
-
-| RIO load | Game work | Server packets/s | Frames/s | Frames over 16.67 ms / total | Main mean / p99 / max (ms) | Game threads min / mean / max (ms) |
-| --- | --- | ---: | ---: | --- | --- | --- |
-| Peak | None | 900,319 | 60.7 | 0 / 4,952 | 0.45 / 0.48 / 0.87 | 2.72 / 2.91 / 5.2 |
-| Average | None | 480,318 | 60.7 | 0 / 4,994 | 0.45 / 0.51 / 0.85 | 1.43 / 1.59 / 3.7 |
-| Peak | Game threads half busy | 900,012 | 60.5 | 8 / 5,002 | 0.46 / 0.68 / 1.19 | 2.12 / 2.69 / 6.0 |
-| Average | Game threads half busy | 480,285 | 60.5 | 2 / 5,001 | 0.44 / 0.60 / 0.70 | 0.97 / 1.37 / 5.9 |
-| Peak, repeat | Game threads half busy | 900,029 | 60.6 | 10 / 4,974 | 0.47 / 0.65 / 1.21 | 2.08 / 2.66 / 5.9 |
-
-The loaded rows use `--game-load 0.5 --world-ms 10 --space-split top`;
-the no-game rows use `--game-load 0 --world-ms 0` and omit `--space-split`,
-retaining the earlier order. `--game-threads 50` includes the main thread.
-The g13–g17 logs confirm the 50-thread pool was pinned at real-time priority,
-1000 player connections, zero player-message loss in both directions, and
-the frame totals above. Sampling-window boundaries for the reported rates
-and timings remain pending. The frame counts include the final partial
-reporting interval and have not been converted into a steady-window
-overrun rate here.
-
-#### macOS with client receive steering
-
-The four final rows use the same measurement build `d02703aa9` and transport
-`f63f4993f` as the earlier trials, with no library code change. The changed
-setup enables receive packet steering on the Linux client's single NIC
-queue and pauses competing CI work on both hosts. Three send workers and
-one receive worker serve 1000 clients. The raw logs confirm a 13-thread
-pool: the main thread plus 12 game threads, with advisory affinity refused
-and user-interactive QoS accepted for all 13.
-
-| Cell | Load / game work | Server packets/s | Frames/s | Server → client delivery | Client → server delivery | Complete-run overruns / frames |
-| --- | --- | ---: | ---: | ---: | ---: | --- |
-| m41 | Peak / none | 892,000 | 60.6 | 99.9971% | 99.9998% | 0 / 5,264 |
-| m43 | Peak / half busy | 881,000 | 60.2 | 99.9944% | 99.9774% | 71 / 5,209 |
-| m44 | Average / none | 472,000 | 60.6 | 99.9496% | 99.9997% | 0 / 5,234 |
-| m45 | Average / half busy | 476,000 | 60.5 | 99.9986% | 99.9996% | 0 / 5,260 |
-
-| Cell | Reported main network mean (ms/frame) | Full-run main work p99 / max (ms) | Game threads min / mean / max (ms/frame) | Lost server → client messages | Lost client → server inputs |
-| --- | ---: | --- | --- | ---: | ---: |
-| m41 | 0.116 | 0.171 / 0.203 | 4.49 / 4.67 / 4.88 | 2,084 | 10 |
-| m43 | 0.086 | 0.162 / 0.493 | 3.77 / 4.55 / 5.36 | 4,058 | 1,088 |
-| m44 | 0.120 | 0.222 / 0.294 | 2.23 / 2.40 / 2.59 | 19,431 | 14 |
-| m45 | 0.108 | 0.199 / 0.312 | 1.83 / 2.33 / 2.88 | 545 | 20 |
-
-The run owner accepts these four workload rows: all reach 60 Hz and their
-raw logs report `players=PASS frame_aim=MET`. Delivery exceeds the recorded
-99.900% bound in both directions, but is not lossless. Every reconciliation
-still reports `verdict=FAIL chains=FAIL`; packet accounting has not closed.
-The packet rates are measured values, not an exact 900,000/480,000 packets/s
-claim. m43 also records 437 reordered server-to-client messages.
-
-The p99/max and overrun/frame columns come from complete-run reconciliation,
-including joining and warm-up. Rate and mean-time aggregation boundaries
-remain pending; the full-run p99 is not substituted for a steady-window p99
-in the summary table. `frame_aim=MET` checks the main-work timing aim,
-separately from frame rate and the count of frames exceeding 16.67 ms.
-No-game rows use `--game-load 0 --world-ms 0`; loaded rows use
-`--game-load 0.5 --world-ms 10`. All use `--space-split top`.
-
-The earlier two-send peak result was 653,000 packets/s at 45.3 Hz; four
-send workers reached only 516,000 packets/s at 36.4 Hz. The run owner's
-subsequent path investigation attributes this behavior to receiver pause
-frames backing up the Mac's output queue, rather than a fixed macOS
-syscall limit. A separate bare-send test to a non-pausing receiver reported
-506,000 / 884,000 / 900,000 / 900,000 packets/s with one / two / three / four
-send threads. These are path-test results, not RocketNet workload rows.
-When profiling a sender, inspect receiver pause counters and receive
-steering as well as sender output-queue drops. A thread sampled inside
-`sendmsg_x` can be blocked rather than using CPU. The earlier sampling
-results therefore do not establish syscall CPU saturation.
-
-### Network threads needed at peak
-
-These are the smallest counts meeting the rate/frame target so far on each
-stated machine and workload. Counts still being tested are not established minima. Reaching
-the rate and frame target does not imply zero loss; delivery is reported
-separately.
-
-| Transport | Smallest count meeting rate/frame target | Workload and remaining checks |
-| --- | ---: | --- |
-| GSO | 1 | Peak with game threads half busy; 100% delivery both ways |
-| XDP | 1 | Peak with game threads half busy; 100% delivery both ways; no late frames |
-| io_uring | 2 | Loaded peak: one thread misses the target, two pass |
-| RIO | 6 | Five lanes miss peak target; six pass all four rows, with loaded peak repeated; over-budget frame counts above |
-| IOCP | 4 (2 receive + 2 send) | All four performance rows reach target; measured input loss and failed reconciliation remain explicit; profiled handle growth is a tool artifact |
-| macOS `msgx` | 4 (3 send + 1 receive) | Smallest tested configuration accepted across all four workloads; two send workers miss loaded peak; delivery and failed accounting remain explicit |
-
-The macOS comparison retains client receive steering and one receive worker:
-
-| Cell | Send workers | Load / game work | Server packets/s | Frames/s | Delivery server → client / client → server | Overruns / frames |
+| Row | XDP threads | Load / game work | Packets/s | Frames/s | Main p99 / max | Game min / mean / max |
 | --- | ---: | --- | ---: | ---: | --- | --- |
-| m42 | 2 | Peak / none | 885,000 | 60.6 | 99.9988% / 99.9999% | 11 / 5,230 |
-| m46 | 2 | Peak / half busy | 737,000 | 50.5 | 99.9998% / 99.9632% | 584 / 4,470 |
-| m47 | 2 | Average / none | 475,000 | 60.6 | 99.9782% / 99.9999% | 0 / 5,256 |
-| m48 | 2 | Average / half busy | 475,000 | 60.6 | 99.9659% / 99.9998% | 0 / 5,256 |
+| R5 | 1 | Peak / none | 900.3k | 60.57 | 0.523 / 0.671 | 3.26 / 3.40 / 3.71 |
+| R6 | 1 | Peak / half | 900.3k | 60.47 | 0.586 / 0.715 | 2.76 / 3.21 / 3.73 |
+| R7 | 1 | Average / none | 480.3k | 60.50 | 0.493 / 0.502 | 1.79 / 1.92 / 2.22 |
+| R8 | 1 | Average / half | 480.3k | 60.40 | 0.507 / 0.859 | 1.18 / 1.76 / 2.94 |
+| R1 | 2 | Peak / none | 900.3k | 60.37 | 0.497 / 0.510 | 3.32 / 3.46 / 3.75 |
+| R2 | 2 | Peak / half | 900.3k | 60.50 | 0.582 / 0.647 | 2.81 / 3.30 / 4.01 |
+| R3 | 2 | Average / none | 480.3k | 60.40 | 0.498 / 0.653 | 1.83 / 1.97 / 2.41 |
+| R4 | 2 | Average / half | 480.3k | 60.50 | 0.592 / 0.788 | 1.53 / 1.92 / 2.46 |
 
-All four comparisons report `players=PASS frame_aim=MET` but
-`verdict=FAIL chains=FAIL`. Two send workers reach 60 Hz without game work
-at peak and in both average rows, but miss loaded peak. The two-send pool
-has 14 threads including main, versus 13 in the three-send rows; this is
-the smallest accepted count among these measured configurations, not an
-isolated thread-count experiment. The recorded m42 `ps -M` reading shows
-send workers at 95.8% and 93.7% CPU, and receive at 11.4%.
+The reconciliation chain reported FAIL in seven rows because it subtracted
+1–7 stray no-port drops even though the libraries' sent and received packet
+counts matched exactly. R3 passed the chain check. These failures are
+accounting failures, separate from the measured 100% player delivery.
 
-IOCP's loaded-peak thread-count sweep reported:
+### GSO
 
-| Receive threads | Send threads | Server packets/s | Frames/s | Rate/frame target |
-| ---: | ---: | ---: | ---: | --- |
-| 2 | 2 | 900,000 | 60.5 | Reached |
-| 2 | 1 | 696,700 | 47.0 | Missed |
-| 1 | 2 | 855,900 | 57.6 | Missed |
-| 1 | 1 | 665,100 | 44.8 | Missed |
+One worker reaches all four workloads with the documented socket buffers.
+All rows below have 100% delivery both ways and zero message-start refusals.
 
-This earlier sweep used development placement controls, a 42-thread game
-pool starting at processor 22, and send threads on separate cores. The
-one-receive-thread configuration did not request receive-thread pinning.
-The final four rows instead use transport-owned send pinning and the
-54-thread pool described above. The count result applies to the tested
-configurations, not every possible placement.
+| Row | Workers | Load / game work | Packets/s | Frames/s | Main p99 / max | Game min / mean / max |
+| --- | ---: | --- | ---: | ---: | --- | --- |
+| G1 | 1 | Peak / none | 900.3k | 60.47 | 0.528 / 0.749 | 4.26 / 4.38 / 4.66 |
+| G2 | 1 | Peak / half | 900.2k | 60.43 | 0.661 / 0.839 | 3.34 / 3.86 / 4.66 |
+| G3 | 1 | Average / none | 480.3k | 60.57 | 0.495 / 0.599 | 2.30 / 2.41 / 2.67 |
+| G4 | 1 | Average / half | 480.3k | 60.50 | 0.530 / 0.733 | 1.81 / 2.14 / 2.75 |
+| G5 | 2 | Peak / none | 900.3k | 60.50 | 0.514 / 0.765 | 3.81 / 3.94 / 4.21 |
 
-The one-thread XDP peak run used `f46d820ba`, 1000 players, game threads half
-busy, and the corrected frame order. One NIC queue, its interrupt, and the
-XDP thread use CPU 1; the main thread remains on CPU 3 and the 20 game
-threads on CPUs 4–23. Its sampling window is pending confirmation.
+The kernel reported 124,107–570,623 `SndbufErrors` per row as the 1 MB send
+buffer filled. The worker retained the unsent tail and retried; library
+sent and received counts matched exactly. The chain check incorrectly
+counted those refused-then-retried sends as drops and failed every s2c row.
+G2 and G3 also had the small no-port accounting discrepancy on c2s.
+These rows do not show player loss from those send-buffer refusals.
 
-| XDP network threads | Server packets/s | Frames/s | Delivery, both directions | Main mean / p99 / max (ms) | Game threads min / mean / max (ms) | Main / mean game thread | Mean game-thread time left (ms/frame) |
-| --- | ---: | ---: | --- | --- | --- | ---: | ---: |
-| 1, CPU 1 | 900,000 | 60.6 | 100% | 0.429 / 0.624 / 0.703 | 2.57 / 3.03 / 4.14 | 0.14 | 5.3 |
+### io_uring
 
-The remaining-time figure uses the corrected average-budget calculation
-described above. The run reported no late frames.
+Two workers reach all four workloads. One worker also reaches both peak
+workloads on this bare-metal pair; average rows were not repeated at one.
+The earlier AWS c6in.8xlarge measurement needed two workers. The machines
+and NICs differ, so the new one-worker result does not replace that AWS limit.
 
-The io_uring one-thread loaded peak run preserved 100% delivery in both
-directions but missed the packet-rate and frame-rate targets:
+| Row | Workers | Load / game work | Packets/s | Frames/s | Main p99 / max | Game min / mean / max | Lost s2c messages |
+| --- | ---: | --- | ---: | ---: | --- | --- | ---: |
+| U1 | 2 | Peak / none | 900.3k | 60.47 | 0.522 / 0.711 | 4.26 / 4.39 / 4.76 | 30 |
+| U2 | 2 | Peak / half | 900.2k | 60.57 | 0.671 / 0.768 | 3.58 / 4.06 / 4.83 | 0 |
+| U3 | 2 | Average / none | 480.3k | 60.47 | 0.504 / 0.583 | 2.35 / 2.47 / 2.74 | 0 |
+| U4 | 2 | Average / half | 480.3k | 60.50 | 0.508 / 0.604 | 1.87 / 2.27 / 2.98 | 0 |
+| U5 | 1 | Peak / none | 900.3k | 60.47 | 0.518 / 0.806 | 4.38 / 4.51 / 4.76 | 0 |
+| U6 | 1 | Peak / half | 900.2k | 60.57 | 0.506 / 0.568 | 3.55 / 4.04 / 4.83 | 0 |
 
-| io_uring network threads | Server packets/s | Frames/s | Main mean / p99 / max (ms) | Late frames |
-| --- | ---: | ---: | --- | ---: |
-| 1 | 753,920 | 51.14 | 0.192 / 1.072 / 1.225 | 145 |
+All six rows have zero start refusals, 1000 connected players, 100% c2s
+delivery, zero pin refusals and zero socket receive drops. U2 recorded one
+overrun in 4878 frames; U4 recorded four in 4865; U6 recorded two in 4922.
 
-Two network threads are required among the tested configurations for this
-workload on this server. Both runs use `c154d7971` on the c6in.8xlarge.
-The one-thread trial places its network thread on CPU 1, main thread on
-CPU 2, and 29 game threads on CPUs 3–31, with a 30-thread pool. It uses
-`--game-load 0.5 --world-ms 10 --space-split top`; its sampling window is
-pending. The passing two-thread row above uses main CPU 3 and 28 game
-threads, so the comparison also changes the game pool and main-thread CPU.
+Unloaded peak with two workers lost packets in all four attempts:
 
-The GSO loaded-peak comparison uses library-owned network-thread pinning:
+| Attempt | Lost s2c messages | Server qdisc drops | Main p99 / max (ms) | Packets/s | Frames/s |
+| --- | ---: | ---: | --- | ---: | ---: |
+| U1 | 30 | 2 | 0.522 / 0.711 | 900.3k | 60.47 |
+| Repeat 2 | 75 | 5 | 0.500 / 0.674 | 900.3k | 60.43 |
+| Repeat 3 | 90 | 6 | 0.498 / 0.742 | 900.3k | 60.60 |
+| Repeat 4 | 195 | 13 | 0.509 / 0.815 | 900.3k | 60.57 |
 
-| GSO network threads | Server packets/s | Frames/s | Delivery, both directions | Main mean / p99 / max (ms) | Game threads min / mean / max (ms) |
-| --- | ---: | ---: | --- | --- | --- |
-| 1, CPU 1 | 900,000 | 60.6 | 100% | 0.25 / 0.32 / 0.32 | 2.30 / 2.63 / 3.08 |
-| 2, CPUs 1–2 | 900,000 | 60.6 | 100% | 0.26 / 0.32 / 0.35 | 2.30 / 2.68 / 3.12 |
+Each qdisc drop corresponds to 15 lost packets: one peak tick's GSO batch.
+The server uses `mq` with `fq_codel`; the chain counted a dropped batch as
+one packet, leaving 14 packets unnamed per drop. Delivery was
+99.9997–100.0000% after rounding, but the loss counts establish that these
+were not lossless rows. The other five original rows had no measured loss.
 
-Both rows use `ebdce1ca4` on the same machines. The one-thread row retains
-the main thread on CPU 3 and game threads on CPUs 4–31; its single network
-thread runs on CPU 1. Sampling-window confirmation remains pending.
+`URING_SEND_DEFERRED` equaled the kernel's `SndbufErrors`: 8.6–10.7 million
+at peak and 2.1–2.2 million at average load. In these builds it counts
+SENDMSG completions returning `-EAGAIN`, followed by retry after `POLLOUT`.
+Those retries also make the chain check fail by being counted as drops.
+They are separate from the actual qdisc loss above. The documented 1 MB
+send buffer was used without tuning.
 
-RIO's lane sweep used the earlier frame order without game work:
+### IOCP
 
-| RIO lanes | Server packets/s | Frames/s | Server → client delivery | Client → server delivery | Peak target |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 2 | 222,000 | 16.4 | Pending | 86.5% | Missed |
-| 4 | 629,000 | 44.7 | 100% | 100% | Missed |
-| 5 | 532,000 | 37.4 | Pending | 99.99% | Missed |
-| 6 | 900,000 | 60.6 | 100% | 100% | Reached in the initial sweep |
-| 8 | 900,000 | 60.6 | 100% | 100% | Reached |
+Two completion workers and two send threads reach all four workloads.
+Server-to-client delivery is 100% in all four; input loss remains visible.
 
-There was one run at each listed count in this initial sweep. Six lanes is
-the smallest passing count measured; the subsequent four-row set and
-loaded-peak repeat are listed above. The five-lane run
-reported a lower packet rate and frame rate than the four-lane run; no
-explanation is established. A fixed per-lane capacity is not established by
-these rows. The initial sweep's build and detailed setup remain pending;
-its rounded values are retained as historical results, separate from the
-final six-lane rows at `27ede60b2`.
+| Row | Load / game work | Packets/s | Frames/s | Main p99 / max | Game min / mean / max | c2s delivery | Lost inputs |
+| --- | --- | ---: | ---: | --- | --- | ---: | ---: |
+| M1 | Peak / none | 900.3k | 60.87 | 0.190 / 1.344 | 3.05 / 3.14 / 4.83 | 99.995% | 240 |
+| M2 | Peak / half | 900.3k | 60.63 | 0.260 / 0.321 | 1.98 / 2.53 / 3.71 | 99.973% | 1219 |
+| M3 | Average / none | 480.3k | 60.80 | 0.189 / 0.299 | 1.61 / 1.68 / 3.63 | 100% | 0 |
+| M4 | Average / half | 480.3k | 60.63 | 0.270 / 0.310 | 1.02 / 1.35 / 2.38 | 99.984% | 726 |
 
-| Measurement still pending | Status |
-| --- | --- |
-| RIO exact Windows build/RSS setup, historical launcher, and sampling windows | Pending |
-| IOCP complete packet-accounting acceptance | Open; original recordings report FAIL |
-| IOCP exact Windows build/RSS setup and rate/timing sampling windows | Pending |
-| macOS rate/mean-time windows, exact build command and compiler | Pending |
-| macOS complete packet-accounting acceptance | Open; m41–m48 reconciliations all report FAIL |
+M1 and M2 recorded 738 and 7405 message-start refusals over the run; the
+harness retried and reached the offered rate. M3 and M4 had none. The
+reported overruns were 0, 3, 0 and 3 respectively. M1 includes a 1.344 ms
+main-thread receive spike, despite its low mean per-second p99.
 
-### XDP under hostile traffic
+The chain check passed M3 and failed the other three, leaving c2s gaps of
+246, 1282 and 750 packets unnamed. ENA receive-discard counters rose while
+UDP receive errors stayed zero, consistent with loss below IOCP. They also
+rose in M3, which lost no player inputs, so these machine counters do not
+attribute every discard to a player or isolate its time within the run.
+The failed checks are not merely the stray no-port accounting issue.
 
-This resilience run adds hostile packets to the normal player workload;
-the hostile stream is not player input. XDP ran peak traffic with game
-threads half busy, the corrected frame order, and two XDP threads. A sender
-on the client machine added malformed, truncated, replayed, and forged
-packets at about 1.04 million packets/s: 62.5 million over 60 seconds.
+With one completion worker and two send threads, loaded peak fell to
+371.1k packets/s with about 567k starts refused/s. In that run the send
+threads shared processors with RSS. This establishes the limit of that
+measured layout, not an isolated worker-count comparison. The measured main
+build fixes send threads at two; the earlier branch's one-send-thread test
+also missed peak (696.7k packets/s, 47 frames/s).
 
-| Measure | Reported result |
-| --- | --- |
-| Player delivery, server → client / client → server | 100% / 100%; none lost |
-| Server packets/s | 915,700 |
-| Frames/s | 60.6 |
-| Late frames | 1 in the reported 30-second window |
-| Main network mean / p99 / max | 0.432 / 0.484 / 0.610 ms/frame |
-| Game-thread network min / mean / max | 2.77 / 3.20 / 4.14 ms/frame |
-| Mean game-thread time left | 5.2 ms/frame, using the corrected budget calculation |
-| Server update on its game thread | 5.55 ms, maximum 7.72 ms; reported baseline 2.7 ms |
-| Hostile packets dropped before the library | 19.6 million reported |
+### RIO
 
-The measured build, exact hostile-sender command, steady-window boundaries,
-and counter attribution for the pre-library drops are pending. These results
-describe this supplied packet mix and rate; they do not establish behavior
-for every hostile traffic pattern.
+Five lanes reach all four workloads; six also pass. Four lanes fail the
+peak rate even though the packets actually sent are delivered successfully.
+All rows in the table have 100% delivery both ways and pass reconciliation.
+
+| Row | Lanes | Load / game work | Packets/s | Frames/s | Main p99 / max | Game min / mean / max |
+| --- | ---: | --- | ---: | ---: | --- | --- |
+| RIO-R5 | 5 | Peak / none | 900.3k | 60.57 | 0.587 / 0.828 | 2.89 / 3.02 / 4.10 |
+| RIO-R7 | 5 | Peak / half | 900.2k | 60.60 | 0.840 / 1.255 | 2.15 / 2.66 / 3.64 |
+| RIO-R8 | 5 | Average / none | 480.3k | 60.50 | 0.899 / 1.053 | 1.51 / 1.59 / 2.39 |
+| RIO-R9 | 5 | Average / half | 480.3k | 60.50 | 0.583 / 0.869 | 1.13 / 1.46 / 2.27 |
+| RIO-R1 | 6 | Peak / none | 900.3k | 60.47 | 0.799 / 0.889 | 2.97 / 3.09 / 4.00 |
+| RIO-R2 | 6 | Peak / half | 900.3k | 60.50 | 0.931 / 1.370 | 2.25 / 2.78 / 3.83 |
+| RIO-R3 | 6 | Average / none | 480.3k | 60.63 | 0.912 / 1.150 | 1.56 / 1.63 / 3.20 |
+| RIO-R4 | 6 | Average / half | 480.3k | 60.60 | 0.608 / 0.678 | 1.12 / 1.47 / 2.57 |
+| RIO-R6 | 4 | Peak / none | 545.1k | 60.40 | 1.994 / 2.476 | 1.66 / 1.77 / 3.80 |
+
+The five- and six-lane rows have zero start refusals. Four lanes refuse
+about 374k message starts/s; their 100% delivery describes only what was
+sent. The loaded-peak five-lane and loaded-average six-lane reports record
+0.03 overruns/s. The previous branch's five-lane failure preceded the larger
+send capacity; the measured main result supersedes that limit.
+
+## Time available for the game
+
+Main-thread network time alone understates networking cost: game threads
+build and encrypt messages, and dedicated network workers perform I/O.
+The following loaded rows show the main-to-game distribution and the
+measured remaining game-thread budget.
+
+| Loaded row | Main network mean (ms) | Mean game network (ms) | Main / mean game | Mean game-thread time left (ms) | State-to-send mean (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| XDP, 1 thread, peak | 0.456 | 3.21 | 0.14 | 5.12 | 10.19 |
+| XDP, 1 thread, average | 0.429 | 1.76 | 0.24 | 6.57 | 9.84 |
+| GSO, 1 worker, peak | Not supplied | 3.86 | 0.12 | 4.48 | 10.52 |
+| GSO, 1 worker, average | Not supplied | 2.14 | 0.21 | 6.19 | 9.50 |
+| io_uring, 2 workers, peak | 0.445 | 4.06 | 0.11 | 4.27 | 10.58 |
+| io_uring, 2 workers, average | 0.443 | 2.27 | 0.20 | 6.06 | 9.63 |
+| IOCP, 2 completion + 2 send, peak | 0.162 | 2.53 | 0.06 | 5.80 | 10.96 |
+| IOCP, 2 completion + 2 send, average | 0.161 | 1.35 | 0.12 | 6.98 | 9.81 |
+| RIO, 5 lanes, peak | 0.457 | 2.66 | 0.17 | 5.67 | 10.89 |
+| RIO, 5 lanes, average | 0.471 | 1.46 | 0.32 | 6.88 | 9.78 |
+
+“Time left” subtracts the measured game work and network work per game
+thread from the frame budget. It is not simply the unused half of a frame.
+It is a mean budget estimate, not a guarantee for the slowest thread or
+frame, and excludes the dedicated network workers. State-to-send latency
+runs from the world state used for the packet to its send call; it is not
+network transit time. Without game work the recorded means are roughly
+18–23 ms; starting the network task alongside world work changes that
+pipeline, giving the loaded rows above roughly 9–11 ms.
+
+## Machines, placement and source commits
+
+| Rows | Server | Clients and network | Server placement |
+| --- | --- | --- | --- |
+| XDP | Latitude m4.metal.large, AMD EPYC 9254, 24 cores; Intel X710 | Second m4.metal.large; 10 GbE | OS CPU 0; two-thread rows: XDP CPUs 1–2, main 3, 20 game workers 4–23; one-thread rows: XDP CPU 1, main 2, 21 game workers 3–23 |
+| GSO and io_uring | Same bare-metal X710 server; GCC 15.2; io_uring kernel 7.0.0-43-generic, liburing 2.14 | Same X710 client machine; 32 client threads | OS CPU 0; network worker(s) CPU 1 (and 2); main 3; 20 game workers 4–23 |
+| IOCP | AWS m7i.16xlarge, 64 logical processors, Windows Server 2025, MSVC Release | AWS c8gn.8xlarge, 16 client threads; same subnet in us-east-1d | RSS processors 2,4; completion workers 3,5; send threads 6,8; main 10; 53 game workers 11–63 |
+| RIO | AWS m7i.16xlarge, Windows Server 2025, MSVC Release | AWS c8gn.8xlarge, 32 client threads; same subnet and cluster placement group in us-east-1a | Lane i: RSS processor 2i, worker 2i+1; five lanes: main 10, 53 game workers 11–63; six lanes: main 12, 51 game workers 13–63 |
+
+The Linux library pins its own network workers. The bare-metal servers
+retain `isolcpus=1-2`; XDP provisioning matches NIC queues to XDP threads.
+GSO and io_uring run unprivileged: requests for real-time priority were
+refused, so their network workers ran at default priority. io_uring's
+memlock limit was 8 MiB. Both use granted receive/send socket buffers of
+25,000,000/1,000,000 bytes. These are different machines from the older
+AWS GSO and io_uring runs.
+
+Windows rows bind a specific IPv4 address and steer RSS to the receive
+processors. IOCP uses the development layout override
+`ROCKETNET_TEST_IOCP_LAYOUT=2,4/3,5`; RIO uses built-in placement from core 0.
+Their results are not evidence that an unconfigured wildcard bind and
+default RSS achieve the same throughput.
+
+| Transport | Measured main commit | Evidence row IDs |
+| --- | --- | --- |
+| XDP | [59890655d](https://github.com/mas-bandwidth/rocketnet/commit/59890655d1f35133732073d6b1786a1407a134c7) | R1–R8, `rm-xdp-{peak,avg}-{noload,load}-q{1,2}` |
+| GSO | [3218cf5f6](https://github.com/mas-bandwidth/rocketnet/commit/3218cf5f64dbad2babdd5a2cfc98bb7d9a53884c) | G1–G5, `rm-gso-doc-{peak,avg}-{noload,load}-q{1,2}` |
+| io_uring | [3afea2aed](https://github.com/mas-bandwidth/rocketnet/commit/3afea2aed6f010a043ae194760a719f51f9b2380) | U1–U6, `rm-uring-{peak,avg}-{noload,load}-q{1,2}`; U1 repeats `-r2` through `-r4` |
+| IOCP | [3218cf5f6](https://github.com/mas-bandwidth/rocketnet/commit/3218cf5f64dbad2babdd5a2cfc98bb7d9a53884c) | `m1-peak-noload`, `m2-peak-load`, `m3-avg-noload`, `m4-avg-load`, `m5-peak-load-r1` |
+| RIO | [3218cf5f6](https://github.com/mas-bandwidth/rocketnet/commit/3218cf5f64dbad2babdd5a2cfc98bb7d9a53884c) | RIO-R1–R9, `rm-rio-{peak,avg}-{noload,load}-l{4,5,6}` |
+
+Server, clients and reconciliation binaries used each row's matching
+commit. The run records are maintained in `REMEASURE-MAIN.md` under the
+measurement archive `review-2026-11-10/final-fable`, with Linux cells in
+`harden-pair-cells` and Windows cells in the corresponding
+`remeasure-iocp` and `remeasure-rio` directories.
+The archive is separate from this repository. The commands below make the
+method repeatable; this page does not substitute for those raw logs.
+
+### Per-transport thread settings
+
+The measured commits predate the dedicated count fields. They use the old
+`num_xdp_queues` field and load-tool `--num-xdp-queues` / controller
+`--xdp-queues` flag for several transports. Those historical names in the
+reproduction commands below are intentional.
+
+[PR #1115](https://github.com/mas-bandwidth/rocketnet/pull/1115) introduces
+one field and environment setting per transport. At the time of this
+update it is open; the following names and defaults were checked against
+its public header at `f5cf0354d70c46fcb0f4eff1af3ab93e5829015f`. They are
+not fields present in the measured commits. Check the header of the
+version you build before using them.
+
+| Transport | Config field | Environment variable | Proposed default | Measurement supporting the count |
+| --- | --- | --- | ---: | --- |
+| XDP | `num_xdp_threads` | `ROCKETNET_SERVER_NUM_XDP_THREADS` | 1 | R5–R8; match the NIC queue count |
+| GSO | `num_gso_workers` | `ROCKETNET_SERVER_NUM_GSO_WORKERS` | 1 | G1–G4 |
+| io_uring | `num_io_uring_workers` | `ROCKETNET_SERVER_NUM_IO_URING_WORKERS` | 2 | U1–U4; earlier AWS loaded peak needed 2 |
+| RIO | `num_rio_lanes` | `ROCKETNET_SERVER_NUM_RIO_LANES` | 5 | RIO-R5/R7/R8/R9; 4 lanes miss peak |
+| IOCP receive | `num_iocp_completion_workers` | `ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS` | 2 | M1–M4 |
+| IOCP send | `num_iocp_send_threads` | `ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS` | 2 | M1–M4 |
+
+In that change, zero selects the default and the environment overrides the
+config field. Windows needs a specific bind address for multiple RIO lanes
+or IOCP completion workers: an unspecified count on a wildcard bind falls
+back to one. See [Windows](WINDOWS.md), [Linux](LINUX.md)
+and [Deployment](DEPLOYING.md) for the version's setup.
 
 ## Run it yourself
 
-The tool is `tests/load/harden_load.cpp`. Build `harden_load` on both machines
-using the [build instructions](BUILDING.md), at the commit of the row being
-repeated. Use a server address reachable from the client machine.
+Build the row's commit on both machines and a matching local reconciliation
+binary on the controller. These commands repeat the measured revisions;
+newer versions can change flags, placement and results. See
+[Building](BUILDING.md) for dependencies and [Load testing](LOAD.md) for the
+load tools. Use a fresh output directory for each run.
 
-### Run an XDP row from the controller
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DROCKETNET_DEV=ON -DROCKETNET_BUILD_TOOLS=ON \
+  -DROCKETNET_BUILD_DEV_LIBRARIES=ON \
+  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$OUTPUT_DIR/bin"
+cmake --build build --config Release --target harden_load --parallel 4
+```
 
-The committed [row script](https://github.com/mas-bandwidth/rocketnet/blob/dec497ae629d326a79bd7a3bff10180b4f3c86c5/scripts/space-frame-row)
-at `dec497ae6` drives both machines over SSH through
-[harden-pair](https://github.com/mas-bandwidth/rocketnet/blob/dec497ae629d326a79bd7a3bff10180b4f3c86c5/scripts/harden-pair).
-Use that script revision on the controller and build the remote binaries
-at the measured row's commit. Each remote checkout needs
-`bin/harden_load`, built Release with `ROCKETNET_DEV=ON`; the controller
-also needs a compatible local `harden_load` for reconciliation. The build
-and XDP provisioning commands are below.
+`OUTPUT_DIR` is an absolute output directory. On multi-configuration
+Windows builds, locate the resulting Release executable. XDP needs its
+AF_XDP dependencies and BPF-capable clang; io_uring needs liburing and
+`ROCKETNET_IO_URING=ON`. Confirm in CMake output that the requested transport
+was included, and in `harden_ready` that it was actually granted.
 
-Set the SSH destinations, server IP, checkout paths, interface names, and
-a fresh local output directory. For a loaded peak row with two XDP queues,
-run this on the controller:
+### Linux rows
+
+On the XDP server, match the NIC's combined queues to the selected count
+and verify provisioning at the measured commit:
+
+```sh
+sudo scripts/rocketnet-provision "$SERVER_DEV" 1 provision
+sudo scripts/rocketnet-provision "$SERVER_DEV" 1 verify
+```
+
+Provisioning changes queue and interrupt settings. Retain the existing
+isolated CPU range 1–2 for comparison with these rows. Then, from the
+controller, run the one-thread loaded peak row:
 
 ```sh
 scripts/space-frame-row \
@@ -544,662 +359,213 @@ scripts/space-frame-row \
   --server-ip "$SERVER_IP" --remote "$SERVER_CHECKOUT" \
   --client-remote "$CLIENT_CHECKOUT" --local-bin "$LOCAL_BIN" \
   --out "$OUT_DIR" --server-dev "$SERVER_DEV" --client-dev "$CLIENT_DEV" \
-  --load peak --game-threads 21 --first-cpu 3 --queues 2 \
+  --load peak --game-threads 22 --first-cpu 2 --queues 1 \
   --game-load 0.5 --world-ms 10 --split top --input-bytes 256 \
   --seconds 60 --clients 1000 --threads 32
 ```
 
-The server role runs through `sudo -n`, so passwordless sudo is required
-for this script even without profiling. The server's matching
-`scripts/rocketnet-provision DEV 2 verify` must pass before this two-queue
-run. For average load change `--load` to `average`; for an earlier no-game
-row use its recorded work and split settings rather than the script's
-default `top`. The script currently selects XDP; it is not a generic
-transport wrapper. One real loaded peak invocation was reported to pass at
-60.53 frames/s and produce a profile; the exact binary and full result
-record for that script check are not supplied here.
+The script uses passwordless `sudo -n` for the XDP server. For two XDP
+threads, provision two queues and use `--queues 2 --first-cpu 3
+--game-threads 21`. Change load to `average` for average rows; set game
+load and world work to zero for unloaded rows.
 
-The output includes `server.log`, `clients.log`, and `reconcile.txt`.
-Check rate, frame timing, and delivery against the desired row as described
-below; the reconciliation result alone is not every performance criterion.
-
-Optional `--profile` runs an eight-second capture approximately 40 seconds
-after finding the server process and writes `profile.log`, `profile.tids`,
-`profile.rep`, and `profile.txt`. It needs perf on the server. `profile.txt`
-contains per-thread-class totals and the top 12 functions in estimated
-milliseconds per frame. With game work enabled, the stand-in busy loop can
-lead the main/game-thread lists; that is load-test work, not library cost.
-
-At `dec497ae6`, profile failures are not propagated to the script's exit
-status and its remote profile files use fixed temporary paths. A stale
-capture can therefore survive a failed later attempt. Use the manual
-profiling procedure below until capture freshness and success can be
-established; successful row reconciliation alone does not validate a profile.
-The script estimates frames/s from mean frame counts in the t=25–55 reports;
-the manual procedure uses actual elapsed report time for the capture window.
-
-### Build and provision the machines
-
-The target requires `ROCKETNET_BUILD_TOOLS=ON` and
-`ROCKETNET_BUILD_DEV_LIBRARIES=ON`; it links the development library. XDP
-requires `ROCKETNET_XDP=ON`, a clang with BPF support, and the AF_XDP
-dependencies in [Building](BUILDING.md). io_uring requires
-`ROCKETNET_IO_URING=ON` and liburing. Check the CMake output: a requested
-transport can be compiled out if its dependencies are absent.
-
-The supplied Linux build recipe is below. Run it from a checkout at the
-row's measured commit, setting `OUTPUT_DIR` to an absolute directory and
-`BUILD_JOBS` to the desired build parallelism. Development-library, XDP,
-and io_uring options above default to on in these builds.
+GSO and io_uring use `scripts/harden-pair` directly. On the measured server,
+the socket limits were set as follows and restored afterward:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DROCKETNET_DEV=ON -DROCKETNET_BUILD_TOOLS=ON \
-  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$OUTPUT_DIR/bin"
-cmake --build build --target harden_load -j "$BUILD_JOBS"
+sudo sysctl -w net.core.rmem_max=25000000 net.core.wmem_max=1000000
 ```
 
-`-S` selects the source directory and `-B` the build directory. `Release`
-selects optimization; `ROCKETNET_DEV` enables development helpers and
-`ROCKETNET_BUILD_TOOLS` includes the load tool. The runtime output option
-chooses the binary directory; `--target` builds `harden_load`, and `-j`
-sets compiler parallelism. The run commands below assume that binary is
-available at `./bin/harden_load`. The XDP profiling build's flags are recorded
-in the profiling section below.
-
-The XDP worker's exact build recipe on both machines uses absolute checkout
-and build paths, with four compiler jobs. At `f46d820ba`, the top-level
-build enables tools and development libraries by default:
+Set `TRANSPORT` to `gso` or `io_uring`, `NETWORK_THREADS` to 1 or 2,
+`LOAD` to `peak` or `average`, and `GAME_LOAD`/`WORLD_MS` to `0`/`0` or
+`0.5`/`10`. Set host, path and interface variables for the two machines.
 
 ```sh
-cmake -S "$REPO_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
-  -DROCKETNET_DEV=ON -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$REPO_DIR/bin"
-cmake --build "$BUILD_DIR" --target harden_load --parallel 4
+scripts/harden-pair \
+  --server-host "$SERVER_HOST" --client-host "$CLIENT_HOST" \
+  --server-ip "$SERVER_IP" --remote "$SERVER_CHECKOUT" \
+  --client-remote "$CLIENT_CHECKOUT" --local-bin "$LOCAL_BIN" \
+  --out "$OUT_DIR" --server-dev "$SERVER_DEV" --client-dev "$CLIENT_DEV" \
+  --transport "$TRANSPORT" --row space --xdp-queues "$NETWORK_THREADS" \
+  --seconds 60 --clients 1000 --threads 32 \
+  --server-args "--frame-shape space --game-threads 21 --pin-first-cpu 3 --space-send wide --space-update split --space-net task --space-split top --game-load $GAME_LOAD --world-ms $WORLD_MS --load $LOAD" \
+  --client-args "--input-bytes 256"
 ```
 
-`REPO_DIR` selects the measured checkout, `BUILD_DIR` its build directory,
-and `--parallel 4` sets build parallelism. Run the following provisioning
-commands from that checkout on the XDP server before starting the load.
-The recorded initial check used its existing two-queue configuration:
+Unlike XDP, these worker counts do not require matching the NIC queue
+count. The measured NIC retained two combined queues. Run unprivileged
+to repeat the reported default-priority GSO/io_uring setup. Read the limits
+before changing them with `sysctl net.core.rmem_max net.core.wmem_max` and
+restore those recorded values after the session.
 
-```sh
-sudo scripts/rocketnet-provision "$SERVER_DEV" 2 verify
-```
+### Windows rows
 
-`SERVER_DEV` is the server NIC. `verify` checks without modifying the host;
-retain its output. The measured environment has the boot settings listed
-above, the `i40e` driver, queue interrupts pinned to their corresponding
-CPUs, `napi_defer_hard_irqs=2`, and `gro_flush_timeout=200000`.
-
-To select the one- or two-queue row, set `NETWORK_THREADS` to 1 or 2 and run:
-
-```sh
-sudo scripts/rocketnet-provision "$SERVER_DEV" "$NETWORK_THREADS" provision
-```
-
-`provision` changes the NIC's combined queue count and runtime settings,
-then pins the resulting queue interrupts. It checks the boot prerequisites;
-it does not apply bootloader changes or reboot the host. The measured
-one-queue row keeps the existing isolated CPU range 1–2. The checked-in
-[provisioning script](https://github.com/mas-bandwidth/rocketnet/blob/f46d820ba851bb09db3a488c7bcd9ff36b8ad2c0/scripts/rocketnet-provision)
-documents its full checks. The NIC queue count and server's
-`--num-xdp-queues` must match.
-
-The current `--game-threads N` flag counts the main thread plus N−1 game
-threads. XDP uses 21; io_uring and GSO use 29; IOCP uses 54; RIO uses 50.
-`--world-ms` sets simulated work
-on the main thread; `--game-load 0.5` requests game work equal to half a frame
-per game thread. Neither is a network timing measurement.
-
-Choose the matching XDP or io_uring row settings for the direct commands below:
-
-| Row | `TRANSPORT` | `POOL_THREADS` | `PAYLOAD` | `LOAD` |
-| --- | --- | ---: | --- | --- |
-| XDP peak | `xdp` | 21 | `pattern` | `peak` |
-| XDP average | `xdp` | 21 | `pattern` | `average` |
-| io_uring peak | `io_uring` | 29 | `copy` | `peak` |
-| io_uring average | `io_uring` | 29 | `copy` | `average` |
-
-The commands preserve the workload arguments copied from the measurement
-cells. Set the variables above and substitute addresses and interface names.
-Supply the same Unix timestamp
-`END_AT` to both roles, allowing about 25 seconds for joining and warm-up
-before the 60-second load. Start the server first:
-
-```sh
-./bin/harden_load server --address "$SERVER_IP:40000" \
-  --transport "$TRANSPORT" --max-clients 1000 --hz 60 \
-  --seconds 60 --end-at "$END_AT" --dev "$SERVER_DEV" \
-  --warm-seconds 20 --sample-seconds 60 --payload "$PAYLOAD" --num-xdp-queues 2 \
-  --frame-shape space --load "$LOAD" --game-threads "$POOL_THREADS" \
-  --pin-first-cpu 3 --world-ms 0 --game-load 0 \
-  --space-send wide --space-update split --space-net task > server.log 2>&1
-```
-
-Copy the public key from the server's `harden_ready` line into `SERVER_KEY`.
-On the client machine, using the same `END_AT`:
-
-```sh
-./bin/harden_load clients --address "$SERVER_IP:40000" --key "$SERVER_KEY" \
-  --clients 1000 --threads 32 --hz 60 --messages 1 \
-  --reliable-every 1 --join-rate 100 --payload "$PAYLOAD" \
-  --input-bytes 256 --seconds 60 --end-at "$END_AT" \
-  --dev "$CLIENT_DEV" > clients.log 2>&1
-```
-
-After both roles finish, collect the logs on one machine:
-
-```sh
-./bin/harden_load reconcile --logs server.log,clients.log
-```
-
-The older io_uring run used `scripts/harden-pair` with a bench-local wrapper
-that appended `SF_SERVER_ARGS`; its exact historical wrapper is pending.
-The committed XDP row script is linked above. At `dec497ae6`, `harden-pair`
-accepts `--server-args`, `--client-args`, and `--server-sudo` for the row
-script's direct workload arguments. The binary commands above retain the
-older rows' arguments, including omission of `--space-split top`.
-Do not substitute a different frame order when repeating a row.
-
-For GSO's new loaded peak rows, use `ebdce1ca4`, set `NETWORK_THREADS` to
-1 or 2, and preserve the 10 ms world-work setting. The library pins its network threads;
-the command does not need a load-test network-pin flag.
-The archived launcher and its stop-time
-arguments are pending; these are the binary workload arguments supplied
-with the row:
-
-```sh
-./bin/harden_load server --address "$SERVER_IP:40000" \
-  --transport gso --max-clients 1000 --dev "$SERVER_DEV" \
-  --sample-seconds 60 --num-xdp-queues "$NETWORK_THREADS" \
-  --frame-shape space --game-threads 29 --pin-first-cpu 3 \
-  --space-send wide --space-update split --space-net task \
-  --world-ms 10 --space-split top --game-load 0.5 --load peak > server.log 2>&1
-```
-
-After copying the server public key, run on the client machine:
-
-```sh
-./bin/harden_load clients --address "$SERVER_IP:40000" --key "$SERVER_KEY" \
-  --clients 1000 --threads 32 --messages 1 --reliable-every 1 \
-  --join-rate 100 --input-bytes 256 > clients.log 2>&1
-```
-
-Reconcile the logs as above. GSO uses the tool's default 60 Hz and 60-second
-duration; the supplied command does not override its default pattern payload.
-
-The historical GSO rows use their original commits: `d9110a19f` without
-game work and `aad649f62` for loaded average. To repeat those rows, retain
-their recorded `--net-first-cpu 1`, set `--game-load` to 0 or 0.5 respectively,
-and select the recorded peak/average load. They have not been relabelled as
-measurements of the newer build. Set `NETWORK_THREADS=2` for those historical
-rows.
-
-For the final IOCP rows, use `1afaabe69` on the Windows server and Linux
-client. Its source defines two send threads; `--num-xdp-queues 2` selects
-two receive/completion workers. No runtime send-thread override is needed.
-The development-only receive-layout setting below matches the cells; the
-transport then pins its send threads on processors 6 and 8. Exact MSVC
-invocation and adapter RSS setup remain pending. Set `LOAD` to `peak` or
-`average` and bind the server to its specific IPv4 address. In PowerShell,
-the no-game workload is:
+Use the matching Windows and Linux builds with `scripts/harden-pair
+--server-os windows`. Set the specific bind address to the server's private
+address and match RSS to the intended lane processors before starting.
+The recorded five-lane RIO configuration was:
 
 ```powershell
-$env:ROCKETNET_SERVER_BIND_IPV4_ADDRESS = $SERVER_IP
-$env:ROCKETNET_TEST_IOCP_LAYOUT = "2,4/3,5"
-.\bin\Release\harden_load.exe server --address "${SERVER_IP}:40000" --transport iocp --max-clients 1000 --dev "$SERVER_DEV" --warm-seconds 20 --sample-seconds 60 --payload copy --frame-shape space --load "$LOAD" --game-threads 54 --pin-first-cpu 10 --game-load 0 --world-ms 0 --space-send wide --space-update split --space-net task --num-xdp-queues 2 > server.log 2>&1
+Set-NetAdapterRss -Name 'Ethernet 2' -BaseProcessorNumber 0 -MaxProcessorNumber 8 -MaxProcessors 5 -NumberOfReceiveQueues 5
+Get-NetAdapterRss -Name 'Ethernet 2'
 ```
 
-Copy the server public key, then run on the Linux client:
+Use the adapter's actual name. Six-lane comparison rows used maximum
+processor 10 and six processors/queues. IOCP used two RSS queues spanning
+processors 2 and 4. Retain the read-back output, rather than assuming the
+request was granted.
 
-```sh
-./bin/harden_load clients --address "$SERVER_IP:40000" --key "$SERVER_KEY" \
-  --clients 1000 --threads 16 --messages 1 --reliable-every 1 \
-  --join-rate 100 --payload copy --input-bytes 256 > clients.log 2>&1
-```
+From a POSIX controller with SSH access to both machines, use a Windows
+checkout path such as `C:/rn/main` for `SERVER_CHECKOUT`, and the Linux
+checkout path for `CLIENT_CHECKOUT`. `SERVER_IP` is the server's private
+IPv4 address without a port; the controller uses port 40000. `LOCAL_BIN`
+is the controller's directory containing the matching `harden_load`.
+Select the four workloads with `LOAD=peak` or `average` and
+`GAME_LOAD=0 WORLD_MS=0` or `GAME_LOAD=0.5 WORLD_MS=10`.
 
-For the loaded rows, set `--game-load 0.5 --world-ms 10` and add
-`--space-split top`. The log should confirm two completion workers, two
-pinned send threads, and `game_threads=54 first_cpu=10 pinned=54 realtime=54`.
-Reconcile both logs on the Linux machine as above, retaining failures as well
-as performance metrics. These arguments retain the default 60 Hz and
-60-second duration; the original launcher's exact shared stop-time and
-profiling settings remain pending.
-
-For RIO's final six-lane rows, build `27ede60b2` on the Windows server and
-Linux client. The measured development build uses the layout override below:
-the first processor list assigns each lane's receive socket, and the second
-assigns its worker thread. These are logical processors in group 0,
-corresponding to the two siblings of physical cores 1–6. The NIC uses six
-RSS queues; the exact adapter RSS setup and MSVC build invocation remain
-pending. From the server checkout in PowerShell, the loaded peak workload is:
+For IOCP, set the measured RSS layout on the Windows server (replace the
+adapter name), then run the controller command:
 
 ```powershell
-$env:ROCKETNET_SERVER_BIND_IPV4_ADDRESS = $SERVER_IP
-$env:ROCKETNET_TEST_RIO_LAYOUT = "2,4,6,8,10,12/3,5,7,9,11,13"
-.\bin\Release\harden_load.exe server --address "${SERVER_IP}:40000" --transport rio --max-clients 1000 --warm-seconds 20 --sample-seconds 60 --payload pattern --frame-shape space --game-threads 50 --pin-first-cpu 14 --space-send wide --space-update split --space-net task --load peak --world-ms 10 --game-load 0.5 --space-split top --num-xdp-queues 6 > server.log 2>&1
+Set-NetAdapterRss -Name 'Ethernet 2' -BaseProcessorNumber 2 -MaxProcessorNumber 4 -MaxProcessors 2 -NumberOfReceiveQueues 2
+Get-NetAdapterRss -Name 'Ethernet 2'
 ```
-
-`ROCKETNET_TEST_RIO_LAYOUT` is a development-only measurement override, not
-a production configuration setting. The server log should confirm the
-requested lane placement and `game_threads=50 first_cpu=14 pinned=50
-realtime=50`. On the Linux client, after copying the server public key:
 
 ```sh
-./bin/harden_load clients --address "$SERVER_IP:40000" --key "$SERVER_KEY" \
-  --clients 1000 --threads 32 --messages 1 --reliable-every 1 \
-  --join-rate 100 --payload pattern > clients.log 2>&1
+scripts/harden-pair \
+  --server-host "$SERVER_HOST" --client-host "$CLIENT_HOST" \
+  --server-ip "$SERVER_IP" --remote "$SERVER_CHECKOUT" \
+  --client-remote "$CLIENT_CHECKOUT" --local-bin "$LOCAL_BIN" --out "$OUT_DIR" \
+  --server-os windows --transport iocp --row bar --xdp-queues 2 \
+  --client-dev ens5 --seconds 60 --clients 1000 --threads 16 \
+  --server-env "ROCKETNET_SERVER_BIND_IPV4_ADDRESS=$SERVER_IP" \
+  --server-env "ROCKETNET_TEST_IOCP_LAYOUT=2,4/3,5" \
+  --server-args "--frame-shape space --load $LOAD --game-threads 54 --pin-first-cpu 10 --game-load $GAME_LOAD --world-ms $WORLD_MS --space-send wide --space-update split --space-net task --space-split top" \
+  --client-args "--input-bytes 256"
 ```
 
-This build defaults to 256-byte client inputs. Change the server's `--load`
-to `average` for either average row. For either no-game row, set
-`--world-ms 0 --game-load 0` and remove `--space-split top`. Reconcile both
-logs as above. These are the recorded workload arguments and environment;
-the historical launcher's shared stop-time and drain settings remain pending.
-
-To repeat an XDP or io_uring row with game threads half busy, build its loaded-row commit
-from the table above. Retain that transport's machine layout, payload,
-client arguments, and peak/average load selection. In the server command,
-replace `--game-load 0` with `--game-load 0.5`, set `--world-ms 10`, and
-add `--space-split top` if absent. Use these settings only with the listed
-loaded-row builds; the earlier builds have a different world-work stand-in.
-
-For the one-thread XDP peak row, use `f46d820ba`, the XDP peak client
-arguments, and a 21-thread server pool starting at CPU 3. Set the server to
-`--num-xdp-queues 1 --game-load 0.5 --world-ms 10 --space-split top`, retaining
-the other XDP peak arguments, after provisioning one NIC queue as above.
-
-To repeat the failing one-thread io_uring loaded peak trial, use `c154d7971`
-and retain the io_uring peak arguments, changing the server to
-`--num-xdp-queues 1 --game-threads 30 --pin-first-cpu 2 --game-load 0.5
---world-ms 10 --space-split top`. This reproduces its observed layout;
-the passing two-thread row uses a different pool size and main-thread CPU.
-
-### macOS workload commands
-
-The recorded macOS rows use `d02703aa9` on both machines, `msgx` on the
-server, and 12 client threads. The server was built in Release; the exact
-compiler and build invocation remain pending. With the same common
-`END_AT` stop timestamp on both hosts, the m41 server workload is:
+For RIO, apply the five-lane RSS command above and run:
 
 ```sh
-./bin/harden_load server --address "${SERVER_IP}:40000" --transport msgx \
-  --max-clients 1000 --end-at "$END_AT" --quiet-seconds 1.5 --dev en0 \
-  --warm-seconds 20 --sample-seconds 60 --payload copy \
-  --frame-shape space --load peak --game-threads 13 --pin-first-cpu 3 \
-  --game-load 0 --world-ms 0 --space-send wide --space-update split \
-  --space-net task --space-split top --num-xdp-queues 3 > server.log 2>&1
+scripts/harden-pair \
+  --server-host "$SERVER_HOST" --client-host "$CLIENT_HOST" \
+  --server-ip "$SERVER_IP" --remote "$SERVER_CHECKOUT" \
+  --client-remote "$CLIENT_CHECKOUT" --local-bin "$LOCAL_BIN" --out "$OUT_DIR" \
+  --server-os windows --transport rio --row space --xdp-queues 5 \
+  --client-dev ens34 --seconds 60 --clients 1000 --threads 32 \
+  --server-env "ROCKETNET_SERVER_BIND_IPV4_ADDRESS=$SERVER_IP" \
+  --server-args "--frame-shape space --load $LOAD --game-threads 54 --pin-first-cpu 10 --game-load $GAME_LOAD --world-ms $WORLD_MS --space-send wide --space-update split --space-net task --space-split top" \
+  --client-args "--input-bytes 256"
 ```
 
-Here `--num-xdp-queues 3` requests three send workers plus one receive
-worker. The pool size of 13 includes main. `--pin-first-cpu 3` records the
-requested affinity; the logs show all tags refused. For m43, change to
-`--game-load 0.5 --world-ms 10`; for m44, change to `--load average`; m45
-combines the average load with the game-work settings. The two-send
-comparisons use `--num-xdp-queues 2 --game-threads 14`.
+`ens5` and `ens34` are the recorded client interfaces; substitute the actual
+interface when repeating on another host. For six RIO lanes, set six RSS
+queues through processor 10 and use `--xdp-queues 6`, pool 52 and main
+processor 12. For four, set four RSS queues through processor 6 and use
+count 4, pool 56 and main processor 8. Restore the original RSS settings
+after a comparison session.
 
-The measured client interface had one receive queue and used the RPS mask
-`ffff` on `rx-0/rps_cpus`, distributing receive processing across its 16
-CPUs. The run record reports competing CI jobs paused on both hosts and
-restored with the original RPS setting after each session. These setup
-conditions matter to the comparison; choose the interface and mask for
-the actual client machine when reproducing it.
-The client log confirms 1000 clients, 12 threads, 60 Hz, a join rate of
-100/s, one 256-byte input per tick, and nominal `--seconds 60`.
-The complete historical client command and orchestration are still pending;
-retain the common stop-time and final drain when reconstructing a row.
+### Read and profile a row
 
-### Command flags
-
-| Flag | Meaning |
-| --- | --- |
-| `--address` | Server bind address for `server`; destination address for `clients`. |
-| `--transport` | Requested server transport; confirm the granted transport in `harden_ready`. |
-| `--max-clients` / `--clients` | Server capacity / number of client players. |
-| `--hz 60` | Tick rate on both ends. |
-| `--seconds 60` | Nominal duration; the shared `--end-at` controls the actual stop time when supplied. |
-| `--end-at` | Common Unix timestamp at which the roles stop generating traffic, then drain. |
-| `--dev` | Network interface used for host counters. |
-| `--warm-seconds 20` | Delay before the server's first long-run sample; separate from the reported steady window. |
-| `--sample-seconds 60` | Interval between long-run server samples. |
-| `--payload` | `pattern` generates a verifiable body; `copy` copies a prebuilt body. |
-| `--num-xdp-queues` | Requested queue/lane count: 2 for baseline Linux rows, 1 for the XDP/GSO one-thread runs, 6 for final RIO rows; in the final IOCP build, 2 selects two receive/completion workers; on macOS `msgx`, the final rows use 3 for three send workers plus a separate receive worker. |
-| `--frame-shape` | Select the test's job-based frame loop. |
-| `--load` | Set the peak or average server traffic from the workload table. |
-| `--game-threads` | Pool size including the main thread. |
-| `--pin-first-cpu` | Pin the main thread to this CPU and successive game threads to successive CPUs: 3 for baseline Linux rows, 10 for final IOCP, 14 for RIO. |
-| `--net-first-cpu 1` | Historical GSO load-test pinning for the older measured builds; omitted for library-owned pinning in `ebdce1ca4`. |
-| `--world-ms` | Main-thread simulated world work in milliseconds; 0 disables it, 10 requests 10 ms. |
-| `--game-load` | 0 disables simulated game jobs; 0.5 requests half a frame of game work per game thread. |
-| `--space-send wide` | Let the client-range jobs write their clients' messages directly. |
-| `--space-update split` | Run per-client network updates as jobs over client ranges. |
-| `--space-net task` | Run network update and send work in the scheduled network task. |
-| `--space-split top` | Start the network task before the main thread's world update so they can overlap. |
-| `--key` | Server public key printed by `harden_ready`. |
-| `--threads` | Number of client-machine threads, independent of the server pool: 32 for Linux and RIO server rows, 16 for IOCP, 12 for macOS. |
-| `--messages 1` | One client input message per player per tick. |
-| `--reliable-every 1` | Preserved client command setting; the server's reliable cadence is set separately by `--load`. |
-| `--join-rate 100` | Connect approximately 100 players per second. |
-| `--input-bytes 256` | Size of each client input message. |
-| `--logs` | Comma-separated role logs read by `reconcile`. |
-
-The row script adds these orchestration flags; workload flags shared with
-the binary keep the meanings above:
-
-| Row-script flag | Meaning |
-| --- | --- |
-| `--server-host` / `--client-host` | SSH destinations for the two machines. |
-| `--server-ip` | Server address reachable from the client machine. |
-| `--remote` | Server checkout containing `bin/harden_load`; also the default client checkout. |
-| `--client-remote` | Client checkout when its path differs from the server's. |
-| `--local-bin` | Controller directory containing `harden_load` for reconciliation. |
-| `--out` | Local directory receiving this run's logs and reports. |
-| `--server-dev` / `--client-dev` | Network interface names on the respective machines. |
-| `--first-cpu` | Server main-thread CPU; forwarded as `--pin-first-cpu`. |
-| `--queues` | XDP queue count; must match provisioning; forwarded as `--num-xdp-queues`. |
-| `--split` | `top` or `bottom` frame order; forwarded as `--space-split`. |
-| `--ssh` | SSH command; defaults to `ssh -o BatchMode=yes`. |
-| `--profile` | Request the script's perf capture and ranked report, subject to the capture-handling limitation above. |
-
-### Check placement and read the results
-
-For XDP, the measured pool log reports `game_threads=21 first_cpu=3 pinned=21
-realtime=21`: the main thread plus 20 game threads successfully pinned and
-entered real-time scheduling. The library pins the two network threads to
-CPUs 1–2. For io_uring, check for `io_uring worker 0 pinned to cpu 1` and
-`io_uring worker 1 pinned to cpu 2`; a pin or priority refusal is logged.
-Retain these startup lines with the result rather than assuming requested
-affinity was granted.
-
-| Result field | How to read it |
-| --- | --- |
-| `harden_tick t` | Seconds since the server run started. Select the row's stated steady window. |
-| `harden_tick pkts_ps` | Change in server packets sent divided by the reporting interval. |
-| `harden_tick frames` | Frames in that interval; divide by elapsed seconds between reports for frames/s. |
-| `harden_tick conn` | Connected players at the report. |
-| `harden_players connects` | Successful connection count; read with stable/unplanned ends and error counts. |
-| `harden_players` delivery percentages | Unreliable delivered / (delivered + lost), separately for each direction, after draining. |
-| `harden_threads main_net_ms` | Mean elapsed main-thread network work per frame in that reporting interval. |
-| `harden_frame main_rn_ms p99/max` | Per-interval main-thread network-time p99 and maximum. XDP's rows without game work average the per-second p99 values. |
-| `harden_frame latency_ms avg/max` | Time from the world state used for a frame's packets to its send call; not wire latency. |
-| `harden_frame input_age_ms avg/max` | Time from the network update completing to the main thread taking its inputs for the world update. |
-| `harden_frame join_ms avg/max` | Time the main thread waits for the network task to finish. |
-| `harden_frame world_ms avg/max` | Elapsed world-update time, including waiting for its game jobs; may exceed the nominal 10 ms. |
-| `harden_threads game_net_ms min/mean/max` | Minimum, mean, and maximum across game threads of each thread's network work per frame. |
-| `harden_threads ratio` | `main_net_ms` / mean `game_net_ms`. |
-| `harden_threads leftover_ms` | On the corrected XDP builds only: frame budget minus measured game work per game thread minus mean network work per game thread. |
-| `harden_frame rn_core_ms` | On the corrected XDP builds: summed instrumented network work across the main/game pool, excluding dedicated network threads. |
-| `harden_thread_net_ms` | Per-thread network work; index 0 is the main thread's contribution to jobs. |
-
-For example, the io_uring peak row delivers 900,316 packets/s at 60.60
-frames/s. Its main thread spends 0.157 ms per frame on network work and its
-game threads average 3.20 ms each: 0.157 / 3.20 is about 0.05. This does not
-mean the entire frame takes 0.157 ms, or that all thread times should be added
-to obtain elapsed frame time.
-
-## Profiles
-
-### Record and inspect a Linux profile
-
-The XDP profiles below used the same machines and thread layout as its rows
-without game work. The profiled binary was [186a4f364](https://github.com/mas-bandwidth/rocketnet/commit/186a4f3646632119d64633e9e9404cd93e61c4ee),
-on the measurement branch, built as target `harden_load` with
-`ROCKETNET_DEV=ON`, Release `-O3 -DNDEBUG`, no `-g`, and no frame pointers.
-The profiled peak and average rows had no game work and used the default
-earlier frame order. This is a separate capture from the earlier throughput
-rows at `79888a398`.
-
-The server was sampled for eight seconds, from t=40 to t=48 of the
-60-second run, using perf `7.0.14` and event `cpu/cycles/P`. The record
-command omitted `-e`; the worker identified the selected event with
-`perf evlist`. Although recording requested call graphs, this build does
-not support reliable unwinding: use the self-time report below. The current
-row script is committed at `dec497ae6`; its capture-handling limitation is
-described in the controller instructions above.
-
-Start the chosen server and client row. On the server machine, the recorded
-process-selection command was:
+The controller saves each role's log and runs reconciliation. To repeat
+that check directly with the matching binary revision:
 
 ```sh
-pid=$(pgrep -x harden_load | tail -1)
+bin/harden_load reconcile --logs "$SERVER_LOG,$CLIENT_LOG" \
+  --min-delivery 99.9 --frame-p99-us 5000
 ```
 
-Use the server process ID if several load processes are running. The main
-thread's ID equals this process ID. The run identified the remaining threads
-by their names and last CPU from `/proc/$pid/task/*`. This helper performs
-that inspection and prints the thread ID, name, and last CPU:
+Keep `server.log`, `clients.log`, `reconcile.txt`, command lines, source
+commits, build configuration, affinity/RSS read-back and host counters.
+Check all of the following together:
+
+- `harden_ready`: actual transport, buffer sizes and thread setup.
+- `harden_tick`: connected players, sent packet rate, refused starts and frames.
+- `harden_frame`: per-second main p99/max, latency, join wait and overruns.
+- `harden_threads`: game-thread network work and remaining-time accounting.
+- `harden_players`: connected players, loss and delivery in each direction.
+- Reconciliation chains: named drops and gaps, with the known limits above.
+
+### Linux CPU profiles: XDP, GSO and io_uring
+
+A short Linux CPU profile can explain where network and game threads spend
+time. Record it during a steady interval of the same row, using the actual
+server process ID and a new output directory. Start when `harden_tick`
+reaches about t=40, keeping the capture inside the load interval. Obtain
+the PID from the server session and verify it identifies the server role;
+several `harden_load` processes can otherwise be confused.
 
 ```sh
-python3 - "$pid" <<'PY'
-from pathlib import Path
-import sys
-
-pid = int(sys.argv[1])
-print("TID\tNAME\tLAST_CPU")
-for task in sorted(Path(f"/proc/{pid}/task").iterdir(), key=lambda p: int(p.name)):
-    try:
-        stat = (task / "stat").read_text()
-        # Fields after the final ')' start at field 3; processor is field 39.
-        fields = stat.rsplit(")", 1)[1].split()
-        name = (task / "comm").read_text().strip()
-        print(f"{task.name}\t{name}\t{fields[36]}")
-    except FileNotFoundError:
-        continue  # The thread exited during inspection.
-PY
+mkdir -p "$PROFILE_DIR"
+ps -L -p "$SERVER_PID" -o pid,tid,psr,comm > "$PROFILE_DIR/threads.txt"
+sudo perf record -F 999 -g -p "$SERVER_PID" -o "$PROFILE_DIR/perf.data" -- sleep 8
+sudo perf report -f -i "$PROFILE_DIR/perf.data" --no-children \
+  --sort pid,symbol -n --stdio -g none > "$PROFILE_DIR/perf.rep"
 ```
 
-For this XDP layout, identify the main thread on CPU 3, two XDP threads on
-CPUs 1–2, and 20 game threads on CPUs 4–23. Field 39 is the last CPU used,
-so this reading complements the startup affinity logs; it does not prove
-an affinity mask. See the [Linux stat-field reference](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html).
+Save the thread IDs and names from `/proc/$SERVER_PID/task` during capture,
+match them to the report and separate main, game and network workers.
+Inspect `perf evlist -i "$PROFILE_DIR/perf.data"` for the selected event.
+Self samples are usable without reliable stack unwinding; call graphs need
+a suitable build. Requested sample frequency is not an exact CPU timer.
+Use the capture's actual duration and frame rate when estimating time per
+frame, and keep kernel work in the accounting.
 
-When `harden_tick` reaches t=40, record the following eight seconds. Use a
-fresh output directory for each row so the capture and report stay together.
-These are the supplied recording and reporting commands:
+For a rough sampling estimate, sum a function's self samples over one
+thread class and divide by `999 * capture_seconds * measured_frames_per_second`,
+then multiply by 1000 for core-ms/frame. Divide again by the number of game
+or network workers only when reporting the mean worker. This assumes the
+requested sampling frequency; elapsed-call timings and sampled CPU time
+measure different things. Preserve total CPU cost and the unlisted tail.
+
+### Windows profiles: IOCP and RIO
+
+Repeat the chosen controller command in a new output directory, adding
+these controller options before the command ends:
 
 ```sh
-sudo perf record -F 999 -g -p "$pid" -o perf.data -- sleep 8
-sudo perf report -f -i perf.data --no-children --sort pid,symbol -n --stdio -g none > perf.rep
+--profile-after 30 --profile-seconds 10
 ```
 
-The recording requests 999 samples/s (`-F`), call graphs (`-g`), attachment
-to the server (`-p`), and the named output file (`-o`); `sleep 8` bounds the
-capture. See [perf record](https://man7.org/linux/man-pages/man1/perf-record.1.html).
+These are options to `scripts/harden-pair`, not a separate shell command.
+The script forwards them to the Windows server and copies its `profile.txt`
+into `OUT_DIR`. For a direct Windows server invocation, the equivalent
+arguments are `--profile-after 30 --profile-seconds 10 --profile-out profile.txt`.
+Keep the matching executable and its symbols together; retain the recorded
+Release optimization settings when comparing runs.
 
-The report reads that file (`-i`), allows it despite an ownership mismatch
-(`-f`), shows self samples (`--no-children`) and sample counts (`-n`), and
-writes text (`--stdio`) without call graphs (`-g none`). In this report,
-the `pid` sort key identifies a task's thread ID; `symbol` identifies the
-function. There is no separate `tid` sort key in the measured perf version.
-See [perf report](https://man7.org/linux/man-pages/man1/perf-report.1.html).
+The built-in profiler in `tests/load/harden_load.cpp` takes a ten-second
+window starting 30 seconds after its profiler starts. It samples the main
+thread's program counter approximately once per millisecond and reads CPU
+time for every accessible process thread. It does not sample the game or
+network workers' call stacks.
 
-Match report thread IDs to the saved thread listing. Sum a function's sample
-counts over the threads in the desired class, then estimate its milliseconds
-per frame using the run owner's conversion:
+Read the output as follows:
 
-```text
-class ms/frame ≈ samples / 999 × 1000 / (frames_per_second × 8)
-mean game-thread ms/frame ≈ class ms/frame / 20
-mean XDP-thread ms/frame ≈ class ms/frame / 2
-```
+- `harden_profile`: actual window duration, main sample count and whether
+  DbgHelp was available. A nonempty file with zero samples is not a profile.
+- `harden_profile_thread`: thread ID, CPU percentage of one core, main-thread
+  marker, creation time and start routine. Match the worker count and creation
+  order to the startup layout. A raw address indicates unresolved symbols.
+- `harden_profile_phase`: main-thread samples by update, receive, write,
+  send, sleep and other phase.
+- `harden_profile_main` / `harden_profile_in`: flat main-thread function
+  shares overall and within each phase. Sleep samples are elapsed waiting,
+  not networking CPU consumption.
 
-Use the frame rate from the capture interval. Sort functions by the resulting
-self-time estimate within each class. These are sampling estimates assuming
-the requested frequency, not exact timers; they need not match elapsed-call
-measurements, which include waits. Keep kernel entries, marked `[k]`, and
-the unlisted tail when considering a thread's total.
+Convert a thread's CPU percentage to core-ms/frame with
+`cpu_percent / 100 * 1000 / measured_frames_per_second`, and sum the network
+workers for total network-worker CPU cost. The profiler periodically
+suspends the main thread and itself uses a thread and handles. Keep an
+unprofiled rate/delivery row beside it; its handle growth and timing changes
+are not evidence of a transport leak or an unprofiled performance result.
+The main-run evidence above supplies elapsed row timings; it does not
+supply a new Windows per-function table.
 
-### XDP profile results
-
-At peak, the profiled server sent about 895,000 packets/s; at average load,
-about 480,000 packets/s. Estimated totals are per thread, per frame:
-
-| Thread class | Peak (ms) | Average load (ms) |
-| --- | ---: | ---: |
-| Main thread | 0.33 | 0.33 |
-| Mean game thread, 20 threads | 3.32 | 1.96 |
-| Mean XDP thread, two threads | 16.5 | 16.5 |
-
-The two XDP threads busy-poll: each occupies a full core at both measured
-loads, and this polling design keeps them busy even when traffic is low.
-Their cost is additional to the main and game threads' work.
-
-The leading game-thread self times are below. `rn_bitmap_walk_bits_desc`
-appears in acknowledgment application.
-
-| Function | Peak ms/frame per game thread | Average ms/frame per game thread |
-| --- | ---: | ---: |
-| `harden_write_message` (load test) | 0.746 | 0.404 |
-| `chacha20_encrypt_bytes__avx2` | 0.650 | 0.353 |
-| `rocketnet_server_transport_start_packet` | 0.310 | 0.177 |
-| `poly1305_blocks__sse2` | 0.292 | 0.161 |
-| `rocketnet_ack_block_build` | 0.205 | 0.113 |
-| `rocketnet_next_packet_lease_id` | 0.153 | 0.085 |
-| `rocketnet_server_transport_queue_budget_now` | 0.112 | 0.073 |
-| `rocketnet_server_socket_send_room` | 0.063 | 0.034 |
-| `rocketnet_fill_phase_fill_end` | 0.055 | 0.033 |
-| `send_room_queue` | 0.045 | Not supplied |
-| `rn_bitmap_walk_bits_desc` | 0.042 | 0.030 |
-| `rocketnet_server_transport_finish_packet` | 0.031 | Not supplied |
-
-The main-thread leaders are:
-
-| Function | Peak ms/frame | Average ms/frame |
-| --- | ---: | ---: |
-| `harden_read_message` (load test) | 0.194 | 0.213 |
-| `rn_message_object_receive_messages` | 0.058 | 0.050 |
-| `harden_server_main` (load test) | 0.025 | 0.021 |
-
-The remaining peak main-thread functions each contribute less than 0.01 ms.
-The peak XDP-thread leaders, averaged over its two threads, are:
-
-| Function | Peak ms/frame per XDP thread |
-| --- | ---: |
-| `entry_SYSRETQ_unsafe_stack` [k] | 2.4 |
-| `do_sys_poll` [k] | 1.9 |
-| `rocketnet_server_socket_xdp_thread_function` | 1.54 |
-| `native_sched_clock` [k] | 1.3 |
-| `do_syscall_64` [k] | 1.3 |
-| `__ct_user_exit` [k] | 0.52 |
-| `__sys_sendto` [k] | 0.35 |
-| `i40e_xsk_wakeup` [k] | 0.32 |
-| `xsk_poll` [k] | 0.27 |
-
-These lists omit smaller entries; their sums are not the thread totals.
-As a worked reading, peak ChaCha20 and Poly1305 self time is
-0.650 + 0.292 = 0.942 ms per game thread per frame, about 28% of its
-3.32 ms total. That is the largest listed library cost when those encryption
-and authentication functions are grouped. The load test's own message-body
-write costs another 0.746 ms; it is application workload, not library time.
-The main thread similarly spends 0.194 ms in the test's input-copying code.
-
-### io_uring profile procedure and results
-
-The io_uring profiles used the AWS c6in.8xlarge server without game work,
-at [c154d7971](https://github.com/mas-bandwidth/rocketnet/commit/c154d7971ab3e6e57c12c4e2012fe9442d7534bb)
-on `tests/v1.2/goal-uring`, built Release with `ROCKETNET_DEV=ON`.
-The peak capture ran for ten seconds starting at t=40. The record command
-did not specify `-e`; the run owner identifies its default event as cycles.
-The exact event string from the data file and perf version were not recorded.
-The exact frame rate used for conversion and average-load capture window
-are pending.
-
-On the server, select its process ID as above. The supplied commands are:
-
-```sh
-sudo perf record -F 999 -p "$pid" -o uring-perf.data -- sleep 10
-sudo perf report -f -i uring-perf.data --no-children --sort pid,dso,symbol -n --stdio > uring-perf.rep
-```
-
-This recording does not request call graphs. The report adds `dso` to the
-sort keys to distinguish the executable, libraries, and kernel alongside
-thread IDs and symbols. In this capture the main thread was the process ID,
-the next two thread IDs belonged to network threads, and the rest were game
-threads. Verify the mapping against the thread listing and affinity logs
-for a new run; thread-ID order is an observation from this capture, not an
-identity rule. Confirmation of the captured game-thread count is pending.
-
-The supplied conversion uses the same sampling approximation as XDP, with
-a ten-second capture:
-
-```text
-class ms/frame ≈ samples / 999 / 10 / frames_per_second × 1000
-mean thread ms/frame ≈ class ms/frame / number_of_threads_in_class
-```
-
-The aggregate results distinguish per-thread means from class totals:
-
-| Thread class | Peak (ms/frame) | Average load (ms/frame) |
-| --- | ---: | ---: |
-| Main thread | 0.248 | 0.233 |
-| Mean game thread | 3.16 | 1.86 |
-| Mean network thread, two threads | 8.5 | 5.87 (derived) |
-| Both network threads combined | 17.0 (derived) | 11.74 |
-
-The mean average-load network time is 11.74 / 2; the combined peak time is
-8.5 × 2. At peak each io_uring network thread uses roughly half a core and
-sleeps when idle. XDP's measured polling threads each occupy a full core.
-These profiles use different hardware, so the contrast describes the
-observed thread behavior rather than a controlled transport ranking.
-
-The leading peak main-thread self times are:
-
-| Function | Peak ms/frame |
-| --- | ---: |
-| `_raw_spin_unlock_irqrestore` [k] | 0.091 |
-| `rn_message_object_receive_messages` | 0.043 |
-| `harden_server_main` (load test) | 0.033 |
-| `harden_stream_take` (load test) | 0.021 |
-
-The peak network-thread leaders are kernel send-path functions. The values
-below are totals across both network threads, unlike the per-thread mean
-in the summary table:
-
-| Function | Peak ms/frame, both network threads combined |
-| --- | ---: |
-| `rep_movs_alternative` [k] | 2.67 |
-| `ena_start_xmit` [k] | 2.02 |
-| `kernel_init_pages` [k] | 1.70 |
-| `skb_segment` [k] | 0.98 |
-| `memset_orig` [k] | 0.85 |
-| `__alloc_skb` [k] | 0.53 |
-| `kmem_cache_alloc_node` [k] | 0.48 |
-| `ena_com_sq_update_tail` [k] | 0.37 |
-| `_raw_spin_lock` [k] | 0.36 |
-| `ena_com_prepare_tx` [k] | 0.29 |
-
-For example, `rep_movs_alternative` accounts for 2.67 ms per frame across
-the pair, or a derived 1.335 ms per network thread on average. The listed
-functions omit the smaller entries and do not sum to the full class total.
-
-The leading game-thread self times are per-thread means. Average-load labels
-are preserved as supplied; their exact exported symbol names are pending.
-
-| Peak function | Peak ms/frame per game thread | Average-load label | Average ms/frame per game thread |
-| --- | ---: | --- | ---: |
-| `chacha20_encrypt_bytes__avx2` | 0.579 | `chacha20` | 0.325 |
-| `poly1305_blocks__sse2` | 0.345 | `poly1305` | 0.192 |
-| `rocketnet_server_transport_start_packet` | 0.336 | `start_packet` | 0.207 |
-| `rocketnet_server_transport_queue_budget_now` | 0.223 | `queue_budget_now` | 0.145 |
-| `rocketnet_uring_send_queues_staged` | 0.192 | `send_queues_staged` | 0.104 |
-| `rocketnet_uring_send_queues_start` | 0.192 | `send_queues_start` | 0.099 |
-| `rocketnet_fill_phase_fill_begin` | 0.185 | `fill_begin` | 0.097 |
-| `rocketnet_server_transport_finish_packet` | 0.112 | Not supplied | — |
-| `rocketnet_ack_block_build` | 0.103 | Not supplied | — |
-| `rocketnet_uring_send_queues_finish` | 0.101 | Not supplied | — |
-| `rocketnet_next_packet_lease_id` | 0.083 | Not supplied | — |
-
-### macOS thread CPU observations
-
-The final m41 and m42 cells include `ps -M` readings, recorded around
-t=55 s by the run owner. m41's three send workers report 86.7%, 88.1%, and
-90.7% CPU, with the receive worker at 13.1%. m42's two send workers report
-95.8% and 93.7%, with receive at 11.4%. These are thread CPU observations,
-not function self-time measurements or per-frame costs.
-
-The earlier `/usr/bin/sample` captures were taken before the corrected
-receiver setup. Their wall-time stack shares include blocked syscalls and
-do not identify the CPU cost of sending or receiving. A function profile
-of the final setup remains pending.
-
-Full function profiles for GSO, RIO, IOCP, macOS, and rows with game work remain pending.
+The older [function profiles](https://github.com/mas-bandwidth/rocketnet/blob/2da198e234dab41c118f58fa3e0ec263b562c1d4/docs/PERFORMANCE.md#profiles)
+and [hostile-traffic experiment](https://github.com/mas-bandwidth/rocketnet/blob/2da198e234dab41c118f58fa3e0ec263b562c1d4/docs/PERFORMANCE.md#xdp-under-hostile-traffic)
+remain available at their original document revision. They used measurement
+branches, including AWS io_uring hardware, and are not new profiles of the
+main commits in this report. This update replaces their throughput headline
+with the main measurements above; it does not claim that those older
+function costs or hostile-traffic results were requalified on main.

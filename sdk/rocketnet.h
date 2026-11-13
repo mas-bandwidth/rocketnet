@@ -1648,23 +1648,19 @@ struct rocketnet_server_config_t
 
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
-    /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp, gso, io_uring and the
-    /// Windows rio and iocp transports.
-    /// Zero, the default, selects the transport's own. Range is 1 .. 1024;
-    /// gso and io_uring refuse a value above 32, and so do rio and iocp.
-    /// On Windows it is the number of sockets on the server's port, each with
-    /// its own worker thread: rio runs that many lanes, iocp that many
-    /// completion workers. Zero or 1 is one socket, bound to the port
-    /// exclusively. More than one needs a specific local address, set in
-    /// bind_ipv4_address or bind_ipv6_address: start refuses the wildcard
-    /// (0.0.0.0 or ::). The sockets then share the port, one per processor,
-    /// and Windows has no exclusive form of that sharing: a plain bind of
-    /// that address and port is refused while the server runs, but a process
-    /// that asks for the same sharing can join the port and receive the
-    /// datagrams steered to its processor. Use one socket where nothing else on
-    /// the machine can be trusted with the port.
+    /// ROCKETNET_SERVER_NUM_XDP_THREADS sets the xdp transport's network
+    /// threads: one XDP thread per NIC queue. Default is 1 (zero selects it):
+    /// the count that held 1000 players at 60 Hz and 10 Gb/s out on an Intel
+    /// X710 pair (2026-11-13, main 59890655d). Range is 1 .. 1024. The NIC's
+    /// combined queue count must equal it: otherwise the xdp pre-flight
+    /// refuses, with a warning naming both counts and both fixes, and start
+    /// takes the next transport in the list (with xdp alone,
+    /// ROCKETNET_STATUS_NO_TRANSPORT_FOUND). Set the NIC with
+    /// scripts/rocketnet-provision, which reads this same variable. Thread q
+    /// runs on cpu num_os_cpus + q, never cpu 0. Each server transport has its
+    /// own count; this one is read by xdp only.
 
-    int num_xdp_queues;
+    int num_xdp_threads;
 
     /// ROCKETNET_SERVER_NUM_OS_CPUS applies to xdp. It sets cores left for
     /// the operating system. Zero, the default, selects the transport's own.
@@ -1904,6 +1900,78 @@ struct rocketnet_server_config_t
     /// above.
 
     const char * bind_ipv6_address;
+
+    /// ROCKETNET_SERVER_NUM_GSO_WORKERS sets the gso transport's network
+    /// threads: queue workers, each with its own socket on the port. Default
+    /// is 1 (zero selects it): the count that held 1000 players at 60 Hz and
+    /// 10 Gb/s out on an Intel X710 pair and on AWS c8gn.8xlarge (2026-11-13,
+    /// main 3218cf5f6). Range is 1 .. 32. Worker q runs on cpu num_os_cpus +
+    /// q, never cpu 0. No machine setting has to match it.
+
+    int num_gso_workers;
+
+    /// ROCKETNET_SERVER_NUM_IO_URING_WORKERS sets the io_uring transport's
+    /// network threads: workers, each with its own ring and socket. Default
+    /// is 2 (zero selects it): AWS c6in.8xlarge needed 2 for 1000 players at
+    /// 60 Hz and 10 Gb/s out with a game load (2026-11-13, c154d7971; 1 ran
+    /// at 51 frames a second) and an Intel X710 pair passed at 2 (main
+    /// 3afea2aed). Range is 1 .. 32. Worker q runs on cpu num_os_cpus + q,
+    /// never cpu 0. No machine setting has to match it.
+
+    int num_io_uring_workers;
+
+    /// ROCKETNET_SERVER_NUM_RIO_LANES sets the Windows rio transport's
+    /// network threads: lanes, each a socket, a registered region and an I/O
+    /// worker. Default is 5 (zero selects it): the smallest count that held
+    /// 1000 players at peak and average, with and without a game load, on AWS
+    /// m7i.16xlarge (2026-11-13, 3218cf5f6; 4 lanes fell short of the peak
+    /// rate, 545k of 900k a second). Range is 1 .. 32. More
+    /// than one lane needs a specific local address in bind_ipv4_address or
+    /// bind_ipv6_address: the sockets share the port, one per processor, and
+    /// Windows has no exclusive form of that sharing (a process that asks for
+    /// the same sharing can join the port). On the wildcard (0.0.0.0 or ::)
+    /// with this field and its variable unset, rio runs one lane and logs a
+    /// warning saying so; a value above 1 on the wildcard is refused at start
+    /// with ROCKETNET_STATUS_INVALID_ADDRESS.
+
+    int num_rio_lanes;
+
+    /// ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS sets the Windows iocp
+    /// transport's receive threads: completion workers, each with its own
+    /// socket and completion port. Default is 2 (zero selects it), with 2
+    /// send threads below: the counts that held 1000 players at 60 Hz and 10
+    /// Gb/s out on AWS m7i.16xlarge (2026-11-13, 1afaabe69; 1 worker with 2
+    /// send threads ran at 57.6 frames a second). Range is 1 .. 32. More than
+    /// one worker needs a specific local address, as num_rio_lanes: on the
+    /// wildcard with this field and its variable unset, iocp runs one worker
+    /// and logs a warning saying so; a value above 1 on the wildcard is
+    /// refused at start with ROCKETNET_STATUS_INVALID_ADDRESS.
+
+    int num_iocp_completion_workers;
+
+    /// ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS sets the Windows iocp
+    /// transport's send threads. Default is 2 (zero selects it; 2 workers
+    /// with 1 send thread ran at 47 frames a second), or the send lanes when
+    /// there are fewer. Range is 1 .. 16, and at most the send lanes
+    /// max_clients gives (8 at 1000 clients, fewer for a smaller server): a
+    /// larger value is refused at start with
+    /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
+
+    int num_iocp_send_threads;
+
+    /// ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS sets the macOS msgx
+    /// transport's send threads: transmit workers, each sending with
+    /// sendmsg_x; one receive worker beside them is fixed. Default is 3 (zero
+    /// selects it): measured 2026-11-13 (5366e4f13) with players on Linux over
+    /// 10 GbE, an M5 Pro Mac mini server sends the whole peak, 900k a second,
+    /// to 1000 players at 3. An M3 Ultra server tops out near 694k a second
+    /// at 2 and sends less as workers are added, each near fully busy in the
+    /// kernel's send path. Range is 1 .. 16.
+    ///
+    /// The portable transport has no count to choose: one send and one
+    /// receive thread.
+
+    int num_msgx_transmit_workers;
 };
 
 /// Messages
@@ -3104,7 +3172,8 @@ ROCKETNET_EXPORT void rocketnet_server_update_receive( struct rocketnet_server_t
 /// misuse and returns 0.
 /// @param client_index The slot, 0 to max_clients - 1. Another index, or a
 /// call outside update_receive .. update_finish, counts as API misuse and
-/// returns 0.
+/// returns 0, except on a server never started, stopping or stopped, where
+/// it returns 0 and is not counted.
 /// @return The number of acknowledgement blocks applied, 0 when the client
 /// had none.
 

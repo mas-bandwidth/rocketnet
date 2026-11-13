@@ -618,6 +618,20 @@ bool rocketnet_platform_thread_priority_enabled( void );
  * @return The priority.
  */
 int rocketnet_platform_network_thread_rr_priority( void );
+
+/**
+ * @brief Writes a cpu mask as ranges, "0-3,8", for a log line.
+ *
+ * Pure: no system call. Room for "..." is always kept: a range that would
+ * leave fewer than 4 bytes free is not written, and the list ends in "..."
+ * instead. "none" for an empty mask.
+ * @param cpus cpus[i] nonzero when cpu i is in the mask.
+ * @param count The entries of cpus.
+ * @param text Receives the text, always terminated.
+ * @param text_bytes The size of text, at least 5.
+ * @return None.
+ */
+void rocketnet_platform_cpu_list_text( const unsigned char * cpus, int count, char * text, int text_bytes );
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 /**
@@ -1009,5 +1023,18 @@ int rocketnet_platform_socket_error();
 // ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED through its status.
 bool rocketnet_platform_bind_refused( int error );
 struct rocketnet_platform_error_text_t rocketnet_platform_socket_error_text( int error );
+
+#if defined( __APPLE__ )
+// binds handle (an AF_INET6 socket with IPV6_V6ONLY cleared, for an IPv6
+// address) to address. Darwin does not check the IPv4 namespace when it binds
+// a dual-stack IPv6 wildcard, so the IPv6 wildcard binds while an IPv4
+// reservation of the same port is held: a port another socket holds in IPv4 is
+// refused (EADDRINUSE), and port 0 never lands on one. Every other address
+// binds plainly. 0 when bound, with *bound_port the port bound (the kernel's
+// choice for port 0 on the IPv6 wildcard, else address->port); otherwise the
+// error, a value from rocketnet_platform_socket_error. No reservation outlives
+// the call.
+int rocketnet_platform_bind_dual_stack( int handle, const struct rocketnet_address_t * address, uint16_t * bound_port );
+#endif // #if defined( __APPLE__ )
 
 #endif // ROCKETNET_SDK_ROCKETNET_PLATFORM_H

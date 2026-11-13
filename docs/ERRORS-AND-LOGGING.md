@@ -95,7 +95,7 @@ status code and the accompanying `ERROR` log line:
      configured client epoch, connect checks expiry at the time of the
      client's most recent update (zero if it has never been updated), so a
      client whose clock does not start at zero is updated once before connect.
-3. **Transport list and host capability failures (`INVALID_TRANSPORT_LIST`, `TRANSPORT_NOT_BUILT`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `NO_TRANSPORT_FOUND`)**:
+3. **Transport list and host capability failures (`INVALID_TRANSPORT_LIST`, `TRANSPORT_NOT_BUILT`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_BIND_REFUSED`, `NO_TRANSPORT_FOUND`)**:
    - `INVALID_TRANSPORT_LIST`: `config.transport` (or
      `ROCKETNET_*_TRANSPORT`) contains an unknown transport name, an empty
      comma-separated token, or mixes `"auto"` with other names (`"auto"` must
@@ -104,16 +104,22 @@ status code and the accompanying `ERROR` log line:
      binary (`docs/LINUX.md`).
    - `TRANSPORT_FAMILIES_UNSUPPORTED`: the selected transport cannot
      serve the configured IPv4/IPv6 family combination.
+   - `TRANSPORT_BIND_REFUSED`: the platform refused the bind of at least
+     one transport (another socket holds the address and port, or this host
+     cannot bind the address) and no other candidate, except the xdp
+     transport, failed for a reason of its own ([the rule](#21-status-code-enum-rocketnet_status_t)
+     below).
    - `NO_TRANSPORT_FOUND`: every candidate in the resolved
-     transport list failed host preflight, socket bind, or the operator
+     transport list failed host preflight, its socket setup, or the operator
      transport memory budget (`ROCKETNET_*_MEMORY_BUDGET_BYTES`, which checks
-     `allocator_bytes + umem_bytes` per candidate, not the create-time block).
+     `allocator_bytes + umem_bytes` per candidate, not the create-time block),
+     and no narrower status above names the failure.
    - **Action**: inspect the `WARN` / `ERROR` log lines emitted by each
      candidate during `start` or `connect`. When troubleshooting `xdp` on
      Linux, preserve the pinned geometry: 4,096-byte frames, a 16,384-entry send
      queue, 32,768-entry receive queue and fill set, a 65,536-entry fill ring,
      and 98,304 UMEM frames per queue. Use only the supported runtime controls
-     (`num_xdp_queues`, `num_os_cpus`, and
+     (`num_xdp_threads`, `num_os_cpus`, and
      `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`). The XDP data plane requires
      effective UID 0; Linux capabilities alone do not satisfy that preflight.
      Then verify provisioning (`CAP_NET_ADMIN`, `CAP_BPF`, `RLIMIT_MEMLOCK`),
@@ -608,7 +614,10 @@ can bind) and no other transport tried, except the xdp transport, failed for a
 reason of its own. A transport reports it when the platform refuses its bind
 with EADDRINUSE, EADDRNOTAVAIL or EACCES (WSAEADDRINUSE, WSAEADDRNOTAVAIL or
 WSAEACCES on Windows): the portable socket, gso, io_uring, iocp and rio
-transports. The xdp transport binds no datagram socket and never reports it, and
+transports. The iocp transport with several workers and the rio transport with
+several lanes also report it when their exclusive probe of an explicit port, or
+the SIO_CPU_AFFINITY that shares the port among them, is refused for any reason
+but want of memory. The xdp transport binds no datagram socket and never reports it, and
 its own refusal does not stop the others' bind refusal from naming the start. A
 transport skipped for the memory budget is not counted. A server whose port
 another socket holds, with neither bind field set, now reads this status where it

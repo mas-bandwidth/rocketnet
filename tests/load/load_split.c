@@ -306,13 +306,27 @@ static int split_stock_profile_environment( void )
 
         const size_t length = (size_t) ( equals - variable );
 
-        /* The transport and its core layout (AF_XDP queues and the cores
-         * left to the operating system) are deployment placement, not
-         * profile: a dedicated XDP server is measured on its own layout. */
-        const int server_placement =
-            ( length == 26 && strncmp( variable, "ROCKETNET_SERVER_TRANSPORT", 26 ) == 0 ) ||
-            ( length == 31 && strncmp( variable, "ROCKETNET_SERVER_NUM_XDP_QUEUES", 31 ) == 0 ) ||
-            ( length == 28 && strncmp( variable, "ROCKETNET_SERVER_NUM_OS_CPUS", 28 ) == 0 );
+        /* The transport and its core layout (each transport's network
+         * thread count and the cores left to the operating system) are
+         * deployment placement, not profile: a dedicated server is measured
+         * on its own layout. */
+        static const char * const placement[] = { "ROCKETNET_SERVER_TRANSPORT",
+                                                  "ROCKETNET_SERVER_NUM_OS_CPUS",
+                                                  "ROCKETNET_SERVER_NUM_XDP_THREADS",
+                                                  "ROCKETNET_SERVER_NUM_GSO_WORKERS",
+                                                  "ROCKETNET_SERVER_NUM_IO_URING_WORKERS",
+                                                  "ROCKETNET_SERVER_NUM_RIO_LANES",
+                                                  "ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS",
+                                                  "ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS",
+                                                  "ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS" };
+        int server_placement = 0;
+        for ( size_t p = 0; p < sizeof( placement ) / sizeof( placement[0] ); p++ )
+        {
+            if ( length == strlen( placement[p] ) && strncmp( variable, placement[p], length ) == 0 )
+            {
+                server_placement = 1;
+            }
+        }
         if ( ( length >= 17 && strncmp( variable, "ROCKETNET_SERVER_", 17 ) == 0 && !server_placement ) ||
              ( length >= 17 && strncmp( variable, "ROCKETNET_CLIENT_", 17 ) == 0 &&
                !( length == 26 && strncmp( variable, "ROCKETNET_CLIENT_TRANSPORT", 26 ) == 0 ) ) ||

@@ -310,8 +310,15 @@ static std::vector<std::string> env_names_set_candidates()
     const char * dummy32_base64 = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
     env_names_setenv( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY", dummy32_base64 );
     set.push_back( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" );
-    env_names_setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "4" );
-    set.push_back( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
+    env_names_setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "4" );
+    set.push_back( "ROCKETNET_SERVER_NUM_XDP_THREADS" );
+    for ( const char * name : { "ROCKETNET_SERVER_NUM_GSO_WORKERS", "ROCKETNET_SERVER_NUM_IO_URING_WORKERS", "ROCKETNET_SERVER_NUM_RIO_LANES",
+                                "ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS", "ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS",
+                                "ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS" } )
+    {
+        env_names_setenv( name, "2" );
+        set.push_back( name );
+    }
     env_names_setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2" );
     set.push_back( "ROCKETNET_SERVER_NUM_OS_CPUS" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "1200" );
@@ -596,7 +603,8 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV6_ADDRESS" ) );
-    check( documented.size() == ( ROCKETNET_DEV ? 69u : 67u ) );
+    check( documented.size() == ( ROCKETNET_DEV ? 76u : 74u ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_NUM_XDP_QUEUES" ) );          // retired: read only to warn (rocketnet_config_warn_retired_server_env)
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );

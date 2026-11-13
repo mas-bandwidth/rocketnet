@@ -349,7 +349,7 @@ server_stray_args=""
 
 xdp_args=""
 if [ "$xdp_queues" -gt 0 ]; then
-    xdp_args="--num-xdp-queues $xdp_queues"
+    xdp_args="--num-xdp-threads $xdp_queues"
 fi
 xdp_args="$xdp_args $server_extra $server_stray_args"
 server_runner="env"
