@@ -277,7 +277,7 @@
    :text "On a transport that buffers payloads in the server's ring, a thread's unused chunk slots stay on its line until the flush. If one thread sends to a client, a checked main thread call that is not send_packets follows, and another thread then sends to the same client, the second thread's packets may sit in lower slots and leave first. rocketnet.h states it. Returning every line's chunk at each checked main thread call would keep start order; it costs a walk of the 64 lines a call."
    :date "2026-11-13" :origin "Piece G, cold reader finding 2 (second case)")
 
-  (item "msgx-partial-send-no-sleep" :group "macos" :area "sdk"
+  (item "msgx-partial-send-no-sleep" :group "audit-remaining" :area "sdk"
    :title "Do not sleep after a partial sendmsg_x"
    :text "A partial sendmsg_x result ends the call kept (sdk/rocketnet_msgx_send_runs.h), so the transmit worker marks the socket full and waits 1 ms (sdk/rocketnet_server_msgx_apple.cpp) although the socket took data. Loop again at once when the kept call made progress, and wait only when a call took nothing. Measured nowhere yet: the four space rows pass as it is."
    :date "2026-11-13" :origin "Piece P cold read")
