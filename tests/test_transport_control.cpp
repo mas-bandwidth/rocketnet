@@ -2125,6 +2125,16 @@ static void test_client_connection_reset_writes_only_what_it_owns()
 
 int main( int argc, char ** argv )
 {
+    // every case here pins loopback in its config and drives fixture
+    // operations; a whole-suite server pin would override that pin (the
+    // environment wins, by design) and an xdp pin refuses the port-0 create,
+    // so this binary runs without one
+#if defined( _WIN32 )
+    _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
+#else
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+#endif // #if defined( _WIN32 )
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();

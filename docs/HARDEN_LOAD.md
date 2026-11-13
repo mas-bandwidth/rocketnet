@@ -87,4 +87,12 @@ Host-wide kernel counters include traffic that is not the cell's. Run cells on h
           --remote /path/to/checkout --transport io_uring --row impair --fill-jobs 6 \
           --out <dir> --seconds 60 --clients 1000 --threads 16 --local-bin ./bin
 
+  With `--server-os windows` the server is a Windows machine and the players stay on Linux:
+  - each server command runs in Git for Windows' bash;
+  - the tool is `<checkout>/bin/Release/harden_load.exe`;
+  - netem goes on the client machine only;
+  - the chain stands on library terms, since the tool reads no kernel counters on Windows.
+
+  A RIO server with more than one lane needs `--server-env ROCKETNET_SERVER_BIND_IPV4_ADDRESS=<private address>`.
+
 Both scripts exit 0 only on PASS.

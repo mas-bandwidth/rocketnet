@@ -41,9 +41,9 @@
 // secrets (S = k + 1, R = B), and must verify: they show the vectors are
 // refused for their encoding and not because the harness is wrong.
 //
-// The server case is the forgery the differential judgement measured
-// (DIFFERENTIAL-JUDGEMENT.md, gap 2): a server whose backend public key is a
-// small-order point admits tokens nobody signed when this check is gone.
+// The server case is the forgery this check exists to stop: a server whose
+// backend public key is a small-order point admits tokens nobody signed
+// when this check is gone.
 // rocketnet_server_transport_create refuses only the all-zero backend key, so
 // for a server configured with any other small-order key this check is the
 // only protection. Unit cases: no socket, no clock, no sleep.

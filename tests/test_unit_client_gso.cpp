@@ -84,6 +84,7 @@ struct fake_gso_socket_t
     fake_gso_message_t messages[FAKE_GSO_MAX_MESSAGES];
     uint8_t packet_data[FAKE_GSO_MAX_PACKETS][512];
     int num_packets;
+    int refuse_addresses;               // the next reads of a source address refused
 };
 
 static int fake_gso_stride( const struct msghdr * header )
@@ -249,8 +250,15 @@ static int fake_gso_gro_enable( void * context, int socket )
     return fake->gro_result;
 }
 
-static bool fake_gso_read_address( void *, const struct sockaddr_storage * storage, rocketnet_address_t * from )
+static bool fake_gso_read_address( void * context, const struct sockaddr_storage * storage, rocketnet_address_t * from )
 {
+    fake_gso_socket_t * fake = (fake_gso_socket_t *) context;
+    if ( fake->refuse_addresses > 0 )
+    {
+        fake->refuse_addresses--;
+        return false;
+    }
+
     rocketnet_unit_check( storage->ss_family == AF_INET );
 
     const struct sockaddr_in * name = (const struct sockaddr_in *) storage;
@@ -656,6 +664,44 @@ static void test_client_gso_receive_bounds_the_skipped_datagrams()
 }
 
 REGISTER_UNIT_TEST( test_client_gso_receive_bounds_the_skipped_datagrams );
+
+// a datagram whose source cannot be read is skipped like an empty one: the
+// call reads on past it, up to its batch of skips, and the next call carries
+// on to the datagram behind them
+
+static void test_client_gso_receive_skips_unreadable_sources_within_the_batch()
+{
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+
+    // one unreadable source, then a good datagram: both read in one call
+
+    test_socket.refuse_addresses = 1;
+    fake_gso_queue_receive( 200, 0, 40, FAKE_GSO_CONTROL_NONE );
+    fake_gso_queue_receive( 200, 0, 41, FAKE_GSO_CONTROL_NONE );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 1 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 2 );
+    check_gso_receive_slot( 0, 200, 41 );
+
+    // six unreadable sources: a call skips at most its batch of four
+
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    test_socket.refuse_addresses = 6;
+    for ( int i = 0; i < 6; i++ )
+    {
+        fake_gso_queue_receive( 200, 0, 50 + i, FAKE_GSO_CONTROL_NONE );
+    }
+    fake_gso_queue_receive( 200, 0, 60, FAKE_GSO_CONTROL_NONE );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 0 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 4 );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 1 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 7 );
+    check_gso_receive_slot( 0, 200, 60 );
+}
+
+REGISTER_UNIT_TEST( test_client_gso_receive_skips_unreadable_sources_within_the_batch );
 
 static void test_client_gso_receive_gro_fault_is_counted()
 {

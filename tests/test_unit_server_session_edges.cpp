@@ -58,6 +58,40 @@
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
 #include "counters_expect.h"
 
+#if defined( __has_feature )
+#if __has_feature( memory_sanitizer )
+#include <sanitizer/msan_interface.h>
+#define EDGES_MSAN 1
+#endif // #if __has_feature( memory_sanitizer )
+#endif // #if defined( __has_feature )
+
+// Whether live state is the same bytes as the copy taken of it before a
+// refused call. The ack endpoint is library memory written member by member,
+// so its padding and any member not yet written hold no value. A memcmp of it
+// reads them, and MemorySanitizer reports the compare (bench-nyc-3,
+// 2026-11-12). So the compare runs on two fresh copies, and only the copies are
+// unpoisoned. The live state keeps its shadow, so a library read of a byte
+// nothing wrote is still reported where it happens, and a refused call that
+// writes any byte of the state still fails the compare.
+
+static bool edges_same_bytes( const void * before, const void * live, size_t bytes )
+{
+    uint8_t * a = (uint8_t *) malloc( bytes );
+    uint8_t * b = (uint8_t *) malloc( bytes );
+    check( a != NULL && b != NULL );
+    memcpy( a, before, bytes );
+    memcpy( b, live, bytes );
+#if defined( EDGES_MSAN )
+    __msan_unpoison( a, bytes );
+    __msan_unpoison( b, bytes );
+#endif // #if defined( EDGES_MSAN )
+    const bool same = memcmp( a, b, bytes ) == 0;
+    free( a );
+    free( b );
+    return same;
+}
+
+
 #define EDGES_SLOTS 4
 #define EDGES_TIMEOUT 10            // the token's timeout seconds
 
@@ -543,10 +577,10 @@ static void edges_refused( struct edges_world_t * world, const struct rocketnet_
     check( world->payload_bytes == 0 );
 
     edges_read_state( world, address, client_index, after );
-    check( memcmp( &before->server, &after->server, sizeof( before->server ) ) == 0 );
-    check( memcmp( &before->mapping, &after->mapping, sizeof( before->mapping ) ) == 0 );
-    check( memcmp( &before->control, &after->control, sizeof( before->control ) ) == 0 );
-    check( memcmp( &before->endpoint, &after->endpoint, sizeof( before->endpoint ) ) == 0 );
+    check( edges_same_bytes( &before->server, &after->server, sizeof( before->server ) ) );
+    check( edges_same_bytes( &before->mapping, &after->mapping, sizeof( before->mapping ) ) );
+    check( edges_same_bytes( &before->control, &after->control, sizeof( before->control ) ) );
+    check( edges_same_bytes( &before->endpoint, &after->endpoint, sizeof( before->endpoint ) ) );
     check( before->connected == after->connected && before->confirmed == after->confirmed );
     check( before->num_acked == after->num_acked );
 

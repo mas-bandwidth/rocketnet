@@ -594,7 +594,9 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( documented.size() == ( ROCKETNET_DEV ? 67u : 65u ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV6_ADDRESS" ) );
+    check( documented.size() == ( ROCKETNET_DEV ? 69u : 67u ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );

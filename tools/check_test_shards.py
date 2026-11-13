@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """The suite's shards partition its cases (tests/suite_runner.h, --shard).
 
-Lists a suite binary's registered cases (`<binary> --list`) and each shard's
-(`<binary> --list --shard i/n`, 0 <= i < n), and exits 1 unless every case is
+Lists the cases a suite binary's run starts (`<binary> --list`) and the cases
+each shard's run keeps (`<binary> --list --shard i/n`, 0 <= i < n). The lists
+come from the run's own selection (suite_list_cases: suite_collect, then
+suite_keep_shard), so a case a shard run drops is missing here too. Exits 1
+unless every case is
 in exactly one shard, no shard lists a case the suite does not, and every
 shard has at least one case. Prints each shard's count and their sum.
 

@@ -12,6 +12,9 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
+#if defined( _WIN32 )
+#include "rocketnet_server_rio.h"
+#endif // #if defined( _WIN32 )
 #if ROCKETNET_DEV
 #include "channel_harness.h"
 #endif // #if ROCKETNET_DEV
@@ -29,8 +32,18 @@ const char * rocketnet_functional_test_name( int index );
 void rocketnet_functional_prepare();
 int rocketnet_functional_run_named( const char * name );
 
+#if defined( __linux__ )
+// the registered name of the case this process runs (set by the worker), read
+// by rocketnet_functional_require_xdp_case
+static const char * rocketnet_functional_running_case = NULL;
+#endif // #if defined( __linux__ )
+
 static int rocketnet_functional_worker( const char * name )
 {
+#if defined( __linux__ )
+    rocketnet_functional_running_case = name;
+#endif // #if defined( __linux__ )
+
 #if defined( _WIN32 )
     // MSVC treats _IOLBF as full buffering and rejects a zero buffer size.
     // A 4096-byte buffer paired with explicit fflush keeps each worker's
@@ -70,7 +83,21 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_functional_prepare();
 
+#if defined( _WIN32 ) && ROCKETNET_DEV
+    const uint64_t rio_lanes_before = rocketnet_server_rio_test_lanes_made();
+    const uint64_t rio_transports_before = rocketnet_server_rio_test_transports_made();
+#endif // #if defined( _WIN32 ) && ROCKETNET_DEV
     int result = rocketnet_functional_run_named( name );
+#if defined( _WIN32 ) && ROCKETNET_DEV
+    // CI's RIO lanes leg reads this: the lanes the case's RIO transports
+    // really made, against how many transports it made whole
+    char rio_lanes_env[16];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_RIO_LANES", rio_lanes_env, sizeof( rio_lanes_env ) ) )
+    {
+        printf( "rio_made lanes=%llu transports=%llu\n", (unsigned long long) ( rocketnet_server_rio_test_lanes_made() - rio_lanes_before ),
+                (unsigned long long) ( rocketnet_server_rio_test_transports_made() - rio_transports_before ) );
+    }
+#endif // #if defined( _WIN32 ) && ROCKETNET_DEV
     if ( !rocketnet_test_loopback_hub_release() )
     {
         result = 1;
@@ -106,13 +133,6 @@ static const char * const rocketnet_functional_nightly_cases[] = {
     "test_posix_connect_disconnect_1000_portable_*",
     "test_posix_connect_disconnect_1000_msgx_portable",
 #endif // #if defined( __APPLE__ )
-#if defined( __linux__ )
-    // XDP cases share the host's XDP state (the pre-flight answer, the commit
-    // barrier, interfaces): they cannot run beside other cases, so they run in
-    // the Linux nightly tier, which runs serially (nightly.yml)
-    "test_xdp_transport_*",
-    "test_session_reconnect_isolation_xdp",
-#endif // #if defined( __linux__ )
 #if defined( _WIN32 )
     // the RIO and IOCP x1000 server cycles, 16-45 s each on the Windows bench
     // (captain, 2026-10-29); the portable x1000 cycles stay on every commit
@@ -130,12 +150,82 @@ static const char * const rocketnet_functional_nightly_cases[] = {
 // (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1, nightly.yml), never run
 // alone per commit. The nightly tier holds every case over a second on any
 // operating system, measured 2026-10-29 (ROCKETNET_TEST_REPORT=all).
+static bool rocketnet_functional_name_matches( const char * name, const char * pattern )
+{
+    const size_t length = strlen( pattern );
+    return length > 0 && pattern[length - 1] == '*' ? strncmp( name, pattern, length - 1 ) == 0 : strcmp( name, pattern ) == 0;
+}
+
+#if defined( __linux__ )
+
+// The XDP cases share the host's XDP state (the pre-flight answer, the commit
+// barrier, the veth pairs and namespaces of each fixture family), so none may
+// run beside another case, XDP or not. They are in the Linux nightly tier,
+// each in a group of its own (a group runs alone, groups in ascending order),
+// numbered by its place among the registered XDP cases, so the rest of the
+// nightly tier keeps running in parallel in group 0. An XDP case is any case
+// whose name says xdp, and the one case that brings up the veth fixture
+// without saying so. The rule is held by the fixtures themselves: each calls
+// rocketnet_functional_require_xdp_case, which fails a case the rule leaves
+// out (a narrower list let test_posix_hard_killed_client_xdp_ipv4_client_portable
+// lose its namespace to a test_xdp_transport case running beside it).
+static bool rocketnet_functional_is_xdp_case( const char * name )
+{
+    return strstr( name, "xdp" ) != NULL || strcmp( name, "test_server_transport_io_ladder_fall" ) == 0;
+}
+
+void rocketnet_functional_require_xdp_case( const char * fixture );
+
+void rocketnet_functional_require_xdp_case( const char * fixture )
+{
+    const char * name = rocketnet_functional_running_case;
+    if ( name && !rocketnet_functional_is_xdp_case( name ) )
+    {
+        printf( "%s brings up the shared XDP fixture %s but is not scheduled as an XDP case "
+                "(rocketnet_functional_is_xdp_case, tests/functional/main.cpp)\n",
+                name, fixture );
+        fflush( stdout );
+        exit( 1 );
+    }
+}
+
+static int rocketnet_functional_xdp_group( const char * name )
+{
+    int ordinal = 0;
+    const int count = rocketnet_functional_test_count();
+    for ( int i = 0; i < count; i++ )
+    {
+        const char * registered = rocketnet_functional_test_name( i );
+        if ( registered && rocketnet_functional_is_xdp_case( registered ) )
+        {
+            ordinal++;
+            if ( strcmp( registered, name ) == 0 && ordinal < SUITE_GROUP_NIGHTLY - 1 )
+            {
+                return ordinal;
+            }
+        }
+    }
+
+    // a case outside the registry (a sibling binary), or past the groups
+    // below the nightly flag, takes the last group: still apart from every
+    // case of group 0 and of the numbered XDP groups
+    return SUITE_GROUP_NIGHTLY - 1;
+}
+
+#endif // #if defined( __linux__ )
+
 static int rocketnet_functional_test_group( const char * name )
 {
+#if defined( __linux__ )
+    if ( rocketnet_functional_is_xdp_case( name ) )
+    {
+        return SUITE_GROUP_NIGHTLY | rocketnet_functional_xdp_group( name );
+    }
+#endif // #if defined( __linux__ )
+
     for ( const char * const * nightly = rocketnet_functional_nightly_cases; *nightly; ++nightly )
     {
-        const size_t length = strlen( *nightly );
-        if ( length > 0 && ( *nightly )[length - 1] == '*' ? strncmp( name, *nightly, length - 1 ) == 0 : strcmp( name, *nightly ) == 0 )
+        if ( rocketnet_functional_name_matches( name, *nightly ) )
         {
             return SUITE_GROUP_NIGHTLY;
         }
@@ -222,27 +312,24 @@ int main( int argc, char ** argv )
 #elif defined( _WIN32 )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
-        { "test_serialize", "test_serialize", NULL, true },
         { "test_transport_control", "test_transport_control", NULL, true },
         { "test_iocp", "test_iocp", NULL, true },
     };
     // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
     const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs + first_exec, 4 - first_exec, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs + first_exec, 3 - first_exec, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined( __APPLE__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
-        { "test_serialize", "test_serialize", NULL, true },
         { "test_transport_control", "test_transport_control", NULL, true },
         { "test_msgx", "test_msgx", NULL, true },
     };
     // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
     const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs + first_exec, 4 - first_exec, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs + first_exec, 3 - first_exec, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined( __linux__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
-        { "test_serialize", "test_serialize", NULL, true },
         { "test_transport_control", "test_transport_control", NULL, true },
 #if ROCKETNET_XDP
         { "test_xdp", "test_xdp", NULL, true },
@@ -259,7 +346,6 @@ int main( int argc, char ** argv )
 #else
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
-        { "test_serialize", "test_serialize", NULL, true },
         { "test_transport_control", "test_transport_control", NULL, true },
     };
     // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here

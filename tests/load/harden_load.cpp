@@ -61,7 +61,7 @@
     every packet that client object ever received.
 
     THE HOSTILE LOAD. From --sockets sockets that are not players, at --pps
-    in total, a mix of --kinds: garbage (random bytes), prefixed (the
+    in total shared by --threads senders, a mix of --kinds: garbage (random bytes), prefixed (the
     published test filter's prefilter header, then random bytes, so it passes
     the prefilter and reaches the typed ladders), truncated (a valid header
     cut short), badsig (a connection request whose signature is random),
@@ -448,6 +448,9 @@ struct harden_options_t
     double pps = 100000.0;
     int sockets = 64;
     int warm_seconds = 60;
+    double profile_after = 0.0;
+    double profile_seconds = 0.0;
+    std::string profile_out = "profile.txt";
     std::string logs;
     int netem_duplicates = 0;
     int frame_p99_us = 12000;
@@ -665,6 +668,18 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--warm-seconds" ) == 0 )
         {
             o->warm_seconds = atoi( v );
+        }
+        else if ( strcmp( a, "--profile-after" ) == 0 )
+        {
+            o->profile_after = atof( v );
+        }
+        else if ( strcmp( a, "--profile-seconds" ) == 0 )
+        {
+            o->profile_seconds = atof( v );
+        }
+        else if ( strcmp( a, "--profile-out" ) == 0 )
+        {
+            o->profile_out = v;
         }
         else
         {
@@ -1290,6 +1305,251 @@ static void harden_print_resources( const char * tag, double t, const process_re
     printf( " library_bytes=%" PRId64, harden_library_bytes() );
 }
 
+// THE WINDOWS PROFILE (--profile-after A --profile-seconds S, Windows only):
+// the images the Windows rows run on carry no sampling profiler, so the
+// server samples itself. A seconds into the run a profiler thread lists the
+// process's threads with their start routines and CPU times, then for S
+// seconds stops the main thread about once a millisecond, reads its program
+// counter and lets it go; at the end it names each address through DbgHelp
+// (loaded at run time, so nothing links it) and writes --profile-out: every
+// thread's share of a core over the window with its start routine, and the
+// main thread's flat profile (the function each sample stopped in, as perf
+// report --no-children). Each stop costs the main thread a few microseconds.
+#if defined( _WIN32 )
+#include <tlhelp32.h>
+#include <dbghelp.h>
+
+struct harden_profile_symbol_t
+{
+    SYMBOL_INFO info;
+    char name[512];
+};
+
+typedef LONG( NTAPI * harden_nt_query_thread_t )( HANDLE, int, PVOID, ULONG, PULONG );
+typedef DWORD( WINAPI * harden_sym_set_options_t )( DWORD );
+typedef BOOL( WINAPI * harden_sym_initialize_t )( HANDLE, PCSTR, BOOL );
+typedef BOOL( WINAPI * harden_sym_from_addr_t )( HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO );
+
+struct harden_profile_thread_t
+{
+    DWORD id = 0;
+    HANDLE handle = NULL;
+    uint64_t start_address = 0;
+    uint64_t cpu_start = 0;
+    uint64_t cpu_end = 0;
+};
+
+static uint64_t harden_profile_cpu( HANDLE thread )
+{
+    FILETIME created, exited, kernel, user;
+    if ( !GetThreadTimes( thread, &created, &exited, &kernel, &user ) )
+    {
+        return 0;
+    }
+    const uint64_t k = ( (uint64_t) kernel.dwHighDateTime << 32 ) | kernel.dwLowDateTime;
+    const uint64_t u = ( (uint64_t) user.dwHighDateTime << 32 ) | user.dwLowDateTime;
+    return k + u; // 100 ns units
+}
+
+static double harden_profile_clock()
+{
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter( &now );
+    QueryPerformanceFrequency( &frequency );
+    return (double) now.QuadPart / (double) frequency.QuadPart;
+}
+
+struct harden_profile_t
+{
+    double after = 0.0;
+    double seconds = 0.0;
+    std::string out;
+    DWORD main_id = 0;
+    std::atomic<bool> stop{ false };
+    std::thread thread;
+
+    ~harden_profile_t()
+    {
+        stop.store( true );
+        if ( thread.joinable() )
+        {
+            thread.join();
+        }
+    }
+};
+
+static void harden_profile_run( harden_profile_t * p )
+{
+    const double begun = harden_profile_clock();
+    while ( harden_profile_clock() - begun < p->after )
+    {
+        if ( p->stop.load() )
+        {
+            return;
+        }
+        Sleep( 50 );
+    }
+    FILE * f = rocketnet_test_fopen( p->out.c_str(), "w" );
+    if ( !f )
+    {
+        return;
+    }
+    const HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
+    const harden_nt_query_thread_t nt_query = ntdll ? reinterpret_cast<harden_nt_query_thread_t>( reinterpret_cast<void *>( GetProcAddress( ntdll, "NtQueryInformationThread" ) ) ) : NULL;
+
+    // every thread of this process but the profiler, with its start routine
+    std::vector<harden_profile_thread_t> threads;
+    HANDLE main_thread = NULL;
+    const HANDLE snapshot = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
+    if ( snapshot != INVALID_HANDLE_VALUE )
+    {
+        THREADENTRY32 entry;
+        entry.dwSize = sizeof( entry );
+        for ( BOOL more = Thread32First( snapshot, &entry ); more; more = Thread32Next( snapshot, &entry ) )
+        {
+            if ( entry.th32OwnerProcessID != GetCurrentProcessId() || entry.th32ThreadID == GetCurrentThreadId() )
+            {
+                continue;
+            }
+            harden_profile_thread_t t;
+            t.id = entry.th32ThreadID;
+            t.handle = OpenThread( THREAD_QUERY_INFORMATION | THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, t.id );
+            if ( !t.handle )
+            {
+                continue;
+            }
+            if ( nt_query )
+            {
+                PVOID start = NULL;
+                const int thread_query_set_win32_start_address = 9;
+                if ( nt_query( t.handle, thread_query_set_win32_start_address, &start, sizeof( start ), NULL ) == 0 )
+                {
+                    t.start_address = (uint64_t) (uintptr_t) start;
+                }
+            }
+            t.cpu_start = harden_profile_cpu( t.handle );
+            if ( t.id == p->main_id )
+            {
+                main_thread = t.handle;
+            }
+            threads.push_back( t );
+        }
+        CloseHandle( snapshot );
+    }
+
+    // the main thread's program counter, about once a millisecond
+    std::vector<uint64_t> samples;
+    const double window_start = harden_profile_clock();
+    double next = window_start;
+    while ( main_thread && harden_profile_clock() - window_start < p->seconds && !p->stop.load() )
+    {
+        while ( harden_profile_clock() < next )
+        {
+            // spin: Sleep() resolves to the timer tick, about 15.6 ms
+        }
+        next += 0.001;
+        if ( SuspendThread( main_thread ) == (DWORD) -1 )
+        {
+            break;
+        }
+        CONTEXT context;
+        memset( &context, 0, sizeof( context ) );
+        context.ContextFlags = CONTEXT_CONTROL;
+        if ( GetThreadContext( main_thread, &context ) )
+        {
+#if defined( _M_ARM64 )
+            samples.push_back( (uint64_t) context.Pc );
+#else
+            samples.push_back( (uint64_t) context.Rip );
+#endif // #if defined( _M_ARM64 )
+        }
+        ResumeThread( main_thread );
+    }
+    const double window = harden_profile_clock() - window_start;
+    for ( harden_profile_thread_t & t : threads )
+    {
+        t.cpu_end = harden_profile_cpu( t.handle );
+    }
+
+    // names, through DbgHelp loaded at run time
+    harden_sym_from_addr_t sym_from_addr = NULL;
+    const HMODULE dbghelp = LoadLibraryW( L"dbghelp.dll" );
+    if ( dbghelp )
+    {
+        const harden_sym_set_options_t sym_set_options = reinterpret_cast<harden_sym_set_options_t>( reinterpret_cast<void *>( GetProcAddress( dbghelp, "SymSetOptions" ) ) );
+        const harden_sym_initialize_t sym_initialize = reinterpret_cast<harden_sym_initialize_t>( reinterpret_cast<void *>( GetProcAddress( dbghelp, "SymInitialize" ) ) );
+        sym_from_addr = reinterpret_cast<harden_sym_from_addr_t>( reinterpret_cast<void *>( GetProcAddress( dbghelp, "SymFromAddr" ) ) );
+        if ( sym_set_options && sym_initialize && sym_from_addr )
+        {
+            sym_set_options( 0x00000002 /* SYMOPT_UNDNAME */ | 0x00000004 /* SYMOPT_DEFERRED_LOADS */ );
+            if ( !sym_initialize( GetCurrentProcess(), NULL, TRUE ) )
+            {
+                sym_from_addr = NULL;
+            }
+        }
+        else
+        {
+            sym_from_addr = NULL;
+        }
+    }
+    auto name_of = [&]( uint64_t address ) -> std::string {
+        if ( sym_from_addr && address )
+        {
+            harden_profile_symbol_t symbol;
+            memset( &symbol, 0, sizeof( symbol ) );
+            symbol.info.SizeOfStruct = sizeof( SYMBOL_INFO );
+            symbol.info.MaxNameLen = sizeof( symbol.name );
+            DWORD64 displacement = 0;
+            if ( sym_from_addr( GetCurrentProcess(), address, &displacement, &symbol.info ) )
+            {
+                return std::string( symbol.info.Name );
+            }
+        }
+        char hex[32];
+        snprintf( hex, sizeof( hex ), "0x%" PRIx64, address );
+        return std::string( hex );
+    };
+
+    std::sort( threads.begin(), threads.end(), []( const harden_profile_thread_t & a, const harden_profile_thread_t & b ) { return a.cpu_end - a.cpu_start > b.cpu_end - b.cpu_start; } );
+    fprintf( f, "harden_profile: window_seconds=%.2f main_samples=%zu threads=%zu symbols=%s\n", window, samples.size(), threads.size(), sym_from_addr ? "dbghelp" : "none" );
+    for ( const harden_profile_thread_t & t : threads )
+    {
+        const double share = window > 0.0 ? (double) ( t.cpu_end - t.cpu_start ) / ( window * 1.0e7 ) * 100.0 : 0.0;
+        fprintf( f, "harden_profile_thread: id=%lu cpu=%.1f%% main=%d start=%s\n", (unsigned long) t.id, share, t.id == p->main_id ? 1 : 0, name_of( t.start_address ).c_str() );
+    }
+    std::vector<std::pair<std::string, int>> counts;
+    {
+        std::vector<std::string> names;
+        names.reserve( samples.size() );
+        for ( uint64_t address : samples )
+        {
+            names.push_back( name_of( address ) );
+        }
+        std::sort( names.begin(), names.end() );
+        for ( size_t i = 0; i < names.size(); )
+        {
+            size_t j = i;
+            while ( j < names.size() && names[j] == names[i] )
+            {
+                j++;
+            }
+            counts.push_back( std::make_pair( names[i], (int) ( j - i ) ) );
+            i = j;
+        }
+    }
+    std::sort( counts.begin(), counts.end(), []( const std::pair<std::string, int> & a, const std::pair<std::string, int> & b ) { return a.second > b.second; } );
+    for ( size_t i = 0; i < counts.size() && i < 60; i++ )
+    {
+        fprintf( f, "harden_profile_main: %6.2f%% %s\n", samples.empty() ? 0.0 : 100.0 * counts[i].second / (double) samples.size(), counts[i].first.c_str() );
+    }
+    fclose( f );
+    for ( harden_profile_thread_t & t : threads )
+    {
+        CloseHandle( t.handle );
+    }
+}
+#endif // #if defined( _WIN32 )
+
 static int harden_server_main( const harden_options_t & o )
 {
     const char * role = "server";
@@ -1352,6 +1612,22 @@ static int harden_server_main( const harden_options_t & o )
     }
     char utc[32];
     harden_utc( utc, sizeof( utc ) );
+#if defined( _WIN32 )
+    harden_profile_t profile;
+    if ( o.profile_seconds > 0.0 )
+    {
+        profile.after = o.profile_after;
+        profile.seconds = o.profile_seconds;
+        profile.out = o.profile_out;
+        profile.main_id = GetCurrentThreadId();
+        profile.thread = std::thread( harden_profile_run, &profile );
+    }
+#else
+    if ( o.profile_seconds > 0.0 )
+    {
+        printf( "harden_profile: unavailable here (Windows only; perf samples Linux)\n" );
+    }
+#endif // #if defined( _WIN32 )
     printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
             o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.payload_copy ? "copy" : "pattern",
             o.reliable_every, o.reliable_bytes, o.big_every, o.big_bytes );
@@ -2624,6 +2900,170 @@ static bool harden_capture( const harden_options_t & o, int want, std::vector<st
 }
 #endif // #if defined( __linux__ )
 
+// one hostile sender: its sockets, its share of the rate, its own generator
+// (xorshift64; rand() is shared state and was the first version's ceiling)
+// and its own counts, summed by the role after the join
+struct harden_hostile_worker_t
+{
+    const harden_hostile_t * h = nullptr;
+    const bool * enabled = nullptr;
+    int num_enabled = 0;
+    std::vector<harden_socket_t> sockets;
+    struct sockaddr_in server = {};
+    double pps = 0.0;
+    double started = 0.0;
+    double hostile_end = 0.0;
+    uint64_t random = 1;
+    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
+    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
+    std::atomic<uint64_t> progress_sent{ 0 }, progress_received{ 0 }, progress_errors{ 0 };
+
+    harden_hostile_worker_t() = default;
+    harden_hostile_worker_t( const harden_hostile_worker_t & ) = delete;
+    harden_hostile_worker_t & operator=( const harden_hostile_worker_t & ) = delete;
+};
+
+static uint64_t harden_hostile_next( harden_hostile_worker_t * w )
+{
+    uint64_t x = w->random;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    w->random = x;
+    return x;
+}
+
+static void harden_hostile_fill( harden_hostile_worker_t * w, uint8_t * p, int from, int to )
+{
+    int i = from;
+    while ( i < to )
+    {
+        uint64_t r = harden_hostile_next( w );
+        for ( int b = 0; b < 8 && i < to; b++, i++ )
+        {
+            p[i] = (uint8_t) r;
+            r >>= 8;
+        }
+    }
+}
+
+static void harden_hostile_send_loop( harden_hostile_worker_t * w )
+{
+    static const uint8_t session_types[] = { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET };
+    const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const harden_hostile_t & h = *w->h;
+    uint64_t sent_total = 0;
+    int socket_cursor = 0, kind_cursor = 0;
+    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
+    while ( harden_wall() < w->hostile_end )
+    {
+        const uint64_t due_total = (uint64_t) ( ( harden_now() - w->started ) * w->pps );
+        int burst = 0;
+        while ( sent_total < due_total && burst < 4096 && w->num_enabled > 0 )
+        {
+            int kind = kind_cursor;
+            while ( !w->enabled[kind] )
+            {
+                kind = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
+            }
+            kind_cursor = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
+            const uint64_t pick = harden_hostile_next( w );
+            int bytes = 0;
+            const uint8_t * data = packet;
+            switch ( kind )
+            {
+                case 0:
+                {
+                    bytes = 1 + (int) ( pick % 1400 );
+                    harden_hostile_fill( w, packet, 0, bytes );
+                    break;
+                }
+                case 1:
+                {
+                    const uint8_t type = session_types[pick % sizeof( session_types )];
+                    uint8_t * p = packet;
+                    rocketnet_write_prefilter_header( &p, type, filter );
+                    bytes = rocketnet_session_min_wire_bytes( type ) + (int) ( ( pick >> 16 ) % 1200 );
+                    harden_hostile_fill( w, packet, ROCKETNET_PREFILTER_BYTES, bytes );
+                    break;
+                }
+                case 2:
+                {
+                    const uint8_t type = session_types[pick % sizeof( session_types )];
+                    uint8_t * p = packet;
+                    rocketnet_write_prefilter_header( &p, type, filter );
+                    const int minimum = rocketnet_session_min_wire_bytes( type );
+                    bytes = 1 + (int) ( ( pick >> 16 ) % (uint64_t) ( minimum > 1 ? minimum - 1 : 1 ) );
+                    harden_hostile_fill( w, packet, ROCKETNET_PREFILTER_BYTES, bytes );
+                    break;
+                }
+                case 3:
+                {
+                    const std::vector<uint8_t> & r = h.requests_badsig[(size_t) ( pick % h.requests_badsig.size() )];
+                    data = r.data();
+                    bytes = (int) r.size();
+                    break;
+                }
+                case 4:
+                {
+                    data = h.request_expired.data();
+                    bytes = (int) h.request_expired.size();
+                    break;
+                }
+                case 5:
+                {
+                    data = h.request_valid.data();
+                    bytes = (int) h.request_valid.size();
+                    break;
+                }
+                default:
+                {
+                    const std::vector<uint8_t> & r = h.captured[(size_t) ( pick % h.captured.size() )];
+                    data = r.data();
+                    bytes = (int) r.size();
+                    break;
+                }
+            }
+            const harden_socket_t s = w->sockets[(size_t) socket_cursor];
+            socket_cursor = ( socket_cursor + 1 ) % (int) w->sockets.size();
+            const int result = (int) sendto( s, (const char *) data, (size_t) bytes, 0, (const struct sockaddr *) &w->server, sizeof( w->server ) );
+            if ( result == bytes )
+            {
+                w->sent[kind]++;
+                w->sent_bytes += (uint64_t) bytes;
+            }
+            else
+            {
+                w->send_errors++;
+            }
+            sent_total++;
+            burst++;
+        }
+        // read whatever the server answered
+        for ( harden_socket_t s : w->sockets )
+        {
+            for ( ;; )
+            {
+                const int n = (int) recv( s, (char *) packet, (int) sizeof( packet ), 0 );
+                if ( n < 0 )
+                {
+                    break;
+                }
+                w->received++;
+                w->received_bytes += (uint64_t) n;
+            }
+        }
+        w->progress_sent.store( sent_total, std::memory_order_relaxed );
+        w->progress_received.store( w->received, std::memory_order_relaxed );
+        w->progress_errors.store( w->send_errors, std::memory_order_relaxed );
+        // sleep only when caught up with the rate
+        if ( sent_total >= due_total )
+        {
+            rocketnet_sleep( 0.001 );
+        }
+    }
+}
+
 static int harden_hostile_main( const harden_options_t & o )
 {
     const char * role = "hostile";
@@ -2725,135 +3165,74 @@ static int harden_hostile_main( const harden_options_t & o )
     printf( "harden_hostile: address=%s pps=%.0f sockets=%d kinds=%s seconds=%.0f utc=%s\n", o.address.c_str(), o.pps, o.sockets, o.kinds.c_str(), o.seconds, utc );
     fflush( stdout );
 
-    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
-    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
-    const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    static const uint8_t session_types[] = { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET };
+    // --threads senders, each with its own share of the sockets and the rate,
+    // its own generator and its own counts; one thread's sendto and the
+    // per-byte rand() of the first version topped out near 200k a second
+    const int num_workers = std::max( 1, std::min( o.threads, (int) sockets.size() ) );
+    std::vector<harden_hostile_worker_t> workers( (size_t) num_workers );
+    for ( int i = 0; i < (int) sockets.size(); i++ )
+    {
+        workers[(size_t) ( i % num_workers )].sockets.push_back( sockets[(size_t) i] );
+    }
     const double started = harden_now();
-    double last_report = started;
-    uint64_t due_total = 0, sent_total = 0, last_sent_total = 0;
-    int socket_cursor = 0, kind_cursor = 0;
-    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
     // the hostile load ends a second before the cut, so its last packets and
     // the answers to them are in before the terms are read
     const double hostile_end = o.end_at > 0.0 ? o.end_at - 1.0 : harden_wall() + o.seconds;
+    const uint64_t seed = (uint64_t) time( NULL );
+    std::vector<std::thread> threads;
+    for ( int w = 0; w < num_workers; w++ )
+    {
+        harden_hostile_worker_t & worker = workers[(size_t) w];
+        worker.h = &h;
+        worker.enabled = enabled;
+        worker.num_enabled = num_enabled;
+        worker.server = server;
+        worker.pps = o.pps / num_workers;
+        worker.started = started;
+        worker.hostile_end = hostile_end;
+        worker.random = harden_mix64( seed ^ ( (uint64_t) ( w + 1 ) << 32 ) ) | 1;
+        threads.emplace_back( harden_hostile_send_loop, &worker );
+    }
+    uint64_t last_sent_total = 0;
+    double last_report = started;
     while ( harden_wall() < hostile_end )
     {
+        rocketnet_sleep( 0.05 );
         const double t = harden_now();
-        due_total = (uint64_t) ( ( t - started ) * o.pps );
-        int burst = 0;
-        while ( sent_total < due_total && burst < 4096 && num_enabled > 0 )
-        {
-            int kind = kind_cursor;
-            while ( !enabled[kind] )
-            {
-                kind = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
-            }
-            kind_cursor = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
-            int bytes = 0;
-            const uint8_t * data = packet;
-            switch ( kind )
-            {
-                case 0:
-                {
-                    bytes = 1 + rand() % 1400;
-                    for ( int i = 0; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 1:
-                {
-                    const uint8_t type = session_types[(size_t) rand() % sizeof( session_types )];
-                    uint8_t * p = packet;
-                    rocketnet_write_prefilter_header( &p, type, filter );
-                    bytes = rocketnet_session_min_wire_bytes( type ) + rand() % 1200;
-                    for ( int i = ROCKETNET_PREFILTER_BYTES; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 2:
-                {
-                    const uint8_t type = session_types[(size_t) rand() % sizeof( session_types )];
-                    uint8_t * p = packet;
-                    rocketnet_write_prefilter_header( &p, type, filter );
-                    const int minimum = rocketnet_session_min_wire_bytes( type );
-                    bytes = 1 + rand() % ( minimum > 1 ? minimum - 1 : 1 );
-                    for ( int i = ROCKETNET_PREFILTER_BYTES; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 3:
-                {
-                    const std::vector<uint8_t> & r = h.requests_badsig[(size_t) rand() % h.requests_badsig.size()];
-                    data = r.data();
-                    bytes = (int) r.size();
-                    break;
-                }
-                case 4:
-                {
-                    data = h.request_expired.data();
-                    bytes = (int) h.request_expired.size();
-                    break;
-                }
-                case 5:
-                {
-                    data = h.request_valid.data();
-                    bytes = (int) h.request_valid.size();
-                    break;
-                }
-                default:
-                {
-                    const std::vector<uint8_t> & r = h.captured[(size_t) rand() % h.captured.size()];
-                    data = r.data();
-                    bytes = (int) r.size();
-                    break;
-                }
-            }
-            const harden_socket_t s = sockets[(size_t) socket_cursor];
-            socket_cursor = ( socket_cursor + 1 ) % (int) sockets.size();
-            const int result = (int) sendto( s, (const char *) data, (size_t) bytes, 0, (const struct sockaddr *) &server, sizeof( server ) );
-            if ( result == bytes )
-            {
-                sent[kind]++;
-                sent_bytes += (uint64_t) bytes;
-            }
-            else
-            {
-                send_errors++;
-            }
-            sent_total++;
-            burst++;
-        }
-        // read whatever the server answered
-        for ( harden_socket_t s : sockets )
-        {
-            for ( ;; )
-            {
-                const int n = (int) recv( s, (char *) packet, (int) sizeof( packet ), 0 );
-                if ( n < 0 )
-                {
-                    break;
-                }
-                received++;
-                received_bytes += (uint64_t) n;
-            }
-        }
         if ( t - last_report >= 1.0 )
         {
+            uint64_t sent_total = 0, received_now = 0, errors_now = 0;
+            for ( const harden_hostile_worker_t & worker : workers )
+            {
+                sent_total += worker.progress_sent.load( std::memory_order_relaxed );
+                received_now += worker.progress_received.load( std::memory_order_relaxed );
+                errors_now += worker.progress_errors.load( std::memory_order_relaxed );
+            }
             printf( "harden_hostile_tick: t=%.1f sent_ps=%.0f received_total=%" PRIu64 " send_errors=%" PRIu64 "\n", t - started,
-                    (double) ( sent_total - last_sent_total ) / ( t - last_report ), received, send_errors );
+                    (double) ( sent_total - last_sent_total ) / ( t - last_report ), received_now, errors_now );
             fflush( stdout );
             last_sent_total = sent_total;
             last_report = t;
         }
-        rocketnet_sleep( 0.001 );
     }
+    for ( std::thread & thread : threads )
+    {
+        thread.join();
+    }
+    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
+    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
+    for ( const harden_hostile_worker_t & worker : workers )
+    {
+        for ( int k = 0; k < HARDEN_HOSTILE_KINDS; k++ )
+        {
+            sent[k] += worker.sent[k];
+        }
+        send_errors += worker.send_errors;
+        received += worker.received;
+        received_bytes += worker.received_bytes;
+        sent_bytes += worker.sent_bytes;
+    }
+    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
 
     // a last read for late answers, then close every socket
     const double tail = harden_now() + 2.0;
@@ -3092,7 +3471,21 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
     up.arrived_device_dropped = t.get( "server.c2s_dev_rx_dropped" );
     up.library_received = t.get( "server.c2s_packets_received" );
-    up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
+    // a transport that prefilters off the main thread (IOCP's completion
+    // workers, for one) counts each datagram it refuses into the public
+    // PACKETS_RECEIVED and its reason, and main's stats never see it: the
+    // difference is the refusals before main. A transport that drops on its
+    // own receive path counts the drop in PREFILTER_TOO_SHORT/TOO_LARGE and
+    // in neither received count
+    const int64_t refused_off_main = t.get( "server.c2s_transport_PACKETS_RECEIVED" ) - up.library_received;
+    if ( refused_off_main > 0 )
+    {
+        up.library_refused_before_received = refused_off_main;
+    }
+    else
+    {
+        up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
+    }
 
     harden_chain_t down;
     down.library_sent = t.get( "server.s2c_packets_sent" );

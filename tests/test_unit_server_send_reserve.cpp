@@ -83,6 +83,14 @@ static int sr_send_queues( void * ) { return sr.queues; }
 static int sr_send_queue_of( void *, const rocketnet_address_t * ) { return sr.queue_for_all; }
 static int sr_send_room_queue( void *, int queue ) { return sr.room[queue]; }
 
+// an update's receive: nothing arrived (a test that updates the server)
+static struct rocketnet_server_socket_process_packets_t sr_received;
+static struct rocketnet_server_socket_process_packets_t * sr_receive( void * )
+{
+    sr_received.num_packets = 0;
+    return &sr_received;
+}
+
 static double sr_clock = 1000.0;
 static double sr_time( void * ) { return sr_clock; }
 
@@ -161,6 +169,7 @@ static void sr_swap_in_fake( struct sr_rig_t * rig, int queues )
     rig->fake.flush = sr_flush;
     rig->fake.send_room = sr_send_room;
     rig->fake.send_idle = sr_send_idle;
+    rig->fake.receive = sr_receive;
     sr.queues = queues;
     if ( queues > 0 )
     {
@@ -417,11 +426,55 @@ static void test_server_send_reserve_refused_own_frame_stays_reserved()
     sr_teardown( &rig );
 }
 
+// With several send queues, a start refused because the destination's queue
+// is full is a full staging even while another queue has room: it counts as
+// SEND_RING_FULL, and a disconnect burst to that destination waits for its
+// queue's room instead of being abandoned as a refused destination.
+static void test_server_send_reserve_full_queue_is_full_staging()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 1;
+    sr_swap_in_fake( &rig, SR_MAX_QUEUES );
+
+    // the client's queue (1) is full; queue 0 has room
+    sr.room[0] = 500;
+    sr.room[1] = 0;
+    sr.room[2] = 0;
+
+    // a fill phase opens: the server reads the fake's queues
+    rocketnet_server_transport_send_packets( rig.server );
+
+    const uint64_t full_before = rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    rocketnet_server_transport_disconnect_client( rig.server, 0 );
+    sr_clock += 0.01;
+    rocketnet_server_transport_update( rig.server, sr_clock );
+    rocketnet_server_transport_send_packets( rig.server );
+    check( sr.starts == 0 );
+    check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] > full_before );
+
+    // the queue's room returns: the burst was kept, and its packets leave
+    sr.room[1] = 100;
+    for ( int i = 0; i < 8 && sr.starts < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS; i++ )
+    {
+        sr_clock += 0.01;
+        rocketnet_server_transport_update( rig.server, sr_clock );
+        rocketnet_server_transport_send_packets( rig.server );
+    }
+    check( sr.starts == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+
+    sr_teardown( &rig );
+}
+
 REGISTER_UNIT_TEST( test_server_send_reserve_one_queue );
 REGISTER_UNIT_TEST( test_server_send_reserve_refill );
 REGISTER_UNIT_TEST( test_server_send_reserve_refused_own_frame_stays_reserved );
 REGISTER_UNIT_TEST( test_server_send_reserve_refused_start_returns_claim );
 REGISTER_UNIT_TEST( test_server_send_reserve_own_frame );
 REGISTER_UNIT_TEST( test_server_send_reserve_per_queue );
+REGISTER_UNIT_TEST( test_server_send_reserve_full_queue_is_full_staging );
 
 #endif // #if ROCKETNET_DEV

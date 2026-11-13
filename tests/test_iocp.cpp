@@ -17,6 +17,45 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The portable socket's don't-fragment options as the kernel reports them on
+// a real socket made by rocketnet_platform_socket_create (the client's and
+// the portable server's Windows create sets them inline, not through
+// rocketnet_platform_socket_apply_dont_fragment, so a unit test of that helper
+// does not see them): IP_DONTFRAGMENT always, IPV6_DONTFRAG on an IPv6
+// socket. Returns false when the socket could not be made or read.
+
+static bool platform_socket_dont_fragment( const char * bind_text, int * ipv4_enabled, int * ipv6_enabled )
+{
+    rocketnet_address_t bind;
+    if ( !rocketnet_address_parse( &bind, bind_text ) )
+    {
+        return false;
+    }
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                             ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    if ( !socket )
+    {
+        return false;
+    }
+    *ipv4_enabled = 0;
+    *ipv6_enabled = 0;
+    int bytes = (int) sizeof( *ipv4_enabled );
+    bool read = getsockopt( (SOCKET) socket->handle, IPPROTO_IP, IP_DONTFRAGMENT, (char *) ipv4_enabled, &bytes ) == 0 &&
+                bytes == (int) sizeof( *ipv4_enabled );
+    if ( bind.type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        bytes = (int) sizeof( *ipv6_enabled );
+        read = read && getsockopt( (SOCKET) socket->handle, IPPROTO_IPV6, IPV6_DONTFRAG, (char *) ipv6_enabled, &bytes ) == 0 &&
+               bytes == (int) sizeof( *ipv6_enabled );
+    }
+    else
+    {
+        *ipv6_enabled = 1;
+    }
+    rocketnet_platform_socket_destroy( socket );
+    return read;
+}
+
 #if !ROCKETNET_DEV
 
 // This translation unit also supplies the production-linked native transport
@@ -124,8 +163,18 @@ static uint8_t * production_rio_start( void * p, const rocketnet_address_t * to,
 static void production_rio_finish( void * p, uint64_t id, uint8_t * frame, int bytes ) { rocketnet_server_rio_finish_packet( (rocketnet_server_rio_t *) p, id, frame, bytes ); }
 static void production_rio_send( void * p ) { rocketnet_server_rio_send_packets( (rocketnet_server_rio_t *) p ); }
 
-int main()
+int main( int argc, char ** argv )
 {
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     PRODUCTION_CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
@@ -165,6 +214,16 @@ int main()
     PRODUCTION_CHECK( rocketnet_server_rio_stopped( rio ) && rocketnet_server_rio_pending( rio ) == 0 );
     rocketnet_server_rio_destroy( rio );
     printf( "test_rio_production_exchange_shutdown\n" );
+
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    for ( int family = 0; family < 2; ++family )
+    {
+        int ipv4_enabled = 0;
+        int ipv6_enabled = 0;
+        PRODUCTION_CHECK( platform_socket_dont_fragment( binds[family], &ipv4_enabled, &ipv6_enabled ) );
+        PRODUCTION_CHECK( ipv4_enabled == 1 && ipv6_enabled == 1 );
+    }
+    printf( "test_platform_socket_production_sets_dont_fragment\n" );
 
     rocketnet_term();
     printf( "*** PRODUCTION WINDOWS TRANSPORTS PASSED ***\n" );
@@ -2685,6 +2744,10 @@ static void test_windows_transports_sized_by_max_clients()
         CHECK( held > 0 && (uint64_t) held <= rocketnet_server_iocp_allocation_bytes( 1, max_clients ) );
         wait_stopped( transport );
         rocketnet_server_iocp_destroy( transport );
+
+        // destroy gives back every byte create took (VERIFY-4 W10: the unit
+        // tier's RIO case counts only the fixture's free)
+        CHECK( live_bytes.load() == before );
     }
 
     CHECK( rocketnet_server_rio_available() );
@@ -2708,6 +2771,7 @@ static void test_windows_transports_sized_by_max_clients()
                 (long long) held, (unsigned long long) plan );
         CHECK( held > 0 && (uint64_t) held <= plan );
         rn_native_backend_stop_and_destroy( transport, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+        CHECK( live_bytes.load() == before );
     }
 }
 
@@ -2824,6 +2888,21 @@ static void test_rio_transport_socket_sets_dont_fragment()
     CHECK( enabled_for_both );
 }
 
+static void test_platform_socket_sets_dont_fragment()
+{
+    const int baseline = live_allocations.load();
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    for ( int family = 0; family < 2; ++family )
+    {
+        int ipv4_enabled = 0;
+        int ipv6_enabled = 0;
+        CHECK( platform_socket_dont_fragment( binds[family], &ipv4_enabled, &ipv6_enabled ) );
+        printf( "test_platform_socket_sets_dont_fragment %s ipv4=%d ipv6=%d\n", binds[family], ipv4_enabled, ipv6_enabled );
+        CHECK( ipv4_enabled == 1 && ipv6_enabled == 1 );
+        CHECK( live_allocations.load() == baseline );
+    }
+}
+
 // every socket the Windows transports open is non-inheritable, so a child
 // process spawned with handle inheritance never holds the bound port or
 // stalls closesocket's cancel of the posted I/O
@@ -2866,6 +2945,37 @@ static void test_windows_sockets_not_inherited()
     }
 
     printf( "test_windows_sockets_not_inherited\n" );
+}
+
+// The platform socket is non-blocking (its one mode,
+// ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING; the create sets FIONBIO). Windows
+// has no getter for the mode, so a receive on the empty socket tells: a
+// non-blocking socket answers WSAEWOULDBLOCK at once. A one-second receive
+// timeout is set first, so a blocking socket fails WSAETIMEDOUT instead of
+// hanging the case (VERIFY-4 W10: the unit tier's non-blocking check,
+// tests/test_unit_platform_nits.cpp, is excluded on Windows).
+
+static void test_platform_socket_is_non_blocking()
+{
+    const int baseline = live_allocations.load();
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+
+    for ( int family = 0; family < 2; ++family )
+    {
+        rocketnet_address_t bind = address( binds[family] );
+        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                 ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+        CHECK( socket );
+        const DWORD timeout_ms = 1000;
+        CHECK( setsockopt( (SOCKET) socket->handle, SOL_SOCKET, SO_RCVTIMEO, (const char *) &timeout_ms, (int) sizeof( timeout_ms ) ) == 0 );
+        char byte = 0;
+        const int got = recv( (SOCKET) socket->handle, &byte, 1, 0 );
+        const int error = got == SOCKET_ERROR ? WSAGetLastError() : 0;
+        printf( "test_platform_socket_is_non_blocking %s recv=%d error=%d\n", binds[family], got, error );
+        CHECK( got == SOCKET_ERROR && error == WSAEWOULDBLOCK );
+        rocketnet_platform_socket_destroy( socket );
+        CHECK( live_allocations.load() == baseline );
+    }
 }
 
 // A create that fails after posting receives drains them inline before it
@@ -3314,14 +3424,13 @@ static void test_rio_lanes_refuse_a_held_port()
             rocketnet_server_rio_options_t options;
             options.lanes = lanes;
             options.packet_filter = NULL;
-            // a refused bind has no status of its own (only memory does): the
-            // create fails, and no lane is made
+            // the create fails naming the refused bind, and no lane is made
             int status = ROCKETNET_STATUS_OK;
 #if ROCKETNET_DEV
             const uint64_t made = rocketnet_server_rio_test_lanes_made();
 #endif // #if ROCKETNET_DEV
             CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
-            CHECK( status == ROCKETNET_STATUS_OK );
+            CHECK( status == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
 #if ROCKETNET_DEV
             CHECK( rocketnet_server_rio_test_lanes_made() == made );
 #endif // #if ROCKETNET_DEV
@@ -3647,6 +3756,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_send_waits_counted", test_rio_send_waits_counted },
     { "test_iocp_transport_socket_sets_dont_fragment", test_iocp_transport_socket_sets_dont_fragment },
     { "test_rio_transport_socket_sets_dont_fragment", test_rio_transport_socket_sets_dont_fragment },
+    { "test_platform_socket_sets_dont_fragment", test_platform_socket_sets_dont_fragment },
     { "test_iocp_transport_finish_refuses_unissued_packet_id", test_iocp_finish_refuses_unissued_packet_id },
     { "test_iocp_transport_finish_refuses_bad_packet_bytes", test_iocp_finish_refuses_bad_packet_bytes },
     { "test_iocp_transport_stop_sends_published_burst", test_iocp_stop_sends_published_burst },
@@ -3667,6 +3777,7 @@ static const fault_case_t fault_cases[] = {
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
     { "test_windows_sockets_not_inherited", test_windows_sockets_not_inherited },
+    { "test_platform_socket_is_non_blocking", test_platform_socket_is_non_blocking },
     { "test_windows_transports_sized_by_max_clients", test_windows_transports_sized_by_max_clients },
     { "test_rio_transport_lanes_send_and_receive", test_rio_lanes_send_and_receive },
     { "test_rio_transport_lanes_refuse_a_held_port", test_rio_lanes_refuse_a_held_port },
