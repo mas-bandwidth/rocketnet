@@ -13,6 +13,8 @@
 \* for both). Raw times are therefore never negative, which is why
 \* BackwardStep draws its target from 0..raw-1: every negative sample, the
 \* first and each one after it, is a NonFiniteStep, never a backwards step.
+\* A sample above the ceiling MaxTime stands for is refused the same way
+\* (AboveCeilingStep), so the raw time never passes it.
 \* Once the caller's clock has caught up with the clamped one, the clock is
 \* the caller's clock again.
 \*
@@ -89,6 +91,31 @@ NonFiniteStep ==
     /\ lastDelta' = 0
     /\ steps' = steps + 1
 
+\* A finite sample above the ceiling (ROCKETNET_UPDATE_TIME_MAX_SECONDS,
+\* which MaxTime stands for), refused before the clock reads it like a
+\* NonFiniteStep: nothing changes but the misuse count, so the raw time
+\* stays at or below the ceiling and no call moves the clamped time by more
+\* than it (ClampedStepBounded). The broken variant "noceiling" accepts it as a forward step to
+\* MaxTime + 1, the code before the ceiling, where a step of any finite size
+\* was taken and the sum could reach +inf.
+AboveCeilingStep ==
+    /\ steps < MaxSteps
+    /\ IF "noceiling" \in Broken
+       THEN /\ clamped' = IF MaxTime + 1 >= clamped THEN MaxTime + 1
+                         ELSE clamped + (MaxTime + 1 - raw)
+            /\ raw' = MaxTime + 1
+            /\ misuse' = misuse
+            /\ lastStep' = "forward"
+            /\ lastDelta' = MaxTime + 1 - raw
+       ELSE /\ UNCHANGED <<clamped, raw>>
+            /\ misuse' = misuse + 1
+            /\ lastStep' = "aboveceiling"
+            /\ lastDelta' = 0
+    /\ offset' = offset
+    /\ prevClamped' = clamped
+    /\ prevRaw' = raw
+    /\ steps' = steps + 1
+
 \* The step budget is spent: the model stops.
 Done ==
     /\ steps = MaxSteps
@@ -98,6 +125,7 @@ Next ==
     \/ \E d \in 1..MaxTime : ForwardStep(d)
     \/ \E t \in 0..MaxTime : BackwardStep(t)
     \/ NonFiniteStep
+    \/ AboveCeilingStep
     \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -109,7 +137,7 @@ TypeOK ==
     /\ misuse \in 0..MaxSteps
     /\ prevClamped \in 0..(MaxTime * (MaxSteps + 1))
     /\ prevRaw \in 0..MaxTime
-    /\ lastStep \in {"none", "forward", "backward", "nonfinite"}
+    /\ lastStep \in {"none", "forward", "backward", "nonfinite", "aboveceiling"}
     /\ lastDelta \in 0..MaxTime
     /\ steps \in 0..MaxSteps
 
@@ -128,4 +156,13 @@ ResumeAdvances ==
 \* A non-finite sample leaves both values alone.
 NonFiniteChangesNothing ==
     lastStep = "nonfinite" => (/\ clamped = prevClamped /\ raw = prevRaw)
+
+\* A sample above the ceiling leaves both values alone.
+AboveCeilingChangesNothing ==
+    lastStep = "aboveceiling" => (/\ clamped = prevClamped /\ raw = prevRaw)
+
+\* No call moves the clamped time by more than the ceiling. In the code's
+\* doubles the step is rounded once, so a call moves it by at most about
+\* 2^52 seconds and the clock stays finite for any number of calls.
+ClampedStepBounded == clamped - prevClamped <= MaxTime
 =============================================================================

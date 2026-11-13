@@ -57,7 +57,9 @@ static std::atomic<unsigned long long> g_client_link_simulator_ordinal{ 0 };
 // forward raw step, BackwardStep, a backwards raw step, and NonFiniteStep, a
 // non-finite or negative sample, refused before the clock reads it, so it
 // changes neither the raw time nor the offset (a negative is never a raw time
-// the next sample steps forward from). A forward step of d advances the
+// the next sample steps forward from), and AboveCeilingStep, a sample above
+// ROCKETNET_UPDATE_TIME_MAX_SECONDS, refused the same way so every sum the
+// clock makes stays finite. A forward step of d advances the
 // clamped time by exactly d while the caller's clock is still behind, so a
 // clock whose caller stepped backwards resumes with the caller instead of
 // standing still until the caller's clock passes the last good time again (BASE's rule, which
@@ -105,6 +107,25 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
         rocketnet_api_misuse_record();
 
         rocketnet_error( "update refused its time %f: it is negative; the last good time %f is kept", time, last_good );
+
+        return last_good;
+    }
+
+    if ( time > ROCKETNET_UPDATE_TIME_MAX_SECONDS )
+    {
+        // a sample above the ceiling is refused the same way: the raw time
+        // stays at or below 2^52, so each call moves the clamped time by at
+        // most about 2^52 and every sum stays finite
+        // (proofs/tla/RNUpdateClock.tla AboveCeilingStep)
+
+        if ( clamped )
+        {
+            *clamped = true;
+        }
+
+        rocketnet_api_misuse_record();
+
+        rocketnet_error( "update refused its time %f: it is above %.0f seconds; the last good time %f is kept", time, ROCKETNET_UPDATE_TIME_MAX_SECONDS, last_good );
 
         return last_good;
     }
@@ -2046,8 +2067,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     memcpy( client_transport->protocol.packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 
     // the create-time clock is checked the same way an update's is: a
-    // non-finite or negative seed would poison every later comparison, so it
-    // is clamped to the initial last good time before anything reads it.
+    // non-finite, negative or above-ceiling seed would poison every later
+    // comparison, so it is clamped to the initial last good time before anything reads it.
 
     bool time_clamped = false;
     time = rocketnet_update_clock_advance( 0.0, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );

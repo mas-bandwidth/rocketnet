@@ -1713,14 +1713,15 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 // CONNECTED connection (reliable timeout, protocol violation, config
 // mismatch, message memory exhausted, message not received).
 
-// With no live connection the time still meets update's rule: a non-finite or
-// backwards time is counted as API misuse and logged, and the last good time
+// With no live connection the time still meets update's rule: a non-finite,
+// negative, above-ceiling or backwards time is counted as API misuse and logged, and the last good time
 // is kept, by the clock a connection keeps (rocketnet_update_clock_advance).
 // Disconnect hands the ended connection's clock to it (rn_client_disconnect),
 // so the update after a disconnect is held to the times before it. A new
 // connection's clock starts at its first update.
 //
-// Update times are finite and non-negative, the first included (rocketnet.h
+// Update times are finite, non-negative and at most
+// ROCKETNET_UPDATE_TIME_MAX_SECONDS, the first included (rocketnet.h
 // rocketnet_client_update). This clock starts at 0.0, as a connection's
 // message clock is seeded (rn_message_object_create), and takes every time
 // through the same advance: every negative time is refused before the clock

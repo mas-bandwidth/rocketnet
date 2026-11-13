@@ -31,6 +31,13 @@ or the slots.
   the clock reads it: it changes neither value and counts one misuse. Every
   negative sample is one, not only the first, so raw times are never
   negative and BackwardStep's target is drawn from `0..raw-1`.
+- **AboveCeilingStep.** A finite sample above
+  `ROCKETNET_UPDATE_TIME_MAX_SECONDS` (2^52 seconds; `MaxTime` stands for
+  it) is refused the same way. The raw time never passes the ceiling, so no
+  call moves the clamped time by more than it (in the code's doubles, by at
+  most about 2^52, the step rounded once), and the clock stays finite for
+  any number of calls. Before the ceiling a finite sample of any size was a
+  step: DBL_MAX, then 0, then 0.75 * DBL_MAX left the clock at +inf.
 - **Done.** The step budget is spent; the model stops.
 
 ## Properties
@@ -42,6 +49,10 @@ or the slots.
   still behind; the step that catches up with the clamped time makes the
   clock the caller's clock again.
 - `NonFiniteChangesNothing`: a non-finite sample leaves both values alone.
+- `AboveCeilingChangesNothing`: a sample above the ceiling leaves both
+  values alone.
+- `ClampedStepBounded`: no call moves the clamped time by more than the
+  ceiling.
 
 ## Cases
 
@@ -50,6 +61,9 @@ or the slots.
 - `proofs/tla/MCRNUpdateClockBrokenStall.cfg` violates `ResumeAdvances`: the
   reversed witness for BASE's rule, the clock that stalls until the
   caller's clock catches up.
+- `proofs/tla/MCRNUpdateClockBrokenNoCeiling.cfg` violates
+  `ClampedStepBounded`: the clock before the ceiling, which takes a sample
+  above `MaxTime` as a forward step.
 
 The model bounds the caller's clock to `MaxTime` and the run to `MaxSteps`
 samples; it does not model the transports, the channels or the deadlines that

@@ -301,6 +301,13 @@ static inline bool rocketnet_api_null_guard( const void * p )
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
 void rocketnet_default_free_function( void * context, void * p );
 
+// The largest update time the clock accepts: 2^52 seconds, about 143 million
+// years. The raw time stays at or below it, so each call moves the clamped
+// time by at most about 2^52 (the step, rounded once): past about 2^106 a
+// step no longer changes the sum, so every value the clock makes is finite
+// (proofs/tla/RNUpdateClock.tla ClampedStepBounded, in integers).
+#define ROCKETNET_UPDATE_TIME_MAX_SECONDS 4503599627370496.0
+
 /**
  * @brief Advances one owner's update clock by the caller's raw step. Internal
  * to the SDK: the client and server transport updates, the message server's
@@ -310,7 +317,8 @@ void rocketnet_default_free_function( void * context, void * p );
  * clamped time it hands out; this helper keeps them in step: a forward raw
  * step of d advances the clamped time by exactly d, a backwards raw step
  * returns the last good time and records the new raw time, and a non-finite
- * sample changes neither value. While no backwards step has happened the
+ * sample, a negative one or one above ROCKETNET_UPDATE_TIME_MAX_SECONDS
+ * changes neither value. While no backwards step has happened the
  * returned time is the caller's time, bit for bit, so every caller that reads
  * an exact time still reads it.
  * @param last_good The clamped time the owner keeps.
@@ -321,8 +329,9 @@ void rocketnet_default_free_function( void * context, void * p );
  * @param time The caller's new raw time.
  * @param clamped Optional output set true when the sample was rejected; NULL
  * is allowed.
- * @return The owner's new clamped time. A non-finite or backwards sample
- * counts one misuse and logs one error, in every build; it never asserts.
+ * @return The owner's new clamped time. A non-finite, negative, too large or
+ * backwards sample counts one misuse and logs one error, in every build; it
+ * never asserts.
  */
 double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
 

@@ -6,15 +6,17 @@
 // The token clock, token_epoch_unix_seconds plus the whole seconds of the
 // caller's time, stops at the largest timestamp: an epoch so near it that
 // the sum would pass it, or a finite time of 2^64 seconds or more, reads as
-// UINT64_MAX, and every token has expired. The server's check reads it at
-// each update, and public connect's at connect. Time is an argument, step
-// driven over the in-memory loopback transport, with no socket, sleep or
-// thread.
+// UINT64_MAX, and every token has expired. The update refuses a time above
+// 2^52 seconds, so only the epoch can push a public update past the largest
+// timestamp. The server's check reads it at each update, and public
+// connect's at connect. Time is an argument, step driven over the in-memory
+// loopback transport, with no socket, sleep or thread.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_counters.h"
 
 #include <stdint.h>
@@ -144,42 +146,51 @@ static void token_clock_client_refuses( uint64_t client_epoch, double client_tim
 }
 
 // the server: an epoch five seconds short of the largest timestamp, updated
-// at 10.0; a time of 1e20 seconds on a configured epoch; and a time of 1e20
-// seconds at the first update of a server whose epoch is read from the wall
-// clock. The client's own clock admits the token each time.
+// at 10.0; update times just under the largest the clock accepts
+// (ROCKETNET_UPDATE_TIME_MAX_SECONDS, 2^52 seconds: stepped up from two
+// seconds short of it, the last step rounds to a second short) on a
+// configured epoch; and the same at the first update of a server whose
+// epoch is read from the wall clock. The client's
+// own clock admits the token each time. An update time of 2^64 seconds or
+// more no longer reaches the token clock (the update refuses a time above
+// 2^52 seconds), so its saturation there is checked on
+// rocketnet_platform_token_clock itself.
 
 static void test_token_clock_saturates_server_past_the_largest_timestamp()
 {
     token_clock_server_refuses( UINT64_MAX - 5, 10.0, 15, 10.0, 40 );
 }
 
-static void test_token_clock_saturates_server_time_of_two_to_the_64()
+static void test_token_clock_saturates_server_time_at_the_update_ceiling()
 {
-    token_clock_server_refuses( TOKEN_CLOCK_EPOCH, 1.0e20, TOKEN_CLOCK_EPOCH - 1000, 1000.0, TOKEN_CLOCK_EPOCH + 20 );
+    check( rocketnet_platform_token_clock( TOKEN_CLOCK_EPOCH, 1.0e20 ) == UINT64_MAX );
+    check( rocketnet_platform_token_clock( TOKEN_CLOCK_EPOCH, ROCKETNET_UPDATE_TIME_MAX_SECONDS ) == TOKEN_CLOCK_EPOCH + ( 1ULL << 52 ) );
+    token_clock_server_refuses( TOKEN_CLOCK_EPOCH, ROCKETNET_UPDATE_TIME_MAX_SECONDS - 2.0, TOKEN_CLOCK_EPOCH - 1000, 1000.0, TOKEN_CLOCK_EPOCH + 20 );
 }
 
 static void test_token_clock_saturates_server_wall_clock_epoch()
 {
-    token_clock_server_refuses( 0, 1.0e20, ROCKETNET_UNIT_WALL_CLOCK - 1000, 1000.0, ROCKETNET_UNIT_WALL_CLOCK + 20 );
+    token_clock_server_refuses( 0, ROCKETNET_UPDATE_TIME_MAX_SECONDS - 2.0, ROCKETNET_UNIT_WALL_CLOCK - 1000, 1000.0, ROCKETNET_UNIT_WALL_CLOCK + 20 );
 }
 
 // public connect: an epoch five seconds short of the largest timestamp,
-// updated at 1000.0, and a time of 1e20 seconds on a configured epoch
+// updated at 1000.0, and the largest update time the clock accepts on a
+// configured epoch
 
 static void test_token_clock_saturates_client_past_the_largest_timestamp()
 {
     token_clock_client_refuses( UINT64_MAX - 5, 1000.0, 2000 );
 }
 
-static void test_token_clock_saturates_client_time_of_two_to_the_64()
+static void test_token_clock_saturates_client_time_at_the_update_ceiling()
 {
-    token_clock_client_refuses( TOKEN_CLOCK_EPOCH, 1.0e20, TOKEN_CLOCK_EPOCH + 30 );
+    token_clock_client_refuses( TOKEN_CLOCK_EPOCH, ROCKETNET_UPDATE_TIME_MAX_SECONDS, TOKEN_CLOCK_EPOCH + 30 );
 }
 
 REGISTER_UNIT_TEST( test_token_clock_saturates_server_past_the_largest_timestamp );
-REGISTER_UNIT_TEST( test_token_clock_saturates_server_time_of_two_to_the_64 );
+REGISTER_UNIT_TEST( test_token_clock_saturates_server_time_at_the_update_ceiling );
 REGISTER_UNIT_TEST( test_token_clock_saturates_server_wall_clock_epoch );
 REGISTER_UNIT_TEST( test_token_clock_saturates_client_past_the_largest_timestamp );
-REGISTER_UNIT_TEST( test_token_clock_saturates_client_time_of_two_to_the_64 );
+REGISTER_UNIT_TEST( test_token_clock_saturates_client_time_at_the_update_ceiling );
 
 #endif // #if ROCKETNET_DEV

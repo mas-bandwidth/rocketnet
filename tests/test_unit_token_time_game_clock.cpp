@@ -209,18 +209,36 @@ static void test_token_time_game_clock_refuses_after_expire()
     token_time_game_server_teardown( &t );
 }
 
-// the client transport's clock stops at the largest timestamp: an epoch five
-// seconds short of it at time 1000.0, and a time of 1e20 seconds, read as
-// UINT64_MAX and refuse the token as expired; in a development build also
-// with the epoch read from the suite's wall clock
+// the token clock stops at the largest timestamp: an epoch five seconds short
+// of it at time 1000.0 reads as UINT64_MAX and refuses the token as expired,
+// and a time of 1e20 seconds reads as UINT64_MAX in rocketnet_platform_token_clock.
+// The client transport never hands it such a time: a create time above
+// ROCKETNET_UPDATE_TIME_MAX_SECONDS (2^52 seconds) is refused before the
+// clock reads it, like a negative one, counted as misuse, and the clock
+// starts at 0.0, so the token is read at the epoch and admitted (a
+// production build then refuses it as sealed to the development server key,
+// after the expiry check); in a development build also with the epoch read
+// from the suite's wall clock
 
 static void test_token_time_game_clock_saturates_at_the_largest_timestamp()
 {
     check( token_time_game_client_create( 1000, 2000, UINT64_MAX - 5, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
-    check( token_time_game_client_create( TOKEN_EPOCH_UNIX_SECONDS, TOKEN_EPOCH_UNIX_SECONDS + TOKEN_LIFETIME, TOKEN_EPOCH_UNIX_SECONDS, 1.0e20 ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+    check( rocketnet_platform_token_clock( TOKEN_EPOCH_UNIX_SECONDS, 1.0e20 ) == UINT64_MAX );
+
+    rocketnet_quiet( true );
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
 #if ROCKETNET_DEV
-    check( token_time_game_client_create( ROCKETNET_UNIT_WALL_CLOCK, ROCKETNET_UNIT_WALL_CLOCK + TOKEN_LIFETIME, 0, 1.0e20 ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+    const int admitted = ROCKETNET_STATUS_OK;
+#else // #if ROCKETNET_DEV
+    const int admitted = ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION;
 #endif // #if ROCKETNET_DEV
+    check( token_time_game_client_create( TOKEN_EPOCH_UNIX_SECONDS, TOKEN_EPOCH_UNIX_SECONDS + TOKEN_LIFETIME, TOKEN_EPOCH_UNIX_SECONDS, 1.0e20 ) == admitted );
+    check( rocketnet_api_misuse_count() == misuse_before + 1 );
+#if ROCKETNET_DEV
+    check( token_time_game_client_create( ROCKETNET_UNIT_WALL_CLOCK, ROCKETNET_UNIT_WALL_CLOCK + TOKEN_LIFETIME, 0, 1.0e20 ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_api_misuse_count() == misuse_before + 2 );
+#endif // #if ROCKETNET_DEV
+    rocketnet_quiet( false );
 }
 
 #if ROCKETNET_DEV
