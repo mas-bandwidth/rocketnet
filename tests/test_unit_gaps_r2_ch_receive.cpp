@@ -1471,6 +1471,74 @@ static void test_gaps_r2_ch_reused_slot_starts_with_no_block()
 
 REGISTER_UNIT_TEST( test_gaps_r2_ch_reused_slot_starts_with_no_block );
 
+// A delivery whose descriptor is no longer live when the update ends (the
+// state rn_sequenced_release_slot leaves behind: live cleared, block_count
+// kept) frees nothing: number 1, held on channel 1, stays live.
+// mutation gap: hunt 1/3532 (the release's return for a descriptor not live deleted)
+
+static void test_gaps_r2_ch_end_update_skips_a_released_delivery()
+{
+    rcv_node_t node;
+    rcv_init( &node );
+    const uint8_t byte = 0x71;
+
+    const rocketnet_message_record_t held = rcv_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 1, 1, 0, &byte, 1, 200 );
+    rcv_accept( &node, held );
+    check( rcv_dispatch( &node, held ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+
+    rn_receive_descriptor_t * released = &node.region->receive_descriptors[0];
+    released->live = 0;
+    released->number = 0;
+    released->block_count = 2;
+    released->block_have = 2;
+    node.region->deliveries[0].descriptor = 0;
+    node.ordered.channels.deliveries = 1;
+
+    rn_ordered_end_update( &node.ordered );
+    if ( !node.region->receive_descriptors[1].live )
+    {
+        printf( "the end of the update walked a released delivery's stale block count and freed held number 1\n" );
+    }
+    check( node.region->receive_descriptors[1].live != 0 );
+    rcv_free( &node );
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2_ch_end_update_skips_a_released_delivery );
+
+// A future code-1 hold at ordering 3 the read index has passed (read index
+// 4); a record at ordering 3 + HALF is ahead of the read index (by HALF - 1)
+// but exactly half the range from the hold: not newer than it, so stale,
+// and the hold is kept.
+// mutation gap: hunt 1/4498 (gap >= HALF to > against the hold)
+
+static void test_gaps_r2_ch_sequenced_half_range_from_the_hold_ordering_is_stale()
+{
+    rcv_node_t node;
+    rcv_init( &node );
+    const uint8_t first = 0x81;
+    const uint8_t second = 0x82;
+
+    check( rcv_dispatch( &node, rcv_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 3, 0, &first, 1, 0 ) ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    const uint32_t hold = rcv_rx( &node, 1 )->held_sequenced;
+    check( hold != RN_DESCRIPTOR_NONE );
+    rn_channels_deliver_ordered( &node.ordered.channels, 1, 3 );
+
+    const uint64_t superseded = rcv_counter( &node, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED );
+    const int result = rcv_dispatch( &node, rcv_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, ( 3 + RCV_HALF ) & ROCKETNET_MESSAGE_U24_MASK, 0, &second, 1, 0 ) );
+    const uint32_t now_held = rcv_rx( &node, 1 )->held_sequenced;
+    if ( result != ROCKETNET_CHANNEL_DISPATCH_STALE || now_held != hold || node.region->sequenced_message_payloads[hold].data[0] != first )
+    {
+        printf( "a record half the ordering range from the hold replaced it (result %d)\n", result );
+    }
+    check( result == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    check( now_held == hold );
+    check( node.region->sequenced_message_payloads[hold].data[0] == first );
+    check( rcv_counter( &node, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED ) == superseded + 1 );
+    rcv_free( &node );
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2_ch_sequenced_half_range_from_the_hold_ordering_is_stale );
+
 #if ROCKETNET_DEV
 
 // rn_window_receive_release frees only the exact live number: a stale number
