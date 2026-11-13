@@ -1401,10 +1401,17 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 // drains datagrams into its buffer, runs the cheap replay check and the AEAD,
 // tagging each record opened, replay, forged or raw.
 // proofs/tla/RNClientIoDecrypt.tla IoPublish, IoOwe, IoWait, IoWake and IoClearWake:
-// the I/O thread publishes its filled buffer or records the owed publish, waits
-// on the wake, and burns a wake it does not need.
-// proofs/tla/RNClientIoDecrypt.tla Expose, Return and Done: update exposes the ready
-// buffer at its start, returns it at its end, and the behaviour ends drained.
+// the I/O thread makes its records visible to update, waits on the wake, and
+// burns a wake it does not need. The model keeps the two-buffer handshake of
+// RNClientIo as an abstraction of the receive handoff: IoPublish stands for
+// the commit of rocketnet_receive_handoff_commit (records become visible to
+// update only there, each opened before it), and IoOwe has no step in the code
+// now, since the commit never waits on update (proofs/tla/RNReceiveHandoff.tla
+// is the handoff itself).
+// proofs/tla/RNClientIoDecrypt.tla Expose, Return and Done: update takes the
+// committed records at its start (Expose stands for the begin of the receive
+// handoff's Call); Return has no step in the code now, since update hands no
+// buffer back; the behaviour ends drained.
 // proofs/tla/RNClientIoDecrypt.tla Tag: each step records its thread as the writer,
 // which the SingleWriter invariant reads.
 
