@@ -61,11 +61,15 @@ opens a frame, fills it and is sealed (see the abstractions below for when).
   with its records queued and nothing counted, an unreliable phase ends the
   pass), `WriteFailed` (a fault: a packet of the pass refused at finish, or a
   reliable packet written first that finds no frame; counted against the
-  allowance; its reliable records due again and the reliable phase ended,
+  allowance; a refused finish's frame spent until the flush on the buffered
+  transport, none spent for the packet that found no frame; its reliable records due again and the reliable phase ended,
   its unreliable records dropped and counted
   `MESSAGE_UNRELIABLE_SEND_FAILED`), `TransportSend` (the flush after the
   write pass's rounds, link `send_packets`: every staged packet to the wire,
-  their frames and the spent ones back; never inside the pass), `EndFlush`,
+  their frames and the spent ones back; never inside the pass, though a
+  staged transport's io send room can grow inside the pass as earlier sends
+  complete, which this model's fixed frame pool leaves out on the side of
+  fewer frames), `EndFlush`,
   and `BeginUpdate` (seals the open build; the sole packet-quota reset; the
   transport's update, where acks become due). Every seal (`Seal`,
   `rn_message_flush_unreliable`) either stages the frame's records as one
@@ -90,8 +94,9 @@ opens a frame, fills it and is sealed (see the abstractions below for when).
   allowance had room, the open build's packet counted as spent, or still
   queued when the update began) is with the transport, unless the transport
   cut the pass (`Excused`: `WriteNoFrame` or `WriteFailed`). A cut pass
-  releases the promise for the rest of the update, since the failed packet
-  may have spent the allowance; the next update owes it again, and a promise
+  releases the promise for the rest of the update, since a failed packet
+  counts against the allowance and a transport that refused a frame may
+  refuse the next; the next update owes it again, and a promise
   made after a cut names the oldest reliable message still queued. The
   witness `MCRNOutgoingBuildBrokenNoExcuse.cfg` drops the excuse and shows a
   cut is reachable. It is the bounded form

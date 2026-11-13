@@ -84,10 +84,16 @@ function lists.
    `if ( !frame )` branch: "proofs/tla/RNOutgoingBuild.tla WriteNoFrame: no
    frame cuts the pass (the reliable phase, or the whole pass in the
    unreliable phase)."
-5. `sdk/rocketnet_endpoint.cpp:1798` (MM052), add above `rn_endpoint_packet_failed`:
-   "proofs/tla/RNOutgoingBuild.tla WriteFailed: a finish that sent nothing; an
-   ordered packet is due again and cuts the reliable phase, unreliable records
-   are dropped and counted, and the allowance is spent either way."
+5. `sdk/rocketnet_endpoint.cpp` inside `rn_endpoint_packet_failed` (MM052,
+   function at 1798): above `if ( !endpoint->packet_written )` (1808) add
+   "proofs/tla/RNOutgoingBuild.tla WriteNoFrame: nothing written, nothing
+   counted."; above the `packet_written == 2` branch (1824) add
+   "RNOutgoingBuild WriteNoFrame in the unreliable phase: the pass ends."; above
+   the `switch ( endpoint->packet_kind )` that follows (about 1836) add
+   "proofs/tla/RNOutgoingBuild.tla WriteFailed: a written packet that was not
+   sent (refused at finish, or a reliable packet written first that found no
+   frame): counted against the allowance; an ordered packet is due again and
+   the reliable phase ends, unreliable records are dropped and counted."
 6. `sdk/rocketnet_server_transport.cpp:1554` (MM057), add above
    `rocketnet_server_transport_send_capacity_available`: "proofs/tla/RNServerSendFair.tla
    room and Grow: the capacity the send pass reads live at each visit."

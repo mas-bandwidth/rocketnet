@@ -11,7 +11,7 @@
 (*                                                                         *)
 (* Time is in ticks; Rate is the refill per tick at one unit of kbps, W     *)
 (* ticks are one window (one second), so the budget per window at kbps k   *)
-(* is k * Rate * W, and the bucket's depth is k * Depth.  The connection's *)
+(* is k * Rate * W, and the depth is Max(MaxPkt, k * Depth).  The        *)
 (* kbps is a variable: SetKbps between two positive values changes the     *)
 (* rate and the depth and caps the tokens at the new depth, keeping them   *)
 (* otherwise (rocketnet_send_budget_set_kbps: refill at the old rate, then *)
@@ -113,12 +113,13 @@ UncapHonoured == TRUE
 \* MCRNSendBudgetBrokenFreshOnChange.cfg can replace it with FALSE (a fresh
 \* full bucket at every change).
 KeepTokens == TRUE
-\* the refill per tick and the depth at kbps k
-RateOf(k) == k * Rate
-DepthOf(k) == k * Depth
-DropCap == 2
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
+\* the refill per tick and the depth at kbps k: the larger of one maximum
+\* packet and the depth's share of the rate (rocketnet_send_budget_depth_bytes)
+RateOf(k) == k * Rate
+DepthOf(k) == Max(MaxPkt, k * Depth)
+DropCap == 2
 
 RECURSIVE SeqSum(_)
 SeqSum(s) == IF s = <<>> THEN 0 ELSE Head(s) + SeqSum(Tail(s))

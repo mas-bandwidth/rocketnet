@@ -348,15 +348,17 @@ BeginUpdate ==
 
 \* the environment between flushes: messages sent, resends coming due, an
 \* ack clearing the stall (with or without the room the ready message needs)
-\* or the window filling, the budget refilling or not, a long acked prefix
-\* in a resend FIFO or the connection ending (vain)
+\* or the window filling, the budget refilling or not, or the connection
+\* ending (vain).  An ended connection
+\* stays ended (the errors are sticky) until the update kicks it; the kick
+\* is not modelled, so vain once set stays set
 Env(c) ==
     /\ pc = "between"
     /\ \E rd \in 0..1, rs \in 0..1, ur \in 0..1,
           st \in (IF EnvStall THEN BOOLEAN ELSE {FALSE}),
           ft \in (IF EnvShortAck THEN BOOLEAN ELSE {TRUE}),
           py \in (IF EnvRefuse THEN BOOLEAN ELSE {TRUE}),
-          vn \in (IF EnvVain THEN BOOLEAN ELSE {FALSE}) :
+          vn \in (IF conn[c].vain THEN {TRUE} ELSE IF EnvVain THEN BOOLEAN ELSE {FALSE}) :
           conn' = [ conn EXCEPT ![c] = [ @ EXCEPT !.ready = rd, !.resend = rs, !.unr = ur,
                                                    !.stalled = st, !.fits = ft, !.pays = py,
                                                    !.vain = vn ] ]

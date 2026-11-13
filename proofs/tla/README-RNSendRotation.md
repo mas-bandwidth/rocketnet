@@ -45,7 +45,10 @@ so `rn_message_connection_write` aborts the started frame and
 reliable path does not reopen within the flush, so a vain write costs at
 most one slot per connection per flush (`AbortsBounded`), and no refusal the
 code decides before a frame ever costs one (`NoRefusalAbort`). It costs one
-again at each later flush until the owner kicks the connection.
+again at each later flush until the update kicks the connection
+(`rn_endpoint_error` in `rn_message_object_update_end`). The errors are
+sticky, so in the model a vain connection stays vain; the kick is not
+modelled.
 `rn_endpoint_fifo_due` also answers yes after 64 acknowledged steps at a
 FIFO's head ("a long acked prefix"), which would be the same shape for a live
 connection; the resend FIFOs hold no acknowledged number (an ack unlinks its
@@ -146,8 +149,8 @@ are written and nothing the model observes.
   exception the Vain instance fails here: two ended connections, three
   frames, the second's abort spends the last frame every flush, and its
   unreliable record waits until the kick. `RNServerSendFair` states the
-  tighter `ceil(N / K)` at the loop's index arithmetic, where every visit
-  with capacity writes.
+  tighter `ceil(N / K)` over the flushes with the full capacity, at the
+  loop's index arithmetic, where every visit with capacity writes.
 
 ## The instances
 
@@ -286,7 +289,7 @@ bound in flushes is owed under a live room: a transport whose room stays at
 Witness trace, read by hand (7 states): five slots, slot 4 with one frame
 of work. Each of three flushes begins with `room = 0`; the first visit finds
 no capacity and the flush ends, and slot 4 has waited 3 flushes,
-past `ceil(5 / 2)`. Against the C: with `send_capacity_available` at 0,
+reaching `ceil(5 / 2)` (the invariant is `waiting < 3`). Against the C: with `send_capacity_available` at 0,
 `rn_message_send_admit` answers 0 at the first visit and
 `rn_message_object_send_packets` goes to the flush having written nothing,
 as often as the transport's room stays spent.

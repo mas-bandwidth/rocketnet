@@ -57,6 +57,9 @@
 (* packets go out once the write pass's rounds are over (link              *)
 (* send_packets after the rounds of rn_message_object_send_packets), so    *)
 (* a frame the pass sealed is not handed out again inside the same pass.   *)
+(* (A staged transport's io send room can also grow inside the pass as     *)
+(* sends of earlier flushes complete, RNServerSendFair Grow; this model's  *)
+(* frame pool does not grow, the side with fewer frames.)                  *)
 (* An aborted or dropped frame goes back at once on a staged transport     *)
 (* (io_abort_packet); on the buffered one (Buffered, the server's own      *)
 (* payload ring) an abort only clears the slot's wire bytes and the slot   *)
@@ -499,7 +502,8 @@ WriteNoFrame ==
 \* a packet the write pass wrote fails (the transport refuses it at finish,
 \* or a reliable packet written first finds no frame), a fault: it is
 \* counted against the allowance (written++), its frame aborted (back at
-\* once on a staged transport, spent until the flush on the buffered one).
+\* once on a staged transport, spent until the flush on the buffered one;
+\* a packet written first that found no frame spent none).
 \* Its reliable records are due again and the reliable phase ends
 \* (rn_ordered_packet_failed, rn_endpoint_end_reliable); its unreliable
 \* records are dropped and counted (MESSAGE_UNRELIABLE_SEND_FAILED) and the
@@ -512,9 +516,11 @@ WriteFailed ==
     /\ faults' = faults + 1
     /\ packetsThisUpdate' = packetsThisUpdate + 1
     /\ IF Buffered /\ frameFree # {}
-       THEN \E f \in frameFree :
-              /\ frameFree' = frameFree \ {f}
-              /\ spent' = spent \cup {f}
+       THEN \/ \E f \in frameFree :                  \* refused at finish
+                 /\ frameFree' = frameFree \ {f}
+                 /\ spent' = spent \cup {f}
+            \/ /\ ReliablePhase                      \* written first, no frame
+               /\ UNCHANGED << frameFree, spent >>
        ELSE UNCHANGED << frameFree, spent >>
     /\ IF ReliablePhase
        THEN /\ cut' = "rel"

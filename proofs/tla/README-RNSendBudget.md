@@ -64,7 +64,7 @@ State:
 | `uncapped` | TRUE when the budget does not apply to this connection |
 | `uncapBad` | ghost: an uncapped connection dropped or waited by the budget |
 | `fails` | sends the transport refused at finish so far (bounded by `MaxFail`) |
-| `kbps` | the connection's rate in units of kbps: the refill per tick is `kbps * Rate` and the depth `kbps * Depth` |
+| `kbps` | the connection's rate in units of kbps: the refill per tick is `kbps * Rate` and the depth the larger of `MaxPkt` and `kbps * Depth`, as `rocketnet_send_budget_depth_bytes` takes the larger of one maximum packet and 100 ms of budget (with `Depth >= MaxPkt` the instance never reaches the floor) |
 | `khist`, `kcur` | the largest `kbps` in force in each of the previous `W - 1` ticks, and in this one: the window's allowance |
 | `failBad` | ghost: a failed send left `tokens` or `cur` other than they were before it |
 
