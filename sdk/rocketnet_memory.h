@@ -68,9 +68,31 @@ inline void rocketnet_red_zone_poison( const void * p, uint64_t bytes )
     ASAN_POISON_MEMORY_REGION( p, (size_t) bytes );
 }
 
+// the bytes whose shadow fills one shadow page: 8 bytes to a shadow byte, 4096
+// shadow bytes to a page
+#define ROCKETNET_RED_ZONE_SHADOW_PAGE_SPAN ( (uint64_t) 4096 * 8 )
+
+// Makes the whole region addressable, writing only the shadow pages that hold
+// poison. ASan's unpoison writes the shadow of every byte it is given, and a
+// block's shadow is touched only where a pad was poisoned or the block was
+// used: unpoisoning a sparse multi-gigabyte block whole faults in an eighth
+// of its size in shadow pages at free (example_soak's peak memory check).
+// So the region goes a shadow page's span at a time, and only a span that
+// holds poison, whose shadow page is already in memory, is unpoisoned.
 inline void rocketnet_red_zone_unpoison( const void * p, uint64_t bytes )
 {
-    ASAN_UNPOISON_MEMORY_REGION( p, (size_t) bytes );
+    const uintptr_t end = (uintptr_t) p + (uintptr_t) bytes;
+    uintptr_t at = (uintptr_t) p;
+    while ( at < end )
+    {
+        const uintptr_t span_end = ( at | ( (uintptr_t) ROCKETNET_RED_ZONE_SHADOW_PAGE_SPAN - 1 ) ) + 1;
+        const uintptr_t next = span_end < end ? span_end : end;
+        if ( __asan_region_is_poisoned( (void *) at, (size_t) ( next - at ) ) )
+        {
+            ASAN_UNPOISON_MEMORY_REGION( (void *) at, (size_t) ( next - at ) );
+        }
+        at = next;
+    }
 }
 
 #if ROCKETNET_DEV
