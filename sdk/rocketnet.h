@@ -2999,6 +2999,44 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
+/// rocketnet_server_update in three calls, so the game's own jobs apply the
+/// acknowledgements each client's packets carried: update_receive, then
+/// update_client once for each client index on any of the game's threads,
+/// then update_finish. The result is rocketnet_server_update's exactly;
+/// a client nobody calls update_client for is applied by update_finish.
+///
+/// Thread: update_receive and update_finish on the thread that owns the
+/// server. Between them, update_client may run on any number of threads at
+/// once, one call per client index (a second call for the same index finds
+/// nothing to do), and nothing else may be called on the server. The game
+/// joins its jobs (a join or a barrier, not a wall-clock wait) before
+/// update_finish.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param time As rocketnet_server_update's.
+
+ROCKETNET_EXPORT void rocketnet_server_update_receive( struct rocketnet_server_t * server, double time );
+
+/// Applies one client's received acknowledgements. See
+/// rocketnet_server_update_receive.
+///
+/// @param server The server update_receive was called on. NULL counts as API
+/// misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Another index, or a
+/// call outside update_receive .. update_finish, counts as API misuse and
+/// returns 0.
+/// @return The number of acknowledgement blocks applied, 0 when the client
+/// had none.
+
+ROCKETNET_EXPORT int rocketnet_server_update_client( struct rocketnet_server_t * server, int client_index );
+
+/// Finishes the update rocketnet_server_update_receive began. See
+/// rocketnet_server_update_receive.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+
+ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t * server );
+
 /// Sends each client's queued messages in packets under its send budget.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
