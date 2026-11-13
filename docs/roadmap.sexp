@@ -585,4 +585,14 @@
    :title "A tenth tla-trace shard, so shard 3 leaves room under the 2-minute cap"
    :text "Shard 3 of tools/tla_trace_check.py SHARDS (msgx:4, msgxsendruns, gather and msgx's reach predicates) is the slowest per-commit trace shard: 98 s on a CI runner in v1.1.53, and on v1.1.54 106 s alone on a bench and 123.5 s when three shards shared a loaded one, against the job's 120 s cap. Moving gso or gather out of it within nine shards barely helped on the bench (fix/v1.1.x/trace-shard3-lighter, not merged). Add a tenth shard (matrix.shard N/10 in .github/workflows/ci.yml and the summary's shard names) and split shard 3's entries across it, with each shard's replay time recorded."
    :date "2026-11-13" :origin "v1.1.54 replays: trace shard 3 at 106 s alone")
+
+  (item "unit-transport-families-unsupported" :group "review-v1-2" :area "tests"
+   :title "A unit case that reaches ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED"
+   :text "tests/test_unit_status.cpp checks TRANSPORT_FAMILIES_UNSUPPORTED only as a name and number; no unit case makes a create return it (sdk/rocketnet_server_transport.cpp, the served-families check; sdk/rocketnet_driver_builtin.cpp). A server of both families on a transport that serves one family, refused before any socket, would reach it in the unit tier: a loopback-style fake that declares one family, or the families check read directly."
+   :date "2026-11-13" :origin "Review before v1.2.0, tests track row TM101 (optional), tests/v1.1.x/p8-status-config-units")
+
+  (item "unit-purity-file-reads" :group "review-v1-2" :area "tools"
+   :title "The unit purity gate sees file reads and host-state reads"
+   :text "tools/check_unit_purity.py exempts tests/suite_runner.h and has no pattern for a file read (fopen, /proc, /sys) or a host query (sched_getaffinity, sysctlbyname, GlobalMemoryStatusEx), so a unit case that called the runner's live helpers read the host's cgroup, memory and affinity unseen (row TM036, repaired on tests/v1.1.x/p8-status-config-units by passing those inputs in). Teach the gate those patterns for unit sources, with the runner's own use (it plans the job count) allowed by name only."
+   :date "2026-11-13" :origin "Review before v1.2.0, tests track row TM036 (Ro O-M1), tests/v1.1.x/p8-status-config-units")
  ))
