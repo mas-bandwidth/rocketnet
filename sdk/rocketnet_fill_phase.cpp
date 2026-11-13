@@ -316,9 +316,10 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
                 // seq_cst operations ([atomics.order]): only the claimer
                 // stores a depth, after its seq_cst claim store C (owner
                 // store O sequenced before C), while its claim stands. A
-                // seq_cst word load L here that reads a depth store D
-                // follows C in modification order (C, then D, same thread),
-                // so C is coherence-ordered before L, and both are seq_cst:
+                // seq_cst word load L here may read a depth store D. D, not
+                // L, follows C in the word's modification order (C, then D,
+                // same thread), and L reads D (or C itself), so C is
+                // coherence-ordered before L, and both are seq_cst:
                 // C precedes L in S. O precedes C in S (sequenced before),
                 // and L precedes the owner load L2 below. So O precedes L2
                 // in S, and a seq_cst load preceded in S by a seq_cst store
