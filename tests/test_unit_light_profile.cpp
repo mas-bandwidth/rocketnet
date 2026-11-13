@@ -122,7 +122,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452223 )
+// v1.2/shared-fill-and-prefilter on v1.1.9 (the protocol send reserve, the
+// worker receive drop totals, the two bind addresses and 56 appended counter
+// rows, the Linux note below): with 60 rows the CI legs read actual=1469505983
+// and 15389932 (wip run 43350932541, Release, DEV=ON); the 56-row table is
+// computed 64 lower on the server and level on the client, as macOS measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468457343 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -166,7 +171,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452639 )
+// v1.2/shared-fill-and-prefilter on v1.1.9 (the protocol send reserve, the
+// worker receive drop totals, the two bind addresses and 56 appended counter
+// rows, the Linux note below) move the server 5120 and the client 896
+// (studio, Apple clang, Debug, DEV=ON, ROCKETNET_TEST_VERBOSE=1): the probe's
+// actual= lines are 1469506335 and 15037450.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468457759 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988874 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -241,11 +251,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Release, DEV ON, ROCKETNET_TEST_VERBOSE=1): actual=3111676851 and 15185170.
 // v1.2/shared-fill-and-prefilter on v1.1.9: the protocol send reserve (five
 // uint64_t a send queue and an own-frame flag a client slot), the worker
-// receive drop totals, the two bind addresses and 60 appended counter rows
-// (the branch's 8 at 224-231 and the transports' 52 at 232-283, 480 bytes in
-// every counter block) move the server 5120 and the client 960 (bench-nyc-6,
-// gcc, Debug, DEV ON, ROCKETNET_TEST_VERBOSE=1): actual=3111681971 and
-// 15186130.
+// receive drop totals, the two bind addresses and 56 appended counter rows
+// (the branch's 3 at 224-226, the transports' 52 at 227-278 and
+// RECEIVE_DROPPED_RETIRED at 279, 448 bytes in every counter block) move the
+// server 5120 and the client 896 (bench-nyc-6, gcc, Debug, DEV ON,
+// ROCKETNET_TEST_VERBOSE=1): actual=3111681971 and 15186066.
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -257,7 +267,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 #else // #if defined( __aarch64__ )
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110633395ULL )
 #endif // #if defined( __aarch64__ )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137554 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137490 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
