@@ -44,18 +44,23 @@ RNRioWorker, RNRioDriver. Rows: MM181-MM186, MM191, MM219, MM221.
 
 ## Citations for package C (comment lines only)
 
-- tests/functional/rocketnet_functional_tests.cpp:5223 at this branch's
-  merged base (the table's :5214 is at 5a2dbf403) now reads
+(Symbols, not line numbers: the coverage checker refuses line citations in
+notes under proofs/tla. The table row's line is 5214 at 5a2dbf403; at this
+branch's merged base the same comment is line 5223.)
+
+- tests/functional/rocketnet_functional_tests.cpp
+  (rocketnet_test_server_rio_start): the comment block above it now reads
   `// the rio transport (sdk/rocketnet_server_rio_windows.cpp, proofs/tla/RNRioDriver.tla)`.
   New text:
   `// the rio transport (sdk/rocketnet_server_rio_windows.cpp, proofs/tla/RNRioWorker.tla)`.
   (The same edit is in trace-layers-at-scale 9b95b845d; whichever lands
   first, the other is a no-op.)
-- sdk/rocketnet_server_rio_windows.cpp:1240-1254 (the abandon branch of
-  rocketnet_rio_create_failed_drain) has no model citation of its own; the
-  function's comment at :1221-1228 cites RNRioWorker WLeak, which now models
-  that branch too. Optional new comment line at :1242, before "closesocket
-  refused on every pass": `// proofs/tla/RNRioWorker.tla WLeak, AbandonUnposted:`
+- sdk/rocketnet_server_rio_windows.cpp (rocketnet_rio_create_failed_drain):
+  the abandon branch inside its loop has no model citation of its own; the
+  function's leading comment cites RNRioWorker WLeak, which now models that
+  branch too. Optional: before the comment line "closesocket refused on
+  every pass, with nothing posted and no" add
+  `// proofs/tla/RNRioWorker.tla WLeak, AbandonUnposted:`
   (keep the existing text after it).
 
 ## Cross-family
