@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_client_server_words as check
 
 WORD = check.WORD
+WORD2 = check.WORD2
 
 
 class TextTest(unittest.TestCase):
@@ -42,9 +43,37 @@ class TextTest(unittest.TestCase):
         self.assertEqual(check.violations_in_text("a.py", "except (TypeError, ValueError):"), [])
         self.assertEqual(check.violations_in_text("a.py", "raise argparse.ArgumentTypeError('x')"), [])
 
+    def test_pe_error_class_is_allowed(self):
+        self.assertEqual(check.violations_in_text("a.py", "class PE" + "Error(Exception):"), [])
+        self.assertEqual(len(check.violations_in_text("a.py", "class PE" + "Errors(Exception):")), 1)
+
     def test_path_with_the_word_fails(self):
         self.assertEqual(len(check.violations_in_path(f"tests/functional/posix_hard_killed_{WORD}.cpp")), 1)
         self.assertEqual(check.violations_in_path("tests/functional/posix_hard_killed_client.cpp"), [])
+
+
+class SecondWordTest(unittest.TestCase):
+
+    def test_second_word_in_a_line_fails(self):
+        for line in (f"// take a {WORD2} of the state", WORD2.upper(), f"{WORD2.capitalize()}Reader",
+                     f"rocketnet_{WORD2}_count"):
+            with self.subTest(line=line):
+                self.assertEqual(len(check.violations_in_text("a.c", line + "\n")), 1)
+
+    def test_second_word_in_a_path_fails(self):
+        self.assertEqual(len(check.violations_in_path(f"tools/{WORD2}_state.py")), 1)
+
+    def test_windows_toolhelp_name_is_allowed(self):
+        line = f"HANDLE h = CreateToolhelp32{WORD2.capitalize()}( TH32CS_SNAPTHREAD, 0 );"
+        self.assertEqual(check.violations_in_text("a.cpp", line), [])
+
+    def test_windows_toolhelp_name_does_not_excuse_the_rest_of_the_line(self):
+        line = f"HANDLE h = CreateToolhelp32{WORD2.capitalize()}( 0, 0 ); // a {WORD2}"
+        self.assertEqual(len(check.violations_in_text("a.cpp", line)), 1)
+
+    def test_host_helper_name_is_allowed(self):
+        self.assertEqual(check.violations_in_text("a.sh", f"host_{WORD2} > \"$dir/before\""), [])
+        self.assertEqual(len(check.violations_in_text("a.sh", f"guest_{WORD2} > \"$dir/before\"")), 1)
 
 
 class TreeTest(unittest.TestCase):
