@@ -15,13 +15,23 @@ difference in:
   fingerprint  the engine's input SHA-256 equals the record's input_sha256
   jar          the TLC JAR digest equals the record's
   workers      the adapter's worker count equals the record's
-  generated,   the state counts. A witness runs on one worker, so its search
-  distinct     and the counts at its stop are deterministic. A pass case runs
+  generated,   the state counts, exactly, for every case: no config and no mode
+  distinct     has a tolerance. A witness runs on one worker, so its search
+               and the counts at its stop are deterministic. A pass case runs
                on two workers but explores the whole reachable state space, so
                its distinct count (the reachable set) and generated count (the
                successors of each distinct state, computed once) do not depend
                on the schedule; the bench run that set this rule compared all
-               of them (see tlc.yml).
+               of them (see tlc.yml). That holds under a TLC VIEW only when the
+               view is a true abstraction: TLC keeps the first state reached
+               for each view value, and a view that merges states with
+               different futures makes the explored set, and its counts,
+               depend on which worker got there first. A distinct count that
+               moves between runs is a finding about the model's view, never
+               noise to tolerate (v1.1.9: MCRNChannelNotReceived.cfg gave 8634
+               against its recorded 8630 under a view that dropped Link's send
+               counter and merged rxQueue into trace; MCRNChannelViewSound.cfg
+               now checks RNChannel's view).
 
 A nightly-debt case (plan budget not 0; proofs/tla/NIGHTLY-DEBT.tsv) has a
 bounded FAIL/124 record, because the pinned tlacheck caps a record at 110 s.

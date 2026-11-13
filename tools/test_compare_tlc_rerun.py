@@ -108,6 +108,23 @@ class ComparerTests(unittest.TestCase):
     def test_mismatched_distinct_count_is_red(self):
         self.assertRed(record("MCWitness.cfg", distinct="1545"), fresh("MCWitness.cfg"), "distinct")
 
+    def test_two_worker_pass_case_distinct_drift_is_red(self):
+        # The v1.1.9 finding: MCRNChannelNotReceived.cfg, a pass case on two
+        # workers, re-ran to 8634 distinct against its record's 8630 under an
+        # unsound VIEW. Distinct is exact for every config and mode: a pass
+        # case, a witness, a declared-budget case, whatever its name.
+        for config, workers in (("MCRNChannelNotReceived.cfg", "2"), ("MCRNChannelSafety.cfg", "2"),
+                                ("MCWitness.cfg", "1")):
+            rec = record(config, "pass", "-", "0", workers, "21199", "8630")
+            for got_distinct in ("8634", "8626", "8631"):
+                with self.subTest(config=config, distinct=got_distinct):
+                    got = fresh(config, (), 0, int(workers), "21199", got_distinct)
+                    failed, text = self.check(rec, got, config=config)
+                    self.assertEqual(failed, [config], text)
+                    self.assertIn(f"TLC-RERUN MISMATCH {config} distinct: record=8630 fresh={got_distinct}", text)
+            self.assertEqual(self.check(rec, fresh(config, (), 0, int(workers), "21199", "8630"), config=config)[0],
+                             [])
+
     def test_mismatched_generated_count_is_red(self):
         self.assertRed(record("MCWitness.cfg"), fresh("MCWitness.cfg", generated="3543"), "generated")
 
