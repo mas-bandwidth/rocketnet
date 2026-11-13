@@ -159,6 +159,8 @@ static void sr_connect( struct sr_rig_t * rig, int max_clients )
     check( connected );
 }
 
+static bool sr_prime = true;
+
 static void sr_swap_in_fake( struct sr_rig_t * rig, int queues )
 {
     memset( &rig->fake, 0, sizeof( rig->fake ) );
@@ -182,6 +184,20 @@ static void sr_swap_in_fake( struct sr_rig_t * rig, int queues )
     rocketnet_server_transport_swap_io_for_test( rig->server, &operations, &instance );
     rig->real_operations = operations;
     rig->real_instance = instance;
+
+    // The reserve is never more than half the largest room a queue has
+    // reported (the staging). The cases set rooms a little above the reserve,
+    // so they first show the server a large staging; the case of the half
+    // itself does not.
+    if ( sr_prime )
+    {
+        for ( int queue = 0; queue < SR_MAX_QUEUES; ++queue )
+        {
+            sr.room[queue] = 1 << 20;
+        }
+        rocketnet_server_transport_send_packets( rig->server );
+        memset( sr.room, 0, sizeof( sr.room ) );
+    }
 }
 
 static void sr_teardown( struct sr_rig_t * rig )
@@ -515,7 +531,51 @@ static void test_server_send_reserve_refused_claim_retested()
     sr_teardown( &rig );
 }
 
+// The reserve is never more than half of the largest room a queue has
+// reported at an open: a staging smaller than twice the formula still gives
+// the game half of it, and once a larger staging has been seen the reserve
+// is the formula again.
+static void test_server_send_reserve_never_more_than_half_the_staging()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 0;
+    sr_prime = false;
+    sr_swap_in_fake( &rig, 0 );
+    sr_prime = true;
+    rocketnet_server_transport_set_keep_alive_acked_for_test( rig.server, 0, 0 );
+
+    const uint64_t reserve =
+        (uint64_t) rig.config.handshakes_per_update + (uint64_t) rig.config.disconnect_packets_per_update + 3 + 1;
+
+    // a staging of the formula and 10 more: half of it is kept, half is the game's
+    const int staging = (int) reserve + 10;
+    sr.room[0] = staging;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_send_reserve_for_test( rig.server, 0 ) == (uint64_t) ( staging / 2 ) );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == (uint64_t) ( staging - staging / 2 ) );
+    check( sr_fill( &rig, 1000 ) == staging - staging / 2 );
+    check( sr.room[0] == staging / 2 );
+
+    // frames in flight lower the room, not the staging: the reserve stays
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_send_reserve_for_test( rig.server, 0 ) == (uint64_t) ( staging / 2 ) );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == 0 );
+
+    // a staging of twice the formula or more: the formula
+    sr.room[0] = 2 * (int) reserve + 7;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_send_reserve_for_test( rig.server, 0 ) == reserve );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == reserve + 7 );
+
+    sr_teardown( &rig );
+}
+
 REGISTER_UNIT_TEST( test_server_send_reserve_one_queue );
+REGISTER_UNIT_TEST( test_server_send_reserve_never_more_than_half_the_staging );
 REGISTER_UNIT_TEST( test_server_send_reserve_refused_claim_retested );
 REGISTER_UNIT_TEST( test_server_send_reserve_refill );
 REGISTER_UNIT_TEST( test_server_send_reserve_refused_own_frame_stays_reserved );

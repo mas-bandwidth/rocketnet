@@ -143,7 +143,10 @@ struct rocketnet_server_transport_io_operations_t
 
     void ( *send_batch_shutdown )( void *, const rocketnet_platform_send_t *, int );
 
-    // optional; main thread only. The frames the transport accepts before
+    // optional. On a buffered transport, main thread only. On a staged one,
+    // the main thread and any thread that starts a game packet: the protocol
+    // reserve reads it there when a start reaches its budget, so it must be
+    // safe beside start_packet and the transport's own workers. The frames the transport accepts before
     // its next flush without a refusal for room: start_packet on the staged
     // path, or the frames send_batch takes without dropping one on the
     // buffered path. A frame the transport still holds from an earlier flush
@@ -193,7 +196,7 @@ struct rocketnet_server_transport_io_operations_t
     //     1 .. ROCKETNET_SERVER_MAX_SEND_QUEUES.
     //   send_queue_of: any thread, pure; the queue start_packet stages a
     //     frame to this address in (the destination hash).
-    //   send_room_queue: main thread only; send_room for one queue.
+    //   send_room_queue: send_room for one queue, on the same threads.
     int ( *send_queues )( void * transport );
     int ( *send_queue_of )( void * transport, const rocketnet_address_t * to );
     int ( *send_room_queue )( void * transport, int queue );

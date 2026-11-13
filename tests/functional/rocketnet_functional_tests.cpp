@@ -892,26 +892,24 @@ void rocketnet_test_transport_ring_exhaustion()
     if ( strcmp( rocketnet_server_transport_io_name( server ), "iocp" ) == 0 )
     {
         completion_capacity = rocketnet_server_iocp_send_queue_size( server_config.max_clients );
-#if ROCKETNET_DEV
-        // a staged transport keeps its protocol reserve out of the game's packets
-        // (RNSendReserve): the game's packets take the client's lane less that lane's
-        // reserve (the largest, the only one with a connected slot), plus
-        // the client's own frame when its keep-alive is acknowledged
-        uint64_t reserve = 0;
-        for ( int queue = 0; queue < ROCKETNET_SERVER_MAX_SEND_QUEUES; ++queue )
-        {
-            const uint64_t queue_reserve = rocketnet_server_transport_send_reserve_for_test( server, queue );
-            reserve = queue_reserve > reserve ? queue_reserve : reserve;
-        }
-        completion_capacity -= (int) reserve;
-        completion_capacity += (int) rocketnet_server_transport_fill_own_frames_for_test( server );
-#endif // #if ROCKETNET_DEV
+
+        // a staged transport keeps its protocol reserve out of the game's
+        // packets (RNSendReserve): the handshake and disconnect allowances and
+        // a frame a client slot, never more than half the pool. Read from the
+        // config, so the figure is the same in every build.
+        const int pool = completion_capacity;
+        int reserve = server_config.handshakes_per_update + server_config.disconnect_packets_per_update + server_config.max_clients;
+        reserve = reserve > pool / 2 ? pool / 2 : reserve;
+        completion_capacity -= reserve;
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const int capacity = rocketnet_test_fill_server_ring( server, completion_capacity );
     rocketnet_check( capacity >= 256 );
     rocketnet_check( capacity < 20000 );
-    rocketnet_check( completion_capacity == 0 || capacity == completion_capacity );
+
+    // the one client's own frame comes on top once its keep-alive is acknowledged
+
+    rocketnet_check( completion_capacity == 0 || capacity == completion_capacity || capacity == completion_capacity + 1 );
 
     // refusal holds until the flush -- 44 more starts all refuse, and the
     // counters attribute every refusal exactly (the game's packets already incurred

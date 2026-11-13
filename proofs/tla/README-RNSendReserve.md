@@ -7,7 +7,11 @@ The protocol send reserve of one send queue of a staged server transport
 share each queue's staging. The reserve is what the protocol needs there:
 `handshakes_per_update + disconnect_packets_per_update`, one frame for every
 slot not connected, and one for every connected slot whose address hashes to
-this queue (`rocketnet_server_transport_send_reserves`). The game's packets may
+this queue (`rocketnet_server_transport_send_reserves`), and never more than
+half the largest room the queue has reported when a budget opened (its
+staging), so a config whose allowances outgrow the staging still leaves the
+game half of it; the own frames handed out are never more than the reserve.
+In the models `Reserve` is that figure, whatever it is. The game's packets may
 take the room above it, and frames the transport retires before the budget is
 opened again (a completion port, a ring the kernel drains) come back to them.
 
@@ -139,7 +143,7 @@ OwnCountFirst, NoReread, IndexTest and NoRetry have no call-level form.
 
 ## What it does not cover
 
-The size of the reserve, which is the formula above, checked by the unit tests
+The size of the reserve, which is the formula and the half above, checked by the unit tests
 in `tests/test_unit_server_send_reserve.cpp`; several queues, which are
 independent (each its own fields), checked by the same tests; and the C++
 memory order, beyond what the atomics the code uses

@@ -1182,7 +1182,7 @@ struct rocketnet_packet_context_t
  * @param client_index Connected client slot index.
  * @param request_bytes Requested capacity in bytes, from 1 through ROCKETNET_MAX_PACKET_PAYLOAD_BYTES.
  * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
- * @return Writable payload pointer, or NULL when slot or reservation is invalid. Fill calls may run concurrently between update and the following flush.
+ * @return Writable payload pointer, or NULL when the slot or the request is invalid, when the transport has no room, or, on a staged transport, when the send room is down to the reserve kept for the protocol's own frames (counted in SEND_RESERVE_REFUSED). Starts may run concurrently between update and the following flush; two that start packets to one client at once are safe, and that client's own reserved frame goes to one of them.
  */
 uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
 

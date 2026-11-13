@@ -2947,6 +2947,22 @@ ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * serve
 
 /// Sends each client's queued messages in packets under its send budget.
 ///
+/// The gso, io_uring, xdp, iocp and rio server transports hold packets for
+/// the network in a send room of fixed size. Part of that room is kept each
+/// update for the library's own packets: connection replies, keep-alives and
+/// disconnects. The part kept is the config's handshakes_per_update plus
+/// disconnect_packets_per_update plus one packet a client slot (1080 packets
+/// at the defaults with 1000 clients), and never more than half the room.
+/// Messages use the rest, and a connected client that has acknowledged a
+/// keep-alive is given one packet an update out of the kept part. A message
+/// that would take more is not lost by that: it waits in its queue, as a
+/// message does when the transport is full, and goes out in a later call
+/// once the transport has sent what it holds. The counter
+/// SEND_RESERVE_REFUSED counts the packets held back this way. Before this
+/// rule a packet was held back only when the whole room was spent, which
+/// SEND_RING_FULL counted; SEND_RING_FULL still counts a send room that is
+/// full. The portable and loopback transports keep nothing back.
+///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
 /// thread-safe; the caller owns the server one thread at a time.
 ///

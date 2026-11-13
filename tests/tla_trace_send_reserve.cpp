@@ -202,9 +202,14 @@ static int trace_send_reserve( uint64_t seed, int steps, const char * out )
     tla_random_t random = { seed };
     memset( &sr_fake, 0, sizeof( sr_fake ) );
 
-    // the first open, before the first record: the reserve is the code's own
-    // number, read after it; the fake's staging is sized from it and starts
-    // empty, with no keep-alive acknowledged (RNSendReserveCalls Init)
+    // the first open, before the first record, shows the server a staging far
+    // larger than twice its reserve, so the reserve is the formula for the
+    // whole walk (the half-of-the-staging rule is the unit test's:
+    // test_server_send_reserve_never_more_than_half_the_staging). The reserve
+    // is the code's own number, read after that open; the walk's room is
+    // then held to the reserve and SR_SPARE frames, and the walk starts with
+    // the room at that most and no keep-alive acknowledged (RNSendReserveCalls
+    // Init)
 
     bool acked[SR_CLIENTS];
     for ( int c = 0; c < SR_CLIENTS; c++ )
@@ -212,6 +217,7 @@ static int trace_send_reserve( uint64_t seed, int steps, const char * out )
         acked[c] = false;
         rocketnet_server_transport_set_keep_alive_acked_for_test( server, c, acked[c] ? 1 : 0 );
     }
+    sr_fake.room = 1 << 20;
     rocketnet_server_transport_send_packets( server );
     const int reserve = (int) rocketnet_server_transport_send_reserve_for_test( server, 0 );
     const int max_free = reserve + SR_SPARE;
