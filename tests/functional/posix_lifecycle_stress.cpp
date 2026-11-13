@@ -1037,9 +1037,12 @@ static void posix_case_result( const char * name, const posix_cell_t * cell, con
 
     // The library creates no threads. Growth is a leak. An OS-owned thread
     // that exits during the case is not one, so an equal or lower count
-    // passes. Descriptors and xdp umems stay exact.
+    // passes. Descriptors and xdp umems stay exact. A read that failed
+    // (posix_threads and posix_open_file_descriptors answer -1) is no count
+    // at all, before or after, and fails: -1 is not a lower thread count.
 
     if ( before->fds < 0 || before->threads < 0 || before->umems < 0 ||
+         after->fds < 0 || after->threads < 0 || after->umems < 0 ||
          before->fds != after->fds || after->threads > before->threads || before->umems != after->umems )
     {
         printf( "%s [%s]: FAIL resource count moved (fds %d -> %d, threads %d -> %d, heap umems %ld -> %ld)\n", name, cell->name,
