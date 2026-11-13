@@ -119,6 +119,12 @@ LAYERS = {
         # (the last three): a seed set must hold both kinds
         "reach": ["SealedAtFinish", "RefusedAtFinish", "NothingForWalk", "RingOpen", "RingQueued", "WalkCarried"],
     },
+    "ackapply": {
+        "modules": ["RNAckApplyPhase.tla", "TraceRNAckApplyPhase.tla"],
+        "untraced": {},
+        "reach": ["TakenByGameThread", "LeftForFinish", "Chained", "QueuedBehindSettled", "GatheredQueueFull",
+                  "GatheredRangesFull"],
+    },
 }
 
 STEPS = 400

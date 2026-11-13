@@ -828,6 +828,7 @@ MCSessionAcksWitOverclaim.cfg	MCSessionAcks.tla	invariant	BurnedNeverNamed	check
 MCSessionAcksWitOverclaimSurfaced.cfg	MCSessionAcks.tla	invariant	SurfacedOnlyIfOpened	check	sessionacks	required	-
 MCSessionAcksWitWalkskip.cfg	MCSessionAcks.tla	invariant	WalkVisitsUnacked	check	sessionacks	required	-
 MCSessionAcksWitStaleheld.cfg	MCSessionAcks.tla	invariant	BitsMatchRing	check	sessionacks	required	-
+MCSessionAcksWitSkipdeferred.cfg	MCSessionAcks.tla	invariant	RepeatExact	check	sessionacks	required	-
 MCRNUringSendPhases.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsendphases	required	-
 MCRNUringSendPhasesLateReap.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenOnePhase.cfg	MCRNUringSendPhases.tla	invariant	NeverRefusedUnderLateReap	check	rnuringsendphases	required	-
@@ -949,6 +950,13 @@ MCRNSendReserveCallsChunk.cfg	MCRNSendReserveCalls.tla	pass	-	check	rnsendreserv
 MCRNSendReserveCallsBrokenTailLeak.cfg	MCRNSendReserveCalls.tla	invariant	NeverStarved	check	rnsendreserve	required	-
 MCRNWriterFinish.cfg	MCRNWriterFinish.tla	pass	-	check	rnwriterfinish	required	-
 MCRNWriterFinishBrokenNoOwner.cfg	MCRNWriterFinish.tla	invariant	OneWriter	check	rnwriterfinish	required	-
+MCRNAckApplyPhase.cfg	MCRNAckApplyPhase.tla	pass	-	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenCloseKeepsClaim.cfg	MCRNAckApplyPhase.tla	invariant	ClaimOnlyOpen	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenCloseSkipsUntaken.cfg	MCRNAckApplyPhase.tla	invariant	Whole	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenLoadTake.cfg	MCRNAckApplyPhase.tla	invariant	OneTaker	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenNoGatherWhenFull.cfg	MCRNAckApplyPhase.tla	invariant	InBounds	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenSettleWhileOpen.cfg	MCRNAckApplyPhase.tla	invariant	OneTaker	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenTailNotAdvanced.cfg	MCRNAckApplyPhase.tla	invariant	ChainWhole	check	rnackapplyphase	required	-
 MCRNWriterFinishBuffered.cfg	MCRNWriterFinish.tla	pass	-	check	rnwriterfinish	required	-
 MCRNWriterFinishBrokenRingRefuses.cfg	MCRNWriterFinish.tla	invariant	BufferedNeverRefuses	check	rnwriterfinish	required	-
 MCRNWriterFinishBrokenNotSealed.cfg	MCRNWriterFinish.tla	invariant	NothingLeftForWalk	check	rnwriterfinish	required	-

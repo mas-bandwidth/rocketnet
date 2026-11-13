@@ -1,0 +1,126 @@
+----------------------- MODULE TraceRNAckApplyPhase -----------------------
+(***************************************************************************)
+(* The trace check of RNAckApplyPhase, a copy of the template              *)
+(* TraceRNTraceExample.tla (README-TraceCheck.md).  TraceLog is the record *)
+(* sequence tests/tla_trace_ack_apply.cpp writes: one per step, with the   *)
+(* operation the walk called (op), the walk's arguments to it (args), the  *)
+(* model action the code's own result says it took (act), and every model  *)
+(* variable after it (state).  Record 1 is "init".                         *)
+(*                                                                         *)
+(* TraceStep allows only the recorded action with the recorded arguments,  *)
+(* and only when the operation can be that action (OpActs): a step that    *)
+(* did one thing but landed in a state another action allows is rejected.  *)
+(* The step must be a Next step too, so Next's ranges and guards around an *)
+(* action (\E t \in Threads, c \in Clients) hold for the recorded          *)
+(* arguments.  A state                                                     *)
+(* that names fewer or other fields than VarsRec never matches, and a      *)
+(* record that is not [op, act, args, state] fails the ASSUME: an          *)
+(* under-logged harness fails red, never green.                            *)
+(*                                                                         *)
+(* A copy changes only EXTENDS, VarsRec, OpActs, Act and the row's reach   *)
+(* predicates; tools/tla_trace_check.py compares the rest with this text   *)
+(* and checks the shapes of those four.                                    *)
+(*                                                                         *)
+(* When no step matches, TraceReject sets rejected, so TraceConsistent     *)
+(* fails; the behaviour TLC prints ends at ti, the last record that        *)
+(* matched, and record ti + 1 is the first code step that is not a model   *)
+(* step.  At the last record the trace stutters (TraceDone).  Nothing here *)
+(* quantifies over the log in a state formula, and nothing reads TraceLog  *)
+(* but Trace (below).                                                      *)
+(***************************************************************************)
+EXTENDS RNAckApplyPhase, Sequences
+
+CONSTANT TraceLog
+
+\* the log as a definition of no arguments, which TLC evaluates once when
+\* it starts; every formula below reads Trace, never TraceLog. Read through
+\* the substituted constant, TLC rebuilds the whole log at each access, and a
+\* 3200-record trace takes 68 s instead of 3 s (bench-nyc-6, 2026-11-12)
+Trace == TraceLog
+
+\* checked once, when TLC starts
+ASSUME /\ Len(TraceLog) >= 2
+       /\ \A n \in DOMAIN TraceLog : DOMAIN TraceLog[n] = {"op", "act", "args", "state"}
+
+VARIABLES ti,        \* the index of the record the state matches
+          rejected   \* the record after ti is not a model step
+
+\* every model variable the code or the walk holds, by the field name the harness writes
+VarsRec == [phase |-> phase, queue |-> queue, numRanges |-> numRanges, head |-> head, tail |-> tail, claim |-> claim, segment |-> segment, batch |-> batch, took |-> took, arrived |-> arrived]
+
+\* the actions each operation of the code can be
+OpActs == [begin_receive |-> {"BeginReceive"}, receive_block |-> {"Receive"}, settle |-> {"Settle"}, open |-> {"Open"}, take |-> {"Take", "TakeRefused", "TakeOutside"}, close |-> {"Close"}]
+
+\* the action a record names, with the record's arguments; a name this CASE
+\* lacks stops TLC with an error
+Act(a, x) == CASE a = "BeginReceive" -> BeginReceive
+               [] a = "Receive" -> Receive(x[1], x[2], x[3])
+               [] a = "Settle" -> Settle(x[1])
+               [] a = "Open" -> Open
+               [] a = "Take" -> Take(x[1], x[2], x[3])
+               [] a = "TakeRefused" -> TakeRefused(x[1], x[2])
+               [] a = "TakeOutside" -> TakeOutside(x[1], x[2])
+               [] a = "Close" -> Close
+
+TraceInit ==
+    /\ Init
+    /\ ti = 1
+    /\ rejected = (Trace[1].op # "init" \/ Trace[1].act # "init" \/ Trace[1].args # <<>>
+                   \/ VarsRec # Trace[1].state)
+
+TraceStep ==
+    /\ ~rejected
+    /\ ti < Len(Trace)
+    /\ LET r == Trace[ti + 1]
+       IN /\ r.op \in DOMAIN OpActs
+          /\ r.act \in OpActs[r.op]
+          /\ Act(r.act, r.args)
+          /\ Next
+          /\ VarsRec' = r.state
+    /\ ti' = ti + 1
+    /\ UNCHANGED rejected
+
+TraceReject ==
+    /\ ~rejected
+    /\ ti < Len(Trace)
+    /\ ~ENABLED TraceStep
+    /\ rejected' = TRUE
+    /\ UNCHANGED <<vars, ti>>
+
+TraceDone ==
+    /\ rejected \/ ti = Len(Trace)
+    /\ UNCHANGED <<vars, ti, rejected>>
+
+TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, rejected>>
+
+\* every record of the trace is the model step it names, from the one before
+TraceConsistent == ~rejected
+
+\* the row's reach predicates: some clean trace must see a client taken by a
+\* game thread; stand after a finish with a client nobody took whose blocks
+\* are in the batch (the main thread applied them); see a chain of two or
+\* more entries linked through the queue; see a client settled in the
+\* receive with blocks queued again behind the ids it already holds, so their
+\* apply starts past offset 0; and stand in a receive after each early
+\* gather. The batch is empty in a receive until one runs. A batch that is
+\* not empty with the queue holding one entry of no ranges is a gather a
+\* full queue forced: that entry forced it, and a block of no ranges always
+\* fits the range store. A batch that is not empty and shorter than
+\* PendingCap is a gather the range store forced: no full queue has been
+\* gathered. The refused take and the take outside the open phase are actions
+\* (TakeRefused, TakeOutside): the checker requires each in an accepted
+\* clean trace.
+\*
+\* LeftForFinish also holds for a client whose blocks the main thread only
+\* settled in the receive. No state tells the two apart: a client left for
+\* the finish is one with its claim set when Close runs, Close clears the
+\* claim, the chain and the segment, and the state before Close does not say
+\* that Close is the next step. A predicate over states cannot name the step
+TakenByGameThread == \E c \in Clients : took[c] # {} /\ Main \notin took[c]
+LeftForFinish == phase = "closed" /\ \E c \in Clients : took[c] = {} /\ \E i \in DOMAIN batch : batch[i][1] = c
+Chained == \E c \in Clients : head[c] >= 0 /\ tail[c] # head[c]
+QueuedBehindSettled == phase = "receiving" /\ \E c \in Clients : segment[c] # <<>> /\ head[c] >= 0
+GatheredQueueFull == phase = "receiving" /\ batch # <<>> /\ Len(queue) = 1 /\ queue[1].ranges = 0
+GatheredRangesFull == phase = "receiving" /\ batch # <<>> /\ Len(batch) < PendingCap
+
+=============================================================================

@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.1.35 of v1.1.35;
+# CMake's VERSION holds numbers only, so it is the 1.1.36 of v1.1.36;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.1.35 LANGUAGES C CXX)
+project(rocketnet VERSION 1.1.36 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -720,6 +720,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_unreliable_promotion.cpp
             tests/test_unit_window_sequences.cpp
             tests/test_unit_xdp_replay_marks.cpp
+            tests/test_unit_ack_apply_phase.cpp
             tests/test_unit_ack_block_walk.cpp
             tests/test_unit_ack_span_cost.cpp
             tests/test_unit_ack_stats.cpp
@@ -1185,6 +1186,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/disconnect_reasons_real.cpp
         tests/functional/production_paths.cpp
         tests/functional/client_io_threaded.cpp
+        tests/functional/ack_apply_threads.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
@@ -1259,6 +1261,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     #   tests/functional/posix_hard_killed_client.cpp (platform test seams)
     #   tests/functional/windows_socket_errors.cpp (server/client transport test seams)
     #   tests/functional/windows_lifecycle_stress.cpp (Windows SDK resource ledger, ROCKETNET_DEV on Windows)
+    #   tests/functional/ack_apply_threads.cpp (the ack layer's internal calls)
     # The four Windows connreset iocp_plain cases also require development-only
     # USO/URO force flags; production retains the ordinary IOCP cases instead.
     # and, in tests/functional/rocketnet_functional_tests.cpp, the registry entries
@@ -1459,6 +1462,12 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_definitions(server_receive_cost PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
+    # The server's update with the bar's ack shape (benchmarks/server_update_ack_cost.cpp):
+    # public API, loopback, simulated time; counts update's instructions and cycles.
+    add_executable(server_update_ack_cost benchmarks/server_update_ack_cost.cpp)
+    target_link_libraries(server_update_ack_cost PRIVATE rocketnet)
+    target_compile_features(server_update_ack_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(server_update_ack_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
     # One client's per-frame cost on the game thread against a real server
     # (benchmarks/client_frame_time.md). It links the library a game ships,
@@ -1550,8 +1559,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.1.35; the label
-# v1.1.35 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.1.36; the label
+# v1.1.36 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)

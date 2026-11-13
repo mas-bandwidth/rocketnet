@@ -873,6 +873,36 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 //                          update
 // ---------------------------------------------------------------
 
+// the connection id entry k is tagged with, as rn_message_admit compares it;
+// 0 for a slot out of range, which admit discards before reading it
+
+static uint64_t rn_message_entry_connection( rn_message_object_t * object, const int * client_index, uint64_t ( *entry_connection )( void * transport, int k ), int k )
+{
+    const int index = client_index ? client_index[k] : 0;
+    if ( index < 0 || index >= object->num_connections || !object->connections )
+    {
+        return 0;                                       // no slot of that index (connections is carved with the slots)
+    }
+
+    return entry_connection ? entry_connection( object->link.transport, k )
+                            : ( object->slots.changed[index] ? 0 : object->connections[index].hot->connection_id );
+}
+
+// rn_message_admit for an in-range slot whose entry connection id is already read
+
+static rn_message_connection_t * rn_message_admit_tagged( rn_message_object_t * object, int index, uint64_t entry_connection_id )
+{
+    rocketnet_assert( index >= 0 && index < object->num_connections );
+
+    if ( rn_slots_admit( &object->slots, index, entry_connection_id ) != RN_SLOTS_APPLY )
+    {
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+        return NULL;
+    }
+
+    return &object->connections[index];
+}
+
 static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, uint64_t ( *entry_connection )( void * transport, int k ), int k )
 {
     // RNSlots Admit: an entry is applied only to the connection it was received
@@ -892,16 +922,7 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
         return NULL;
     }
 
-    rn_message_connection_t * connection = &object->connections[index];
-    const uint64_t entry_connection_id = entry_connection ? entry_connection( object->link.transport, k )
-                                                          : ( object->slots.changed[index] ? 0 : connection->hot->connection_id );
-    if ( rn_slots_admit( &object->slots, index, entry_connection_id ) != RN_SLOTS_APPLY )
-    {
-        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
-        return NULL;
-    }
-
-    return connection;
+    return rn_message_admit_tagged( object, index, rn_message_entry_connection( object, client_index, entry_connection, k ) );
 }
 
 static void rn_message_object_release_batch( struct rn_message_object_t * object );
@@ -909,13 +930,32 @@ static void rn_message_object_release_batch( struct rn_message_object_t * object
 // proofs/tla/RNMessageViews.tla Update: the batch released, the last update's views cleared by its delivery count, cursor and held reset
 int rn_message_object_update( struct rn_message_object_t * object, double time )
 {
+    rn_message_object_update_begin( object, time );
+    return rn_message_object_update_end( object );
+}
+
+// the link splits update only when update is the server transport's own: a
+// test that wraps update keeps its wrapper whole
+static bool rn_message_link_splits_update( const struct rn_message_object_t * object );
+
+void rn_message_object_update_begin( struct rn_message_object_t * object, double time )
+{
+    // the main thread's call: checked here for the begin of the update (the
+    // end is the main thread's too)
     rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL );
     if ( !phase.entered )
     {
-        return ROCKETNET_UPDATE_OK;
+        return;
+    }
+    if ( object->update_stage != RN_MESSAGE_UPDATE_CLOSED )
+    {
+        rocketnet_api_misuse_record();
+        rocketnet_assert( object->update_stage == RN_MESSAGE_UPDATE_CLOSED && "end the update before the next begins" );
+        (void) rn_message_object_update_end( object );
     }
 
     int result = ROCKETNET_UPDATE_OK;
+    object->update_stage = RN_MESSAGE_UPDATE_DONE;
 
     // proofs/tla/RNSlots.tla BeginUpdate: enters the transport phase once every view from the last update is released.
     // proofs/tla/RNSlots.tla RejectUnreleasedUpdate: a view still held sets the not-released result this update returns.
@@ -983,7 +1023,8 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
     time = rocketnet_update_clock_advance( object->time, &object->raw_time, &object->time_offset, time, &time_clamped );
     if ( time_clamped && !object->clock_started )
     {
-        return result;
+        object->update_result = result;
+        return;
     }
 
     object->time = time;
@@ -1032,7 +1073,44 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
     object->receive_connection = 0;                     // the receive queue starts again at the first connection
 
+    object->update_result = result;
+    if ( rn_message_link_splits_update( object ) )
+    {
+        object->link.update_receive( object->link.transport, time - object->clock_origin );
+        object->update_stage = RN_MESSAGE_UPDATE_SPLIT;
+        return;
+    }
+
     object->link.update( object->link.transport, time - object->clock_origin );
+    object->update_stage = RN_MESSAGE_UPDATE_WHOLE;
+}
+
+int rn_message_object_update_end( struct rn_message_object_t * object )
+{
+    const int stage = object->update_stage;
+    object->update_stage = RN_MESSAGE_UPDATE_CLOSED;
+    const int result = object->update_result;
+    object->update_result = ROCKETNET_UPDATE_OK;
+
+    if ( stage == RN_MESSAGE_UPDATE_CLOSED )
+    {
+        // an end with no begin: nothing to finish
+        rocketnet_api_misuse_record();
+        rocketnet_assert( stage != RN_MESSAGE_UPDATE_CLOSED && "begin the update before ending it" );
+        return ROCKETNET_UPDATE_OK;
+    }
+
+    if ( stage == RN_MESSAGE_UPDATE_DONE )
+    {
+        return result;
+    }
+
+    if ( stage == RN_MESSAGE_UPDATE_SPLIT )
+    {
+        object->link.update_finish( object->link.transport );
+    }
+
+    const double time = object->time;
 
     // the client message connection is bound before the handshake so its
     // CONFIG record waits while its transport connects (application sends
@@ -1105,17 +1183,87 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         const int * client_index = NULL;
         const uint64_t * packet_ids = NULL;
         const int count = object->link.acked( object->link.transport, &client_index, &packet_ids );
-        for ( int k = 0; k < count; k++ )
+
+        // the transport appends each received block's ids as one run of one
+        // slot and one connection id, so the entries are taken a run at a
+        // time: a run is the longest stretch of entries with the same slot
+        // and the same entry connection id, so every entry of it gets the
+        // admit verdict of its first (rn_slots_admit reads only the slot's
+        // binding, which nothing in this loop changes). An admitted run's ids
+        // go to the window in one call, in entry order, which is the same as
+        // one call per id (rn_window_ack_on_acks); a discarded run counts
+        // one stale entry per id, as one admit per id did.
+
+        // the batch's connection ids read once when the link offers them
+        // (acked_connection_ids): ids[k] is what acked_connection( k )
+        // answers, and 0 past the count
+
+        const uint64_t * acked_ids = NULL;
+        int acked_ids_count = 0;
+        if ( object->link.acked_connection_ids )
         {
-            rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.acked_connection, k );
+            acked_ids_count = object->link.acked_connection_ids( object->link.transport, &acked_ids );
+            if ( !acked_ids )
+            {
+                acked_ids_count = 0;
+            }
+        }
+
+        auto entry_id = [&]( int e ) -> uint64_t
+        {
+            if ( !object->link.acked_connection_ids )
+            {
+                return rn_message_entry_connection( object, client_index, object->link.acked_connection, e );
+            }
+            const int slot = client_index ? client_index[e] : 0;
+            if ( slot < 0 || slot >= object->num_connections )
+            {
+                return 0;
+            }
+            return e < acked_ids_count ? acked_ids[e] : 0;
+        };
+
+        int k = 0;
+        while ( k < count )
+        {
+            const int index = client_index ? client_index[k] : 0;
+            const uint64_t entry_connection_id = entry_id( k );
+
+            int end = k + 1;
+            while ( end < count && ( client_index ? client_index[end] : 0 ) == index && entry_id( end ) == entry_connection_id )
+            {
+                end++;
+            }
+
+            rn_message_connection_t * connection = NULL;
+            if ( index < 0 || index >= object->num_connections )
+            {
+                rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+            }
+            else
+            {
+                connection = rn_message_admit_tagged( object, index, entry_connection_id );
+            }
+
             if ( connection )
             {
-                rn_endpoint_on_acked( connection, packet_ids[k], time );   // RNEndpoint OnAcked
+                rn_endpoint_on_acked_ids( connection, &packet_ids[k], (uint32_t) ( end - k ), time );   // RNEndpoint OnAcked
             }
+            else
+            {
+                for ( int stale = k + 1; stale < end; stale++ )
+                {
+                    rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
+                }
+            }
+
+            k = end;
         }
     }
 
-    for ( int i = 0; i < object->num_connections; i++ )
+    // connections is carved with hot_connections, so it is set whenever there
+    // are connections to walk; the test names that for the reads below
+    for ( int i = 0; object->connections && i < object->num_connections; i++ )
     {
         if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
         {
@@ -2332,11 +2480,20 @@ static uint8_t * rn_server_link_start_packet( void * transport, int client_index
     return rocketnet_server_transport_start_packet( (rocketnet_server_transport_t *) transport, client_index, request_bytes, context ) ? context->frame : NULL;
 }
 
+static bool rn_message_link_splits_update( const struct rn_message_object_t * object )
+{
+    return object->link.update_receive && object->link.update_client_acks && object->link.update_finish &&
+           object->link.update == RN_LINK_FORWARD( rocketnet_server_transport_update )::call;
+}
+
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
     link->update = RN_LINK_FORWARD( rocketnet_server_transport_update )::call;
+    link->update_receive = RN_LINK_FORWARD( rocketnet_server_transport_update_receive )::call;
+    link->update_client_acks = RN_LINK_FORWARD( rocketnet_server_transport_update_client_acks )::call;
+    link->update_finish = RN_LINK_FORWARD( rocketnet_server_transport_update_finish )::call;
     link->payloads = RN_LINK_FORWARD( rocketnet_server_transport_payloads )::call;
     link->accept_payload = RN_LINK_FORWARD( rocketnet_server_transport_accept_payload )::call;
 
@@ -2348,6 +2505,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->acked = RN_LINK_FORWARD( rocketnet_server_transport_acked_packets )::call;
     link->payload_connection = rn_server_link_payload_connection;
     link->acked_connection = rn_server_link_acked_connection;
+    link->acked_connection_ids = RN_LINK_FORWARD( rocketnet_server_transport_acked_connection_ids )::call;
     link->max_payload_bytes = RN_LINK_FORWARD( rocketnet_server_transport_max_payload_bytes )::call;
     link->start_packet = rn_server_link_start_packet;
     link->finish_packet = RN_LINK_FORWARD( rocketnet_server_transport_finish_packet )::call;
@@ -2564,6 +2722,51 @@ int rocketnet_message_server_update( struct rocketnet_message_server_t * server,
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     }
     return rn_message_object_update( &server->object, time );
+}
+
+void rocketnet_message_server_update_receive( struct rocketnet_message_server_t * server, double time )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+    if ( server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
+    {
+        rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
+    }
+    rn_message_object_update_begin( &server->object, time );
+}
+
+int rocketnet_message_server_update_client_acks( struct rocketnet_message_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    // only a split update leaves acks to apply; any other stage has none
+    // (the begin returned early, or the link updated whole), and that is
+    // not the caller's error
+
+    if ( server->object.update_stage != RN_MESSAGE_UPDATE_SPLIT )
+    {
+        if ( server->object.update_stage == RN_MESSAGE_UPDATE_CLOSED )
+        {
+            rocketnet_api_misuse_record();
+            rocketnet_assert( server->object.update_stage != RN_MESSAGE_UPDATE_CLOSED && "update_client_acks runs between update_receive and update_finish" );
+        }
+        return 0;
+    }
+    return server->object.link.update_client_acks( server->object.link.transport, client_index );
+}
+
+int rocketnet_message_server_update_finish( struct rocketnet_message_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return ROCKETNET_UPDATE_OK;
+    }
+    return rn_message_object_update_end( &server->object );
 }
 
 void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server )

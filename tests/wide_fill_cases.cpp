@@ -364,8 +364,44 @@ static void wide_fill_client_receive( wide_fill_world_t * world, int c, wide_fil
     }
 }
 
-static void wide_fill_run( int num_threads, int frames, int unreliable_per_frame, int bytes, bool one_thread_finish )
+// the server's update: one call, or the three calls with the game threads
+// each taking the clients whose index falls to them (every index asked for
+// by exactly one thread; a client nobody took would be left to the finish)
+static void wide_fill_server_update( wide_fill_world_t * world, bool three_calls, int num_threads, uint64_t * applied )
 {
+    if ( !three_calls )
+    {
+        rocketnet_server_update( world->server, world->time );
+        return;
+    }
+
+    rocketnet_server_update_receive( world->server, world->time );
+    uint64_t taken[8] = {};
+    std::vector<std::thread> threads;
+    for ( int t = 0; t < num_threads; t++ )
+    {
+        threads.emplace_back( [world, num_threads, t, &taken]()
+                              {
+                                  for ( int c = t; c < WIDE_FILL_MAX_CLIENTS; c += num_threads )
+                                  {
+                                      taken[t] += (uint64_t) rocketnet_server_update_client( world->server, c );
+                                  } } );
+    }
+    for ( std::thread & thread : threads )
+    {
+        thread.join();
+    }
+    for ( int t = 0; t < num_threads; t++ )
+    {
+        *applied += taken[t];
+    }
+    rocketnet_server_update_finish( world->server );
+}
+
+static void wide_fill_run( int num_threads, int frames, int unreliable_per_frame, int bytes, bool one_thread_finish, bool three_calls = false )
+{
+    uint64_t applied = 0;
+    const uint64_t misuse = rocketnet_api_misuse_count();
     wide_fill_world_t world;
     wide_fill_world_create( &world, WIDE_FILL_MAX_CLIENTS );
     wide_fill_connect_all( &world );
@@ -390,7 +426,7 @@ static void wide_fill_run( int num_threads, int frames, int unreliable_per_frame
 
         rocketnet_server_send_packets( world.server );
         wide_fill_clients_step( &world );
-        rocketnet_server_update( world.server, world.time );
+        wide_fill_server_update( &world, three_calls, num_threads, &applied );
         while ( rocketnet_server_receive_messages( world.server ) != NULL )
         {
         }
@@ -431,7 +467,7 @@ static void wide_fill_run( int num_threads, int frames, int unreliable_per_frame
     {
         rocketnet_server_send_packets( world.server );
         wide_fill_clients_step( &world );
-        rocketnet_server_update( world.server, world.time );
+        wide_fill_server_update( &world, three_calls, num_threads, &applied );
         while ( rocketnet_server_receive_messages( world.server ) != NULL )
         {
         }
@@ -463,6 +499,13 @@ static void wide_fill_run( int num_threads, int frames, int unreliable_per_frame
     check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap );
     check( wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS ) == two );
 
+    // the three calls: the game threads applied ack blocks, and no call was misuse
+    if ( three_calls )
+    {
+        check( applied > 0 );
+        check( rocketnet_api_misuse_count() == misuse );
+    }
+
     wide_fill_world_destroy( &world );
 }
 
@@ -479,6 +522,16 @@ static void test_wide_fill_four_threads()
 static void test_wide_fill_eight_threads_large()
 {
     wide_fill_run( 8, 90, 3, 1000, false );
+}
+
+// the same frame with the server updated by the three calls: receive on the
+// main thread, each client's received acks applied on the game threads,
+// finish on the main thread. Every reliable message still arrives once, in
+// order, which needs every ack applied
+static void test_wide_fill_update_in_three_calls()
+{
+    wide_fill_run( 4, 120, 4, 120, false, true );
+    wide_fill_run( 8, 60, 3, 1000, false, true );
 }
 
 // ---------------------------------------------------------------------------
@@ -1565,6 +1618,7 @@ REGISTER_UNIT_TEST( test_wide_fill_default_start_on_one_thread_finish_on_another
 REGISTER_UNIT_TEST( test_wide_fill_default_start_on_one_thread_abort_on_another );
 REGISTER_UNIT_TEST( test_wide_fill_four_threads );
 REGISTER_UNIT_TEST( test_wide_fill_eight_threads_large );
+REGISTER_UNIT_TEST( test_wide_fill_update_in_three_calls );
 REGISTER_UNIT_TEST( test_wide_fill_check_steps );
 REGISTER_UNIT_TEST( test_wide_fill_check_public );
 REGISTER_UNIT_TEST( test_wide_fill_open_per_client );
