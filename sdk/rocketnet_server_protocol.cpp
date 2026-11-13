@@ -564,10 +564,20 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // It is counted with the version refusal: the signed data is not a
     // well-formed structure of this wire version.
 
-    {
-        const int pad_offset = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES;
+    // A plain memcmp, not sodium_is_zero: both operands are public (the
+    // sender's own bytes and zero), so the time it takes tells the sender
+    // nothing it did not send. Constant time protects secrets; there is none
+    // here, and this rung runs for every request a flood sends.
 
-        if ( sodium_is_zero( signed_connect_data + pad_offset, (size_t) ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES - pad_offset ) ) == 0 )
+    {
+        enum
+        {
+            PAD_OFFSET = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES,
+            PAD_BYTES = ROCKETNET_SIGNED_CONNECT_DATA_BYTES - PAD_OFFSET
+        };
+        static const uint8_t zero_pad[PAD_BYTES] = { 0 };
+
+        if ( memcmp( signed_connect_data + PAD_OFFSET, zero_pad, PAD_BYTES ) != 0 )
         {
             rocketnet_debug( "server ignored connection request. signed zero pad is not zero" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION]++;
@@ -585,7 +595,13 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    if ( sodium_memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->server_public_key, ROCKETNET_KEY_BYTES ) != 0 )
+    // A plain memcmp, not sodium_memcmp: the server's public key is public
+    // (it is in every token the backend issues) and the other operand is the
+    // sender's own bytes, so an early exit leaks nothing. Constant time stays
+    // on every comparison against keyed or stored state (the cookie mac, the
+    // token identifier, the half-open mapping's salt).
+
+    if ( memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->server_public_key, ROCKETNET_KEY_BYTES ) != 0 )
     {
         rocketnet_debug( "server ignored connection request. token is sealed to a different server key" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY]++;

@@ -213,5 +213,71 @@ static void test_request_ladder_two_rung_failure_counts_first_rung()
     request_ladder_server_teardown( &test );
 }
 
+// t12: the signed zero pad and the server public key are compared over their
+// whole width (plain memcmp: both operands are public). A flip of any one
+// byte of either is refused, unanswered, on its own rung and no other; with
+// both wrong the pad's rung counts; the unmodified request still gets its
+// cookie.
+static void test_request_ladder_pad_and_server_key_compare_every_byte()
+{
+    struct request_ladder_server_t test;
+    request_ladder_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    const int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
+                              ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
+    const int pad_offset = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES;
+    const int pad_bytes = ROCKETNET_SIGNED_CONNECT_DATA_BYTES - pad_offset;
+    check( pad_bytes > 0 );
+
+    struct rocketnet_counters_t before;
+    memcpy( &before, &test.counters, sizeof( before ) );
+
+    for ( int i = 0; i < pad_bytes; i++ )
+    {
+        request_ladder_build_request( request, rocketnet_test_salt );
+        request[signed_offset + pad_offset + i] = 0x80;
+        response_bytes = -1;
+        check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+    }
+
+    for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+    {
+        request_ladder_build_request( request, rocketnet_test_salt );
+        request[signed_offset + ROCKETNET_SIGNED_OFFSET_SERVER_KEY + i] ^= 0x01;
+        response_bytes = -1;
+        check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+    }
+
+    // both wrong: the pad is the earlier rung
+
+    request_ladder_build_request( request, rocketnet_test_salt );
+    request[signed_offset + pad_offset + pad_bytes - 1] = 0x01;
+    request[signed_offset + ROCKETNET_SIGNED_OFFSET_SERVER_KEY + ROCKETNET_KEY_BYTES - 1] ^= 0x01;
+    check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    const uint64_t * after = test.counters.values;
+    check( after[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] + (uint64_t) ( pad_bytes + ROCKETNET_KEY_BYTES + 1 ) );
+    check( after[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] + (uint64_t) ( pad_bytes + 1 ) );
+    check( after[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] + (uint64_t) ROCKETNET_KEY_BYTES );
+    check( after[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] );
+    check( after[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] );
+
+    // the unmodified request passes both rungs and is answered with a cookie
+
+    request_ladder_build_request( request, rocketnet_test_salt );
+    check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] + 1 );
+
+    request_ladder_server_teardown( &test );
+}
+
 REGISTER_UNIT_TEST( test_request_ladder_wrong_salt_does_not_refresh_half_open );
 REGISTER_UNIT_TEST( test_request_ladder_two_rung_failure_counts_first_rung );
+REGISTER_UNIT_TEST( test_request_ladder_pad_and_server_key_compare_every_byte );
