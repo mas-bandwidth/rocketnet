@@ -18,6 +18,7 @@
 #include "test_unit_registry.h"
 #include "portable_crt.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -185,6 +186,22 @@ static int guard_block_end( const std::vector<std::string> & lines, size_t from 
     return -1;
 }
 
+// whether name occurs in line as a whole identifier
+static bool uses_name( const std::string & line, const std::string & name )
+{
+    for ( size_t at = line.find( name ); at != std::string::npos; at = line.find( name, at + 1 ) )
+    {
+        const bool before = at > 0 && ( isalnum( (unsigned char) line[at - 1] ) || line[at - 1] == '_' );
+        const size_t after_at = at + name.size();
+        const bool after = after_at < line.size() && ( isalnum( (unsigned char) line[after_at] ) || line[after_at] == '_' );
+        if ( !before && !after )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void audit_blob( audit_t & audit, const std::string & file, const std::vector<std::string> & lines, size_t line_offset )
 {
     struct guard_t
@@ -238,7 +255,12 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
                 has_preflight = true;
             }
         }
-        // a start made from a game thread has no preflight: rocketnet_server_can_send_message is a main thread call, and a start with no room returns NULL, which the example checks. The example says so in a comment of this exact form above the start
+        // a start made from a game thread has no preflight:
+        // rocketnet_server_can_send_message is a main thread call. The comment
+        // marks the site; what the audit holds it to is checked below: the
+        // pointer is tested against NULL before any write through it, and
+        // the path that gets NULL neither writes nor finishes
+        bool game_thread_start = false;
         if ( !has_preflight && side == "server" )
         {
             for ( size_t j = i > 16 ? i - 16 : 0; j < i; j++ )
@@ -246,6 +268,7 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
                 if ( contains( lines[j], "game thread start: no can_send_message preflight" ) )
                 {
                     has_preflight = true;
+                    game_thread_start = true;
                 }
             }
         }
@@ -290,6 +313,27 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
         g.begin = next;
         g.end = (size_t) end;
         guards.push_back( g );
+
+        // a game thread start: nothing after the guard's block, to the end of
+        // its function, may use the pointer (the path that got NULL writes
+        // and finishes nothing), and the guard has no else that does
+        if ( game_thread_start )
+        {
+            for ( size_t j = (size_t) end + 1; j < lines.size() && lines[j].compare( 0, 1, "}" ) != 0; j++ )
+            {
+                if ( uses_name( lines[j], var ) || contains( lines[j], "rocketnet_server_finish_" ) )
+                {
+                    audit.fail( file, line_offset + j, "a game thread start's NULL path uses " + var + " or finishes: it must do nothing" );
+                }
+            }
+            for ( size_t j = next + 1; j < (size_t) end; j++ )
+            {
+                if ( trim( lines[j] ).compare( 0, 6, "} else" ) == 0 )
+                {
+                    audit.fail( file, line_offset + j, "a game thread start's guard has an else: the NULL path must do nothing" );
+                }
+            }
+        }
 
         // the matching finish must occur inside the guard
         const std::string finish = "rocketnet_" + side + "_finish_message(";
@@ -489,5 +533,66 @@ static void test_example_send_safety_every_example_and_snippet()
 {
     rocketnet_example_send_safety_audit_run();
 }
+
+// the audit's own cases, in memory: a game thread start passes only when its
+// result is tested before any write and the NULL path does nothing
+static size_t send_safety_failures( const char * text )
+{
+    audit_t audit;
+    audit_blob( audit, "case", split_lines( text ), 0 );
+    return audit.failures.size();
+}
+
+static void test_example_send_safety_game_thread_start_is_held_to_its_null_test()
+{
+    static const char * const good =
+        "// game thread start: no can_send_message preflight\n"
+        "uint8_t * p = rocketnet_server_start_message( server, 1, 0, mode, 12 );\n"
+        "if ( p )\n"
+        "{\n"
+        "    const uint32_t serial = rocketnet_server_finish_message( server, write( p ) );\n"
+        "    (void) serial;\n"
+        "}\n";
+    static const char * const unchecked =
+        "// game thread start: no can_send_message preflight\n"
+        "uint8_t * p = rocketnet_server_start_message( server, 1, 0, mode, 12 );\n"
+        "memcpy( p, data, 12 );\n"
+        "if ( p )\n"
+        "{\n"
+        "    const uint32_t serial = rocketnet_server_finish_message( server, 12 );\n"
+        "    (void) serial;\n"
+        "}\n";
+    static const char * const no_guard =
+        "// game thread start: no can_send_message preflight\n"
+        "uint8_t * p = rocketnet_server_start_message( server, 1, 0, mode, 12 );\n"
+        "write( p );\n";
+    static const char * const null_path_writes =
+        "void f()\n"
+        "{\n"
+        "    // game thread start: no can_send_message preflight\n"
+        "    uint8_t * p = rocketnet_server_start_message( server, 1, 0, mode, 12 );\n"
+        "    if ( p )\n"
+        "    {\n"
+        "        const uint32_t serial = rocketnet_server_finish_message( server, write( p ) );\n"
+        "        (void) serial;\n"
+        "    }\n"
+        "    p[0] = 1;\n"
+        "}\n";
+    static const char * const no_marker =
+        "uint8_t * p = rocketnet_server_start_message( server, 1, 0, mode, 12 );\n"
+        "if ( p )\n"
+        "{\n"
+        "    const uint32_t serial = rocketnet_server_finish_message( server, write( p ) );\n"
+        "    (void) serial;\n"
+        "}\n";
+
+    rocketnet_unit_check( send_safety_failures( good ) == 0 );
+    rocketnet_unit_check( send_safety_failures( unchecked ) > 0 );
+    rocketnet_unit_check( send_safety_failures( no_guard ) > 0 );
+    rocketnet_unit_check( send_safety_failures( null_path_writes ) > 0 );
+    rocketnet_unit_check( send_safety_failures( no_marker ) > 0 );
+}
+
+REGISTER_UNIT_TEST( test_example_send_safety_game_thread_start_is_held_to_its_null_test );
 
 REGISTER_UNIT_TEST( test_example_send_safety_every_example_and_snippet );
