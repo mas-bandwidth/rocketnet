@@ -128,6 +128,16 @@ In outline, from v1.1.8:
   (the second check) and `release gates passed on the tag` (the tag run's
   final job, red unless the second check and the version check succeeded).
 
+Which tiers gate which release (the owner, 2026-11-13: "I want each point
+release to have fast tests only"): from v1.1.8 a point release (vX.Y.Z with
+Z not 0 and no pre-release suffix) is gated by the per-commit tier and the
+tag push only. A minor or major release (Z is 0), and every pre-release, is
+gated by every tier. The rows whose events are `nightly` are the minor-only
+rows: both `tools/release.py` and the second
+check on the tag skip them for a point release and print each as `MINOR ONLY`.
+The nightly tier still runs on `main`'s schedule; none of it is deleted or
+muted, and a red in it is fixed in the next point release.
+
 A version is judged by the gates in force for it: the gates that were the
 release requirement from v1.0.0-preview-6 (the per-commit runs green, Nightly
 CI, CBMC, TLC records and the threaded TSan leg green) and the gates added on
@@ -184,7 +194,8 @@ makes the same checks required on `main` itself.
    names every version site that `release-check.yml`'s `version-consistency`
    job reads, and exits 1 naming any site this document omits.
 3. Land the release pull request with `python3 tools/land.py <pr>`.
-4. Dispatch the nightly tier on the merged commit once it is `main`'s head:
+4. For a minor or major release, dispatch the nightly tier on the merged
+   commit once it is `main`'s head (a point release skips this step):
    `gh workflow run nightly-ci.yml --ref main`, and the same for `nightly.yml`,
    `cbmc.yml`, `tlc.yml` (a dispatched run is never replaced by a scheduled
    one) and `msan.yml`. Resolve the analyzer evidence limitation above before
