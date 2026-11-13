@@ -16,7 +16,7 @@ Start [here](docs/GETTING-STARTED.md). It takes you through
 building the library, sending a message over an in-memory connection, and
 running a client and server in separate processes over UDP.
 
-## Connect your game
+## Integration
 
 | Task | Start here |
 | --- | --- |
