@@ -236,7 +236,9 @@ bool rocketnet_uring_queue_send_publish( struct rocketnet_uring_queue_send_t * s
 
     // main never waits on the worker: a mutex the worker holds (its claim or
     // retire) keeps the producer, with its slots, for the next update
-    // (PublishKept), as the gso transport's publish does
+    // (proofs/tla/RNUringQueueSend.tla PublishKept, LockRule "try"), as the
+    // gso transport's publish does; PublishWaits and PublishResumes are
+    // LockRule "wait", the blocking acquire this replaced
     struct rocketnet_uring_queue_send_queue_t * queue = &send->queue[queue_index];
     if ( !rocketnet_platform_mutex_try_acquire( &queue->mutex ) )
     {
@@ -294,6 +296,9 @@ int rocketnet_uring_queue_send_claim( struct rocketnet_uring_queue_send_t * send
         return -1;
     }
 
+    // proofs/tla/RNUringQueueSend.tla WorkerLocks, WorkerUnlocks: the worker
+    // holds the mutex for the take (and the retire's release), where main's
+    // try may find it held
     rocketnet_platform_mutex_acquire( &queue->mutex );
     const int b = rocketnet_buffer_handoff_take( &queue->handoff );
     queue->held = b;
