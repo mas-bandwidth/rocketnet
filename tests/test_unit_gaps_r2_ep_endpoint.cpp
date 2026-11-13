@@ -15,6 +15,7 @@
 // copy) as a pure machine: no socket, no clock, no transport; time is an
 // argument from 1000.0.
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,7 @@ struct gx_t
 {
     rocketnet_message_config_t config;
     rocketnet_counters_t counters;
+    uint8_t * raw;                          // the arena's block (in every build: rn_arena_create is ROCKETNET_DEV)
     rn_arena_t * arena;
     rn_endpoint_t endpoint;
 };
@@ -66,7 +68,12 @@ static void gx_create( gx_t * x, int32_t kbps )
     x->config.packets_per_update = 4;
 
     memset( &x->counters, 0, sizeof( x->counters ) );
-    x->arena = rn_arena_create( NULL, &x->config, 1, &x->counters );
+    const uint64_t required = rn_arena_required_bytes( &x->config, 1 );
+    rocketnet_unit_check( required > 0 );
+    x->raw = (uint8_t *) malloc( (size_t) required + ROCKETNET_ALLOCATION_ALIGNMENT );
+    rocketnet_unit_check( x->raw != NULL );
+    uint8_t * block = (uint8_t *) ( ( (uintptr_t) x->raw + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+    x->arena = rn_arena_create_in_block( block, required, &x->config, 1, &x->counters );
     rocketnet_unit_check( x->arena != NULL );
 
     rn_endpoint_config_t endpoint_config;
@@ -81,6 +88,7 @@ static void gx_create( gx_t * x, int32_t kbps )
 static void gx_destroy( gx_t * x )
 {
     rn_arena_destroy( x->arena );
+    free( x->raw );
 }
 
 static uint64_t gx_counter( const gx_t * x, int counter )
