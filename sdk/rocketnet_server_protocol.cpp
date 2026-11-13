@@ -870,6 +870,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
                                                           current_time, fail_denied_writer, replace_index, response_packet, response_bytes );
 
     sodium_memzero( &private_data, sizeof( private_data ) );
+    ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_REQUEST_PRIVATE_DATA, &private_data, (int) sizeof( private_data ) );
 
     // Only a live mapping retains the request claim. Every refusal, including
     // a sealed denial, releases it immediately instead of waiting for expiry
@@ -961,6 +962,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                               keys.handshake_server_to_client );
             }
             sodium_memzero( &keys, sizeof( keys ) );
+            ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_REQUEST_KEYS_DENIED, &keys, (int) sizeof( keys ) );
 
             if ( denied_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
             {
@@ -1004,6 +1006,8 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         {
             sodium_memzero( server_ephemeral_secret_key, sizeof( server_ephemeral_secret_key ) );
             sodium_memzero( &keys, sizeof( keys ) );
+            ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_REQUEST_EPHEMERAL_SMALL_ORDER, server_ephemeral_secret_key, (int) sizeof( server_ephemeral_secret_key ) );
+            ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_REQUEST_KEYS_SMALL_ORDER, &keys, (int) sizeof( keys ) );
             rocketnet_signature_verify_budget_record_failure( &server->signature_verify_budget, from, current_timestamp );
             rocketnet_debug( "server ignored connection request. client ephemeral key is a small order point" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY]++;
@@ -1011,6 +1015,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         }
 
         sodium_memzero( server_ephemeral_secret_key, sizeof( server_ephemeral_secret_key ) );
+        ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_REQUEST_EPHEMERAL, server_ephemeral_secret_key, (int) sizeof( server_ephemeral_secret_key ) );
 
         // every check has passed: a replaced half-open mapping leaves now,
         // releasing its own token's claim, and the new one takes its place
@@ -1049,6 +1054,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         mapping->last_keep_alive_send_time = current_time;
 
         sodium_memzero( &keys, sizeof( keys ) );
+        ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_REQUEST_KEYS, &keys, (int) sizeof( keys ) );
 
         // build the challenge at this mapping's next handshake sequence and
         // store it, so a retransmitted request is answered byte-identical

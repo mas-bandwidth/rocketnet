@@ -195,6 +195,8 @@ out:
 
     sodium_memzero( private_block, sizeof( private_block ) );
     sodium_memzero( &private_data, sizeof( private_data ) );
+    ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_TOKEN_PRIVATE_BLOCK, private_block, (int) sizeof( private_block ) );
+    ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_TOKEN_PRIVATE_DATA, &private_data, (int) sizeof( private_data ) );
     return result;
 }
 
@@ -411,6 +413,7 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
     rocketnet_crypto_release();
 
     sodium_memzero( &private_fields, sizeof( private_fields ) );
+    ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_PRODUCTION_PRIVATE_FIELDS, &private_fields, (int) sizeof( private_fields ) );
 
     return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
@@ -439,6 +442,7 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
 // 1, so the case reads what the staging still holds)
 // (test_unit_secrets_wiped.cpp).
 #if ROCKETNET_DEV
+void ( *rocketnet_stack_secret_hook )( int site, const void * staging, int bytes ) = NULL;       // mutation gaps secrets (sdk/rocketnet_test_seams.h)
 void ( *rocketnet_token_private_block_hook )( uint8_t * block, int bytes, int at_exit ) = NULL;
 #define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do { if ( rocketnet_token_private_block_hook ) { rocketnet_token_private_block_hook( block, bytes, at_exit ); } } while ( 0 )
 #else
@@ -608,6 +612,7 @@ enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_
     const enum rocketnet_status_t status = rocketnet_create_connect_token( &config, connect_token );
 
     sodium_memzero( &config, sizeof( config ) );
+    ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_DEV_TOKEN_CONFIG, &config, (int) sizeof( config ) );
 
     return status;
 }
