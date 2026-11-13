@@ -257,7 +257,7 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
 }
 
 // the wire delivering everything captured one way (0 client -> server, 1
-// server -> client), at least one datagram: the receiver hears its peer now.
+// server -> client), at least one datagram: the receiver hears the sender now.
 // The time since the last such delivery is a silence the script imposed;
 // the longest is kept
 static void rocketnet_fuzz_session_heard_from( const struct rocketnet_fuzz_pair_t * pair, int direction )
