@@ -1530,43 +1530,8 @@ static void harden_profile_run( harden_profile_t * p )
         CloseHandle( snapshot );
     }
 
-    // the main thread's program counter, about once a millisecond, with the
-    // phase of the frame it was in
-    std::vector<std::pair<int, uint64_t>> samples;
-    const double window_start = harden_profile_clock();
-    double next = window_start;
-    while ( main_thread && harden_profile_clock() - window_start < p->seconds && !p->stop.load() )
-    {
-        while ( harden_profile_clock() < next )
-        {
-            // spin: Sleep() resolves to the timer tick, about 15.6 ms
-        }
-        next += 0.001;
-        if ( SuspendThread( main_thread ) == (DWORD) -1 )
-        {
-            break;
-        }
-        CONTEXT context;
-        memset( &context, 0, sizeof( context ) );
-        context.ContextFlags = CONTEXT_CONTROL;
-        const int phase = harden_main_phase.load( std::memory_order_relaxed );
-        if ( GetThreadContext( main_thread, &context ) )
-        {
-#if defined( _M_ARM64 )
-            samples.push_back( std::make_pair( phase, (uint64_t) context.Pc ) );
-#else
-            samples.push_back( std::make_pair( phase, (uint64_t) context.Rip ) );
-#endif // #if defined( _M_ARM64 )
-        }
-        ResumeThread( main_thread );
-    }
-    const double window = harden_profile_clock() - window_start;
-    for ( harden_profile_thread_t & t : threads )
-    {
-        t.cpu_end = harden_profile_cpu( t.handle );
-    }
-
-    // names, through DbgHelp loaded at run time
+    // names, through DbgHelp loaded at run time (before the window, so the
+    // network threads can be picked by their start routine)
     harden_sym_from_addr_t sym_from_addr = NULL;
     const HMODULE dbghelp = LoadLibraryW( L"dbghelp.dll" );
     if ( dbghelp )
@@ -1605,6 +1570,75 @@ static void harden_profile_run( harden_profile_t * p )
         snprintf( hex, sizeof( hex ), "0x%" PRIx64, address );
         return std::string( hex );
     };
+
+    // the network threads: every thread the library started (they all begin
+    // in the platform's thread_function_shim; the fill jobs and this profiler
+    // are std::threads), sampled beside main, each sample stopping one thread
+    // for a few microseconds
+    std::vector<HANDLE> workers;
+    for ( const harden_profile_thread_t & t : threads )
+    {
+        if ( t.id != p->main_id && name_of( t.start_address ).find( "thread_function_shim" ) != std::string::npos )
+        {
+            workers.push_back( t.handle );
+        }
+    }
+    std::vector<uint64_t> worker_samples;
+
+    // the main thread's program counter, about once a millisecond, with the
+    // phase of the frame it was in
+    std::vector<std::pair<int, uint64_t>> samples;
+    const double window_start = harden_profile_clock();
+    double next = window_start;
+    while ( main_thread && harden_profile_clock() - window_start < p->seconds && !p->stop.load() )
+    {
+        while ( harden_profile_clock() < next )
+        {
+            // spin: Sleep() resolves to the timer tick, about 15.6 ms
+        }
+        next += 0.001;
+        for ( HANDLE worker : workers )
+        {
+            if ( SuspendThread( worker ) == (DWORD) -1 )
+            {
+                continue;
+            }
+            CONTEXT worker_context;
+            memset( &worker_context, 0, sizeof( worker_context ) );
+            worker_context.ContextFlags = CONTEXT_CONTROL;
+            if ( GetThreadContext( worker, &worker_context ) )
+            {
+#if defined( _M_ARM64 )
+                worker_samples.push_back( (uint64_t) worker_context.Pc );
+#else
+                worker_samples.push_back( (uint64_t) worker_context.Rip );
+#endif // #if defined( _M_ARM64 )
+            }
+            ResumeThread( worker );
+        }
+        if ( SuspendThread( main_thread ) == (DWORD) -1 )
+        {
+            break;
+        }
+        CONTEXT context;
+        memset( &context, 0, sizeof( context ) );
+        context.ContextFlags = CONTEXT_CONTROL;
+        const int phase = harden_main_phase.load( std::memory_order_relaxed );
+        if ( GetThreadContext( main_thread, &context ) )
+        {
+#if defined( _M_ARM64 )
+            samples.push_back( std::make_pair( phase, (uint64_t) context.Pc ) );
+#else
+            samples.push_back( std::make_pair( phase, (uint64_t) context.Rip ) );
+#endif // #if defined( _M_ARM64 )
+        }
+        ResumeThread( main_thread );
+    }
+    const double window = harden_profile_clock() - window_start;
+    for ( harden_profile_thread_t & t : threads )
+    {
+        t.cpu_end = harden_profile_cpu( t.handle );
+    }
 
     std::sort( threads.begin(), threads.end(), []( const harden_profile_thread_t & a, const harden_profile_thread_t & b )
                { return a.cpu_end - a.cpu_start > b.cpu_end - b.cpu_start; } );
@@ -1668,6 +1702,34 @@ static void harden_profile_run( harden_profile_t * p )
         for ( size_t i = 0; i < counts.size() && i < 30; i++ )
         {
             fprintf( f, "harden_profile_in: phase=%s %6.2f%% %s\n", phase_names[phase], n ? 100.0 * counts[i].second / (double) n : 0.0, counts[i].first.c_str() );
+        }
+    }
+    {
+        // the network threads together: the function each sample stopped in
+        std::vector<std::string> names;
+        names.reserve( worker_samples.size() );
+        for ( uint64_t address : worker_samples )
+        {
+            names.push_back( name_of( address ) );
+        }
+        std::sort( names.begin(), names.end() );
+        std::vector<std::pair<std::string, int>> counts;
+        for ( size_t i = 0; i < names.size(); )
+        {
+            size_t j = i;
+            while ( j < names.size() && names[j] == names[i] )
+            {
+                j++;
+            }
+            counts.push_back( std::make_pair( names[i], (int) ( j - i ) ) );
+            i = j;
+        }
+        std::sort( counts.begin(), counts.end(), []( const std::pair<std::string, int> & a, const std::pair<std::string, int> & b )
+                   { return a.second > b.second; } );
+        fprintf( f, "harden_profile_workers: threads=%zu samples=%zu\n", workers.size(), names.size() );
+        for ( size_t i = 0; i < counts.size() && i < 60; i++ )
+        {
+            fprintf( f, "harden_profile_worker: %6.2f%% %s\n", names.empty() ? 0.0 : 100.0 * counts[i].second / (double) names.size(), counts[i].first.c_str() );
         }
     }
     fclose( f );
