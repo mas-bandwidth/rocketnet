@@ -998,6 +998,7 @@ MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg	MCRNMsgxSendRuns.tla	invariant	Re
 MCRNMsgxSendRunsBrokenUnstableSort.cfg	MCRNMsgxSendRuns.tla	invariant	ClientOrder	check	rnmsgxsendruns	required	-
 MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg	MCRNMsgxSendRuns.tla	invariant	NoCrossClient	check	rnmsgxsendruns	required	-
 MCRNMsgxSendRunsBrokenDeadNoResend.cfg	MCRNMsgxSendRuns.tla	invariant	CursorSafe	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsBrokenPartialKeeps.cfg	MCRNMsgxSendRuns.tla	action	KeptOnlyWhenNothingLeft	check	rnmsgxsendruns	required	-
 MCTraceRNMsgxSendRunsSelf.cfg	MCTraceRNMsgxSendRunsSelf.tla	pass	-	check	rnmsgxsendruns	required	-
 MCTraceRNMsgxSendRunsSelfBrokenSortBlind.cfg	MCTraceRNMsgxSendRunsSelf.tla	invariant	TraceConsistent	check	rnmsgxsendruns	required	-
 MCRNMsgxReceiveFill.cfg	MCRNMsgxReceiveFill.tla	pass	-	check	rnmsgxreceivefill	required	-
