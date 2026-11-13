@@ -86,6 +86,18 @@ LAYERS = {
             "Seqs": "not an action: the set of sequences Next's Forge ranges over",
         },
     },
+    "bank": {
+        "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
+        "quiet": True,
+    },
+    "gather": {
+        "modules": ["RNSendGatherLayout.tla", "TraceRNSendGatherLayout.tla"],
+        "quiet": False,
+    },
+    "gso": {
+        "modules": ["RNGsoQueueBankLayout.tla", "TraceRNGsoQueueBankLayout.tla"],
+        "quiet": True,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"

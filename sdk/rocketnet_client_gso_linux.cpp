@@ -590,9 +590,20 @@ static void rocketnet_client_gso_send( void * transport, const rocketnet_address
     rocketnet_platform_socket_send_packet( client->socket, to, data, bytes );
 }
 
+// One datagram per call, for a client with no I/O thread (the link simulator
+// on, for one). With UDP_GRO on, the socket hands back a coalesced message:
+// read through the batch receive's split and carry, one slot at a time, so
+// each datagram leaves whole and at its own size, never the message as one.
 static int rocketnet_client_gso_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
     rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
+    if ( client->gso.gro )
+    {
+        int packet_bytes = 0;
+        const int got = rocketnet_client_gso_receive_batch( &client->gso, from, data, capacity, &packet_bytes, 1 );
+        return got > 0 ? packet_bytes : 0;
+    }
+
     return rocketnet_platform_socket_receive_packet( client->socket, from, data, capacity );
 }
 

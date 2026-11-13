@@ -490,11 +490,14 @@ def module_actions(module):
         return set(), [f"{module}: proofs/tla/{module}.tla does not exist"]
     text = strip_comments(path.read_text(errors="replace"))
     defs = find_definitions(text)
-    if "Next" not in defs:
+    # a trace module (README-TraceCheck.md) extends its spec and cannot define
+    # Next again: its own steps are the disjunction TraceNext
+    root = "Next" if "Next" in defs else "TraceNext" if "TraceNext" in defs else None
+    if root is None:
         return set(), [f"{module}: no Next definition to follow"]
     actions = set()
     names = set(defs)
-    frontier = set(scan_refs(defs["Next"], names))
+    frontier = set(scan_refs(defs[root], names))
     seen = set()
     memo = {}
     visiting = set()
