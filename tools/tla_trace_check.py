@@ -129,8 +129,8 @@ LAYERS = {
     "xdp-replay": {
         "modules": ["RNXdpReplay.tla", "TraceRNXdpReplay.tla"],
         "untraced": {},
-        # the filter's drop rule, a forget the kernel refused, a held greeting
-        "reach": ["KernelDropped", "ForgetRefused", "GreetingHeld"],
+        # a kernel mark for the filter's drop rule to read, a forget the kernel refused, a held greeting
+        "reach": ["KernelMarked", "ForgetRefused", "GreetingHeld"],
     },
 }
 

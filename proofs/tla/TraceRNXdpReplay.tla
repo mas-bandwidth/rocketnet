@@ -105,10 +105,10 @@ TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, 
 \* every record of the trace is the model step it names, from the one before
 TraceConsistent == ~rejected
 
-\* the row's reach predicates: the filter dropped a genuine packet, the kernel
+\* the row's reach predicates: the kernel map holds a mark (what the filter's drop rule reads), the kernel
 \* refused a forget, and a live session's greeting was held back (a session
 \* whose first keep-alive has not left while its mark is the zero mark)
-KernelDropped == dropped # {}
+KernelMarked == \E a \in Addresses : kmap[a] # NoEntry
 ForgetRefused == forgetFailures > 0
 GreetingHeld == \E a \in Addresses : session[a] # NoSession /\ ~greeted[a] /\ marked[a] = 0 /\ seen[a]
 
