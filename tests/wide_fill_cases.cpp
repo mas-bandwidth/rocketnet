@@ -361,8 +361,8 @@ static void wide_fill_run( int num_threads, int frames, int unreliable_per_frame
         slots[slot_of_client[c]].last_unreliable = -1;
     }
 
-    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_PHASE_OVERLAP );
-    const uint64_t two = wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS );
+    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
+    const uint64_t two = wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS );
 
     for ( int frame = 0; frame < frames; frame++ )
     {
@@ -440,8 +440,8 @@ static void wide_fill_run( int num_threads, int frames, int unreliable_per_frame
     check( received_unreliable * 10 >= sent_unreliable * 9 );     // a lossless hub: the budget may drop a few
 
     // no break of the contract happened, so nothing was refused or counted
-    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_PHASE_OVERLAP ) == overlap );
-    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS ) == two );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS ) == two );
 
     wide_fill_world_destroy( &world );
 }
@@ -596,7 +596,7 @@ static void test_wide_fill_check_public()
     const int slot0 = rocketnet_client_index( world.clients[0] );
     const int slot1 = rocketnet_client_index( world.clients[1] );
 
-    const uint64_t two = wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS );
+    const uint64_t two = wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS );
 
     // this thread (A, alive throughout: an exited thread's id may be reused
     // by B, and the check names a thread by its id) opens and finishes a
@@ -628,7 +628,7 @@ static void test_wide_fill_check_public()
         tb.join();
         check( refused == NULL );
         check( accepted != NULL );
-        check( wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS ) == two + 1 );
+        check( wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS ) == two + 1 );
         check( g_wide_fill_asserts == wide_fill_expected_asserts( 1 ) );
     }
 
@@ -647,7 +647,7 @@ static void test_wide_fill_check_public()
         } );
         tb.join();
         check( p != NULL );
-        check( wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS ) == two + 1 );
+        check( wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS ) == two + 1 );
     }
 
     wide_fill_world_destroy( &world );
@@ -767,7 +767,7 @@ static void test_wide_fill_main_refused_during_fill()
     rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) );
     rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( transport );
     check( phase != NULL );
-    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_PHASE_OVERLAP );
+    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
 
     check( rocketnet_fill_phase_fill_begin( phase, slot0 ) );
 
@@ -778,7 +778,7 @@ static void test_wide_fill_main_refused_during_fill()
     check( rocketnet_server_client_connected( world.server, slot0 ) );
     check( rocketnet_server_client_connected( world.server, slot1 ) );
 
-    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_PHASE_OVERLAP ) == overlap + 3 );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 3 );
     check( g_wide_fill_asserts == wide_fill_expected_asserts( 3 ) );
 
     rocketnet_fill_phase_fill_end( phase, slot0 );
@@ -788,7 +788,7 @@ static void test_wide_fill_main_refused_during_fill()
     rocketnet_server_disconnect_client( world.server, slot1 );
     check( !rocketnet_server_client_connected( world.server, slot1 ) );
     check( rocketnet_server_client_connected( world.server, slot0 ) );
-    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_PHASE_OVERLAP ) == overlap + 3 );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 3 );
 
     wide_fill_world_destroy( &world );
     rocketnet_assert_function( NULL );
@@ -810,7 +810,7 @@ static void test_wide_fill_refused_finish_and_start()
     rn_message_object_t * object = &rocketnet_server_message_server( world.server )->object;
     rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) );
 
-    const uint64_t two = wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS );
+    const uint64_t two = wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS );
     const uint64_t refused = object->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED];
 
     // this thread (alive throughout) opens on slot0; thread B's finish of it
@@ -842,7 +842,7 @@ static void test_wide_fill_refused_finish_and_start()
     check( finished == 0 );
     check( started == NULL );
     check( context_client == -1 );
-    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS ) == two + 2 );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS ) == two + 2 );
     check( rn_message_open_count( object ) == 1 );
     check( object->connections[slot0].open.pending == 1 );
 

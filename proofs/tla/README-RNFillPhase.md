@@ -12,7 +12,7 @@ run on one thread. Fill calls (start, finish and abort of a packet or a
 message) may run on any number of game threads between an update and the
 next send_packets. Each client has one filler per fill phase. Breaking the
 contract is caller misuse. The check refuses the call, counts
-`FILL_PHASE_OVERLAP` or `FILL_TWO_FILLERS`, and asserts in a debug build.
+`MAIN_THREAD_CALL_OVERLAP` or `CLIENT_SEND_TWO_THREADS`, and asserts in a debug build.
 It keeps no thread-local state: a thread is named by
 `rocketnet_platform_thread_id`.
 

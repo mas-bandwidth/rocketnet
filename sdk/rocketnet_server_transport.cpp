@@ -20,6 +20,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include <limits.h>
 #include <new>
 #include "rocketnet_packet_lease.h"
+#include "rocketnet_fill_phase.h"
 #include "rocketnet_receive_prefilter.h"
 #include "rocketnet_stats_window.h"
 /*
@@ -3287,8 +3288,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
 
     protocol->counters = &server_transport->counters;
     rocketnet_fill_phase_init( &server_transport->fill_phase, max_clients,
-                               &server_transport->counters.values[ROCKETNET_COUNTER_FILL_PHASE_OVERLAP],
-                               &server_transport->counters.values[ROCKETNET_COUNTER_FILL_TWO_FILLERS] );
+                               &server_transport->counters.values[ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP],
+                               &server_transport->counters.values[ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS] );
 
     if ( server_transport->io.operations->replay_mark )
     {

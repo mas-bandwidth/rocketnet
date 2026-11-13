@@ -3823,6 +3823,9 @@ The registry of counters, in index order, is:
 | `RIO_RECEIVE_REPOST_FAILED` | `refusal` | `none` |
 | `RIO_COMMITS` | `expected` | `none` |
 | `SEND_RESERVE_REFUSED` | `refusal` | `none` |
+| `MAIN_THREAD_CALL_OVERLAP` | `refusal` | `none` |
+| `CLIENT_SEND_TWO_THREADS` | `refusal` | `none` |
+| `SEND_RESERVE_REFUSED_TAILS_HELD` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver

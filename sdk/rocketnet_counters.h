@@ -582,7 +582,16 @@
     X( RIO_COMMITS, EXPECTED, NONE ) \
         \
         /* A game packet start refused on a staged transport because its queue had no room left above the protocol reserve: the frames the next update may need for handshakes, keep-alives and disconnects (sdk/rocketnet_server_transport.cpp, RNSendReserve). REFUSAL: a resource exhaustion is a refusal. appended: indices are the contract. */ /** @brief ROCKETNET_COUNTER_SEND_RESERVE_REFUSED: Counts game packet starts refused because the send room was down to the protocol reserve. Unit: occurrences. Class: refusal; family: none. */ \
-    X( SEND_RESERVE_REFUSED, REFUSAL, NONE )
+    X( SEND_RESERVE_REFUSED, REFUSAL, NONE ) \
+        \
+        /* A server call refused because a main thread call and a game thread's send call ran at once, or two main thread calls did: the later one is refused and does nothing (sdk/rocketnet_server_transport.cpp). REFUSAL: the call did nothing. appended: indices are the contract. */ /** @brief ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP: Counts server calls refused because a main thread call and a game thread's send call ran at once (or two main thread calls did): the later one refused and did nothing. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MAIN_THREAD_CALL_OVERLAP, REFUSAL, NONE ) \
+        \
+        /* A server send call refused because another thread had sent to the same client since the last main thread call: between two main thread calls one thread sends to a client (sdk/rocketnet_server_transport.cpp). REFUSAL: the call did nothing. appended: indices are the contract. */ /** @brief ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS: Counts server send calls refused because another thread had sent to the same client since the last main thread call. Unit: occurrences. Class: refusal; family: none. */ \
+    X( CLIENT_SEND_TWO_THREADS, REFUSAL, NONE ) \
+        \
+        /* A game packet start refused on a staged transport, as SEND_RESERVE_REFUSED, while other game threads held frames they had claimed and not yet staged: frames the room still had, held for those threads' next packets (sdk/rocketnet_server_transport.cpp, RNSendReserve TailsNamed). Counted apart from SEND_RESERVE_REFUSED so a row shows whether those held frames ever cost a send. REFUSAL: a resource exhaustion is a refusal. appended: indices are the contract. */ /** @brief ROCKETNET_COUNTER_SEND_RESERVE_REFUSED_TAILS_HELD: Counts game packet starts refused at the protocol reserve while other game threads held claimed frames not yet staged; counted apart from SEND_RESERVE_REFUSED. Unit: occurrences. Class: refusal; family: none. */ \
+    X( SEND_RESERVE_REFUSED_TAILS_HELD, REFUSAL, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

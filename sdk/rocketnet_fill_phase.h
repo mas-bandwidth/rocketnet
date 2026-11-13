@@ -34,7 +34,7 @@
 //     writer for that reason.
 //
 // The check. A break of the contract is refused and counted in every build
-// (FILL_PHASE_OVERLAP, FILL_TWO_FILLERS) and asserts in a build with
+// (MAIN_THREAD_CALL_OVERLAP, CLIENT_SEND_TWO_THREADS) and asserts in a build with
 // ROCKETNET_ASSERTS. A refused fill call does nothing (start returns NULL,
 // finish 0, abort leaves the lease to the next reset); a refused main-thread
 // operation does nothing and returns. It keeps no thread-local state: a
@@ -132,8 +132,8 @@ struct alignas( 64 ) rocketnet_fill_phase_t
     std::atomic<uint64_t> main_owner;           // the thread inside a main operation, 0: none
     int main_depth;                             // written and read only by main_owner
     int num_clients;
-    uint64_t * overlap_counter;                 // FILL_PHASE_OVERLAP, NULL: not counted
-    uint64_t * two_fillers_counter;             // FILL_TWO_FILLERS, NULL: not counted
+    uint64_t * overlap_counter;                 // MAIN_THREAD_CALL_OVERLAP, NULL: not counted
+    uint64_t * two_fillers_counter;             // CLIENT_SEND_TWO_THREADS, NULL: not counted
     struct rocketnet_fill_phase_line_t lines[ROCKETNET_FILL_PHASE_FILL_LINES];
     struct rocketnet_fill_phase_client_t clients[ROCKETNET_MAX_CLIENTS];
 };
