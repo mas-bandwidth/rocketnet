@@ -127,7 +127,7 @@ required runs are:
   **CBMC** ([.github/workflows/cbmc.yml](../.github/workflows/cbmc.yml)),
   nightly: `MemorySanitizer` and `cbmc (arithmetic leaf proofs)`, dispatched
   on the release commit the same way. Release Check enforces a green `cbmc.yml`
-  run on the tag push (`msan.yml` is advisory; see below).
+  run on the tag push (`msan.yml` is not one it enforces; see below).
 - **nightly** ([.github/workflows/nightly.yml](../.github/workflows/nightly.yml)):
   `tsan (threaded transport) (main)` on the release commit. Run it with
   workflow_dispatch on `main` (`gh workflow run nightly.yml --ref main`) once
@@ -185,8 +185,9 @@ and its own evidence artifact, two cases at a time; at the case times measured
 so far, in run 41337755290 and a 213-second MCRNClientIoDecrypt run, a run in
 plan order takes about 89 hours, against 87 for its longest case alone) are
 watches, not
-release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
-job is `continue-on-error`. The release commit must also be the commit the tag
+release gates. The `msan` workflow (`MemorySanitizer`) is not one Release
+Check enforces; its run is red whenever its gate is red (the job is no longer
+`continue-on-error`). The release commit must also be the commit the tag
 points at, not a later merge.
 
 A pushed tag is never moved or reused.

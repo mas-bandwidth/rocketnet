@@ -39,11 +39,28 @@ FATAL_TEXT = (
 )
 
 
+# a use found by an interceptor: the sanitizer's own bcmp frame, binary-only,
+# above the frame that called it
+INTERCEPTED_TEXT = (
+    "==1==WARNING: MemorySanitizer: use-of-uninitialized-value\n"
+    "    #0 0x1000 in bcmp (/runner/work/rocketnet/build-msan/bin/test+0xa1150)"
+    " (BuildId: 16e1f8fc0c8d7e66)\n"
+    "    #1 0x2000 in unrelated_compare tools/fixture.cpp:7:5\n"
+    "    #2 0x3000 in test_unrelated_case() tools/fixture.cpp:9:5\n"
+    "\n"
+    "  Uninitialized value was created by a heap allocation\n"
+    "    #0 0x4000 in malloc (/runner/work/rocketnet/build-msan/bin/test+0x1)\n"
+    "SUMMARY: MemorySanitizer: use-of-uninitialized-value\n"
+)
+
+
 def warning_text(top):
     if top is None:
         return ""
     if top == "fatal":
         return FATAL_TEXT
+    if top == "intercepted":
+        return INTERCEPTED_TEXT
     return (
         "==1==WARNING: MemorySanitizer: use-of-uninitialized-value\n"
         "    #0 0x1000 in %s\n"
@@ -59,7 +76,7 @@ class RunMsanGateTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_gate(self, stdout, status, top):
+    def run_gate(self, stdout, status, top, known_top=KNOWN_TOP, keep_dir=None):
         binary = Path(self.tmp.name) / "fake-test"
         binary.write_text(
             FAKE_TEMPLATE
@@ -67,10 +84,11 @@ class RunMsanGateTest(unittest.TestCase):
         )
         binary.chmod(0o755)
         known = Path(self.tmp.name) / "known.txt"
-        known.write_text("# the fixture's known list\n%s\n" % KNOWN_TOP)
+        known.write_text("# the fixture's known list\n%s\n" % known_top)
         env = dict(os.environ)
         env["RUN_MSAN_TEST_BIN"] = str(binary)
         env["RUN_MSAN_KNOWN_FILE"] = str(known)
+        env["RUN_MSAN_KEEP_DIR"] = str(keep_dir or Path(self.tmp.name) / "kept")
         result = subprocess.run(
             ["bash", str(RUN_MSAN)],
             cwd=str(REPO_ROOT),
@@ -138,6 +156,29 @@ class RunMsanGateTest(unittest.TestCase):
             "ERROR: MemorySanitizer: requested allocation size",
             output,
         )
+
+    def test_interceptor_entry_does_not_pass_an_unrelated_finding(self):
+        # named by its top frame, every use through bcmp was one finding, and
+        # a known-list entry for the interceptor passed them all
+        code, output = self.run_gate("", 0, "intercepted", known_top="bcmp (bin/test)")
+        self.assertEqual(code, 1, output)
+        self.assertIn("findings not in", output)
+        self.assertIn("unrelated_compare tools/fixture.cpp:7:5", output)
+        self.assertIn("  case: test_unrelated_case", output)
+
+    def test_intercepted_finding_is_named_by_its_caller(self):
+        code, output = self.run_gate("", 0, "intercepted", known_top="unrelated_compare tools/fixture.cpp:7:5")
+        self.assertEqual(code, 0, output)
+        self.assertIn("(all known)", output)
+
+    def test_failing_run_keeps_its_logs(self):
+        keep = Path(self.tmp.name) / "kept"
+        code, output = self.run_gate("", 0, UNKNOWN_TOP, keep_dir=keep)
+        self.assertEqual(code, 1, output)
+        self.assertIn("MSan: the run's logs are kept in %s" % keep, output)
+        kept = sorted(p.name for p in keep.iterdir())
+        self.assertIn("msan.log", kept)
+        self.assertTrue(any(name.startswith("msan.") and name != "msan.log" for name in kept), kept)
 
     def test_clean_run_passes(self):
         code, output = self.run_gate("", 0, None)

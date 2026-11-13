@@ -17,8 +17,10 @@
 # there, a test crashes or exits non-zero, a fatal MemorySanitizer ERROR
 # appears in any process (its exit code is 0 here, so the suite reads that
 # case as passed), or the run stops without a test fail line. A finding is
-# the top frame of a MemorySanitizer warning. Its origin trace is printed
-# with it.
+# the first frame of a MemorySanitizer warning's stack that has a source
+# location, so an interceptor (bcmp, memcmp) never names one. Its origin
+# trace and the cases that reported it are printed with it, and a failing
+# run keeps its logs (RUN_MSAN_KEEP_DIR, default build-msan/msan-reports).
 #
 # The C++ standard library is the MSan-instrumented libc++ for the active
 # clang, /opt/msan-libcxx-<clang++ -dumpversion>, built by
@@ -122,6 +124,7 @@ set +e
 status=$?
 set -e
 
+set +e
 python3 - "$log" "$reports" "$known_file" "$status" "$PWD" << 'PY'
 import glob, os, re, sys
 
@@ -191,11 +194,20 @@ for text in texts:
         lines = part.splitlines()
         if not lines or "WARNING: MemorySanitizer:" not in lines[0]:
             continue
-        top = None
-        for line in lines:
-            if line.startswith("    #0 "):
-                top = frame(line)
-                break
+        # the finding is named by the first frame of the use's stack that
+        # has a source location. The frames above it are the sanitizer's own
+        # interceptors (bcmp, memcmp, strlen) and other code without line
+        # information: named by one of those, every use reached through it
+        # would be one finding, and one known-list entry would pass them all.
+        # A stack with no source location anywhere is named by its top frame.
+        stack = []
+        for line in lines[1:]:
+            if not line.startswith("    #"):
+                if stack:
+                    break
+                continue
+            stack.append(frame(line))
+        top = next((f for f in stack if re.search(r":\d+(?::\d+)?$", f)), stack[0] if stack else None)
         if not top:
             continue
         origin = []
@@ -213,7 +225,8 @@ for text in texts:
                 origin.append(line.strip())
             if len(origin) >= 8:
                 break
-        warnings.append((top, origin))
+        case = re.search(r"\bin (test_[a-z0-9_]+)\b", part)
+        warnings.append((top, origin, case.group(1) if case else None))
 
 if not warnings:
     if status != 0:
@@ -236,11 +249,15 @@ if os.path.exists(known_file):
             known.add(line)
 
 seen = {}
+cases = {}
 order = []
-for top, origin in warnings:
+for top, origin, case in warnings:
     if top not in seen:
         seen[top] = origin
+        cases[top] = []
         order.append(top)
+    if case and case not in cases[top]:
+        cases[top].append(case)
 
 print("MSan: findings (each with its origin trace):")
 unmatched = []
@@ -248,6 +265,8 @@ for top in order:
     print(top)
     for line in seen[top]:
         print("  origin: " + line)
+    for case in cases[top]:
+        print("  case: " + case)
     if top not in known:
         unmatched.append(top)
 
@@ -270,3 +289,18 @@ if unmatched or failed or status_failed:
 print("MSan: findings listed in %s (all known)" % known_file)
 sys.exit(0)
 PY
+verdict=$?
+set -e
+
+# a failing verdict keeps the run's log and the per-process MemorySanitizer
+# logs, each warning's whole stack and origin, which the verdict above prints
+# only in part; RUN_MSAN_KEEP_DIR names where (default build-msan/msan-reports)
+if [ "$verdict" -ne 0 ]; then
+    keep=${RUN_MSAN_KEEP_DIR:-$abs_build/msan-reports}
+    rm -rf "$keep"
+    mkdir -p "$keep"
+    cp "$log" "$keep/" 2> /dev/null || true
+    cp "$reports"/msan.* "$keep/" 2> /dev/null || true
+    echo "MSan: the run's logs are kept in $keep"
+fi
+exit "$verdict"

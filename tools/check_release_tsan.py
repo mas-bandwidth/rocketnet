@@ -7,7 +7,7 @@ commit before a v* tag is pushed:
   - `Nightly CI` (.github/workflows/nightly-ci.yml, ci.yml with full: true)
   - `CBMC` (.github/workflows/cbmc.yml, `cbmc (arithmetic leaf proofs)`)
   - `TLC records` (.github/workflows/tlc.yml, `Model records are current`)
-(.github/workflows/msan.yml is advisory: its job is continue-on-error.)
+(.github/workflows/msan.yml is not enforced here; its run is red when its gate is.)
 
 Release Check runs this script on a v* tag push. It asks the GitHub Actions API
 for the workflow runs whose head commit is the tagged commit:
