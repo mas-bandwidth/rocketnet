@@ -146,12 +146,21 @@ Results (amd-3, pinned jar 936a2620..., tlacheck at nova-tools 0c97d595, 2 worke
 
 | cfg | expected | result | states (distinct) |
 |---|---|---|---|
-| MCRNUringQueueWorker.cfg | pass | pass | 1,449,925 (272,871), 3.8 s |
-| MCRNUringQueueWorkerLive.cfg | pass (ShutdownDrains, StopFinishes, Drains) | pass | 1,449,925 (272,871), 30.2 s |
-| MCRNUringQueueWorkerBrokenExitEarly.cfg | ExitDrained violated: the witness "exit before drain" | violated | 130 (70) |
-| MCRNUringQueueWorkerBrokenRetryUnbounded.cfg | StopFinishes violated: a socket that stays full is retried forever | violated (temporal) | 1,371,961 (264,431) |
-| MCRNUringQueueWorkerBrokenWakeSkip.cfg | StopFinishes violated: the worker sleeps with no wake read armed | violated (temporal) | 1,491,874 (283,641) |
-| MCRNUringQueueWorkerBrokenShutdownNone.cfg | ShutdownDrains violated: the witness "stop never completes", no begin_shutdown (the transport before the fix) | violated (temporal) | 1,509,104 (282,321) |
+| MCRNUringQueueWorker.cfg | pass | pass | 13,109,144 (2,197,174), 18.3 s |
+| MCRNUringQueueWorkerLive.cfg | pass (ShutdownDrains, StopFinishes, Drains) | pass | 1,125,427 (199,180), 42.5 s |
+| MCRNUringQueueWorkerLiveRecv.cfg | pass (StopFinishes, RecvRearms) | pass | 1,179,230 (215,238), 30.5 s |
+| MCRNUringQueueWorkerBrokenExitEarly.cfg | ExitDrained violated: the witness "exit before drain" | violated | 168 (87) |
+| MCRNUringQueueWorkerBrokenRetryUnbounded.cfg | StopFinishes violated: a socket that stays full is retried forever | violated (temporal) | 1,053,469 (190,580) |
+| MCRNUringQueueWorkerBrokenWakeSkip.cfg | StopFinishes violated: the worker sleeps with no wake read armed | violated (temporal) | 1,155,568 (206,360) |
+| MCRNUringQueueWorkerBrokenShutdownNone.cfg | ShutdownDrains violated: the witness "stop never completes", no begin_shutdown (the transport before the fix) | violated (temporal) | 1,228,476 (214,426) |
+| MCRNUringQueueWorkerBrokenRecvSpin.cfg | RecvNoSpin violated: a refused receive re-armed at once every time (RecvRule "immediate", the code before the fix) | violated | 6,282 (1,864) |
+
+Each witness was checked by hand against its broken rule. RetryUnbounded: after
+the stop, submit, the kernel answers full, the timer fires, submit again, for
+ever. WakeSkip: the worker sleeps with no wake read, main stops, and nothing
+wakes it. ShutdownNone: with no begin, the held bank on a full socket is
+retried for ever and never abandoned. RecvSpin: two refused ends, each armed
+again at once with no timer and no datagram between.
 
 Status: the model, its trace module and the code are written; the trace check binds
 the code to the model (tools/tla_trace_check.py, layer queue-worker). RUNS.tsv holds

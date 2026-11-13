@@ -37,15 +37,16 @@ the code to the model (tools/tla_trace_check.py, layer queue-send).
 - 3 flushes, so every bank is reused (2 flushes for the liveness cfgs).
 - 1 eagain.
 
-## Results (bench-nyc-5, pinned jar 936a2620..., TLC 2.19, 2 workers, 2026-11-13)
+## Results (amd-3, pinned jar 936a2620..., tlacheck at nova-tools 0c97d595, 2 workers, 2026-11-13)
 
 | cfg | expected | result | states (distinct) |
 |---|---|---|---|
-| MCRNUringQueueSend.cfg | pass | pass | 10,820,982 (2,147,440), 54.5 s, under MCSafetyView |
-| MCRNUringQueueSendLive.cfg | pass (Drains) | pass | 3,225,151 (671,550), 59.7 s |
-| MCRNUringQueueSendBrokenRetireAtSubmit.cfg | NoWriteWhileKernelOwned | violated | 164,961 (58,664) |
-| MCRNUringQueueSendBrokenEagainLost.cfg | Accounted | violated | 2,871 (1,531) |
-| MCRNUringQueueSendBrokenEagainStuck.cfg | Drains | violated (stuttering) | 3,193,565 (661,518) |
+| MCRNUringQueueSend.cfg | pass | pass | 24,602,144 (4,336,670), 62.4 s, under MCSafetyView |
+| MCRNUringQueueSendLive.cfg | pass (Drains) | pass | 8,039,760 (1,475,334), 70.9 s; BUDGETS.tsv declares 200 s (84.3 s on bench-xdp-8) |
+| MCRNUringQueueSendBrokenRetireAtSubmit.cfg | NoWriteWhileKernelOwned | violated | 299,007 (95,202) |
+| MCRNUringQueueSendBrokenEagainLost.cfg | Accounted | violated | 4,705 (2,262) |
+| MCRNUringQueueSendBrokenEagainStuck.cfg | Drains | violated (stuttering) | 3,193,565 (661,518), LockRule "none" |
+| MCRNUringQueueSendBrokenMainWaits.cfg | MainNeverWaits | violated | 67 (42) |
 | MCTraceRNUringQueueSendSelf.cfg | pass | pass | 9 (8): all 8 records accepted |
 | MCTraceRNUringQueueSendSelfBrokenRetire.cfg | TraceConsistent | violated: ti = 5, record 6 rejected | 6 (6) |
 
@@ -75,6 +76,8 @@ Each was checked by hand against the broken rule.
   the slots back but leaves the run pending. The resubmitted run is completed ok and
   reaped, but pending stays at 1. The bank never retires, and the behaviour stutters
   with the worker holding it.
+- **MainWaits.** Stage, the worker takes the handoff mutex to claim, and main's
+  publish blocks on it (LockRule "wait"): MainNeverWaits fails at state 4.
 - **SelfBrokenRetire.** Records 1-5 match: init, stage, publish, worker claim, submit.
   Record 6 retires the bank while its run is pending, which no model step does, so
   TraceReject fires with ti = 5.

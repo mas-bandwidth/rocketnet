@@ -211,10 +211,11 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
 // count of refused ends again; a multishot that ends refused (a result
 // other than -ECANCELED with no IORING_CQE_F_MORE and no datagram: no buffer
 // free, a kernel that refuses the receive, or an end with nothing, 0, since
-// a multishot RECVMSG result holds at least its header) counts one, and from the second in a row its next arm waits for
-// the receive's retry timer (ArmRecvTimer). The first is armed again at once:
-// a burst that took every buffer gives them back as its completions are
-// reaped. The receive module counts the refusal itself.
+// a multishot RECVMSG result holds at least its header) counts one, and
+// from the second in a row its next arm waits for the receive's retry timer
+// (ArmRecvTimer). The first is armed again at once: a burst that took every
+// buffer gives them back as its completions are reaped. The receive module
+// counts the refusal itself.
 
 static void rocketnet_uring_queue_worker_recv_cqe( struct rocketnet_uring_queue_worker_t * worker, int32_t res, uint32_t flags )
 {
