@@ -66,7 +66,7 @@ struct rocketnet_counters_t;
 // process view of a built-in transport, io_uring's receive bank
 // (rocketnet_server_uring_bank_packets), never smaller than the receive
 // budget the other transports and the buffered path take
-// (rocketnet_server_receive_packets_per_update, 16 x sized clients). At most
+// (rocketnet_server_receive_packets_per_update, 64 x sized clients). At most
 // that many bits are set in one update, so an honest source's bit is already
 // set -- and it is refused for that update -- with probability at most 1 in
 // FACTOR, and only when a flood fills the whole bound; proportionally less

@@ -357,7 +357,7 @@ int rocketnet_loopback_server_queue_packets( int max_clients )
 {
     // the server endpoint's queue, from the plan: every datagram one server
     // update may read, ROCKETNET_RECEIVE_PACKETS_PER_CLIENT for each of the
-    // hub's clients, rounded up to a power of two (16384 at 1000 clients),
+X
     // and never less than a client endpoint's. A whole population's disconnect
     // bursts, ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS from each client, fit
     // beside one update's ordinary traffic, and one update reads them all.
