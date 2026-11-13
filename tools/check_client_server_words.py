@@ -77,7 +77,7 @@ SPANS_ALLOWED = (
 # The same, for the second banned word.
 SPANS_ALLOWED2 = (
     (re.compile(r"\bCreateToolhelp32" + WORD2.capitalize() + r"\b"),
-     ("tests/load/load.c", "tests/load/load_census.h", "tests/process_resources.h"),
+     ("tests/load/harden_load.cpp", "tests/load/load.c", "tests/load/load_census.h", "tests/process_resources.h"),
      "Windows API name: CreateToolhelp32" + WORD2.capitalize() + " is the "
      "operating system's name, not this repository's word"),
     (re.compile(r"\bhost_" + WORD2 + r"\b"),
