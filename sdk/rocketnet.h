@@ -1046,19 +1046,25 @@ struct rocketnet_client_t;
 /// rocketnet_server_start_message, rocketnet_server_finish_client_message
 /// and rocketnet_server_abort_client_message. The main thread may make them
 /// too. Every other server call is a main thread call. A thread here is an
-/// operating system thread: a server that several threads share under a lock
-/// is bound by these rules as well. The rules:
+/// operating system thread. The rules:
 ///
 /// - The game threads have returned from their calls before the main thread
 ///   makes its next call, and the main thread has returned from its call
 ///   before a game thread calls again. Join the game threads' work, or pass
 ///   a barrier, in both directions.
 /// - Between one main thread call and the next, every one of the three calls
-///   for one client index comes from one thread, so a message is finished or
-///   aborted by the thread that started it. Different clients may be sent to
+///   for one client index comes from one thread (this rule is in force from
+///   the server's first rocketnet_server_finish_client_message or
+///   rocketnet_server_abort_client_message on; a server that never makes
+///   those calls is used one thread at a time, and its threads may send to
+///   one client in turn), so a message is finished or
+///   aborted by the thread that started it. (rocketnet_server_finish_message
+///   and rocketnet_server_abort_message, the calls of a server used one
+///   thread at a time, may come from another thread: they count as a main
+///   thread call first.) Different clients may be sent to
 ///   from different threads at the same time. The thread that sends to a
 ///   client may change after a main thread call that is checked (below);
-///   packets two threads write to one client between two
+///   messages two threads write to one client between two
 ///   rocketnet_server_send_packets calls may then leave in either order.
 ///
 /// The check. The three calls, and the main thread calls that change the
@@ -1070,7 +1076,9 @@ struct rocketnet_client_t;
 /// asserts in a debug build. A refused start returns NULL and a refused
 /// finish 0; a refused abort leaves its message for the next update to
 /// cancel; a refused main thread call returns as if it had found nothing to
-/// do, and a refused stop leaves the server running. The calls that only
+/// do (rocketnet_server_set_send_kbps returns
+/// ROCKETNET_STATUS_INVALID_ARGUMENT), and a refused stop leaves the server
+/// running. The calls that only
 /// read the server are main thread calls too and are not checked: one made
 /// while game threads send is not refused, counted or safe. Nor is
 /// rocketnet_server_destroy: join the game threads before it.
@@ -1242,11 +1250,13 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 ///   another allocator.
 /// - Update receives a non-finite time or a time that goes backwards, with or
 ///   without a connection. The last good time is kept, and the call logs.
-/// - An in-place start message stays open at update or send_packets: an
-///   unreliable message of at most ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES that
-///   start wrote in place for sending. It is aborted there. A start that
-///   took the queue instead stays pending; which path start took is not
-///   visible, so finish or abort every start before update or send_packets.
+/// - A started message stays open at update or send_packets. On the server
+///   every open message is aborted there. On the client an in-place start is
+///   aborted there (an unreliable message of at most
+///   ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES that start wrote in place for
+///   sending) and a start that took the queue instead stays pending; which
+///   path start took is not visible. Finish or abort every start before
+///   update or send_packets.
 /// - A message is still in the receive queue at update. That connection ends
 ///   with MESSAGE_NOT_RECEIVED.
 /// - Connect runs from a state other than DISCONNECTED or a connection-ended
@@ -1924,8 +1934,9 @@ struct rocketnet_server_config_t
 /// Pass the same game clock to every update, in seconds.
 /// By default run each frame on one thread. Update first, receive until NULL,
 /// simulate, write messages with start and finish, then send packets. A
-/// server may have its messages written by several game threads between its
-/// update and its send packets; see rocketnet_server_t.
+/// server may have its messages written by several game threads between
+/// rocketnet_server_update and rocketnet_server_send_packets; see
+/// rocketnet_server_t.
 ///
 /// Reliable messages wait for send budget. Unreliable messages over budget are
 /// dropped and counted in messages_dropped_over_budget.
@@ -3053,19 +3064,19 @@ ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * serve
 
 /// Sends each client's queued messages in packets under its send budget.
 ///
-/// The gso, io_uring, xdp, iocp and rio server transports hold packets for
-/// the network in a send room of fixed size. Part of that room is kept each
-/// update for the library's own packets: connection replies, keep-alives and
+/// The gso, io_uring, xdp, iocp and rio server transports hold what they send
+/// in a send room of fixed size. Part of that room is kept each update for
+/// the library's own traffic: connection replies, keep-alives and
 /// disconnects. The part kept is the config's handshakes_per_update plus
-/// disconnect_packets_per_update plus one packet a client slot (1080 packets
+/// disconnect_packets_per_update plus one place a client slot (1080 places
 /// at the defaults with 1000 clients), and never more than half the room.
 /// Messages use the rest, and a connected client that has acknowledged a
-/// keep-alive is given one packet an update out of the kept part. A message
+/// keep-alive is given one place an update out of the kept part. A message
 /// that would take more is not lost by that: it waits in its queue, as a
 /// message does when the transport is full, and goes out in a later call
 /// once the transport has sent what it holds. The counter
-/// SEND_RESERVE_REFUSED counts the packets held back this way. Before this
-/// rule a packet was held back only when the whole room was spent, which
+/// SEND_RESERVE_REFUSED counts the sends held back this way. Before this
+/// rule a send was held back only when the whole room was spent, which
 /// SEND_RING_FULL counted; SEND_RING_FULL still counts a send room that is
 /// full. The portable and loopback transports keep nothing back.
 ///
@@ -3301,7 +3312,10 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// rocketnet_server_abort_message). Game threads that each hold a message
 /// open on their own clients finish and abort by client index
 /// (rocketnet_server_finish_client_message,
-/// rocketnet_server_abort_client_message).
+/// rocketnet_server_abort_client_message). The returned memory is the
+/// caller's until finish or abort, and no later than the next
+/// rocketnet_server_update or rocketnet_server_send_packets, which aborts a
+/// message still open.
 /// To broadcast, send to each connected client index.
 ///
 /// An index at or above max_clients is refused.
@@ -3338,12 +3352,14 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 ///
 /// Needs a message opened by rocketnet_server_start_message on a running
 /// server; otherwise it asserts in a debug build and returns 0 in a release
-/// build. It names no client: it finishes the message the calling thread
-/// opened last, and only while that is the one message open on the whole
-/// server. With more than one open, or with that one already closed, it
-/// asserts in a debug build and returns 0 in a release build. Thread: not
-/// thread-safe; the caller owns the server one thread at a time. Game
-/// threads use rocketnet_server_finish_client_message.
+/// build. It names no client: it finishes the one message open on the whole
+/// server, whichever thread started it. With more than one open it cannot
+/// tell which is meant: that counts as API misuse, asserts in a debug build
+/// and returns 0 in a release build. Thread: not thread-safe; the caller owns
+/// the server one thread at a time. When the message was started on another
+/// thread the call counts as a main thread call first (see
+/// rocketnet_server_t), so no other thread may be inside a server call.
+/// Game threads use rocketnet_server_finish_client_message.
 ///
 /// @param server The server. NULL counts as API misuse and returns 0.
 /// @param bytes_written The bytes written into the open message.
@@ -3353,11 +3369,15 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, int bytes_written );
 
 /// Cancels the open message and releases its memory.
-/// Does nothing if no message is open, if more than one is, or if the one
-/// open is not the message the calling thread opened last.
+/// It names no client: it cancels the one message open on the whole server,
+/// whichever thread started it. Does nothing if no message is open; with
+/// more than one open it cannot tell which is meant, counts as API misuse
+/// and does nothing.
 ///
 /// Callable running or stopped. Thread: not thread-safe; the caller owns the
-/// server one thread at a time. Game threads use
+/// server one thread at a time. When the message was started on another
+/// thread the call counts as a main thread call first, as
+/// rocketnet_server_finish_message. Game threads use
 /// rocketnet_server_abort_client_message.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.

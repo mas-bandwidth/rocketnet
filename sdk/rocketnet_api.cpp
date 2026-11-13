@@ -3605,16 +3605,60 @@ static int rn_server_pending_slot( const struct rocketnet_server_t * server )
     }
 
     const struct rn_message_object_t * object = &server->running->object;
-    if ( rn_message_open_count( object ) != 1 )
+    const int64_t open = rn_message_open_count( object );
+    if ( open != 1 )
     {
+        if ( open > 1 )
+        {
+            rocketnet_api_misuse_record();              // more than one open: which is meant cannot be told
+        }
         return -1;
     }
 
-    return rn_message_open_last( object );
+    // the one open message, whichever thread started it: the calling
+    // thread's last start when that is it, else the one connection that
+    // holds a start (another thread started it, or this thread's last start
+    // was closed since)
+
+    const int last = rn_message_open_last( object );
+    if ( last >= 0 && last < object->num_connections && object->connections[last].open.pending )
+    {
+        return last;
+    }
+    for ( int index = 0; index < object->num_connections; ++index )
+    {
+        if ( object->connections[index].open.pending )
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+// The one open message was started by another thread: under the default
+// contract, one thread at a time, that is allowed, so the claim the starting
+// thread holds on the client is ended first by one empty main-thread
+// operation (sdk/rocketnet_fill_phase.h, hand_over), which is refused, as any
+// main-thread operation is, while another call is running.
+static bool rn_server_hand_over_open( struct rocketnet_server_t * server, int slot )
+{
+    struct rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rn_server_transport( server ) );
+    return !phase || rocketnet_fill_phase_hand_over( phase, slot );
 }
 
 // finish and abort of the message open on one client: any number of fill
-// threads, each on its own clients (sdk/rocketnet_fill_phase.h)
+// threads, each on its own clients (sdk/rocketnet_fill_phase.h). The first
+// of these calls is the game saying it sends from game threads: from it on,
+// one thread a client between main-thread calls is enforced.
+
+static void rn_server_arm_one_thread_a_client( struct rocketnet_server_t * server )
+{
+    struct rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rn_server_transport( server ) );
+    if ( phase )
+    {
+        rocketnet_fill_phase_arm_one_filler( phase, true );
+    }
+}
 
 uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * server, int client_index, int bytes_written )
 {
@@ -3635,6 +3679,7 @@ uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * ser
         return 0;
     }
 
+    rn_server_arm_one_thread_a_client( server );
     return rocketnet_message_server_finish( rn_server( server ), client_index, bytes_written );
 }
 
@@ -3656,6 +3701,7 @@ void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, 
         return;
     }
 
+    rn_server_arm_one_thread_a_client( server );
     rocketnet_message_server_abort( rn_server( server ), client_index );
 }
 
@@ -3670,6 +3716,10 @@ uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, in
     if ( slot < 0 )
     {
         rocketnet_assert( slot >= 0 );
+        return 0;
+    }
+    if ( !rn_server_hand_over_open( server, slot ) )
+    {
         return 0;
     }
 
@@ -3714,6 +3764,10 @@ void rocketnet_server_abort_message( struct rocketnet_server_t * server )
 
     const int slot = rn_server_pending_slot( server );
     if ( slot < 0 )
+    {
+        return;
+    }
+    if ( !rn_server_hand_over_open( server, slot ) )
     {
         return;
     }
