@@ -483,7 +483,7 @@ static void rocketnet_rotation_spend_handshake_budget( struct rocketnet_rotation
     }
 
     rocketnet_rotation_set_client_address( test, budget );
-    rocketnet_rotation_build_request_with_key( test, request, 0x10000ULL + (uint64_t) budget, test->server.cookie_key );
+    rocketnet_rotation_build_request_with_key( test, request, UINT64_C( 0x10000 ) + (uint64_t) budget, test->server.cookie_key );
     rocketnet_unit_check( rocketnet_rotation_process_from_client_address( test, request ) == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
     rocketnet_unit_check( test->counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
 }
@@ -500,7 +500,7 @@ static void test_handshake_budget_reopens_after_update()
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_rotation_set_client_address( &test, budget + 1 );
-    rocketnet_rotation_build_request_with_key( &test, request, 0x10000ULL + (uint64_t) ( budget + 1 ), test.server.cookie_key );
+    rocketnet_rotation_build_request_with_key( &test, request, UINT64_C( 0x10000 ) + (uint64_t) ( budget + 1 ), test.server.cookie_key );
     rocketnet_unit_check( rocketnet_rotation_process_from_client_address( &test, request ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
 
