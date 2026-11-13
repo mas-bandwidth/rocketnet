@@ -1100,6 +1100,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rocketnet_server_rio_t * rio = new ( storage ) rocketnet_server_rio_t();
     rio->context = context;
     rio->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
+    // the address the caller asked for: the bound port is written into
+    // bind_address once the socket is bound, and a create that fails after
+    // that hands the caller back what it asked for, so the next transport of
+    // the ladder never inherits this one's ephemeral port
+    const rocketnet_address_t requested_address = *bind_address;
 
     SOCKADDR_INET address;
     int address_bytes = 0;
@@ -1113,6 +1118,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     int granted_length = sizeof( granted_receive_bytes );
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
+    int bind_result = 0;
     RIO_NOTIFICATION_COMPLETION notification;
     memset( &notification, 0, sizeof( notification ) );
 
@@ -1215,8 +1221,19 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     // path skips the statuses
 
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
-    if ( bind( rio->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
+    bind_result = bind( rio->socket, (sockaddr *) &address, address_bytes );
+#if ROCKETNET_DEV
+    if ( fail_stage == 8 )
     {
+        bind_result = SOCKET_ERROR;
+        WSASetLastError( WSAENOBUFS );
+    }
+#endif // #if ROCKETNET_DEV
+    if ( bind_result == SOCKET_ERROR )
+    {
+        // a held port or an address this host cannot bind; a refusal for want
+        // of buffers (WSAENOBUFS) reads OUT_OF_MEMORY, which ends the ladder
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         goto failed;
     }
     address_bytes = sizeof( address );
@@ -1383,6 +1400,7 @@ failed:
 #else
     rocketnet_warn( "rio transport create failed (%s, Win32 %lu)", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text, GetLastError() );
 #endif
+    *bind_address = requested_address;
     // Partial construction remains private to this synchronous create call.
     if ( !rocketnet_rio_create_failed_drain( rio ) )
     {
