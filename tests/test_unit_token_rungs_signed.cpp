@@ -65,7 +65,9 @@ REGISTER_UNIT_TEST( test_token_rung_signed_pad_signed_tokens );
 // whole for that other server (its block sealed to it), and a token that
 // names the other server but whose block is sealed to this one, so it would
 // open here. Both are refused at the key rung, before the cookie gate's
-// asymmetric work, and neither reaches the signature.
+// work, and neither reaches the handshake work budget, the signature or the
+// sealed block's open (the work is read in a development build; the budget
+// in every build).
 
 static void test_token_rung_server_key_signed_tokens()
 {
@@ -81,11 +83,13 @@ static void test_token_rung_server_key_signed_tokens()
     signed_token_spec_default( &spec, 3 );
     memcpy( spec.signed_fields.server_public_key, other_public, 32 );
     signed_token_expect_refused( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY );
+    signed_token_expect_refused_unworked( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY );
 
     signed_token_spec_default( &spec, 3 );
     memcpy( spec.signed_fields.server_public_key, other_public, 32 );
     spec.seal_key = rocketnet_test_server_public_key;
     signed_token_expect_refused( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY );
+    signed_token_expect_refused_unworked( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY );
 }
 
 REGISTER_UNIT_TEST( test_token_rung_server_key_signed_tokens );

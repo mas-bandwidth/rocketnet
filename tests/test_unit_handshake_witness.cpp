@@ -16,8 +16,10 @@
 //       them. The four failure modes are denial and the three handshake
 //       timeouts.
 //   F8  TerminalAbsorbing (ClientConnection): a terminal state leaves only
-//       by connect (to 1) or by disconnect (to 0). disconnect() from a
-//       terminal state returns the client to DISCONNECTED.
+//       by connect (to 1) or by disconnect (to 0). Updates past every
+//       deadline, a cookie echoing the salt and a keep-alive under the
+//       client's own key leave it where it is; disconnect() from a terminal
+//       state returns the client to DISCONNECTED.
 //   One client id, one live connection (ServerConnection F9, History
 //       "none"): two handshakes, each with its own token for one client id;
 //       the client-id check at the response refuses the second while the
@@ -545,6 +547,75 @@ static int rocketnet_handshake_disconnect_returns_disconnected( struct rocketnet
     return client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
 }
 
+// the absorbing half of F8: a client in a terminal state stays in it through
+// updates long past every deadline, sending nothing (the state guards at the
+// top of rocketnet_client_check_deadlines and rocketnet_client_protocol_update),
+// and through the two packets that move a live attempt: a cookie echoing the
+// attempt's salt (it advances requesting cookie) and a keep-alive sealed under
+// the client's own session key (it connects sending connection response).
+// Each packet is refused at its state rung and nothing else moves.
+
+static int rocketnet_handshake_terminal_absorbs( struct rocketnet_client_protocol_t * client,
+                                                 const struct rocketnet_counters_t * counters )
+{
+    const int terminal_state = client->state;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    const double update_times[3] = { 120.0, 1000.0, 100000.0 };
+    for ( int i = 0; i < 3; i++ )
+    {
+        int packet_bytes = -1;
+        rocketnet_client_protocol_update( client, update_times[i], packet, &packet_bytes );
+        if ( client->state != terminal_state || packet_bytes != 0 )
+        {
+            return 0;
+        }
+    }
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+
+    uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
+    const uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES] = { 0 };
+    rocketnet_write_connection_cookie_packet( cookie, client->packet_filter, client->connection_salt,
+                                              ROCKETNET_TEST_CREATE_TS + 3, cookie_mac );
+    const uint64_t cookie_wrong_state = counters->values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE];
+    const uint64_t cookie_stored = counters->values[ROCKETNET_COUNTER_CLIENT_COOKIE_STORED];
+    rocketnet_client_protocol_process_packet( client, cookie, (int) sizeof( cookie ), 100000.0, payload, (int) sizeof( payload ), &payload_bytes );
+    if ( client->state != terminal_state ||
+         counters->values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE] != cookie_wrong_state + 1 ||
+         counters->values[ROCKETNET_COUNTER_CLIENT_COOKIE_STORED] != cookie_stored )
+    {
+        return 0;
+    }
+
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 8];
+    memset( plaintext, 0, sizeof( plaintext ) );
+    uint8_t * p = plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES;
+    rocketnet_write_uint32( &p, 0 );
+    rocketnet_write_uint32( &p, 4 );
+    uint8_t keep_alive[ROCKETNET_RECEIVE_CEILING];
+    const int keep_alive_bytes = rocketnet_write_sealed_packet( keep_alive, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, client->packet_filter, 1,
+                                                                NULL, plaintext, (int) sizeof( plaintext ),
+                                                                client->signed_fields.protocol_id, client->connection_salt,
+                                                                NULL, client->keys.session_server_to_client );
+    if ( keep_alive_bytes <= 0 )
+    {
+        return 0;
+    }
+    const uint64_t keep_alive_wrong_state = counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE];
+    const uint64_t keep_alive_accepted = counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED];
+    rocketnet_client_protocol_process_packet( client, keep_alive, keep_alive_bytes, 100000.0, payload, (int) sizeof( payload ), &payload_bytes );
+    if ( client->state != terminal_state ||
+         counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE] != keep_alive_wrong_state + 1 ||
+         counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED] != keep_alive_accepted )
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
 // ---------------------------------------------------------------------------
 // F4, EphemeralErasedOutsideHandshake (ClientConnection.tla). a denial or a
 // handshake timeout is set_state of a state <= DISCONNECTED, which zeroes
@@ -580,7 +651,8 @@ static void test_client_ephemeral_erased_outside_handshake()
 
 // ---------------------------------------------------------------------------
 // F8, TerminalAbsorbing (ClientConnection.tla). a terminal state leaves
-// only by connect or by disconnect. disconnect() from each terminal state
+// only by connect or by disconnect. each terminal state absorbs updates and
+// packets (rocketnet_handshake_terminal_absorbs), and disconnect() from it
 // returns DISCONNECTED.
 // ---------------------------------------------------------------------------
 
@@ -596,6 +668,7 @@ static void test_disconnect_absorbs_terminal_state()
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED,                 // -1
     };
 
+    int absorbed = 0;
     int returned = 0;
 
     for ( int i = 0; i < 7; i++ )
@@ -603,6 +676,10 @@ static void test_disconnect_absorbs_terminal_state()
         struct rocketnet_client_protocol_t client;
         struct rocketnet_counters_t counters;
         rocketnet_handshake_prepare_terminal( &client, &counters, terminal_states[i] );
+        if ( rocketnet_handshake_terminal_absorbs( &client, &counters ) )
+        {
+            absorbed++;
+        }
         if ( rocketnet_handshake_disconnect_returns_disconnected( &client ) )
         {
             returned++;
@@ -610,6 +687,7 @@ static void test_disconnect_absorbs_terminal_state()
         rocketnet_counters_assert_conserved( &counters );
     }
 
+    rocketnet_unit_check( absorbed == 7 );
     rocketnet_unit_check( returned == 7 );
 }
 

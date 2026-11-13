@@ -9,7 +9,10 @@
 //
 // The appendix has no known-answer vector block, so the twin table stays
 // empty and the walk still accepts that. The checks below are the note and
-// those properties: a broken constant or rule fails this case.
+// those properties. Most pin a constant, a counter's class or a config field,
+// and each such label says so; where a rule runs in memory (the key
+// derivation, config validation and the environment, transport order parsing,
+// the readout publish) it is run.
 
 #include "test_unit_standard.h"
 #include "test_env_source.h"
@@ -171,7 +174,8 @@ static void test_standard_transport_appendices_vectors()
     rocketnet_unit_check( sizeof( ( (struct rocketnet_signed_connect_data_t *) 0 )->ipv6_address ) == 18 );
     rocketnet_unit_check( sizeof( ( (struct rocketnet_signed_connect_data_t *) 0 )->server_public_key ) == 32 );
 
-    // t12. Token binding: a token already in use is refused. One live connection.
+    // t12. Token binding: the refusal of a token already in use is a refusal-class
+    // counter. The constant only; the binding itself is run in test_unit_token_churn.cpp.
     rocketnet_unit_check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 
     // t7. Packet keys: token keys only key a derivation. Handshake keys differ from them.
@@ -234,7 +238,8 @@ static void test_standard_transport_appendices_vectors()
         rocketnet_unit_check( packet_bytes[i] >= ROCKETNET_PREFILTER_BYTES );
     }
 
-    // t13. Payload to an unconfirmed client: no keep-alive prefix. The challenge is its own packet.
+    // t13. Payload to an unconfirmed client: the payload, keep-alive and challenge are
+    // distinct types, and a payload's floor is below a keep-alive's. The constants only.
     rocketnet_unit_check( ROCKETNET_CONNECTION_PAYLOAD_PACKET != ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
     rocketnet_unit_check( ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES < ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
     rocketnet_unit_check( ROCKETNET_CONNECTION_CHALLENGE_PACKET != ROCKETNET_CONNECTION_PAYLOAD_PACKET );
@@ -279,6 +284,11 @@ static void test_standard_transport_appendices_vectors()
 
     server_config_set_int( &server_config, timeout, 0 );
     rocketnet_unit_check( !rocketnet_config_validate( "server", &server_config, fields, num_fields ) );
+
+    // not clamped: a value past the maximum is refused and left as given
+    server_config_set_int( &server_config, timeout, (int) timeout->max_value + 1 );
+    rocketnet_unit_check( !rocketnet_config_validate( "server", &server_config, fields, num_fields ) );
+    rocketnet_unit_check( server_config_int( &server_config, timeout ) == (int) timeout->max_value + 1 );
 
     // tc. Transport selection: auto is the available order without pin-only transports.
     // An explicit list keeps its order and appends nothing. One applicable name is a pin.
@@ -350,13 +360,15 @@ static void test_standard_transport_appendices_vectors()
     rocketnet_unit_check( rocketnet_counter_class( ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     rocketnet_unit_check( rocketnet_counter_class( ROCKETNET_COUNTER_XDP_KERNEL_PASSED_IPV6_EXTENSION ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
 
-    // tc. Check placement: userspace still refuses a short prefilter when the kernel does too.
+    // tc. Check placement: userspace's short-prefilter refusal and the kernel's are two
+    // distinct refusal-class counters. The constants only.
     rocketnet_unit_check( rocketnet_counter_class( ROCKETNET_COUNTER_PREFILTER_TOO_SHORT ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     rocketnet_unit_check( rocketnet_counter_class( ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     rocketnet_unit_check( ROCKETNET_COUNTER_PREFILTER_TOO_SHORT != ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL );
 
-    // tc. Configuration surface: the env name is derived, an unparsable value is refused, and it is not clamped.
-    // Covered with the timeout field above (default, then struct, then environment).
+    // tc. Configuration surface: the env name is derived, an unparsable value is refused, and a
+    // value out of range is refused, not clamped. Run with the timeout field above (default,
+    // then struct, then environment).
 
     // tc. Counters per execution context: a failed readout keeps the last total, and a good readout sums contexts.
     uint64_t last[ROCKETNET_SERVER_XDP_NUM_COUNTERS];

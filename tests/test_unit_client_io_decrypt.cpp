@@ -348,12 +348,13 @@ static void test_client_io_decrypt_verdicts_counted_in_order()
     check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN] == 1 );
     check( f.client.integrity_failures == 1 );
 
-    // the third is accepted, or refused by the state check if the limit ended
-    // the session: exactly one of the two moved
+    // one failed open is far below the integrity limit, so the session goes on
+    // and the third is delivered, not refused by the state check
 
-    check( ( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] - delivered_before_third ) +
-               ( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] - wrong_state_before_third ) ==
-           1 );
+    check( ROCKETNET_INTEGRITY_LIMIT > 1 );
+    check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] == delivered_before_third + 1 );
+    check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] == wrong_state_before_third );
+    check( f.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED] == 3 );
 
     rocketnet_client_io_return( &f.io );
@@ -362,8 +363,12 @@ static void test_client_io_decrypt_verdicts_counted_in_order()
 REGISTER_UNIT_TEST( test_client_io_decrypt_verdicts_counted_in_order );
 
 // A copy of a genuine datagram from any source but the dialed server stays raw
-// and leaves the I/O thread's window alone: update drops it as junk, so the
-// genuine copy that follows from the server still opens and is delivered.
+// and leaves the I/O thread's window alone, so the genuine copy that follows
+// from the server still opens and is delivered. The I/O thread keeps the
+// copy's source beside it; the drop of a foreign source is the client
+// transport's (rocketnet_client_process_packet, CLIENT_RECEIVE_FOREIGN_SOURCE),
+// not the protocol's, which reads no source and is not driven with the copy
+// here.
 
 static void test_client_io_decrypt_other_source_stays_raw()
 {
@@ -386,6 +391,8 @@ static void test_client_io_decrypt_other_source_stays_raw()
     check( buffer->verdict[0] == ROCKETNET_CLIENT_IO_VERDICT_RAW );
     check( buffer->verdict[1] == ROCKETNET_CLIENT_IO_VERDICT_OPENED );
     check( buffer->sequence[1] == 1 );
+    check( rocketnet_address_equal( &buffer->from[0], &other ) );
+    check( rocketnet_address_equal( &buffer->from[1], &f.server ) );
 
     uint8_t payload[ROCKETNET_FRAME_SIZE];
     int payload_bytes = 0;

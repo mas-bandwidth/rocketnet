@@ -17,8 +17,10 @@
 // answered by nothing. Each row also states the table's exact size.
 //
 // The second case drives each unauthenticated type through truncation,
-// extension, a wrong type byte, and fixed-seed random bytes of every length
-// from one to the largest provoking packet, and asserts that no answer is
+// extension and a wrong type byte from an address holding a half-open
+// mapping, pinning the counter of the rung that refuses each, and then sends
+// fixed-seed random bytes of every length from one to the largest provoking
+// packet, from that address and an unmapped one, asserting that no answer is
 // longer than its provoker.
 
 #include "test_unit_registry.h"
@@ -531,6 +533,44 @@ static void reply_write_header( uint8_t * packet, int packet_bytes, uint8_t type
     rocketnet_write_prefilter_header( &p, type, tag );
 }
 
+// A hostile row is sent from an address holding a half-open mapping, so the
+// rung that refuses it is the one named, not a missing mapping: the request
+// is refused for its size, the response for its size before its open, and a
+// denied, challenge or cookie for its direction. Each refusal moves exactly
+// those counters.
+
+static void reply_hostile_refused( struct reply_server_t * test, const struct rocketnet_address_t * from,
+                                   const uint8_t * packet, int packet_bytes, uint8_t type )
+{
+    const struct rocketnet_counters_t before = test->counters;
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = -1;
+    rocketnet_unit_check( reply_process_at( test, from, packet, packet_bytes, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+
+    if ( type == ROCKETNET_CONNECTION_REQUEST_PACKET )
+    {
+        rocketnet_counters_expect( &before, &test->counters,
+                                   { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
+                                     { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
+                                     { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 } } );
+    }
+    else if ( type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+    {
+        rocketnet_counters_expect( &before, &test->counters,
+                                   { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
+                                     { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, 1 },
+                                     { ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE, 1 } } );
+    }
+    else
+    {
+        rocketnet_counters_expect( &before, &test->counters,
+                                   { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
+                                     { ROCKETNET_COUNTER_WRONG_DIRECTION, 1 } } );
+    }
+}
+
 static void test_reply_never_larger_than_request_hostile_inputs()
 {
     static const uint8_t types[] = {
@@ -555,6 +595,40 @@ static void test_reply_never_larger_than_request_hostile_inputs()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
+    // the hostile source: second_address passes the cookie gate and is
+    // challenged, so it holds a half-open mapping
+
+    const struct rocketnet_address_t * mapped = &test.second_address;
+    {
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        reply_build_standard_request( request, 0xF900ULL, rocketnet_test_salt );
+        reply_pass_cookie_gate( &test, mapped, request, NULL, NULL );
+        rocketnet_unit_check( reply_process_at( &test, mapped, request, sizeof( request ),
+                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+        rocketnet_unit_check( rocketnet_encryption_map_find( test.server.encryption_map, mapped ) != -1 );
+    }
+
+    // the control for the response row: a response of the right size from
+    // the mapped source, with a nonzero sequence and a zero body, passes the
+    // size, mapping and sequence rungs and is refused by its open
+
+    {
+        uint8_t packet[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+        memset( packet, 0, sizeof( packet ) );
+        reply_write_header( packet, (int) sizeof( packet ), ROCKETNET_CONNECTION_RESPONSE_PACKET );
+        packet[ROCKETNET_PREFILTER_BYTES] = 1;
+
+        const struct rocketnet_counters_t before = test.counters;
+        response_bytes = -1;
+        rocketnet_unit_check( reply_process_at( &test, mapped, packet, (int) sizeof( packet ),
+                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_unit_check( response_bytes == 0 );
+        rocketnet_counters_expect( &before, &test.counters,
+                                   { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
+                                     { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, 1 },
+                                     { ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, 1 } } );
+    }
+
     for ( int t = 0; t < type_count; t++ )
     {
         const int size = sizes[t];
@@ -565,50 +639,47 @@ static void test_reply_never_larger_than_request_hostile_inputs()
         memset( packet, 0, sizeof( packet ) );
         reply_write_header( packet, size, type );
 
-        // truncated by one byte: no answer, and never a longer one
+        // truncated by one byte: no answer, refused by its own rung
 
-        rocketnet_unit_check( reply_process_at( &test, &test.client_address, packet, size - 1,
-                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_unit_check( response_bytes == 0 );
-        rocketnet_unit_check( response_bytes <= size - 1 );
+        reply_hostile_refused( &test, mapped, packet, size - 1, type );
 
-        // extended by one byte: no answer, and never a longer one
+        // extended by one byte: no answer, refused by its own rung
 
         memset( packet, 0, sizeof( packet ) );
         reply_write_header( packet, size + 1, type );
-        rocketnet_unit_check( reply_process_at( &test, &test.client_address, packet, size + 1,
-                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_unit_check( response_bytes == 0 );
-        rocketnet_unit_check( response_bytes <= size + 1 );
+        reply_hostile_refused( &test, mapped, packet, size + 1, type );
 
-        // a wrong type byte at the type's own size: no answer, and never a
-        // longer one.
+        // a wrong type byte at the type's own size: no answer, refused by the
+        // wrong type's rung (a request or a response of the wrong size)
 
         memset( packet, 0, sizeof( packet ) );
         reply_write_header( packet, size, wrong_type );
-        rocketnet_unit_check( reply_process_at( &test, &test.client_address, packet, size,
-                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_unit_check( response_bytes == 0 );
-        rocketnet_unit_check( response_bytes <= size );
+        reply_hostile_refused( &test, mapped, packet, size, wrong_type );
     }
 
     // fixed-seed random bytes at every length from one to the largest
     // provoking size, with the type and filter header set so each length
-    // reaches its type's reader. No answer may be longer than its provoker.
+    // reaches its type's reader, from an unmapped source and from the mapped
+    // one. No answer may be longer than its provoker.
 
     reply_rng_state = 0x9E3779B97F4A7C15ULL;
 
-    for ( int t = 0; t < type_count; t++ )
-    {
-        const uint8_t type = types[t];
-        for ( int length = 1; length <= ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES; length++ )
-        {
-            uint8_t packet[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-            reply_fill_random( packet, length );
-            reply_write_header( packet, length, type );
+    const struct rocketnet_address_t * sources[2] = { &test.client_address, mapped };
 
-            reply_process_at( &test, &test.client_address, packet, length, response, &response_bytes );
-            rocketnet_unit_check( response_bytes <= length );
+    for ( int s = 0; s < 2; s++ )
+    {
+        for ( int t = 0; t < type_count; t++ )
+        {
+            const uint8_t type = types[t];
+            for ( int length = 1; length <= ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES; length++ )
+            {
+                uint8_t packet[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+                reply_fill_random( packet, length );
+                reply_write_header( packet, length, type );
+
+                reply_process_at( &test, sources[s], packet, length, response, &response_bytes );
+                rocketnet_unit_check( response_bytes <= length );
+            }
         }
     }
 

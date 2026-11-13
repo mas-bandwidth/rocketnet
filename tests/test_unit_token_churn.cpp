@@ -290,8 +290,9 @@ REGISTER_UNIT_TEST( test_server_admits_sequential_fresh_tokens_past_twice_max_cl
 // -- the replay passes the history and the open, and the client-id check
 // refuses it: never a second seat.
 
-// The four clients are static: an unoptimised MSVC build stacks them all at
-// once, past the default 1 MB stack. tc_client_init resets each in full.
+// The server and the four clients are static, as in every case here that
+// holds a server: an unoptimised MSVC build stacks them all at once, past the
+// default 1 MB stack. tc_server_setup and tc_client_init reset each in full.
 
 #if ROCKETNET_DEV
 static void test_server_refuses_a_token_connected_now()
@@ -448,10 +449,10 @@ REGISTER_UNIT_TEST( test_server_admits_a_token_again_after_its_connection_closes
 // activity. It cannot postpone the connected slot's idle timeout.
 static void test_response_replay_does_not_refresh_connected_slot()
 {
-    struct tc_server_t t;
+    static struct tc_server_t t;
     tc_server_setup( &t, 1, 8 );
 
-    struct tc_client_t c;
+    static struct tc_client_t c;
     tc_client_init( &c, "198.51.100.7:56789" );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -808,7 +809,10 @@ static void test_claim_flat_index_full_key_collisions_are_bounded()
 
     rocketnet_dev_token_table_reset_operation_counts( history );
     check( rocketnet_used_token_history_claim_can_record( history, colliding[4], 1001.0 ) == 0 );
-    check( rocketnet_dev_token_claim_probe_steps( history ) <= (uint64_t) ( capacity * 2 ) );
+    // the index holds twice the capacity, so a bound of capacity * 2 holds
+    // whatever the probe does; the exact count is the one that bites: the
+    // four live colliding cells, then the empty cell past them ends the probe
+    check( rocketnet_dev_token_claim_probe_steps( history ) == (uint64_t) ( capacity + 1 ) );
 
     rocketnet_used_token_history_destroy( history );
     rocketnet_dev_set_hash_key_seed( 0 );
