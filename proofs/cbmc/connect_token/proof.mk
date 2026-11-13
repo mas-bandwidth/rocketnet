@@ -46,6 +46,11 @@ proofs-connect_token:
 	    $(CURDIR)/run_with_timeout.sh $(CONNECT_TOKEN_TIMEOUT) prlimit --as=$(CONNECT_TOKEN_AS_LIMIT) -- \
 	      $(ESBMC) $(CONNECT_TOKEN_FLAGS) --unwind $$unwind --function $$harness \
 	      $(CONNECT_TOKEN_SOURCE) > "$$output" 2>&1 || status=$$?; \
+	    unmodelled=$$($(ESBMC_UNMODELLED)); \
+	    if [ -n "$$unmodelled" ]; then \
+	      echo "$$harness UNMODELLED CALL (unwind $$unwind): $$unmodelled"; \
+	      exit 1; \
+	    fi; \
 	    if [ $$status -eq 0 ] && grep -q "VERIFICATION SUCCESSFUL" "$$output"; then \
 	      echo "$$harness VERIFICATION SUCCESSFUL (unwind $$unwind)"; \
 	    else \

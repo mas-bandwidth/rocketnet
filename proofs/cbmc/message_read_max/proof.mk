@@ -34,7 +34,10 @@ proofs-message_read_max:
 	    $(CURDIR)/run_with_timeout.sh $(MESSAGE_READ_MAX_TIMEOUT) $(ESBMC) $(MESSAGE_READ_MAX_FLAGS) --unwind $$unwind $$extra \
 	        --function $$harness "$$work/proof.cpp" > "$$output" 2>&1 || status=$$?; \
 	    seconds=$$(( $$(date +%s) - start )); \
-	    if [ $$status -eq 124 ]; then \
+	    unmodelled=$$($(ESBMC_UNMODELLED)); \
+	    if [ -n "$$unmodelled" ]; then \
+	        verdict="UNMODELLED CALL: $$unmodelled"; \
+	    elif [ $$status -eq 124 ]; then \
 	        verdict="timed out after $(MESSAGE_READ_MAX_TIMEOUT) s"; \
 	    elif grep -q "VERIFICATION SUCCESSFUL" "$$output"; then \
 	        verdict="VERIFICATION SUCCESSFUL"; \

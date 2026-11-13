@@ -195,6 +195,13 @@ reconstruct: proof_reconstruct_sequence.c
 	$(CBMC) $(CBMC_FLAGS) --unwind 1 $(RECONSTRUCT_FLAGS) proof_reconstruct_sequence.c
 
 ESBMC ?= esbmc
+
+# ESBMC havocs a call it has no body for and never reads its pointer
+# arguments, so a memory-safety claim about that call would be vacuous (CBMC
+# fails such a call as its own no-body property; ESBMC only warns). Only the
+# shim's nondet generators may be body-less: every ESBMC reader runs this on
+# its log and goes red on any other name it prints.
+ESBMC_UNMODELLED = grep 'WARNING: no body for function' "$$output" | grep -v 'no body for function rocketnet_esbmc_nondet_' | sort -u
 ACK_RUN_SOURCE = $(CURDIR)/proof_ack_apply_run.c
 ACK_RUN_FLAGS = --std c++17 --z3 --overflow-check --ub-shift-check \
                 -DROCKETNET_ESBMC -DNDEBUG -DROCKETNET_DEV=1 \
