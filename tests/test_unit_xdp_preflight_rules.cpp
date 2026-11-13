@@ -8,7 +8,7 @@
 // under a root; production's root is ""): the kernel command line (B1), the
 // queue IRQs (R4), the real-time throttle (R8), and the queue vectors read
 // again after the attach. No root, no NIC, no socket, no clock: the files are
-// the machine. scripts/rocketnet-provision's selftest drives the script's
+// the machine. The VLAN tag rule (R2) is judged from a given flags read. scripts/rocketnet-provision's selftest drives the script's
 // side of the same rules.
 
 #include <stdio.h>
@@ -28,6 +28,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <ftw.h>
+#include <linux/ethtool.h>
 
 // a fake root under the working directory, emptied first
 
@@ -463,6 +464,34 @@ static void test_xdp_transport_attach_moved_queue_irqs_are_found()
     rocketnet_unit_check( rocketnet_server_socket_queue_irqs_off_worker( root, "enp9s0f0", 2, 1, first, sizeof( first ) ) == 0 );
 }
 
+// R2 on a VLAN: the filter reads the 802.1Q tag in the frame, so the parent
+// NIC must hand it the tag (rx-vlan-offload off). The judge takes the
+// ETHTOOL_GFLAGS read's outcome (0, or the errno it failed with) and flags
+
+static void test_xdp_transport_preflight_vlan_tag_reaches_the_filter()
+{
+    // an untagged server: the flag is never read and never matters
+
+    rocketnet_unit_check( rocketnet_server_socket_preflight_vlan_tag( "eth0", 0, 0, ETH_FLAG_RXVLAN ) );
+    rocketnet_unit_check( rocketnet_server_socket_preflight_vlan_tag( "eth0", 0, ENODEV, 0 ) );
+
+    // a VLAN server whose parent strips the tag on receive: unmet
+
+    rocketnet_unit_check( !rocketnet_server_socket_preflight_vlan_tag( "eth0", 300, 0, ETH_FLAG_RXVLAN ) );
+    rocketnet_unit_check( !rocketnet_server_socket_preflight_vlan_tag( "eth0", 300, 0, ETH_FLAG_RXVLAN | ETH_FLAG_TXVLAN ) );
+
+    // offload off: met, whatever else is on
+
+    rocketnet_unit_check( rocketnet_server_socket_preflight_vlan_tag( "eth0", 300, 0, 0 ) );
+    rocketnet_unit_check( rocketnet_server_socket_preflight_vlan_tag( "eth0", 300, 0, ETH_FLAG_TXVLAN ) );
+
+    // a read that failed cannot show the tag arrives: unmet
+
+    rocketnet_unit_check( !rocketnet_server_socket_preflight_vlan_tag( "eth0", 300, EOPNOTSUPP, 0 ) );
+    rocketnet_unit_check( !rocketnet_server_socket_preflight_vlan_tag( "eth0", 300, ENODEV, 0 ) );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_preflight_vlan_tag_reaches_the_filter );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_irqaffinity_list );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_rt_throttle );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_irq_pairs_queue_with_worker );

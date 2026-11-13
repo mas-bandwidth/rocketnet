@@ -53,6 +53,10 @@
 #                             device resolves to its parent NIC, where R3-R7
 #                             act (QinQ, 802.1ad, stacked devices refuse); the
 #                             pre-flight checks it carries the public address.
+#                             On a VLAN the parent's rx-vlan-offload is turned
+#                             off (ethtool -K <parent> rxvlan off), so the
+#                             802.1Q tag reaches the filter; a parent with it
+#                             on [fixed] is unmet.
 #   R3. exclusive xdp slot    no XDP program attached (this script unloads;
 #                             the library never unloads anyone and pins only
 #                             under its own per-INSTANCE random-token root
@@ -842,6 +846,55 @@ r7_enforce()
     fi
 }
 
+# R2'S VLAN TAG AS A FUNCTION, same contract: INTERFACE (the parent),
+# VLAN_ID (empty for an untagged interface) and VERIFY in; say/fail out.
+# The filter takes a VLAN server's frames by the 802.1Q tag in the frame, so
+# the parent must not strip it on receive: rx-vlan-offload off, read back
+# after the write. The pre-flight checks the same flag
+# (rocketnet_server_socket_preflight_vlan_tag).
+
+rxvlan_state()      # $1 iface -> on | off | on-fixed | off-fixed | "" (unread)
+{
+    LC_ALL=C ethtool -k "$1" 2>/dev/null | awk '
+        $1 == "rx-vlan-offload:" { print $2 ($3 == "[fixed]" ? "-fixed" : ""); exit }'
+}
+
+r2_vlan_enforce()
+{
+    [ -n "${VLAN_ID:-}" ] || return 0
+
+    if ! command -v ethtool >/dev/null 2>&1; then
+        fail "ethtool not found (R2): whether $INTERFACE strips VLAN $VLAN_ID's tag can be neither set nor verified -- install ethtool"
+        return
+    fi
+
+    local STATE
+    STATE="$(rxvlan_state "$INTERFACE")"
+    case "$STATE" in
+        off|off-fixed)
+            say "rx-vlan-offload off on $INTERFACE: VLAN $VLAN_ID's tag reaches the filter (R2)"
+            ;;
+        on-fixed)
+            fail "$INTERFACE strips the 802.1Q tag on receive and cannot turn it off (rx-vlan-offload: on [fixed]) (R2): the filter cannot tell VLAN $VLAN_ID's frames from other VLANs' on this NIC"
+            ;;
+        on)
+            if [ $VERIFY -eq 1 ]; then
+                fail "$INTERFACE strips the 802.1Q tag on receive (rx-vlan-offload on) (R2): ethtool -K $INTERFACE rxvlan off"
+            elif ! ethtool -K "$INTERFACE" rxvlan off; then
+                fail "ethtool -K $INTERFACE rxvlan off was refused (R2)"
+            else
+                case "$(rxvlan_state "$INTERFACE")" in
+                    off|off-fixed) say "rx-vlan-offload confirmed off on $INTERFACE after ethtool -K (R2)" ;;
+                    *) fail "rx-vlan-offload on $INTERFACE does not read back off after ethtool -K (R2)" ;;
+                esac
+            fi
+            ;;
+        *)
+            fail "could not read rx-vlan-offload of $INTERFACE (ethtool -k) (R2): cannot show VLAN $VLAN_ID's tag reaches the filter"
+            ;;
+    esac
+}
+
 # R8 ENFORCEMENT AS A FUNCTION, same contract: VERIFY in; say/fail out.
 # The kernel release, the sysctl's file and the kernel's build config are
 # read through R8_RELEASE, R8_RUNTIME and R8_CONFIG, so the selftest drives
@@ -1259,6 +1312,31 @@ case "$1" in
             works_then_unparseable) echo rxonly > "$STUB_STATE_DIR/combined.$IFACE"; exit 0 ;;
         esac
         ;;
+    -k)
+        # the real layout: one "name: value" line per feature, [fixed] after
+        IFACE="$2"
+        [ -f "$STUB_STATE_DIR/rxvlan.$IFACE" ] || { echo "Cannot get device feature names: No such device" >&2; exit 1; }
+        echo "Features for $IFACE:"
+        echo "rx-checksumming: on"
+        case "$(cat "$STUB_STATE_DIR/rxvlan.$IFACE")" in
+            on) echo "rx-vlan-offload: on" ;;
+            off) echo "rx-vlan-offload: off" ;;
+            on-fixed) echo "rx-vlan-offload: on [fixed]" ;;
+            absent) ;;
+        esac
+        echo "tx-vlan-offload: on"
+        exit 0
+        ;;
+    -K)
+        IFACE="$2"
+        [ -f "$STUB_STATE_DIR/rxvlan.$IFACE" ] || { echo "stub: -K on unknown interface '$IFACE'" >&2; exit 99; }
+        [ "$3 $4" = "rxvlan off" ] || { echo "stub: unexpected -K form $*" >&2; exit 99; }
+        case "$(cat "$STUB_STATE_DIR/setk_mode" 2>/dev/null)" in
+            fails) echo "Could not change any device features" >&2; exit 1 ;;
+            lies)  exit 0 ;;
+            *)     echo off > "$STUB_STATE_DIR/rxvlan.$IFACE"; exit 0 ;;
+        esac
+        ;;
 esac
 echo "stub: unexpected invocation $*" >&2
 exit 99
@@ -1529,6 +1607,41 @@ STUB
     OUT="$(run_r7 0 eth1.200 5)"
     expect_case "r7 provision vlan unmangled through -L" $? 0 "$OUT" "confirmed at 5"
 
+    # --- R2 on a VLAN: the parent's rx-vlan-offload, read, turned off and
+    # read back; an untagged interface never reads it ---
+
+    run_r2v()       # $1 verify-flag  $2 parent  $3 vlan id ("" untagged)  -> rc = UNMET
+    {
+        ( UNMET=0; VERIFY="$1"; INTERFACE="$2"; VLAN_ID="$3"; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+          r2_vlan_enforce; exit $UNMET ) 2>&1
+    }
+
+    OUT="$(run_r2v 1 vtag0 "")"
+    expect_case "r2 vlan: untagged never reads the flag" $? 0 "$OUT" "" 0 "rx-vlan-offload"
+    echo on > "$STUB_STATE_DIR/rxvlan.vtag0"
+    OUT="$(run_r2v 1 vtag0 300)"
+    expect_case "r2 vlan verify: offload on is unmet" $? 1 "$OUT" "ethtool -K vtag0 rxvlan off" 1
+    expect_case "r2 vlan verify: offload on is not written" 1 1 "$(cat "$STUB_STATE_DIR/rxvlan.vtag0")" "on"
+    OUT="$(run_r2v 0 vtag0 300)"
+    expect_case "r2 vlan provision: turned off and read back" $? 0 "$OUT" "confirmed off on vtag0" 0
+    OUT="$(run_r2v 1 vtag0 300)"
+    expect_case "r2 vlan verify: offload off is met" $? 0 "$OUT" "rx-vlan-offload off on vtag0" 0
+    echo on > "$STUB_STATE_DIR/rxvlan.vtag0"; echo lies > "$STUB_STATE_DIR/setk_mode"
+    OUT="$(run_r2v 0 vtag0 300)"
+    expect_case "r2 vlan provision: a write that does not take is unmet" $? 1 "$OUT" "does not read back off" 1
+    echo fails > "$STUB_STATE_DIR/setk_mode"
+    OUT="$(run_r2v 0 vtag0 300)"
+    expect_case "r2 vlan provision: a refused write is unmet" $? 1 "$OUT" "rxvlan off was refused" 1
+    rm -f "$STUB_STATE_DIR/setk_mode"
+    echo on-fixed > "$STUB_STATE_DIR/rxvlan.vtag0"
+    OUT="$(run_r2v 0 vtag0 300)"
+    expect_case "r2 vlan provision: on [fixed] is unmet" $? 1 "$OUT" "cannot turn it off" 1
+    echo absent > "$STUB_STATE_DIR/rxvlan.vtag0"
+    OUT="$(run_r2v 1 vtag0 300)"
+    expect_case "r2 vlan verify: no flag line is unmet" $? 1 "$OUT" "could not read rx-vlan-offload of vtag0" 1
+    OUT="$(run_r2v 1 nosuch0 300)"
+    expect_case "r2 vlan verify: a failed read is unmet" $? 1 "$OUT" "could not read rx-vlan-offload of nosuch0" 1
+
     # --- THE TOP LEVEL: the WHOLE SCRIPT, door to fail. a verify
     # run of this very script under the stub environment must exit 1 and
     # carry the R3 and R7 UNMETs by name in its full-flow output -- this
@@ -1642,6 +1755,10 @@ STUB
     expect_case "full-flow verify on a VLAN names the parent" $? 1 "$OUT" "stubnic0.300 is 802.1Q VLAN 300 on stubnic0: the xdp transport attaches to stubnic0" "" "on stubnic0.300 (R3)"
     expect_case "full-flow verify on a VLAN reads R3 on the parent" 1 1 "$OUT" "no XDP program attached to stubnic0"
     expect_case "full-flow verify on a VLAN reads R7 on the parent" 1 1 "$OUT" "combined queue count already 7 (R7)" "" "stubnic0.300 (R7)"
+    expect_case "full-flow verify on a VLAN reads the parent's rx-vlan-offload" 1 1 "$OUT" "could not read rx-vlan-offload of stubnic0 (ethtool -k) (R2)"
+    echo on > "$STUB_STATE_DIR/rxvlan.stubnic0"
+    OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubnic0.300 7 verify 2>&1 )"
+    expect_case "full-flow verify on a VLAN names rxvlan off on the parent" $? 1 "$OUT" "stubnic0 strips the 802.1Q tag on receive (rx-vlan-offload on) (R2): ethtool -K stubnic0 rxvlan off"
 
     OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" vk0.10.20 7 verify 2>&1 )"
     expect_case "full-flow verify refuses QinQ by name" $? 1 "$OUT" "the xdp transport refuses vk0.10.20: vk0.10.20 is a VLAN on the VLAN vk0.10 (nested tags, QinQ) (R2)" "" "(R3)"
@@ -2149,6 +2266,7 @@ fi
 # the run in either mode: no condition below means anything for it.
 
 ADDRESS_INTERFACE="$INTERFACE"
+VLAN_ID=""
 if command -v ip >/dev/null 2>&1; then
     RESOLVED="$(xdp_device_resolve "$INTERFACE")"
     case "$RESOLVED" in
@@ -2320,6 +2438,10 @@ r3_enforce
 
 r7_enforce
 
+# R2 on a VLAN: the tag reaches the filter. Before R4, like R7: a driver may
+# rebuild its queue vectors on a feature change
+
+r2_vlan_enforce
 
 # crash-leftover pin roots are the SWEEP mode's business, deliberately --
 # see the sweep block above for why neither provision nor verify touches

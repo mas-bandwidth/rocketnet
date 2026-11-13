@@ -179,7 +179,13 @@ after the interface name for more):
     #    The interface is the one carrying the public address. On one
     #    802.1Q VLAN device (eth0.300) the script resolves it to the parent
     #    NIC and provisions that (R2), and the server attaches there and tags
-    #    what it sends; QinQ, 802.1ad and VLANs on bonds or bridges are
+    #    what it sends. The filter tells the server's VLAN by the 802.1Q tag
+    #    in the frame, so the script also turns the parent's receive VLAN
+    #    offload off (ethtool -K eth0 rxvlan off) and reads it back; with it
+    #    on, the parent would hand the filter every VLAN's frames untagged,
+    #    and the pre-flight refuses xdp (auto falls to the next rung). The
+    #    setting does not survive a reboot or a driver reload: re-run this
+    #    script after either. QinQ, 802.1ad and VLANs on bonds or bridges are
     #    refused by name (LINUX.md section 6, "A VLAN"). Native XDP only: a
     #    NIC without it refuses an xdp pin, and auto falls to the next rung.
     #    The socket transports pay for connection tracking under a stateful

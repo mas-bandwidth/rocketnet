@@ -385,9 +385,11 @@ static inline int rocketnet_xdp_frame_build(
 // tag of vlan_id), or -1 when the frame is tagged for anything else: a
 // tagged frame on an untagged transport, a VLAN ID that is not the
 // transport's, or a tag cut by the frame end. An untagged frame is taken on
-// a tagged transport too: a NIC that strips the tag on receive (rx VLAN
-// offload, the ixgbe and i40e default) hands XDP the frame without it. The
-// frame holds at least ROCKETNET_ETHERNET_HEADER_BYTES.
+// a tagged transport too. A NIC that strips the tag on receive (rx VLAN
+// offload, the ixgbe and i40e default) would hand XDP every VLAN's frames
+// without it, so the pre-flight refuses a tagged transport whose parent has
+// that offload on (rocketnet_server_socket_preflight_vlan_tag). The frame
+// holds at least ROCKETNET_ETHERNET_HEADER_BYTES.
 
 static inline int rocketnet_xdp_frame_vlan_tag( const uint8_t * f, size_t frame_bytes, int vlan_id )
 {

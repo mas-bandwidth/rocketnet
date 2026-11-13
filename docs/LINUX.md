@@ -342,7 +342,7 @@ refuses by name on any unmet condition (`BUILDING.md`,
 | B2 | `/sys/devices/system/cpu/isolated` is non-empty | `:38-39` |
 | B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:40-45` |
 | R1 | euid 0 | `:49` |
-| R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act; the pre-flight checks it carries the public address | `:50-53` |
+| R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act, and the parent's `rx-vlan-offload` is off so the tag reaches the filter; the pre-flight checks it carries the public address | `:52-59` |
 | R3 | no XDP program already attached | `:54-64` |
 | R4 | each queue IRQ (`<iface>-TxRx-<k>`) pinned to cpu `num_os_cpus + k`, the cpu its XDP thread pins to, and the interface's other IRQs off those cpus; a NIC without queue names: each IRQ on its own isolated CPU | `:65-74` |
 | R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:75-77` |
@@ -409,10 +409,32 @@ attaches natively in the CI guest.
 (`eth0.300`, created with `ip link add link eth0 name eth0.300 type vlan id 300`)
 whose parent is a physical NIC or a veth. A VLAN device has no native XDP of its
 own, so the transport attaches to the parent (logging
-`xdp: eth0.300 is 802.1Q VLAN 300 on eth0`), takes only frames tagged with that
-VLAN ID (and untagged frames, which is how a NIC with `rx-vlan-offload` on
-delivers them), passes frames of any other VLAN up the stack, and tags every
-frame it sends. Run the provisioning script on either name: given `eth0.300` it
+`xdp: eth0.300 is 802.1Q VLAN 300 on eth0`) and tags every frame it sends.
+
+What the filter checks is the 802.1Q tag in the frame's bytes. A frame tagged
+with the server's VLAN ID is taken; a frame tagged with any other ID, a second
+tag, or a tag cut short passes up the stack untouched. An untagged frame is
+read as on an untagged server: taken when it is addressed to the server's
+address and port. So the tag must reach the program in the frame. A NIC with
+`rx-vlan-offload` on (the i40e and ixgbe default) strips it before XDP runs,
+and then a frame from any VLAN on that NIC, or from the untagged segment,
+addressed to the server's address and port would be taken as the server's. The
+pre-flight therefore refuses a VLAN server whose parent has the offload on
+(`eth0 strips the 802.1Q tag on receive (rx-vlan-offload on) ... run
+ethtool -K eth0 rxvlan off`): a pin on `xdp` refuses the create, and `auto`
+falls to the next transport. The provisioning script turns it off
+(`ethtool -K eth0 rxvlan off`) and reads it back; `verify` reports it unmet
+when it is on, and a NIC whose flag reads `on [fixed]` cannot carry a VLAN
+server on this transport. With the offload off, the only untagged frames the
+program sees are frames sent with no tag. A veth parent is the one case the
+flag cannot settle: a veth carries a tag the sending end put beside the frame
+(its `tx-vlan-offload` on) beside it still, so the program sees that frame
+untagged whatever the parent's flag; on a veth, the sending end must put the
+tag in the frame (`tx-vlan-offload` off), which the library cannot read from
+here. Reading the stripped tag from the receive metadata instead is on the
+roadmap (`xdp-vlan-stripped-tags`).
+
+Run the provisioning script on either name: given `eth0.300` it
 says `R3 to R7 act on eth0` and provisions the parent (R2). These are refused by
 name, by the pre-flight and by the script: an 802.1ad (QinQ outer) tag, a VLAN
 on a VLAN, a VLAN on a bond, bridge, team, macvlan or other stacked device, a

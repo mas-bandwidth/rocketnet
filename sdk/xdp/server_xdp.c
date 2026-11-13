@@ -487,9 +487,10 @@ int server_xdp_filter( struct xdp_md * ctx )
         // untagged frame 4 bytes on. A frame tagged with any other VLAN ID,
         // any tag on an untagged server, a second tag (QinQ) and a tag cut by
         // the frame end pass untouched, as any other frame for someone else.
-        // An untagged frame is read as before on either server: a NIC that
-        // strips the tag on receive (rx VLAN offload) hands this program the
-        // frame without it
+        // An untagged frame is read as before on either server. A NIC that
+        // strips the tag on receive (rx VLAN offload) hands this program
+        // every VLAN's frames without it, so the pre-flight refuses a VLAN
+        // server whose parent has that offload on (R2)
 
         __be16 h_proto = eth->h_proto;
         __u8 * l3 = data + sizeof( struct ethhdr );

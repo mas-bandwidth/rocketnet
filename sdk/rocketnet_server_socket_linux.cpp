@@ -1859,6 +1859,73 @@ uint64_t rocketnet_server_socket_memory_required( int num_queues, int max_client
     return bytes;
 }
 
+// R2 on a VLAN: server_xdp takes a frame for the server's VLAN by the 802.1Q
+// tag in the frame. A parent NIC with rx-vlan-offload on strips the tag
+// before XDP runs, and the program then cannot tell a frame of the server's
+// VLAN from one of any other VLAN on that NIC, so the tag must reach it.
+
+bool rocketnet_server_socket_preflight_vlan_tag( const char * parent_name, int vlan_id, int read_errno, uint32_t flags )
+{
+    rocketnet_assert( parent_name );
+
+    if ( vlan_id == 0 )
+    {
+        return true;
+    }
+
+    if ( read_errno != 0 )
+    {
+        rocketnet_warn( "xdp pre-flight: could not read the offload flags of %s (%s) (R2): cannot show the VLAN %d tag reaches the filter", parent_name, strerror( read_errno ), vlan_id );
+        return false;
+    }
+
+    if ( flags & ETH_FLAG_RXVLAN )
+    {
+        rocketnet_warn( "xdp pre-flight: %s strips the 802.1Q tag on receive (rx-vlan-offload on), so the filter cannot tell VLAN %d's frames from other VLANs' (R2): run `ethtool -K %s rxvlan off`, or scripts/rocketnet-provision", parent_name, vlan_id, parent_name );
+        return false;
+    }
+
+    return true;
+}
+
+// the parent's offload flags (ETHTOOL_GFLAGS): 0, or the errno the read failed with
+
+static int rocketnet_server_socket_read_offload_flags( const char * interface_name, uint32_t * flags )
+{
+    *flags = 0;
+
+    const int probe_fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
+    if ( probe_fd < 0 )
+    {
+        return errno ? errno : EIO;
+    }
+
+    struct ethtool_value value;
+    memset( &value, 0, sizeof( value ) );
+    value.cmd = ETHTOOL_GFLAGS;
+
+    struct ifreq ifr;
+    memset( &ifr, 0, sizeof( ifr ) );
+
+    // ifr is zeroed above, so the copied name stays NUL terminated
+
+    memcpy( ifr.ifr_name, interface_name, strnlen( interface_name, sizeof( ifr.ifr_name ) - 1 ) );
+    ifr.ifr_data = (char *) &value;
+
+    int result = 0;
+    if ( ioctl( probe_fd, SIOCETHTOOL, &ifr ) != 0 )
+    {
+        result = errno ? errno : EIO;
+    }
+    else
+    {
+        *flags = value.data;
+    }
+    close( probe_fd );
+
+    return result;
+}
+
 static bool rocketnet_server_socket_interface_is_veth( const char * interface_name )
 {
     // the transport name the kernel reports for the interface (ETHTOOL_GDRVINFO)
@@ -1966,6 +2033,18 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
             return false;
         }
         interface_index = xdp_index;
+
+        // R2 on a VLAN: the tag reaches the filter (the function above)
+
+        if ( vlan_id != 0 )
+        {
+            uint32_t offload_flags = 0;
+            const int read_errno = rocketnet_server_socket_read_offload_flags( xdp_name, &offload_flags );
+            if ( !rocketnet_server_socket_preflight_vlan_tag( xdp_name, vlan_id, read_errno, offload_flags ) )
+            {
+                provisioned = false;
+            }
+        }
     }
 
     // R3: the exclusive xdp slot -- no program of anyone's attached to the
