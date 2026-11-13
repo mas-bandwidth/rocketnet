@@ -25,9 +25,11 @@
 // UDP sends; only completions return frames to the lane's bounded
 // free-reference queue.
 // Receive workers dequeue completions in batches, refuse what the stateless
-// prefilter names before a datagram takes a bank slot, and publish private
-// four-bank buffers. Completion work never runs under the publication mutex;
-// the main receive call swaps bank ownership without waiting for that mutex.
+// prefilter names before a datagram takes a bank slot, and commit their bank
+// to a three-buffer shared receive handoff (sdk/rocketnet_receive_handoff.h).
+// Completion work never runs under the publication mutex; the main receive
+// call tries that mutex once and reads each worker's committed datagrams
+// without waiting for it.
 // Refused receive posts enter a bounded generation-tagged retry queue; a
 // worker drains only positions below the enqueue ticket captured at the start
 // of its pass.
