@@ -133,6 +133,13 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 #define ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES     34  // 6 + 4 + 7 + 1 + 16
 #define ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES  33  // 6 + 4 + 7 + 0 + 16
 
+// The largest slot count a keep-alive may name (standard/TRANSPORT.md t10
+// step 17): the most clients any server can be built with, the ceiling of
+// ROCKETNET_MAX_CLIENTS in rocketnet.h. A client of any build connects to a
+// server of any build; a count or index above it is no slot of any server.
+
+#define ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT             32768
+
 // Every handshake packet fits one datagram on the smaller family's budget:
 // 1500 - 40 - 8 = 1452 UDP payload bytes over IPv6 (ROCKETNET_MAX_PACKET_BYTES
 // in rocketnet.h; written out here because this header stands alone in the

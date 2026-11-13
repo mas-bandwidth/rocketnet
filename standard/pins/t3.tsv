@@ -1,0 +1,4 @@
+# The rows of RN-1 t3 (TRANSPORT.md) added after the skeleton: document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+#include "rocketnet_wire.h"
+slot count maximum	ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT	32768

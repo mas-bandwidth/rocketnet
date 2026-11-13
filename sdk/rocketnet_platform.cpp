@@ -3032,6 +3032,44 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
 // ---------------------------------------------------
 
+// A wake create that fails at its kernel object (a kqueue, an eventfd or a
+// pipe) for want of memory writes OUT_OF_MEMORY through status, as
+// rocketnet_platform_windows_create_status maps the Windows errors, so the
+// transport list ends the create there instead of trying the next
+// transport: ENOMEM and ENOBUFS. Any other error leaves status as it is, a
+// refusal like any other.
+static void rocketnet_platform_wake_create_status( int * status, int error )
+{
+    if ( error == ENOMEM || error == ENOBUFS )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+    }
+}
+
+#if ROCKETNET_DEV
+// rocketnet_dev_fail_wake_create (sdk/rocketnet_test_seams.h)
+static int rn_wake_create_fail_errno = 0;
+
+void rocketnet_dev_fail_wake_create( int error )
+{
+    rn_wake_create_fail_errno = error;
+}
+#endif // #if ROCKETNET_DEV
+
+// true, with errno set, when a DEV build fails the wake's kernel object
+// with a chosen errno
+static bool rocketnet_platform_wake_failed_for_test()
+{
+#if ROCKETNET_DEV
+    if ( rn_wake_create_fail_errno != 0 )
+    {
+        errno = rn_wake_create_fail_errno;
+        return true;
+    }
+#endif // #if ROCKETNET_DEV
+    return false;
+}
+
 #if defined( __APPLE__ )
 
 // The client I/O wake on darwin: one kqueue holding the socket's EVFILT_READ
@@ -3061,9 +3099,10 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->context = context;
     wake->socket_fd = socket ? socket->handle : -1;
     wake->read_enabled = socket != NULL;
-    wake->kq = kqueue();
+    wake->kq = rocketnet_platform_wake_failed_for_test() ? -1 : kqueue();
     if ( wake->kq < 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         rocketnet_free( context, wake );
         return NULL;
     }
@@ -3071,6 +3110,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     // close-on-exec, as every platform descriptor is: a spawned child never holds the wake
     if ( fcntl( wake->kq, F_SETFD, FD_CLOEXEC ) != 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         close( wake->kq );
         rocketnet_free( context, wake );
         return NULL;
@@ -3088,6 +3128,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
 
     if ( kevent( wake->kq, changes, num_changes, NULL, 0, NULL ) < 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         close( wake->kq );
         rocketnet_free( context, wake );
         return NULL;
@@ -3224,22 +3265,25 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->socket_fd = socket ? socket->handle : -1;
 
 #if defined( __linux__ )
-    wake->read_fd = eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+    wake->read_fd = rocketnet_platform_wake_failed_for_test() ? -1 : eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
     wake->write_fd = wake->read_fd;
     if ( wake->read_fd < 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         rocketnet_free( context, wake );
         return NULL;
     }
 #else // #if defined( __linux__ )
     int fds[2];
-    if ( pipe( fds ) != 0 )
+    if ( rocketnet_platform_wake_failed_for_test() || pipe( fds ) != 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         rocketnet_free( context, wake );
         return NULL;
     }
     if ( !rocketnet_platform_wake_fd_flags( fds[0] ) || !rocketnet_platform_wake_fd_flags( fds[1] ) )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         close( fds[0] );
         close( fds[1] );
         rocketnet_free( context, wake );
