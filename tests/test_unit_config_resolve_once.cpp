@@ -323,7 +323,7 @@ static void config_ladder_max_assert_hook( const char *, const char *, const cha
     config_ladder_max_assertions++;
 }
 
-static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
+static void test_config_transport_order_auto_refuses_more_than_max_candidates()
 {
     rocketnet_quiet( 1 );
 
@@ -341,7 +341,7 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 
     struct
     {
-        struct rocketnet_transport_ladder_t ladder;
+        struct rocketnet_transport_order_t ladder;
         uint8_t canary[32];
     } guarded;
 
@@ -357,7 +357,7 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 #if ROCKETNET_ASSERTS
             const int assertions_before_parse = config_ladder_max_assertions;
 #endif // #if ROCKETNET_ASSERTS
-            check( !rocketnet_transport_ladder_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
+            check( !rocketnet_transport_order_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
 #if ROCKETNET_ASSERTS
             check( config_ladder_max_assertions == assertions_before_parse + 1 );
 #endif // #if ROCKETNET_ASSERTS
@@ -382,4 +382,4 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 #endif // #if ROCKETNET_ASSERTS
     rocketnet_quiet( 0 );
 }
-REGISTER_UNIT_TEST( test_config_transport_ladder_auto_refuses_more_than_max_candidates );
+REGISTER_UNIT_TEST( test_config_transport_order_auto_refuses_more_than_max_candidates );

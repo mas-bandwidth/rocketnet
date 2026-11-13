@@ -95,7 +95,7 @@ On the same Linux x86-64 build with io_uring and XDP enabled and
 `1 client: 1845916823`, `2 clients: 1865090161` and `delta: 19173338`.
 These queries include the 1 MiB allowance. The figures differ by platform,
 configuration, and source revision because each counts the largest transport
-that platform's ladder can grant. Use the planner from the exact library you
+that platform's transport order can grant. Use the planner from the exact library you
 will deploy; the regeneration details are in
 [LOAD.md](LOAD.md#deterministic-memory-planning-and-regenerated-sizing-examples).
 
@@ -340,7 +340,7 @@ component budgets and the operator memory budgets below.
 Memory grows with the clients a server asks for, at the per-client depth the
 config sets: `rocketnet_server_required_memory` gives the lifecycle allocator
 peak before create, including the largest planned built-in transport in the
-configured ladder. Query the exact build and configuration for its requirement;
+configured transports. Query the exact build and configuration for its requirement;
 a 10000-client server can set lighter per-client limits (send and receive
 buffers, queues, windows and receipts) for its game.
 A build for more clients adds nothing to a smaller server: the receive arrays
@@ -393,7 +393,7 @@ one block: each client endpoint's queue is 2048 slots of 1476 bytes
 not count it.
 
 The client's corresponding transport plan is applied at connect, after the
-token selects an address and the transport ladder. For portable and msgx it
+token selects an address and the transport list. For portable and msgx it
 includes the client transport block, socket, wake object and one SDK thread allocation. The normal client runs one background
 network thread; its operating-system stack reserve, kernel socket queues and
 application memory are outside that allocator plan. The

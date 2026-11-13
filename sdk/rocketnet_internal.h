@@ -515,7 +515,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE   16
 #define ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE       1024
 
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
     INT_FIELD(    max_clients,        ROCKETNET_DEFAULT_MAX_CLIENTS,     1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
     BYTES_FIELD(  packet_filter,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
@@ -539,6 +539,15 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    disconnect_packets_per_update, ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE, 1, 1024,              0 ) \
     INT_FIELD(    handshakes_per_update, ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE, 1, ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE, 0 )
 
+// revision 6, after the loopback hub (not a table row) in the struct: the local bind addresses
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
+    STRING_FIELD( bind_ipv4_address,     ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
+    STRING_FIELD( bind_ipv6_address,     ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )
+
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
+
 /** @brief Size in bytes of the server transport config before token_epoch_unix_seconds. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Size in bytes of server transport config revision 1: before the public link simulator fields. */
@@ -553,8 +562,10 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshakes_per_update ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Server transport config revision 5, in bytes: the loopback hub, appended. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, loopback_hub ) + sizeof( void * ), sizeof( uint64_t ) )
+/** @brief Server transport config revision 6, in bytes: the local bind addresses, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, bind_ipv6_address ) + ROCKETNET_MAX_ADDRESS_STRING_LENGTH, sizeof( uint64_t ) )
 /** @brief Known server transport config sizes, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6
 
 // the largest build-specific channel count: a WIDE record carries a u16 channel
 
@@ -703,7 +714,7 @@ void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_ser
 // A create's reason for failing, written through its caller's status (NULL:
 // not asked). OUT_OF_MEMORY, once written, is never replaced: a create that
 // was refused an allocation anywhere fails for want of memory, and the
-// transport ladder ends there instead of falling to the next candidate.
+// transport list ends there instead of falling to the next candidate.
 static inline void rocketnet_create_status( int * status, int value )
 {
     if ( status && *status != ROCKETNET_STATUS_OUT_OF_MEMORY )

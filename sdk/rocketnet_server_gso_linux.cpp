@@ -1534,7 +1534,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
         queue->ipv6 = gso->ipv6;
         queue->gso = gso;
 
-        queue->fd = rocketnet_server_udp_open( "gso", bind_address, i, max_clients, &bound_port );
+        queue->fd = rocketnet_server_udp_open( "gso", bind_address, i, max_clients, &bound_port, status );
         if ( queue->fd < 0 )
         {
             rocketnet_server_gso_abort_create( gso );
