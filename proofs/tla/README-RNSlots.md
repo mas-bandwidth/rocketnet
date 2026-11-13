@@ -140,7 +140,7 @@ two-slot interaction with two wire copies exceeds the 110-second budget and
 remains an unexplored larger bound. The failed measurement is preserved in
 the job evidence; it is not reported as a pass.
 
-The six counterexamples below are replayed from the measured TLC traces.
+The counterexamples below are replayed from the measured TLC traces.
 `BeginUpdate` precedes transport actions and `EndUpdate` returns to the
 application. Message numbers in a liveness trace are arbitrary record
 identifiers, not an ordering protocol.
@@ -210,24 +210,30 @@ controls check the full safety set; `Live` also checks
 `RUNS.tsv`. Earlier semantic-error and timeout attempts are retained in the
 job evidence, not substituted for final completed measurements.
 
-All ten cases match their expected result with up to two workers, a 110-second
-per-case budget and the pinned runner/JAR from `README.md`. The measured
-totals across separate configurations are 8,915,107 generated and 2,329,260
-distinct states in 40.362 seconds; these totals are not one combined state
-space. The exact table follows.
+Every case matches its expected result with up to two workers, a 110-second
+budget per run and the pinned runner/JAR from `README.md`. The table below
+was measured on 2026-11-13 on aws-mut-3, a shared bench under other load, so
+the seconds are loaded; `RUNS.tsv` holds the records. The controls grew with
+this revision (an update with views held now continues, the region keeps
+released records until the next update begins, and a start is pending per
+slot): `MCRNSlotsExhaustion.cfg` is the closest to the budget at 72 seconds.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|
-| `MCRNSlots.cfg` | 72,386 | 38,716 | 1.333 | pass - |
-| `MCRNSlotsBrokenApplyBySlot.cfg` | 287 | 201 | 0.676 | invariant NoCrossConnectionApply |
-| `MCRNSlotsBrokenClientIdAsConnection.cfg` | 1,522 | 971 | 1.531 | invariant ReusedSlotStartsClean |
-| `MCRNSlotsBrokenKickCarriesOn.cfg` | 18,459 | 8,016 | 0.996 | action ExhaustionOnlyLeadsToDisconnect |
-| `MCRNSlotsBrokenNoResetOnReuse.cfg` | 1,007 | 643 | 0.696 | invariant ReusedSlotStartsClean |
-| `MCRNSlotsBrokenReleaseIgnored.cfg` | 1,056 | 689 | 0.998 | temporal EveryReliableDelivered |
-| `MCRNSlotsBrokenUpdateWithHeldViews.cfg` | 149 | 81 | 0.665 | invariant UpdateRequiresReleasedViews |
-| `MCRNSlotsExhaustion.cfg` | 7,961,361 | 1,918,511 | 25.977 | pass - |
-| `MCRNSlotsLive.cfg` | 756 | 491 | 1.593 | pass - |
-| `MCRNSlotsTwoSlots.cfg` | 858,124 | 360,941 | 5.897 | pass - |
+| `MCRNSlots.cfg` | 721,069 | 391,807 | 7.595 | pass - |
+| `MCRNSlotsBrokenApplyBySlot.cfg` | 686 | 453 | 0.843 | invariant NoCrossConnectionApply |
+| `MCRNSlotsBrokenClientIdAsConnection.cfg` | 3,378 | 2,062 | 0.929 | invariant ReusedSlotStartsClean |
+| `MCRNSlotsBrokenKickCarriesOn.cfg` | 35,907 | 15,784 | 1.407 | action ExhaustionOnlyLeadsToDisconnect |
+| `MCRNSlotsBrokenNoResetOnReuse.cfg` | 4,019 | 2,564 | 0.975 | invariant ReusedSlotStartsClean |
+| `MCRNSlotsBrokenReleaseIgnored.cfg` | 127 | 89 | 0.800 | invariant ReleaseReturnsView |
+| `MCRNSlotsBrokenNoExpire.cfg` | 179 | 122 | 0.961 | invariant ReleasedRecordsReusable |
+| `MCRNSlotsBrokenNoExpireLive.cfg` | 1,799 | 1,068 | 1.199 | temporal EveryReliableDelivered |
+| `MCRNSlotsBrokenUpdateWithHeldViews.cfg` | 279 | 200 | 0.773 | invariant UpdateRequiresReleasedViews |
+| `MCRNSlotsBrokenPendingAcrossReset.cfg` | 251 | 182 | 0.796 | invariant NoPendingAcrossReset |
+| `MCRNSlotsTwoPending.cfg` | 401 | 250 | 0.816 | invariant NotBothPending |
+| `MCRNSlotsExhaustion.cfg` | 13,307,947 | 3,072,865 | 71.697 | pass - |
+| `MCRNSlotsLive.cfg` | 1,833 | 1,024 | 2.968 | pass - |
+| `MCRNSlotsTwoSlots.cfg` | 4,528,622 | 1,700,027 | 38.532 | pass - |
 
 ## Revision 1.1.2: a freed slot is held until the update ends
 
