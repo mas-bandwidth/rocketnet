@@ -7,15 +7,19 @@
 // second_public_address that does not parse, that names the public
 // address's own family, or that names another port is refused with
 // ROCKETNET_STATUS_INVALID_ADDRESS while the config is resolved, before the
-// transport is allocated and before any socket opens.
+// transport is allocated and before any socket opens. The creates name the
+// in-memory loopback transport, so the unit case binds no socket even if a
+// refusal regressed.
 
 #include "test_unit_registry.h"
 
 #if ROCKETNET_DEV
 
+#include "unit_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_config.h"
 #include "rocketnet_layers.h"
+#include "loopback_hub.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -24,15 +28,22 @@
 
 static int second_address_create_status( const char * public_address, const char * second_address )
 {
+    // the in-memory loopback transport: a refusal that regressed would create
+    // a server here (and fail the check), never bind a real socket
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 4;
-    snprintf( config.transport, sizeof( config.transport ), "portable" );
+    snprintf( config.transport, sizeof( config.transport ), "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     snprintf( config.second_public_address, sizeof( config.second_public_address ), "%s", second_address );
 
     int status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, public_address, &config, 0.0, &status );
     check( server == NULL );
+    if ( server )
+    {
+        rn_test_server_transport_stop_and_destroy( server );
+    }
 
     return status;
 }
