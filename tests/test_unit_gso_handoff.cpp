@@ -4,6 +4,7 @@
 */
 
 #include "test_unit_registry.h"
+#include "suite_runner.h"
 
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_server_gso.h"
