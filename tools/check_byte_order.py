@@ -19,10 +19,11 @@ joined. Rules:
                bytes (bswap, byteswap, byte_swap, swap_bytes, swapbytes,
                endian_swap, or swap16/32/64).
   shift swap   one logical line that moves a value both ways by 8 bits with a
-               byte mask (0xff00 or 0x00ff), or both ways by 24 bits: a
+               byte mask (0xff, 0x00ff or 0xff00), or both ways by 24 bits: a
                hand-written 16- or 32-bit swap.
-  host read    a pointer cast to a 16-, 32- or 64-bit integer type that is
-               dereferenced or indexed in the same expression, or a memcpy
+  host read    a pointer cast (C style or reinterpret_cast) to a 16-, 32- or
+               64-bit integer type that is dereferenced or indexed in the
+               same expression, or a memcpy
                whose size is exactly sizeof one such type: the integer is
                read or written in host byte order.
   netlink      htons, ntohs, htonl, ntohl or a library hton/ntoh helper in
@@ -87,13 +88,15 @@ NAMED_SWAP = re.compile(r"\b(\w*(?:bswap|byteswap|byte_swap|swap_bytes|swapbytes
 SHIFT_8 = re.compile(r"<<\s*8\b")
 SHIFT_8_BACK = re.compile(r">>\s*8\b")
 MASK_8 = re.compile(r"\b0x(?:00)?ff(?:00)?\b", re.IGNORECASE)
-MASK_16 = re.compile(r"\b0x(?:ff00|00ff)\b", re.IGNORECASE)
 SHIFT_24 = re.compile(r"<<\s*24\b")
 SHIFT_24_BACK = re.compile(r">>\s*24\b")
 INTEGER = r"(?:u?int(?:16|32|64)_t|__u(?:16|32|64)|__be(?:16|32|64)|__le(?:16|32|64)|unsigned\s+short|short|unsigned\s+int|unsigned\s+long(?:\s+long)?|long\s+long)"
 CAST = r"\(\s*(?:const\s+)?(?:volatile\s+)?" + INTEGER + r"\s*(?:const\s*)?\*\s*\)"
-CAST_DEREF = re.compile(r"\*\s*" + CAST)
-CAST_INDEX = re.compile(r"\(\s*" + CAST + r"[^;]*?\)\s*\[")
+# the C++ spelling of the same cast: reinterpret_cast<const uint16_t *>( p )
+CPP_CAST = (r"\breinterpret_cast\s*<\s*(?:const\s+)?(?:volatile\s+)?" + INTEGER +
+            r"\s*(?:const\s*)?\*\s*>\s*\(")
+CAST_DEREF = re.compile(r"\*\s*(?:" + CAST + "|" + CPP_CAST + ")")
+CAST_INDEX = re.compile(r"(?:\(\s*" + CAST + "|" + CPP_CAST + r")[^;]*?\)\s*\[")
 MEMCPY_SCALAR = re.compile(r"\bmemcpy\s*\([^;]*,\s*sizeof\s*\(\s*" + INTEGER + r"\s*\)\s*\)")
 NETWORK_ORDER = re.compile(r"\b(?:htons|ntohs|htonl|ntohl|\w*_htons|\w*_ntohs|\w*_htonl|\w*_ntohl)\s*\(")
 BYTE_ORDER_CONDITION = re.compile(r"ENDIAN|BYTE_ORDER")
@@ -130,7 +133,7 @@ def logical_lines(text):
 
 
 def shift_swap(line):
-    if SHIFT_8.search(line) and SHIFT_8_BACK.search(line) and (MASK_16.search(line) or MASK_8.search(line)):
+    if SHIFT_8.search(line) and SHIFT_8_BACK.search(line) and MASK_8.search(line):
         return True
     return bool(SHIFT_24.search(line) and SHIFT_24_BACK.search(line))
 
@@ -230,7 +233,11 @@ CONTROLS = [
     ("host read: deref of a u16 cast", "sdk/x.cpp", "uint16_t length = *(const uint16_t *) ( packet + 4 );\n", 1),
     ("host read: deref of a __be16 cast", "sdk/xdp/x.c", "__u16 n = *( __be16 * ) p;\n", 1),
     ("host read: indexed u32 cast", "sdk/x.cpp", "uint32_t w = ( (const uint32_t *) buffer )[2];\n", 1),
-    ("host read: memcpy of one integer", "sdk/x.cpp", "memcpy( &sequence, packet + 1, sizeof( uint32_t ) );\n", 1),
+    ("host read: deref of a reinterpret_cast", "sdk/x.cpp", "uint16_t length = *reinterpret_cast<const uint16_t *>( packet + 4 );\n", 1),
+    ("host read: indexed reinterpret_cast", "sdk/x.cpp", "uint32_t w = reinterpret_cast<const uint32_t *>( buffer )[2];\n", 1),
+    ("a reinterpret_cast not dereferenced", "sdk/x.cpp", "uint64_t * ids = reinterpret_cast<uint64_t *>( block );\n", 0),
+    ("hand-written 16-bit shift swap with a 0xff mask", "sdk/x.cpp", "uint16_t v = (uint16_t) ( ( ( w & 0xff ) << 8 ) | ( w >> 8 ) );\n", 1),
+    ("host read: memcpy of one integer","sdk/x.cpp", "memcpy( &sequence, packet + 1, sizeof( uint32_t ) );\n", 1),
     ("an array memcpy is no scalar read", "sdk/x.cpp", "memcpy( counters, last, 8 * sizeof( uint64_t ) );\n", 0),
     ("a cast not dereferenced", "sdk/x.cpp", "rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[c], 1 );\n", 0),
     ("an allocation cast", "sdk/x.cpp", "ids = (uint64_t *) rocketnet_malloc( context, n * sizeof( uint64_t ) );\n", 0),
