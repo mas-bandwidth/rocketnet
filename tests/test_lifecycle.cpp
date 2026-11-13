@@ -1329,8 +1329,7 @@ static void check_random_draws_before_init()
                                   {
                                   }
                                   values[i] = rocketnet_random_uint64();
-                                  rocketnet_random_bytes( bytes[i], sizeof( bytes[i] ) );
-                              } );
+                                  rocketnet_random_bytes( bytes[i], sizeof( bytes[i] ) ); } );
     }
     for ( std::thread & thread : threads )
     {

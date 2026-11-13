@@ -4523,7 +4523,8 @@ static int harden_reconcile_main( const harden_options_t & o )
     // the refusals before the library's received count, both parts on every
     // transport and with or without a hostile role (harden_chain.h,
     // harden_refused_from_terms)
-    up.library_refused_before_received = harden_refused_from_terms( [&t]( const char * key ) { return t.get( key ); } );
+    up.library_refused_before_received = harden_refused_from_terms( [&t]( const char * key )
+                                                                    { return t.get( key ); } );
     up.refused_source = "transport PACKETS_RECEIVED - library received (refused off the main thread) + the receive path's size drops (URING_RECEIVE_DROPPED_SIZE, IOCP_/RIO_RECEIVE_TOO_SHORT/TOO_LARGE)";
 
     harden_chain_t down;

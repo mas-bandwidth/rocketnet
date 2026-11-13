@@ -299,8 +299,7 @@ static void test_harden_chain_refused_from_terms_reads_the_counters()
         const int64_t refused = harden_refused_from_terms( [&terms]( const char * key ) -> int64_t
                                                            {
                                                                std::map<std::string, int64_t>::const_iterator it = terms.find( key );
-                                                               return it == terms.end() ? 0 : it->second;
-                                                           } );
+                                                               return it == terms.end() ? 0 : it->second; } );
         check( refused == 13 );
     }
 }
