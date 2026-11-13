@@ -819,8 +819,9 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
 // The fill-phase atomics: the send path lets any number of game threads
 // acquire and seal packets between update and the flush, and these are the
 // only shared-word operations that phase needs -- a sequence taken with an
-// add, a timestamp or counter published with a store, and a high-water mark
-// folded with a max. Relaxed ordering is correct for all of them: each
+// add, a timestamp or counter published with a store, a high-water mark
+// folded with a max, and a word on a filler's own line moved with a
+// compare-and-swap. Relaxed ordering is correct for all of them: each
 // value is meaningful alone and nothing is ordered behind it.
 
 #include <string.h>
@@ -861,6 +862,12 @@ inline void rocketnet_platform_atomic_store_double( volatile double * value, dou
 
     // folds value = max(value, candidate) with a compare-exchange loop, so
     // concurrent folds from any number of threads leave the largest
+
+    // relaxed ordering; true when value held expected and now holds desired
+inline bool rocketnet_platform_atomic_cas_u64( volatile uint64_t * value, uint64_t expected, uint64_t desired )
+{
+    return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, (long long) desired, (long long) expected ) == expected;
+}
 
 inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
 {
@@ -906,6 +913,12 @@ inline void rocketnet_platform_atomic_store_double( volatile double * value, dou
 
     // folds value = max(value, candidate) with a compare-exchange loop, so
     // concurrent folds from any number of threads leave the largest
+
+    // relaxed ordering; true when value held expected and now holds desired
+inline bool rocketnet_platform_atomic_cas_u64( volatile uint64_t * value, uint64_t expected, uint64_t desired )
+{
+    return __atomic_compare_exchange_n( value, &expected, desired, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED );
+}
 
 inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
 {
