@@ -3667,20 +3667,24 @@ jobs:
           # baseline was; the setup-subtraction fallback measures differently
           grep -qx 'isolation mode=client_requests' <<<"$output"
 
-  # THE LINT JOB: every per-commit check that reads files and builds nothing
-  # (or one small compile), in one job on one runner, so the per-commit tier
-  # stays within the runners that can pick it up at once. Each check keeps its
-  # own step and its own verdict.
+  # THE LINT JOB, in four parallel shard jobs (lint (0/4) .. (3/4)) and a summary job.
+  # Every per-commit check that reads files and builds nothing (or one small
+  # compile), each with its own step and its own verdict. The one job ran 112 to
+  # 131 s against the 120 s cap; each step below runs exactly once, in its
+  # original order within its shard, and the required check
+  # "lint (workflows, format, standard, tool selftests)" is the summary job at the
+  # end, green only when all four shards are (tools/check_debug_unit_shards.py,
+  # given the shard names).
   #
-  #   workflows    every runs-on selects the fleet, every main commit gets its
-  #                own concurrency group, and every per-commit job is bounded
-  #                to two minutes (tools/check_ci_budget.py)
-  #   formatting   clang-format 18 over every tracked C and C++ source
-  #   standard     standard conformance and the witness ledger
-  #   source       client/server words, no owned linked lists
-  #   tools        the validation tools' own self-test suites
+  #   0/4  workflows (every runs-on selects the fleet, every main commit gets its
+  #        own concurrency group, every per-commit job is bounded to two minutes),
+  #        formatting, standard conformance, the witness ledger, client/server words
+  #   1/4  stands on its own, no owned linked lists, byte order, the release and
+  #        landing tools, the ruleset
+  #   2/4  the TLA+ tools, run records and model coverage; the fuzz corpora
+  #   3/4  the remaining tools' own self-test suites
   lint:
-    name: lint (workflows, format, standard, tool selftests)
+    name: lint (0/4)
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
@@ -3936,6 +3940,19 @@ jobs:
           python3 tools/test_check_client_server_words.py
           python3 tools/check_client_server_words.py
 
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  lint-source:
+    name: lint (1/4)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
+        with:
+          persist-credentials: false
+
       # tools/check_other_libraries.py exits 1 when a tracked file's path or
       # text names another network library, outside the dated records it
       # lists (RECORDS_ALLOWED): rocketnet stands on its own. Its tests hold
@@ -4118,6 +4135,19 @@ jobs:
           python3 tools/check_branch_protection.py --self-test
           python3 tools/check_branch_protection.py
 
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  lint-models:
+    name: lint (2/4)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
+        with:
+          persist-credentials: false
+
       - name: Test the nightly TLA+ case planner
         if: ${{ !cancelled() }}
         run: |
@@ -4189,6 +4219,19 @@ jobs:
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  lint-tools:
+    name: lint (3/4)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
+        with:
+          persist-credentials: false
 
       # tools/check_msvc_crt.py: no bare call MSVC deprecates (C4996, an error
       # under /WX) in a test, tool or example source MSVC compiles; three
@@ -4344,6 +4387,49 @@ jobs:
 
       - if: always()
         uses: ./.github/actions/ccache-stats
+
+  lint-summary:
+    name: lint (workflows, format, standard, tool selftests)
+    needs: [lint, lint-source, lint-models, lint-tools]
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: All four lint shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD_JOBS: lint-shard-jobs.json
+        run: |
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "lint (0/4)" "lint (1/4)" "lint (2/4)" "lint (3/4)"
 
   # Every registered unit case runs in at least one CI configuration. Each job
   # that runs the unit suite uploads `bin/test --list` (or, for a leg that
