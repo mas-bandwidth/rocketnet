@@ -161,6 +161,14 @@ void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
 bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index );
 void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, int client_index );
 
+// A fill call for a client by a thread other than the one that claimed it
+// last, in a server that one thread at a time uses (the calls that name no
+// client): when another thread holds the client's claim, one empty main
+// operation is run first, which ends every claim of the phase and is refused
+// like any main operation while a fill call is running. true: the caller's
+// fill call for the client may follow. false: refused and counted.
+bool rocketnet_fill_phase_hand_over( struct rocketnet_fill_phase_t * fill_phase, int client_index );
+
 // RAII forms for the call sites
 struct rocketnet_fill_phase_main_scope_t
 {

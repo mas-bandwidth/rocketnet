@@ -1114,7 +1114,7 @@ static uint64_t rocketnet_server_transport_queue_budget_now( const struct rocket
         return started + ( free_frames > reserve ? free_frames - reserve : 0 );
     }
 }
-static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport );
+static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport, int queues );
 
 
 
@@ -1140,6 +1140,7 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
         rocketnet_assert( queues >= 1 && queues <= ROCKETNET_SERVER_MAX_SEND_QUEUES );
         queues = queues < 1 ? 1 : ( queues > ROCKETNET_SERVER_MAX_SEND_QUEUES ? ROCKETNET_SERVER_MAX_SEND_QUEUES : queues );
     }
+    const int queues_before = server_transport->send_queues;
     server_transport->send_queues = queues;
 
     rocketnet_server_transport_send_reserves( server_transport, server_transport->send_reserve );
@@ -1174,7 +1175,8 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
             smallest_reserve = server_transport->send_reserve[queue];
         }
     }
-    rocketnet_server_transport_return_fill_tails( server_transport );
+    // the tails of the queues claimed since the last open: the count then, or now if it grew
+    rocketnet_server_transport_return_fill_tails( server_transport, queues_before > queues ? queues_before : queues );
 
     for ( int queue = 0; queue < server_transport->send_queues; ++queue )
     {
@@ -1409,12 +1411,12 @@ static void rocketnet_server_transport_fill_refused( struct rocketnet_server_tra
 // Main, with no fill running (RNSendReserve End at the phase's end): every
 // line's tail on every queue goes back to the queue's claims, one add each,
 // and the line's words are zeroed.
-static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport )
+static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport, int queues )
 {
     for ( int i = 0; i < ROCKETNET_FILL_PHASE_FILL_LINES; ++i )
     {
         struct rocketnet_server_fill_line_t * line = &server_transport->fill_lines[i];
-        for ( int queue = 0; queue < ROCKETNET_SERVER_MAX_SEND_QUEUES; ++queue )
+        for ( int queue = 0; queue < queues; ++queue )
         {
             const uint64_t rest = line->tails[queue] & ROCKETNET_SERVER_FILL_HALF_MASK;
             if ( rest != 0 )
@@ -3443,13 +3445,6 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     if ( !rocketnet_api_null_guard( server_transport ) )
     {
         return;
-    }
-    {
-        rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
-        if ( !phase.entered )
-        {
-            return;
-        }
     }
     rocketnet_assert( server_transport );
 

@@ -174,6 +174,32 @@ void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
     RN_FILL_PHASE_TRACE( "MainDrop", -1, epoch, false );
 }
 
+// One main operation with nothing inside it (proofs/tla/RNFillPhase.tla
+// MainAnnounce to MainDrop), run only when another thread holds the client's
+// claim: it ends the claim, so this thread's fill call for the client is the
+// first of a new phase.
+bool rocketnet_fill_phase_hand_over( struct rocketnet_fill_phase_t * fill_phase, int client_index )
+{
+    rocketnet_assert( fill_phase );
+
+    const uint64_t me = rocketnet_platform_thread_id();
+    if ( fill_phase->main_owner.load( std::memory_order_relaxed ) == me || !rn_fill_phase_claims( fill_phase, client_index ) )
+    {
+        return true;
+    }
+    const uint64_t owner = fill_phase->clients[client_index].owner.load();
+    if ( owner == 0 || owner == me )
+    {
+        return true;
+    }
+    if ( !rocketnet_fill_phase_main_begin( fill_phase ) )
+    {
+        return false;
+    }
+    rocketnet_fill_phase_main_end( fill_phase );
+    return true;
+}
+
 // proofs/tla/RNFillPhase.tla FillBegin, FillLock, FillDecide, FillCount, FillLook. The lock is one
 // compare-and-swap; the reversed witness LoadStore takes it as a load (FillLoad) and a store (FillStore).
 bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index )
