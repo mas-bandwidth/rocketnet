@@ -10,14 +10,19 @@
 // The code under test is the reserve in sdk/rocketnet_server_transport.cpp,
 // driven through the server transport's own calls on one thread: a server
 // with SR_CLIENTS clients seated and its I/O swapped for a fake staged
-// transport of one queue, whose room the walk owns. Each step is one call:
+// transport of one queue, whose room the walk owns. An odd seed's queue holds
+// the reserve and SR_SPARE frames more, so every claim is one frame; an even
+// seed's holds SR_CHUNK_SPARE more, so the room above the reserve passes the
+// chunk guard near the top and misses it lower down. Each step is one call:
 //
 //   open      the fake's room drops by the frames an update's protocol
 //             traffic took, each client's keep-alive is marked acknowledged
 //             or not, then rocketnet_server_transport_send_packets opens the
 //             budget: Open(used, acked)
 //   start     rocketnet_server_transport_start_packet for one client. A
-//             frame came back: StartStaged(c). Nothing came back and the
+//             frame came back (the client's own, one of the tail this
+//             thread's line holds, the first of a chunk, or one claimed
+//             alone): StartStaged(c). Nothing came back and the
 //             fake was asked for a frame and refused: StartIoRefused(c).
 //             Nothing came back and the fake was never asked: StartRefused(c)
 //   finish    rocketnet_server_transport_finish_packet on the open packet
@@ -29,15 +34,17 @@
 // The action of a start is read from the call's return value and from the
 // fake transport's own account of the call (asked or not), never from the
 // reserve's words. Every record carries the reserve's words read from the
-// transport through its test seams (budget, claims, the frames staged, the
+// transport through its test seams (budget, claims, the tail this thread's
+// line holds, the frames staged, the
 // own frames used, each client's own frame, the count of those left), the
 // counter SEND_RESERVE_REFUSED read from the transport's counters, and the
 // fake's room.
 //
 // The plant (ROCKETNET_SEND_RESERVE_PLANT, the tla_trace_plant build): a
-// claim whose frame the transport refused is not given back. PLANT-FIRED
-// counts the records where the claims outstanding differ from the frames
-// staged, which the clean code never shows on one thread.
+// claim whose frame the transport refused is not given back, nor the tail
+// held with it. PLANT-FIRED counts the records where the claims outstanding
+// differ from the frames staged and the tail held, which the clean code
+// never shows on one thread.
 
 #if defined( ROCKETNET_TLA_PLANT )
 #define ROCKETNET_SEND_RESERVE_PLANT 1
@@ -61,7 +68,15 @@
 bool rocketnet_server_transport_seat_clients_for_test( struct rocketnet_server_transport_t * server, int clients );
 
 #define SR_CLIENTS 3
-#define SR_SPARE   6    // the fake's staging holds the reserve and this many frames more
+#define SR_SPARE   6    // an odd seed: the fake's staging holds the reserve and this many frames more
+
+// the chunk a claim takes and the room the guard asks for, as
+// sdk/rocketnet_server_transport.cpp has them (ROCKETNET_SERVER_FILL_CHUNK,
+// and a chunk for each of the 64 lines); an even seed's staging holds the
+// reserve, the guard and this many frames more
+#define SR_CHUNK        8
+#define SR_GUARD        ( SR_CHUNK * 64 )
+#define SR_CHUNK_SPARE  ( SR_GUARD + 200 )
 
 // the fake staged transport: one queue, its room owned by the walk
 struct sr_fake_t
@@ -130,6 +145,14 @@ static std::string sr_client_set( const bool * in )
     return text + "}";
 }
 
+// the frames of a chunk this thread's line still holds: the low half of the
+// line's word; the high half, a chunk claim in flight, is 0 between calls
+static uint64_t sr_tail( const struct rocketnet_server_transport_t * server )
+{
+    const uint64_t word = rocketnet_server_transport_fill_tail_for_test( server, -1, 0 );
+    return ( word >> 32 ) == 0 ? ( word & 0xFFFFFFFFULL ) : UINT64_MAX;
+}
+
 // every variable of RNSendReserveCalls but its ghost, read from the
 // transport; the room is the fake's
 static tla_record_t sr_state( struct rocketnet_server_transport_t * server )
@@ -143,11 +166,12 @@ static tla_record_t sr_state( struct rocketnet_server_transport_t * server )
     state.add( "free", tla_int( sr_fake.room ) );
     state.add( "budget", tla_int( (int64_t) rocketnet_server_transport_fill_budget_for_test( server, 0 ) ) );
     state.add( "claims", tla_int( (int64_t) rocketnet_server_transport_fill_claims_for_test( server, 0 ) ) );
+    state.add( "tail", tla_int( (int64_t) sr_tail( server ) ) );
     state.add( "started", tla_int( (int64_t) rocketnet_server_transport_fill_started_for_test( server, 0 ) ) );
     state.add( "ownUsed", tla_int( (int64_t) rocketnet_server_transport_fill_own_used_for_test( server, 0 ) ) );
     state.add( "own", sr_client_set( own ) );
     state.add( "ownLeft", tla_int( (int64_t) rocketnet_server_transport_fill_own_frames_for_test( server ) ) );
-    state.add( "refused", tla_int( (int64_t) rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] ) );
+    state.add( "refused", tla_int( (int64_t) rocketnet_server_transport_counters( const_cast<struct rocketnet_server_transport_t *>( server ) )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] ) );
     return state;
 }
 
@@ -220,7 +244,7 @@ static int trace_send_reserve( uint64_t seed, int steps, const char * out )
     sr_fake.room = 1 << 20;
     rocketnet_server_transport_send_packets( server );
     const int reserve = (int) rocketnet_server_transport_send_reserve_for_test( server, 0 );
-    const int max_free = reserve + SR_SPARE;
+    const int max_free = reserve + ( seed % 2 == 0 ? SR_CHUNK_SPARE : SR_SPARE );
     sr_fake.room = max_free;
     rocketnet_server_transport_send_packets( server );
 
@@ -335,8 +359,8 @@ static int trace_send_reserve( uint64_t seed, int steps, const char * out )
         report.act( act );
         records.push_back( tla_step( op, act, args, sr_state( server ) ) );
 
-        // the planted effect, where it shows: a claim outstanding with no frame staged for it
-        if ( rocketnet_server_transport_fill_claims_for_test( server, 0 ) != rocketnet_server_transport_fill_started_for_test( server, 0 ) )
+        // the planted effect, where it shows: a claim outstanding with no frame staged for it and no tail held
+        if ( rocketnet_server_transport_fill_claims_for_test( server, 0 ) != rocketnet_server_transport_fill_started_for_test( server, 0 ) + sr_tail( server ) )
         {
             report.planted( (int) records.size() );
         }
@@ -344,15 +368,18 @@ static int trace_send_reserve( uint64_t seed, int steps, const char * out )
 
     report.print();
 
-    char constants[256];
+    char constants[384];
     snprintf( constants, sizeof( constants ),
               "    Clients = {0, 1, 2}\n"
               "    Reserve = %d\n"
               "    MaxFree = %d\n"
+              "    Chunk = %d\n"
+              "    Guard = %d\n"
               "    RoomOnly = FALSE\n"
               "    NoRefresh = FALSE\n"
-              "    AbortReturns = FALSE\n",
-              reserve, max_free );
+              "    AbortReturns = FALSE\n"
+              "    TailLeak = FALSE\n",
+              reserve, max_free, SR_CHUNK, SR_GUARD );
     const bool written = tla_write_trace( out, "MCTraceSendReserve", seed, "TraceRNSendReserveCalls", "", constants, records );
 
     if ( open_packet )

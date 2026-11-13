@@ -133,8 +133,19 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // block below has the account): the client reads actual=15389932 in the
 // Windows unit jobs, 64 above the counter union, and the server reads
 // actual=1469512895, 11136 above it (MSVC, Release, DEV ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468464831 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
+// Sending from the game threads (the per-client open message, the thread rule
+// check's lines, the message object's per-thread open lines, each region's
+// room_refusals, the per-thread send lines, the per-client wire totals on a
+// line each) reads 1469750271 and 15394028 (aws-win-5, MSVC, Release, DEV=ON).
+// The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
+// (8 bytes a counter block across a 64-byte rounding): computed from the
+// macOS reading, not measured on Windows.
+// The update in three calls adds 34160412 to the server (the macOS and
+// Linux readings agree): computed, not measured on Windows. The client gains
+// one 64-byte rounding, as on macOS: actual=15394156 (the Windows unit job,
+// MSVC, Release, DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862683 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345580 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -185,6 +196,18 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // block below has the account): measured on the studio (Apple clang, Release,
 // DEV ON, ROCKETNET_TEST_VERBOSE=1), actual=1469513311 and 15037450, 11136
 // and 128 above the counter union.
+// Sending from the game threads (the per-client open message, the thread rule
+// check's lines, the message object's per-thread open lines, each region's
+// room_refusals, the per-thread send lines, the per-client wire totals on a
+// line each) reads 1469750687 and 15041546 (studio, AppleClang, Debug, DEV=ON).
+// The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
+// (8 bytes a counter block across a 64-byte rounding): the probe's actual=
+// lines are 1469751263 and 15041610 (studio, AppleClang, Debug, DEV=ON).
+// The update in three calls: every server keeps the per-client store its
+// received ack blocks wait in (sdk/rocketnet_ack.h, the deferred apply: a
+// segment of acked ids a client, the pending entries and their ranges) and
+// each ack endpoint the last block it applied in full; the client gains one
+// 64-byte rounding: 34160412 and 64 above (studio, AppleClang, Debug, DEV=ON).
 // The staged msgx server is a candidate of the planned peak: ROCKETNET_MSGX_DEFAULT_WORKERS (3)
 // send workers, each with ROCKETNET_MSGX_TX_BANKS banks of ROCKETNET_MSGX_SEND_QUEUE_SIZE (16384)
 // frames, plus the receive banks, add 121665576 bytes to the server over the figure above
@@ -285,6 +308,22 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual=5610460147, 11200 above it with the object's alignment, and
 // actual=15186066, 64 above it (the counter crosses the client object's
 // 64-byte rounding).
+// Sending from the game threads (the per-client open message, the thread rule
+// check's lines, the message object's per-thread open lines, each region's
+// room_refusals, the per-thread send lines, the per-client wire totals on a
+// line each) reads actual=5610697459 and 15190226 (vision, gcc, Debug and
+// Release, DEV ON).
+// The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
+// (8 bytes a counter block across a 64-byte rounding).
+// The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 128 to the
+// server (8 bytes in each of its counter blocks, across two 64-byte
+// roundings) and 64 to the client (hulk, gcc, Debug and Release, DEV ON).
+// The update in three calls (the deferred ack apply's per-client store and
+// each endpoint's last applied block, as the macOS note says) adds 34160412
+// to the server and nothing to the client (hulk, gcc, Debug and Release,
+// DEV ON).
+// The xdp transport's server-wide packet id counter and two put-off counts left
+// the queue sockets (per-queue packet ids): the pin below is main's less 8 (actual=5610449451, bench, gcc Debug, DEV ON).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -292,11 +331,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609412139ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809983ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609412083ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809927ULL )
 #endif // #if defined( __aarch64__ )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137490 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141714 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

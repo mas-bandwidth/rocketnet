@@ -39,6 +39,7 @@ export rocketnet_loopback_hub_create
 export rocketnet_loopback_hub_destroy
 export rocketnet_max_unfragmented_message_bytes
 export rocketnet_quiet
+export rocketnet_server_abort_client_message
 export rocketnet_server_abort_message
 export rocketnet_server_can_send_message
 export rocketnet_server_client_conditions
@@ -53,6 +54,7 @@ export rocketnet_server_destroy
 export rocketnet_server_disconnect_all_clients
 export rocketnet_server_disconnect_client
 export rocketnet_server_disconnect_reason
+export rocketnet_server_finish_client_message
 export rocketnet_server_finish_message
 export rocketnet_server_ipv4_address
 export rocketnet_server_ipv6_address
@@ -74,6 +76,9 @@ export rocketnet_server_stop
 export rocketnet_server_stopped
 export rocketnet_server_transport_name
 export rocketnet_server_update
+export rocketnet_server_update_client
+export rocketnet_server_update_finish
+export rocketnet_server_update_receive
 export rocketnet_sleep
 export rocketnet_status_name
 export rocketnet_term
@@ -122,6 +127,7 @@ prototype rocketnet_loopback_hub_create struct rocketnet_loopback_hub_t*rocketne
 prototype rocketnet_loopback_hub_destroy enum rocketnet_status_t rocketnet_loopback_hub_destroy(struct rocketnet_loopback_hub_t*)
 prototype rocketnet_max_unfragmented_message_bytes int rocketnet_max_unfragmented_message_bytes(enum rocketnet_reliability_t, int)
 prototype rocketnet_quiet void rocketnet_quiet(bool)
+prototype rocketnet_server_abort_client_message void rocketnet_server_abort_client_message(struct rocketnet_server_t*, int)
 prototype rocketnet_server_abort_message void rocketnet_server_abort_message(struct rocketnet_server_t*)
 prototype rocketnet_server_can_send_message bool rocketnet_server_can_send_message(const struct rocketnet_server_t*, int, int, enum rocketnet_reliability_t, int)
 prototype rocketnet_server_client_conditions bool rocketnet_server_client_conditions(const struct rocketnet_server_t*, int, struct rocketnet_conditions_t*, int)
@@ -137,6 +143,7 @@ prototype rocketnet_server_destroy void rocketnet_server_destroy(struct rocketne
 prototype rocketnet_server_disconnect_all_clients void rocketnet_server_disconnect_all_clients(struct rocketnet_server_t*)
 prototype rocketnet_server_disconnect_client void rocketnet_server_disconnect_client(struct rocketnet_server_t*, int)
 prototype rocketnet_server_disconnect_reason enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason(const struct rocketnet_server_t*, int)
+prototype rocketnet_server_finish_client_message uint32_t rocketnet_server_finish_client_message(struct rocketnet_server_t*, int, int)
 prototype rocketnet_server_finish_message uint32_t rocketnet_server_finish_message(struct rocketnet_server_t*, int)
 prototype rocketnet_server_ipv4_address bool rocketnet_server_ipv4_address(const struct rocketnet_server_t*, char*, size_t)
 prototype rocketnet_server_ipv6_address bool rocketnet_server_ipv6_address(const struct rocketnet_server_t*, char*, size_t)
@@ -160,6 +167,9 @@ prototype rocketnet_server_stop void rocketnet_server_stop(struct rocketnet_serv
 prototype rocketnet_server_stopped bool rocketnet_server_stopped(const struct rocketnet_server_t*)
 prototype rocketnet_server_transport_name const char*rocketnet_server_transport_name(const struct rocketnet_server_t*)
 prototype rocketnet_server_update void rocketnet_server_update(struct rocketnet_server_t*, double)
+prototype rocketnet_server_update_client int rocketnet_server_update_client(struct rocketnet_server_t*, int)
+prototype rocketnet_server_update_finish void rocketnet_server_update_finish(struct rocketnet_server_t*)
+prototype rocketnet_server_update_receive void rocketnet_server_update_receive(struct rocketnet_server_t*, double)
 prototype rocketnet_sleep void rocketnet_sleep(double)
 prototype rocketnet_status_name const char*rocketnet_status_name(enum rocketnet_status_t)
 prototype rocketnet_term enum rocketnet_status_t rocketnet_term(void)

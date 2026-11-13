@@ -47,6 +47,12 @@ fake ran 0 'test_a' 'skipped: 0' '*** ALL TESTS PASSED ***'
 fake crashed 139 'test_b'
 fake crlf 0 $'test_b\r' $'SKIPPED test_a: p_root\r' $'skipped: 1\r' $'\r' $'*** ALL TESTS PASSED ***\r' $'\r'
 fake lost 0 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
+# test_a falls in shard 1 of 2 and test_b in shard 0 (tests/suite_runner.h suite_shard_of); every shard prints all SKIPPED lines
+fake shard0 0 'shard 0/2: 1 of 2 cases' 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
+fake shard1 0 'shard 1/2: 1 of 2 cases' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
+fake shard0_lost 0 'shard 0/2: 1 of 2 cases' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
+fake shard0_noline 0 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
+fake report 0 'jobs: 4 (cpus this run may use: 4)' 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' 'slowest cases:' '    1.200s  test_b' 'peak rss:' '     10 MiB (bound 20)  test_b' '' '*** ALL TESTS PASSED ***' ''
 fake stranger 0 'test_b' 'test_z' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 
 failures=0
@@ -68,6 +74,7 @@ expect() {
 }
 
 expect 0 "clean suite, exact skips" t "$work/good"
+expect 0 "the ROCKETNET_TEST_REPORT lines are reports, not cases" t "$work/report"
 expect 0 "carriage returns removed" t "$work/crlf"
 expect 1 "suite failed: the suite's exit" t "$work/red_suite"
 expect 1 "unlisted skip" t "$work/unlisted"
@@ -75,6 +82,11 @@ expect 1 "listed row ran" t "$work/ran"
 expect 1 "a registered row neither ran nor skipped" t "$work/lost"
 expect 1 "a printed name no registry holds" t "$work/stranger"
 expect 139 "crash: the suite's exit, not the check's" t "$work/crashed"
+expect 0 "shard 0/2: its rows only" t --shard 0/2 "$work/shard0"
+expect 0 "shard 1/2: its skip only" t --shard 1/2 "$work/shard1"
+expect 1 "shard 0/2: a row of the shard neither ran nor skipped" t --shard 0/2 "$work/shard0_lost"
+expect 1 "shard run without its shard line" t --shard 0/2 "$work/shard0_noline"
+expect 1 "whole-suite log must hold every row (a shard log is not whole)" t "$work/shard0"
 expect 1 "undeclared variant" other "$work/good"
 expect 2 "no command" t
 expect 0 "--log names the log" t --log "$work/named.log" "$work/good"

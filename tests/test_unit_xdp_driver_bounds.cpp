@@ -241,6 +241,61 @@ static void test_xdp_transport_pin_cpu_refuses_outside_the_set()
     rocketnet_unit_check( rocketnet_xdp_cpu_in_set( 1023, 1024 ) );
 }
 
+static void test_xdp_transport_threads_never_pin_to_core_zero()
+{
+    // the operating system keeps core 0: the first queue's thread is on cpu 1
+    // at the least, however num_os_cpus reads, and queue q is q past it
+
+    rocketnet_unit_check( rocketnet_xdp_thread_cpu( 1, 0 ) == 1 );
+    rocketnet_unit_check( rocketnet_xdp_thread_cpu( 1, 1 ) == 2 );
+    rocketnet_unit_check( rocketnet_xdp_thread_cpu( 1, 6 ) == 7 );
+    rocketnet_unit_check( rocketnet_xdp_thread_cpu( 2, 0 ) == 2 );
+    rocketnet_unit_check( rocketnet_xdp_thread_cpu( 0, 0 ) == 1 );
+    rocketnet_unit_check( rocketnet_xdp_thread_cpu( -3, 4 ) == 5 );
+
+    for ( int num_os_cpus = -1; num_os_cpus <= 8; num_os_cpus++ )
+    {
+        for ( int queue = 0; queue < 8; queue++ )
+        {
+            rocketnet_unit_check( rocketnet_xdp_thread_cpu( num_os_cpus, queue ) >= 1 );
+        }
+    }
+
+    // the pre-flight's targets are the same cpus: num_os_cpus 0 asks for 1 .. 7, never cpu 0
+
+    int first_missing = -1;
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "1-7", 0, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == -1 );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2-7", 0, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 1 );
+}
+
+static void test_xdp_transport_refused_pin_falls_back_without_core_zero()
+{
+    uint8_t allowed[8];
+    uint8_t out[8];
+
+    // cpus 0, 1 and 9 allowed: the fallback holds 1 and 9
+    memset( allowed, 0, sizeof( allowed ) );
+    allowed[0] = 0x03;
+    allowed[1] = 0x02;
+    rocketnet_unit_check( rocketnet_xdp_mask_without_core_zero( allowed, out, 8 ) == 2 );
+    rocketnet_unit_check( out[0] == 0x02 && out[1] == 0x02 && out[2] == 0 );
+
+    // core 0 alone: nothing to fall back to, the caller leaves its mask
+    memset( allowed, 0, sizeof( allowed ) );
+    allowed[0] = 0x01;
+    rocketnet_unit_check( rocketnet_xdp_mask_without_core_zero( allowed, out, 8 ) == 0 );
+    rocketnet_unit_check( out[0] == 0 );
+
+    // no core 0 to take: the mask is unchanged
+    memset( allowed, 0, sizeof( allowed ) );
+    allowed[0] = 0xF0;
+    allowed[7] = 0x80;
+    rocketnet_unit_check( rocketnet_xdp_mask_without_core_zero( allowed, out, 8 ) == 5 );
+    rocketnet_unit_check( out[0] == 0xF0 && out[7] == 0x80 );
+}
+
 static void test_xdp_transport_preflight_refuses_pin_targets_outside_isolated()
 {
     int first_missing = -1;
@@ -379,6 +434,8 @@ REGISTER_UNIT_TEST( test_xdp_transport_receive_descriptor_refuses_bad_descriptor
 REGISTER_UNIT_TEST( test_xdp_transport_refused_descriptor_not_refilled );
 #endif // #if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );
+REGISTER_UNIT_TEST( test_xdp_transport_threads_never_pin_to_core_zero );
+REGISTER_UNIT_TEST( test_xdp_transport_refused_pin_falls_back_without_core_zero );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_pin_targets_outside_isolated );
 REGISTER_UNIT_TEST( test_xdp_transport_stats_cpus_are_bounded );
 REGISTER_UNIT_TEST( test_xdp_transport_stats_failed_read_keeps_last );

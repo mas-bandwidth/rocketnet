@@ -78,6 +78,7 @@ other session state.
 | | other slots, server totals, transport/config and counters | server-wide state | KEEP | lifetime state or another connection |
 | message connection / endpoint | the client table's message and channel fields | per-slot message state | RESET | endpoint reset makes the slot fresh |
 | | `disconnect_reason` | last connection's reason | KEEP | cleared only when a new id is observed |
+| | `open` | the message open on the slot | KEEP through the reset | a start still open is cancelled before the reset (`rn_message_connection_cancel_at_reset`), so the reset finds it closed |
 
 The server reset wipes the encryption mapping's secrets and removes it while the slot still
 names it, releases identity and user data, clears the connection id, compacts

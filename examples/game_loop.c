@@ -3,19 +3,35 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Game loop: a 60 Hz fixed-step loop driving one server and N clients over
-    loopback, each frame in the order a game runs it: update, receive,
-    simulate, queue, then send last. Clients send a position every frame and
-    an event twice a second; the server sends each a state update every frame.
-    Each message carries its frame, so receivers measure latency in frames.
-    Network calls per frame are timed against a 100 microsecond budget, which
-    is printed, never failed on. --wrong-order sends before queuing.
+    loopback. Each client's frame runs in the order a client runs it: update,
+    receive, simulate, queue, then send last.
 
-    Run: ./bin/example_game_loop [--clients <1..1000>] [--seconds <1..3600>] [--wrong-order]
+    The server's frame runs one of two ways. By default (--game-threads 1)
+    every server call is made on the main thread, one thread at a time: take
+    in what arrived, queue every client's state update, send_packets, then
+    update. With --game-threads N the server's frame runs the way a game
+    server runs it: the main thread joins last frame's network half, reads
+    the messages the last update left, does the world update, then splits off
+    the second half of the network update to run in parallel with the main
+    thread, joined at the start of the next frame. That half queues every
+    client's state update on N game threads (the examples' stand-in for a
+    game's job system, examples/thread.h), then sends, then updates the
+    server in three calls with the acknowledgements applied on the game
+    threads. The main thread takes very little of it.
+
+    Clients send a position every frame and an event twice a second; the
+    server sends each a state update every frame. Each message carries its
+    frame, so receivers measure latency in frames. Client network calls per
+    frame are timed against a 100 microsecond budget, which is printed, never
+    failed on. --wrong-order makes the clients send before queuing.
+
+    Run: ./bin/example_game_loop [--clients <1..1000>] [--seconds <1..3600>] [--game-threads <1..64>] [--wrong-order]
 */
 
 #include "rocketnet.h"
 #include "dev_keys.h"
 #include "shutdown.h"
+#include "thread.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,7 +50,9 @@ struct latency_t
 
 static struct latency_t to_server, to_client;
 static uint32_t bins[BINS + 1], count;      // the client frame costs
-static double max_us, tick_sum_us, tick_max_us;
+static double max_us;
+static double main_sum_us, main_max_us;         // the server's main thread in rocketnet: the join and the receive, and the whole network half when it runs there
+static double network_sum_us, network_max_us;   // the network half: queue every state update, send, update
 
 static void add_client_cost( double us )
 {
@@ -104,6 +122,93 @@ static void read_message( struct latency_t * l, uint32_t frame, const uint8_t * 
     l->count++;
 }
 
+// One server frame of the game's state: what the world update wrote for the
+// second half of the network update to send. The server keeps two and swaps
+// them at the frame boundary, so the main thread never writes the frame the
+// other thread is sending from.
+
+struct server_frame_t
+{
+    struct rocketnet_server_t * server;
+    int num_clients;
+    int game_threads;   // 1: every call on the main thread; more: the second half is split off
+    uint32_t frame;     // every client's state update this frame carries its frame number
+    double now;         // the game clock for this frame's update
+    struct rn_cli_pool_t * pool;     // the game threads, NULL with one
+    int send;           // 0 until every client is connected and the run is measured
+    double network_us;  // written by the thread that ran the second half, read by the main thread after the join
+};
+
+// Queue the state updates of the clients in [begin, end). One thread queues
+// a client's messages, so each game thread takes a range of clients and no
+// two threads start a message on the same client. A start with no room
+// returns NULL: a state update is replaceable, so the frame skips it.
+
+static void queue_range( void * data, int begin, int end )
+{
+    struct server_frame_t * f = (struct server_frame_t *) data;
+
+    for ( int i = begin; f->send && i < end; i++ )
+    {
+        // game thread start: no can_send_message preflight (that call is a main
+        // thread call); a start with no room returns NULL and is skipped below
+        uint8_t * p = rocketnet_server_start_message( f->server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES );
+        if ( p )
+        {
+            // game threads finish by client index; one thread may use the plain call
+            const int bytes = write_message( p, f->frame );
+            const uint32_t serial = f->game_threads > 1 ? rocketnet_server_finish_client_message( f->server, i, bytes ) : rocketnet_server_finish_message( f->server, bytes );
+            (void) serial;
+        }
+    }
+}
+
+// Apply the acknowledgements of the clients in [begin, end).
+
+static void update_range( void * data, int begin, int end )
+{
+    struct server_frame_t * f = (struct server_frame_t *) data;
+
+    for ( int i = begin; i < end; i++ )
+    {
+        (void) rocketnet_server_update_client( f->server, i );
+    }
+}
+
+// The second half of the server's network update: queue every client's state
+// update, send, then (split off only) update. With one game thread it runs
+// on the main thread, after the update the frame began with. With more it is
+// split off to run on another thread in parallel with the main thread, which
+// does not touch the server until the join; the calls the game threads make
+// are joined before the thread's next call.
+
+static void network_half( void * data )
+{
+    struct server_frame_t * f = (struct server_frame_t *) data;
+    const double start = rocketnet_time();
+
+    rn_cli_pool_run( f->pool, f->num_clients, queue_range, f );
+    rocketnet_server_send_packets( f->server );
+
+    if ( f->game_threads > 1 )
+    {
+        rocketnet_server_update_receive( f->server, f->now );
+        rn_cli_pool_run( f->pool, f->num_clients, update_range, f );
+        rocketnet_server_update_finish( f->server );
+    }
+
+    f->network_us = ( rocketnet_time() - start ) * 1e6;
+}
+
+static void tally_network_half( const struct server_frame_t * f )
+{
+    if ( f->send )
+    {
+        network_sum_us += f->network_us;
+        network_max_us = f->network_us > network_max_us ? f->network_us : network_max_us;
+    }
+}
+
 // a whole decimal argument, or -1 for anything else (a sign, no digits,
 // trailing characters, more than a million), which the range check refuses
 
@@ -116,7 +221,7 @@ static int parse_whole( const char * text )
 
 int main( int argc, char ** argv )
 {
-    int num_clients = 32, seconds = 5, wrong_order = 0;
+    int num_clients = 32, seconds = 5, game_threads = 1, wrong_order = 0;
 
     for ( int i = 1; i < argc; i++ )
     {
@@ -132,15 +237,19 @@ int main( int argc, char ** argv )
         {
             seconds = parse_whole( argv[++i] );
         }
+        else if ( strcmp( argv[i], "--game-threads" ) == 0 && i + 1 < argc )
+        {
+            game_threads = parse_whole( argv[++i] );
+        }
         else
         {
             seconds = 0;
         }
     }
 
-    if ( num_clients < 1 || num_clients > ROCKETNET_MAX_CLIENTS || seconds < 1 || seconds > 3600 )
+    if ( num_clients < 1 || num_clients > ROCKETNET_MAX_CLIENTS || seconds < 1 || seconds > 3600 || game_threads < 1 || game_threads > RN_CLI_MAX_GAME_THREADS )
     {
-        printf( "usage: example_game_loop [--clients <1..1000>] [--seconds <1..3600>] [--wrong-order]\n" );
+        printf( "usage: example_game_loop [--clients <1..1000>] [--seconds <1..3600>] [--game-threads <1..64>] [--wrong-order]\n" );
         return 1;
     }
 
@@ -214,7 +323,7 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    printf( "%d clients, server transport %s\n", num_clients, rocketnet_server_transport_name( server ) );
+    printf( "%d clients, %d game thread(s), server transport %s\n", num_clients, game_threads, rocketnet_server_transport_name( server ) );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
@@ -310,6 +419,16 @@ int main( int argc, char ** argv )
     double previous = rocketnet_time(), accumulator = 0.0;
     double last_now = 1000.0;     // the last frame's game time, for the shutdown's updates
     const char * failure = NULL;
+
+    static struct server_frame_t server_frames[2];
+    struct server_frame_t * split_off = NULL;     // the frame the other thread is sending from, until the join
+    struct rn_cli_thread_t network;
+    memset( &network, 0, sizeof( network ) );
+    static struct rn_cli_pool_t pool;     // the stand-in game threads, started once
+    if ( game_threads > 1 )
+    {
+        rn_cli_pool_start( &pool, game_threads );
+    }
 
     for ( uint32_t frame = 0; !failure && ( measure_from == UINT32_MAX || frame < measure_from + frames ); frame++ )
     {
@@ -408,15 +527,30 @@ int main( int argc, char ** argv )
             connected += rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
         }
 
-        // the server's frame, timed as one tick, in the same order
+        // the server's frame, on the main thread. The join and the receive
+        // are what rocketnet takes from the main thread, timed
 
         const double start = rocketnet_time();
 
-        rocketnet_server_update( server, now );
+        // 1. join: wait for last frame's second half of the network update.
+        // The main thread owns the server again from here
 
-        if ( wrong_order )
+        rn_cli_thread_join( &network );
+        if ( split_off )
         {
-            rocketnet_server_send_packets( server );
+            tally_network_half( split_off );
+            split_off = NULL;
+        }
+
+        // 2. a bit of networking on the main thread. By default, the update
+        // the frame begins with, in the order of the integration guide: update,
+        // receive, queue, then send last. With game threads the update is in
+        // the split-off half, so the main thread only reads each message the
+        // last update left into the game's state, before the next update
+
+        if ( game_threads == 1 )
+        {
+            rocketnet_server_update( server, now );
         }
 
         const struct rocketnet_message_batch_t * batch;         // one queue across every client
@@ -429,29 +563,48 @@ int main( int argc, char ** argv )
             }
         }
 
-        for ( int i = 0; measuring && i < num_clients; i++ )
+        double main_us = ( rocketnet_time() - start ) * 1e6;
+
+        // 3. the world update, on the main thread: nothing moves in this
+        // example, so this frame's state is each client's state update,
+        // stamped with the frame
+
+        struct server_frame_t * f = &server_frames[frame % 2];
+        f->server = server;
+        f->num_clients = num_clients;
+        f->game_threads = game_threads;
+        f->frame = frame;
+        f->now = now;
+        f->pool = game_threads > 1 ? &pool : NULL;
+        f->send = measuring;
+        f->network_us = 0.0;
+
+        // 4. the second half of the network update. By default it runs here,
+        // on the main thread. With game threads it is split off: another
+        // thread runs it in parallel with the main thread, which must not
+        // touch the server until the join next frame
+
+        if ( game_threads == 1 )
         {
-            if ( rocketnet_server_can_send_message( server, i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES ) )
-            {
-                uint8_t * p = rocketnet_server_start_message( server, (uint64_t) i, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, MESSAGE_BYTES );
-                if ( p )
-                {
-                    const uint32_t serial = rocketnet_server_finish_message( server, write_message( p, frame ) );
-                    (void) serial;
-                }
-            }
+            network_half( f );
+            tally_network_half( f );
+            main_us += f->network_us;
+        }
+        else if ( !rn_cli_thread_start( &network, network_half, f ) )
+        {
+            failure = "could not start a thread";
+        }
+        else
+        {
+            split_off = f;
         }
 
-        if ( !wrong_order )
-        {
-            rocketnet_server_send_packets( server );
-        }
+        // 5. the main thread goes on: the frame edge, then next frame's clients
 
         if ( measuring )
         {
-            const double tick_us = ( rocketnet_time() - start ) * 1e6;
-            tick_sum_us += tick_us;
-            tick_max_us = tick_us > tick_max_us ? tick_us : tick_max_us;
+            main_sum_us += main_us;
+            main_max_us = main_us > main_max_us ? main_us : main_max_us;
 
             if ( connected != num_clients )
             {
@@ -468,15 +621,37 @@ int main( int argc, char ** argv )
         }
     }
 
+    // the server's last split-off half finishes before its server is destroyed
+
+    rn_cli_thread_join( &network );
+    if ( split_off )
+    {
+        tally_network_half( split_off );
+    }
+
+    if ( game_threads > 1 )
+    {
+        rn_cli_pool_stop( &pool );
+    }
+
     // clients run their frames before the server's, so the server reads a
-    // client's message no earlier than the frame it was sent (0) and a client
-    // reads its state update no earlier than the next frame (1). Both
-    // directions pass through a background handoff (the client never blocks
-    // on its send), which can add frames: that cost is reported, not capped.
-    // The wrong order holds each message one frame more, so it raises both
-    // causal minimums by one; telling it apart exactly would need same-frame
-    // delivery, which the handoff does not promise, so the check is the
-    // minimum and the printed latency shows the rest
+    // client's message no earlier than the frame it was sent (0). By default
+    // the update that takes it in is the first thing in the server's frame;
+    // with game threads the update runs in the split-off half, which can run
+    // after the next frame's clients have sent, so the main thread can read
+    // a message the frame it was sent too (0), and the check is no stricter.
+    // A state update the server's frame F queues goes on the wire in the
+    // same frame, after that frame's clients ran, so a client reads it no
+    // earlier than frame F + 1 (1). Both directions also pass
+    // through a background handoff (the client never blocks on its send),
+    // which can add frames: that cost is reported, not capped. With game
+    // threads the second half runs in parallel with the main thread, so it
+    // can finish after the next frame's clients have run: another frame the
+    // printed latency shows. The clients' wrong order holds each client
+    // message one frame more, so it raises the client-to-server minimum by
+    // one; telling it apart exactly would need same-frame delivery, which the
+    // handoff does not promise, so the check is the minimum and the printed
+    // latency shows the rest
 
     if ( !failure && ( to_server.count == 0 || to_client.count == 0 ) )
     {
@@ -487,8 +662,10 @@ int main( int argc, char ** argv )
 
     if ( !failure )
     {
-        printf( "[end] client frame p50 %.1f us, p99 %.1f us, max %.1f us (budget %.0f us); server tick mean %.1f us, max %.1f us\n",
-                percentile( 0.5 ), percentile( 0.99 ), max_us, BUDGET_US, tick_sum_us / frames, tick_max_us );
+        printf( "[end] client frame p50 %.1f us, p99 %.1f us, max %.1f us (budget %.0f us)\n",
+                percentile( 0.5 ), percentile( 0.99 ), max_us, BUDGET_US );
+        printf( "server main thread in rocketnet mean %.1f us, max %.1f us; network half (on the %s) mean %.1f us, max %.1f us\n",
+                main_sum_us / frames, main_max_us, game_threads == 1 ? "main thread" : "game threads", network_sum_us / frames, network_max_us );
         printf( "client frame budget %s at p99 (informational, never a failure)\n", percentile( 0.99 ) <= BUDGET_US ? "held" : "exceeded" );
         printf( "latency client->server frames: min %u mean %.2f max %u\n", to_server.min, to_server.sum / to_server.count, to_server.max );
         printf( "latency server->client frames: min %u mean %.2f max %u\n", to_client.min, to_client.sum / to_client.count, to_client.max );
@@ -502,7 +679,7 @@ int main( int argc, char ** argv )
         {
             failure = "a client message arrived before its causal minimum";
         }
-        else if ( to_client.min < 1 + order_frames )
+        else if ( to_client.min < 1 )
         {
             failure = "a state update arrived before its causal minimum";
         }

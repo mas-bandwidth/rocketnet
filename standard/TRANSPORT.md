@@ -3823,6 +3823,10 @@ The registry of counters, in index order, is:
 | `RIO_RECEIVE_REPOST_FAILED` | `refusal` | `none` |
 | `RIO_COMMITS` | `expected` | `none` |
 | `SEND_RESERVE_REFUSED` | `refusal` | `none` |
+| `MAIN_THREAD_CALL_OVERLAP` | `refusal` | `none` |
+| `CLIENT_SEND_TWO_THREADS` | `refusal` | `none` |
+| `SEND_RESERVE_REFUSED_TAILS_HELD` | `refusal` | `none` |
+| `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY` | `refusal` | `none` |
 | `RECEIVE_DROPPED_STOPPED` | `expected` | `none` |
 | `RECEIVE_DROPPED_RETIRED` | `expected` | `none` |
 
@@ -3979,8 +3983,10 @@ d7 01 00 00 1c 31 f2 57 00 00 00 d4 1f 4d 66 00
 00 00 69 7d ae d0 01 00 00 05 4c ed e0 00 00 00
 2a 63 c3 16 00 00 00 6f 54 6f 12 00 00 00 62 5c
 63 05 00 00 00 a1 e9 0d d3 00 00 00 2c 79 8c cf
-01 00 00 83 0e ee 6b 00 00 00 ad 33 2a 98 01 00
-00 dd 5b 1f d0 01 00 00
+01 00 00 83 0e ee 6b 00 00 00 86 ee 14 9c 00 00
+00 da 28 2c b9 00 00 00 9f ba 38 0a 00 00 00 c1
+13 1f ae 00 00 00 ad 33 2a 98 01 00 00 dd 5b 1f
+d0 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

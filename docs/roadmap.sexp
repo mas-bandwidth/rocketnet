@@ -252,6 +252,31 @@
    :text "CONFIG is printed by tests/tla_trace.cpp, so a COMPILE_DEFINITIONS set on one layer's source file, or a configuration macro without the ROCKETNET_ prefix, changes the layer's code without the checker seeing it. Enforcing it: CMake refuses source-file COMPILE_DEFINITIONS on tests/tla_trace_*.cpp. Each layer's walk prints CONFIG through a macro in tla_trace_record.h expanded in its own unit. The macro list is every identifier an #if of the included sdk files tests, read from those files, not a fixed list of ROCKETNET_ names. Add planted rows for a per-source define and for an unprefixed macro."
    :date "2026-11-12" :origin "Trace check v2, third cold reader")
 
+  (item "thread-rules-nesting-model" :group "proof-debt" :area "proofs"
+   :title "Model the nested calls and the refused look's three writes in RNFillPhase"
+   :text "proofs/tla/RNFillPhase.tla leaves out the nesting depths, and takes a refused look (sdk/rocketnet_fill_phase.cpp rocketnet_fill_phase_fill_begin: the word, the owner and the word again) as one step. A cold reader found an interleaving in that gap: a call that a main thread call ran inside puts the owner back while the word still reads as held at depth 1, the thread it gives the client back to reads its own next call as nested, and its end leaves a fills_in line it never entered, after which every main thread call is refused. Fixed by the order of the writes (the word goes back to the lock's form first); no test fails without the fix and no model step sees it. Add the nested path and the three writes to the model with a reversed witness for the old order, and a trace point between the writes."
+   :date "2026-11-13" :origin "Piece G (sending from the game threads), cold reader finding 1")
+
+  (item "payload-ring-chunk-layout-model" :group "proof-debt" :area "proofs"
+   :title "Model the chunked payload ring claims at the layout level"
+   :text "rocketnet_server_payload_ring_take (sdk/rocketnet_server_transport.cpp) claims payload ring slots in chunks held on per-thread lines, with index arithmetic on a packed [end:32][next:32] word, a guard, a clip at send_capacity and a give-up when another thread on the line installs first. proofs/tla/RNServerPayloadRingLayout.tla still models one fetch-add a slot. Model the same arithmetic at capacity 3 or 4 with reversed witnesses: a lost install that keeps its first slot (one client's packets then leave out of start order; test_server_fill_ring_chunk_lost_install_keeps_start_order pins the fix), and a line's unused slots not marked empty before the flush."
+   :date "2026-11-13" :origin "Piece G, cold reader finding 2; the layout rule")
+
+  (item "send-reserve-tails-named-implied" :group "proof-debt" :area "proofs"
+   :title "RNSendReserve: TailsNamed is implied by NeverStarved"
+   :text "As defined, with no other thread holding a tail RoomFor and RoomPastTails are the same predicate, so unnamed implies starved: the invariant TailsNamed adds nothing NeverStarved does not check, and its witness MCRNSendReserveBrokenNoTailReturn.cfg would fail NeverStarved too. The model also marks the counter choice at the decision, where the code reads the tails after the take back and the retest. Restate TailsNamed so it can fail alone, and move the choice to where the code makes it."
+   :date "2026-11-13" :origin "Piece G, cold reader (TLA+ section)")
+
+  (item "thread-rule-counters-production-test" :group "audit-remaining" :area "tests"
+   :title "Read the three thread rule counters on the production library"
+   :text "MAIN_THREAD_CALL_OVERLAP, CLIENT_SEND_TWO_THREADS and SEND_RESERVE_REFUSED_TAILS_HELD are counted in every build, and each is read by value in a test, but every such test links the development library (bin/test_wide_fill, tests/test_unit_server_send_reserve.cpp). Add a case to the production functional binary that breaks each of the two thread rules through the public API and reads the counters; the same case can check the API misuse count of a message left open at update, which no test reads."
+   :date "2026-11-13" :origin "Piece G, cold reader (counters and tests sections)")
+
+  (item "ring-order-across-thread-change" :group "audit-remaining" :area "sdk"
+   :title "Start order of one client's packets when its sending thread changes between flushes"
+   :text "On a transport that buffers payloads in the server's ring, a thread's unused chunk slots stay on its line until the flush. If one thread sends to a client, a checked main thread call that is not send_packets follows, and another thread then sends to the same client, the second thread's packets may sit in lower slots and leave first. rocketnet.h states it. Returning every line's chunk at each checked main thread call would keep start order; it costs a walk of the 64 lines a call."
+   :date "2026-11-13" :origin "Piece G, cold reader finding 2 (second case)")
+
   (item "msgx-partial-send-no-sleep" :group "macos" :area "sdk"
    :title "Do not sleep after a partial sendmsg_x"
    :text "A partial sendmsg_x result ends the call kept (sdk/rocketnet_msgx_send_runs.h), so the transmit worker marks the socket full and waits 1 ms (sdk/rocketnet_server_msgx_apple.cpp) although the socket took data. Loop again at once when the kept call made progress, and wait only when a call took nothing. Measured nowhere yet: the four space rows pass as it is."

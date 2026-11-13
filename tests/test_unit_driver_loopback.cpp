@@ -787,7 +787,7 @@ static void test_wire_totals_staged_finish_counts_exactly()
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
         rocketnet_unit_check( frame );
-        memset( frame + context.payload_index, i & 0xff, 16 );
+        memset( frame, i & 0xff, 16 );
 
         const int wire_bytes = rocketnet_server_transport_finish_packet( server, &context, 16 );
         rocketnet_unit_check( wire_bytes > 0 );

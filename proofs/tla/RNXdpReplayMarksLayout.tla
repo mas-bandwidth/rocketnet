@@ -19,7 +19,9 @@
 (* place, else append), then the commit, whose end is                      *)
 (* rocketnet_xdp_replay_marks_reset_keeping: two in-place compactions,     *)
 (* each loop iteration one step here, so a write that lands on an entry    *)
-(* the loop has not read yet is visible.                                   *)
+(* the loop has not read yet is visible.  ResetKeeping is the commit and   *)
+(* the whole call as one step with the same arithmetic, the call the trace *)
+(* check observes; it reaches no state the loop steps do not.              *)
 (*                                                                         *)
 (* Memory past a count is not cleared: an entry the compaction or a drop   *)
 (* left behind keeps its old key and value, and only a search that runs    *)
@@ -110,6 +112,10 @@ ForgetHit(k) == { i \in 0..(kf - 1) : forgets[i] = k }
 PendingForget(k) == DeduplicateForgets /\ ForgetHit(k) # {}
 AbsForgetHit(k) == { p \in 1..Len(absF) : absF[p] = k }
 
+\* reset_keeping's forget loop keeps forget i of the array f: the kernel
+\* refused it and no applied mark of its key superseded it
+ForgetKept(f, i, fs, as) == i \in fs /\ ~(\E j \in as : mkeys[j] = f[i])
+
 Init ==
     /\ forgets = [ x \in Cells |-> NONE ]
     /\ fc = 0
@@ -128,8 +134,9 @@ Init ==
     /\ absK = 0
     /\ overflow = FALSE
 
-\* rocketnet_xdp_replay_marks_forget, from the walk's forget pass
-Forget(k) ==
+\* rocketnet_xdp_replay_marks_forget, from the walk's forget pass; ok is what
+\* it returns, TRUE exactly when it refused nothing
+Forget(k, ok) ==
     /\ phase = "forget"
     /\ k \notin doneF
     /\ doneF' = doneF \cup {k}
@@ -156,10 +163,12 @@ Forget(k) ==
                        /\ absK' = absK - 1
                ELSE UNCHANGED <<absM, absK>>
     /\ UNCHANGED <<kf, phase, li, lk, failed, applied, doneM>>
+    /\ ok = (refused' = refused)
 
 \* rocketnet_xdp_replay_marks_mark, from the walk's mark pass (which follows
-\* the forget pass and marks each key at most once)
-Mark(k, v) ==
+\* the forget pass and marks each key at most once); ok is what it returns,
+\* TRUE exactly when it refused nothing
+Mark(k, v, ok) ==
     /\ phase \in {"forget", "mark"}
     /\ k \notin doneM
     /\ phase' = "mark"
@@ -185,22 +194,27 @@ Mark(k, v) ==
             ELSE /\ absM' = Append(absM, [ k |-> k, v |-> v ])
                  /\ UNCHANGED absK
     /\ UNCHANGED <<forgets, fc, kf, kc, li, lk, failed, applied, doneF, absF>>
+    /\ ok = (refused' = refused)
 
 \* the transport's commit: the kernel refuses some forgets and applies some
 \* marks; rocketnet_xdp_replay_marks_reset_keeping starts.  The contract's
 \* result is taken here: the refused forgets no applied mark of their key
-\* superseded, in order, and the refused marks, in order, all kept.
+\* superseded, in order, and the refused marks, in order, all kept
+\* (CommitContract, which ResetKeeping takes too).
+CommitContract(fs, as) ==
+    LET superseded(p) == \E j \in as : j + 1 <= Len(absM) /\ absM[j + 1].k = absF[p]
+        keepF == [ p \in 1..Len(absF) |-> (p - 1) \in fs /\ ~superseded(p) ]
+        keepM == [ p \in 1..Len(absM) |-> (p - 1) \notin as ]
+    IN /\ absF' = Sub(absF, keepF)
+       /\ absM' = Sub(absM, keepM)
+       /\ absK' = Len(Sub(absM, keepM))
+
 Commit ==
     /\ phase \in {"forget", "mark"}
     /\ \E fs \in SUBSET (0..(fc - 1)), as \in SUBSET (0..(mc - 1)) :
           /\ failed' = fs
           /\ applied' = as
-          /\ LET superseded(p) == \E j \in as : j + 1 <= Len(absM) /\ absM[j + 1].k = absF[p]
-                 keepF == [ p \in 1..Len(absF) |-> (p - 1) \in fs /\ ~superseded(p) ]
-                 keepM == [ p \in 1..Len(absM) |-> (p - 1) \notin as ]
-             IN /\ absF' = Sub(absF, keepF)
-                /\ absM' = Sub(absM, keepM)
-                /\ absK' = Len(Sub(absM, keepM))
+          /\ CommitContract(fs, as)
     /\ phase' = "cf"
     /\ li' = 0
     /\ lk' = 0
@@ -211,8 +225,7 @@ Commit ==
 CompactForgetStep ==
     /\ phase = "cf"
     /\ IF li < fc
-       THEN LET superseded == \E j \in applied : mkeys[j] = forgets[li]
-                keep == li \in failed /\ ~superseded
+       THEN LET keep == ForgetKept(forgets, li, failed, applied)
             IN /\ forgets' = IF keep /\ lk # li THEN Put(forgets, lk, forgets[li]) ELSE forgets
                /\ overflow' = (overflow \/ (keep /\ lk # li /\ Past(lk)))
                /\ lk' = IF keep THEN lk + 1 ELSE lk
@@ -248,12 +261,63 @@ CompactMarkStep ==
             /\ UNCHANGED <<mkeys, mvals, overflow>>
     /\ UNCHANGED <<forgets, fc, kf, absF, absM, absK>>
 
+\* reset_keeping's forget loop from index i with kept count k over the array
+\* f, o a write past the end so far: CompactForgetStep's iterations run to the
+\* loop's end, with its arithmetic
+RECURSIVE ForgetLoop(_, _, _, _, _, _)
+ForgetLoop(f, i, k, o, fs, as) ==
+    IF i >= fc
+    THEN [arr |-> f, kept |-> k, ovf |-> o]
+    ELSE LET keep == ForgetKept(f, i, fs, as)
+             write == keep /\ k # i
+         IN ForgetLoop(IF write THEN Put(f, k, f[i]) ELSE f, i + 1, IF keep THEN k + 1 ELSE k,
+                       o \/ (write /\ Past(k)), fs, as)
+
+\* reset_keeping's mark loop the same way: CompactMarkStep's iterations
+RECURSIVE MarkLoop(_, _, _, _, _, _)
+MarkLoop(ks, vs, i, k, o, as) ==
+    IF i >= mc
+    THEN [keys |-> ks, vals |-> vs, kept |-> k, ovf |-> o]
+    ELSE LET keep == i \notin as
+             write == keep /\ k # i
+         IN MarkLoop(IF write THEN Put(ks, k, ks[i]) ELSE ks, IF write THEN Put(vs, k, vs[i]) ELSE vs, i + 1,
+                     IF keep THEN k + 1 ELSE k, o \/ (write /\ Past(k)), as)
+
+\* the commit with the whole rocketnet_xdp_replay_marks_reset_keeping call as
+\* one step: Commit, then every CompactForgetStep and CompactMarkStep to the
+\* mark loop's end, with the same arithmetic (ForgetLoop, MarkLoop). It is
+\* what the trace check sees of the call, which runs both loops inside it;
+\* n is what the call returns, the refusals before it zeroes them. It reaches
+\* no state Commit and the loop steps do not.
+ResetKeeping(fs, as, n) ==
+    /\ phase \in {"forget", "mark"}
+    /\ n = refused
+    /\ fs \subseteq 0..(fc - 1)
+    /\ as \subseteq 0..(mc - 1)
+    /\ CommitContract(fs, as)
+    /\ LET F == ForgetLoop(forgets, 0, 0, overflow, fs, as)
+           K == MarkLoop(mkeys, mvals, 0, IF CompactFromZero THEN 0 ELSE kc, F.ovf, as)
+       IN /\ forgets' = F.arr
+          /\ fc' = F.kept
+          /\ kf' = IF KeptForgetsRecorded THEN F.kept ELSE 0
+          /\ mkeys' = K.keys
+          /\ mvals' = K.vals
+          /\ mc' = K.kept
+          /\ kc' = K.kept
+          /\ overflow' = K.ovf
+    /\ refused' = 0
+    /\ phase' = "forget"
+    /\ li' = 0 /\ lk' = 0
+    /\ failed' = {} /\ applied' = {}
+    /\ doneF' = {} /\ doneM' = {}
+
 Next ==
-    \/ \E k \in Keys : Forget(k)
-    \/ \E k \in Keys, v \in Vals : Mark(k, v)
+    \/ \E k \in Keys, ok \in BOOLEAN : Forget(k, ok)
+    \/ \E k \in Keys, v \in Vals, ok \in BOOLEAN : Mark(k, v, ok)
     \/ Commit
     \/ CompactForgetStep
     \/ CompactMarkStep
+    \/ \E fs \in SUBSET (0..(fc - 1)), as \in SUBSET (0..(mc - 1)) : ResetKeeping(fs, as, refused)
 
 Spec == Init /\ [][Next]_vars
 
