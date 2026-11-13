@@ -283,15 +283,17 @@ ClaimStore(f) ==
 Refuse(f) ==
     pc' = [pc EXCEPT ![f] = "refused"]
 
-\* a claim refused for good is starved if the room the decision read had a
-\* frame for f past the reserve and past every frame and tail the other
-\* fillers hold; unnamed if that room had a frame for f past every filler in
-\* flight while no other filler held a tail.  Room that came back after the
-\* read, or that a filler claiming after the read takes, is no starvation.
+\* a claim refused for good is starved if the room the decision read, less
+\* the frames that have left it since, has a frame for f past the reserve
+\* and past every frame and tail the other fillers hold now; unnamed if that
+\* room has a frame for f past every filler in flight while no other filler
+\* holds a tail.  Room that came back after the read, or that a filler
+\* claiming after the read takes, is no starvation.
 FinalRefuse(f) ==
-    /\ pc' = [pc EXCEPT ![f] = "idle"]
-    /\ starved' = (starved \/ RoomPastTails(f, seenR[f]))
-    /\ unnamed' = (unnamed \/ (RoomFor(f, seenR[f]) /\ OthersTail(f) = 0))
+    LET r == IF free < seenR[f] THEN free ELSE seenR[f]
+    IN /\ pc' = [pc EXCEPT ![f] = "idle"]
+       /\ starved' = (starved \/ RoomPastTails(f, r))
+       /\ unnamed' = (unnamed \/ (RoomFor(f, r) /\ OthersTail(f) = 0))
 
 \* the take back: the claim leaves the claims whole.  A chunk is claimed
 \* again as one frame; a single claim is retested (NoRetry: refused)
