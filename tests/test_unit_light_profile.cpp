@@ -318,6 +318,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // each endpoint's last applied block, as the macOS note says) adds 34160412
 // to the server and nothing to the client (hulk, gcc, Debug and Release,
 // DEV ON).
+// The xdp transport's server-wide packet id counter and two put-off counts left
+// the queue sockets (per-queue packet ids): the pin below is main's less 8 (actual=5610449451, bench, gcc Debug, DEV ON).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -325,9 +327,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809991ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809983ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809935ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809927ULL )
 #endif // #if defined( __aarch64__ )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141714 )
 #endif // #if defined( _WIN32 )

@@ -23,7 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # workflow file (relative to the root) -> jobs whose steps are independent checks
 INDEPENDENT_JOBS = {
-    ".github/workflows/ci.yml": ["lint"],
+    ".github/workflows/ci.yml": ["lint", "lint-source", "lint-models", "lint-tools"],
 }
 
 SETUP_USES = re.compile(r"^(?:actions/checkout@|\./\.github/actions/ccache\b)")
@@ -120,7 +120,9 @@ GOOD = """jobs:
     steps:
       - name: free
         run: true
-"""
+""" + "".join(
+    "  %s:\n    steps:\n      - name: only\n        if: ${{ !cancelled() }}\n        run: true\n" % job
+    for job in ("lint-source", "lint-models", "lint-tools"))
 
 
 def self_test():
