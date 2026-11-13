@@ -1466,7 +1466,7 @@ int rocketnet_platform_socket_open_for_testing( int domain )
 // bound in the IPv6 namespace
 #define ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS 16
 
-static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * address, uint16_t * bind_port )
+static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * address, uint16_t * bind_port, int * status )
 {
     if ( address->type != ROCKETNET_ADDRESS_IPV6 )
     {
@@ -1494,7 +1494,12 @@ static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * add
     reservation_address.sin_port = rocketnet_platform_htons( *bind_port );
     if ( bind( reservation, (sockaddr *) &reservation_address, sizeof( reservation_address ) ) < 0 )
     {
-        rocketnet_error( "failed to reserve ipv4 port for dual stack socket: %s", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
+        const int reserve_error = rocketnet_platform_socket_error();
+        if ( rocketnet_platform_bind_refused( reserve_error ) )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
+        rocketnet_error( "failed to reserve ipv4 port for dual stack socket: %s", rocketnet_platform_socket_error_text( reserve_error ).text );
         close( reservation );
         return -2;
     }
@@ -1647,6 +1652,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     rocketnet_address_t bind_address = *address;
     sockaddr_storage bind_storage;
     int bind_result = -1;
+    int bind_error = 0;
 
 #if defined( __APPLE__ )
     // The port an IPv4 reservation takes from the kernel is free in the IPv4
@@ -1662,7 +1668,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     while ( true )
     {
         bind_address.port = address->port;
-        ipv4_port_reservation = rocketnet_platform_reserve_ipv4_port( address, &bind_address.port );
+        ipv4_port_reservation = rocketnet_platform_reserve_ipv4_port( address, &bind_address.port, status );
         if ( ipv4_port_reservation == -2 )
         {
             break;
@@ -1670,7 +1676,8 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
         const socklen_t bind_bytes = (socklen_t) rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
         bind_result = bind( socket->handle, (sockaddr *) &bind_storage, bind_bytes );
-        if ( bind_result >= 0 || ipv4_port_reservation < 0 || address->port != 0 || errno != EADDRINUSE ||
+        bind_error = rocketnet_platform_socket_error();
+        if ( bind_result >= 0 || ipv4_port_reservation < 0 || address->port != 0 || bind_error != EADDRINUSE ||
              num_held == ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS - 1 )
         {
             break;
@@ -1701,11 +1708,16 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 #else // #if defined( __APPLE__ )
     const socklen_t bind_bytes = (socklen_t) rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
     bind_result = bind( socket->handle, (sockaddr *) &bind_storage, bind_bytes );
+    bind_error = rocketnet_platform_socket_error();
 #endif // #if defined( __APPLE__ )
 
     if ( bind_result < 0 )
     {
-        rocketnet_error( "failed to bind socket (%s): %s", socket->ipv6 ? "ipv6" : "ipv4", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
+        if ( rocketnet_platform_bind_refused( bind_error ) )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
+        rocketnet_error( "failed to bind socket (%s): %s", socket->ipv6 ? "ipv6" : "ipv4", rocketnet_platform_socket_error_text( bind_error ).text );
         rocketnet_platform_socket_destroy( socket );
         return NULL;
     }
@@ -4512,6 +4524,10 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
         if ( bind( s->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) < 0 )
         {
+            if ( rocketnet_platform_bind_refused( rocketnet_platform_socket_error() ) )
+            {
+                rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+            }
             rocketnet_error( "failed to bind socket (ipv6): %s", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
             rocketnet_platform_socket_destroy( s );
             return NULL;
@@ -4524,6 +4540,10 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
         if ( bind( s->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) < 0 )
         {
+            if ( rocketnet_platform_bind_refused( rocketnet_platform_socket_error() ) )
+            {
+                rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+            }
             rocketnet_error( "failed to bind socket (ipv4): %s", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
             rocketnet_platform_socket_destroy( s );
             return NULL;
@@ -5494,7 +5514,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // ----------------------------------------------------------------
 
-// pump-request socket create: the transport ladder's entry into the
+// pump-request socket create: the transport list's entry into the
 // platform pump selection. pump NULL or "auto" is the pre-existing
 // behavior -- offer the platform's batch pump. "portable" forces the portable pump: the
 // request wins and no batch decision matters. "msgx" REQUIRES the darwin
@@ -5601,6 +5621,11 @@ int rocketnet_platform_socket_error()
 {
     return WSAGetLastError();
 }
+
+bool rocketnet_platform_bind_refused( int error )
+{
+    return error == WSAEADDRINUSE || error == WSAEADDRNOTAVAIL || error == WSAEACCES;
+}
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #define ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( name ) { name, #name },
 static const struct
@@ -5623,6 +5648,11 @@ static const struct
 int rocketnet_platform_socket_error()
 {
     return errno;
+}
+
+bool rocketnet_platform_bind_refused( int error )
+{
+    return error == EADDRINUSE || error == EADDRNOTAVAIL || error == EACCES;
 }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 

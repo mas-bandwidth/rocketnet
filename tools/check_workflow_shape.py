@@ -39,6 +39,7 @@ BARE_TOP = re.compile(r"^[A-Za-z_][\w-]*:(\s|$)")
 JOB_LINE = re.compile(r"^  [A-Za-z0-9_][\w-]*:\s*(#.*)?$")
 PROPERTY = re.compile(r"^    [A-Za-z_][\w-]*:(\s|$)")
 BLOCK_SCALAR = re.compile(r":\s*[|>][-+0-9]*\s*(#.*)?$")
+SPARSE = re.compile(r"^\s*(?:-\s+)?sparse-checkout(?:-cone-mode)?:")
 ANCHORED = re.compile(r"^\s*(?:-\s+)?[^\s#][^:#]*:\s*[&*]")
 
 
@@ -165,6 +166,12 @@ def violations(name, text):
     if expect_property:
         found.append((name, job_ids[job], "job %r has nothing four spaces in" % job))
     close_concurrency()
+    if "self-hosted" in text:
+        for number, line in lines:
+            if SPARSE.match(line):
+                found.append((name, number, "sparse-checkout in a workflow that runs on self-hosted runners: its "
+                                            "patterns stay in the runner's workspace and the next job's plain "
+                                            "checkout gets only those files"))
     for key in ("on", "jobs"):
         if key not in tops:
             found.append((name, 0, "no bare top-level `%s:`" % key))
@@ -227,6 +234,8 @@ BAD = (
     ("job twice", GOOD + "  a:\n    runs-on: x\n", "given twice"),
     ("on twice", GOOD + "on:\n  schedule:\n", "given twice"),
     ("no jobs", "name: x\non:\n  push:\n", "no bare top-level `jobs:`"),
+    ("sparse checkout on a self-hosted runner", GOOD.replace("      - run: *alias_in_a_step\n",
+     "      - uses: actions/checkout@v4\n        with:\n          sparse-checkout: tools\n"), "sparse-checkout"),
     ("tab", GOOD.replace("    runs-on", "\truns-on"), "tab"),
 )
 

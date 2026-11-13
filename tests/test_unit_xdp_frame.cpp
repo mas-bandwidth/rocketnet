@@ -816,18 +816,18 @@ REGISTER_UNIT_TEST( test_xdp_transport_receive_drops_mapped_source );
 // The server ladder keeps xdp for either family: the list parses the same
 // for an IPv4 and an IPv6 server, with xdp first under "auto".
 
-static void test_xdp_transport_ladder_keeps_xdp_for_ipv6()
+static void test_xdp_transport_order_keeps_xdp_for_ipv6()
 {
     const int linux_server[] = { ROCKETNET_TRANSPORT_XDP, ROCKETNET_TRANSPORT_GSO, ROCKETNET_TRANSPORT_PORTABLE };
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
 
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( "auto", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( rocketnet_transport_order_parse( "auto", linux_server, 3, &ladder ) );
     rocketnet_unit_check( ladder.num_candidates == 3 && ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
 
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( "gso,xdp,portable", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( rocketnet_transport_order_parse( "gso,xdp,portable", linux_server, 3, &ladder ) );
     rocketnet_unit_check( ladder.num_candidates == 3 && ladder.candidates[1] == ROCKETNET_TRANSPORT_XDP );
 
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( "xdp", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( rocketnet_transport_order_parse( "xdp", linux_server, 3, &ladder ) );
     rocketnet_unit_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
 }
 
@@ -1015,7 +1015,7 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 
     // the barrier's refusal is neither "not built" nor "families": the
     // ladder is exhausted
-    rocketnet_unit_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+    rocketnet_unit_check( status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
     rocketnet_unit_check( xdp_ipv6_family_refusals == 0 );
     rocketnet_unit_check( xdp_ipv6_barrier_lines == 1 );
 }
@@ -1031,8 +1031,8 @@ static void test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks()
     const int * available = rocketnet_server_transport_io_availability( &count );
     rocketnet_unit_check( count > 0 );
 
-    struct rocketnet_transport_ladder_t ladder;
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( "xdp", available, count, &ladder ) );
+    struct rocketnet_transport_order_t ladder;
+    rocketnet_unit_check( rocketnet_transport_order_parse( "xdp", available, count, &ladder ) );
     rocketnet_unit_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
     rocketnet_unit_check( ladder.num_skipped == 0 );
 
@@ -1043,7 +1043,7 @@ static void test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks()
     rocketnet_unit_check( xdp->backend && xdp->backend->server );
     rocketnet_unit_check( !rocketnet_server_transport_io_open( xdp->backend->server, NULL, &config, &bind, &io ) );
     rocketnet_unit_check( io.instance == NULL );
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( "auto", available, count, &ladder ) );
+    rocketnet_unit_check( rocketnet_transport_order_parse( "auto", available, count, &ladder ) );
     rocketnet_unit_check( ladder.num_candidates >= 2 );
     rocketnet_unit_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
     rocketnet_unit_check( ladder.candidates[1] == ROCKETNET_TRANSPORT_GSO );
@@ -1273,7 +1273,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_frame_build_ipv6_checksum_vector );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_ipv6_extension_dropped_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_frame_ipv4_unchanged );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_dispatches_both_families_counted );
-REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
+REGISTER_UNIT_TEST( test_xdp_transport_order_keeps_xdp_for_ipv6 );
 REGISTER_UNIT_TEST( test_xdp_transport_mac_address_parse_is_strict );
 REGISTER_UNIT_TEST( test_xdp_cpu_list_entry_takes_cpu_zero );
 REGISTER_UNIT_TEST( test_xdp_reply_macs_ports_differing_in_the_high_byte_spread );
