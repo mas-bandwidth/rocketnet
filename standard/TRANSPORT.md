@@ -3822,6 +3822,7 @@ The registry of counters, in index order, is:
 | `RIO_RECEIVE_TOO_LARGE` | `refusal` | `none` |
 | `RIO_RECEIVE_REPOST_FAILED` | `refusal` | `none` |
 | `RIO_COMMITS` | `expected` | `none` |
+| `SEND_RESERVE_REFUSED` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
