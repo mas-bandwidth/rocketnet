@@ -3704,11 +3704,13 @@ static int rocketnet_server_gso_test_overflow_receive( struct rocketnet_server_g
         struct msghdr * header = &queue->messages[i].msg_hdr;
         header->msg_flags = 0;
         header->msg_controllen = 0;
+        struct sockaddr_in in4;
+        memset( &in4, 0, sizeof( in4 ) );
+        in4.sin_family = AF_INET;
+        in4.sin_port = htons( 40000 );
+        in4.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
         memset( &queue->names[i], 0, sizeof( queue->names[i] ) );
-        struct sockaddr_in * in4 = (struct sockaddr_in *) &queue->names[i];
-        in4->sin_family = AF_INET;
-        in4->sin_port = htons( 40000 );
-        in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        memcpy( &queue->names[i], &in4, sizeof( in4 ) );
 
         const uint32_t drops = source->counts[source->next++];
         if ( drops != 0 )
@@ -4075,7 +4077,6 @@ bool rocketnet_server_gso_test_receive_backoff()
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     gso->test_receive = rocketnet_server_gso_test_source_receive;
 
     bool valid = true;
@@ -4089,7 +4090,7 @@ bool rocketnet_server_gso_test_receive_backoff()
 
     queue->receive_handoff.worker = 1;
     queue->receive_handoff.free = -1;
-    buffer = rocketnet_server_gso_worker_buffer( queue );
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     buffer->num_packets = ROCKETNET_GSO_RECV_QUEUE_SIZE;
     buffer->dropped_size = 0;
     buffer->dropped_overflow = 0;
