@@ -9597,16 +9597,27 @@ void rocketnet_test_sleep_resumes_after_signal()
     rocketnet_sleep( 0.2 );
     const double elapsed = rocketnet_test_sleep_monotonic() - start;
 
+    // SIGALRM is ignored before the timer goes off and stays ignored for the
+    // rest of the process, never restored. On macOS a timer expiry can still
+    // raise SIGALRM after setitimer( off ) returns (for any thread, the
+    // suite's watchdog included). Under the default action that ends the
+    // process: "signal 14" in CI 43349573416, 12 of 800 runs on the studio;
+    // ignoring and then restoring still left 4 of 800. Left caught, a late one
+    // cuts the next case's kevent wait short (EINTR): CI 43353232146,
+    // test_platform_wake_apple_wakes_and_reads. Ignoring discards one already
+    // pending and drops any raised later, so it interrupts no call. Nothing
+    // else in the suite uses SIGALRM.
+
+    struct sigaction ignore;
+    memset( &ignore, 0, sizeof( ignore ) );
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset( &ignore.sa_mask );
+    ignore.sa_flags = 0;
+    rocketnet_check( sigaction( SIGALRM, &ignore, NULL ) == 0 );
+
     struct itimerval off;
     memset( &off, 0, sizeof( off ) );
     rocketnet_check( setitimer( ITIMER_REAL, &off, NULL ) == 0 );
-
-    // The counting handler stays installed for the rest of the process. On
-    // macOS a timer expiry can still raise SIGALRM after setitimer( off )
-    // returns (for any thread, the suite's watchdog included), and under the
-    // default action that ends the process: "signal 14" in CI 43349573416,
-    // 12 of 800 runs on the studio. Ignoring before the restore cut it to 4 of
-    // 800, so no restore at all: nothing else in the suite uses SIGALRM.
 
     printf( "  slept %.3f seconds through %d signals\n", elapsed, (int) rocketnet_test_sleep_signals );
     fflush( stdout );
