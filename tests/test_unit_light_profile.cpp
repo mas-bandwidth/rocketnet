@@ -225,7 +225,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The io_uring transport's rows URING_PIN_REFUSALS and
 // URING_RECEIVE_DROPPED_SOCKET add 64 to the client: actual=15041802 (the
 // macOS unit job, Debug, DEV ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863227 )
+// The staged msgx server is a candidate of the planned peak: ROCKETNET_MSGX_DEFAULT_WORKERS (3)
+// send workers, each with ROCKETNET_MSGX_TX_BANKS banks of ROCKETNET_MSGX_SEND_QUEUE_SIZE (16384)
+// frames, plus the receive banks; with the counters through RECEIVE_DROPPED_RETIRED (289) the
+// probe's actual= lines are 1625576931 and 15041802 (studio, Apple clang, Release, DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624528355 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
