@@ -425,6 +425,33 @@ static int ack_phase_compare( ack_phase_world_t * a, ack_phase_world_t * b )
         if ( !ea || !eb || !rocketnet_ack_endpoint_state_equal( ea, eb ) )
         {
             printf( "    ack endpoint %d differs\n", slot );
+            if ( ea && eb )
+            {
+                const uint8_t * pa = (const uint8_t *) ea;
+                const uint8_t * pb = (const uint8_t *) eb;
+                for ( size_t o = 0; o < sizeof( rocketnet_ack_endpoint_t ); o++ )
+                {
+                    if ( pa[o] != pb[o] )
+                    {
+                        printf( "      DIAG first byte %zu (sent at %zu, received at %zu, rtt_history at %zu, memo at %zu)\n", o,
+                                offsetof( rocketnet_ack_endpoint_t, sent ), offsetof( rocketnet_ack_endpoint_t, received ),
+                                offsetof( rocketnet_ack_endpoint_t, rtt_history ), offsetof( rocketnet_ack_endpoint_t, block_memo ) );
+                        break;
+                    }
+                }
+                printf( "      DIAG rtt %f %f jitter %f %f loss %f %f acked %llu %llu sum %f %f count %u %u eu %u %u ak %u %u\n", (double) ea->rtt, (double) eb->rtt, (double) ea->jitter, (double) eb->jitter, (double) ea->packet_loss, (double) eb->packet_loss,
+                        (unsigned long long) ea->largest_acked_sequence, (unsigned long long) eb->largest_acked_sequence, ea->stats_rtt_sum, eb->stats_rtt_sum, ea->stats_rtt_count, eb->stats_rtt_count,
+                        ea->stats_eligible_unacked, eb->stats_eligible_unacked, ea->stats_acked_count, eb->stats_acked_count );
+                printf( "      DIAG highest %llu %llu\n", (unsigned long long) ea->highest_sequence, (unsigned long long) eb->highest_sequence );
+                for ( int i = 0; i < 8; i++ )
+                {
+                    const rocketnet_sent_packet_record_t * ra = &ea->sent[i];
+                    const rocketnet_sent_packet_record_t * rb = &eb->sent[i];
+                    printf( "      DIAG sent[%d] seq %llu/%llu id %llu/%llu t %f/%f bytes %u/%u acked %d/%d hasid %d/%d ka %d/%d\n", i,
+                            (unsigned long long) ra->sequence, (unsigned long long) rb->sequence, (unsigned long long) ra->packet_id, (unsigned long long) rb->packet_id,
+                            ra->send_time, rb->send_time, ra->wire_bytes, rb->wire_bytes, ra->acked, rb->acked, ra->has_packet_id, rb->has_packet_id, ra->was_keep_alive, rb->was_keep_alive );
+                }
+            }
             differences++;
         }
         if ( oa->hot_connections[slot].state != ob->hot_connections[slot].state ||
