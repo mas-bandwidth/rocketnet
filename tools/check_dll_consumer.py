@@ -9,7 +9,8 @@ directory as the only RocketNet include path, links the library alone (plus
 system libraries and the C++ runtime), and runs the program. The program
 creates a message server on 127.0.0.1 through the portable transport, connects a
 client with a development connect token, exchanges one message each way inside
-five seconds of wall clock, and exits 0.
+phases its own code bounds (60 s in all; a normal run takes well under a
+second), and exits 0. The script kills a run past RUN_TIMEOUT_SECONDS (70 s).
 
 The script also lists the production shared library's exported symbols and
 refuses a name outside tools/exports.txt or an expected name that is missing;
@@ -33,6 +34,14 @@ from nightly_timeout import execution_timeout
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = Path(__file__).resolve()
+
+# tools/dll_consumer/main.c bounds its own phases: they run until 10, 20, 30
+# and 40 s after its start, then a 10 s disconnect and a 10 s stop budget, 60 s
+# in all, each failing with a CHECK that names the phase. The outer kill sits
+# past the longest of them, so a slow phase is reported by its own CHECK and the
+# kill catches only a hang. A normal run takes well under a second.
+# test_check_dll_consumer.py reads main.c's budgets and holds this above them.
+RUN_TIMEOUT_SECONDS = 70
 
 failures = []
 
@@ -261,9 +270,9 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
                 return
         try:
             run = subprocess.run([str(executable)], capture_output=True, text=True,
-                                 cwd=directory, env=environment, timeout=execution_timeout(30))
+                                 cwd=directory, env=environment, timeout=execution_timeout(RUN_TIMEOUT_SECONDS))
         except subprocess.TimeoutExpired:
-            report(False, f"{language} client against the {linkage} library runs in five seconds (wall clock exceeded)")
+            report(False, f"{language} client against the {linkage} library ran past {RUN_TIMEOUT_SECONDS} s, beyond every phase budget of tools/dll_consumer/main.c (a hang)")
             return
         if run.returncode != 0:
             detail = (run.stderr.strip().splitlines() or run.stdout.strip().splitlines() or

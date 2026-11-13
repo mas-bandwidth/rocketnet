@@ -8,6 +8,7 @@ exactly the listed exports and passing consumers exit 0, and an empty build
 directory (zero libraries) exits nonzero."""
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -82,6 +83,17 @@ class CheckDllConsumerProcessTest(unittest.TestCase):
         result = self.run_tool(self.build, listed_exports(), run_exit=1)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exchanges one message each way", result.stdout)
+
+    def test_run_timeout_exceeds_every_phase_budget_of_the_program(self):
+        # the kill must sit past main.c's own budgets (the latest wall_start
+        # bound plus the deadline budgets after it), so a slow phase fails by
+        # the CHECK that names it, not by a generic kill
+        source = (check_dll_consumer.ROOT / "tools" / "dll_consumer" / "main.c").read_text()
+        phases = [float(value) for value in re.findall(r"wall_start\s*<\s*([0-9.]+)", source)]
+        deadlines = [float(value) for value in
+                     re.findall(r"_deadline\s*=\s*rocketnet_time\(\)\s*\+\s*([0-9.]+)", source)]
+        self.assertTrue(phases and deadlines, "no phase budgets read from tools/dll_consumer/main.c")
+        self.assertGreater(check_dll_consumer.RUN_TIMEOUT_SECONDS, max(phases) + sum(deadlines))
 
     def test_empty_build_directory_fails(self):
         empty = self.dir / "empty"
