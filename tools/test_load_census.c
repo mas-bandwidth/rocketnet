@@ -118,13 +118,25 @@ int main( void )
     /* a closed handle's number reused by a new object of the same type (an
        SDK handle taking a baseline handle's slot) is a different object:
        the census's held duplicate, not number and type, decides */
-    HANDLE first_event = CreateEventA( NULL, TRUE, FALSE, NULL );
-    CENSUS_CHECK( first_event );
-    CENSUS_CHECK( load_census_take( &test_before ) );
-    CloseHandle( first_event );
+    /* the handle table promises no order of reuse, so the pair is retried
+       until the second Event takes the first one's number */
+    HANDLE second_event = NULL;
+    for ( int attempt = 0; attempt < 64 && !second_event; ++attempt )
+    {
+        HANDLE first_event = CreateEventA( NULL, TRUE, FALSE, NULL );
+        CENSUS_CHECK( first_event );
+        CENSUS_CHECK( load_census_take( &test_before ) );
+        CloseHandle( first_event );
 
-    HANDLE second_event = CreateEventA( NULL, TRUE, FALSE, NULL );
-    CENSUS_CHECK( second_event && second_event == first_event );
+        second_event = CreateEventA( NULL, TRUE, FALSE, NULL );
+        CENSUS_CHECK( second_event );
+        if ( second_event != first_event )
+        {
+            CloseHandle( second_event );
+            second_event = NULL;
+        }
+    }
+    CENSUS_CHECK( second_event );
     survivors = test_survivors();
     CENSUS_CHECK( survivors.handles == 1 );
     CloseHandle( second_event );

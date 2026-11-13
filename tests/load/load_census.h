@@ -61,8 +61,8 @@
 /* One thread or handle. id is the thread id, or the handle value (fd
    number); kind is the object type index on Windows, the file identity
    elsewhere, so a closed and reused fd number is a different object. On
-   Windows a handle number and type index are reused too, and the handle
-   snapshot's kernel object address reads 0 to a process without
+   Windows a handle number and type index are reused too, and the system
+   handle list's kernel object address reads 0 to a process without
    SeDebugPrivilege (the CI runners' NETWORK SERVICE): so the census holds
    a duplicate of each handle it lists (held), and a later handle with the
    same number and type is the same object only when CompareObjectHandles
@@ -671,6 +671,16 @@ static int load_census_take_after( const struct load_census_t * before, struct l
 #endif // #if defined( __APPLE__ )
 }
 
+#if defined( _WIN32 )
+/* The handle a census entry's object is read through: the census's own
+   duplicate when it holds one, which stays open and names the same object
+   when a harness reads its phases after term, else the number */
+static uint64_t load_census_object( const struct load_census_entry_t * entry )
+{
+    return entry->held ? entry->held : entry->id;
+}
+#endif // #if defined( _WIN32 )
+
 static int load_census_holds( const struct load_census_entry_t * entries, int count, const struct load_census_entry_t * wanted )
 {
     for ( int i = 0; i < count; ++i )
@@ -685,8 +695,7 @@ static int load_census_holds( const struct load_census_entry_t * entries, int co
             // may be closed or name something else (aws-win-ci-2: load's
             // operational pair, compared after term, read four OS handles
             // closed at term as new objects through their numbers)
-            const uint64_t later = wanted->held ? wanted->held : wanted->id;
-            if ( entries[i].file_id != wanted->file_id || ( entries[i].held && !load_census_same_object( entries[i].held, later ) ) )
+            if ( entries[i].file_id != wanted->file_id || ( entries[i].held && !load_census_same_object( entries[i].held, load_census_object( wanted ) ) ) )
             {
                 continue;
             }
@@ -701,16 +710,17 @@ static int load_census_holds( const struct load_census_entry_t * entries, int co
 #if defined( _WIN32 )
 /* A Thread handle to a process thread pool worker that is new since before:
    the OS's (load_census_survivors) */
-static int load_census_is_pool_thread_handle( const struct load_census_t * before, const struct load_census_t * after, uint64_t handle )
+static int load_census_is_pool_thread_handle( const struct load_census_t * before, const struct load_census_t * after,
+                                              const struct load_census_entry_t * entry )
 {
     char type[128];
-    load_census_type_name( handle, type, sizeof( type ) );
+    load_census_type_name( load_census_object( entry ), type, sizeof( type ) );
     if ( strcmp( type, "Thread" ) != 0 )
     {
         return 0;
     }
 
-    const DWORD tid = GetThreadId( (HANDLE) (uintptr_t) handle );
+    const DWORD tid = GetThreadId( (HANDLE) (uintptr_t) load_census_object( entry ) );
     for ( int j = 0; j < after->threads; ++j )
     {
         if ( after->thread[j].id == tid && after->thread[j].os_pool && !load_census_holds( before->thread, before->threads, &after->thread[j] ) )
@@ -773,7 +783,7 @@ static int load_census_survivors( const char * prefix, const char * label, int i
     for ( int i = 0; i < after->handles; ++i )
     {
         const struct load_census_entry_t * handle = &after->handle[i];
-        pool_thread_handles += !load_census_holds( before->handle, before->handles, handle ) && load_census_is_pool_thread_handle( before, after, handle->id );
+        pool_thread_handles += !load_census_holds( before->handle, before->handles, handle ) && load_census_is_pool_thread_handle( before, after, handle );
     }
     long pool_events = 0;
 #endif // #if defined( _WIN32 )
@@ -792,8 +802,8 @@ static int load_census_survivors( const char * prefix, const char * label, int i
         }
 #if defined( _WIN32 )
         char type[128];
-        load_census_type_name( handle->id, type, sizeof( type ) );
-        if ( strcmp( type, "Thread" ) == 0 && load_census_is_pool_thread_handle( before, after, handle->id ) )
+        load_census_type_name( load_census_object( handle ), type, sizeof( type ) );
+        if ( strcmp( type, "Thread" ) == 0 && load_census_is_pool_thread_handle( before, after, handle ) )
         {
             survivors->os_pool_handles++;
             continue;
