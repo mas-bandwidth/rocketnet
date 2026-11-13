@@ -250,7 +250,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 #endif // #if ROCKETNET_DEV
         receive_latency_check( setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "1", 1 ) == 0, name, "xdp threads" );
         receive_latency_check( setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 ) == 0, name, "os cpus" );
-        snprintf( bind_address, sizeof( bind_address ), "%s:40431", rocketnet_xdp_veth_host( false, false ) );
+        snprintf( bind_address, sizeof( bind_address ), "%s", veth_address ); // the pair's port, which its capture records
     }
 #else  // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
     receive_latency_check( !row->veth, name, "a veth row in a build without xdp" );

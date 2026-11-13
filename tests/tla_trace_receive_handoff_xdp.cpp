@@ -7,7 +7,7 @@
 // sdk/rocketnet_server_socket_linux.cpp), checked by
 // proofs/tla/TraceRNReceiveHandoff.tla (README-TraceCheck.md) against
 // proofs/tla/RNReceiveHandoff.tla: the same model and trace module as the gso
-// server's walk (tests/tla_trace_receive_handoff_xdp.cpp), over the xdp code.
+// server's walk (tests/tla_trace_receive_handoff.cpp), over the xdp code.
 //
 //   tla_trace --layer receive-handoff-xdp --seed N --out DIR [--steps K]
 //
@@ -32,8 +32,11 @@
 //   call      a receive call                          Call(busy, b) with what
 //             it returned, its first datagram and how many (CallGave)
 // The xdp worker commits only a pass that staged past its committed count,
-// or a full buffer (an idle busy-poll pass takes no lock); the walk ends a
-// pass only then, and requires the end to commit. The roles, counts,
+// or a full buffer (an idle busy-poll pass takes no lock); the walk's
+// end_pass record is a pass that commits, and the end must commit. Before a
+// call the walk now and then ends a pass that must not commit, which must
+// return false and change nothing: the call's record then holds the state
+// the model's Call reaches, which a spurious commit would not. The roles, counts,
 // committed counts, cursors and first datagrams are read from the queue as
 // the library holds it (rocketnet_server_socket_test_receive_state); arrived
 // and delivered are the walk's counts of what it staged and what the calls
@@ -199,6 +202,18 @@ static int trace_receive_handoff_xdp( uint64_t seed, int steps, const char * out
             report.act( "Commit" );
             records.push_back( tla_step( "end_pass", "Commit", "<<>>", xdp_handoff_record( state, walk ) ) );
             continue;
+        }
+
+        // a pass that must not commit (nothing staged since the last commit,
+        // and room left): it ends with no commit and moves nothing
+        if ( !commits && random.below( 2 ) == 0 )
+        {
+            if ( rocketnet_server_socket_test_receive_end_pass( fixture ) )
+            {
+                fprintf( stderr, "tla_trace: receive-handoff-xdp: a pass that staged nothing new committed\n" );
+                failed = 1;
+                break;
+            }
         }
 
         // a receive call

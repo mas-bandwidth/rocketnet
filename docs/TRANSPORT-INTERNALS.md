@@ -333,7 +333,8 @@ thread copies packets while it holds it. Both use the receive handoff of
 `sdk/rocketnet_receive_handoff.h` over three buffers: at the end of a pass
 the worker commits its buffer's count under the mutex (GSO after each pass
 with results; XDP after a pass that staged past its committed count, or
-with its buffer full, so an idle busy-poll pass takes no lock), and moves to the free buffer once main has started on its buffer;
+with its buffer full, so an idle busy-poll pass takes no lock and a full one
+takes it until main starts on the buffer), and moves to the free buffer once main has started on its buffer;
 main, with a try-acquire at each call, reads the worker's buffer in place up
 to the committed count, after the unread tail of the buffer it held before.
 A datagram committed before main's call is returned by that call unless the

@@ -25,4 +25,13 @@ static void test_receive_delivery_xdp()
 
 REGISTER_UNIT_TEST( test_receive_delivery_xdp );
 
+// a queue the call reaches after its budget ended returns nothing but
+// still moves its roles on, and is served first at the next call
+static void test_receive_budget_spent_xdp()
+{
+    rocketnet_unit_check( rocketnet_server_socket_test_receive_budget_spent() );
+}
+
+REGISTER_UNIT_TEST( test_receive_budget_spent_xdp );
+
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP && ROCKETNET_DEV
