@@ -1,0 +1,14 @@
+# The trace check's row of tests/tla_trace_queue_send.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "queue-send",
+    "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
+    "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
+                         "length, so it never gets there"},
+    "reach": ["Full", "AgainPosted"],
+    # the model's Ids grow with MaxFlush, the walk's length: each record
+    # carries (steps + 1) * 4 statuses
+    "steps": 200,
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 8, 2: 8, 3: 8, 4: 8},
+}

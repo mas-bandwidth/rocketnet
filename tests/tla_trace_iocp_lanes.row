@@ -1,0 +1,10 @@
+# The trace check's row of tests/tla_trace_iocp_lanes.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "iocp-lanes",
+    "modules": ["RNIocpSendLanes.tla", "TraceRNIocpSendLanes.tla"],
+    "untraced": {},
+    "reach": ["LaneEmpty", "EveryThreadPosts"],
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 8, 2: 8, 3: 8, 4: 8},
+}

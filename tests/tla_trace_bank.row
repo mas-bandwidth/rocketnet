@@ -1,0 +1,11 @@
+# The trace check's row of tests/tla_trace_bank.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "bank",
+    "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
+    "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
+                         "under MaxFlush, so it never gets there"},
+    "reach": ["LastSlot"],
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 7, 2: 7, 3: 7, 4: 7},
+}

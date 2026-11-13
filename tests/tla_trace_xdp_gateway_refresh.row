@@ -1,0 +1,12 @@
+# The trace check's row of tests/tla_trace_xdp_gateway_refresh.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "xdp-gateway-refresh",
+    "modules": ["RNXdpGatewayRefresh.tla", "TraceRNXdpGatewayRefresh.tla"],
+    "untraced": {
+        "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
+    },
+    "reach": ["StagedNewMac"],
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 6, 2: 6, 3: 6, 4: 6},
+}

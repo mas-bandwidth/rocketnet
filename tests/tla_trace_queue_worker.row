@@ -1,0 +1,12 @@
+# The trace check's row of tests/tla_trace_queue_worker.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "queue-worker",
+    "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],
+    "untraced": {"CancelWake": "the stop writes the eventfd in the walk's one step, which completes an armed "
+                               "READ before the worker can see quit, and the worker arms no READ after it: "
+                               "a READ to cancel is left only when the write and the arm race on two threads",
+                 "KernelWakeEnd": "the cancelled READ's completion: no READ is cancelled (CancelWake)"},
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 4, 2: 4, 3: 4, 4: 4},
+}

@@ -323,9 +323,12 @@ inline bool tla_write_trace( const char * dir, const char * stem, uint64_t seed,
 // registration past TLA_TRACE_MAX_LAYERS, a second registration of one name
 // or a bad name is refused and recorded, and tla_trace then prints each
 // refusal (REFUSED <name> <reason>) and refuses to run, so a layer is never
-// silently left out or hidden behind another of its name.
+// silently left out or hidden behind another of its name. CMake refuses to
+// configure with more tests/tla_trace_*.cpp files than this (one layer a
+// file), so a full table is red where the file is added. About 132 layers
+// are planned (every model bound to its code): 256 leaves room.
 
-#define TLA_TRACE_MAX_LAYERS 64
+#define TLA_TRACE_MAX_LAYERS 256
 
 typedef int ( *tla_trace_walk_t )( uint64_t seed, int steps, const char * out );
 

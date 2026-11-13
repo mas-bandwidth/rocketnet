@@ -84,11 +84,18 @@ int main( int argc, char ** argv )
     const tla_trace_table_t & table = tla_trace_layers();
     if ( table.refused > 0 )
     {
+        bool full = false;
         for ( int i = 0; i < table.refused && i < TLA_TRACE_MAX_LAYERS; i++ )
         {
             printf( "REFUSED %s %s\n", table.refusal[i].name, table.refusal[i].reason );
+            full = full || strcmp( table.refusal[i].reason, "table-full" ) == 0;
         }
         fprintf( stderr, "tla_trace: %d layer registrations refused\n", table.refused );
+        if ( full )
+        {
+            fprintf( stderr, "tla_trace: more layers than TLA_TRACE_MAX_LAYERS (%d): raise it in tests/tla_trace_record.h\n",
+                     TLA_TRACE_MAX_LAYERS );
+        }
         return 3;
     }
 

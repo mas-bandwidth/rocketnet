@@ -1,0 +1,11 @@
+# The trace check's row of tests/tla_trace_gso.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "gso",
+    "modules": ["RNGsoQueueBankLayout.tla", "TraceRNGsoQueueBankLayout.tla"],
+    "untraced": {"Done": "the model's stutter once every bound is spent; the walk's flush bound is its length, so it never "
+                         "gets there, and Done is no call of the code"},
+    "reach": ["BankFull", "TurnedOverEveryBank", "NoFreeBank"],
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 2, 2: 2, 3: 2, 4: 2},
+}

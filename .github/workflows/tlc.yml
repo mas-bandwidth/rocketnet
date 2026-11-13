@@ -341,13 +341,20 @@ jobs:
         run: rm -rf -- "$TLC_EVIDENCE"
 
   # The trace check over a rolling range of seeds (proofs/tla/README-TraceCheck.md):
-  # ci.yml runs seeds 1-4 of every layer on every commit; each night runs 64
-  # seeds that start where the day of the year puts them, so the range moves
-  # every night.
+  # ci.yml runs each layer's per-commit seeds (its row's commit) on every commit; each
+  # night runs 64 seeds of every layer that start where the day of the year puts them,
+  # so the range moves every night. The same shards as ci.yml's (SHARD_COUNT in
+  # tools/tla_trace_check.py; --write-shards writes this matrix): shard I runs the
+  # layers whose first commit seed is in shard I, every seed of the range, with their
+  # action coverage and reach over all of them, and builds only those layers.
   trace:
-    name: TLA+ trace check (rolling seeds)
+    name: TLA+ trace check (rolling seeds, shard ${{ matrix.shard }})
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['0/9', '1/9', '2/9', '3/9', '4/9', '5/9', '6/9', '7/9', '8/9']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
@@ -357,7 +364,8 @@ jobs:
           CC: gcc
           CXX: g++
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+          stems=$(python3 tools/tla_trace_check.py --stems ${{ matrix.shard }})
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON "-DROCKETNET_TLA_TRACE_ONLY=$stems"
           cmake --build build --target tla_trace_all --parallel 8
       - name: Every trace is a behaviour of its spec, every plant's is not
         shell: bash
@@ -379,4 +387,4 @@ jobs:
           fi
           first=$(( 1000 + 64 * 10#$(date -u +%j) ))
           python3 tools/tla_trace_check.py --bin bin --tlacheck "$job/tlacheck" --jar "$jar" \
-            --layer all --seeds "$first-$(( first + 63 ))" --jobs 8 --dir "$job/work"
+            --layer all --seeds "$first-$(( first + 63 ))" --jobs 8 --dir "$job/work" --shard ${{ matrix.shard }}

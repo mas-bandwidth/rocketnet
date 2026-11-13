@@ -1,0 +1,19 @@
+# The trace check's row of tests/tla_trace_xdp_replay_marks.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "xdp-replay-marks",
+    "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
+    "untraced": {
+        "Commit": "the start of reset_keeping, inside the one call the walk makes; the walk takes ResetKeeping, "
+                  "the call whole",
+        "CompactForgetStep": "one iteration of reset_keeping's forget loop, inside the call; ResetKeeping runs it "
+                             "with the same arithmetic",
+        "CompactMarkStep": "one iteration of reset_keeping's mark loop, inside the call; ResetKeeping runs it "
+                           "with the same arithmetic",
+    },
+    "reach": ["ForgetsFull", "MarksFull", "SomeRefused", "ForgetsKept", "MarksKept"],
+    # an update is up to five forgets, five marks and a commit
+    "steps": 400,
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 8, 2: 8, 3: 8, 4: 8},
+}

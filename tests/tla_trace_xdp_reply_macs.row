@@ -1,0 +1,11 @@
+# The trace check's row of tests/tla_trace_xdp_reply_macs.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "xdp-reply-macs",
+    "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
+    "untraced": {},
+    "reach": ["Wrapped", "WindowLive"],
+    "steps": 250,
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 4, 2: 5, 3: 5, 4: 6},
+}

@@ -1,0 +1,11 @@
+# The trace check's row of tests/tla_trace_example.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "example",
+    "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
+    "untraced": {},
+    "reach": ["Full"],
+    "self_contained": "the template: its code is a counter written for the example, not library code",
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 4, 2: 4, 3: 4, 4: 4},
+}

@@ -1744,33 +1744,25 @@ jobs:
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every
   # trace is a behaviour of the layer's spec, and that the plant build's
   # trace of the same walk is not. tlc.yml runs a rolling range nightly.
-  # Parallel shards over the same build (tools/tla_trace_check.py --shard I/N; until
-  # the change below, the layers of shard I were the sorted layer list's every Nth). One job ran 83 to 126 s
-  # under load against the 120 s cap; at four shards, shard 3/4 (fillphase,
-  # xdp-gateway-refresh, xdp-reply-macs: about 31 s a reply-macs case) ran 95 to 104 s
-  # in its check step on loaded runners and was cancelled at the cap three times
-  # running (PR #1082, run 43436280125), so six (two of the twelve layers each). At six of
-  # 21 layers, shard 2/6 held both heavy layers, msgx and xdp-reply-macs (their sorted places
-  # are 12 apart, and 6 divides 12): its check step ran 88 to 114 s on main and was cancelled
-  # at the cap three times on a8cf53bc8 (run 43457339643). Measured one layer at a time
-  # (bench-nyc-5, ccacc2a0b, seeds 1-4, --jobs 8, loaded): xdp-reply-macs 87 s, msgx 64 s,
-  # xdp-replay 34 s, gso 26 s, every other layer 3 to 23 s; a CI check step ran at about
-  # 0.55 to 0.7 of the bench sum. Nine shards part the two (9 does not divide 12) and put
-  # xdp-reply-macs with only example and queue-worker, within 8% of that layer alone, the
-  # floor of any partition of whole layers. Their PR run (#1117): msgx with
-  # xdp-receive-ring 85 s, xdp-reply-macs with two small layers 66 s. So a shard is now a
-  # set of (layer, seed) pairs, the SHARDS table in tools/tla_trace_check.py: msgx's four
-  # seeds are in four shards (its first, with its coverage and reach, alone) and
-  # xdp-reply-macs's in three; every other layer is whole. Every layer still runs every
-  # seed: the table is red unless each pair is in exactly one shard, and a shard with no
-  # pair is red. A shard is the build and tlacheck (about 30 s) plus its pairs. Adding a
-  # layer adds its row to SHARDS (the table check names it until then). When any shard's
-  # check step passes 45 s, move pairs between shards, or add a shard: a row in SHARDS, a
-  # matrix entry "K/N+1" for every shard (N becomes N+1 in all of them), the ruleset's
-  # shard names, the summary job's name list and its plant rows, in the same change. The
-  # required check "TLA+ trace check (fixed seeds)"
-  # is the summary job below (tools/check_debug_unit_shards.py), green only when every
-  # shard is.
+  # Parallel shards (tools/tla_trace_check.py --seeds commit --shard I/N): each layer's
+  # row, tests/tla_trace_<file>.row, gives its per-commit seeds and the shard each runs
+  # in; a heavy layer is spread by seed (msgx's four seeds in four shards, xdp-reply-macs's
+  # in three), every other layer is whole. Every run checks the rows: a layer with no
+  # commit seed, a seed in two shards or in none, an empty shard, and this matrix, the
+  # summary job's list and the ruleset's shard names against SHARD_COUNT in the tool
+  # are red. Each shard builds the harness and the plants of its own layers only
+  # (CMake's ROCKETNET_TLA_TRACE_ONLY, from --stems). A shard is its build and tlacheck
+  # plus its pairs. History: one job ran 83 to 126 s under load against the 120 s cap;
+  # at four and then six shards of whole layers a shard holding a heavy layer was
+  # cancelled at the cap three times running (runs 43436280125, 43457339643); measured
+  # one layer at a time (bench-nyc-5, ccacc2a0b, seeds 1-4, --jobs 8, loaded):
+  # xdp-reply-macs 87 s, msgx 64 s, xdp-replay 34 s, gso 26 s, every other layer 3 to
+  # 23 s; a CI check step ran at about 0.55 to 0.7 of the bench sum. When a shard's
+  # check step passes 45 s, move pairs to another shard in the rows, or add shards:
+  # raise SHARD_COUNT and run tools/tla_trace_check.py --write-shards, which writes this
+  # matrix, tlc.yml's and the ruleset's shard names. The required check "TLA+ trace
+  # check (fixed seeds)" is the summary job below (tools/check_debug_unit_shards.py),
+  # green only when every shard is.
   tla-trace:
     name: TLA+ trace check (fixed seeds, shard ${{ matrix.shard }})
     runs-on: [self-hosted, Linux, X64, fleet]
@@ -1791,7 +1783,8 @@ jobs:
           CC: gcc
           CXX: g++
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+          stems=$(python3 tools/tla_trace_check.py --stems ${{ matrix.shard }})
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON "-DROCKETNET_TLA_TRACE_ONLY=$stems"
           cmake --build build --target tla_trace_all --parallel 8
 
       - name: Build the pinned tlacheck and find the pinned jar
@@ -1818,7 +1811,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/tla_trace_check.py --bin bin --tlacheck "$TRACE_JOB/tlacheck" --jar /opt/tla/tla2tools.jar \
-            --layer all --seeds 1-4 --jobs 8 --dir "$TRACE_JOB/work" --shard ${{ matrix.shard }}
+            --layer all --seeds commit --jobs 8 --dir "$TRACE_JOB/work" --shard ${{ matrix.shard }}
 
       - name: Remove the trace work
         if: always() && env.TRACE_JOB != ''
@@ -1858,7 +1851,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - name: All nine trace check shards succeeded
+      - name: All trace check shards succeeded
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: trace-shard-jobs.json
@@ -1868,7 +1861,9 @@ jobs:
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/9)" "TLA+ trace check (fixed seeds, shard 1/9)" "TLA+ trace check (fixed seeds, shard 2/9)" "TLA+ trace check (fixed seeds, shard 3/9)" "TLA+ trace check (fixed seeds, shard 4/9)" "TLA+ trace check (fixed seeds, shard 5/9)" "TLA+ trace check (fixed seeds, shard 6/9)" "TLA+ trace check (fixed seeds, shard 7/9)" "TLA+ trace check (fixed seeds, shard 8/9)"
+          names=$(python3 tools/tla_trace_check.py --shard-names)
+          mapfile -t shards <<< "$names"
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "${shards[@]}"
 
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a
@@ -4692,6 +4687,16 @@ jobs:
       - name: Model coverage rows and citations are true
         if: ${{ !cancelled() }}
         run: python3 tools/test_check_tla_coverage.py && python3 tools/check_tla_coverage.py --all --actions-strict
+
+      # The trace check's rows (tests/tla_trace_<file>.row) and shard table, and the
+      # sharded jobs' matrices and the ruleset's shard checks against SHARD_COUNT,
+      # with no build: the same checks every trace shard makes before its walks
+      - name: Test and check the trace check's rows and shard table
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_tla_trace_check.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          python3 tools/tla_trace_check.py --table
 
       - name: Test and check the fuzz regression corpus
         if: ${{ !cancelled() }}

@@ -1422,6 +1422,35 @@ if(ROCKETNET_BUILD_TOOLS)
         endif()
     endfunction()
     file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
+    # the harness's layer table is a fixed array (tests/tla_trace_record.h): a
+    # layer past it is refused when tla_trace starts, so a layer count over it
+    # is refused here first, where adding the file is
+    list(LENGTH ROCKETNET_TLA_TRACE_LAYERS rocketnet_tla_trace_count)
+    file(STRINGS tests/tla_trace_record.h rocketnet_tla_trace_max REGEX "^#define TLA_TRACE_MAX_LAYERS [0-9]+$")
+    string(REGEX REPLACE "^#define TLA_TRACE_MAX_LAYERS ([0-9]+)$" "\\1" rocketnet_tla_trace_max "${rocketnet_tla_trace_max}")
+    if(NOT rocketnet_tla_trace_max MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "tests/tla_trace_record.h has no #define TLA_TRACE_MAX_LAYERS <n> line")
+    endif()
+    if(rocketnet_tla_trace_count GREATER rocketnet_tla_trace_max)
+        message(FATAL_ERROR "${rocketnet_tla_trace_count} trace layer files tests/tla_trace_*.cpp, more than "
+            "TLA_TRACE_MAX_LAYERS (${rocketnet_tla_trace_max}) in tests/tla_trace_record.h: raise it")
+    endif()
+    # A trace check shard builds only its own layers: ROCKETNET_TLA_TRACE_ONLY
+    # is a ';' list of file stems (tla_trace_<stem>.cpp), the one
+    # tools/tla_trace_check.py --stems I/N prints. Empty (the default) builds
+    # every layer. A stem with no file is an error, never a smaller build.
+    set(ROCKETNET_TLA_TRACE_ONLY "" CACHE STRING "build only these trace layer files (stems, ';' list); empty: every layer")
+    if(ROCKETNET_TLA_TRACE_ONLY)
+        set(rocketnet_tla_trace_kept "")
+        foreach(stem IN LISTS ROCKETNET_TLA_TRACE_ONLY)
+            set(layer_file "${CMAKE_CURRENT_SOURCE_DIR}/tests/tla_trace_${stem}.cpp")
+            if(NOT layer_file IN_LIST ROCKETNET_TLA_TRACE_LAYERS)
+                message(FATAL_ERROR "ROCKETNET_TLA_TRACE_ONLY names ${stem}: there is no tests/tla_trace_${stem}.cpp")
+            endif()
+            list(APPEND rocketnet_tla_trace_kept "${layer_file}")
+        endforeach()
+        set(ROCKETNET_TLA_TRACE_LAYERS ${rocketnet_tla_trace_kept})
+    endif()
     add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
     rocketnet_tla_trace_target(tla_trace)
     set(ROCKETNET_TLA_TRACE_PLANTS "")

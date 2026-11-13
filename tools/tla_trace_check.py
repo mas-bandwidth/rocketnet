@@ -20,9 +20,12 @@ Before any walk, the layer's files are read and refused, by name, when:
   the layer's file defines or undefines a ROCKETNET_ macro other than its
     plant's, or (but for a self-contained row) includes no sdk .cpp, or its
     plant define appears in none of the sdk files it includes;
-  the table and the binaries disagree: a row with no layer, a layer with no
+  the rows and the binaries disagree: a row with no layer, a layer with no
     row, a name registered twice or refused, two rows of one name, a plant
-    binary that is not exactly one layer.
+    binary that is not exactly one layer or not its row's;
+  the shard table is not a partition: a layer with no per-commit seed, a
+    seed in two shards or in none, an empty shard; or the workflows' shard
+    matrices or the ruleset's shard checks are not SHARD_COUNT's.
 
 Per seed, red when: a walk fails, times out, prints no CONFIG, TRACE, ACTS,
 PLANT-FIRED and PLANT-AT, or writes different output twice; the trace is not
@@ -36,16 +39,20 @@ the first record it changed.
 
 Across the seeds, red when an action of Next that is not untraced, or a
 reach predicate of the row, was never taken or reached in a clean trace.
+Per commit (--seeds commit) the seeds are the layer's own commit seeds; with
+--seeds A-B, every seed of the range.
 
-Per commit the work is split by SHARDS (--shard I/9): each shard is a set of
-(layer, seed) pairs, and the table is red unless every pair is in exactly one
-shard. A layer's cross-seed checks run in the shard holding its first seed.
+Per commit the work is split into SHARD_COUNT shards (--shard I/N): each
+layer's row puts each of its commit seeds in one shard. A layer's cross-seed
+checks run in the shard of its first commit seed, its home. Nightly, a shard
+runs the layers homed there over every seed of the range.
 
-A layer is one file, tests/tla_trace_<layer>.cpp, that registers itself
-with TLA_TRACE_LAYER, plus one row of LAYERS below.
+A layer is one file, tests/tla_trace_<stem>.cpp, that registers itself
+with TLA_TRACE_LAYER, plus its row beside it, tests/tla_trace_<stem>.row.
 
   python3 tools/tla_trace_check.py --bin bin --tlacheck TLACHECK \\
-      --jar /opt/tla/tla2tools.jar --layer all --seeds 1-4 --jobs 8 --dir WORK
+      --jar /opt/tla/tla2tools.jar --layer all --seeds commit --jobs 8 --dir WORK
+  python3 tools/tla_trace_check.py --table      the rows and shard lists alone
 """
 
 import argparse
@@ -63,7 +70,10 @@ ROOT = Path(__file__).resolve().parent.parent
 TLA = ROOT / "proofs" / "tla"
 TESTS = ROOT / "tests"
 
-# One row per layer.
+# One row per layer, in its own file beside the layer's harness file:
+# tests/tla_trace_<stem>.row for tests/tla_trace_<stem>.cpp. A row is a Python
+# dict literal, read with ast (never run), comments allowed. Its keys:
+#   layer           the name the harness file registers (TLA_TRACE_LAYER).
 #   modules         the modules TLC reads: the spec first, any module it
 #                   extends from proofs/tla, and its Trace<Spec>.tla last.
 #   untraced        Next's actions no walk takes, each with the reason.
@@ -81,202 +91,36 @@ TESTS = ROOT / "tests"
 #                   this key a layer must include an sdk .cpp under the plant block.
 #   self_contained  (the example only) why the code under test lives in the
 #                   layer's own file instead of sdk/.
-LAYERS = {
-    "example": {
-        "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
-        "untraced": {},
-        "reach": ["Full"],
-        "self_contained": "the template: its code is a counter written for the example, not library code",
-    },
-    "msgx": {
-        "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
-        "untraced": {
-            "Forget": "the first step of a forget call, where holders run before its retire: the walk sees the table between calls and takes the whole call, ForgetCall",
-            "Retire": "the second step of a retire inside a forget or a sweep call, which the walk takes whole as ForgetCall or SweepCall",
-            "RetireWordLate": "the broken order of the retire's two steps (PassCopyFirst), which the code does not have and the model's reversed witness keeps",
-            "ForgetDereg": "the last step of a forget call, taken whole as ForgetCall",
-            "SweepBegin": "the first step of a sweep call, where holders run before its dead-report loop: the walk takes the whole call, SweepCall",
-            "RetireDead": "one slot of a sweep call's dead-report loop, taken whole as SweepCall",
-            "Close": "one entry of a sweep call's close loop, taken whole as SweepCall",
-        },
-        "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired"],
-        "steps": 500,
-    },
-    "msgxsendruns": {
-        "modules": ["RNMsgxSendRuns.tla", "TraceRNMsgxSendRuns.tla"],
-        "untraced": {},
-        # one bank of 16 to 24 packets leaves in about 60 steps; the rest
-        # of a 400-step walk would be Done records, each paid for by the
-        # template's ASSUME
-        "steps": 150,
-    },
-    "iocp-admit": {
-        "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
-        "untraced": {},
-        "reach": ["BankFull"],
-    },
-    "iocp-lanes": {
-        "modules": ["RNIocpSendLanes.tla", "TraceRNIocpSendLanes.tla"],
-        "untraced": {},
-        "reach": ["LaneEmpty", "EveryThreadPosts"],
-    },
-    "bank": {
-        "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
-        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
-                             "under MaxFlush, so it never gets there"},
-        "reach": ["LastSlot"],
-    },
-    "gather": {
-        "modules": ["RNSendGatherCall.tla", "TraceRNSendGatherCall.tla"],
-        "untraced": {},
-        "reach": ["SegCapEdge", "ByteCapEdge"],
-        # seven steps a bank (six stages and the call): 100 calls a seed
-        "steps": 700,
-    },
-    "gso": {
-        "modules": ["RNGsoQueueBankLayout.tla", "TraceRNGsoQueueBankLayout.tla"],
-        "untraced": {"Done": "the model's stutter once every bound is spent; the walk's flush bound is its length, so it never "
-                             "gets there, and Done is no call of the code"},
-        "reach": ["BankFull", "TurnedOverEveryBank", "NoFreeBank"],
-    },
-    "fillphase": {
-        "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
-        "untraced": {
-            "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
-            "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",
-            "FillStore": "a reversed witness's step (LoadStore); the code locks by one CAS",
-            "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
-                    "so it never gets there",
-        },
-        "ghost": {"refusal": "history for the reach predicates: the last refusal step taken; the code keeps no such word, "
-                             "and the counts it does keep (overlaps, twoFillers) are compared"},
-        "reach": ["RefusedMainLook", "RefusedMainIn", "RefusedFillLock", "RefusedFillDecide", "RefusedFillLookByMain",
-                  "RefusedFillLookInWindow", "RefusedTakeLook", "TakeInWindow", "TwoTakesInWindow",
-                  "RefusedMainBesideTake", "WindowOpened"],
-        # each record carries the 64 fills_in lines, and a TLC run's time is the size of the log it reads: 400 steps
-        # ran 35 to 53 s a run on a shared bench slot (vision, 2026-11-13) against the 100 s budget; a main call is 66
-        # steps (one look a line), so a walk much shorter than this finishes none
-        "steps": 240,
-    },
-    "sendreserve": {
-        "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
-        "untraced": {},
-        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
-        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],
-    },
-    "writerfinish": {
-        "modules": ["RNWriterFinish.tla", "TraceRNWriterFinish.tla"],
-        "untraced": {},
-        # the walk's odd seeds are a staged transport (the first three predicates), its even seeds a buffered one
-        # (the last three): a seed set must hold both kinds
-        "reach": ["SealedAtFinish", "RefusedAtFinish", "NothingForWalk", "RingOpen", "RingQueued", "WalkCarried"],
-    },
-    "rio-lane": {
-        "modules": ["RNRioLaneLayout.tla", "TraceRNRioLaneLayout.tla"],
-        "untraced": {},
-        "reach": ["BothLanesStaged"],
-        "header_only": True,
-    },
-    "ackapply": {
-        "modules": ["RNAckApplyPhase.tla", "TraceRNAckApplyPhase.tla"],
-        "untraced": {},
-        "reach": ["TakenByGameThread", "LeftForFinish", "Chained", "QueuedBehindSettled", "GatheredQueueFull",
-                  "GatheredRangesFull"],
-    },
-    "xdp-gateway-refresh": {
-        "modules": ["RNXdpGatewayRefresh.tla", "TraceRNXdpGatewayRefresh.tla"],
-        "untraced": {
-            "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
-        },
-        "reach": ["StagedNewMac"],
-    },
-    "xdp-reply-macs": {
-        "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
-        "untraced": {},
-        "reach": ["Wrapped", "WindowLive"],
-        "steps": 250,
-    },
-    "xdp-replay-marks": {
-        "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
-        "untraced": {
-            "Commit": "the start of reset_keeping, inside the one call the walk makes; the walk takes ResetKeeping, "
-                      "the call whole",
-            "CompactForgetStep": "one iteration of reset_keeping's forget loop, inside the call; ResetKeeping runs it "
-                                 "with the same arithmetic",
-            "CompactMarkStep": "one iteration of reset_keeping's mark loop, inside the call; ResetKeeping runs it "
-                               "with the same arithmetic",
-        },
-        "reach": ["ForgetsFull", "MarksFull", "SomeRefused", "ForgetsKept", "MarksKept"],
-        # an update is up to five forgets, five marks and a commit
-        "steps": 400,
-    },
-    "xdp-receive-ring": {
-        "modules": ["RNXdpReceiveRing.tla", "TraceRNXdpReceiveRing.tla"],
-        "untraced": {},
-        # the staging buffer full, the RX ring full, and a refused flush
-        # (even seeds: a fill ring of exactly the frames)
-        "reach": ["StagingFull", "RxRingFull", "HeldBetweenPasses"],
-    },
-    "xdp-replay": {
-        "modules": ["RNXdpReplay.tla", "TraceRNXdpReplay.tla"],
-        "untraced": {},
-        # a kernel mark for the filter's drop rule to read, a forget the kernel refused, a held greeting
-        "reach": ["KernelMarked", "ForgetRefused", "GreetingHeld"],
-    },
-    "queue-send": {
-        "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
-        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
-                             "length, so it never gets there"},
-        "reach": ["Full", "AgainPosted"],
-        # the model's Ids grow with MaxFlush, the walk's length: each record
-        # carries (steps + 1) * 4 statuses
-        "steps": 200,
-    },
-    "queue-worker": {
-        "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],
-        "untraced": {"CancelWake": "the stop writes the eventfd in the walk's one step, which completes an armed "
-                                   "READ before the worker can see quit, and the worker arms no READ after it: "
-                                   "a READ to cancel is left only when the write and the arm race on two threads",
-                     "KernelWakeEnd": "the cancelled READ's completion: no READ is cancelled (CancelWake)"},
-    },
-    "receive": {
-        "modules": ["RNUringQueueReceiveLayout.tla", "TraceRNUringQueueReceiveLayout.tla"],
-        "untraced": {},
-        "reach": ["BankFull", "RingDry"],
-        # a record carries the datagrams banked and delivered so far, so TLC's
-        # time grows faster than the walk: 200 steps a seed stays in budget
-        "steps": 200,
-    },
-}
+#   commit          the per-commit seeds and where each runs: {seed: shard},
+#                   shard in 0 .. SHARD_COUNT - 1. Per commit (--seeds commit)
+#                   a layer runs exactly these seeds, and its action coverage
+#                   and reach predicates must hold over them alone; nightly
+#                   (--seeds A-B) it runs every seed of the range in the shard
+#                   of its first commit seed, its home.
+ROW_GLOB = "tla_trace_*.row"
+REQUIRED_KEYS = {"layer", "modules", "untraced", "commit"}
 
-# The per-commit shards (ci.yml tla-trace, --shard I/9 with --seeds 1-4): each is
-# a set of (layer, seed) pairs, written "layer:seed", or "layer" for the layer's
-# every seed in SHARD_SEEDS. Every pair of every layer is in exactly one shard: a
-# pair in two shards, or in none, or an empty shard is red. A layer's action
-# coverage and its reach predicates run in its home shard, the one holding its
-# first seed; that shard walks the layer's other seeds again (the walk alone,
-# whose TLC check is in their own shards, every one required by the summary job)
-# to count their actions and try their reach. A layer over about 40 s of a
-# runner's check step is spread by seed. Measured (bench-nyc-5, ccacc2a0b): msgx
-# 68 to 86 s a seed alone with its reach, two TLC runs of about 21 s a seed;
-# xdp-reply-macs 43 to 59 s a seed; every other layer 3 to 34 s whole.
-SHARD_SEEDS = range(1, 5)
-SHARDS = [
-    ["msgx:1"],
-    ["msgx:2", "xdp-replay"],
-    ["msgx:3", "gso"],
-    ["msgx:4", "msgxsendruns", "gather"],
-    ["xdp-reply-macs:1", "example", "queue-worker"],
-    ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
-    ["xdp-reply-macs:4", "xdp-gateway-refresh"],
-    ["ackapply", "bank", "receive"],
-    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks"],
-]
+# The per-commit shard count: ci.yml's tla-trace matrix, tlc.yml's trace
+# matrix and the ruleset's shard names are written from it (--write-shards)
+# and every run checks them against it, so adding shards is this one number
+# and one --write-shards. A layer over about 40 s of a runner's check step is
+# spread by seed (msgx, xdp-reply-macs). Measured (bench-nyc-5, ccacc2a0b):
+# msgx 68 to 86 s a seed alone with its reach, two TLC runs of about 21 s a
+# seed; xdp-reply-macs 43 to 59 s a seed; every other layer 3 to 34 s whole.
+SHARD_COUNT = 9
+SHARD_JOB = "TLA+ trace check (fixed seeds, shard {})"
+NIGHT_JOB = "TLA+ trace check (rolling seeds, shard {})"
+CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
+TLC_YML = ROOT / ".github" / "workflows" / "tlc.yml"
+RULESET = ROOT / ".github" / "rulesets" / "main.json"
+# the matrix line of each sharded job, and the ruleset's shard entries, as --write-shards writes them
+MATRIX_LINE = re.compile(r"^        shard: \[[^\]\n]*\]$", re.M)
+RULESET_SHARD = re.compile(r'^ *\{"context": "TLA\+ trace check \(fixed seeds, shard [0-9]+/[0-9]+\)"[^\n]*\n', re.M)
 
 STEPS = 400
 # the shortest walk a row may ask for
 MIN_STEPS = 100
-ROW_KEYS = {"modules", "untraced", "ghost", "reach", "steps", "self_contained", "header_only"}
+ROW_KEYS = {"layer", "modules", "untraced", "ghost", "reach", "steps", "self_contained", "header_only", "commit"}
 # the rows whose code may live in the layer's own file
 SELF_CONTAINED = {"example"}
 WALK_TIMEOUT = 120
@@ -863,10 +707,10 @@ def trace_sha(walk_dir, report):
     return hashlib.sha256((walk_dir / (report["module"] + ".tla")).read_bytes()).hexdigest()
 
 
-def reached(args, name, layer, predicate, log):
+def reached(args, name, layer, predicate, log, seeds):
     """True when some seed's accepted clean trace reaches the predicate: a TLC run of the trace with the
     invariant ~predicate must find it violated"""
-    for seed in args.seeds:
+    for seed in seeds:
         walk_dir = args.dir / f"{name}-{seed}" / "clean" / "walk"
         traced = list(walk_dir.glob("MC*.tla")) if walk_dir.exists() else []
         if len(traced) != 1:
@@ -915,108 +759,304 @@ def listed(binary_path):
     return result.stdout.split(), refusals
 
 
-def shard_pairs(shards):
-    """([[(layer, seed), ...] per shard], [failure]): SHARDS expanded, and every way it is not a partition of
-    LAYERS x SHARD_SEEDS: an entry naming no layer or no seed of SHARD_SEEDS, a pair in two shards, a pair in
-    none, an empty shard"""
-    failures, expanded, where = [], [], {}
-    count = len(shards)
-    for i, shard in enumerate(shards):
-        pairs = []
-        for entry in shard:
-            layer, _, seed = entry.partition(":")
-            if layer not in LAYERS:
-                failures.append(f"shard {i}/{count}: {entry} names no layer of LAYERS")
+def read_row(path):
+    """(row dict or None, [failure]) of one row file: one dict literal of constant keys, no key twice at any
+    level. A dict literal keeps only the last of two equal keys, so a second "steps", or a commit seed given
+    two shards, would hide the first silently: both are refused here, from the syntax tree."""
+    where = f"tests/{path.name}"
+    try:
+        tree = ast.parse(path.read_text(), filename=where, mode="eval")
+    except (OSError, SyntaxError, ValueError) as error:
+        return None, [f"{where}: not a Python literal: {error}"]
+    if not isinstance(tree.body, ast.Dict):
+        return None, [f"{where}: a row is one dict literal"]
+    failures = []
+    commit = None
+    for key, value in zip(tree.body.keys, tree.body.values):
+        if isinstance(key, ast.Constant) and key.value == "commit":
+            commit = value
+    layer = next((v.value for k, v in zip(tree.body.keys, tree.body.values)
+                  if isinstance(k, ast.Constant) and k.value == "layer" and isinstance(v, ast.Constant)), path.name)
+    for node in ast.walk(tree.body):
+        if not isinstance(node, ast.Dict):
+            continue
+        seen = {}
+        for key, value in zip(node.keys, node.values):
+            if not isinstance(key, ast.Constant):
+                failures.append(f"{where}: a key that is not a constant")
                 continue
-            if seed and not (seed.isdigit() and int(seed) in SHARD_SEEDS):
-                failures.append(f"shard {i}/{count}: {entry} names no seed of {SHARD_SEEDS.start}-{SHARD_SEEDS.stop - 1}")
+            if key.value in seen and node is commit:
+                shards = [seen[key.value], value]
+                said = " and ".join(f"{s.value}/{SHARD_COUNT}" if isinstance(s, ast.Constant) else "?" for s in shards)
+                failures.append(f"SHARDS: {layer}:{key.value} is listed twice, in shards {said}")
+            elif key.value in seen:
+                failures.append(f"{where}: key {key.value!r} twice in one dict: the second hides the first")
+            seen[key.value] = value
+    try:
+        row = ast.literal_eval(tree.body)
+    except ValueError as error:
+        return None, failures + [f"{where}: not a literal: {error}"]
+    return row, failures
+
+
+def load_rows(tests=None):
+    """({layer: row}, {layer: stem}, [failure]) of every row file and harness file in tests/: each harness file
+    tests/tla_trace_<stem>.cpp has its row tests/tla_trace_<stem>.row and each row its harness file, and no two
+    rows name one layer"""
+    tests = tests or TESTS
+    failures, rows, stems, where = [], {}, {}, {}
+    harness = {p.name[len("tla_trace_"):-len(".cpp")] for p in tests.glob("tla_trace_*.cpp")}
+    files = {p.name[len("tla_trace_"):-len(".row")]: p for p in tests.glob(ROW_GLOB)}
+    for stem in sorted(harness - set(files)):
+        failures.append(f"tests/tla_trace_{stem}.cpp has no row: every layer file has its row tests/tla_trace_{stem}.row")
+    for stem in sorted(set(files) - harness):
+        failures.append(f"tests/tla_trace_{stem}.row is a row with no layer file tests/tla_trace_{stem}.cpp")
+    for stem, path in sorted(files.items()):
+        row, row_failures = read_row(path)
+        failures += row_failures
+        if row is None:
+            continue
+        name = row.get("layer")
+        if not isinstance(name, str):
+            failures.append(f"tests/{path.name}: no \"layer\", the name its harness file registers")
+            continue
+        if name in where:
+            failures.append(f"layer {name}: two rows, tests/{where[name]} and tests/{path.name}")
+            continue
+        where[name] = path.name
+        rows[name] = row
+        stems[name] = stem
+    return rows, stems, failures
+
+
+def row_failures(name, row, steps_given):
+    """[failure] of one row's own keys and values"""
+    failures = []
+    if not LAYER_NAME.fullmatch(name):
+        failures.append(f"layer {name}: a name is lower-case letters, digits and '-' only")
+    for key in sorted(set(row) - ROW_KEYS):
+        failures.append(f"layer {name}: no row key {key}")
+    for key in sorted(REQUIRED_KEYS - set(row)):
+        failures.append(f"layer {name}: the row has no {key}")
+    if not isinstance(row.get("modules", []), list) or not all(isinstance(m, str) for m in row.get("modules", [])):
+        failures.append(f"layer {name}: modules is a list of file names")
+    for key in ("untraced", "ghost"):
+        if not isinstance(row.get(key, {}), dict):
+            failures.append(f"layer {name}: {key} is a dict of name: reason")
+    if not isinstance(row.get("reach", []), list):
+        failures.append(f"layer {name}: reach is a list of predicate names")
+    if "self_contained" in row and name not in SELF_CONTAINED:
+        failures.append(f"layer {name}: only the example is self-contained; a layer traces sdk code")
+    steps = row.get("steps", STEPS)
+    if not isinstance(steps, int):
+        failures.append(f"layer {name}: steps is a whole number")
+    elif not steps_given and steps < MIN_STEPS:
+        failures.append(f"layer {name}: steps {steps} is under {MIN_STEPS}")
+    return failures
+
+
+def commit_seeds(row):
+    """the row's per-commit seeds, sorted (the well-formed ones)"""
+    commit = row.get("commit")
+    if not isinstance(commit, dict):
+        return []
+    return sorted(s for s in commit if isinstance(s, int) and not isinstance(s, bool) and s >= 1)
+
+
+def shard_table(rows, count):
+    """([[(layer, seed), ...] per shard], {layer: home shard}, [failure]): the rows' commit maps as shards,
+    and every way they are not a partition of the per-commit pairs into count shards: a layer with no commit
+    seed, a seed that is not a positive whole number, a shard outside 0 .. count - 1, an empty shard. (A seed
+    given two shards is refused by read_row, which sees the literal.)"""
+    failures, expanded, homes = [], [[] for _ in range(count)], {}
+    for name in sorted(rows):
+        commit = rows[name].get("commit")
+        if not isinstance(commit, dict) or not commit:
+            failures.append(f"{name} is listed in no shard: its row has no commit seed, so it would never be "
+                            "checked per commit")
+            continue
+        for seed, shard in sorted(commit.items(), key=lambda item: str(item[0])):
+            if isinstance(seed, bool) or not isinstance(seed, int) or seed < 1:
+                failures.append(f"{name}: commit seed {seed!r} is not a positive whole number")
                 continue
-            pairs += [(layer, int(seed))] if seed else [(layer, s) for s in SHARD_SEEDS]
-        if not shard:
+            if isinstance(shard, bool) or not isinstance(shard, int) or not 0 <= shard < count:
+                failures.append(f"{name}:{seed} is listed in no shard: shard {shard!r} is not one of the {count} "
+                                f"shards 0 to {count - 1}, so it would never be checked per commit")
+                continue
+            expanded[shard].append((name, seed))
+        seeds = commit_seeds(rows[name])
+        if seeds and isinstance(commit[seeds[0]], int) and 0 <= commit[seeds[0]] < count:
+            homes[name] = commit[seeds[0]]
+    for i, pairs in enumerate(expanded):
+        if not pairs:
             failures.append(f"shard {i}/{count} holds no (layer, seed) pair")
-        for pair in pairs:
-            if pair in where:
-                failures.append(f"{pair[0]}:{pair[1]} is listed twice, in shards {where[pair]}/{count} and {i}/{count}")
-            else:
-                where[pair] = i
-        expanded.append(pairs)
-    for layer in sorted(LAYERS):
-        for seed in SHARD_SEEDS:
-            if (layer, seed) not in where:
-                failures.append(f"{layer}:{seed} is listed in no shard: it would never be checked per commit")
-    return expanded, failures
+    return expanded, homes, failures
 
 
-def table_rows():
-    """The keys of the LAYERS literal in this file, in order, duplicates kept: a dict literal keeps
-    only the last of two equal keys, so a second row of one name would hide the first silently."""
-    tree = ast.parse(Path(__file__).read_text())
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "LAYERS" for t in node.targets):
-            return [k.value for k in node.value.keys if isinstance(k, ast.Constant)]
-    return []
+def shard_names(count):
+    return [f"{i}/{count}" for i in range(count)]
+
+
+def job_block(text, job):
+    """(start, end) of a job's block in a workflow's text, or None"""
+    found = re.search(r"^  " + re.escape(job) + r":\n", text, re.M)
+    if not found:
+        return None
+    after = re.search(r"^  [A-Za-z0-9_-]+:\n", text[found.end():], re.M)
+    return found.start(), found.end() + after.start() if after else len(text)
+
+
+def matrix_line(count):
+    return "        shard: [" + ", ".join(f"'{s}'" for s in shard_names(count)) + "]"
+
+
+def workflow_failures(count, ci=None, tlc_yml=None, ruleset=None):
+    """[failure]: the sharded jobs' matrices and the ruleset's shard checks against the shard count"""
+    failures = []
+    for path, job in ((ci or CI_YML, "tla-trace"), (tlc_yml or TLC_YML, "trace")):
+        text = path.read_text()
+        block = job_block(text, job)
+        lines = MATRIX_LINE.findall(text[block[0]:block[1]]) if block else []
+        if lines != [matrix_line(count)]:
+            failures.append(f"{path.name} job {job}: its matrix is not the {count} shards of SHARD_COUNT "
+                            f"({lines[0].strip() if lines else 'no shard matrix'}): run tools/tla_trace_check.py --write-shards")
+    text = (ruleset or RULESET).read_text()
+    named = re.findall(r'"TLA\+ trace check \(fixed seeds, shard ([0-9]+/[0-9]+)\)"', text)
+    if named != shard_names(count):
+        failures.append(f"{(ruleset or RULESET).name}: requires the trace shards {named}, not the {count} of SHARD_COUNT: "
+                        "run tools/tla_trace_check.py --write-shards")
+    return failures
+
+
+def write_shards(count, ci=None, tlc_yml=None, ruleset=None):
+    """write the sharded jobs' matrices and the ruleset's shard checks from the shard count"""
+    for path, job in ((ci or CI_YML, "tla-trace"), (tlc_yml or TLC_YML, "trace")):
+        text = path.read_text()
+        block = job_block(text, job)
+        if not block or len(MATRIX_LINE.findall(text[block[0]:block[1]])) != 1:
+            raise SystemExit(f"{path.name} job {job}: no one `shard: [...]` matrix line to write")
+        part = MATRIX_LINE.sub(matrix_line(count), text[block[0]:block[1]])
+        path.write_text(text[:block[0]] + part + text[block[1]:])
+    path = ruleset or RULESET
+    text = path.read_text()
+    found = list(RULESET_SHARD.finditer(text))
+    if not found or any(a.end() != b.start() for a, b in zip(found, found[1:])):
+        raise SystemExit(f"{path.name}: the trace shard checks are not one run of lines to write")
+    first = found[0].group(0)
+    indent = first[:len(first) - len(first.lstrip())]
+    entries = "".join(indent + '{"context": "' + SHARD_JOB.format(s) + '", "integration_id": 15368},\n'
+                      for s in shard_names(count))
+    path.write_text(text[:found[0].start()] + entries + text[found[-1].end():])
+
+
+def table_failures(rows, stems, steps_given=False, count=None):
+    """[failure] of the rows and the shard table, before any build"""
+    count = count or SHARD_COUNT
+    failed = []
+    for name in sorted(rows):
+        failed += row_failures(name, rows[name], steps_given)
+    _, _, shard_failures = shard_table(rows, count)
+    failed += [f"SHARDS: {f}" for f in shard_failures]
+    return failed
+
+
+def span_text(seeds):
+    seeds = list(seeds)
+    if len(seeds) == 1:
+        return f"seed {seeds[0]}"
+    if seeds and seeds == list(range(seeds[0], seeds[-1] + 1)):
+        return f"seeds {seeds[0]}-{seeds[-1]}"
+    return "seeds " + ",".join(str(s) for s in seeds)
 
 
 def main():
+    rows, stems, load_failures = load_rows()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bin", required=True, type=Path)
-    parser.add_argument("--tlacheck", required=True)
-    parser.add_argument("--jar", required=True)
-    parser.add_argument("--layer", required=True, choices=sorted(LAYERS) + ["all"])
-    parser.add_argument("--seeds", required=True, type=seeds)
+    parser.add_argument("--bin", type=Path)
+    parser.add_argument("--tlacheck")
+    parser.add_argument("--jar")
+    parser.add_argument("--layer", choices=sorted(rows) + ["all"])
+    parser.add_argument("--seeds", type=seeds,
+                        help="commit: each layer's own per-commit seeds (its row's commit); A-B: every seed of the range")
     parser.add_argument("--steps", type=int, default=0, help="every layer's walk length (default: the row's, else 400)")
     parser.add_argument("--jobs", type=int, default=1)
-    parser.add_argument("--dir", required=True, type=Path)
+    parser.add_argument("--dir", type=Path)
     parser.add_argument("--tlc-timeout", default=TLC_TIMEOUT)
     parser.add_argument("--shard", default="0/1",
-                        help=f"I/N: 0/1 runs every seed of the layers asked for; I/{len(SHARDS)} runs shard I of SHARDS "
-                             f"(--layer all, --seeds {SHARD_SEEDS.start}-{SHARD_SEEDS.stop - 1})")
+                        help=f"I/N: 0/1 runs the layers asked for whole; I/{SHARD_COUNT} runs shard I: with --seeds commit, "
+                             f"the (layer, seed) pairs the rows put there; with --seeds A-B, the layers whose first commit "
+                             f"seed is there, every seed of the range")
+    parser.add_argument("--table", action="store_true",
+                        help="check the rows, the shard table and the workflows' shard lists only (no build)")
+    parser.add_argument("--stems", metavar="I/N",
+                        help="print the harness file stems shard I runs, ';'-joined (CMake's ROCKETNET_TLA_TRACE_ONLY)")
+    parser.add_argument("--shard-names", action="store_true", help="print the per-commit shard jobs' names")
+    parser.add_argument("--write-shards", action="store_true",
+                        help="write ci.yml's and tlc.yml's shard matrices and the ruleset's shard checks from SHARD_COUNT")
     args = parser.parse_args()
+
+    if args.shard_names:
+        print("\n".join(SHARD_JOB.format(s) for s in shard_names(SHARD_COUNT)))
+        return 0
+    if args.write_shards:
+        write_shards(SHARD_COUNT)
+        return 0
+    failed = list(load_failures) + table_failures(rows, stems, args.steps != 0) + workflow_failures(SHARD_COUNT)
+    expanded, homes_of, _ = shard_table(rows, SHARD_COUNT)
+    if args.stems:
+        shard = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", args.stems)
+        if not shard or int(shard.group(2)) != SHARD_COUNT or int(shard.group(1)) >= SHARD_COUNT:
+            parser.error(f"--stems must be I/{SHARD_COUNT} with I < {SHARD_COUNT}: {args.stems}")
+        if failed:
+            for line in failed:
+                print(f"TRACE-CHECK FAIL {line}", file=sys.stderr)
+            return 1
+        print(";".join(sorted({stems[n] for n, _ in expanded[int(shard.group(1))]})))
+        return 0
+    if args.table:
+        for line in failed:
+            print(f"TRACE-CHECK FAIL {line}")
+        if failed:
+            return 1
+        print(f"TRACE-TABLE OK layers={len(rows)} shards={SHARD_COUNT} "
+              f"pairs={sum(len(p) for p in expanded)}")
+        return 0
+    for need in ("bin", "tlacheck", "jar", "layer", "seeds", "dir"):
+        if getattr(args, need) is None:
+            parser.error(f"--{need} is required")
     args.library_config = library_config(args.bin / "tla_trace_config.txt")
 
-    failed = []
-    names = sorted(LAYERS) if args.layer == "all" else [args.layer]
+    names = sorted(rows) if args.layer == "all" else [args.layer]
     shard = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", args.shard)
     if not shard or int(shard.group(1)) >= int(shard.group(2)):
         parser.error(f"--shard must be I/N with I < N: {args.shard}")
     index, count = int(shard.group(1)), int(shard.group(2))
-    # the shard table is checked on every run, so a table that drops or
-    # doubles a pair is red wherever the check runs
-    expanded, table_failures = shard_pairs(SHARDS)
-    failed += [f"SHARDS: {f}" for f in table_failures]
+    commit = args.seeds == "commit"
     if count == 1:
-        pairs = [(n, seed) for n in names for seed in args.seeds]
-    elif count == len(SHARDS):
-        if args.layer != "all" or args.seeds != SHARD_SEEDS:
-            parser.error(f"--shard {args.shard} is a shard of SHARDS: it needs --layer all and "
-                         f"--seeds {SHARD_SEEDS.start}-{SHARD_SEEDS.stop - 1}")
-        pairs = expanded[index]
+        pairs = [(n, seed) for n in names for seed in (commit_seeds(rows[n]) if commit else args.seeds)]
+    elif count == SHARD_COUNT:
+        if args.layer != "all":
+            parser.error(f"--shard {args.shard} is a shard of the rows' table: it needs --layer all")
+        if commit:
+            pairs = expanded[index]
+        else:
+            pairs = [(n, seed) for n in names if homes_of.get(n) == index for seed in args.seeds]
     else:
-        parser.error(f"--shard {args.shard}: SHARDS holds {len(SHARDS)} shards; use I/{len(SHARDS)}, or 0/1 for every seed")
+        parser.error(f"--shard {args.shard}: the rows hold {SHARD_COUNT} shards (SHARD_COUNT); use I/{SHARD_COUNT}, "
+                     "or 0/1 for every layer asked for")
     # an empty shard checks nothing: never TRACE-CHECK OK
-    if not pairs:
+    if not pairs and not failed:
         parser.error(f"--shard {args.shard} holds no (layer, seed) pair, so nothing would be checked")
     names = sorted({n for n, _ in pairs})
-    # a layer's coverage and reach run where its first seed is
-    homes = [n for n in names if (n, args.seeds.start) in pairs]
+    # the seeds a layer's action coverage and reach predicates are held over: per commit its commit seeds,
+    # wherever their TLC runs are, in the shard of its first (its home); else the run's whole range
+    cover = {n: (commit_seeds(rows[n]) if commit else list(args.seeds)) for n in names}
+    homes = [n for n in names if cover[n] and (n, cover[n][0]) in pairs]
     if args.library_config is None:
         failed.append(f"no {args.bin / 'tla_trace_config.txt'}: the library's definitions are not known")
 
-    rows = table_rows()
-    for n in sorted({r for r in rows if rows.count(r) > 1}):
-        failed.append(f"layer {n}: two rows in LAYERS")
-    for n in rows:
-        if not LAYER_NAME.fullmatch(n):
-            failed.append(f"layer {n}: a name is lower-case letters, digits and '-' only")
-    for n, layer in sorted(LAYERS.items()):
-        for key in sorted(set(layer) - ROW_KEYS):
-            failed.append(f"layer {n}: no row key {key}")
-        if "self_contained" in layer and n not in SELF_CONTAINED:
-            failed.append(f"layer {n}: only the example is self-contained; a layer traces sdk code")
-        if args.steps == 0 and layer.get("steps", STEPS) < MIN_STEPS:
-            failed.append(f"layer {n}: steps {layer['steps']} is under {MIN_STEPS}")
-
-    # the harness and the plant binaries against the table
+    # the harness and the plant binaries against the rows: a shard's build may hold only its own layers
+    # (CMake's ROCKETNET_TLA_TRACE_ONLY); a run of every layer needs every row's layer registered
     registered, refusals = listed(args.bin / "tla_trace")
     plants = {}
     for n, reason in refusals:
@@ -1027,11 +1067,16 @@ def main():
     else:
         for dup in sorted({n for n in registered if registered.count(n) > 1}):
             failed.append(f"layer {dup}: registered twice")
-        if args.layer == "all":
-            for n in sorted(set(registered) - set(LAYERS)):
-                failed.append(f"layer {n}: registered by the harness, no row in LAYERS")
-            for n in sorted(set(LAYERS) - set(registered)):
-                failed.append(f"layer {n}: a row in LAYERS, not registered by the harness")
+        for n in sorted(set(registered) - set(rows)):
+            failed.append(f"layer {n}: registered by the harness, no row (tests/tla_trace_<file>.row)")
+        if args.layer == "all" and count == 1:
+            for n in sorted(set(rows) - set(registered)):
+                failed.append(f"layer {n}: a row, not registered by the harness")
+        else:
+            for n in sorted(set(names) - set(registered)):
+                failed.append(f"layer {n}: a row this run needs, not registered by the harness (a build of other layers: "
+                              f"ROCKETNET_TLA_TRACE_ONLY)")
+    layer_of_stem = {stem: n for n, stem in stems.items()}
     for path in sorted(args.bin.glob("tla_trace_plant_*")):
         if path.suffix not in ("", ".exe"):
             continue
@@ -1044,14 +1089,23 @@ def main():
         if layers[0] in plants:
             failed.append(f"layer {layers[0]}: two plant binaries")
         plants[layers[0]] = path.name
+        stem = path.stem[len("tla_trace_plant_"):] if path.suffix else path.name[len("tla_trace_plant_"):]
+        if stem in layer_of_stem and layer_of_stem[stem] != layers[0]:
+            failed.append(f"{path.name} holds layer {layers[0]}, its row tests/tla_trace_{stem}.row names "
+                          f"{layer_of_stem[stem]}")
 
     facts = {}
     for n in names:
         if n not in plants:
             failed.append(f"layer {n}: no plant binary tla_trace_plant_<file> holds it")
             continue
-        found, failures = module_facts(n, LAYERS[n])
-        failures += source_failures(LAYERS[n], plants[n])
+        # a row without its modules or with values of the wrong kind is already red above
+        if not REQUIRED_KEYS <= set(rows[n]) or not isinstance(rows[n]["modules"], list) or not rows[n]["modules"] \
+                or not all(isinstance(rows[n].get(k, {}), dict) for k in ("untraced", "ghost")) \
+                or not isinstance(rows[n].get("reach", []), list):
+            continue
+        found, failures = module_facts(n, rows[n])
+        failures += source_failures(rows[n], plants[n])
         for failure in failures:
             failed.append(f"layer {n}: {failure}")
         if found:
@@ -1069,7 +1123,7 @@ def main():
     reruns = 0
     # each seed runs its two TLC runs at once
     with ThreadPoolExecutor(max_workers=max(1, args.jobs // 2)) as pool:
-        futures = [pool.submit(check_seed, args, n, LAYERS[n], plants[n], seed, facts[n]) for n, seed in pairs]
+        futures = [pool.submit(check_seed, args, n, rows[n], plants[n], seed, facts[n]) for n, seed in pairs]
         for future in as_completed(futures):
             n, seed, log, failures, clean, reran = future.result()
             reruns += reran
@@ -1081,56 +1135,66 @@ def main():
             if clean and not failures:
                 # actions are counted from the traces TLC accepted, never
                 # from the walk's own report
-                for act, count in clean["logged"].items():
-                    taken[n][act] = taken[n].get(act, 0) + count
+                for act, count_ in clean["logged"].items():
+                    taken[n][act] = taken[n].get(act, 0) + count_
 
     # a home layer's seeds that other shards check: the clean walk alone, into
     # the directory check_seed uses, so their actions are counted here and the
     # reach predicates can try them; TLC accepts each in its own shard, and the
     # summary job is green only when every shard is
-    elsewhere = [(n, seed) for n in homes for seed in args.seeds if (n, seed) not in pairs]
+    elsewhere = [(n, seed) for n in homes for seed in cover[n] if (n, seed) not in pairs]
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        walked = list(pool.map(lambda p: coverage_walk(args, p[0], LAYERS[p[0]], p[1]), elsewhere))
+        walked = list(pool.map(lambda p: coverage_walk(args, p[0], rows[p[0]], p[1]), elsewhere))
     for (n, seed), (report, log, failures) in zip(elsewhere, walked):
         sys.stdout.write("".join(log))
         for failure in failures:
             failed.append(f"layer {n} seed {seed}: {failure}")
         if report is None:
             continue
-        for act, count in report["logged"].items():
-            taken[n][act] = taken[n].get(act, 0) + count
+        for act, count_ in report["logged"].items():
+            taken[n][act] = taken[n].get(act, 0) + count_
 
-    span = f"seeds {args.seeds.start}-{args.seeds.stop - 1}"
+    def unmet(n):
+        """how a cross-seed check of layer n that failed is told: its seeds, and per commit what to change"""
+        said = span_text(cover[n])
+        if commit:
+            said += (f" (its per-commit seeds: the row's commit, tests/tla_trace_{stems[n]}.row; a layer's checks "
+                     "per commit hold over those seeds alone, so give it the seeds this needs)")
+        return said
+
     for n in homes:
-        required = facts[n]["actions"] - set(LAYERS[n]["untraced"])
+        required = facts[n]["actions"] - set(rows[n]["untraced"])
         for act in sorted(required):
             if taken[n].get(act, 0) == 0:
-                failed.append(f"layer {n}: {act} never reached in an accepted clean trace of {span}")
+                failed.append(f"layer {n}: {act} never reached in an accepted clean trace of {unmet(n)}")
         for act in sorted(set(taken[n]) - facts[n]["actions"]):
             failed.append(f"layer {n}: the trace records {act}, which is not an action of the spec's Next")
     # each reach predicate tries the seeds in turn, the predicates at once
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        checks = [(n, p, []) for n in homes for p in LAYERS[n].get("reach", [])]
-        hits = list(pool.map(lambda c: reached(args, c[0], LAYERS[c[0]], c[1], c[2]), checks))
+        checks = [(n, p, []) for n in homes for p in rows[n].get("reach", [])]
+        hits = list(pool.map(lambda c: reached(args, c[0], rows[c[0]], c[1], c[2], cover[c[0]]), checks))
     for (n, predicate, log), hit in zip(checks, hits):
         if not hit:
             sys.stdout.write("".join(log))
-            failed.append(f"layer {n}: reach predicate {predicate} never reached in a clean trace of {span}")
+            failed.append(f"layer {n}: reach predicate {predicate} never reached in a clean trace of {unmet(n)}")
 
     for line in failed:
         print(f"TRACE-CHECK FAIL {line}")
     if failed:
         print(f"TRACE-CHECK FAILED reruns={reruns}")
         return 1
-    print(f"TRACE-CHECK OK layers={','.join(names)} seeds={args.seeds.start}-{args.seeds.stop - 1} "
+    seeds_said = "commit" if commit else f"{args.seeds.start}-{args.seeds.stop - 1}"
+    print(f"TRACE-CHECK OK layers={','.join(names)} seeds={seeds_said} "
           f"pairs={len(pairs)} homes={','.join(homes)} reruns={reruns}")
     return 0
 
 
 def seeds(text):
+    if text == "commit":
+        return "commit"
     match = re.fullmatch(r"([0-9]+)-([0-9]+)", text)
     if not match or int(match.group(1)) > int(match.group(2)):
-        raise ValueError(f"seeds must be FIRST-LAST with FIRST <= LAST: {text}")
+        raise ValueError(f"seeds must be commit, or FIRST-LAST with FIRST <= LAST: {text}")
     return range(int(match.group(1)), int(match.group(2)) + 1)
 
 

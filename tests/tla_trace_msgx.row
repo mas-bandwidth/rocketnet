@@ -1,0 +1,19 @@
+# The trace check's row of tests/tla_trace_msgx.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "msgx",
+    "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
+    "untraced": {
+        "Forget": "the first step of a forget call, where holders run before its retire: the walk sees the table between calls and takes the whole call, ForgetCall",
+        "Retire": "the second step of a retire inside a forget or a sweep call, which the walk takes whole as ForgetCall or SweepCall",
+        "RetireWordLate": "the broken order of the retire's two steps (PassCopyFirst), which the code does not have and the model's reversed witness keeps",
+        "ForgetDereg": "the last step of a forget call, taken whole as ForgetCall",
+        "SweepBegin": "the first step of a sweep call, where holders run before its dead-report loop: the walk takes the whole call, SweepCall",
+        "RetireDead": "one slot of a sweep call's dead-report loop, taken whole as SweepCall",
+        "Close": "one entry of a sweep call's close loop, taken whole as SweepCall",
+    },
+    "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired"],
+    "steps": 500,
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 0, 2: 1, 3: 2, 4: 3},
+}
