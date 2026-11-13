@@ -1396,8 +1396,8 @@ static int rn_blaster_self_test()
             rn_endpoint_reset( &endpoint, 0.0 );
             (void) rn_endpoint_begin_update( &endpoint );
             RN_BLASTER_CHECK( rn_blaster_endpoint_request( &endpoint, 0.0 ) == 0 );
-            uint8_t body[64] = {};
-            RN_BLASTER_CHECK( rn_endpoint_send( &endpoint, body, (int) sizeof( body ), ROCKETNET_RELIABILITY_UNRELIABLE,
+            uint8_t record[64] = {};
+            RN_BLASTER_CHECK( rn_endpoint_send( &endpoint, record, (int) sizeof( record ), ROCKETNET_RELIABILITY_UNRELIABLE,
                                                 ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 );
             RN_BLASTER_CHECK( rn_blaster_endpoint_request( &endpoint, 0.0 ) > 0 );
             rn_arena_destroy( arena );
