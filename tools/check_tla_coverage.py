@@ -166,16 +166,34 @@ def check_citations():
                 continue
             target_text = target.read_text(errors="replace")
             target_lines = target_text.splitlines()
-            header_window = target_lines[line_no - 1] \
-                if line_no <= len(target_lines) else ""
-            if re.search(rf"\b{re.escape(named)}\s*\(", header_window):
+            end_no = int(m.group(3)) if m.group(3) else line_no
+            if line_no < 1 or end_no < line_no or end_no > len(target_lines):
+                failures.append(f"{rel}: citation {target_rel}:{line_no}"
+                                f"{'-%d' % end_no if m.group(3) else ''} is past the "
+                                f"end of the file ({len(target_lines)} lines) "
+                                f"or an empty range")
                 continue
-            enclosing = enclosing_symbol(target_text, line_no)
-            if enclosing != named:
-                failures.append(
-                    f"{rel}: citation {target_rel}:{line_no} is inside "
-                    f"{enclosing}, not {named}")
+            # the cited start may be the declaration or definition header of
+            # named (a call site or a comment naming it is not); the range
+            # end, and a start that is no header, lie inside named
+            cited_lines = [line_no] if not declares(target_lines[line_no - 1], named) else []
+            if end_no != line_no:
+                cited_lines.append(end_no)
+            for cited in cited_lines:
+                enclosing = enclosing_symbol(target_text, cited)
+                if enclosing != named:
+                    failures.append(
+                        f"{rel}: citation {target_rel}:{cited} is inside "
+                        f"{enclosing}, not {named}")
     return failures
+
+
+def declares(line, named):
+    """The line opens a declaration or definition of named: it starts at
+    column 0 with an identifier (a return type, a storage class or named
+    itself), so it is neither an indented call site nor a comment."""
+    return bool(re.match(r"[A-Za-z_]", line)) and \
+        re.search(rf"\b{re.escape(named)}\s*\(", line) is not None
 
 
 def iter_rows():

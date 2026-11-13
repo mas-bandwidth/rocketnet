@@ -308,6 +308,115 @@ class CheckTlaCoverageTest(unittest.TestCase):
         self.assertIn("is inside rocketnet_other_init, not "
                       "rocketnet_send_budget_init", out)
 
+    def plant_call_site_repo(self):
+        root = self.plant_basic_repo()
+        (root / "sdk" / "rocketnet_send_budget.h").write_text(
+            "// proofs/tla/RNSendBudget.tla\n"
+            "void rocketnet_send_budget_init(void)\n{\n}\n"
+            "void rocketnet_other_init(void)\n{\n"
+            "    rocketnet_send_budget_init();\n"
+            "}\n")
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": "sdk/rocketnet_send_budget.h",
+            "module": "RNSendBudget",
+            "status": "current",
+            "owed_by": "-",
+            "note": GOOD_NOTE,
+        })
+        return root
+
+    def test_citation_of_a_call_site_fails(self):
+        # line 7 calls rocketnet_send_budget_init inside rocketnet_other_init
+        root = self.plant_call_site_repo()
+        (root / "sdk" / "rocketnet_driver.h").write_text(
+            "// rocketnet_send_budget_init (sdk/rocketnet_send_budget.h:7)\n")
+        code, out = run_check(root)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("citation sdk/rocketnet_send_budget.h:7 is inside "
+                      "rocketnet_other_init, not rocketnet_send_budget_init", out)
+
+    def test_citation_of_the_definition_header_passes(self):
+        root = self.plant_call_site_repo()
+        (root / "sdk" / "rocketnet_driver.h").write_text(
+            "// rocketnet_send_budget_init (sdk/rocketnet_send_budget.h:2-4)\n")
+        code, out = run_check(root)
+        self.assertEqual(code, 0, out)
+
+    def test_citation_range_ending_in_another_symbol_fails(self):
+        root = self.plant_call_site_repo()
+        (root / "sdk" / "rocketnet_driver.h").write_text(
+            "// rocketnet_send_budget_init (sdk/rocketnet_send_budget.h:2-7)\n")
+        code, out = run_check(root)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("citation sdk/rocketnet_send_budget.h:7 is inside "
+                      "rocketnet_other_init, not rocketnet_send_budget_init", out)
+
+    def test_citation_past_the_end_of_the_file_fails(self):
+        root = self.plant_call_site_repo()
+        (root / "sdk" / "rocketnet_driver.h").write_text(
+            "// rocketnet_send_budget_init (sdk/rocketnet_send_budget.h:40)\n")
+        code, out = run_check(root)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("citation sdk/rocketnet_send_budget.h:40 is past the end of the file (8 lines)", out)
+
+    # ------------------------------------------------------------------
+    # Rows with no model (status none) and rows a DST check covers (dst).
+
+    def plant_unmodelled_repo(self, status, module, code, note):
+        root = self.plant_basic_repo()
+        (root / "tests").mkdir()
+        (root / "tests" / "dst_checks.h").write_text(
+            'rocketnet_dst_check_fail( state, "budget_never_negative" );\n')
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": code,
+            "module": module,
+            "status": status,
+            "owed_by": "-",
+            "note": note,
+        })
+        return root
+
+    def test_none_and_dst_rows(self):
+        header = "sdk/rocketnet_send_budget.h"
+        cases = [
+            ("none passes", "none", "-", header,
+             "no model: one counter, read once", None),
+            ("none names a module", "none", "RNSendBudget", header,
+             "no model: one counter", "a row with no model must name - as its module"),
+            ("none joins two paths", "none", "-", header + ",sdk/rocketnet_endpoint.cpp",
+             "no model: one counter", "code column must hold one path"),
+            ("none names a missing file", "none", "-", "sdk/rocketnet_missing.h",
+             "no model: one counter", "sdk/rocketnet_missing.h does not exist"),
+            ("none says not why", "none", "-", header,
+             "one counter", "a row with no model must say why the code is safe"),
+            ("dst passes", "dst", "-", header,
+             "budget_never_negative holds it", None),
+            ("dst passes with a module", "dst", "RNSendBudget", header,
+             "budget_never_negative holds it", None),
+            ("dst names a missing module", "dst", "RNMissing", header,
+             "budget_never_negative holds it", "proofs/tla/RNMissing.tla does not exist"),
+            ("dst joins two paths", "dst", "-", header + ", sdk/rocketnet_endpoint.cpp",
+             "budget_never_negative holds it", "code column must hold one path"),
+            ("dst names a missing file", "dst", "-", "sdk/rocketnet_missing.h",
+             "budget_never_negative holds it", "sdk/rocketnet_missing.h does not exist"),
+            ("dst names no check", "dst", "-", header,
+             "a DST run holds it", "a dst row must name the DST check in its note"),
+        ]
+        for name, status, module, code_path, note, refusal in cases:
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                root = self.plant_unmodelled_repo(status, module, code_path, note)
+                code, out = run_check(root)
+                if refusal is None:
+                    self.assertEqual(code, 0, out)
+                    self.assertIn("COVERAGE OK 1 rows", out)
+                else:
+                    self.assertNotEqual(code, 0, out)
+                    self.assertIn(refusal, out)
+
     def test_real_coverage_passes(self):
         code, out = run_check(REPO_ROOT, ["--all"])
         self.assertEqual(code, 0, out)
