@@ -348,7 +348,7 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
 }
 
 // -----------------------------------------------------------------------
-//  3: the config value parses -- the transport ladder and the integer parse
+//  3: the config value parses -- the transport list and the integer parse
 // -----------------------------------------------------------------------
 
 static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
@@ -378,10 +378,10 @@ static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
 
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
     memset( &ladder, 0, sizeof( ladder ) );
 
-    const bool ladder_parsed = rocketnet_transport_ladder_parse( value, available, num_available, &ladder );
+    const bool ladder_parsed = rocketnet_transport_order_parse( value, available, num_available, &ladder );
     if ( ladder_parsed )
     {
         rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_CONFIG_LADDER_PARSED]++;

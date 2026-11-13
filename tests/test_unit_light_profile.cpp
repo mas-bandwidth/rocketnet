@@ -127,11 +127,17 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
+// The server config's two bind addresses add 512 bytes to the server and nothing to the
+// client (measured on the Windows unit job: actual=1469501311).
+// The protocol send reserve and its counter SEND_RESERVE_REFUSED (the Linux
+// block below has the account): the client reads actual=15389932 in the
+// Windows unit jobs, 64 above the counter union, and the server reads
+// actual=1469512895, 11136 above it (MSVC, Release, DEV ON).
 // Sending from the game threads (the per-client open message, the thread rule
 // check's lines, the message object's per-thread open lines, each region's
 // room_refusals, the per-thread send lines, the per-client wire totals on a
 // line each) reads 1469750271 and 15394028 (aws-win-5, MSVC, Release, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468701695 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702207 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345452 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -175,11 +181,19 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
+// The server config's two bind addresses (bind_ipv4_address,
+// bind_ipv6_address) add 512 bytes to the server (the object holding the
+// config crosses its rounding) and nothing to the client (measured); the
+// probe's actual= line is 1469501727.
+// The protocol send reserve and its counter SEND_RESERVE_REFUSED (the Linux
+// block below has the account): measured on the studio (Apple clang, Release,
+// DEV ON, ROCKETNET_TEST_VERBOSE=1), actual=1469513311 and 15037450, 11136
+// and 128 above the counter union.
 // Sending from the game threads (the per-client open message, the thread rule
 // check's lines, the message object's per-thread open lines, each region's
 // room_refusals, the per-thread send lines, the per-client wire totals on a
 // line each) reads 1469750687 and 15041546 (studio, AppleClang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702111 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702623 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992970 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -261,6 +275,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // the client (measured on bench-nyc-4, gcc, Release, ROCKETNET_DEV=ON, before
 // and after: actual=3111676851 to 5610448051). A Linux build without XDP plans
 // a smaller peak and the check is at most there.
+// The server config's two bind addresses (bind_ipv4_address,
+// bind_ipv6_address) add 512 bytes to the server and nothing to the client
+// (measured on bench-nyc-4, gcc, Debug, DEV ON, as 3111676851 to 3111677363
+// before the send queue change above; the pin below holds both).
 // The protocol send reserve keeps, per send queue, a budget, its claims, the
 // grants staged, the own frames used, the reserve and the largest room seen
 // (six uint64_t by ROCKETNET_SERVER_MAX_SEND_QUEUES, 3072 bytes), one
@@ -283,9 +301,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609648939ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649451ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609648883ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649395ULL )
 #endif // #if defined( __aarch64__ )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141650 )
 #endif // #if defined( _WIN32 )

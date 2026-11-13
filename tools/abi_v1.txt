@@ -283,6 +283,8 @@ fieldtype rocketnet_server_config_t handshakes_per_update int
 fieldtype rocketnet_server_config_t loopback_hub struct rocketnet_loopback_hub_t*
 fieldtype rocketnet_server_config_t server_secret_key uint8_t[ROCKETNET_SERVER_SECRET_KEY_BYTES]
 fieldtype rocketnet_server_config_t token_epoch_unix_seconds uint64_t
+fieldtype rocketnet_server_config_t bind_ipv4_address const char*
+fieldtype rocketnet_server_config_t bind_ipv6_address const char*
 fieldtype rocketnet_receipt_t serial uint32_t
 fieldtype rocketnet_receipt_t status enum rocketnet_receipt_status_t
 fieldtype rocketnet_connect_token_config_t config_bytes size_t
@@ -392,7 +394,7 @@ field rocketnet_client_config_t loopback_hub 96 8
 field rocketnet_client_config_t time_callback 104 8
 field rocketnet_client_config_t step_driven 112 1
 field rocketnet_client_config_t token_epoch_unix_seconds 120 8
-struct rocketnet_server_config_t 200
+struct rocketnet_server_config_t 216
 field rocketnet_server_config_t config_bytes 0 8
 field rocketnet_server_config_t protocol_id 8 8
 field rocketnet_server_config_t max_clients 16 4
@@ -424,6 +426,8 @@ field rocketnet_server_config_t handshakes_per_update 148 4
 field rocketnet_server_config_t loopback_hub 152 8
 field rocketnet_server_config_t server_secret_key 160 32
 field rocketnet_server_config_t token_epoch_unix_seconds 192 8
+field rocketnet_server_config_t bind_ipv4_address 200 8
+field rocketnet_server_config_t bind_ipv6_address 208 8
 struct rocketnet_receipt_t 8
 field rocketnet_receipt_t serial 0 4
 field rocketnet_receipt_t status 4 4
@@ -510,7 +514,7 @@ enum rocketnet_status_t ROCKETNET_STATUS_INVALID_TRANSPORT_LIST -14
 enum rocketnet_status_t ROCKETNET_STATUS_INVALID_CONNECT_TOKEN -15
 enum rocketnet_status_t ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED -16
 enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED -17
-enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED -18
+enum rocketnet_status_t ROCKETNET_STATUS_NO_TRANSPORT_FOUND -18
 enum rocketnet_status_t ROCKETNET_STATUS_OUT_OF_MEMORY -19
 enum rocketnet_status_t ROCKETNET_STATUS_MUTEX_CREATE_FAILED -20
 enum rocketnet_status_t ROCKETNET_STATUS_THREAD_CREATE_FAILED -21
@@ -526,6 +530,7 @@ enum rocketnet_status_t ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO -31
 enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_MISSING -32
 enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH -33
 enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE -34
+enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED -35
 macro ROCKETNET_ALLOCATION_ALIGNMENT 64
 macro ROCKETNET_BACKEND_PUBLIC_KEY_BYTES 32
 macro ROCKETNET_BACKEND_SECRET_KEY_BYTES 64

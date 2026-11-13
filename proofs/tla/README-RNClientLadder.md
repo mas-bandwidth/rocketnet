@@ -29,7 +29,7 @@ handshake that follows or the family race that runs after an IPv6 grant
   on `"ok"`, the create ends on `"oom"`, and a refusal falls to the next
   candidate.
 - **The end.** The last candidate's refusal exhausts the list
-  (`TRANSPORT_LADDER_EXHAUSTED`). A list of one candidate is a pin: the model
+  (`NO_TRANSPORT_FOUND`). A list of one candidate is a pin: the model
   at `NumCandidates = 1` is the pinned transport.
 - **Done.** The create has ended; the model stutters.
 

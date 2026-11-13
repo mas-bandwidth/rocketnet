@@ -843,7 +843,7 @@ same port (both 0, or equal), the server binds the IPv6 wildcard on
 that port with `IPV6_V6ONLY` off and advertises both named addresses.
 `"auto"` tries `xdp` first when both addresses are on one interface. `xdp` on
 two interfaces, and `portable` where `IPV6_V6ONLY` cannot be cleared, refuse
-with `TRANSPORT_FAMILIES_UNSUPPORTED` and the ladder continues. A connect
+with `TRANSPORT_FAMILIES_UNSUPPORTED` and the next transport is tried. A connect
 token is accepted when its address of the arrival family is one the server
 advertises (`TokenAddressAdvertised`).
 

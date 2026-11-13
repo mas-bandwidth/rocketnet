@@ -8,7 +8,7 @@
 # qemu-system-s390x and runs the unmodified suite there. The guest kernel
 # owns the sockets.
 #
-# What it covers: ./bin/test, then ./bin/functional on the auto ladder, then
+# What it covers: ./bin/test, then ./bin/functional on the automatic transport order, then
 # ./bin/functional with the portable rung pinned, then the cross-endian
 # interoperability run (tools/bigendian/run_interop.sh): a big-endian server
 # in the guest with little-endian clients on this runner, and a little-endian

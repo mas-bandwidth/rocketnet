@@ -192,10 +192,10 @@ bool rocketnet_development_values_refused( void );
 bool rocketnet_config_packet_filter_refused( const char * side, const uint8_t * filter );
 
 // ----------------------------------------------------------------
-//                        the transport ladder
+//                        the transport list
 // ----------------------------------------------------------------
 
-// The runtime transport ladder: the transport config value is always an
+// The runtime transport list: the transport config value is always an
 // ordered candidate list, tried left to right at transport create, first
 // grant wins, and a list exhausted by refusal fails loudly. "auto" (or the
 // empty string) expands to the platform's recommended order for the
@@ -223,7 +223,7 @@ bool rocketnet_transport_discovers_bound_port( int transport );
 // through its own registry (tests/driver_extension adds one)
 #define ROCKETNET_MAX_TRANSPORT_CANDIDATES 16
 
-struct rocketnet_transport_ladder_t
+struct rocketnet_transport_order_t
 {
     int num_candidates;                                     // available candidates, in list order
     int candidates[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
@@ -244,7 +244,7 @@ static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "
 // list longer than ROCKETNET_MAX_TRANSPORT_CANDIDATES.
 
 // server: the endpoint whose registry column decides pin-only (auto skips it)
-bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server = true );
+bool rocketnet_transport_order_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_order_t * ladder, bool server = true );
 
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from. The ranks in
