@@ -44,6 +44,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
+#include "rocketnet_memory.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_config.h"
 #include "rocketnet_counters.h"
@@ -102,19 +103,20 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
 
     memset( layout, 0, sizeof( *layout ) );
 
+    const uint64_t pad = ROCKETNET_RED_ZONE_BYTES;  // ASan builds: a red zone after each array, poisoned by create (sdk/rocketnet_memory.h)
     uint64_t offset = rn_message_align64( sizeof( rn_message_object_t ) > sizeof( rocketnet_message_server_t ) ? sizeof( rn_message_object_t ) : sizeof( rocketnet_message_server_t ) );
     layout->hot_connections = offset;
-    offset += rn_message_align64( sizeof( rn_message_connection_hot_t ) * n );
+    offset += rn_message_align64( sizeof( rn_message_connection_hot_t ) * n + pad );
     layout->connections = offset;
-    offset += rn_message_align64( sizeof( rn_message_connection_t ) * n );
+    offset += rn_message_align64( sizeof( rn_message_connection_t ) * n + pad );
     layout->slot_connection_ids = offset;
-    offset += rn_message_align64( sizeof( uint64_t ) * n );
+    offset += rn_message_align64( sizeof( uint64_t ) * n + pad );
     layout->slot_changed = offset;
-    offset += rn_message_align64( sizeof( uint8_t ) * n );
+    offset += rn_message_align64( sizeof( uint8_t ) * n + pad );
     layout->send_writers = offset;
-    offset += n > 1 ? rn_message_align64( sizeof( int32_t ) * 2 * n ) : 0;    // one connection: two entries on the send pass's stack
+    offset += n > 1 ? rn_message_align64( sizeof( int32_t ) * 2 * n + pad ) : 0;    // one connection: two entries on the send pass's stack
     layout->views = offset;
-    layout->view_stride = rn_message_align64( deliveries );
+    layout->view_stride = rn_message_align64( deliveries + pad );
     offset += layout->view_stride * n;
     layout->arena = offset;
     layout->arena_bytes = arena_bytes;
@@ -363,6 +365,12 @@ static void rn_message_link_abort_create( const struct rn_message_link_t * link 
     }
 }
 
+// ASan builds: the red zones create poisons and destroy clears (sdk/rocketnet_memory.h)
+#if ROCKETNET_RED_ZONES
+static void rn_message_object_poison_red_zones( uint8_t * block, const rn_message_object_layout_t * layout, int num_connections, const rocketnet_message_config_t * config );
+static void rn_message_object_unpoison_caller_block( const struct rn_message_object_t * object );
+#endif // #if ROCKETNET_RED_ZONES
+
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
                                                        int32_t default_kbps, double time, bool reserve_unlimited )
@@ -464,6 +472,10 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->send_writers = num_connections > 1 ? (int32_t *) ( block + layout.send_writers ) : NULL;
     rn_slots_init( &object->slots, num_connections, (uint64_t *) ( block + layout.slot_connection_ids ), block + layout.slot_changed );
 
+#if ROCKETNET_RED_ZONES
+    rn_message_object_poison_red_zones( block, &layout, num_connections, config );
+#endif // #if ROCKETNET_RED_ZONES
+
     object->arena = rn_arena_create_in_block( block + layout.arena, layout.arena_bytes, config, num_connections, &object->counters );
     if ( !object->arena )
     {
@@ -473,6 +485,12 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         {
             rocketnet_free( context, block );
         }
+#if ROCKETNET_RED_ZONES
+        else
+        {
+            rocketnet_red_zone_unpoison( block, layout.total );
+        }
+#endif // #if ROCKETNET_RED_ZONES
         return NULL;
     }
 
@@ -696,6 +714,12 @@ void rn_message_object_destroy( struct rn_message_object_t * object )
     {
         rocketnet_free( object->context, object->block );
     }
+#if ROCKETNET_RED_ZONES
+    else
+    {
+        rn_message_object_unpoison_caller_block( object );
+    }
+#endif // #if ROCKETNET_RED_ZONES
 }
 
 // ---------------------------------------------------------------
@@ -868,6 +892,39 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 
     rocketnet_info( "message connection %d ended: reason %d", index, reason );
 }
+
+#if ROCKETNET_RED_ZONES
+
+// ASan builds: the red zone after each array of the block (sdk/rocketnet_memory.h)
+static void rn_message_object_poison_red_zones( uint8_t * block, const rn_message_object_layout_t * layout, int num_connections, const rocketnet_message_config_t * config )
+{
+    const uint64_t n = (uint64_t) num_connections;
+    const uint64_t deliveries = (uint64_t) config->reliable_messages_in_flight + (uint64_t) config->unreliable_messages_per_update;
+    rocketnet_red_zone_poison( block + layout->hot_connections + sizeof( rn_message_connection_hot_t ) * n, ROCKETNET_RED_ZONE_BYTES );
+    rocketnet_red_zone_poison( block + layout->connections + sizeof( rn_message_connection_t ) * n, ROCKETNET_RED_ZONE_BYTES );
+    rocketnet_red_zone_poison( block + layout->slot_connection_ids + sizeof( uint64_t ) * n, ROCKETNET_RED_ZONE_BYTES );
+    rocketnet_red_zone_poison( block + layout->slot_changed + sizeof( uint8_t ) * n, ROCKETNET_RED_ZONE_BYTES );
+    if ( n > 1 )
+    {
+        rocketnet_red_zone_poison( block + layout->send_writers + sizeof( int32_t ) * 2 * n, ROCKETNET_RED_ZONE_BYTES );
+    }
+    for ( uint64_t i = 0; i < n; i++ )
+    {
+        rocketnet_red_zone_poison( block + layout->views + layout->view_stride * i + deliveries, ROCKETNET_RED_ZONE_BYTES );
+    }
+}
+
+// ASan builds: the caller's block goes back with no red zone poisoned
+static void rn_message_object_unpoison_caller_block( const struct rn_message_object_t * object )
+{
+    rn_message_object_layout_t layout;
+    if ( rn_message_object_layout( &object->config, object->num_connections, &layout ) )
+    {
+        rocketnet_red_zone_unpoison( object->block, layout.total );
+    }
+}
+
+#endif // #if ROCKETNET_RED_ZONES
 
 // ---------------------------------------------------------------
 //                          update

@@ -67,6 +67,9 @@ static inline bool rocketnet_server_process_packets_create( void * context, stru
     view->packet_bytes = (int *) ( base + rocketnet_carve( carve, (uint64_t) capacity, sizeof( int ) ) );
     view->packet_data = (uint8_t **) ( base + rocketnet_carve( carve, (uint64_t) capacity, sizeof( uint8_t * ) ) );
     view->capacity = capacity;
+
+    // ASan builds: the red zones between the carves (sdk/rocketnet_memory.h)
+    ROCKETNET_RED_ZONE_CARVE( base, rocketnet_server_process_packets_bytes( capacity ) );
     return true;
 }
 

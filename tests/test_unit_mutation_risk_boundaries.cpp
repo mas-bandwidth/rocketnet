@@ -7,6 +7,7 @@
 
 #include "test_unit_registry.h"
 #include "unit_arena.h"
+#include "red_zones.h"
 
 #include "rocketnet_ack.h"
 #include "rocketnet_allocator.h"
@@ -139,12 +140,16 @@ static void test_window_ack_descriptor_equal_queue()
     // One past the queue must not be dereferenced. Plant the bytes a
     // dereference would read there (the send store follows the
     // descriptor array) as a live multi-fragment descriptor, so a
-    // build that reads it answers true.
+    // build that reads it answers true. In an ASan build those bytes are the
+    // descriptors' red zone (sdk/rocketnet_memory.h), so the plant is written
+    // raw and a dereference is also reported by ASan.
     uint8_t * past = (uint8_t *) &region->send_descriptors[queue];
-    memset( past, 0, 64 );
-    past[36] = 1;        // in_use, at its rn_send_descriptor_t offset
-    past[38] = 3;        // fragments (little-endian low byte, any host
-    past[39] = 0;        // reads the planted value the same way)
+    uint8_t planted[64];
+    memset( planted, 0, sizeof( planted ) );
+    planted[36] = 1;     // in_use, at its rn_send_descriptor_t offset
+    planted[38] = 3;     // fragments (little-endian low byte, any host
+    planted[39] = 0;     // reads the planted value the same way)
+    rocketnet_test_raw_copy( past, planted, sizeof( planted ) );
     region->send_numbers[0].descriptor = queue;
     check( rn_window_ack_slot_is_chunk( &w.ack, 0 ) == false );
 

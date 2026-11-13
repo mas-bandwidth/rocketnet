@@ -34,13 +34,98 @@ inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t str
     return true;
 }
 
+// Red zones, in AddressSanitizer builds only. Arrays carved from one
+// allocation sit back to back, so a read or write one past an array lands in
+// the next array's bytes, which ASan sees as addressable. In an ASan build
+// every carve helper leaves ROCKETNET_RED_ZONE_BYTES after each carved array
+// and poisons them, so ASan reports a one-past access; rocketnet_malloc does
+// the same after each block it returns (its alignment slack is otherwise
+// addressable). The plans count the pads through the same layout functions,
+// so a plan stays exact in every build. In every other build the size is 0
+// and none of this is compiled: layouts, plans and the library are unchanged.
+#if defined( __SANITIZE_ADDRESS__ )
+#define ROCKETNET_RED_ZONES 1
+#elif defined( __has_feature )
+#if __has_feature( address_sanitizer )
+#define ROCKETNET_RED_ZONES 1
+#endif // #if __has_feature( address_sanitizer )
+#endif // #if defined( __SANITIZE_ADDRESS__ )
+
+#ifndef ROCKETNET_RED_ZONES
+#define ROCKETNET_RED_ZONES 0
+#endif // #ifndef ROCKETNET_RED_ZONES
+
+#if ROCKETNET_RED_ZONES
+
+#include <sanitizer/asan_interface.h>
+
+// one allocation alignment, so every offset after a pad keeps its alignment
+#define ROCKETNET_RED_ZONE_BYTES 64
+
+inline void rocketnet_red_zone_poison( const void * p, uint64_t bytes )
+{
+    ASAN_POISON_MEMORY_REGION( p, (size_t) bytes );
+}
+
+inline void rocketnet_red_zone_unpoison( const void * p, uint64_t bytes )
+{
+    ASAN_UNPOISON_MEMORY_REGION( p, (size_t) bytes );
+}
+
+#if ROCKETNET_DEV
+
+// the block a create is carving: while a scope names it on this thread, each
+// rocketnet_carve poisons the pad it leaves at that block's offset. A plan
+// carves with no scope and poisons nothing. A thread-local, so only in a
+// development build (tools/check_no_thread_local.py): a production ASan build
+// plans the same pads but leaves the transports' carved pads unpoisoned
+// (rocketnet_malloc's, the message region's and the message object's are
+// poisoned in every ASan build).
+inline uint8_t *& rocketnet_red_zone_carve_base()
+{
+    static thread_local uint8_t * base = nullptr;
+    return base;
+}
+
+struct rocketnet_red_zone_scope_t
+{
+    explicit rocketnet_red_zone_scope_t( void * base ) { rocketnet_red_zone_carve_base() = (uint8_t *) base; }
+    ~rocketnet_red_zone_scope_t() { rocketnet_red_zone_carve_base() = nullptr; }
+    rocketnet_red_zone_scope_t( const rocketnet_red_zone_scope_t & ) = delete;
+    rocketnet_red_zone_scope_t & operator=( const rocketnet_red_zone_scope_t & ) = delete;
+};
+
+// run a layout function again over the created block, after create has
+// zeroed what it zeroes, so its carves poison their pads in the block
+#define ROCKETNET_RED_ZONE_CARVE( base, layout_call ) \
+do                                                     \
+{                                                      \
+    rocketnet_red_zone_scope_t rn_red_zone_scope( (void *) ( base ) ); \
+    (void) ( layout_call );                            \
+} while ( 0 )
+
+#else
+
+#define ROCKETNET_RED_ZONE_CARVE( base, layout_call ) do { } while ( 0 )
+
+#endif // #if ROCKETNET_DEV
+
+#else
+
+#define ROCKETNET_RED_ZONE_BYTES 0
+
+#define ROCKETNET_RED_ZONE_CARVE( base, layout_call ) do { } while ( 0 )
+
+#endif // #if ROCKETNET_RED_ZONES
+
 // A create-time layout: an owner's fixed part followed by the buffers its
 // config sizes, carved out of the one allocation create makes. The owner's
 // layout function takes the carves in order and returns each offset; its
 // create and its memory plan both call it, so the plan counts exactly the
 // bytes create allocates. Each offset is aligned to align (a power of two at
 // most ROCKETNET_ALLOCATION_ALIGNMENT, the alignment rocketnet_malloc gives
-// the base). An overflow sets failed and every later carve returns 0.
+// the base). An overflow sets failed and every later carve returns 0. In an
+// ASan build each carve is followed by a poisoned red zone (above).
 struct rocketnet_carve_t
 {
     uint64_t bytes;
@@ -63,6 +148,20 @@ inline uint64_t rocketnet_carve( rocketnet_carve_t & carve, uint64_t count, uint
         carve.failed = true;
         return 0;
     }
+
+#if ROCKETNET_RED_ZONES
+    if ( !rocketnet_memory_add( end, 1, ROCKETNET_RED_ZONE_BYTES ) )
+    {
+        carve.failed = true;
+        return 0;
+    }
+#if ROCKETNET_DEV
+    if ( rocketnet_red_zone_carve_base() )
+    {
+        rocketnet_red_zone_poison( rocketnet_red_zone_carve_base() + end - ROCKETNET_RED_ZONE_BYTES, ROCKETNET_RED_ZONE_BYTES );
+    }
+#endif // #if ROCKETNET_DEV
+#endif // #if ROCKETNET_RED_ZONES
 
     carve.bytes = end;
     return offset;

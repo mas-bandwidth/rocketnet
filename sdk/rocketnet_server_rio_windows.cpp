@@ -1303,6 +1303,9 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
             goto failed;
         }
         rocketnet_rio_sized_bind( rio, base, &sized );
+
+        // ASan builds: the red zones between the carves (sdk/rocketnet_memory.h)
+        ROCKETNET_RED_ZONE_CARVE( base, rocketnet_rio_sized_layout( max_clients, &sized ) );
     }
 
     if ( !rocketnet_platform_mutex_create( &rio->mutex ) )
