@@ -1607,12 +1607,17 @@ static inline void rn_ack_prefetch_unacked( const struct rocketnet_ack_endpoint_
 
         const uint32_t first = w * 64 + (uint32_t) rocketnet_ack_ctz64( word );
         const uint32_t last = w * 64 + 63 - (uint32_t) rocketnet_platform_clz64( word );
-        const char * const first_byte = (const char *) &endpoint->sent[first];
-        const char * const low = first_byte - ( (uintptr_t) first_byte & (uintptr_t) 63 );
-        const char * const high = (const char *) &endpoint->sent[last];
-        for ( const char * line = low; line <= high && lines < ROCKETNET_ACK_PREFETCH_LINES; line += 64 )
+        // two records a cache line: every second record from the first, then
+        // the last, names each line the run [first, last] lies on
+        static_assert( sizeof( endpoint->sent[0] ) == 32, "the read-ahead steps two sent records a cache line" );
+        for ( uint32_t s = first; s < last && lines < ROCKETNET_ACK_PREFETCH_LINES; s += 2 )
         {
-            rocketnet_ack_stats_prefetch( line );
+            rocketnet_ack_stats_prefetch( &endpoint->sent[s] );
+            lines++;
+        }
+        if ( lines < ROCKETNET_ACK_PREFETCH_LINES )
+        {
+            rocketnet_ack_stats_prefetch( &endpoint->sent[last] );
             lines++;
         }
 
@@ -2310,7 +2315,7 @@ struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, i
         return NULL;
     }
 
-    memset( acks, 0, sizeof( struct rocketnet_server_acks_t ) );
+    acks = new ( acks ) rocketnet_server_acks_t();     // every field zero (the struct holds the update's time, a double: no memset)
 
     acks->context = context;
     acks->max_clients = max_clients;
@@ -2347,9 +2352,13 @@ struct alignas( 64 ) rocketnet_server_ack_client_t
     int tail;
     int ids;                                    // ids in the client's segment since the last gather
     int gathered;                               // 1 once the gather has taken this client's counters
+    uint32_t padding_0;                         // the counters start on an 8-byte boundary, explicit
     uint64_t unknown_sequence;
     uint64_t batch_full;
+    uint8_t padding_1[64 - sizeof( std::atomic<uint32_t> ) - 5 * sizeof( int ) - 2 * sizeof( uint64_t )];   // the rest of the cache line, explicit
 };
+
+static_assert( sizeof( rocketnet_server_ack_client_t ) == 64, "one client's part of the deferred apply is one cache line with no implicit padding" );
 
 // a block carries at most this many ranges on average per received packet
 // before the queue applies and gathers early (exact either way)
