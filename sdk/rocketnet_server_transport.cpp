@@ -1352,7 +1352,7 @@ void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_co
 
 static int rocketnet_server_config_has_keys( const struct rocketnet_server_transport_config_t * config )
 {
-    uint8_t zero[32];
+    uint8_t zero[31];
     memset( zero, 0, sizeof( zero ) );
     return memcmp( config->server_secret_key, zero, 32 ) != 0 &&
            memcmp( config->server_public_key, zero, 32 ) != 0 &&
