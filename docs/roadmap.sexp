@@ -615,4 +615,19 @@
    :title "A tenth tla-trace shard, so shard 3 leaves room under the 2-minute cap"
    :text "Shard 3 of tools/tla_trace_check.py SHARDS (msgx:4, msgxsendruns, gather and msgx's reach predicates) is the slowest per-commit trace shard: 98 s on a CI runner in v1.1.53, and on v1.1.54 106 s alone on a bench and 123.5 s when three shards shared a loaded one, against the job's 120 s cap. Moving gso or gather out of it within nine shards barely helped on the bench (fix/v1.1.x/trace-shard3-lighter, not merged). Add a tenth shard (matrix.shard N/10 in .github/workflows/ci.yml and the summary's shard names) and split shard 3's entries across it, with each shard's replay time recorded."
    :date "2026-11-13" :origin "v1.1.54 replays: trace shard 3 at 106 s alone")
+
+  (item "in-place-start-per-queue-capacity" :group "review-v1-2" :area "sdk"
+   :title "The message server's in-place start checks still read the fewest room of any queue"
+   :text "The send pass, the sweep and the stop now judge capacity by the destination's own send queue (rocketnet_server_transport_send_capacity_to). The in-place start checks in sdk/rocketnet_message_server.cpp (about 1543 and 1597) still read rocketnet_server_transport_send_capacity_available, the fewest room of any queue, so with one queue full a send in place to a client on another queue is refused or deferred to the pass. A start that falls back to the queue is accepted work and is not lost: the pass serves it. A writer's start that falls back with no capacity (not held behind the queue, not on a buffered transport) is still refused visibly: its finish returns 0 and the message is cancelled (about 1661 and 1816, MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY), even when only an unrelated queue has no room. That refusal is what this entry removes. Move them to the per-destination answer, outside the send-capacity fix's lines."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix")
+
+  (item "own-frames-smallest-queue-reserve" :group "review-v1-2" :area "sdk"
+   :title "Own frames are bounded by the smallest reserve of any send queue"
+   :text "The own frames handed out when the budgets open (fill_own_frames_left) are server-wide and capped by the smallest queue reserve (RNSendReserveCalls Open: OwnCap of the least reserve). With uneven queues, a queue whose reserve is cut by a small room seen caps the own frames of clients on every queue. Make own frames per queue, with the model's Open changed alongside."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix")
+
+  (item "send-capacity-any-queue-per-queue" :group "review-v1-2" :area "sdk"
+   :title "The any-queue capacity can be above 0 while no queue has both room and budget"
+   :text "rocketnet_server_transport_send_capacity_to( -1 ) answers the room summed over the queues, within the whole budget left. With room on one queue and budget only on another, it is above 0 while no start can be granted, so the send pass holds every connection to the end instead of cutting: bounded (one walk, two capacity reads a connection), never a hang. Answer it per queue (the sum of each queue's room within its own budget, and the own frames), with RNSendReserveCalls CapacityAll and RNServerSendFair's cut changed alongside."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix, cold read")
  ))

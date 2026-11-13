@@ -181,8 +181,11 @@ LAYERS = {
     "sendreserve": {
         "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
         "untraced": {},
-        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
-        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],
+        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word",
+                  "hidden": "history for NoHiddenRoom: a client's capacity answered 0 while a start to it would stage; "
+                            "the code keeps no such word"},
+        # seeds 3 and 4 walk two send queues (QueueStall: one queue's room run out while the other has room)
+        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom", "QueueStall"],
     },
     "writerfinish": {
         "modules": ["RNWriterFinish.tla", "TraceRNWriterFinish.tla"],
