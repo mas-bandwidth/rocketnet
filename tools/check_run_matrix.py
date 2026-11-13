@@ -77,6 +77,7 @@ ARTEFACT_OF_TARGET = {
     "${rocketnet_stress_target}": "test_channels_stress",
     "xver": "xver(portable,gso,io_uring)",
     "instruction_count": "instruction_count",
+    "${plant_target}": "tla_trace",
 }
 # options whose other value changes no code that runs, with the reason
 OPTIONS_WITHOUT_CELL = {
