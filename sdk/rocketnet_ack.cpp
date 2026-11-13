@@ -358,7 +358,13 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 {
     rocketnet_assert( a && b );
 
-    if ( memcmp( a, b, offsetof( rocketnet_ack_endpoint_t, sent ) ) != 0 )
+    // everything before the record rings but the block memo, a cache
+    // (process_block_full never sets it, and the two must compare equal)
+
+    const size_t memo_begin = offsetof( rocketnet_ack_endpoint_t, block_memo );
+    const size_t memo_end = memo_begin + sizeof( a->block_memo );
+    if ( memcmp( a, b, memo_begin ) != 0 ||
+         memcmp( (const uint8_t *) a + memo_end, (const uint8_t *) b + memo_end, offsetof( rocketnet_ack_endpoint_t, sent ) - memo_end ) != 0 )
     {
         return false;
     }
@@ -423,7 +429,6 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
                    "the record rings are one span, before the rtt history" );
 
     memset( (void *) endpoint, 0, offsetof( rocketnet_ack_endpoint_t, sent ) );
-    endpoint->block_memo.valid = 0;
 
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
     {
@@ -1387,6 +1392,31 @@ void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result, u
         case ROCKETNET_ACK_SENT_REFUSED_STALE:
             rocketnet_platform_atomic_add_u64( overflow_counter, 1 );
             break;
+    }
+}
+
+static_assert( ( (uint64_t) 1 << 32 ) % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE == 0,
+               "a received slot is a function of the wire sequence's low 32 bits" );
+
+void rocketnet_ack_endpoint_prefetch_receive( const struct rocketnet_ack_endpoint_t * endpoint, uint32_t sequence_low )
+{
+    const char * scalars = (const char *) endpoint;
+    for ( size_t offset = 0; offset < offsetof( rocketnet_ack_endpoint_t, sent_written ); offset += 64 )
+    {
+        rocketnet_ack_stats_prefetch( scalars + offset );
+    }
+
+    const int slot = (int) ( sequence_low % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const int summary = ( slot / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS ) * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK;
+    rocketnet_ack_stats_prefetch( &endpoint->received[slot] );
+    rocketnet_ack_stats_prefetch( &endpoint->received[summary] );
+    rocketnet_ack_stats_prefetch( &endpoint->received[summary + ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK - 1] );
+
+    const char * pieces = (const char *) &endpoint->received[ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD];
+    const char * pieces_end = (const char *) &endpoint->received[ROCKETNET_ACK_RECEIVED_STATS_STORAGE_WORDS - 1];
+    for ( const char * line = pieces; line <= pieces_end; line += 64 )
+    {
+        rocketnet_ack_stats_prefetch( line );
     }
 }
 

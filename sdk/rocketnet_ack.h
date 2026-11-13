@@ -362,6 +362,16 @@ struct rocketnet_ack_endpoint_t
     uint64_t sent_unacked[ROCKETNET_SENT_BITMAP_WORDS];  // bit (slot) set: written and not yet acknowledged
     uint64_t sent_bits_checked;                          // update thread only: highest sequence whose slot's bits were reconciled
 
+    // update thread only: the last block process_block applied in full, when
+    // that apply deferred nothing (batch full) and nothing has been sent
+    // since. Applying it again would visit no record (every unacknowledged
+    // slot it names was cleared) and add only the same unknown count, so
+    // process_block adds that count and skips the walk
+    // (proofs/tla/SessionAcks.tla RecvAckRepeat). Beside sent_bits_checked,
+    // whose line every block reads already. A cache, not state: state_equal
+    // leaves it out; the reset and every recorded send clear valid.
+    struct rocketnet_ack_block_memo_t block_memo;
+
     struct rocketnet_sent_packet_record_t sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     struct rocketnet_received_packet_record_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
     float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];      // milliseconds; negative = empty
@@ -372,15 +382,6 @@ struct rocketnet_ack_endpoint_t
     // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
     float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
 
-    // update thread only: the last block process_block applied in full, when
-    // that apply deferred nothing (batch full) and nothing has been sent
-    // since. Applying it again would visit no record (every unacknowledged
-    // slot it names was cleared) and add only the same unknown count, so
-    // process_block adds that count and skips the walk
-    // (proofs/tla/SessionAcks.tla RecvAckRepeat). A cache, not state: after
-    // the record rings, so state_equal and the reset's span never read it;
-    // the reset and every recorded send clear valid.
-    struct rocketnet_ack_block_memo_t block_memo;
 };
 
 #if ROCKETNET_HISTORY_PACKETS == 4096
@@ -460,6 +461,13 @@ void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result, u
 // recycled is ignored, which only delays the latch to the next keep-alive.
 
 void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence );
+
+// Read hints for a packet about to be received on this endpoint, whose wire
+// sequence (the low 32 bits) is sequence_low: the endpoint's scalar fields and
+// the received record, block summary and cached pieces record_received will
+// touch. No value is read for use and nothing is written.
+
+void rocketnet_ack_endpoint_prefetch_receive( const struct rocketnet_ack_endpoint_t * endpoint, uint32_t sequence_low );
 
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
                                              uint64_t sequence, int wire_bytes, double time );

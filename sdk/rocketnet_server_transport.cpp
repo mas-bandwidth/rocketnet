@@ -3177,6 +3177,16 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         for ( int i = 0; i < num_received; i++ )
         {
+            // read hints for a packet a few ahead: its mapping and its
+            // client's ack endpoint lines, cold since the last update
+            // (rocketnet_server_protocol_prefetch_received)
+
+            if ( i + ROCKETNET_SERVER_RECEIVE_PREFETCH_AHEAD < num_received )
+            {
+                const int ahead = i + ROCKETNET_SERVER_RECEIVE_PREFETCH_AHEAD;
+                rocketnet_server_protocol_prefetch_received( &server_transport->protocol, &received->from[ahead], received->packet_data[ahead], received->packet_bytes[ahead] );
+            }
+
             if ( received->packet_bytes[i] < 0 || received->packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
             {
                 server_transport->transport_faults++;
