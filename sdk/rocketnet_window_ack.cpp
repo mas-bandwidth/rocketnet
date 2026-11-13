@@ -310,6 +310,21 @@ void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_in
 //       Open-addressed sent_index (2P entries, O(1) lookup)
 // ----------------------------------------------------------------
 
+// a read hint for one line; no effect on any value
+
+#define RN_ACK_PREFETCH_AHEAD 8u
+
+static inline void rn_window_ack_prefetch( const void * address )
+{
+#if defined( __GNUC__ ) || defined( __clang__ )
+    __builtin_prefetch( address );
+#elif defined( _MSC_VER ) && ( defined( _M_X64 ) || defined( _M_IX86 ) )
+    _mm_prefetch( (const char *) address, _MM_HINT_T0 );
+#else
+    (void) address;
+#endif // #if defined( __GNUC__ ) || defined( __clang__ )
+}
+
 static uint32_t rn_sent_index_hash( uint64_t packet_id, uint32_t cap )
 {
     uint64_t h = packet_id * 0x9E3779B97F4A7C15ULL;
@@ -1059,9 +1074,28 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
     ack->last_ack = now;
     ack->has_last_ack = 1;
 
+    // each id's index cell is wherever the hash puts it, and on a server it
+    // is a line the filling thread wrote at commit: fetching the cells
+    // RN_ACK_PREFETCH_AHEAD ids ahead overlaps those misses instead of
+    // taking them one id at a time. A hint only: nothing is read through it.
+
+    const uint32_t cap = ack->region->sent_index_entries;
+    if ( cap != 0 )
+    {
+        for ( uint32_t i = 0; i < count && i < RN_ACK_PREFETCH_AHEAD; i++ )
+        {
+            rn_window_ack_prefetch( &ack->region->sent_index[rn_sent_index_hash( packet_ids[i], cap )] );
+        }
+    }
+
     uint32_t matched = 0;
     for ( uint32_t i = 0; i < count; i++ )
     {
+        if ( cap != 0 && i + RN_ACK_PREFETCH_AHEAD < count )
+        {
+            rn_window_ack_prefetch( &ack->region->sent_index[rn_sent_index_hash( packet_ids[i + RN_ACK_PREFETCH_AHEAD], cap )] );
+        }
+
         if ( rn_window_ack_on_ack( ack, packet_ids[i], now ) )
         {
             matched++;
