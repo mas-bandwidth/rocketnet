@@ -1071,6 +1071,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
                                                          uint64_t current_timestamp,
                                                          double current_time,
                                                          int fail_denied_writer,
+                                                         int fail_keep_alive_writer,
                                                          uint8_t * response_packet,
                                                          int * response_bytes )
 {
@@ -1175,19 +1176,27 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     mapping->last_send_time = current_time;
 
     rocketnet_debug( "client %d connected", client_index );
-    counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED]++;
     counters[ROCKETNET_COUNTER_CLIENT_CONNECTED]++;
 
     // the first keep-alive: how the client learns its index and transitions
-    // to connected
+    // to connected. the response takes one outcome (TRANSPORT.md t18 rule 1):
+    // CONNECTED when the keep-alive is written, INTERNAL_ERROR (its follow-up
+    // packet could not be written) when not. the client is connected either
+    // way: the slot is assigned and the update sends the next keep-alive.
 
-    int keep_alive_bytes = rocketnet_server_write_keep_alive( server, client_index, current_time, response_packet );
+    int keep_alive_bytes = 0;
+    if ( !fail_keep_alive_writer )
+    {
+        keep_alive_bytes = rocketnet_server_write_keep_alive( server, client_index, current_time, response_packet );
+    }
     if ( keep_alive_bytes == 0 )
     {
         rocketnet_assert( 0 );
         counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR]++;
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
     }
+
+    counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED]++;
 
     *response_bytes = keep_alive_bytes;
 
@@ -1326,10 +1335,12 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     uint64_t * counters = server->counters->values;
 
     int fail_response_denied_writer = 0;
+    int fail_keep_alive_writer = 0;
 #if ROCKETNET_DEV
     if ( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
     {
         fail_response_denied_writer = rocketnet_server_test_take_writer_fault( server, ROCKETNET_SERVER_TEST_FAIL_RESPONSE_DENIED_WRITER );
+        fail_keep_alive_writer = rocketnet_server_test_take_writer_fault( server, ROCKETNET_SERVER_TEST_FAIL_KEEP_ALIVE_WRITER );
     }
 #endif // #if ROCKETNET_DEV
 
@@ -1491,7 +1502,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         }
 
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time,
-                                                             fail_response_denied_writer, response_packet, response_bytes );
+                                                             fail_response_denied_writer, fail_keep_alive_writer, response_packet, response_bytes );
     }
 
     // proofs/tla/RNXdpReplay.tla UserOpen: a genuine session packet opens and raises the opened high water.

@@ -272,13 +272,21 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 // none), and becomes the mark; its due-now stamp is below every real send time (Ordered).
 static void rn_resend_fifo_push_mark( rn_window_ack_t * ack, uint32_t slot )
 {
+    // the mark is followed below: a corrupt one is refused first, with
+    // nothing changed (the unlink moves the mark only when it is slot)
+
+    const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
+    uint32_t * sent = chunk ? &ack->chunk_sent : &ack->resend_sent;
+    if ( !rn_resend_fifo_index_ok( ack, *sent ) )
+    {
+        return;
+    }
+
     if ( !rn_resend_fifo_unlink( ack, slot ) )
     {
         return;
     }
 
-    const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
-    uint32_t * sent = chunk ? &ack->chunk_sent : &ack->resend_sent;
     const uint32_t tail = chunk ? ack->chunk_tail : ack->resend_tail;
     const uint32_t after = *sent == RN_RESEND_NONE ? tail : rn_resend_index( ack->region->resend_fifo[*sent].prev );
     rn_resend_fifo_insert_after( ack, after, slot );

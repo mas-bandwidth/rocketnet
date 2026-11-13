@@ -169,9 +169,13 @@ static int rocketnet_client_gso_build( rocketnet_client_gso_t * gso, const rocke
     return num_messages;
 }
 
-// One chunk of at most ROCKETNET_CLIENT_GSO_SEND_BATCH datagrams.
+// One chunk of at most ROCKETNET_CLIENT_GSO_SEND_BATCH datagrams. Returns the
+// datagrams consumed (sent or counted a failure), a prefix of the chunk. A full
+// socket (EAGAIN, EWOULDBLOCK, ENOBUFS) stops the chunk: keep_unsent leaves the
+// unsent tail to the caller, uncounted, for a retry; otherwise the tail is
+// dropped and counted, and the whole chunk is consumed.
 
-static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const rocketnet_platform_send_t * sends, int num_packets )
+static int rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const rocketnet_platform_send_t * sends, int num_packets, bool keep_unsent )
 {
     for ( int i = 0; i < num_packets; i++ )
     {
@@ -239,7 +243,16 @@ static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const
 
         if ( error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS )
         {
-            // the socket cannot take more now: the unsent tail is lost on the wire, counted, never resent (the per-packet path's drop)
+            // the socket cannot take more now. messages cover the chunk's
+            // datagrams in order, so the unsent tail starts at this message's
+            // first datagram: everything before it is consumed
+
+            if ( keep_unsent )
+            {
+                return gso->message_first_packet[sent];
+            }
+
+            // without a retry the unsent tail is lost on the wire, counted, never resent (the per-packet path's drop)
 
             for ( int i = sent; i < num_messages; i++ )
             {
@@ -247,7 +260,7 @@ static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const
             }
 
             rocketnet_debug( "gso client sendmmsg failed: %s. %d messages dropped", strerror( error ), num_messages - sent );
-            return;
+            return num_packets;
         }
 
         // no message went in this call, so the first unsent one is the one
@@ -260,6 +273,8 @@ static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const
 
         sent++;
     }
+
+    return num_packets;
 }
 
 void rocketnet_client_gso_send_batch( rocketnet_client_gso_t * gso, const rocketnet_platform_send_t * sends, int num_packets )
@@ -272,10 +287,32 @@ void rocketnet_client_gso_send_batch( rocketnet_client_gso_t * gso, const rocket
     {
         const int remaining = num_packets - base;
         const int chunk = remaining < ROCKETNET_CLIENT_GSO_SEND_BATCH ? remaining : ROCKETNET_CLIENT_GSO_SEND_BATCH;
-        rocketnet_client_gso_send_chunk( gso, sends + base, chunk );
+        rocketnet_client_gso_send_chunk( gso, sends + base, chunk, false );
 
         base += chunk;
     }
+}
+
+int rocketnet_client_gso_send_batch_progress( rocketnet_client_gso_t * gso, const rocketnet_platform_send_t * sends, int num_packets )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( sends || num_packets == 0 );
+
+    int base = 0;
+    while ( base < num_packets )
+    {
+        const int remaining = num_packets - base;
+        const int chunk = remaining < ROCKETNET_CLIENT_GSO_SEND_BATCH ? remaining : ROCKETNET_CLIENT_GSO_SEND_BATCH;
+        const int consumed = rocketnet_client_gso_send_chunk( gso, sends + base, chunk, true );
+        if ( consumed < chunk )
+        {
+            return base + consumed;
+        }
+
+        base += chunk;
+    }
+
+    return num_packets;
 }
 
 // ---------------------------------------------------------------------------
@@ -646,9 +683,9 @@ static int rocketnet_client_gso_send_batch_progress( void * transport, const roc
         return rocketnet_platform_socket_send_packets_mmsg_progress( client->socket, sends, num_packets );
     }
 
-    // The connected GSO path retains its existing synchronous contract.
-    rocketnet_client_gso_send_batch( &client->gso, sends, num_packets );
-    return num_packets;
+    // a full socket leaves the unsent suffix to the core for a retry, as the
+    // portable progress does (rocketnet_driver.h send_batch_progress)
+    return rocketnet_client_gso_send_batch_progress( &client->gso, sends, num_packets );
 }
 
 // proofs/tla/RNClientIo.tla IoReceive (rocketnet_client_io_step): recvmmsg through the

@@ -159,6 +159,12 @@ bool rocketnet_client_gso_init( struct rocketnet_client_gso_t * gso, const rocke
 // in packet_send_failures.
 void rocketnet_client_gso_send_batch( struct rocketnet_client_gso_t * gso, const struct rocketnet_platform_send_t * sends, int num_packets );
 
+// As rocketnet_client_gso_send_batch, but a full socket (EAGAIN, EWOULDBLOCK,
+// ENOBUFS) stops the send: returns the datagrams consumed (sent or counted in
+// packet_send_failures), a prefix of sends; the rest are not counted and stay
+// the caller's to send again.
+int rocketnet_client_gso_send_batch_progress( struct rocketnet_client_gso_t * gso, const struct rocketnet_platform_send_t * sends, int num_packets );
+
 // Sets up the receive path: probe_gro asks the kernel to turn UDP_GRO on,
 // false keeps the plain tier without asking. Returns whether UDP_GRO is on.
 // Call after rocketnet_client_gso_init.
