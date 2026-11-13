@@ -441,6 +441,43 @@ const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_re
 }
 #endif // #if ROCKETNET_DEV
 
+// a cpu mask as ranges for a log line (the Linux transports name the mask a
+// worker is left on when it cannot be kept off cpu 0)
+
+void rocketnet_platform_cpu_list_text( const unsigned char * cpus, int count, char * text, int text_bytes )
+{
+    rocketnet_assert( cpus && text && text_bytes >= 5 );
+    int used = 0;
+    text[0] = '\0';
+    for ( int cpu = 0; cpu < count; cpu++ )
+    {
+        if ( !cpus[cpu] )
+        {
+            continue;
+        }
+        int last = cpu;
+        while ( last + 1 < count && cpus[last + 1] )
+        {
+            last++;
+        }
+        char range[32];
+        const int length = last > cpu ? snprintf( range, sizeof( range ), "%s%d-%d", used > 0 ? "," : "", cpu, last )
+                                      : snprintf( range, sizeof( range ), "%s%d", used > 0 ? "," : "", cpu );
+        if ( length < 0 || used + length > text_bytes - 4 )
+        {
+            (void) snprintf( text + used, (size_t) ( text_bytes - used ), "..." );
+            return;
+        }
+        memcpy( text + used, range, (size_t) length + 1 );
+        used += length;
+        cpu = last;
+    }
+    if ( used == 0 )
+    {
+        (void) snprintf( text, (size_t) text_bytes, "none" );
+    }
+}
+
 // On macOS request 32, one above the ordinary-thread priority of 31, clamped
 // to the SCHED_RR range. The minimum (15) demoted client I/O under contention;
 // the recorded frame-tail regression at the maximum (47) motivated this lower

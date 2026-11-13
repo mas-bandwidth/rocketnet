@@ -392,3 +392,35 @@ static void test_thread_priority_enable_disable_policy()
 }
 
 REGISTER_UNIT_TEST( test_thread_priority_enable_disable_policy );
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+// the mask a Linux worker left on cpu 0 is named by, as ranges: runs, single
+// cpus, the empty mask, and a list too long for the text cut with "..."
+static void test_platform_cpu_list_text()
+{
+    unsigned char cpus[16] = {};
+    char text[64];
+    rocketnet_platform_cpu_list_text( cpus, 16, text, (int) sizeof( text ) );
+    rocketnet_unit_check( strcmp( text, "none" ) == 0 );
+
+    cpus[0] = 1;
+    rocketnet_platform_cpu_list_text( cpus, 16, text, (int) sizeof( text ) );
+    rocketnet_unit_check( strcmp( text, "0" ) == 0 );
+
+    cpus[1] = 1;
+    cpus[2] = 1;
+    cpus[3] = 1;
+    cpus[8] = 1;
+    cpus[10] = 1;
+    cpus[11] = 1;
+    cpus[15] = 1;
+    rocketnet_platform_cpu_list_text( cpus, 16, text, (int) sizeof( text ) );
+    rocketnet_unit_check( strcmp( text, "0-3,8,10-11,15" ) == 0 );
+
+    char small[8];
+    rocketnet_platform_cpu_list_text( cpus, 16, small, (int) sizeof( small ) );
+    rocketnet_unit_check( strcmp( small, "0-3..." ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_platform_cpu_list_text );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
