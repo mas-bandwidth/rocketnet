@@ -693,8 +693,8 @@ r3_enforce()
                     # interface refuses too: the message says so.
                     #
                     # FAIL CLOSED: the unload is destructive, so the program's
-                    # identity is read from one snapshot that must itself be
-                    # good -- the query succeeded, printed something, and
+                    # identity is read from one status listing that must
+                    # itself be good -- the query succeeded, printed something, and
                     # still grades occupied by the one grader. Anything else
                     # refuses: an identity that cannot be read is never
                     # taken as "not rocketnet's".
