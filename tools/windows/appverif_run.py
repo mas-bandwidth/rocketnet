@@ -1,24 +1,33 @@
 #!/usr/bin/env python3
 """Run one Windows executable under the Application Verifier Basics layers.
 
-The script enables the Handles, Heaps, Locks, Memory, TLS, Threadpool and Leak
-layers for the executable's image name, sets every stop those layers issue to
-log to the verifier log file without a debugger (a stop ends the run with
-STATUS_VERIFIER_STOP after it is logged), runs the executable, exports the
+The script enables the Handles, Heaps, Locks, SRWLock, Memory, TLS, Exceptions,
+Threadpool and Leak layers for the executable's image name (Locks checks
+critical sections; the library's own mutex is an SRWLOCK, which only the
+SRWLock layer checks), sets every stop those layers issue to be active and to
+log itself and its stack to the verifier log file without a debugger (a
+non-continuable stop, such as a heap corruption, then ends the process with
+STATUS_VERIFIER_STOP, 0xC0000421; a continuable one, such as a bad handle,
+lets it run on and shows only in the log, which is why every log is read),
+runs the executable, exports the
 verifier log of every process the run starts with that image name (one log per
 process: the suite runners start one child per case) to XML and disables
 verification for the image again on every exit path, deleting the image's own
 Image File Execution Options key, which appverif leaves behind empty
-(remove_image_key; a key it cannot delete fails the run). The machine-wide
--logtofile setting is put back the way the run found it, on every exit path
-too. Verifier settings and logs are keyed by image name, machine wide, so the
-run verifies a copy of the executable beside it under a name of its own
-(verified_image_path) and removes the copy and its logs on exit. It exits
-non-zero when the executable fails, when no log is exported, or when any log
-holds a verifier stop, printing one line per stop with its layer, stop code
-and top frames.
---xml FILE keeps the most recent log at FILE and the Nth log before it at FILE's
-stem plus .N.
+(remove_image_key; a key it cannot delete fails the run). The run turns the
+machine-wide -logtofile setting on and leaves it on: it is one value for the
+whole host, two runs at once cannot each put back what they found, and
+turned on it changes only where processes under verification log. Verifier settings and logs are
+keyed by image name, machine wide, so the run verifies a copy of the
+executable beside it under a name of its own (verified_image_path) and
+removes the copy and its logs on exit (a copy it cannot remove fails the
+run). A run that times out is ended with its whole process tree, so no case
+child is left holding the copy. It exits non-zero when the executable fails,
+when no log is exported, or when any log holds a verifier stop, printing one
+line per stop with its layer, stop code and top frames.
+--xml FILE keeps the most recent log at FILE and the Nth log before it at
+FILE's stem plus .N plus FILE's suffix (out.xml, out.1.xml, out.2.xml); every
+such sibling an earlier run left is deleted first.
 
 usage: python tools/windows/appverif_run.py [--xml FILE] [--timeout SECONDS] -- EXE [ARGS...]
 
@@ -38,7 +47,7 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-BASICS_LAYERS = ("Handles", "Heaps", "Locks", "Memory", "TLS", "Threadpool", "Leak")
+BASICS_LAYERS = ("Handles", "Heaps", "Locks", "SRWLock", "Memory", "TLS", "Exceptions", "Threadpool", "Leak")
 
 # Stop code ranges the Basics layers issue. The ranges are generous on
 # purpose: appverif applies every code a registered provider issues and names
@@ -47,16 +56,20 @@ BASICS_LAYERS = ("Handles", "Heaps", "Locks", "Memory", "TLS", "Threadpool", "Le
 STOP_CODE_RANGES = (
     (0x0001, 0x0020),  # Heaps
     (0x0200, 0x0220),  # Locks
+    (0x0250, 0x0260),  # SRWLock
     (0x0300, 0x0310),  # Handles
     (0x0350, 0x0360),  # TLS
     (0x0600, 0x0640),  # Memory
+    (0x0650, 0x0660),  # Exceptions
     (0x0700, 0x0720),  # Threadpool
     (0x0900, 0x0910),  # Leak
 )
 
-# Stop report flags: log the stop and its stack trace to the log file; no
-# debugger is attached.
-STOP_ERROR_REPORT = "0x2"
+# Stop report flags (Application Verifier's ErrorReport bits): 0x1 the stop
+# is active (clear, the stop is off), 0x80 it is logged to the log file,
+# 0x100 its stack trace is logged; no 0x20 breakpoint and no 0x40 verifier
+# exception, since no debugger is attached.
+STOP_ERROR_REPORT = "0x181"
 
 AVRF_NS = "{Application Verifier}"
 FRAMES_SHOWN = 8
@@ -69,12 +82,6 @@ MAX_EXPORTED_LOGS = 4096
 UNISSUED_STOP_PATTERN = re.compile(
     r"Stop code \[(0x[0-9a-fA-F]+)\][^\n]*not issued by any of the registered providers",
     re.IGNORECASE,
-)
-
-# Where appverif -logtofile keeps its one machine-wide setting (LogToFile).
-GLOBAL_SETTINGS_KEY = (
-    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
-    r"\{ApplicationVerifierGlobalSettings}"
 )
 
 # Where appverif -enable writes a verified image's settings: one key per image
@@ -273,43 +280,9 @@ def configure_stops(appverif: str, image_name: str, codes: list) -> int:
                 f"appverif -configure failed (exit {proc.returncode}): {' '.join(output.split())}"
             )
         remaining.remove(code)
-    if remaining:
-        raise RuntimeError(
-            f"appverif -configure left {len(remaining)} stop codes unset for {image_name}"
-        )
+    # every pass returned, raised or removed one code, so remaining is empty:
+    # no code in the ranges is issued by any registered provider
     raise RuntimeError(f"appverif -configure set no stop for {image_name}")
-
-
-def logtofile_enabled():
-    """Whether appverif -logtofile is enabled machine-wide, else None if unknown.
-
-    The setting is one machine-wide value, not one per image: a run that
-    turns it on and leaves it on changes what every later run on the host
-    logs. None means the value could not be read, and the run leaves it as it
-    found it rather than guessing.
-    """
-    if sys.platform != "win32":
-        return None
-    import winreg
-
-    try:
-        with winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE,
-            GLOBAL_SETTINGS_KEY,
-            0,
-            winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
-        ) as key:
-            value, _ = winreg.QueryValueEx(key, "LogToFile")
-    except FileNotFoundError:
-        # no key and no value is the setting the run found: not enabled
-        return False
-    except OSError:
-        # a read the run was not allowed to make is not the value zero: leave
-        # the machine-wide setting alone rather than disable it on a guess
-        return None
-    if isinstance(value, str):
-        return value.strip() not in ("", "0")
-    return bool(value)
 
 
 def enabled_layers(appverif: str, image_name: str) -> list:
@@ -351,6 +324,17 @@ def log_path_for(xml_path: Path, offset: int) -> Path:
     return xml_path.with_name(f"{xml_path.stem}.{-offset}{xml_path.suffix}")
 
 
+def remove_old_logs(xml_path: Path) -> None:
+    """Delete FILE and every FILE-stem.N.FILE-suffix sibling an earlier run left."""
+    sibling = re.compile(re.escape(xml_path.stem) + r"\.[0-9]+" + re.escape(xml_path.suffix), re.IGNORECASE)
+    if xml_path.exists():
+        xml_path.unlink()
+    if xml_path.parent.is_dir():
+        for path in xml_path.parent.iterdir():
+            if sibling.fullmatch(path.name) and path.is_file():
+                path.unlink()
+
+
 def export_logs(appverif: str, image_name: str, exe_path: Path, xml_path: Path) -> list:
     """Export every verifier log of the image, the most recent first.
 
@@ -358,15 +342,15 @@ def export_logs(appverif: str, image_name: str, exe_path: Path, xml_path: Path) 
     recent one; Log=-N names the Nth log before it and fails once no log is
     left. Every process the run starts with this image name (the suite runners
     start one child per case) has its own log. The logs are deleted before the
-    run, so every log exported belongs to it. More than MAX_EXPORTED_LOGS logs
-    raise rather than loop on.
+    run, so every log exported belongs to it, and so does every file at
+    xml_path's names (remove_old_logs). More than MAX_EXPORTED_LOGS logs raise
+    rather than loop on.
     """
+    remove_old_logs(xml_path)
     paths = []
-    for index in range(MAX_EXPORTED_LOGS + 1):
-        offset = -index
+    while True:
+        offset = -len(paths)
         path = log_path_for(xml_path, offset)
-        if path.exists():
-            path.unlink()
         proc = appverif_call(
             appverif,
             [
@@ -383,7 +367,22 @@ def export_logs(appverif: str, image_name: str, exe_path: Path, xml_path: Path) 
                 f"more than {MAX_EXPORTED_LOGS} verifier logs for {image_name}; refusing an unbounded export"
             )
         paths.append(path)
-    raise RuntimeError(f"verifier log export limit reached for {image_name}")
+
+
+def run_with_timeout(command: list, timeout) -> tuple:
+    """Run command; return (exit code, timed out). On a timeout the whole
+    process tree is ended (taskkill /T): the suite runner starts its case
+    children as plain processes, which would outlive a killed parent and keep
+    the verified copy open."""
+    child = subprocess.Popen(command, cwd=os.getcwd())
+    try:
+        return child.wait(timeout=timeout), False
+    except subprocess.TimeoutExpired:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(child.pid)], capture_output=True)
+        child.kill()
+        child.wait()
+        return None, True
 
 
 def main() -> int:
@@ -431,9 +430,7 @@ def main() -> int:
     elapsed = 0.0
     timed_out = False
     cleanup_failed = False
-    logtofile_was_enabled = None
     try:
-        logtofile_was_enabled = logtofile_enabled()
         appverif_call(appverif, ["-logtofile", "enable"])
         appverif_call(appverif, ["-delete", "logs", "-for", image_name], check=False)
         appverif_call(appverif, ["-enable", *BASICS_LAYERS, "-for", image_name])
@@ -443,12 +440,7 @@ def main() -> int:
             raise RuntimeError(f"layers not enabled for {image_name}: {', '.join(missing)}")
 
         start = time.monotonic()
-        try:
-            exit_code = subprocess.run(
-                [str(verified_path), *command[1:]], cwd=os.getcwd(), timeout=args.timeout
-            ).returncode
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        exit_code, timed_out = run_with_timeout([str(verified_path), *command[1:]], args.timeout)
         elapsed = time.monotonic() - start
 
         log_paths = export_logs(appverif, image_name, exe_path, xml_path)
@@ -464,15 +456,6 @@ def main() -> int:
         appverif_call(appverif, ["-delete", "logs", "-for", image_name], check=False)
         appverif_call(appverif, ["-disable", "*", "-for", image_name], check=False)
         appverif_call(appverif, ["-delete", "settings", "-for", image_name], check=False)
-        if logtofile_was_enabled is not None:
-            # the machine-wide logging setting is put back the way the run
-            # found it: a run that leaves it on changes what every later run
-            # on this host logs
-            appverif_call(
-                appverif,
-                ["-logtofile", "enable" if logtofile_was_enabled else "disable"],
-                check=False,
-            )
         # the image's own key, which appverif leaves behind empty, and anything
         # a failed -disable left in it: the name is this run's copy, so the
         # key holds only what this run's appverif calls wrote
@@ -488,6 +471,7 @@ def main() -> int:
         try:
             verified_path.unlink()
         except OSError as error:
+            cleanup_failed = True
             print(f"appverif_run: could not remove {verified_path}: {error}", file=sys.stderr)
 
     for stop in stops:

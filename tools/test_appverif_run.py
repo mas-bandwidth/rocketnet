@@ -10,6 +10,8 @@ verifies a copy of the executable under a name no other process uses.
 """
 
 import importlib.util
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -132,6 +134,79 @@ class RemoveImageKeyTest(unittest.TestCase):
     def test_the_name_the_run_verifies_is_accepted(self):
         copy = self.appverif_run.verified_image_path(Path("C:/b/bin/Debug/test_iocp.exe"), "31337")
         self.assertTrue(self.appverif_run.image_key_path(copy.name).endswith("\\test_iocp_appverif_31337.exe"))
+
+
+class LayersAndStopsTest(unittest.TestCase):
+    """What the run turns on: the layers that cover the library's own lock,
+    and stops that are active and logged."""
+
+    def setUp(self):
+        self.appverif_run = load_appverif_run()
+
+    def test_srwlock_layer_and_its_stops_are_enabled(self):
+        # the library's mutex is an SRWLOCK; the Locks layer checks only
+        # critical sections
+        self.assertIn("SRWLock", self.appverif_run.BASICS_LAYERS)
+        self.assertIn("Exceptions", self.appverif_run.BASICS_LAYERS)
+        codes = self.appverif_run.stop_codes()
+        for code in ("0x250", "0x251", "0x255", "0x650"):
+            self.assertIn(code, codes)
+
+    def test_every_stop_is_active_and_logged_with_its_stack(self):
+        value = int(self.appverif_run.STOP_ERROR_REPORT, 16)
+        self.assertEqual(value & 0x1, 0x1, "bit 0x1 clear switches every stop off")
+        self.assertEqual(value & 0x80, 0x80)
+        self.assertEqual(value & 0x100, 0x100)
+        self.assertEqual(value & 0x60, 0, "no breakpoint, no verifier exception: no debugger is attached")
+
+    def test_no_issued_stop_is_refused(self):
+        def unissued(appverif, args, check=True):
+            code = args[1]
+            return subprocess.CompletedProcess(
+                args, 1, f"Stop code [{code}] is not issued by any of the registered providers", "")
+
+        self.appverif_run.appverif_call = unissued
+        with self.assertRaisesRegex(RuntimeError, "set no stop"):
+            self.appverif_run.configure_stops("appverif", "x_appverif_1.exe", ["0x1", "0x2", "0x3"])
+
+
+class ExportLogsTest(unittest.TestCase):
+    """Every exported log belongs to this run: an earlier run's numbered
+    siblings are deleted first."""
+
+    def setUp(self):
+        self.appverif_run = load_appverif_run()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def fake_export(self, logs):
+        def call(appverif, args, check=True):
+            to = next(arg[len("To="):] for arg in args if arg.startswith("To="))
+            offset = int(next(arg[len("Log="):] for arg in args if arg.startswith("Log=")))
+            if -offset >= logs:
+                return subprocess.CompletedProcess(args, 1, "", "no log")
+            Path(to).write_text("<log/>")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return call
+
+    def test_stale_numbered_logs_are_removed(self):
+        for name in ("out.xml", "out.1.xml", "out.2.xml", "out.5.xml", "other.xml", "out.x.xml", "out.3.txt"):
+            (self.dir / name).write_text("old")
+        self.appverif_run.appverif_call = self.fake_export(2)
+        paths = self.appverif_run.export_logs("appverif", "x_appverif_1.exe", self.dir / "x.exe", self.dir / "out.xml")
+        self.assertEqual([p.name for p in paths], ["out.xml", "out.1.xml"])
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()),
+                         ["other.xml", "out.1.xml", "out.3.txt", "out.x.xml", "out.xml"])
+        self.assertEqual((self.dir / "out.xml").read_text(), "<log/>")
+
+    def test_runaway_export_is_refused(self):
+        self.appverif_run.MAX_EXPORTED_LOGS = 3
+        self.appverif_run.appverif_call = self.fake_export(10)
+        with self.assertRaisesRegex(RuntimeError, "more than 3 verifier logs"):
+            self.appverif_run.export_logs("appverif", "x_appverif_1.exe", self.dir / "x.exe", self.dir / "out.xml")
 
 
 if __name__ == "__main__":
