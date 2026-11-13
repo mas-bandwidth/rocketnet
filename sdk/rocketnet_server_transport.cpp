@@ -1093,9 +1093,16 @@ static void rocketnet_server_transport_fill_refused( struct rocketnet_server_tra
 }
 
 // A refused start with room left refused that one frame; without room, or
-// from a transport that does not report it, it is a full staging.
-static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_transport_t * server_transport )
+// from a transport that does not report it, it is a full staging. With
+// several send queues the room that matters is the destination's queue: a
+// start refused because its queue is full while another has room is a full
+// staging, not a refusal of the frame. NULL to asks the whole room.
+static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_transport_t * server_transport, const rocketnet_address_t * to )
 {
+    if ( to && server_transport->send_queues > 1 )
+    {
+        return rocketnet_server_transport_queue_room( server_transport, rocketnet_server_transport_send_queue_of( server_transport, to ) ) <= 0;
+    }
     return !server_transport->io.operations || !server_transport->io.operations->send_room ||
            server_transport->io.operations->send_room( server_transport->io.instance ) <= 0;
 }
@@ -1152,13 +1159,13 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 // cannot carry), which the transport counts in its own send_failures,
 // SEND_FAILED. None is ever sent or counted as sent. An uncounted start (the
 // receive path's response frame) is counted by its caller.
-static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, uint64_t id )
+static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t id )
 {
     if ( id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
     {
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
     }
-    else if ( rocketnet_server_transport_io_refused_full( transport ) )
+    else if ( rocketnet_server_transport_io_refused_full( transport, to ) )
     {
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
     }
@@ -1170,7 +1177,7 @@ static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_tr
     uint8_t * frame = transport->io.operations->start_packet( transport->io.instance, to, id );
     if ( !frame && counted )
     {
-        rocketnet_server_transport_io_count_refused( transport, *id );
+        rocketnet_server_transport_io_count_refused( transport, to, *id );
     }
     return frame;
 }
@@ -2074,21 +2081,25 @@ struct rocketnet_server_transport_resolved_t
 // dual-stack socket cannot bind two specific addresses.
 // The environment is ambient: set once for a host or a test run, it cannot
 // know each server's families, so a bind address it sets for a family the
-// server does not serve is dropped with one log line, not refused. A config
-// field is a statement about this server, so the resolve below still
-// refuses that one.
-void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int serves_ipv4,
-                                                     int serves_ipv6 )
+// server cannot bind specifically (a family it does not serve, or either
+// family on a server that serves both on one dual-stack socket) is dropped
+// with one log line, never refused: the environment never makes a server
+// fail to start for its families. A config field is a statement about this
+// server, so the resolve below still refuses those.
+void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int binds_ipv4,
+                                                     int binds_ipv6 )
 {
     rocketnet_assert( config && ipv4_before && ipv6_before );
-    if ( !serves_ipv4 && strcmp( config->bind_ipv4_address, ipv4_before ) != 0 )
+    if ( !binds_ipv4 && strcmp( config->bind_ipv4_address, ipv4_before ) != 0 )
     {
-        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV4_ADDRESS=%s: the server does not serve IPv4", config->bind_ipv4_address );
+        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV4_ADDRESS=%s: the server binds no specific IPv4 address (it serves IPv6 only, or both families)",
+                        config->bind_ipv4_address );
         rocketnet_copy_string( config->bind_ipv4_address, ipv4_before, sizeof( config->bind_ipv4_address ) );
     }
-    if ( !serves_ipv6 && strcmp( config->bind_ipv6_address, ipv6_before ) != 0 )
+    if ( !binds_ipv6 && strcmp( config->bind_ipv6_address, ipv6_before ) != 0 )
     {
-        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV6_ADDRESS=%s: the server does not serve IPv6", config->bind_ipv6_address );
+        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV6_ADDRESS=%s: the server binds no specific IPv6 address (it serves IPv4 only, or both families)",
+                        config->bind_ipv6_address );
         rocketnet_copy_string( config->bind_ipv6_address, ipv6_before, sizeof( config->bind_ipv6_address ) );
     }
 }
@@ -2402,7 +2413,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     if ( env_pass )
     {
         const bool ipv4 = public_address.type == ROCKETNET_ADDRESS_IPV4;
-        rocketnet_server_transport_ignore_ambient_bind( &effective_config, bind_before[0], bind_before[1], serves_both || ipv4, serves_both || !ipv4 );
+        rocketnet_server_transport_ignore_ambient_bind( &effective_config, bind_before[0], bind_before[1], !serves_both && ipv4, !serves_both && !ipv4 );
     }
 
     rocketnet_address_t bind_address;
@@ -3214,7 +3225,7 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
         {
             if ( server_transport->disconnect_bursts[server_transport->disconnect_burst_head].sealed < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
             {
-                rocketnet_server_transport_io_count_refused( server_transport, 0 );
+                rocketnet_server_transport_io_count_refused( server_transport, &server_transport->disconnect_bursts[server_transport->disconnect_burst_head].to, 0 );
             }
             sodium_memzero( server_transport->disconnect_burst_keys[server_transport->disconnect_burst_head], ROCKETNET_KEY_BYTES );
             server_transport->disconnect_burst_head = ( server_transport->disconnect_burst_head + 1 ) % server_transport->disconnect_burst_capacity;
@@ -3532,7 +3543,7 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     }
     else if ( response_bytes > 0 )
     {
-        rocketnet_server_transport_io_count_refused( server_transport, frame.packet_id );
+        rocketnet_server_transport_io_count_refused( server_transport, from, frame.packet_id );
     }
 
     if ( payload_slot_free && payload && payload_bytes > 0 )
@@ -4580,7 +4591,7 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         {
             // a full staging: the burst waits for the next update or stop step
 
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport ) )
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, &burst->to ) )
             {
                 break;
             }
@@ -4724,14 +4735,19 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     // proofs/tla/ServerSession.tla DisconnectAll and SealWaiting, and
     // proofs/tla/ServerStopSpread.tla Kick and Stop: the slot ends now; its
     // burst is sealed now only while this update's allowance and the
-    // transport's send room hold the whole burst and no earlier burst waits,
+    // transport's send room (with several send queues, the room of the
+    // queue its address stages in too) hold the whole burst and no earlier
+    // burst waits,
     // else it waits in the ring for the following updates. A running server
     // keeps at most max_clients waiting; the stop's bursts always
     // wait, in the half of the ring kept for them, for the stop steps.
 
     if ( shutdown || server_transport->disconnect_burst_count > 0 ||
          server_transport->disconnect_seals_left < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ||
-         rocketnet_server_transport_io_send_room( server_transport ) < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
+         rocketnet_server_transport_io_send_room( server_transport ) < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ||
+         ( server_transport->send_queues > 1 &&
+           rocketnet_server_transport_queue_room( server_transport, rocketnet_server_transport_send_queue_of( server_transport, &client_address ) ) <
+               ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) )
     {
         if ( shutdown || server_transport->disconnect_burst_count < server_transport->disconnect_burst_steady_cap )
         {

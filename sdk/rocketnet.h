@@ -1813,8 +1813,9 @@ struct rocketnet_server_config_t
     /// both families, whose one dual-stack socket binds the IPv6 wildcard:
     /// to bind a specific address, serve one family. The environment form
     /// is ambient, set once for a host or a test run, so it applies only to
-    /// a server that serves IPv4: an IPv6-only server ignores it, with one
-    /// log line, where it refuses the field. The rio transport with
+    /// a server that serves IPv4 alone: an IPv6-only server and a server of
+    /// both families ignore it, with one log line, where they refuse the
+    /// field. The rio transport with
     /// more than one lane requires it (num_xdp_queues). The xdp transport
     /// binds no socket and does not read it: it serves the interface that
     /// holds the served address.
@@ -1829,7 +1830,8 @@ struct rocketnet_server_config_t
     /// (ff00::/8), an IPv4-mapped address (::ffff:a.b.c.d: set
     /// bind_ipv4_address instead) and a link-local address (fe80::/10, whose
     /// bind needs an interface scope the field cannot carry) among them. Its
-    /// environment form applies only to a server that serves IPv6, as above.
+    /// environment form applies only to a server that serves IPv6 alone, as
+    /// above.
 
     const char * bind_ipv6_address;
 };
