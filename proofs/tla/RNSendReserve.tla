@@ -75,6 +75,7 @@ CONSTANTS
     Chunk,          \* frames per chunk claim (1: every claim is one frame)
     GuardWidth,     \* the guard's line bound (0: no guard)
     SharedLine,     \* TRUE: every filler's thread hashes to one fill line
+    IoRefuses,      \* TRUE: the transport may refuse a frame with room left (its own reason); FALSE: only a full queue
     \* reversed witnesses, each TRUE breaks one rule of the code
     RoomOnly,       \* the budget is the whole room, no reserve           (ReserveKept)
     SplitClaim,     \* the claim is a load then a store, not one add      (ReserveKept)
@@ -296,7 +297,8 @@ OwnIo(f) ==
           /\ free' = free - 1
           /\ pc' = [pc EXCEPT ![f] = IF OwnCountFirst THEN "idle" ELSE "owncount"]
           /\ UNCHANGED ownTaken
-       \/ /\ pc' = [pc EXCEPT ![f] = "idle"]
+       \/ /\ IoRefuses \/ free = 0
+          /\ pc' = [pc EXCEPT ![f] = "idle"]
           /\ ownTaken' = ownTaken - 1
           /\ UNCHANGED free
     /\ UNCHANGED <<started, ownUsed, ownLeft, claims, budget, tail, size, claim, ret,
@@ -564,7 +566,8 @@ Stage(f) ==
                 ELSE /\ pc' = [pc EXCEPT ![f] = "counting"]
                      /\ UNCHANGED uncounted
           /\ UNCHANGED <<tail, ret>>
-       \/ /\ ret' = [ret EXCEPT ![f] = IF NoTailReturn THEN 1 ELSE tail[LineOf(f)] + 1]
+       \/ /\ IoRefuses \/ free = 0
+          /\ ret' = [ret EXCEPT ![f] = IF NoTailReturn THEN 1 ELSE tail[LineOf(f)] + 1]
           /\ tail' = [tail EXCEPT ![LineOf(f)] = 0]
           /\ pc' = [pc EXCEPT ![f] = "returning"]
           /\ UNCHANGED <<free, uncounted>>
