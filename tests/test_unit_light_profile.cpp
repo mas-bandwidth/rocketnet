@@ -175,8 +175,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
 // bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
 // computed from the Linux reading, not measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527583711 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
+// Together (integration/v1.1.55: the refused-token table and the send
+// store's free stack): actual=1533264287 and 15398892 (aws-win-ci-2, MSVC,
+// Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1532215711 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350316 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
