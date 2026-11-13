@@ -2134,6 +2134,54 @@ static void test_iocp_post_receive_retries_push_a_stalled_pop_refuses()
 
 REGISTER_UNIT_TEST( test_iocp_post_receive_retries_push_a_stalled_pop_refuses );
 
+bool rocketnet_server_iocp_test_stop_post_race( int mode, int * exit_at_admitted_out, int * posted_out, int * state_out,
+                                                 int * pending_out, int * exit_after_out );
+
+// A01 of the v12 review: worker B, retrying a receive endpoint 0 owns, is
+// admitted to post it; stop is published and endpoint 0's worker runs its
+// stop pass before B's post reaches the kernel. The owner must not exit
+// while B's post is admitted: B's post counts as pending before the pass
+// can see nothing pending, so the owner stays to cancel it and drain its
+// completion. Once that completion is dequeued the owner may exit.
+static void test_iocp_stop_waits_for_an_admitted_receive_post()
+{
+    int exit_at_admitted = -1;
+    int posted = -1;
+    int state = -1;
+    int pending = -1;
+    int exit_after = -1;
+    rocketnet_unit_check( rocketnet_server_iocp_test_stop_post_race( 0, &exit_at_admitted, &posted, &state, &pending, &exit_after ) );
+    rocketnet_unit_check( exit_at_admitted == 0 );
+    rocketnet_unit_check( posted == 1 );
+    rocketnet_unit_check( state == 4 );
+    rocketnet_unit_check( pending == 1 );
+    rocketnet_unit_check( exit_after == 1 );
+}
+
+REGISTER_UNIT_TEST( test_iocp_stop_waits_for_an_admitted_receive_post );
+
+// A post that begins after stop is published, and a post of a receive whose
+// generation is used up, are refused and retire the receive, leaving nothing
+// pending: the owner's stop pass lets it exit.
+static void test_iocp_refused_receive_posts_leave_nothing_pending()
+{
+    for ( int mode = 1; mode <= 2; ++mode )
+    {
+        int exit_at_admitted = -1;
+        int posted = -1;
+        int state = -1;
+        int pending = -1;
+        int exit_after = -1;
+        rocketnet_unit_check( rocketnet_server_iocp_test_stop_post_race( mode, &exit_at_admitted, &posted, &state, &pending, &exit_after ) );
+        rocketnet_unit_check( posted == 0 );
+        rocketnet_unit_check( state == 6 );
+        rocketnet_unit_check( pending == 0 );
+        rocketnet_unit_check( exit_after == 1 );
+    }
+}
+
+REGISTER_UNIT_TEST( test_iocp_refused_receive_posts_leave_nothing_pending );
+
 #endif // #if defined( _WIN32 )
 
 #include "test_unit_driver_results_checked.cpp"

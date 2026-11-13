@@ -891,6 +891,11 @@ struct rocketnet_server_iocp_t
     std::atomic<bool> test_hold_completions{ false };
     bool test_refuse_worker_pins = false; // ROCKETNET_IOCP_REFUSE_WORKER_PINS, set at create
     std::atomic<int> test_active_completion_batches{ 0 };
+    // unit seams only: a receive post runs this once admitted, before the
+    // kernel post, and a post is accepted without a socket
+    void ( *test_post_admitted )( rocketnet_server_iocp_t * iocp, void * context ) = NULL;
+    void * test_post_admitted_context = NULL;
+    bool test_accept_posts = false;
 #endif // #if ROCKETNET_DEV
 };
 
@@ -1174,15 +1179,24 @@ static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int b
 // maps it to its status)
 static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketnet_iocp_operation_t * op, int * post_error = NULL )
 {
-    // proofs/tla/RNIocpRetryStop.tla PostStart is the stop check and the new
-    // generation, PostAccepted an accepted post and PostRefused a refused
-    // one, whose push onto retry_receives is PushClaim and PushPublish.
+    // proofs/tla/RNIocpRetryStop.tla PostCount is the pending increment,
+    // PostStart the stop check and the new generation, PostAccepted an
+    // accepted post and PostRefused a refused one, whose push onto
+    // retry_receives is PushClaim and PushPublish.
     // Only a completion worker or the creating thread posts a receive; no
-    // publication mutex is held. A worker observing stop reissues cancellation
-    // after its last potential repost:
-    // a late repost is cancelled by that worker's next pass. Stack addresses/flags must not back pending I/O.
-    if ( iocp->stopping.load( std::memory_order_acquire ) )
+    // publication mutex is held. Any worker may post a receive another
+    // endpoint owns (from retry_receives), and only the owner cancels it.
+    // The post is counted pending before stop is checked, both seq_cst, as
+    // stop's store and the stop pass's loads are: if this check reads
+    // stopping false, the increment precedes stop's store in the single total
+    // order, so every stop pass sees it pending and the owner stays, reissuing
+    // cancellation each pass until the post's completion is drained. A post
+    // that reads stopping true, or finds its generation used up, takes its
+    // count back and retires. Stack addresses/flags must not back pending I/O.
+    iocp->pending.fetch_add( 1, std::memory_order_seq_cst );
+    if ( iocp->stopping.load( std::memory_order_seq_cst ) )
     {
+        iocp->pending.fetch_sub( 1, std::memory_order_release );
         op->state = ROCKETNET_IOCP_OPERATION_RETIRED;
         return false;
     }
@@ -1191,6 +1205,7 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
 
     if ( op->generation == UINT64_MAX )
     {
+        iocp->pending.fetch_sub( 1, std::memory_order_release );
         op->state = ROCKETNET_IOCP_OPERATION_RETIRED;
         return false;
     }
@@ -1204,9 +1219,20 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
 
     int result;
     int error = 0;
+#if ROCKETNET_DEV
+    if ( iocp->test_post_admitted )
+    {
+        iocp->test_post_admitted( iocp, iocp->test_post_admitted_context );
+    }
+    if ( iocp->test_accept_posts )
+    {
+        result = SOCKET_ERROR;
+        error = WSA_IO_PENDING;
+    }
+    else
+#endif // #if ROCKETNET_DEV
     if ( ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST, &error ) )
     {
-        iocp->pending.fetch_add( 1, std::memory_order_relaxed );
         result = SOCKET_ERROR;
     }
     else if ( op->uro_data )
@@ -1225,14 +1251,12 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
         op->message.dwBufferCount = 1;
         op->message.Control.buf = op->control;
         op->message.Control.len = sizeof( op->control );
-        iocp->pending.fetch_add( 1, std::memory_order_relaxed );
         result = iocp->receive_message( rocketnet_iocp_op_socket( iocp, op ), &op->message, NULL, &op->overlapped, NULL );
     }
     else
     {
         op->buffer.buf = (char *) op->frame;
         op->buffer.len = ROCKETNET_RECEIVE_CEILING + 1;
-        iocp->pending.fetch_add( 1, std::memory_order_relaxed );
         result = WSARecvFrom( rocketnet_iocp_op_socket( iocp, op ), &op->buffer, 1, NULL, &op->flags,
                               (sockaddr *) &op->address, &op->address_bytes, &op->overlapped, NULL );
     }
@@ -1453,6 +1477,37 @@ static void rocketnet_iocp_drop_unread_banks( rocketnet_iocp_worker_t * worker, 
     }
 }
 
+// The top of a completion worker's pass once stop is published: true when
+// the worker may exit. proofs/tla/RNIocpRetryStop.tla Exit: stopping and
+// nothing pending; retries still queued are abandoned with the transport.
+// The stopping and pending loads are seq_cst: with post_receive's increment
+// and check, a post that saw stopping false is counted here.
+static bool rocketnet_iocp_worker_stop_pass( rocketnet_server_iocp_t * iocp, int endpoint )
+{
+    if ( !iocp->stopping.load( std::memory_order_seq_cst ) ||
+         iocp->live_lanes.load( std::memory_order_acquire ) != 0 )
+    {
+        return false;
+    }
+    // Every worker repeats cancellation after its last possible repost.
+    // Cancel only receives, so the final posted sends can complete.
+    // proofs/tla/RNIocpEndpoints.tla Cancel and Exit: the worker's
+    // endpoint is its own: its receives are
+    // [endpoint * ROCKETNET_IOCP_RECEIVES_PER_WORKER, ...)
+    if ( iocp->sockets[endpoint] != INVALID_SOCKET )
+    {
+        for ( int i = endpoint * ROCKETNET_IOCP_RECEIVES_PER_WORKER; i < ( endpoint + 1 ) * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
+        {
+            if ( !CancelIoEx( (HANDLE) iocp->sockets[endpoint], &iocp->receives[i].overlapped ) &&
+                 GetLastError() != ERROR_NOT_FOUND )
+            {
+                rocketnet_error( "IOCP cancellation failed: %lu", GetLastError() );
+            }
+        }
+    }
+    return iocp->pending.load( std::memory_order_seq_cst ) == 0;
+}
+
 static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * argument )
 {
     rocketnet_iocp_worker_t * worker = (rocketnet_iocp_worker_t *) argument;
@@ -1488,32 +1543,10 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
     for ( ;; )
     {
         // RNBufferHandoff WorkerExit sends every bank before receive cancellation.
-        // proofs/tla/RNIocpRetryStop.tla Exit: stopping and nothing pending;
-        // retries still queued are abandoned with the transport.
-        if ( iocp->stopping.load( std::memory_order_acquire ) &&
-             iocp->live_lanes.load( std::memory_order_acquire ) == 0 )
+        if ( rocketnet_iocp_worker_stop_pass( iocp, endpoint ) )
         {
-            // Every worker repeats cancellation after its last possible repost.
-            // Cancel only receives, so the final posted sends can complete.
-            // proofs/tla/RNIocpEndpoints.tla Cancel and Exit: the worker's
-            // endpoint is its own: its receives are
-            // [endpoint * ROCKETNET_IOCP_RECEIVES_PER_WORKER, ...)
-            if ( iocp->sockets[endpoint] != INVALID_SOCKET )
-            {
-                for ( int i = endpoint * ROCKETNET_IOCP_RECEIVES_PER_WORKER; i < ( endpoint + 1 ) * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
-                {
-                    if ( !CancelIoEx( (HANDLE) iocp->sockets[endpoint], &iocp->receives[i].overlapped ) &&
-                         GetLastError() != ERROR_NOT_FOUND )
-                    {
-                        rocketnet_error( "IOCP cancellation failed: %lu", GetLastError() );
-                    }
-                }
-            }
-            if ( iocp->pending.load( std::memory_order_acquire ) == 0 )
-            {
-                rocketnet_iocp_drop_unread_banks( worker, &iocp->drop_tallies[worker - iocp->workers] );
-                break;
-            }
+            rocketnet_iocp_drop_unread_banks( worker, &iocp->drop_tallies[worker - iocp->workers] );
+            break;
         }
 
         OVERLAPPED_ENTRY entries[64];
@@ -1746,7 +1779,8 @@ void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp )
         lane->send_banks[lane->send_producer].count = (int) count;
     }
     // proofs/tla/RNIocpRetryStop.tla Stop: post_receive retires from here on.
-    iocp->stopping.store( true, std::memory_order_release );
+    // seq_cst, in one total order with post_receive's count and check.
+    iocp->stopping.store( true, std::memory_order_seq_cst );
     for ( int l = 0; l < iocp->num_lanes; ++l )
     {
         if ( iocp->lanes[l] && iocp->lanes[l]->send_wake )
@@ -4069,6 +4103,117 @@ bool rocketnet_server_iocp_test_post_receive_retries_refused_push( int * state_o
     rocketnet_free( NULL, storage );
 
     return valid;
+}
+
+// The stop race on a receive post (A01 of the v12 review): worker B,
+// retrying a receive endpoint A owns, is admitted to post it; then stop is
+// published and A runs its stop pass; then B's post reaches the kernel.
+// Stepped on this thread with no socket and no completion port: posts are
+// accepted without a socket and the case delivers the completion of the
+// cancelled receive.
+struct rocketnet_iocp_stop_race_test_t
+{
+    int endpoint;            // the owner whose stop pass runs at the admitted point
+    int exit_at_admitted;    // 1 when that pass let the owner exit
+};
+
+static void rocketnet_iocp_stop_race_test_admitted( rocketnet_server_iocp_t * iocp, void * context )
+{
+    rocketnet_iocp_stop_race_test_t * test = (rocketnet_iocp_stop_race_test_t *) context;
+    rocketnet_server_iocp_stop( iocp );
+    test->exit_at_admitted = rocketnet_iocp_worker_stop_pass( iocp, test->endpoint ) ? 1 : 0;
+}
+
+// mode 0: the race above. mode 1: stop is published before B's post begins.
+// mode 2: the receive's generation is exhausted (no stop). Reports whether
+// the owner's stop pass let it exit at the admitted point (mode 0), whether
+// the post returned true, the receive's state and pending after the post,
+// and whether the owner may exit once the cancelled receive has completed.
+bool rocketnet_server_iocp_test_stop_post_race( int mode, int * exit_at_admitted_out, int * posted_out, int * state_out,
+                                                 int * pending_out, int * exit_after_out )
+{
+    if ( mode < 0 || mode > 2 || !exit_at_admitted_out || !posted_out || !state_out || !pending_out || !exit_after_out )
+    {
+        return false;
+    }
+    const int endpoints = 2;
+    const int count = endpoints * ROCKETNET_IOCP_RECEIVES_PER_WORKER;
+    void * storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_iocp_t ) );
+    void * operations = rocketnet_malloc( NULL, (size_t) count * sizeof( rocketnet_iocp_operation_t ) );
+    if ( !storage || !operations )
+    {
+        rocketnet_free( NULL, storage );
+        rocketnet_free( NULL, operations );
+        return false;
+    }
+
+    rocketnet_server_iocp_t * iocp = new ( storage ) rocketnet_server_iocp_t();
+    alignas( rocketnet_iocp_ref_cell_t ) uint8_t cells[2 * sizeof( rocketnet_iocp_ref_cell_t )];
+    rocketnet_iocp_queue_initialize( &iocp->retry_receives, cells, 2 );
+    iocp->num_endpoints = endpoints;
+    iocp->num_workers = endpoints;
+    iocp->owner_epoch = 1;
+    for ( int e = 0; e < ROCKETNET_IOCP_MAX_WORKERS; ++e )
+    {
+        iocp->sockets[e] = INVALID_SOCKET;
+    }
+    iocp->receives = (rocketnet_iocp_operation_t *) operations;
+    for ( int i = 0; i < count; ++i )
+    {
+        rocketnet_iocp_operation_t * op = new ( &iocp->receives[i] ) rocketnet_iocp_operation_t();
+        op->index = i;
+        op->owner_epoch = iocp->owner_epoch;
+        op->state = ROCKETNET_IOCP_OPERATION_IDLE;
+    }
+    iocp->test_accept_posts = true;
+
+    // worker B (endpoint 1) took endpoint 0's receive from the retry queue
+    rocketnet_iocp_operation_t * op = &iocp->receives[0];
+    op->state = ROCKETNET_IOCP_OPERATION_RETRY;
+    rocketnet_iocp_stop_race_test_t test = { 0, 0 };
+    if ( mode == 0 )
+    {
+        iocp->test_post_admitted = rocketnet_iocp_stop_race_test_admitted;
+        iocp->test_post_admitted_context = &test;
+    }
+    else if ( mode == 1 )
+    {
+        rocketnet_server_iocp_stop( iocp );
+    }
+    else
+    {
+        op->generation = UINT64_MAX;
+    }
+
+    const bool posted = rocketnet_iocp_post_receive( iocp, op );
+    iocp->test_post_admitted = NULL;
+    *exit_at_admitted_out = test.exit_at_admitted;
+    *posted_out = posted ? 1 : 0;
+    *state_out = op->state;
+    *pending_out = iocp->pending.load( std::memory_order_relaxed );
+
+    // the owner's later pass cancels the receive and its completion arrives
+    // on the owner's port: dequeued, it is no longer pending
+    if ( posted )
+    {
+        iocp->pending.fetch_sub( 1, std::memory_order_release );
+        op->state = ROCKETNET_IOCP_OPERATION_IDLE;
+    }
+    if ( mode == 2 )
+    {
+        rocketnet_server_iocp_stop( iocp );
+    }
+    *exit_after_out = rocketnet_iocp_worker_stop_pass( iocp, 0 ) ? 1 : 0;
+
+    for ( int i = 0; i < count; ++i )
+    {
+        iocp->receives[i].~rocketnet_iocp_operation_t();
+    }
+    iocp->~rocketnet_server_iocp_t();
+    rocketnet_free( NULL, operations );
+    rocketnet_free( NULL, storage );
+
+    return true;
 }
 #endif // #if ROCKETNET_DEV
 
