@@ -76,15 +76,20 @@ on a commit.
 
 --coverage WORKFLOW --commit SHA RESULT... reads replay result files (or
 every *.json in a directory) and says, row by row, which rows have a green
-replay at SHA from a clean tree and which have none (RED, OVER CAP, or
-NONE); exit 0 only when every row listed has a green replay. A result
-matches a row when its job is the row's and every matrix value the job's
-steps read is the row's (empty when the row has none).
+replay at SHA from a clean tree and which have none (RED, OVER CAP, NOT
+CLEAN, or NONE). A result matches a row when its job is the row's, every
+matrix value of the row (runs-on's included) and every one the job reads is
+the same in the result (empty when the row has none), its other --set
+values are the coverage's own, and it ran on the OS the row's runs-on names.
+A green replay that went over the cap under --allow-over-cap counts as
+GREEN and says so with its seconds. Exit 0 only when every row listed is
+GREEN and no listed job is one a replay cannot cover: name with --job the
+jobs a replay stands in for.
 
-A summary job (one with needs:, such as lint's and the trace check's) reads
-the run's own job list from GitHub and other jobs' results: it CANNOT BE
-REPLAYED, and --rows and --coverage say so for each one by name rather than
-leave it out. Its verdict exists only in a real run.
+A job with needs: (a summary job such as lint's and the trace check's reads
+the run's own job list from GitHub) depends on other jobs' results, which
+exist only in a real run: it CANNOT BE REPLAYED, and --rows and --coverage
+say so for each one by name rather than leave it out.
 
 This is a stand-in, not a CI run: the runner image, its load and its tools
 are this host's. A green replay says the step commands pass here; only the
@@ -738,9 +743,9 @@ def shell_command(shell, script_path, name="step"):
     if shell == "pwsh":
         return ["pwsh", "-command", ". '%s'" % script_path]
     words = shlex.split(shell)
-    if "{0}" not in words:
+    if not any("{0}" in word for word in words):
         raise ReplayError("step %r: shell %r is not known to the replay and names no {0}" % (name, shell))
-    return [script_path if word == "{0}" else word for word in words]
+    return [word.replace("{0}", script_path) for word in words]
 
 
 def minutes(text, context, default):
@@ -845,11 +850,14 @@ def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout, allow
             env["PATH"] = os.pathsep.join(list(reversed(extra_path)) + [env.get("PATH", "")])
         for key, value in step["env"].items():
             env[key] = substitute(value, context)
-        script = os.path.join(temp, "step-%d.sh" % number)
+        shell = step_shell(step, parsed)
+        # GitHub names the script for its shell; pwsh dot-sources only a .ps1
+        suffix = {"pwsh": ".ps1", "python": ".py"}.get(shell, ".sh")
+        script = os.path.join(temp, "step-%d%s" % (number, suffix))
         with open(script, "w") as handle:
             handle.write(substitute(step["run"], context) + "\n")
         log_path = os.path.join(logs, "step-%d.log" % number)
-        command = shell_command(step_shell(step, parsed), script, step["name"])
+        command = shell_command(shell, script, step["name"])
         step_cap = minutes(step["timeout"], context, 0) if step["timeout"] is not None else None
         out.write("== %s\n" % step["name"])
         out.flush()
@@ -896,7 +904,8 @@ def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout, allow
     if result is not None:
         with open(result, "w") as handle:
             json.dump({"workflow": os.path.basename(workflow), "job": job_key, "sets": sets, "commit": commit,
-                       "clean": clean, "host": platform.node(), "green": green, "seconds": round(total, 1),
+                       "clean": clean, "host": platform.node(), "runner_os": Context({}).lookup("runner.os"),
+                       "green": green, "seconds": round(total, 1),
                        "cap_seconds": job_cap, "over_cap": over, "allow_over_cap": allow_over_cap,
                        "exit": status, "steps": timings}, handle, indent=1, sort_keys=True)
             handle.write("\n")
@@ -938,7 +947,12 @@ def workflow_rows(workflow, jobs, sets):
                 row_sets["matrix.%s" % key] = text_of(row.get(key))
             row_context = Context(row_sets)
             name = substitute(info["name"], row_context) if info["name"] else job
-            values = {key: text_of(row.get(key)) for key in sorted(info["matrix_keys"])}
+            if row and "matrix" not in (info["name"] or ""):
+                # GitHub adds the row's values to a name that does not read the matrix
+                name = "%s (%s)" % (name, ", ".join(text_of(value) for value in row.values()))
+            # every value of the row (runs-on's included) and every one the job reads: a replay matches
+            # a row only on all of them, so one replay never stands in for two rows
+            values = {key: text_of(row.get(key)) for key in sorted(all_keys | info["matrix_keys"])}
             runs_on = info["runs-on"] or ""
             match = re.match(r"^\$\{\{(.*)\}\}$", runs_on)
             if match:
@@ -952,6 +966,20 @@ def workflow_rows(workflow, jobs, sets):
     return rows, summaries, skipped
 
 
+def cannot_replay(job, name, needs):
+    return ("CANNOT REPLAY %s (job %s): it needs %s, whose results exist only in a real run (a summary job "
+            "reads the run's job list); no replay covers it\n" % (name, job, ", ".join(needs)))
+
+
+def row_os(runs_on):
+    """The OS a row's runs-on names (Linux, macOS, Windows), or None when its labels do not say."""
+    labels = runs_on.lower()
+    for word, name in (("windows", "Windows"), ("macos", "macOS"), ("linux", "Linux"), ("ubuntu", "Linux")):
+        if word in labels:
+            return name
+    return None
+
+
 def print_rows(workflow, jobs, sets, out=sys.stdout):
     rows, summaries, skipped = workflow_rows(workflow, jobs, sets)
     tier = "nightly tier (inputs.full)" if truthy(Context(sets).lookup("inputs.full")) else "a commit"
@@ -960,8 +988,7 @@ def print_rows(workflow, jobs, sets, out=sys.stdout):
                            ["--set %s" % shlex.quote(item) for item in row["sets"]])
         out.write("ROW %s\n    runs-on %s\n    %s\n" % (row["name"], row["runs-on"], command))
     for job, name, needs in summaries:
-        out.write("CANNOT REPLAY %s (job %s): it needs %s and reads the run's job list; only a real run has "
-                  "its verdict\n" % (name, job, ", ".join(needs)))
+        out.write(cannot_replay(job, name, needs))
     for job, name, why in skipped:
         out.write("NOT RUN %s (job %s) on %s: if: %s\n" % (name, job, tier, why))
     out.write("rows: %s on %s: %d replayable row(s), %d summary job(s) that cannot be replayed, %d job(s) not run\n"
@@ -986,16 +1013,34 @@ def read_results(paths):
     return results
 
 
-def matches(row, result, workflow, commit, full):
+def context_sets(sets):
+    """The --set values that are not the matrix row, inputs.full read as true or not."""
+    out = {}
+    for key, value in sets.items():
+        if key.startswith("matrix."):
+            continue
+        if key == "inputs.full":
+            value = "true" if truthy(plain(value)) and value != "false" else ""
+        if value != "":
+            out[key] = value
+    return out
+
+
+def matches(row, result, workflow, commit, sets):
     if result.get("job") != row["job"] or result.get("workflow") != os.path.basename(workflow):
         return False
     if not result.get("commit") or not commit or not result["commit"].startswith(commit):
         return False
-    sets = result.get("sets") or {}
-    if text_of(plain(sets.get("inputs.full", ""))) != text_of(full):
+    wanted = row_os(row["runs-on"])
+    if wanted is not None and result.get("runner_os") != wanted:
         return False
-    for key, value in row["values"].items():
-        if sets.get("matrix.%s" % key, "") != value:
+    replayed = result.get("sets") or {}
+    # the same context (inputs, github.*, runner.*) and the same value for every matrix key
+    if context_sets(replayed) != context_sets(sets):
+        return False
+    matrix = dict((key[len("matrix."):], value) for key, value in replayed.items() if key.startswith("matrix."))
+    for key in set(matrix) | set(row["values"]):
+        if matrix.get(key, "") != row["values"].get(key, ""):
             return False
     return True
 
@@ -1005,10 +1050,9 @@ def coverage(workflow, jobs, sets, commit, paths, out=sys.stdout):
         raise ReplayError("--commit wants at least seven hex digits of the commit, got %r" % commit)
     rows, summaries, skipped = workflow_rows(workflow, jobs, sets)
     results = read_results(paths)
-    full = True if truthy(Context(sets).lookup("inputs.full")) else None
     counts = {"GREEN": 0, "RED": 0, "OVER CAP": 0, "NOT CLEAN": 0, "NONE": 0}
     for row in rows:
-        found = [result for result in results if matches(row, result, workflow, commit, full)]
+        found = [result for result in results if matches(row, result, workflow, commit, sets)]
         verdict, detail = "NONE", "no replay result at %s" % commit
         for result in found:
             if not result.get("clean"):
@@ -1027,13 +1071,13 @@ def coverage(workflow, jobs, sets, commit, paths, out=sys.stdout):
         counts[verdict] += 1
         out.write("%-9s %s: %s\n" % (verdict, row["name"], detail))
     for job, name, needs in summaries:
-        out.write("CANNOT REPLAY %s (job %s): it needs %s and reads the run's job list; only a real run has "
-                  "its verdict\n" % (name, job, ", ".join(needs)))
+        out.write(cannot_replay(job, name, needs))
     out.write("coverage: %s at %s: %d row(s): %d green, %d red, %d over cap, %d not clean, %d with no replay; "
-              "%d summary job(s) cannot be replayed\n"
+              "%d job(s) with needs: that no replay covers\n"
               % (workflow, commit, len(rows), counts["GREEN"], counts["RED"], counts["OVER CAP"], counts["NOT CLEAN"],
                  counts["NONE"], len(summaries)))
-    return 0 if rows and counts["GREEN"] == len(rows) else 1
+    # a job no replay can cover is not covered: name only the jobs a replay stands in for (--job)
+    return 0 if rows and counts["GREEN"] == len(rows) and not summaries else 1
 
 
 # --- self-test ---------------------------------------------------------------
@@ -1139,6 +1183,9 @@ jobs:
       - name: A template shell
         shell: bash --noprofile --norc -e {0}
         run: echo template > template.txt
+      - name: A template with {0} inside a word
+        shell: bash -c "source {0}"
+        run: echo embedded > embedded.txt
 """
 
 # The caps: a per-commit job of two minutes, a step with its own cap.
@@ -1199,6 +1246,13 @@ jobs:
             shard: none
     steps:
       - run: echo ${{ matrix.shard }}
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - run: "true"
   nightly:
     if: inputs.full
     runs-on: x
@@ -1297,6 +1351,7 @@ def self_test():
             checks += [
                 ("shell: a step's own sh overrides the workflow's", "FAIL The step's own sh" not in sink.text),
                 ("shell: a {0} template runs the script", read("template.txt") == "template"),
+                ("shell: {0} inside a word is the script", read("embedded.txt") == "embedded"),
             ]
 
             # (b) the job's cap and each step's, on a clock the test turns
@@ -1348,13 +1403,15 @@ def self_test():
                 handle.write(ROWS)
             rows, summaries, skipped = workflow_rows(rows_path, [], {})
             names = [row["name"] for row in rows]
+            linux = '["self-hosted","Linux"]'
+            macos = '["self-hosted","macOS"]'
             checks += [
                 ("rows: product, exclude, include joins and new rows",
                  names == ["linux / checks", "macos / unit", "linux / unit (0/2)", "linux / unit (1/2)",
-                           "block (a)", "block (b)"]),
+                           "block (a)", "block (b)", "build (ubuntu-latest)", "build (macos-latest)"]),
                 ("rows: an include joins the row it matches", rows[0]["values"] == {
-                    "leg": "checks", "os": "linux", "shard": "", "split": "true"}),
-                ("rows: runs-on is not a value a replay sets", "runner" not in rows[0]["values"]),
+                    "leg": "checks", "os": "linux", "runner": linux, "shard": "", "split": "true"}),
+                ("rows: runs-on's matrix value is a row value", rows[1]["values"]["runner"] == macos),
                 ("rows: a summary job cannot be replayed, by name",
                  summaries == [("summary", "split summary", ["split", "blocks"])]),
                 ("rows: a nightly-only job is not run on a commit", [job for job, _, _ in skipped] == ["nightly"]),
@@ -1363,7 +1420,8 @@ def self_test():
             checks.append(("rows: nightly tier, later includes overwrite added values",
                            [row["name"] for row in full_rows] == [
                                "linux / unit (1/2)", "linux / checks", "macos / unit", "macos / checks",
-                               "block (a)", "block (b)", "nightly"] and not full_skipped))
+                               "block (a)", "block (b)", "build (ubuntu-latest)", "build (macos-latest)",
+                               "nightly"] and not full_skipped))
             sink = Sink()
             print_rows(rows_path, [], {}, out=sink)
             checks.append(("rows: --rows names the summary job it cannot replay",
@@ -1375,22 +1433,29 @@ def self_test():
 
             def result(name, job, values, **fields):
                 data = {"workflow": "rows.yml", "job": job, "commit": sha, "clean": True, "green": True,
-                        "seconds": 10.0, "cap_seconds": 120.0, "over_cap": [], "allow_over_cap": False,
+                        "runner_os": "Linux", "seconds": 10.0, "cap_seconds": 120.0, "over_cap": [],
+                        "allow_over_cap": False,
                         "sets": dict(("matrix.%s" % key, value) for key, value in values.items())}
                 data.update(fields)
                 with open(os.path.join(results, name + ".json"), "w") as handle:
                     json.dump(data, handle)
 
-            split = {"leg": "", "os": "", "shard": "", "split": ""}
+            split = {"leg": "", "os": "", "shard": "", "split": "", "runner": linux}
             result("checks", "split", dict(split, leg="checks", os="linux", split="true"))
             result("checks-wrong-values", "split", dict(split, leg="checks", os="linux"), green=False)
-            result("macos-unit", "split", dict(split, leg="unit", os="macos"), over_cap=["150 s against 120 s"])
+            result("macos-unit", "split", dict(split, leg="unit", os="macos", runner=macos), runner_os="macOS",
+                   over_cap=["150 s against 120 s"])
             result("unit-0", "split", dict(split, leg="unit", os="linux", shard="0/2"),
                    over_cap=["150 s against 120 s"], allow_over_cap=True)
             result("unit-1-other-commit", "split", dict(split, leg="unit", os="linux", shard="1/2"),
                    commit="def5678" + "0" * 33)
             result("block-a", "blocks", {"leg": "a", "shard": "0/2"}, green=False)
             result("block-b", "blocks", {"leg": "b", "shard": "none"}, clean=False)
+            # one Linux replay with no matrix values must not stand in for either build row, nor one with
+            # the macOS row's value run on Linux for the macOS row
+            result("build-no-values", "build", {})
+            result("build-ubuntu", "build", {"os": "ubuntu-latest"})
+            result("build-macos-on-linux", "build", {"os": "macos-latest"})
             sink = Sink()
             status = coverage(rows_path, [], {}, "abc1234", [results], out=sink)
             lines = dict((line[10:].split(":")[0], line[:9].strip()) for line in sink.text.split("\n")
@@ -1398,11 +1463,19 @@ def self_test():
             checks += [
                 ("coverage: each row's verdict", lines == {
                     "linux / checks": "GREEN", "macos / unit": "OVER CAP", "linux / unit (0/2)": "GREEN",
-                    "linux / unit (1/2)": "NONE", "block (a)": "RED", "block (b)": "NOT CLEAN"}),
+                    "linux / unit (1/2)": "NONE", "block (a)": "RED", "block (b)": "NOT CLEAN",
+                    "build (ubuntu-latest)": "GREEN", "build (macos-latest)": "NONE"}),
                 ("coverage: a row with no green replay exits 1", status == 1),
                 ("coverage: names the summary job it cannot replay",
                  "CANNOT REPLAY split summary (job summary)" in sink.text),
             ]
+            sink = Sink()
+            status = coverage(rows_path, ["build"], {"github.event_name": "push"}, "abc1234", [results], out=sink)
+            checks.append(("coverage: a replay under other --set values covers nothing",
+                           status == 1 and "2 with no replay" in sink.text))
+            sink = Sink()
+            status = coverage(rows_path, ["build"], {"inputs.full": "false"}, "abc1234", [results], out=sink)
+            checks.append(("coverage: inputs.full=false is the per-commit tier", "1 green" in sink.text))
 
             # a real replay's result file covers its row, at the commit it ran on
             ran = os.path.join(directory, "ran")
@@ -1419,6 +1492,10 @@ def self_test():
             status = coverage(rows_path, ["blocks"], {}, "def5678", [ran], out=sink)
             checks.append(("coverage: another commit's replays cover nothing",
                            status == 1 and "2 with no replay" in sink.text))
+            sink = Sink()
+            status = coverage(rows_path, ["blocks", "summary"], {}, sha, [ran], out=sink)
+            checks.append(("coverage: a job with needs: listed keeps the exit 1",
+                           status == 1 and "2 row(s): 2 green" in sink.text and "CANNOT REPLAY" in sink.text))
         finally:
             os.chdir(cwd)
     for name, ok in checks:
