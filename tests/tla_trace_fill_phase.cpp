@@ -38,7 +38,11 @@
 //
 // The environment is free to break the contract, as in the model: the main
 // thread and the fillers run at once, and two fillers may pick one client.
-// Every refusal is then a step of the model too.
+// Every refusal is then a step of the model too. A fill call let in makes
+// one or two calls for its client inside it now and then (FillPeek,
+// FillNest, FillUnnest), as the message layer's start makes the transport's
+// start_packet; a filler that picks a client another holds takes the same
+// nested test and is refused there (FillNest).
 //
 // The plant (ROCKETNET_FILL_PHASE_PLANT, tla_trace_plant_fill_phase)
 // restores the defect MCRNFillPhaseBrokenNoRestore names: a refused look
@@ -103,6 +107,10 @@ enum fp_pc_t
     FP_EPOCHED,
     FP_TCOUNTED,
     FP_TIN,
+    FP_NBEGUN,                                      // a call nested in the filler's own loaded the epoch (FillBegin)
+    FP_PEEKED,                                      // a call not inside found the word claimed (FillPeek)
+    FP_NPEEKED,                                     // a call nested in the filler's own did
+    FP_NESTED,                                      // a call not inside taken as nested: never (NoFalseNest)
 };
 
 // a main operation's kind: what the walk's main thread calls next, and the
@@ -127,7 +135,7 @@ struct fp_step_t
 struct fp_word_t
 {
     uint64_t ep;
-    bool held;
+    uint64_t depth;
     bool in;
 };
 
@@ -139,6 +147,7 @@ struct fp_walk_t
     int running;
     int next_client[FP_ACTORS];
     bool next_take[FP_ACTORS];                      // a filler's next call is a take
+    int next_nest[FP_ACTORS];                       // the calls a filler's next fill call makes nested inside it
     fp_main_kind_t next_kind;                       // the main thread's next operation
     uint64_t id[FP_ACTORS];
     fp_step_t step[FP_ACTORS];
@@ -171,6 +180,11 @@ struct fp_walk_t
 
     // the latch's ghost: the game has named a client (the walk's own arm step)
     bool opted;
+
+    // the message layer's stage, the update open (RNFillPhase stage): the
+    // walk drives a bare check with no message server, so this is the walk's
+    // own bookkeeping of what its update calls left, not read from the code
+    bool stage;
 };
 
 static thread_local int fp_this_actor = -1;
@@ -199,6 +213,10 @@ static std::string fp_pc_text( fp_pc_t pc )
         case FP_EPOCHED:   return "\"epoched\"";
         case FP_TCOUNTED:  return "\"tcounted\"";
         case FP_TIN:       return "\"tin\"";
+        case FP_NBEGUN:    return "\"nbegun\"";
+        case FP_PEEKED:    return "\"peeked\"";
+        case FP_NPEEKED:   return "\"npeeked\"";
+        case FP_NESTED:    return "\"nested\"";
         case FP_IDLE:      break;
     }
     return "\"idle\"";
@@ -221,18 +239,26 @@ static bool fp_window( const fp_walk_t * walk )
     return walk->phase->window.load() != 0;
 }
 
+// the stage an operation of this kind leaves (RNFillPhase UpdateWork): an
+// update_receive opens the update, an update_finish closes it, another
+// operation leaves it
+static bool fp_stage_after( const fp_walk_t * walk, fp_main_kind_t kind )
+{
+    return kind == FP_KIND_OTHER ? walk->stage : kind == FP_KIND_RECEIVE;
+}
+
 static fp_word_t fp_word( uint64_t word )
 {
     fp_word_t w;
     w.ep = word >> ROCKETNET_FILL_PHASE_EPOCH_SHIFT;
-    w.held = ( word & ROCKETNET_FILL_PHASE_DEPTH_MASK ) != 0;
+    w.depth = ( word & ROCKETNET_FILL_PHASE_DEPTH_MASK ) >> ROCKETNET_FILL_PHASE_DEPTH_SHIFT;
     w.in = ( word & ROCKETNET_FILL_PHASE_IN ) != 0;
     return w;
 }
 
 static std::string fp_word_text( fp_word_t w )
 {
-    return "[ep |-> " + tla_int( (int64_t) w.ep ) + ", held |-> " + tla_bool( w.held ) + ", in |-> " + tla_bool( w.in ) + "]";
+    return "[ep |-> " + tla_int( (int64_t) w.ep ) + ", depth |-> " + tla_int( (int64_t) w.depth ) + ", in |-> " + tla_bool( w.in ) + "]";
 }
 
 // the filler whose thread id this is, -1 for 0, -2 for an id no filler has
@@ -320,6 +346,7 @@ static tla_record_t fp_state( fp_walk_t * walk )
     record.add( "saved", tla_function( fillers, saved ) );
     record.add( "mainCalls", tla_int( walk->phase->main_calls.load() ) );
     record.add( "window", tla_bool( fp_window( walk ) ) );
+    record.add( "stage", tla_bool( walk->stage ) );
     record.add( "fillsIn", tla_function( lines, fills_in ) );
     record.add( "fline", tla_function( fillers, fline ) );
     record.add( "epoch", tla_int( (int64_t) walk->phase->epoch.load() ) );
@@ -430,6 +457,7 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
         }
         else if ( action == "MainEpoch" )
         {
+            walk->stage = fp_stage_after( walk, walk->mkind );
             walk->mpc = FP_EPOCHED;
             memset( walk->phase_in, 0, sizeof( walk->phase_in ) );
         }
@@ -447,6 +475,12 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
     }
 
     const int f = actor - 1;
+    if ( action == "FillBegin" && walk->fpc[f] == FP_IN )
+    {
+        walk->fpc[f] = FP_NBEGUN;                   // a call nested in its own: FillMeets
+        walk->fbroke[f] = walk->fbroke[f] || main_busy;
+        return true;
+    }
     if ( action == "FillBegin" )
     {
         walk->fpc[f] = FP_BEGUN;
@@ -498,6 +532,33 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
     {
         walk->fpc[f] = FP_IN;
         walk->phase_in[c][f] = true;
+    }
+    else if ( action == "FillPeek" && walk->fpc[f] == FP_NBEGUN )
+    {
+        walk->fpc[f] = FP_NPEEKED;                  // nested in its own call: the word is its own
+    }
+    else if ( action == "FillPeek" )
+    {
+        walk->fpc[f] = FP_PEEKED;
+        walk->seen[f] = fp_word( step->word );
+    }
+    else if ( action == "FillNest" && walk->fpc[f] == FP_NPEEKED )
+    {
+        // a nested call, let in or refused at the depth: the outer call goes on
+        walk->false_alarm = walk->false_alarm || walk->last_owner[c] != f;
+        walk->fpc[f] = FP_IN;
+    }
+    else if ( action == "FillNest" && step->refused )
+    {
+        fp_fill_refused( walk, f );
+    }
+    else if ( action == "FillNest" )
+    {
+        walk->fpc[f] = FP_NESTED;
+    }
+    else if ( action == "FillUnnest" )
+    {
+        walk->fpc[f] = FP_IN;
     }
     else if ( action == "FillUnclaim" )
     {
@@ -597,7 +658,13 @@ static void fp_actor( fp_walk_t * walk, int me )
         }
         else
         {
+            // a call let in may make calls for its client inside it, as the
+            // message layer's start makes the transport's start_packet
             rocketnet_fill_phase_fill_scope_t scope( walk->phase, walk->next_client[me] );
+            for ( int n = 0; scope.fill_phase && scope.entered && n < walk->next_nest[me]; n++ )
+            {
+                rocketnet_fill_phase_fill_scope_t inner( walk->phase, walk->next_client[me] );
+            }
         }
     }
     std::unique_lock<std::mutex> lock( walk->mutex );
@@ -628,7 +695,7 @@ static const char * fp_op( int actor, const std::string & action )
     {
         return "take_end";
     }
-    return action == "FillUnclaim" || action == "FillLeave" ? "fill_end" : "fill_begin";
+    return action == "FillUnclaim" || action == "FillLeave" || action == "FillUnnest" ? "fill_end" : "fill_begin";
 }
 
 // the step's arguments in the model's order, what it gave back among them:
@@ -653,7 +720,7 @@ static std::string fp_args( const fp_walk_t * walk, int actor, const fp_step_t *
     }
     if ( action == "MainEpoch" )
     {
-        return tla_sequence( { tla_bool( fp_window( walk ) ) } );
+        return tla_sequence( { tla_bool( fp_window( walk ) ), tla_bool( fp_stage_after( walk, walk->mkind ) ) } );
     }
     if ( actor == 0 )
     {
@@ -668,7 +735,7 @@ static std::string fp_args( const fp_walk_t * walk, int actor, const fp_step_t *
     {
         return tla_sequence( { f, tla_int( (int64_t) step->word ) } );
     }
-    if ( action == "FillLock" || action == "FillDecide" || action == "FillLook" || action == "TakeLook" )
+    if ( action == "FillLock" || action == "FillDecide" || action == "FillLook" || action == "FillNest" || action == "TakeLook" )
     {
         return tla_sequence( { f, ok } );
     }
@@ -816,6 +883,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
             {
                 walk->next_client[a] = random.below( FP_CLIENTS );
                 walk->next_take[a] = random.below( fp_window( walk ) ? 2 : 4 ) == 0;
+                walk->next_nest[a] = random.below( 3 ) == 0 ? 1 + random.below( 2 ) : 0;
             }
             if ( a == 0 && walk->state[0] == FP_READY )
             {
@@ -849,8 +917,11 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                     if ( a == 0 )
                     {
                         walk->mains_done++;
+                        walk->stage = fp_stage_after( walk, walk->next_kind );
                         report.act( "MainSkip" );
-                        records.push_back( tla_step( "main_scope", "MainSkip", tla_sequence( { tla_bool( fp_window( walk ) ) } ), fp_state( walk ) ) );
+                        records.push_back( tla_step( "main_scope", "MainSkip",
+                                                     tla_sequence( { fp_kind_text( walk->next_kind ), tla_bool( fp_window( walk ) ), tla_bool( walk->stage ) } ),
+                                                     fp_state( walk ) ) );
                     }
                     else if ( walk->next_take[a] )
                     {
@@ -877,9 +948,9 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                 // plant would leave in place: the plant's chance, the same
                 // in both builds
                 const int f = a - 1;
-                const fp_word_t left = { walk->fepoch[f], false, false };
+                const fp_word_t left = { walk->fepoch[f], 0, false };
                 const fp_word_t back = walk->seen[f];
-                if ( back.ep != left.ep || back.held || back.in || walk->saved[f] != f )
+                if ( back.ep != left.ep || back.depth != 0 || back.in )
                 {
                     chances++;
                 }
@@ -887,7 +958,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                 // not the one it replaced, which the clean code never leaves
                 const int c = walk->fclient[f];
                 const fp_word_t now = fp_word( walk->phase->clients[c].claim.load() );
-                planted = now.ep != back.ep || now.held != back.held || now.in != back.in ||
+                planted = now.ep != back.ep || now.depth != back.depth || now.in != back.in ||
                           fp_owner( walk, walk->phase->clients[c].owner.load() ) != walk->saved[f];
             }
             refused += step->refused ? 1 : 0;
@@ -1016,7 +1087,9 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                                   "    MaxTakes = " + tla_int( walk->calls ) + "\n" +
                                   "    LookFirst = FALSE\n    LoadStore = FALSE\n    ResetOnLeave = TRUE\n    NoEpochLook = FALSE\n" +
                                   "    NoRestore = FALSE\n    ScanOne = FALSE\n    NoWindow = FALSE\n    NoMainWindow = FALSE\n" +
-                                  "    TakeUncounted = FALSE\n    OptedAtStart = FALSE\n    ArmedAtCreate = FALSE\n" + "    Lines = " + lines + "\n";
+                                  "    TakeUncounted = FALSE\n    OptedAtStart = FALSE\n    ArmedAtCreate = FALSE\n" +
+                                  "    OwnerAtDecide = FALSE\n    KickAll = FALSE\n    ShutOnEarly = FALSE\n    ScanFirst = FALSE\n    DepthMax = " + tla_int( ROCKETNET_FILL_PHASE_DEPTH_MAX ) + "\n" +
+                                  "    Lines = " + lines + "\n";
     const bool written = tla_write_trace( out, "MCTraceFillPhase", seed, "TraceRNFillPhase", "", constants, records );
 
     walk->phase->~rocketnet_fill_phase_t();

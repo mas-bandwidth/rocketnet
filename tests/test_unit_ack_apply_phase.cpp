@@ -508,3 +508,42 @@ static void test_ack_apply_split_update_misuse_is_counted()
 }
 
 REGISTER_UNIT_TEST( test_ack_apply_split_update_misuse_is_counted );
+
+// a settle while the clients are open to the jobs is refused in every build
+// (proofs/tla/RNAckApplyPhase.tla Settle: main, while receiving): the client's
+// blocks stay queued and claimed, and its job applies them as before
+static void test_ack_apply_settle_while_open_refused()
+{
+    struct rocketnet_server_acks_t * acks = rocketnet_server_acks_create( NULL, 2 );
+    rocketnet_unit_check( acks && rocketnet_server_acks_defer( acks ) );
+    for ( uint64_t s = 1; s <= 8; s++ )
+    {
+        rocketnet_ack_endpoint_record_sent_classified( &acks->endpoints[1], s, 100, 7000 + s, 1, 1000.0 );
+    }
+
+    struct rocketnet_ack_block_t block;
+    memset( &block, 0, sizeof( block ) );
+    block.largest = 8;
+    block.first_range_length = 8;
+    uint64_t ids[2 * ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+    uint64_t unknown = 0;
+    uint64_t full = 0;
+
+    rocketnet_server_acks_begin_receive( acks, 1000.5 );
+    rocketnet_server_acks_receive_block( acks, 1, &block, 1000.5, 0xC1, ids, &unknown, &full );
+    rocketnet_server_acks_open( acks );
+
+    rocketnet_assert_function( ack_phase_quiet_assert );
+    rocketnet_server_acks_settle( acks, 1 );
+    rocketnet_assert_function( NULL );
+    rocketnet_unit_check( acks->endpoints[1].largest_acked_sequence == 0 );
+
+    rocketnet_unit_check( rocketnet_server_acks_apply_client( acks, 1 ) == 1 );
+    rocketnet_unit_check( acks->endpoints[1].largest_acked_sequence == 8 );
+    rocketnet_server_acks_close( acks, ids, &unknown, &full );
+    rocketnet_unit_check( acks->num_acked == 8 && acks->num_pending == 0 );
+
+    rocketnet_server_acks_destroy( acks );
+}
+
+REGISTER_UNIT_TEST( test_ack_apply_settle_while_open_refused );

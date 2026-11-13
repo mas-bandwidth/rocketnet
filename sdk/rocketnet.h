@@ -1081,9 +1081,10 @@ struct rocketnet_client_t;
 ///   for one client index comes from one thread, so a message is finished or
 ///   aborted by the thread that started it. (rocketnet_server_finish_message
 ///   and rocketnet_server_abort_message, the calls of a server used one
-///   thread at a time, may come from another thread: they count as a main
-///   thread call first.) Different clients may be sent to
-///   from different threads at the same time. The thread that sends to a
+///   thread at a time, may come from another thread: once the check has
+///   begun they always count as a main thread call.) Different clients may
+///   be sent to from different threads at the same time. The thread that
+///   sends to a
 ///   client may change after a main thread call that is checked (below);
 ///   messages two threads write to one client between two
 ///   rocketnet_server_send_packets calls may then leave in either order.
@@ -3335,8 +3336,14 @@ ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * serve
 /// MAIN_THREAD_CALL_OVERLAP; so are rocketnet_server_update_client during a
 /// main thread call, and rocketnet_server_update_finish while a game thread
 /// is still in rocketnet_server_update_client. rocketnet_server_update or
-/// rocketnet_server_update_receive called again inside the update is not
-/// refused: it counts as API misuse and finishes the open update first.
+/// rocketnet_server_update_receive called while the update is open (no
+/// rocketnet_server_update_finish, or a refused one) is not refused: it
+/// counts as API misuse once, finishes the open update and begins none.
+/// Nobody is disconnected: the messages that finish delivers wait for
+/// rocketnet_server_receive_messages, and the call's time is not taken. A
+/// rocketnet_server_update_receive that finished the open update this way
+/// is followed by the game's update_client and update_finish calls as
+/// usual: update_client finds nothing, and update_finish returns.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
 /// @param time As rocketnet_server_update's.
@@ -3661,10 +3668,12 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 /// server, whichever thread started it. With more than one open it cannot
 /// tell which is meant: that counts as API misuse, asserts in a debug build
 /// and returns 0 in a release build. Thread: not thread-safe; the caller owns
-/// the server one thread at a time. When the message was started on another
-/// thread the call counts as a main thread call first (see
-/// rocketnet_server_t), so no other thread may be inside a server call.
-/// Game threads use rocketnet_server_finish_client_message.
+/// the server one thread at a time. Once the check has begun (see
+/// rocketnet_server_t) it always counts as a main thread call, wherever the
+/// message was started: no other thread may be inside a server call, and
+/// between rocketnet_server_update_receive and
+/// rocketnet_server_update_finish it is refused. Game threads use
+/// rocketnet_server_finish_client_message.
 ///
 /// @param server The server. NULL counts as API misuse and returns 0.
 /// @param bytes_written The bytes written into the open message.
@@ -3680,8 +3689,8 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// and does nothing.
 ///
 /// Callable running or stopped. Thread: not thread-safe; the caller owns the
-/// server one thread at a time. When the message was started on another
-/// thread the call counts as a main thread call first, as
+/// server one thread at a time. Once the check has begun (see
+/// rocketnet_server_t) it always counts as a main thread call, as
 /// rocketnet_server_finish_message. Game threads use
 /// rocketnet_server_abort_client_message.
 ///

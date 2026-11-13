@@ -4,9 +4,10 @@
 (* template TraceRNTraceExample.tla.  TraceLog is the record sequence      *)
 (* tests/tla_trace_fill_phase.cpp writes over sdk/rocketnet_fill_phase.cpp *)
 (* run by real threads, one main and three fillers, released one step at  *)
-(* a time from the code's own trace hook (a filler makes fill calls and   *)
-(* takes, the main thread update calls that open and close the window and *)
-(* other operations): one record per step, with the                       *)
+(* a time from the code's own trace hook (a filler makes fill calls, some *)
+(* with calls nested inside, and takes, the main thread update calls that *)
+(* open and close the window and other operations): one record per step,  *)
+(* with the                                                                *)
 (* operation the thread was in (op), the step's arguments and what it     *)
 (* gave back (args), the model action the hook named (act) and every      *)
 (* model variable after it (state).  Record 1 is "init".                   *)
@@ -44,7 +45,7 @@ VARIABLES ti,        \* the index of the record the state matches
 
 \* every model variable by the field name the harness writes
 VarsRec == [mpc |-> mpc, mscan |-> mscan, mkind |-> mkind, fpc |-> fpc, fclient |-> fclient, fepoch |-> fepoch,
-            seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, window |-> window, fillsIn |-> fillsIn,
+            seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, window |-> window, stage |-> stage, fillsIn |-> fillsIn,
             fline |-> fline, epoch |-> epoch, word |-> word, owner |-> owner, armed |-> armed,
             overlaps |-> overlaps, twoFillers |-> twoFillers, opted |-> opted,
             fbroke |-> fbroke,
@@ -54,8 +55,8 @@ VarsRec == [mpc |-> mpc, mscan |-> mscan, mkind |-> mkind, fpc |-> fpc, fclient 
 \* the steps each call of the code can take
 OpActs == [main_begin |-> {"MainAnnounce", "MainLook", "MainIn"},
            main_end |-> {"MainEpoch", "MainDrop"},
-           fill_begin |-> {"FillBegin", "FillLock", "FillDecide", "FillCount", "FillLook"},
-           fill_end |-> {"FillUnclaim", "FillLeave"},
+           fill_begin |-> {"FillBegin", "FillLock", "FillDecide", "FillCount", "FillLook", "FillPeek", "FillNest"},
+           fill_end |-> {"FillUnnest", "FillUnclaim", "FillLeave"},
            take_begin |-> {"TakeCount", "TakeLook"},
            take_end |-> {"TakeLeave"},
            fill_scope |-> {"FillSkip"},
@@ -68,9 +69,9 @@ OpActs == [main_begin |-> {"MainAnnounce", "MainLook", "MainIn"},
 Act(a, x) == CASE a = "MainAnnounce" -> MainAnnounce(x[1])
                [] a = "MainLook" -> MainLook(x[1], x[2])
                [] a = "MainIn" -> MainIn(x[1])
-               [] a = "MainEpoch" -> MainEpoch(x[1])
+               [] a = "MainEpoch" -> MainEpoch(x[1], x[2])
                [] a = "MainDrop" -> MainDrop
-               [] a = "MainSkip" -> MainSkip(x[1])
+               [] a = "MainSkip" -> MainSkip(x[1], x[2], x[3])
                [] a = "FillSkip" -> FillSkip(x[1])
                [] a = "TakeSkip" -> TakeSkip(x[1])
                [] a = "Arm" -> Arm
@@ -79,6 +80,9 @@ Act(a, x) == CASE a = "MainAnnounce" -> MainAnnounce(x[1])
                [] a = "FillDecide" -> FillDecide(x[1], x[2])
                [] a = "FillCount" -> FillCount(x[1], x[2])
                [] a = "FillLook" -> FillLook(x[1], x[2])
+               [] a = "FillPeek" -> FillPeek(x[1])
+               [] a = "FillNest" -> FillNest(x[1], x[2])
+               [] a = "FillUnnest" -> FillUnnest(x[1])
                [] a = "FillUnclaim" -> FillUnclaim(x[1])
                [] a = "FillLeave" -> FillLeave(x[1])
                [] a = "TakeCount" -> TakeCount(x[1], x[2])
@@ -98,6 +102,8 @@ TakeInWindow == window /\ mpc = "idle" /\ \E f \in Fillers : fpc[f] = "tin"
 TwoTakesInWindow == window /\ \E f, g \in Fillers : f # g /\ fpc[f] = "tin" /\ fpc[g] = "tin"
 RefusedMainBesideTake == refusal = "MainLook" /\ \E f \in Fillers : fpc[f] = "tin"
 WindowOpened == window /\ mpc = "epoched" /\ mkind = "update"
+RefusedFillNest == refusal = "FillNest" /\ \E f \in Fillers : fpc[f] = "in"
+NestedCall == \E f \in Fillers : fpc[f] = "in" /\ word[fclient[f]].depth > 1
 
 TraceInit ==
     /\ Init

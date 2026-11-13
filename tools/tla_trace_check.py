@@ -165,14 +165,26 @@ LAYERS = {
             "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
             "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",
             "FillStore": "a reversed witness's step (LoadStore); the code locks by one CAS",
+            "FillUnwind1": "a reversed witness's step (OwnerAtDecide: a refused look puts the owner back); the code "
+                           "never writes the owner before its look lets it in",
+            "FillUnwind2": "a reversed witness's step (OwnerAtDecide: the refused look's last store); the code's "
+                           "refused look is one store, in FillLook",
+            "PlainScan": "a reversed witness's step (ScanFirst: the plain finish and abort scan before any check); "
+                         "the code makes them main operations of kind other (MainAnnounce .. MainDrop)",
             "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
                     "so it never gets there",
         },
         "ghost": {"refusal": "history for the reach predicates: the last refusal step taken; the code keeps no such word, "
-                             "and the counts it does keep (overlaps, twoFillers) are compared"},
+                             "and the counts it does keep (overlaps, twoFillers) are compared",
+                  "kicked": "history for NoKickOnOpenUpdate: an update call that began the next update on an open one "
+                            "(KickAll); the walk drives a bare check with no message server, and the rule is bound by "
+                            "tests/wide_fill_cases.cpp test_wide_fill_split_update_open_update_call",
+                  "unchecked": "history for PlainChecked: a plain finish or abort that ran unchecked (ScanFirst); only "
+                               "PlainScan sets it, and the rule is bound by tests/wide_fill_cases.cpp "
+                               "test_wide_fill_plain_finish_checked"},
         "reach": ["RefusedMainLook", "RefusedMainIn", "RefusedFillLock", "RefusedFillDecide", "RefusedFillLookByMain",
                   "RefusedFillLookInWindow", "RefusedTakeLook", "TakeInWindow", "TwoTakesInWindow",
-                  "RefusedMainBesideTake", "WindowOpened"],
+                  "RefusedMainBesideTake", "WindowOpened", "RefusedFillNest", "NestedCall"],
         # each record carries the 64 fills_in lines, and a TLC run's time is the size of the log it reads: 400 steps
         # ran 35 to 53 s a run on a shared bench slot (vision, 2026-11-13) against the 100 s budget; a main call is 66
         # steps (one look a line), so a walk much shorter than this finishes none

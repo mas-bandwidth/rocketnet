@@ -1010,18 +1010,34 @@ static bool rn_message_link_splits_update( const struct rn_message_object_t * ob
 void rn_message_object_update_begin( struct rn_message_object_t * object, double time )
 {
     // the main thread's call: checked here for the begin of the update (the
-    // end is the main thread's too); an update call, which may finish an
-    // open update first
+    // end is the main thread's too); an update call, which may find an
+    // update open
     rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL, true );
     if ( !phase.entered )
     {
         return;
     }
+
+    // An update call made with the update in three calls still open (no update_finish, or a refused
+    // one) is API misuse, counted once. It finishes the open update and
+    // begins none: the deliveries that finish hands over wait for
+    // receive_messages, as after any finish, so no connection ends for
+    // messages the game never had the chance to receive (the check below
+    // runs at the next begin). Stage DONE carries the finish's result to
+    // this call's end (update) or to update_finish (update_receive), and
+    // the update's time is not taken. The rule is stated in
+    // proofs/tla/RNFillPhase.tla (KickedBy, NoKickOnOpenUpdate, the old
+    // order MCRNFillPhaseBrokenKickAll.cfg), which has no deliveries: it is
+    // bound to this code by test_wide_fill_split_update_open_update_call.
+
     if ( object->update_stage != RN_MESSAGE_UPDATE_CLOSED )
     {
         rocketnet_api_misuse_record();
         rocketnet_assert( object->update_stage == RN_MESSAGE_UPDATE_CLOSED && "end the update before the next begins" );
-        (void) rn_message_object_update_end( object );
+        const int finished = rn_message_object_update_end( object );
+        object->update_result = finished;
+        object->update_stage = RN_MESSAGE_UPDATE_DONE;
+        return;
     }
 
     int result = ROCKETNET_UPDATE_OK;
@@ -2879,6 +2895,21 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
     return server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call ? (rocketnet_server_transport_t *) server->object.link.transport : NULL;
 }
 
+// The window of the update in three calls follows the update's stage, set as
+// an update call's work ends (proofs/tla/RNFillPhase.tla MainEpoch,
+// UpdateWork, StageShut; MCRNFillPhaseBrokenShutOnEarly.cfg): open
+// while the update is open, whether or not the transport opened its own
+// (an update_receive whose first time is not finite, or whose transport is
+// not running, returns before the transport stores it), shut once it is
+// closed. The transport stores the same window for its own split calls.
+static void rn_message_window_follows_stage( struct rn_message_object_t * object )
+{
+    if ( object->fill_phase )
+    {
+        rocketnet_fill_phase_window( object->fill_phase, object->update_stage != RN_MESSAGE_UPDATE_CLOSED );
+    }
+}
+
 // proofs/tla/RNWriterFinish.tla BeginFill: after this main thread call the game threads may start and finish messages.
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time )
 {
@@ -2889,17 +2920,22 @@ int rocketnet_message_server_update( struct rocketnet_message_server_t * server,
     // one main-thread operation, checked before anything is written: a
     // refused update leaves the transport's update words as they were. An
     // update call: it may run with the update in three calls open, which it
-    // finishes first
+    // finishes, beginning none (rn_message_object_update_begin), so it opens
+    // no disconnect allowance: the open update's allowance is the one its
+    // finish spends
     rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase, true );
     if ( !phase.entered )
     {
         return ROCKETNET_UPDATE_OK;
     }
-    if ( server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
+    if ( server->object.update_stage == RN_MESSAGE_UPDATE_CLOSED &&
+         server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
     {
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     }
-    return rn_message_object_update( &server->object, time );
+    const int result = rn_message_object_update( &server->object, time );
+    rn_message_window_follows_stage( &server->object );
+    return result;
 }
 
 void rocketnet_message_server_update_receive( struct rocketnet_message_server_t * server, double time )
@@ -2910,17 +2946,21 @@ void rocketnet_message_server_update_receive( struct rocketnet_message_server_t 
     }
     // checked before anything is written, as update is: a refused
     // update_receive leaves the transport's disconnect allowance
-    // (disconnect_seals_left, disconnect_update_prepared) as it was
+    // (disconnect_seals_left, disconnect_update_prepared) as it was, and
+    // one that finds the update open finishes it and begins none, so it
+    // opens no second allowance either
     rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase, true );
     if ( !phase.entered )
     {
         return;
     }
-    if ( server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
+    if ( server->object.update_stage == RN_MESSAGE_UPDATE_CLOSED &&
+         server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
     {
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     }
     rn_message_object_update_begin( &server->object, time );
+    rn_message_window_follows_stage( &server->object );
 }
 
 int rocketnet_message_server_update_client_acks( struct rocketnet_message_server_t * server, int client_index )
@@ -2968,7 +3008,9 @@ int rocketnet_message_server_update_finish( struct rocketnet_message_server_t * 
     {
         return ROCKETNET_UPDATE_OK;
     }
-    return rn_message_object_update_end( &server->object );
+    const int result = rn_message_object_update_end( &server->object );
+    rn_message_window_follows_stage( &server->object );
+    return result;
 }
 
 void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server )
