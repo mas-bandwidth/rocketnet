@@ -121,8 +121,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client: computed, not measured
 // on Windows, from the 48000 and the 64 Linux measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468500159 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210172 )
+// The deferred ack apply (sdk/rocketnet_ack.h, rocketnet_server_acks_defer)
+// keeps one id segment per client (4096 x 8 bytes), a claim line per client
+// and a block queue sized to the receive budget: 34112476 bytes at 1000
+// clients; the message object's split update stage adds one 64-byte rounding
+// to the client: computed, not measured on Windows, from the Linux reading
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502612635 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -161,8 +166,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client: computed, not measured
 // on macOS, from the 48000 and the 64 Linux measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468500575 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987914 )
+// The deferred ack apply (sdk/rocketnet_ack.h, rocketnet_server_acks_defer)
+// keeps one id segment per client (4096 x 8 bytes), a claim line per client
+// and a block queue sized to the receive budget: 34112476 bytes at 1000
+// clients; the message object's split update stage adds one 64-byte rounding
+// to the client: computed, not measured on macOS, from the Linux reading
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502613051 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -231,8 +241,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client (measured, gcc
 // Debug: the probe's actual= lines are 3111724723 and 15186146).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110676147ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137570 )
+// The deferred ack apply (sdk/rocketnet_ack.h, rocketnet_server_acks_defer)
+// keeps one id segment per client (4096 x 8 bytes), a claim line per client
+// and a block queue sized to the receive budget: 34112476 bytes at 1000
+// clients; the message object's split update stage adds one 64-byte rounding
+// to the client (measured, gcc Debug: the probe's actual= lines are 3145837199 and
+// 15186210)
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3144788623ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137634 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

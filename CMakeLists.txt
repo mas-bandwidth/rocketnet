@@ -703,6 +703,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_unreliable_promotion.cpp
             tests/test_unit_window_sequences.cpp
             tests/test_unit_xdp_replay_marks.cpp
+            tests/test_unit_ack_apply_phase.cpp
             tests/test_unit_ack_block_walk.cpp
             tests/test_unit_ack_span_cost.cpp
             tests/test_unit_ack_stats.cpp
@@ -1168,6 +1169,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/disconnect_reasons_real.cpp
         tests/functional/production_paths.cpp
         tests/functional/client_io_threaded.cpp
+        tests/functional/ack_apply_threads.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)

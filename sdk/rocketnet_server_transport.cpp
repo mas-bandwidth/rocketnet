@@ -2553,15 +2553,19 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
 
     // the deferred ack apply (rocketnet_server_acks_t): its queue, the
     // per-client id segments and claims
-    bool acks_deferred = protocol->acks != NULL;
+    const bool acks_defer_failed = protocol->acks && !rocketnet_server_acks_defer( protocol->acks );
 #if ROCKETNET_DEV
+    // the seam keeps the storage (the memory plan stays the transport's) and
+    // turns only the deferral off
     if ( rocketnet_server_test_create_inline_acks )
     {
         rocketnet_server_test_create_inline_acks = false;
-        acks_deferred = false;
+        if ( protocol->acks )
+        {
+            protocol->acks->deferred = 0;
+        }
     }
 #endif // #if ROCKETNET_DEV
-    const bool acks_defer_failed = acks_deferred && !rocketnet_server_acks_defer( protocol->acks );
 
     // the connection ids (standard/MESSAGES.md m1.4 rule 5): one per slot, 0 while
     // free, and one per acked batch entry, sized as the acked batch is; and

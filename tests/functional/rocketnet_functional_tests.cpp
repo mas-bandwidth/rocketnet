@@ -14256,6 +14256,7 @@ extern void rocketnet_test_family_race_each_client_transport_carries_messages();
 extern void rocketnet_test_server_disconnect_all_clients_ends_every_slot();
 extern void rocketnet_test_aborted_messages_send_nothing();
 extern void rocketnet_test_client_io_threaded_progress_batch();
+extern void rocketnet_test_ack_apply_jobs_match_inline();
 extern void rocketnet_test_client_io_threaded_batch_flushes_mid_ring();
 extern void rocketnet_test_client_io_threaded_single_datagrams();
 extern void rocketnet_test_session_reconnect_isolation_portable();
@@ -14813,6 +14814,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_disconnect_all_clients_ends_every_slot", rocketnet_test_server_disconnect_all_clients_ends_every_slot, NULL },
     { "test_aborted_messages_send_nothing", rocketnet_test_aborted_messages_send_nothing, NULL },
     { "test_client_io_threaded_progress_batch", rocketnet_test_client_io_threaded_progress_batch, NULL },
+    { "test_ack_apply_jobs_match_inline", rocketnet_test_ack_apply_jobs_match_inline, NULL },
     { "test_client_io_threaded_batch_flushes_mid_ring", rocketnet_test_client_io_threaded_batch_flushes_mid_ring, NULL },
     { "test_client_io_threaded_single_datagrams", rocketnet_test_client_io_threaded_single_datagrams, NULL },
     { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
