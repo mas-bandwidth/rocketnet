@@ -14,11 +14,17 @@
 (* RefusedRefilled <- RefusedRefilledBroken (a refused descriptor naming a *)
 (* send frame goes back to the fill ring like any dropped frame, as the    *)
 (* worker did before rocketnet_xdp_fill_return) and must fail              *)
-(* FillHoldsOnlyReceiveFrames.                                             *)
+(* FillHoldsOnlyReceiveFrames.  MCRNXdpReceiveRingPendBinds.cfg sets       *)
+(* PendCap below the frames and the RX ring, so the pending term binds,    *)
+(* and must pass; MCRNXdpReceiveRingBrokenPeekPastPending.cfg sets         *)
+(* PeekPendingRoom <- PeekPendingRoomBroken on that instance and must fail *)
+(* PendingInBounds.                                                        *)
 (***************************************************************************)
 EXTENDS RNXdpReceiveRing
 
 PeekStagingRoomBroken == FALSE
+
+PeekPendingRoomBroken == FALSE
 
 RefusedRefilledBroken == TRUE
 =============================================================================

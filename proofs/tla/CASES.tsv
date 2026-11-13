@@ -294,6 +294,8 @@ MCRNXdpReceiveRing.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	requ
 MCRNXdpReceiveRingBrokenPeekPastStaging.cfg	MCRNXdpReceiveRing.tla	invariant	StagingInBounds	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg	MCRNXdpReceiveRing.tla	invariant	FillNeverEmptyWhileFramesFree	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenRefusedRefilled.cfg	MCRNXdpReceiveRing.tla	invariant	FillHoldsOnlyReceiveFrames	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingPendBinds.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenPeekPastPending.cfg	MCRNXdpReceiveRing.tla	invariant	PendingInBounds	check	rnxdpreceivering	required	-
 MCRNRioDriver.cfg	MCRNRioDriver.tla	pass	-	check	rnriodriver	required	-
 MCRNRioDriverBrokenSwitchWithoutDrain.cfg	MCRNRioDriver.tla	invariant	NoReserveIntoPostedPhase	check	rnriodriver	required	-
 MCRNRioDriverBrokenFreeBeforeDrain.cfg	MCRNRioDriver.tla	invariant	FreedOnlyWhenDrained	check	rnriodriver	required	-

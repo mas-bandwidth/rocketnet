@@ -67,9 +67,13 @@
 (* ROCKETNET_XDP_RECV_QUEUE_SIZE frames, which equals                      *)
 (* ROCKETNET_XDP_FILL_FRAMES, and it only ever holds receive frames, so    *)
 (* its room is never less than the receive frames the RX ring can name.    *)
-(* The model carries it at the code's ratio (PendCap = the frames) and     *)
-(* checks PendingInBounds; a witness dropping it would pass, so there is   *)
-(* none.                                                                   *)
+(* The design cfg carries it at the code's ratio (PendCap = the frames),   *)
+(* where PendingInBounds cannot fail.  MCRNXdpReceiveRingPendBinds.cfg     *)
+(* sets PendCap below both the frames and the RX ring, so the term binds   *)
+(* and must keep PendingInBounds; its reversed witness                     *)
+(* MCRNXdpReceiveRingBrokenPeekPastPending.cfg drops the term              *)
+(* (PeekPendingRoom) and fails it.  That pair checks the term as written,  *)
+(* not a ratio the code reaches.                                           *)
 (*                                                                         *)
 (* The cancel: rocketnet_xdp_receive_ring_finish cancels the peeked        *)
 (* descriptors the pass did not read before releasing the ones it read.   *)
@@ -81,7 +85,13 @@
 (*                                                                         *)
 (* Left out: packet contents and the frame codec's drops (a dropped frame  *)
 (* is still read and returned; the model stages a packet for every         *)
-(* receive frame read, at least as many as the code stages).               *)
+(* receive frame read, at least as many as the code stages).  Also left    *)
+(* out: a defective descriptor naming a receive-region frame the worker    *)
+(* does not hold (one on the fill ring or already in the RX ring).         *)
+(* rocketnet_xdp_fill_return checks the region only, not ownership, so the *)
+(* code hands such a frame back to the fill ring and it is there twice;    *)
+(* KernelMisdeliver names only a send-region frame, the trace never posts  *)
+(* the other kind, and FrameConservation says nothing about it.            *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -105,6 +115,11 @@ ASSUME /\ Frames # {}
 (*     room (receive_capacity in receive_limit; the design: TRUE).         *)
 (***************************************************************************)
 PeekStagingRoom == TRUE
+
+(*   PeekPendingRoom: the peek asks for no more than the pending return's  *)
+(*     room (pending_return.available() in receive_limit; the design:      *)
+(*     TRUE).                                                              *)
+PeekPendingRoom == TRUE
 
 (***************************************************************************)
 (*   RefusedRefilled: a descriptor naming a frame outside the receive      *)
@@ -227,7 +242,7 @@ KernelRefresh ==
 (* the cached producer where it was.  The code peeks only when the limit   *)
 (* is above zero.                                                          *)
 StageRoom == IF PeekStagingRoom THEN StageCap - staged ELSE RingSize
-PendRoom == PendCap - Cardinality(pending)
+PendRoom == IF PeekPendingRoom THEN PendCap - Cardinality(pending) ELSE RingSize
 ReceiveLimit == Min(StageRoom, PendRoom)
 Refreshed == IF cprod = ahead THEN Len(ring) ELSE cprod
 Peek ==
