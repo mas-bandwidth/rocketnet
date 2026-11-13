@@ -665,6 +665,16 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // case reads the real time. Not exported
 void rocketnet_platform_set_wall_clock_for_testing( uint64_t ( *wall_clock )( void ) );
 
+#if !defined( _WIN32 )
+// the clock rocketnet_platform_time reads on POSIX: with a function set it is
+// called with the clock id the platform reads (CLOCK_BOOTTIME on Linux,
+// CLOCK_MONOTONIC elsewhere) in place of clock_gettime, and the time's origin
+// is taken from it then; NULL, the default, puts back the real clock and its
+// origin. Not exported
+struct timespec;
+void rocketnet_platform_set_clock_for_testing( int ( *clock )( int clock_id, struct timespec * ts ) );
+#endif // #if !defined( _WIN32 )
+
 #endif // #if ROCKETNET_DEV
 
 // the public config structs in rocketnet.h are written out field by field;
