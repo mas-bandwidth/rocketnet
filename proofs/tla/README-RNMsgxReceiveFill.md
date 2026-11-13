@@ -86,7 +86,11 @@ once it is set, so a ready bank stays the worker's and is counted
   bank full and main not yet done with the last, so the worker never stalls
   with room or with a bank it could hand over.
 - `AllConsumed` (under `FairSpec`): every datagram that arrives is main's or
-  the kernel's drop in the end, unless main stops first.
+  the kernel's drop in the end, unless main stops first. This is a claim about
+  the model's finite arrivals with the worker and main fair: `Poll` visits every
+  modelled socket each round, so it says nothing about the kernel's readiness
+  order or fairness between sockets under sustained load (Stella's review of
+  4119919c7, note 3).
 - `StopCounted`: once the worker has exited no bank holds a datagram, so
   every datagram read was consumed by main or counted stopped (R69).
 - `StopEnds` (under `FairSpec`): a stop ends the worker.
