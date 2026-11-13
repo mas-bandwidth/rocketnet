@@ -273,16 +273,19 @@ func generateConnectToken(config *config, clientID uint64, createTimestamp uint6
 		return nil, err
 	}
 	private := connectTokenPrivate{ClientID: clientID}
+	// the session keys travel on in the token; this copy is wiped on every
+	// return, a failed read of either key included
+	defer func() {
+		clear(private.ClientToServerKey[:])
+		clear(private.ServerToClientKey[:])
+	}()
 	if _, err := io.ReadFull(random, private.ClientToServerKey[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate the client to server key: %w", err)
 	}
 	if _, err := io.ReadFull(random, private.ServerToClientKey[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate the server to client key: %w", err)
 	}
-	token, err := writeConnectToken(&signed, &private, config.backendPrivateKey, seal)
-	clear(private.ClientToServerKey[:])
-	clear(private.ServerToClientKey[:])
-	return token, err
+	return writeConnectToken(&signed, &private, config.backendPrivateKey, seal)
 }
 
 // the backend listens on loopback unless ROCKETNET_BACKEND_LISTEN_ADDRESS says

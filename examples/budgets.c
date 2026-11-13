@@ -201,6 +201,7 @@ int main( void )
     }
 
     int bursts_sent = 0, reliable_received = 0;
+    enum rocketnet_status_t set_kbps_status = ROCKETNET_STATUS_OK;
     const double start = rocketnet_time();
 
     while ( reliable_received < RELIABLE_COUNT && rocketnet_time() - start < 60.0 )
@@ -228,8 +229,8 @@ int main( void )
         {
             // the runtime call needs a connected client; the config set the starting rate
 
-            const enum rocketnet_status_t status = rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS );
-            printf( "runtime set-send-kbps returned %s\n", rocketnet_status_name( status ) );
+            set_kbps_status = rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS );
+            printf( "runtime set-send-kbps returned %s\n", rocketnet_status_name( set_kbps_status ) );
 
             // over budget, unreliable messages are dropped and counted; reliable messages wait
 
@@ -248,7 +249,7 @@ int main( void )
     printf( "unreliable over-budget drops: %llu\n", (unsigned long long) stats.messages_dropped_over_budget );
     printf( "reliable messages arrived: %d/%d\n", reliable_received, RELIABLE_COUNT );
 
-    const int result = stats.messages_dropped_over_budget > 0 && reliable_received == RELIABLE_COUNT ? 0 : 1;
+    const int result = set_kbps_status == ROCKETNET_STATUS_OK && stats.messages_dropped_over_budget > 0 && reliable_received == RELIABLE_COUNT ? 0 : 1;
 
     rn_cli_client_stop_and_destroy( client, 1000.0 + rocketnet_time() - start );
     rn_cli_server_stop_and_destroy( server );

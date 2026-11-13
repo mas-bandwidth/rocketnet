@@ -1104,3 +1104,7 @@ MCRNIocpEndpointsBrokenCancelSocketZero.cfg	MCRNIocpEndpoints.tla	temporal	Every
 MCRNReceiveHandoff.cfg	MCRNReceiveHandoff.tla	pass	-	check	rnreceivehandoff	required	-
 MCRNReceiveHandoffBrokenReadOnlyLeft.cfg	MCRNReceiveHandoff.tla	invariant	DeliveredByNextCall	check	rnreceivehandoff	required	-
 MCRNIocpEndpointsBrokenCheckBeforeCount.cfg	MCRNIocpEndpoints.tla	invariant	DrainerLives	check	rniocpendpoints	required	-
+MCRNCreateUnwind.cfg	MCRNCreateUnwind.tla	pass	-	ignore-terminal	rncreateunwind	required	-
+MCRNCreateUnwindBrokenBoundedUnwind.cfg	MCRNCreateUnwind.tla	invariant	LiveTransportOwned	ignore-terminal	rncreateunwind	required	-
+MCRNCreateUnwindBrokenNoRetain.cfg	MCRNCreateUnwind.tla	invariant	LiveTransportOwned	ignore-terminal	rncreateunwind	required	-
+MCRNCreateUnwindBrokenFreeAtDeadline.cfg	MCRNCreateUnwind.tla	invariant	FreedOnlyAfterExit	ignore-terminal	rncreateunwind	required	-
