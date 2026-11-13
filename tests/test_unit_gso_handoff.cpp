@@ -547,8 +547,8 @@ REGISTER_UNIT_TEST( test_server_gso_segment_refusal_is_per_destination );
 // queue), so the first update claims that queue and stops, and the last two
 // queues are left unclaimed. The queues the first update consumes are
 // published full again: a walk that always starts at 0 then stays on the
-// claimed queues, and the last two never deliver. Across two updates every
-// queue must. No socket, no thread, no clock.
+// claimed queues, and the last two never deliver. Across as many updates as
+// there are queues, every queue must. No socket, no thread, no clock.
 static void test_server_gso_receive_queue_rotation()
 {
     const int budget = rocketnet_server_receive_packets_per_update( ROCKETNET_DEFAULT_MAX_CLIENTS );
@@ -589,22 +589,25 @@ static void test_server_gso_receive_queue_rotation()
     check( seen[claimed] == 0 );
     check( seen[claimed + 1] == 0 );
 
-    // the claimed queues have a free buffer again; the last two still hold
-    // the ready buffer the first update did not claim.
-    for ( int q = 0; q < claimed; q++ )
+    // the claimed queues have a free buffer again, the others still hold the
+    // ready buffer the first update did not claim. Each update claims the
+    // next queue after the last it filled: every queue delivers within as
+    // many updates as there are queues.
+    for ( int round = 1; round < queues; round++ )
     {
-        check( rocketnet_server_gso_test_publish_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    }
-    check( !rocketnet_server_gso_test_publish_marked( gso, claimed, (uint8_t) ( claimed + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( !rocketnet_server_gso_test_publish_marked( gso, claimed + 1, (uint8_t) ( claimed + 2 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-
-    rocketnet_server_gso_receive_packets( gso );
-    check( view->num_packets == view->capacity );
-    for ( int i = 0; i < view->num_packets; i++ )
-    {
-        const int marker = (int) view->packet_data[i][0];
-        check( marker >= 1 && marker <= queues );
-        seen[marker - 1]++;
+        for ( int q = 0; q < queues; q++ )
+        {
+            // a queue still holding its ready buffer refuses; that is the point
+            rocketnet_server_gso_test_publish_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE );
+        }
+        rocketnet_server_gso_receive_packets( gso );
+        check( view->num_packets == view->capacity );
+        for ( int i = 0; i < view->num_packets; i++ )
+        {
+            const int marker = (int) view->packet_data[i][0];
+            check( marker >= 1 && marker <= queues );
+            seen[marker - 1]++;
+        }
     }
 
     for ( int q = 0; q < queues; q++ )
