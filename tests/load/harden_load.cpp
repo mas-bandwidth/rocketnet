@@ -52,7 +52,7 @@
     stand-in game in either shape. Each
     second it prints "harden_tick:" (connected, frames, overruns past one
     frame, the work time per frame avg/p99/max split into update, receive,
-    write and send_packets, the fill jobs' summed busy time per frame as
+    write and send_packets, the jobs' summed busy time per frame as
     jobs_core_ms, messages and packets per second, start refusals),
     and each --sample-seconds a "harden_sample:" (fds, threads, resident
     bytes, library bytes and every nonzero counter): the long-run mode reads
@@ -213,7 +213,7 @@ static uint64_t harden_mix64( uint64_t x )
 
 // the pattern's word for the 8-byte block holding byte i: byte i is
 // (uint8_t) ( word >> ( 8 * ( i % 8 ) ) ). One mix a block, not a byte: the
-// writer runs on the server's main thread (or its fill jobs) inside the
+// writer runs on the server's main thread (or its jobs) inside the
 // measured frame, so its cost is kept to a fraction of the seal's
 static uint64_t harden_pattern_word( uint64_t client_id, uint32_t connection, uint32_t kind, uint32_t sequence, int block )
 {
@@ -797,6 +797,20 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         fprintf( stderr, "harden_load: an option is out of range\n" );
         return false;
     }
+    if ( o->payload_copy )
+    {
+        // --payload copy copies from one body of HARDEN_COPY_BODY_BYTES: every message size must fit in it
+        bool fits = o->reliable_bytes <= HARDEN_COPY_BODY_BYTES && o->input_bytes <= HARDEN_COPY_BODY_BYTES;
+        for ( int i = 0; i < o->num_sizes; i++ )
+        {
+            fits = fits && o->sizes[i] <= HARDEN_COPY_BODY_BYTES;
+        }
+        if ( !fits )
+        {
+            fprintf( stderr, "harden_load: --payload copy needs every message size (--sizes, --reliable-bytes, --input-bytes, --big-bytes) at most %d\n", HARDEN_COPY_BODY_BYTES );
+            return false;
+        }
+    }
     return true;
 }
 
@@ -1283,7 +1297,7 @@ struct harden_frame_window_t
     double update_max = 0, receive_max = 0, write_max = 0, send_max = 0;
     uint64_t frames = 0, overruns = 0;
     uint64_t messages = 0, start_refused = 0, received = 0;
-    double jobs_busy_sum = 0; // core seconds the fill jobs spent, summed over the jobs
+    double jobs_busy_sum = 0; // core seconds the jobs spent, summed over the jobs
     // the space frame shape (and the stand-in game in either shape)
     double join_sum = 0, join_max = 0;             // the main thread blocked at the join
     double task_sum = 0, task_max = 0;             // the split-off task, start to end
@@ -1411,7 +1425,7 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
 static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
 {
 #if defined( __linux__ )
-    // named, so a profile or ps -L finds the fill jobs
+    // named, so a profile or ps -L finds the jobs
     char name[16];
     snprintf( name, sizeof( name ), "harden_fill%d", job );
     pthread_setname_np( pthread_self(), name );
@@ -1859,10 +1873,13 @@ static void harden_profile_run( harden_profile_t * p )
 
     // the main thread's program counter, about once a millisecond, with the
     // phase of the frame it was in
+    // the samples' room is reserved before the window, and nothing is allocated while the main thread is
+    // suspended (it may hold the heap lock): a full vector ends the sampling
     std::vector<std::pair<int, uint64_t>> samples;
+    samples.reserve( (size_t) ( p->seconds * 1000.0 * 1.5 ) + 1024 );
     const double window_start = harden_profile_clock();
     double next = window_start;
-    while ( main_thread && harden_profile_clock() - window_start < p->seconds && !p->stop.load() )
+    while ( main_thread && samples.size() < samples.capacity() && harden_profile_clock() - window_start < p->seconds && !p->stop.load() )
     {
         while ( harden_profile_clock() < next )
         {
@@ -1877,15 +1894,21 @@ static void harden_profile_run( harden_profile_t * p )
         memset( &context, 0, sizeof( context ) );
         context.ContextFlags = CONTEXT_CONTROL;
         const int phase = harden_main_phase.load( std::memory_order_relaxed );
-        if ( GetThreadContext( main_thread, &context ) )
+        uint64_t counter = 0;
+        const bool got = GetThreadContext( main_thread, &context ) != 0;
+        if ( got )
         {
 #if defined( _M_ARM64 )
-            samples.push_back( std::make_pair( phase, (uint64_t) context.Pc ) );
+            counter = (uint64_t) context.Pc;
 #else
-            samples.push_back( std::make_pair( phase, (uint64_t) context.Rip ) );
+            counter = (uint64_t) context.Rip;
 #endif // #if defined( _M_ARM64 )
         }
         ResumeThread( main_thread );
+        if ( got )
+        {
+            samples.push_back( std::make_pair( phase, counter ) ); // within the reserved room: no allocation
+        }
     }
     const double window = harden_profile_clock() - window_start;
     for ( harden_profile_thread_t & t : threads )
@@ -2709,8 +2732,8 @@ static int harden_server_main( const harden_options_t & o )
         w.write_max = std::max( w.write_max, t_write - t_receive );
         w.send_max = std::max( w.send_max, t_send - t_write );
         // a frame's packets, from its game state (the world update's end) to send_packets
-        w.latency_sum += t_write - t_receive;
-        w.latency_max = std::max( w.latency_max, t_write - t_receive );
+        w.latency_sum += t_send - t_receive;
+        w.latency_max = std::max( w.latency_max, t_send - t_receive );
         w.latency_frames++;
         w.frames++;
         if ( t_send - frame_start > step )
@@ -2748,7 +2771,7 @@ static int harden_server_main( const harden_options_t & o )
     process_resources_t resources_end;
     const bool end_read = process_resources_read( &resources_end );
     const int64_t library_end = harden_library_bytes();
-    // the fill jobs end with the frames, after the end sample (they are the
+    // the jobs end with the frames, after the end sample (they are the
     // game's threads, alive at both samples): the cuts and the cleanup are main's
     harden_fill_stop( &pool );
     if ( o.game_threads > 0 )
@@ -4186,6 +4209,7 @@ struct harden_chain_t
     // inside it, so a transport that passes short datagrams up makes this
     // term too large and the chain red (library_gap < 0), never green
     int64_t library_refused_before_received = 0;
+    const char * refused_source = "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE"; // where that term comes from, printed with the chain
     // the receiving device's discard delta includes the stop window (a Windows adapter's counter): up to that many
     // more packets than the library lost are named, so the library gap may be that far below zero
     int64_t device_overlap = 0;
@@ -4273,6 +4297,7 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
     {
         printf( "harden_chain: %s library gap with no named drop: the library sent packets that neither arrived nor were counted dropped anywhere\n", direction );
     }
+    printf( "harden_chain: %s library_refused_before_received=%" PRId64 " from %s\n", direction, c.library_refused_before_received, c.refused_source );
     printf( "harden_chain: %s verdict=%s\n", direction, ok ? "PASS" : "FAIL" );
     return ok;
 }
@@ -4318,15 +4343,21 @@ static int harden_reconcile_main( const harden_options_t & o )
     // PACKETS_RECEIVED and its reason, and main's stats never see it: the
     // difference is the refusals before main. A transport that drops on its
     // own receive path counts the drop in PREFILTER_TOO_SHORT/TOO_LARGE and
-    // in neither received count
+    // in neither received count. The transport's PACKETS_RECEIVED can also count
+    // datagrams no client sent (the hostile role's), so that difference is a
+    // named drop only in a cell with no hostile role; its source is printed
     const int64_t refused_off_main = t.get( "server.c2s_transport_PACKETS_RECEIVED" ) - up.library_received;
-    if ( refused_off_main > 0 )
+    const bool hostile_present = t.get( "hostile.sent" ) != 0;
+    if ( refused_off_main > 0 && !hostile_present )
     {
         up.library_refused_before_received = refused_off_main;
+        up.refused_source = "transport PACKETS_RECEIVED less the library's received (refused off the main thread)";
     }
     else
     {
         up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
+        up.refused_source = refused_off_main > 0 ? "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE (the off-main difference is not applied: a hostile role is present)"
+                                                 : "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE";
     }
 
     harden_chain_t down;
@@ -4355,10 +4386,11 @@ static int harden_reconcile_main( const harden_options_t & o )
             t.get( "clients.s2c_nic_pps_allowance" ), t.get( "clients.s2c_nic_bw_in_allowance" ), t.get( "clients.s2c_nic_bw_out_allowance" ), t.get( "server.s2c_nic_pps_allowance" ),
             t.get( "server.s2c_nic_bw_in_allowance" ), t.get( "server.s2c_nic_bw_out_allowance" ) );
 
-    // the frame: rocketnet's whole span on the game thread, from the frame's
-    // start through update, receive, the write (the wait for the fill jobs
-    // included) and send, measured once per frame with nothing between the
-    // phases left out. Its p99 is held to the aim (--frame-p99-us), which is
+    // the frame: what rocketnet takes from the main thread (the frame less the
+    // world update in the blocking shape; the first half's send, update and
+    // receive, and the main thread's writes and second send in the space shape;
+    // the join wait is not in it, it is join_ms), measured once per frame. Its
+    // p99 is held to the aim (--frame-p99-us), which is
     // reported, not judged: the cell's verdict is the chains and the players
     const int64_t p99 = t.get( "server.work_p99_us" );
     const bool frame_ok = p99 <= (int64_t) o.frame_p99_us;

@@ -63,6 +63,7 @@ server_env=""
 server_extra=""
 client_extra=""
 server_sudo=0
+server_pkill="pkill"
 server_os=linux
 profile_after=20
 profile_seconds=""
@@ -100,7 +101,7 @@ while [ $# -gt 0 ]; do
         --server-env) server_env="$server_env $(printf '%q' "$2")"; shift 2 ;;
         --server-args) server_extra="$2"; shift 2 ;;
         --client-args) client_extra="$2"; shift 2 ;;
-        --server-sudo) server_sudo=1; shift ;;
+        --server-sudo) server_sudo=1; server_pkill="sudo -n pkill"; shift ;; # a root server is killed by root
         --server-os) server_os="$2"; shift 2 ;;
         --profile-after) profile_after="$2"; shift 2 ;;
         --profile-seconds) profile_seconds="$2"; shift 2 ;;
@@ -185,7 +186,7 @@ cleanup()
     if [ "$server_os" = windows ]; then
         on_shell "$server_host" "taskkill //F //IM harden_load.exe > /dev/null 2>&1; true" || true
     else
-        on_shell "$server_host" "pkill -f '$tool server' 2>/dev/null; true" || true
+        on_shell "$server_host" "$server_pkill -f '$tool server' 2>/dev/null; true" || true
     fi
     on_shell "$client_host" "pkill -f '$client_tool clients' 2>/dev/null; sudo pkill -f '$client_tool hostile' 2>/dev/null; true" || true
     if [ "$netem_on" = 1 ] && [ "$server_os" = linux ]; then

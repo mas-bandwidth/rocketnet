@@ -76,6 +76,8 @@ lists each thread's network milliseconds a frame by thread index, to see how eve
 `scripts/space-frame-row` runs one such row on the XDP transport in the layout the game runs, over two machines, and
 can profile the server with perf (`--profile`).
 
+The players' input message defaults to 256 bytes (`--input-bytes`, about 100 to 200 kbps a player). It was 64 bytes
+before the frame shape, so every existing row that does not name `--input-bytes` now sends four times the input.
 
 ## The verdict
 
@@ -109,10 +111,13 @@ since the profiler's symbol load opens handles inside the run.
 unplanned ends among the stable clients.
 
 **The frame.** The frame is an aim, reported and not judged: the cell's verdict is the chains and the players.
-Work is rocketnet's whole span on the game thread in one frame, one clock read at the frame's start and one after send,
-with update, receive, the write (the wait for the fill jobs included) and send between them and nothing left out. Its
+Work is what rocketnet takes from the main thread in one frame. In the blocking shape it is the frame from its start to
+after send_packets, less the stand-in world update (update, receive, the write with the wait for the jobs, and send).
+In the space shape it is the sum of three intervals: the first half's send_packets, then update and receive, then the
+main thread's own writes and the second send_packets. The join wait at the top of the frame (printed as `join_ms`), the
+world update and the task hand-off are not in it. Its
 p99 is held to `--frame-p99-us`, 5000 by default, and printed with its max as `aim=MET` or `aim=MISSED`. The rest of a
-60 Hz game frame belongs to the game. Each `harden_tick:` also prints `jobs_core_ms`, the fill jobs' busy time per frame
+60 Hz game frame belongs to the game. Each `harden_tick:` also prints `jobs_core_ms`, the jobs' busy time per frame
 summed over the jobs, because the game needs those cores too.
 
 **The server.** The library must conserve its counters, and fds, threads and library bytes must stay flat from the
