@@ -48,7 +48,9 @@ because the model forbids a second free: the transport is destroyed once
 `rocketnet_client_transport_io_close` destroys a family only while its
 instance is set and then clears it. `frees` counts every free per thread and
 family, so `FreedOnce` sees a repeat free by the same owner;
-`MCRNClientRaceBrokenNoLiveCheck.cfg` takes the instance check away.
+`MCRNClientRaceBrokenNoLiveCheck.cfg` takes the instance check away after a
+reader free, and `MCRNClientRaceBrokenDestroyTwice.cfg` destroys twice
+without it.
 
 **Destination and family.** After the commit the model drops a slot
 addressed to the losing family's server. The code drops by address family:
@@ -89,6 +91,7 @@ losing server after the commit is the `commitkeepsring` defect.
 | `MCRNClientRaceBrokenCommitKeepsRing.cfg` | `PostCommitSlotsKept`: the commit leaves a ring bound to the losing server, as the code did before `rocketnet_client_io_rebind_held` |
 | `MCRNClientRaceBrokenNoKeepAtCommit.cfg` | `SendFailedMonotonic`: only the reader's close keeps the losing family's failures, as the code did before the commit kept them |
 | `MCRNClientRaceBrokenNoLiveCheck.cfg` | `FreedOnce`: the reader frees the losing family and destroy frees every family without `rocketnet_client_transport_io_close`'s instance check, so the losing family is freed twice |
+| `MCRNClientRaceBrokenDestroyTwice.cfg` | `FreedOnce`: the transport destroyed twice, without the instance check, so the caller frees each family twice, a repeat by the same owner that only the counting `frees` can see |
 
 Each counterexample was checked by hand against the code: the reader-frees
 trace is commit, then one reading step whose `rocketnet_client_race_kept`

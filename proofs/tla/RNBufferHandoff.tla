@@ -286,8 +286,8 @@ ProducerExchange(t) ==
 (* succeeds another Return is disabled until an Expose takes a buffer.   *)
 (* Main's exchanges read and clear owed (rocketnet_buffer_handoff_owed) *)
 (* and wake only after unlocking.  The worker's send-side exchange never  *)
-(* calls rocketnet_buffer_handoff_owed: it leaves owed as it is, and only *)
-(* main's next successful publish clears it.                              *)
+(* calls rocketnet_buffer_handoff_owed: it leaves owed as it is, and the  *)
+(* next successful publish clears it.                                     *)
 ConsumerExchange(t, take) ==
     /\ t = Consumer
     /\ pc[t] = "locked"

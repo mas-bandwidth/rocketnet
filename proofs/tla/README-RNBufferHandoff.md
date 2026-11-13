@@ -85,9 +85,10 @@ unchanged; no new fairness assumption forces a successful return.
   2 ms while a send is pending a retry
   (`ROCKETNET_CLIENT_IO_SEND_RETRY_TIMEOUT_SECONDS`). A lost wake is a
   liveness failure here, where the code would lose up to the guard.
-- `owed` is read and cleared only by main's exchanges
-  (`rocketnet_buffer_handoff_owed`); the worker's send-side exchange leaves it,
-  and main's next successful publish clears it.
+- `owed` is read only by main's exchanges (`rocketnet_buffer_handoff_owed`,
+  which also clears it), and cleared too by any successful publish
+  (`rocketnet_buffer_handoff_publish`, the producer's exchange); the worker's
+  send-side consumer exchange leaves it.
 - `Rebind` runs only while the protocol names the losing server (`addr =
   "A"`): a commit after a `Reset` is not explored here. The commit's rebind in
   general is `RNClientRace` (`CallerCommit`).

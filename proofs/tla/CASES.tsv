@@ -559,6 +559,7 @@ MCRNClientRaceBrokenCommitKeepsRing.cfg	MCRNClientRace.tla	invariant	PostCommitS
 MCRNClientRaceBrokenNoKeepAtCommit.cfg	MCRNClientRace.tla	invariant	SendFailedMonotonic	check	clientrace	required	-
 MCRNClientRaceBrokenNoExitClose.cfg	MCRNClientRace.tla	invariant	ExitedIsClosed	check	clientrace	required	-
 MCRNClientRaceBrokenNoLiveCheck.cfg	MCRNClientRace.tla	invariant	FreedOnce	check	clientrace	required	-
+MCRNClientRaceBrokenDestroyTwice.cfg	MCRNClientRace.tla	invariant	FreedOnce	check	clientrace	required	-
 MCRNClientGroCarry.cfg	MCRNClientGroCarry.tla	pass	-	check	clientgrocarry	required	-
 MCRNClientGroCarryBrokenDropTail.cfg	MCRNClientGroCarry.tla	invariant	Conservation	check	clientgrocarry	required	-
 MCRNClientGroCarryBrokenReadOverHeld.cfg	MCRNClientGroCarry.tla	invariant	Conservation	check	clientgrocarry	required	-

@@ -50,6 +50,9 @@
                       is still live (rocketnet_client_transport_io_close
                       without its instance check and clear); with
                       "readerfrees" a family is freed twice: FreedOnce
+     "destroytwice"   the transport is destroyed a second time; with
+                      "nolivecheck" the caller frees each family twice,
+                      a repeat by the same owner: FreedOnce
 
    Destroy's single free per family rests on two things in the code: the
    transport is destroyed once (the API's contract; CallerDestroy's
@@ -94,7 +97,8 @@
 EXTENDS Integers, FiniteSets
 CONSTANTS Defect
 ASSUME Defect \subseteq {"readerfrees", "callerusesloser", "freebeforejoin", "readerclosesearly",
-                         "commitkeepsring", "nokeepatcommit", "noexitclose", "nolivecheck"}
+                         "commitkeepsring", "nokeepatcommit", "noexitclose", "nolivecheck",
+                         "destroytwice"}
 
 MaxFail == 2
 
@@ -272,7 +276,8 @@ CallerJoin ==
    while its instance is set and then clears it (a family whose memory is
    already gone is not freed again). The transport is destroyed once. *)
 CallerDestroy ==
-    /\ ~destroyed
+    /\ \/ ~destroyed
+       \/ "destroytwice" \in Defect /\ \A p \in Threads \X Families : frees[p] < 2
     /\ joined \/ ("freebeforejoin" \in Defect /\ reader # "running")
     /\ destroyed' = TRUE
     /\ handle' = [f \in Families |-> "closed"]
