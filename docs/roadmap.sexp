@@ -541,6 +541,11 @@
    :text "In sdk/rocketnet_receive_handoff.h main moves on to the worker's buffer (rocketnet_receive_handoff_begin) only at the start of a call whose tail is finished. After a call the per-update budget cut, the next call reads the tail and main's own buffer and leaves what the worker committed into its newer buffer for the call after, even with budget left: one more update for those datagrams, only after an overloaded update. A second try-acquire once the tail is drained within the call would close it; it needs RNReceiveHandoff to drop the backlog exemption from DeliveredByNextCall, and its trace walk to cover the second try."
    :date "2026-11-13" :origin "Receive handoff latency fix, cold read finding 4")
 
+  (item "gso-socket-drops-unit" :group "after-v1-1-landing" :area "sdk"
+   :title "Measure what the kernel's SO_RXQ_OVFL count counts on a GRO socket"
+   :text "GSO_RECEIVE_DROPPED_OVERFLOW adds the rise in the kernel's SO_RXQ_OVFL count (sk_drops) to the datagrams the gso worker lost for want of room, and the row's unit is datagrams. Whether the kernel adds one per dropped buffer or one per segment of a dropped GRO run differs by drop site and kernel version; if per buffer, one dropped run of 128 segments reads as 1 and the row undercounts. A kernel drop is also reported only on the next datagram the socket delivers, so drops with no datagram after them are never counted, even at stop. Measure on the fleet's kernels (a flood of UDP_SEGMENT runs at a socket with UDP_GRO and a small receive buffer, against the socket's SK_MEMINFO_DROPS and UDP RcvbufErrors) and make the row's text say what it counts."
+   :date "2026-11-13" :origin "cold read of the v1.1.54 gso CI repair")
+
   (item "gso-receive-dropped-socket-row" :group "after-v1-1-landing" :area "sdk"
    :title "A gso row of its own for the kernel's drops at a queue socket"
    :text "Since 2026-11-13 the gso drain counts the kernel's drops at a full queue socket (SO_RXQ_OVFL) in GSO_RECEIVE_DROPPED_OVERFLOW, so that row no longer aliases RECEIVE_DROPPED_FULL exactly (standard/TRANSPORT.md says so). io_uring keeps the same drops in its own URING_RECEIVE_DROPPED_SOCKET. A GSO_RECEIVE_DROPPED_SOCKET row would restore the alias and match io_uring; counter rows are ABI, so it waits for a release that may append rows."
