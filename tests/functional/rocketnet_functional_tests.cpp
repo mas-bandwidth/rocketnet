@@ -15049,7 +15049,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_client_io_threaded_batch_flushes_mid_ring", rocketnet_test_client_io_threaded_batch_flushes_mid_ring, NULL },
     { "test_client_io_threaded_single_datagrams", rocketnet_test_client_io_threaded_single_datagrams, NULL },
     { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
+#if ROCKETNET_DEV
     { "test_server_bind_environment_reaches_single_family_start", rocketnet_test_server_bind_environment_reaches_single_family_start, NULL },
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, NULL },
     { "test_session_reconnect_isolation_gso", rocketnet_test_session_reconnect_isolation_gso, NULL },
