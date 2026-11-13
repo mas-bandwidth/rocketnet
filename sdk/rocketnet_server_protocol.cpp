@@ -2132,38 +2132,9 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
                                                        ROCKETNET_CONNECTION_ACK_PACKET,
                                                        NULL, 0, current_time, out_packet, NULL );
 
-    if ( bytes > 0 )
-    {
-        server->acks->endpoints[client_index].standalone_ack_time = current_time;
-    }
-
     rocketnet_spam( "server sent standalone ack to client %d", client_index );
 
     return bytes;
-}
-
-// proofs/tla/SessionAcks.tla LatePass: the send pass's standalone ack
-// for a payload the message layer accepted this update, at most one
-// standalone ack per client per update (OneStandalonePerUpdate)
-int rocketnet_server_protocol_write_accepted_ack( struct rocketnet_server_protocol_t * server,
-                                                  int client_index,
-                                                  double current_time,
-                                                  uint8_t * out_packet )
-{
-    rocketnet_assert( server );
-    rocketnet_assert( out_packet );
-
-    if ( !server->acks )
-    {
-        return 0;
-    }
-
-    if ( server->acks->endpoints[client_index].standalone_ack_time == current_time )
-    {
-        return 0;
-    }
-
-    return rocketnet_server_protocol_write_ack_if_due( server, client_index, current_time, out_packet );
 }
 
 static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protocol_t * server,

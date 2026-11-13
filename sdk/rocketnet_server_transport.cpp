@@ -5486,14 +5486,16 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
 // payload becomes ack-eligible only when that layer accepts it
 // (TRANSPORT.md t15.3), and it accepts after this update's sweep has made its
 // ack decisions, so the debt it raises would wait for the next update's sweep:
-// one update on every such ack, straight into the sender's round trip and
-// resend delay. Here, after the frame's payloads were written (any of them
-// carried the block and cleared the debt), the clients of this update's
-// payload batch whose debt is still owed get their standalone ack now. The
-// walk is the batch the accept already walked; every other client is
+// 16.7 ms at 60 Hz (one update) on every such ack, straight into the sender's
+// round trip and resend delay. Here, after the frame's payloads were written
+// (any of them carried the block and cleared the debt), the clients of this
+// update's payload batch whose debt is still owed get their standalone ack
+// now. The walk is the batch the accept already walked; every other client is
 // untouched. The sweep left these clients' acks to this pass (it skips a
 // client with a payload in the batch), so the one standalone ack an update
-// pays the debt their keep-alives and their payloads raised alike.
+// pays the debt their keep-alives and their payloads raised alike, and no
+// client gets two (OneStandalonePerUpdate): a client the batch names twice
+// owes nothing at its second visit.
 // The pass runs after the message layer wrote this update's game frames and
 // takes only the room they left: a client whose own send queue has no room,
 // or whose capacity the update spent, keeps its debt for the next sweep, and
@@ -5517,7 +5519,7 @@ static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_ser
     for ( int k = 0; k < batch->num_payloads; k++ )
     {
         const int i = batch->client_index[k];
-        if ( i < 0 || i >= max_clients || acks->endpoints[i].ack_debt == 0 || acks->endpoints[i].standalone_ack_time == current_time )
+        if ( i < 0 || i >= max_clients || acks->endpoints[i].ack_debt == 0 )
         {
             continue;
         }
@@ -5551,7 +5553,7 @@ static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_ser
         }
         frame.client_index = i;
 
-        const int send_bytes = rocketnet_server_protocol_write_accepted_ack( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
+        const int send_bytes = rocketnet_server_protocol_write_ack_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
         if ( send_bytes > 0 )
         {
             rocketnet_server_commit_send_frame( server_transport, &frame, send_bytes );

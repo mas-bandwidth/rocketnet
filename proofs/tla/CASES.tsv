@@ -846,7 +846,7 @@ MCSessionAcksWitWalkskip.cfg	MCSessionAcks.tla	invariant	WalkVisitsUnacked	check
 MCSessionAcksWitStaleheld.cfg	MCSessionAcks.tla	invariant	BitsMatchRing	check	sessionacks	required	-
 MCSessionAcksWitSkipdeferred.cfg	MCSessionAcks.tla	invariant	RepeatExact	check	sessionacks	required	-
 MCSessionAcksWitLateorder.cfg	MCSessionAcks.tla	invariant	SameUpdateAck	check	sessionacks	required	-
-MCSessionAcksWitNostamp.cfg	MCSessionAcks.tla	invariant	OneStandalonePerUpdate	check	sessionacks	required	-
+MCSessionAcksWitSweepspends.cfg	MCSessionAcks.tla	invariant	OneStandalonePerUpdate	check	sessionacks	required	-
 MCSessionAcksTiming.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-
 MCSessionAcksTimingLive.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-
 MCRNUringSendPhases.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsendphases	required	-

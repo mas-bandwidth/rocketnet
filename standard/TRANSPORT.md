@@ -3283,7 +3283,9 @@ update: when none of the session packets the update sends carries the block,
 the standalone connection ack packet SHOULD go out with them, so that
 acceptance adds no update to the round trip the peer measures. An endpoint
 MUST NOT send more than one standalone connection ack packet to one peer in
-one update.
+one update. An endpoint that will accept payloads from a peer later in the
+update therefore leaves the debt that peer's other packets raised to the
+same standalone connection ack packet, sent after the acceptance.
 
 <a id="t15.5"></a>
 ### t15.5. Round-trip sampling

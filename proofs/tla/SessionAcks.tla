@@ -28,15 +28,16 @@
 (* accept_payload, rocketnet_client_protocol_accept_payload), and the      *)
 (* accept is what raises the ack debt.                                     *)
 (*                                                                         *)
-(* The receiver update, in the code order: the receive drain (RecvData),   *)
-(* the update ack decision (Sweep: the server maintenance sweep and the    *)
-(* client protocol update, which pay a debt carried in), the message layer *)
-(* accepting what arrived (Accept), then the send pass (LatePass:          *)
+(* The receiver update, in the code order: the receive drain (RecvData,    *)
+(* and RecvElicit: the peer's other session packets, a keep-alive, which   *)
+(* raise the debt at receive), the update ack decision (Sweep: the server  *)
+(* maintenance sweep and the client protocol update, which pay a debt      *)
+(* only for a peer with no payload waiting for the accept), the message    *)
+(* layer accepting what arrived (Accept), then the send pass (LatePass:    *)
 (* rocketnet_server_transport_write_accepted_acks and                      *)
-(* rocketnet_client_protocol_write_owed_ack), which pays the debt the      *)
-(* accepts raised with a standalone ack unless one already went to the     *)
-(* peer this update (the standalone_ack_time stamp) or the wire has no     *)
-(* room.  SameUpdateAck and OneStandalonePerUpdate state the two rules.    *)
+(* rocketnet_client_protocol_write_owed_ack), which pays every debt still  *)
+(* owed with one standalone ack unless the wire has no room.  SameUpdateAck *)
+(* and OneStandalonePerUpdate state the two rules.                         *)
 (*                                                                         *)
 (* Time.  Tick is one update on both ends: A's acked batch drains, B's     *)
 (* receive drain resets, both links Age.                                   *)
@@ -54,8 +55,9 @@
 (*                 id (the batch was full)                                 *)
 (*   "lateorder"   the order before the fix: no send pass, so the debt an  *)
 (*                 accept raises waits for the next update ack decision    *)
-(*   "nostamp"     the send pass ignores the stamp and sends a second      *)
-(*                 standalone ack after the update ack decision sent one   *)
+(*   "sweepspends" the update ack decision pays a peer's debt even with a  *)
+(*                 payload waiting for the accept, so the send pass sends  *)
+(*                 a second standalone ack for the accept's debt           *)
 (*                                                                         *)
 (* The block memo.  process_block remembers the last block it applied in   *)
 (* full when nothing was deferred, and a send clears it; the same block    *)
@@ -82,11 +84,11 @@ CONSTANTS
     BurstStart, BurstLen
 
 Witnesses == {"none", "dropfull", "overclaim", "walkskip", "staleheld", "skipdeferred",
-              "lateorder", "nostamp"}
+              "lateorder", "sweepspends"}
 
 (***************************************************************************)
 (* AckTiming.  TRUE runs the receiver update in its steps (Sweep, Accept,  *)
-(* LatePass) with the debt and the stamp, where SameUpdateAck and          *)
+(* LatePass) with the debt, where SameUpdateAck and                        *)
 (* OneStandalonePerUpdate are checked (MCSessionAcksTiming.cfg and the two *)
 (* witnesses).  FALSE, the default, accepts a payload in the step that     *)
 (* opens it: the block is still built from the accepted history, and the   *)
@@ -433,14 +435,20 @@ StandaloneOrRefused(refused) ==
 
 \* The update ack decision (the server maintenance sweep in
 \* update_finish_body, rocketnet_server_protocol_write_ack_if_due; the
-\* client in rocketnet_client_protocol_update): a debt carried into the
-\* update is paid with a standalone ack.  It runs after the receive drain
-\* and before the message layer accepts anything this update.
+\* client in rocketnet_client_protocol_update).  It runs after the receive
+\* drain and before the message layer accepts anything this update.  A
+\* peer with a payload waiting for the accept is left to the send pass
+\* (the server's batched bitmap); otherwise a debt is paid with a
+\* standalone ack, or left to the send pass as well (the client with the
+\* message layer linked never pays here).  Under "sweepspends" the waiting
+\* payload does not stop it.
 Sweep ==
     /\ AckTiming /\ ~swept
     /\ swept' = TRUE
-    /\ IF debt THEN StandaloneOrRefused(TRUE) \/ StandaloneOrRefused(FALSE)
-               ELSE UNCHANGED <<r2dVars, namedEver, debt, standalones>>
+    /\ IF debt /\ (pending = {} \/ Witness = "sweepspends")
+         THEN \/ StandaloneOrRefused(TRUE) \/ StandaloneOrRefused(FALSE)
+              \/ UNCHANGED <<r2dVars, namedEver, debt, standalones>>
+         ELSE UNCHANGED <<r2dVars, namedEver, debt, standalones>>
     /\ UNCHANGED <<senderVars, highestOpened, opened, drained, highestAccepted, accepted,
                    pending, lateDone, lateRefused, burned, surfacedCount, openedEver,
                    d2rVars, bitVars>>
@@ -463,14 +471,14 @@ Accept(s) ==
 
 \* The send pass (rocketnet_server_transport_write_accepted_acks,
 \* rocketnet_client_protocol_write_owed_ack, at the start of send_packets):
-\* a debt the accepts raised is paid by a standalone ack in the same update,
-\* unless one already went to the peer this update (the stamp).  Under
-\* "lateorder" there is no send pass; under "nostamp" it ignores the stamp.
+\* every debt still owed, the accepts' and any the sweep left, is paid by
+\* one standalone ack in the same update.  No room (the wire, or the
+\* client's own send queue): the debt stays for the next update.  Under
+\* "lateorder" there is no send pass.
 LatePass ==
     /\ AckTiming /\ swept /\ ~lateDone /\ pending = {}
     /\ lateDone' = TRUE
-    /\ IF /\ debt /\ Witness # "lateorder"
-          /\ (standalones = 0 \/ Witness = "nostamp")
+    /\ IF debt /\ Witness # "lateorder"
          THEN \/ StandaloneOrRefused(TRUE) /\ lateRefused' = TRUE
               \/ StandaloneOrRefused(FALSE) /\ UNCHANGED lateRefused
          ELSE UNCHANGED <<r2dVars, namedEver, debt, standalones, lateRefused>>
@@ -502,6 +510,17 @@ RecvData ==
     /\ UNCHANGED <<senderVars, timingVars,
                    burned, surfacedCount, namedEver, r2dVars, bitVars>>
 
+\* One of the peer's other session packets (a keep-alive) arrives in the
+\* receive drain: it raises the debt at receive
+\* (rocketnet_session_elicits_ack).  Its block and its wire are outside
+\* this model; only the debt it raises before the update ack decision is.
+RecvElicit ==
+    /\ AckTiming /\ ~swept /\ ~debt
+    /\ debt' = TRUE
+    /\ UNCHANGED <<senderVars, highestOpened, opened, drained, highestAccepted, accepted,
+                   pending, swept, lateDone, lateRefused, standalones,
+                   ghostVars, d2rVars, r2dVars, bitVars>>
+
 (***************************************************************************)
 (* Time: one update on both ends.                                          *)
 (***************************************************************************)
@@ -526,6 +545,7 @@ Next ==
     \/ RecvAckRepeat
     \/ SendAck
     \/ RecvData
+    \/ RecvElicit
     \/ Sweep
     \/ \E s \in Seqs : Accept(s)
     \/ LatePass
@@ -643,18 +663,19 @@ RepeatExact == repeatExact
 
 \* An accepted payload is acknowledged in the update that accepted it when
 \* none of the receiver own packets carried the block: once the update has
-\* decided its acks and run its send pass it holds no debt, unless a
-\* standalone ack already went to the peer this update or the wire had no
-\* room (TRANSPORT.md t15.4).  A state predicate: after LatePass nothing in
-\* the update can raise the debt again (RecvData needs ~swept, Accept needs
-\* ~lateDone), and Tick needs swept /\ lateDone, so it is the update end.
-\* The reversed witness "lateorder" (the order before the fix) leaves the
-\* debt for the next update.
+\* decided its acks and run its send pass it holds no debt, unless the
+\* wire had no room (TRANSPORT.md t15.4).  A state predicate: after
+\* LatePass nothing in the update can raise the debt again (RecvData and
+\* RecvElicit need ~swept, Accept needs ~lateDone), and Tick needs
+\* swept /\ lateDone, so it is the update end.  The reversed witness
+\* "lateorder" (the order before the fix) leaves the debt for the next
+\* update.
 SameUpdateAck ==
-    (AckTiming /\ swept /\ lateDone) => (~debt \/ standalones >= 1 \/ lateRefused)
+    (AckTiming /\ swept /\ lateDone) => (~debt \/ lateRefused)
 
-\* At most one standalone ack to the peer in one update (the
-\* standalone_ack_time stamp).  The reversed witness "nostamp" sends two.
+\* At most one standalone ack to the peer in one update: the sweep leaves a
+\* peer with a payload waiting to the send pass, which pays all its debt
+\* with one.  The reversed witness "sweepspends" sends two.
 OneStandalonePerUpdate == standalones <= 1
 
 (***************************************************************************)

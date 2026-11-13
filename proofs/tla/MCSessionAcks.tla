@@ -16,8 +16,8 @@ EXTENDS SessionAcks
 SpecSafety == Init /\ [][Next]_vars
 
 \* the timing runs (MCSessionAcksTiming.cfg and its reversed witnesses
-\* MCSessionAcksWitLateorder.cfg and MCSessionAcksWitNostamp.cfg): the
-\* receiver update in its steps, with the debt and the stamp
+\* MCSessionAcksWitLateorder.cfg and MCSessionAcksWitSweepspends.cfg): the
+\* receiver update in its steps, with the debt raised at receive and at the accept
 MCAckTiming == TRUE
 
 =============================================================================
