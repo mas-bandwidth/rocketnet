@@ -4091,8 +4091,10 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_proce
 }
 
 // The transport's send_failures operation sums frames each queue's flush drops
-// because the copy rejects their length or the codec refuses to build them,
-// and the packet starts it refused because the queue was full.
+// because the copy rejects their length or the codec refuses to build them.
+// A start refused because its queue is full is not one of them: the server
+// counts that once, as SEND_RING_FULL, by the queue's room (the overflow
+// count stays the worker's, for its warning only).
 // The worker publishes these counts atomically so a request/query never waits
 // behind its send mutex while it copies a batch into UMEM.
 
@@ -4107,7 +4109,6 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
         failures += socket->send_refused_length.load( std::memory_order_relaxed ) +
                     socket->send_refused_build.load( std::memory_order_relaxed ) +
-                    socket->send_refused_overflow.load( std::memory_order_relaxed ) +
                     socket->send_wakeup_failures.load( std::memory_order_relaxed );
     }
 
@@ -4244,7 +4245,8 @@ bool rocketnet_server_socket_test_send_failures_without_mutex()
     queue->send_refused_build.store( 7 );
     queue->send_refused_overflow.store( 3 );
 
-    const bool valid = rocketnet_server_socket_send_failures( server ) == 15;
+    // the overflow's 3 are a full staging, counted by the server, not here
+    const bool valid = rocketnet_server_socket_send_failures( server ) == 12;
     queue->~rocketnet_server_xdp_socket_t();
     rocketnet_server_socket_test_destruct( server );
     rocketnet_free( NULL, queue_storage );

@@ -10,6 +10,7 @@
 
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
@@ -141,28 +142,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET >= 2 * ROCKETNET_URING_SEND
                          "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGMENTS,
                          "the receive bank holds more than one coalesced receive" );
-
-// counters, readable any time from the main thread; indexes into the array
-// rocketnet_server_uring_counters fills
-
-#define ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT                          0
-#define ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED                      1
-#define ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS                       2      // io_uring_enter calls: submits and waits
-#define ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED                          3      // a send CQE with a negative result, or a destination the socket family cannot carry
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE                  4      // datagram outside [server min, receive ceiling], or truncated in its buffer
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW              5      // the fill bank was full during destroy's drain (a running transport holds the receive for the next swap instead)
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE                6      // source address the boundary could not convert
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS                    7      // the multishot ended because the buffer ring was empty (ENOBUFS)
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
-#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that left completions in the queue for the next call (its budget spent) or receives held for the fill bank's room (deferred, not dropped)
-#define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, in either phase, retired by a later call
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER            11      // a receive CQE with res >= 0 that names no provided buffer (no IORING_CQE_F_BUFFER, or an id outside the ring)
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)
-#define ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS                            13      // segmented SENDMSGs submitted: a run of more than one packet with a UDP_SEGMENT cmsg
-#define ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS                        14      // segmentation turned off for the transport: ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD destinations refused a segmented send (EINVAL, EIO or EOPNOTSUPP) and none was ever accepted
-#define ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES                          15      // receive buffers that held more than one segment (a UDP_GRO coalesced receive split by its stride)
-#define ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS                      16      // a receive whose UDP_GRO control was truncated or malformed: taken as one datagram, the gso transport's fault
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 17
 
 // feature bits reported by rocketnet_server_uring_features: what the create
 // probe found and the transport is using now
@@ -300,6 +279,14 @@ void rocketnet_server_uring_test_coalesce( struct rocketnet_server_uring_t * uri
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
 
+// The io_uring transport's counters are rows of the public table: the
+// ROCKETNET_COUNTER_URING_* rows of sdk/rocketnet_counters.h, contiguous from
+// ROCKETNET_COUNTER_URING_PACKETS_SENT. Main thread, any time: writes those
+// rows of counters, an array of ROCKETNET_NUM_COUNTERS values indexed by
+// public counter, cumulative for the transport's life; every other value is
+// left as it was.
+#define ROCKETNET_SERVER_URING_FIRST_COUNTER ROCKETNET_COUNTER_URING_PACKETS_SENT
+#define ROCKETNET_SERVER_URING_COUNTER_ROWS  ( ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS - ROCKETNET_COUNTER_URING_PACKETS_SENT + 1 )
 void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, uint64_t * counters );
 
 // send packets. the phase contract is the transport's: start, finish and
