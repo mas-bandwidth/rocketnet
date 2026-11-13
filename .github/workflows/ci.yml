@@ -1305,6 +1305,41 @@ jobs:
       - if: always()
         uses: ./.github/actions/ccache-stats
 
+  # The required check "linux / Debug / unit" (.github/rulesets/main.json,
+  # tools/land.py, tools/release_gates.py) is this job: the Linux Debug unit
+  # leg runs as two shard rows above, and this row is green only when both
+  # shards are. needs: build-and-test only orders it after the matrix; it
+  # reads the two shards' own conclusions from the run's job list, so another
+  # leg's result never decides it. No checkout.
+  debug-unit:
+    name: linux / Debug / unit
+    needs: build-and-test
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    permissions:
+      actions: read
+    steps:
+      - name: Both Linux Debug unit shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+          url = "https://api.github.com/repos/%s/actions/runs/%s/attempts/%s/jobs?per_page=100" % (
+              os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+          request = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+          jobs = json.load(urllib.request.urlopen(request, timeout=20))["jobs"]
+          bad = 0
+          for shard in ("0/2", "1/2"):
+              name = "linux / Debug / unit (%s)" % shard
+              found = [j["conclusion"] for j in jobs if j["name"] == name]
+              print("%s: %s" % (name, found or "missing"))
+              if found != ["success"]:
+                  bad = 1
+          sys.exit(bad)
+          PY
+
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every
   # trace is a behaviour of the layer's spec, and that the plant build's

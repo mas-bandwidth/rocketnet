@@ -28,6 +28,7 @@
           {"context": "lint (workflows, format, standard, tool selftests)", "integration_id": 15368},
           {"context": "linux / Debug / functional", "integration_id": 15368},
           {"context": "linux / Debug / transport_matrix", "integration_id": 15368},
+          {"context": "linux / Debug / unit", "integration_id": 15368},
           {"context": "linux / Debug / unit (0/2)", "integration_id": 15368},
           {"context": "linux / Debug / unit (1/2)", "integration_id": 15368},
           {"context": "linux / Release / checks", "integration_id": 15368},
