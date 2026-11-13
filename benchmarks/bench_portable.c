@@ -6,15 +6,18 @@
     other candidate must beat this by enough to earn its complexity,
     and this number calibrates the machine between sittings.
 
-    bench_portable recv <port> <warmup> <window> <windows>
-    bench_portable send <ip> <port> <seconds> [drop-half]
+    bench_portable recv <port> <warmup> <window> <windows> [poll=<usec>]
+    bench_portable send <ip> <port> <seconds> [drop-half] [pace=<pps>]
 
-    "drop-half" is the harness-honesty switch: the sender skips every
-    other batch, and the receiver's pps must fall by half or the bench
-    has measured nothing.
+    "pace=<pps>" is the harness-honesty switch: the sender injects a
+    known rate and the receiver must read it back (PROTOCOL.md, the pace
+    and half-pace plants). "drop-half" skips every other batch, which a
+    flat-out sender makes up by looping faster, so pps need not move.
 
-    BENCH_FAULT=recv-errno / send-refused force the two abort paths, so
-    the loudness is watched rather than assumed (benchmarks/selftest.sh).
+    BENCH_FAULT=recv-errno / send-refused / send-partial / send-short /
+    send-zero / send-backpressure force the abort and accounting paths
+    (bench_common.h), so the loudness is watched rather than assumed
+    (benchmarks/selftest.sh).
 */
 
 #include "bench_common.h"
