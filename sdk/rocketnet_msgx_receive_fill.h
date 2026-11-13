@@ -18,7 +18,7 @@
 // kernel. proofs/tla/RNMsgxReceiveFill.tla models it.
 //
 // The rule (the gso transport's, proofs/tla/RNGsoHandoff.tla RxFill and
-// RxPublish): a datagram is read only into room. The drain asks the kernel
+// RxPublish at 5a2dbf403): a datagram is read only into room. The drain asks the kernel
 // for no more datagrams than the bank has room for; a full bank is handed to
 // main at once when main has taken the last one (no ready bank waits and a
 // free bank exists), and otherwise the drain stops and the socket keeps the
@@ -45,6 +45,7 @@ struct rocketnet_msgx_receive_banks_t
     int ready;                      // published, waiting for main, or NO_BANK
     int main;                       // main's view
     int free;                       // nobody's, or NO_BANK
+    bool stopped;                   // main stopped: it claims nothing more (main's alone)
 };
 
 // worker 0, main 1, free 2, none ready
@@ -54,6 +55,19 @@ inline void rocketnet_msgx_receive_banks_init( struct rocketnet_msgx_receive_ban
     banks->main = 1;
     banks->free = 2;
     banks->ready = ROCKETNET_MSGX_RECEIVE_NO_BANK;
+    banks->stopped = false;
+}
+
+// proofs/tla/RNMsgxReceiveFill.tla MainStop, main's, at
+// rocketnet_server_msgx_stop: the tail of main's own bank is counted stopped
+// by the caller, and from here main claims nothing. A bank ready now or
+// published later stays the worker's to count at its exit (Exit, in
+// rocketnet_server_msgx_receive_worker), so every datagram read is counted
+// once.
+// Only main reads or writes the flag: no lock
+inline void rocketnet_msgx_receive_stop( struct rocketnet_msgx_receive_banks_t * banks )
+{
+    banks->stopped = true;
 }
 
 // RxPublish, under the receive mutex: the worker's bank becomes ready and the
@@ -73,10 +87,11 @@ inline bool rocketnet_msgx_receive_publish( struct rocketnet_msgx_receive_banks_
 
 // RxClaim, under the receive mutex, once main has consumed its whole bank:
 // the ready bank becomes main's and main's old bank is free. False with
-// nothing ready
+// nothing ready, and always false once main has stopped (R69: a bank claimed
+// after the stop holds a tail no later update reads and nobody counts)
 inline bool rocketnet_msgx_receive_claim( struct rocketnet_msgx_receive_banks_t * banks )
 {
-    if ( banks->ready == ROCKETNET_MSGX_RECEIVE_NO_BANK )
+    if ( banks->stopped || banks->ready == ROCKETNET_MSGX_RECEIVE_NO_BANK )
     {
         return false;
     }
@@ -155,9 +170,11 @@ inline void rocketnet_msgx_receive_drain_start( struct rocketnet_msgx_receive_dr
 
 // One step of the drain of one socket (one action of
 // proofs/tla/RNMsgxReceiveFill.tla). Every datagram a read returns and every
-// failed read spends one of the socket's budget for the round, so a flooded
-// socket cannot hold the others back. *count is what a Read took. Returns
-// the step (ROCKETNET_MSGX_DRAIN_STEP_*); drain->pc says what is next.
+// failed read spends one of the socket's budget for the round, and a read
+// asks for no more than the budget leaves, so a socket's reads in a round
+// never pass the budget and a flooded socket cannot hold the others back.
+// *count is what a Read took. Returns the step (ROCKETNET_MSGX_DRAIN_STEP_*);
+// drain->pc says what is next.
 inline int rocketnet_msgx_receive_drain_step( struct rocketnet_msgx_receive_drain_t * drain, const struct rocketnet_msgx_receive_io_t * io,
                                               int capacity, int batch, int budget, int * count )
 {
@@ -178,7 +195,10 @@ inline int rocketnet_msgx_receive_drain_step( struct rocketnet_msgx_receive_drai
         return ROCKETNET_MSGX_DRAIN_STEP_BUDGET;
     }
 
-    const int want = rocketnet_msgx_receive_want( banked, capacity, batch );
+    // no more than the room, and no more than the budget leaves: a socket's
+    // reads in a round never pass the budget (RNMsgxReceiveFill Want)
+    const int room_want = rocketnet_msgx_receive_want( banked, capacity, batch );
+    const int want = room_want < budget - drain->reads ? room_want : budget - drain->reads;
     const int result = io->read( io->user, drain->fd, want );
     if ( result < 0 )
     {

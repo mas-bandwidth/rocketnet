@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.53"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.54"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        53
+    #define ROCKETNET_VERSION_PATCH                        54
 
 #else // !ROCKETNET_DEV
 
@@ -1071,8 +1071,9 @@ struct rocketnet_client_t;
 /// refused or counted. From that call on, in every build, the three calls,
 /// rocketnet_server_update_client and the main thread calls that change
 /// the server (update, the split update's receive and finish, send_packets,
-/// receive_messages, receipts, a client's send rate, the disconnects and
-/// stop) are checked, and between rocketnet_server_update_receive and
+/// receive_messages, receipts, a client's send rate, the disconnects, stop
+/// and rocketnet_server_stopped, whose poll takes a stop step) are checked,
+/// and between rocketnet_server_update_receive and
 /// rocketnet_server_update_finish only rocketnet_server_update_client and
 /// the update calls may run (see rocketnet_server_update_receive). One that
 /// breaks a rule is refused: it does nothing, it is counted
@@ -1082,8 +1083,9 @@ struct rocketnet_client_t;
 /// finish 0; a refused abort leaves its message for the next update to
 /// cancel; a refused main thread call returns as if it had found nothing to
 /// do (rocketnet_server_set_send_kbps returns
-/// ROCKETNET_STATUS_INVALID_ARGUMENT), and a refused stop leaves the server
-/// running. The calls that only
+/// ROCKETNET_STATUS_INVALID_ARGUMENT), a refused stop leaves the server
+/// running, and a refused rocketnet_server_stopped returns false. The calls
+/// that only
 /// read the server are main thread calls too and are not checked: one made
 /// while game threads send is not refused, counted or safe. Nor is
 /// rocketnet_server_destroy: join the game threads before it.
@@ -1296,6 +1298,38 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 
 /// Returns monotonic elapsed seconds from an unspecified origin, or 0 before
 /// the first rocketnet_init has set up the clock.
+///
+/// The clock is CLOCK_BOOTTIME on Linux (required: a build whose headers lack
+/// it fails), CLOCK_MONOTONIC on macOS and the other POSIX systems, and
+/// QueryPerformanceCounter on Windows. On Linux and macOS it runs at the rate
+/// the host's time sync (NTP, chrony, timesyncd) sets, the boot-calibrated
+/// rate without one, and counts time the machine was suspended or asleep.
+/// Windows' counter also counts sleep, standby and hibernate (Microsoft,
+/// "Acquiring high-resolution time stamps") but runs at the hardware
+/// oscillator's rate, calibrated at boot and not synchronized to any time
+/// reference. No clock here follows a wall-clock step.
+///
+/// A server whose token_epoch_unix_seconds is 0 checks connect tokens against
+/// the wall clock read once, at its first update, plus the time elapsed on
+/// the clock passed to update since that first update
+/// (ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS).
+/// Passing this clock keeps that check on the wall clock's rate and
+/// across a suspend. What stays the operator's: a wall-clock step after
+/// the first update (the server started before time sync set the clock, or
+/// the clock was set by hand) is not followed until the server restarts; on
+/// Windows the oscillator's rate error accumulates over the server's life
+/// (at 50 ppm, the token checks' 30-second margin, the creation skew or a
+/// default 30-second token lifetime, is used up in about a week: restart
+/// within that); and a game that passes its own clock owns that clock's drift.
+///
+/// After a suspend the clock jumps forward by the time slept. The update
+/// functions take any forward step as elapsed time: it behaves as an outage
+/// of that length. A connection whose other end went silent meanwhile times
+/// out within one timeout of resume (what had already arrived for this end is
+/// still taken first). A connect attempt still requesting a cookie or sending
+/// connection requests whose token lifetime has passed ends as expired; from
+/// sending the connection response on, the timeout alone ends it (TRANSPORT.md
+/// t11 rule 6).
 
 ROCKETNET_EXPORT double rocketnet_time( void );
 
@@ -2124,7 +2158,9 @@ struct rocketnet_connect_token_config_t
 
     /// The server's IPv6 address as "[v6]:port", or NULL. Pass the address
     /// rocketnet_server_ipv6_address returns. At least one address is
-    /// required. Default is NULL.
+    /// required. An IPv4-mapped address ([::ffff:a.b.c.d]:port) is refused
+    /// with ROCKETNET_STATUS_INVALID_ADDRESS: it goes in server_address_ipv4.
+    /// Default is NULL.
 
     const char * server_address_ipv6;
 
@@ -3014,6 +3050,8 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// @param context Passed to the allocator callbacks. May be NULL.
 /// @param ipv4_address The IPv4 address to serve, as "a.b.c.d:port", or NULL.
 /// @param ipv6_address The IPv6 address to serve, as "[v6]:port", or NULL.
+/// An IPv4-mapped address ([::ffff:a.b.c.d]:port) is refused with
+/// ROCKETNET_STATUS_INVALID_ADDRESS: pass it as ipv4_address instead.
 /// @param config The config, filled by rocketnet_server_default_config or
 /// rocketnet_server_light_config, or NULL for the defaults.
 /// @param status Receives the result, or NULL.
@@ -3455,7 +3493,10 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// rocketnet_server_abort_client_message). The returned memory is the
 /// caller's until finish or abort, and no later than the next
 /// rocketnet_server_update or rocketnet_server_send_packets, which aborts a
-/// message still open.
+/// message still open. A call that ends the client's connection
+/// (rocketnet_server_disconnect_client, rocketnet_server_disconnect_all_clients
+/// or rocketnet_server_stop) aborts its open message at once: the memory is
+/// no longer the caller's, and the finish that would have followed is refused.
 /// To broadcast, send to each connected client index.
 ///
 /// An index at or above max_clients is refused.

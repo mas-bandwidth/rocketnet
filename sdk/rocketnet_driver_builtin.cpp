@@ -7,6 +7,7 @@
 #include <new>
 #include <atomic>
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind, int receive_buffer_bytes, int * status )
@@ -24,7 +25,8 @@ static void * portable_socket_create( void * context, const char * name, rocketn
 // the buffered interface borrows caller packets for the duration of send_batch.
 // This adapter copies them into one of three owned banks before returning. The
 // TX and RX workers own only their respective banks; main never calls socket
-// I/O. Portable and msgx use the same ownership, with pump selection at create.
+// I/O. Off macOS the msgx name runs this same code; on macOS the msgx server is
+// its own (sdk/rocketnet_server_msgx_apple.cpp).
 static const int PORTABLE_TX_BANKS = 3;
 static const int PORTABLE_RX_BANKS = 3;
 
@@ -2096,8 +2098,10 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
 static void portable_io_client_close( void * transport )
 {
     // the family race's losing family, on the reading thread
-    // (proofs/tla/RNClientRace.tla ReaderStep): the wake's handles, then the
-    // socket's; the memory stays for destroy on the caller's thread
+    // (proofs/tla/RNClientRace.tla ReaderStep), and at the I/O thread's exit
+    // the transport, or every race family still open (ReaderExit): the wake's
+    // handles, then the socket's; the memory stays for destroy on the
+    // caller's thread
 
     struct portable_io_client_t * client = (struct portable_io_client_t *) transport;
     rocketnet_platform_wake_close( client->wake );
@@ -2245,8 +2249,9 @@ static bool portable_client_connect( void * transport, const rocketnet_address_t
 static void portable_client_close( void * transport )
 {
     // the family race's losing family, on the reading thread
-    // (proofs/tla/RNClientRace.tla ReaderStep): the socket's handle; the memory
-    // stays for destroy on the caller's thread
+    // (proofs/tla/RNClientRace.tla ReaderStep), and at the I/O thread's exit
+    // the transport, or every race family still open (ReaderExit): the
+    // socket's handle; the memory stays for destroy on the caller's thread
 
     rocketnet_platform_socket_close( (rocketnet_platform_socket_t *) transport );
 }
@@ -2795,25 +2800,21 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 
 #include "rocketnet_server_rio.h"
 
-// The lanes the server asks the transport for: num_rio_lanes when asked; else
-// ROCKETNET_RIO_DEFAULT_LANES on a bind address the lanes can share, and 0 (the
-// transport's one lane) on the wildcard. The development library's
-// ROCKETNET_TEST_RIO_LANES keeps its meaning: with it set, nothing asked on a
-// shareable address is left to the transport, which reads it.
+// The lanes the server runs, for the memory plan and for create alike: one
+// answer, rocketnet_rio_lanes_for (sdk/rocketnet_network_threads.h), with the
+// development library's ROCKETNET_TEST_RIO_LANES read here once, so the plan
+// sizes the lanes create makes.
 static int rio_lanes( int asked, bool several )
 {
-    if ( asked != 0 || !several )
-    {
-        return asked;
-    }
+    int test_lanes = 0;
 #if ROCKETNET_DEV
-    char test_lanes[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_LANES", test_lanes, sizeof( test_lanes ) ) > 0 )
+    char text[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_LANES", text, sizeof( text ) ) > 0 )
     {
-        return 0;
+        test_lanes = atoi( text );
     }
 #endif // #if ROCKETNET_DEV
-    return ROCKETNET_RIO_DEFAULT_LANES;
+    return rocketnet_rio_lanes_for( asked, several ? 1 : 0, test_lanes );
 }
 
 // every lane's worker prefilters with the server's packet filter
@@ -2950,6 +2951,10 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         // the staged msgx server: its workers' banks, the receive banks and
         // the socket table; a shared socket, a kqueue and a socket per client
         const int workers = rocketnet_network_threads_count( config->num_msgx_transmit_workers, ROCKETNET_MSGX_DEFAULT_WORKERS );
+        if ( workers < 1 )
+        {
+            return false;
+        }
         plan.transport_io_bytes = rocketnet_server_msgx_allocation_bytes( workers, config->max_clients );
         plan.worker_threads = workers + 1;
         plan.sockets = 1 + config->max_clients;
@@ -2991,6 +2996,10 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     {
         // a worker per queue, each with its own socket (rocketnet_server_gso_create)
         const int queues = rocketnet_network_threads_count( config->num_gso_workers, ROCKETNET_GSO_DEFAULT_QUEUES );
+        if ( queues < 1 )
+        {
+            return false;
+        }
         plan.transport_io_bytes = rocketnet_server_gso_allocation_bytes( queues, config->max_clients );
         plan.worker_threads = queues;
         plan.sockets = queues;
@@ -2998,6 +3007,10 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     else if ( strcmp( transport, "io_uring" ) == 0 )
     {
         const int queues = rocketnet_network_threads_count( config->num_io_uring_workers, ROCKETNET_URING_DEFAULT_QUEUES );
+        if ( queues < 1 )
+        {
+            return false;
+        }
         plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes( queues, config->max_clients );
         plan.mapped_ring_bytes = rocketnet_server_uring_mapped_bytes( queues );
         plan.worker_threads = queues; // a worker per queue owns its ring
@@ -3007,6 +3020,10 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     else if ( strcmp( transport, "xdp" ) == 0 )
     {
         const int queues = rocketnet_network_threads_count( config->num_xdp_threads, ROCKETNET_XDP_DEFAULT_QUEUES );
+        if ( queues < 1 )
+        {
+            return false;
+        }
         plan.transport_io_bytes = rocketnet_server_xdp_allocation_bytes( queues, config->max_clients );
         plan.umem_bytes = rocketnet_xdp_umem_bytes( queues );
         plan.worker_threads = queues;
@@ -3045,7 +3062,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         // (rio_lanes: num_rio_lanes, else the default on a bind address field
         // the lanes can share, else one; rocketnet_server_rio_create)
 
-        const int lanes = rocketnet_server_rio_lane_count( rio_lanes( config->num_rio_lanes, builtin_config_binds_several( config ) ) );
+        const int lanes = rio_lanes( config->num_rio_lanes, builtin_config_binds_several( config ) );
         plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes( config->max_clients, lanes );
 
         // each lane's registered region is one rocketnet_malloc

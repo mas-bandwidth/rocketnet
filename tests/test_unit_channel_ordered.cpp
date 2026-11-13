@@ -1369,9 +1369,12 @@ static void hold_the_longest_run( node_t * b )
 // holding the longest run behind the read index and then sending payloads of
 // duplicate numbers at that index made the server's main thread look up every
 // held ordering for every record, W - 1 lookups a 13-byte record, with no
-// violation counted. Counted by lookups, at most one a record whatever W is;
-// with one delivery left the duplicates are taken, not deferred. Then the
-// honest end: ordering 0 releases the whole run, W deliveries.
+// violation counted. What is counted is held-index lookups (rn_held_find
+// calls), at most one a record whatever W is; the probe steps inside a call
+// are not counted (the index's own rule bounds them: 2W cells, at most W
+// used, so a call meets an empty cell within W + 1 steps). With one
+// delivery left the duplicates are taken, not deferred. Then the honest end:
+// ordering 0 releases the whole run, W deliveries.
 
 static void duplicates_at_the_read_index_leg( int window )
 {
@@ -1458,9 +1461,10 @@ static void test_duplicates_at_the_read_index_never_scan_the_held_run()
 // one delivery with one lookup, not the held run behind it
 // (proofs/tla/RNOrderingWrap.tla ReceivePartial). A block of eight at
 // ordering 0 (numbers 0 .. 7), every ordering after it held complete; the
-// fragments 1 .. 7 arrive one a payload, each at most a few lookups whatever
-// W is, and each is taken with one delivery left; fragment 0 completes the
-// block and releases the whole run.
+// fragments 1 .. 7 arrive one a payload, each at most a few held-index
+// lookups (rn_held_find calls, as above) whatever W is, and each is taken
+// with one delivery left; fragment 0 completes the block and releases the
+// whole run.
 
 static void fragments_at_the_read_index_leg( int window )
 {

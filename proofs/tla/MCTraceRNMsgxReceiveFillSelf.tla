@@ -4,7 +4,8 @@
 (* hand-written record of one socket and banks of three, four datagrams    *)
 (* arriving, a read of two, a read of one into the last slot, the full     *)
 (* bank handed to main, the last datagram read short, the round kept (main *)
-(* has not taken the ready bank), main's claim and its consume, must be    *)
+(* has not taken the ready bank), main's claim and its consume, main's    *)
+(* stop and the worker's exit (the one datagram it holds counted), must be *)
 (* accepted (MCTraceRNMsgxReceiveFillSelf.cfg); the same record with the   *)
 (* planted second read (a whole batch of two into a room of one, the       *)
 (* second datagram lost) must be rejected at that read                     *)
@@ -20,7 +21,7 @@ B(x, y, z) == (0 :> x @@ 1 :> y @@ 2 :> z)
 
 S0 == [kq |-> (1 :> 0), errs |-> (1 :> << >>), cnt |-> B(0, 0, 0), worker |-> 0, ready |-> -1,
        main |-> 1, free |-> 2, pc |-> "poll", cur |-> 0, reads |-> 0, arrived |-> 0, kdrops |-> 0,
-       consumed |-> 0, fullDrops |-> 0, errors |-> 0]
+       consumed |-> 0, fullDrops |-> 0, errors |-> 0, stopping |-> FALSE, exited |-> FALSE, stopped |-> 0]
 
 A1 == [S0 EXCEPT !.kq = (1 :> 1), !.arrived = 1]
 A2 == [S0 EXCEPT !.kq = (1 :> 2), !.arrived = 2]
@@ -51,6 +52,12 @@ C1 == [K1 EXCEPT !.main = 0, !.ready = -1, !.free = 1]
 \* Consume: main takes bank 0's three
 C2 == [C1 EXCEPT !.cnt = B(0, 0, 1), !.consumed = 3]
 
+\* MainStop: main's bank is empty, nothing of its tail to count
+T1 == [C2 EXCEPT !.stopping = TRUE]
+
+\* Exit: the worker's bank 2 holds one, counted stopped
+E1 == [T1 EXCEPT !.exited = TRUE, !.stopped = 1, !.cnt = B(0, 0, 0), !.pc = "exit"]
+
 GoodLog == << Rec("init", "init", << >>, S0),
               Rec("arrive", "Arrive", << 1 >>, A1),
               Rec("arrive", "Arrive", << 1 >>, A2),
@@ -63,7 +70,9 @@ GoodLog == << Rec("init", "init", << >>, S0),
               Rec("step", "Read", << 1 >>, R3),
               Rec("round", "RoundKeep", << >>, K1),
               Rec("claim", "Claim", << >>, C1),
-              Rec("consume", "Consume", << >>, C2) >>
+              Rec("consume", "Consume", << >>, C2),
+              Rec("stop", "MainStop", << >>, T1),
+              Rec("exit", "Exit", << >>, E1) >>
 
 \* the planted read: a whole batch of two into a room of one; one is banked
 \* and the other lost

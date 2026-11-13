@@ -94,6 +94,20 @@ explicit epoch must represent Unix time at that clock's zero, not Unix time at
 the current update, and a client on such an epoch whose clock does not start
 at zero is updated at least once before connect.
 
+A server on an epoch of 0 that passes `rocketnet_time()` stays on the wall
+clock's rate: that clock is `CLOCK_BOOTTIME` on Linux and `CLOCK_MONOTONIC` on
+macOS, both running at the rate the host's time sync sets and counting
+suspend, so on a host with working time sync neither oscillator drift nor a
+sleep moves the server's token clock away from the backend's. Three things
+remain the operator's. A wall-clock step after the server's first update is
+not followed until it restarts, so run time sync and start servers after it
+has set the clock. On Windows `rocketnet_time()` is QueryPerformanceCounter,
+which counts sleep (Microsoft, "Acquiring high-resolution time stamps") but
+runs at the hardware oscillator's rate, calibrated at boot: an error of 50 ppm
+uses up the 30-second margin of the token checks in about a week, so restart
+Windows servers within that. A game that passes its own clock owns that
+clock's drift.
+
 The following are in scope for a report: packet parsing and generation, the
 connect handshake and token handling, replay and acknowledgement state, message
 block reassembly, the public C API and ABI boundary, and the SDK's build and

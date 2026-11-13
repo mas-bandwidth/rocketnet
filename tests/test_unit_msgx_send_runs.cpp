@@ -285,7 +285,9 @@ static void test_rocketnet_msgx_send_runs_runs()
 static void test_rocketnet_msgx_send_runs_partial()
 {
     // the run [a x b c] with x aborted, batch 3: the send takes 2 (a, b), so
-    // the cursor stops at c, past exactly two live packets
+    // the cursor moves past exactly two live packets, to c. The socket took
+    // data, so the same call goes on at once with [c d] (review R124: a
+    // positive partial send made progress and is not a reason to wait)
     struct send_runs_test_t * test = new send_runs_test_t();
     send_runs_test_init( test, 1, 3 );
     send_runs_test_open( test, 0, 0 );
@@ -296,13 +298,10 @@ static void test_rocketnet_msgx_send_runs_partial()
     const int d = send_runs_test_stage( test, 1, 0, 0, 10 );
     send_runs_test_sort( test );
     send_runs_test_answer( test, 2 );
-    rocketnet_unit_check( !send_runs_test_send_bank( test ) );
-    rocketnet_unit_check( test->cursor == 3 );
-    rocketnet_unit_check( test->order[test->cursor] == c );
-    rocketnet_unit_check( test->counters.sent_connected == 2 );
-
-    // the kept bank resumes at c: [c d]
     rocketnet_unit_check( send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->cursor == test->count );
+    rocketnet_unit_check( test->sends == 2 );
+    rocketnet_unit_check( test->last_run_size == 2 && test->last_run[0] == c && test->last_run[1] == d );
     rocketnet_unit_check( test->num_wire == 4 );
     const int expected[] = { a, b, c, d };
     for ( int w = 0; w < 4; w++ )
@@ -312,6 +311,29 @@ static void test_rocketnet_msgx_send_runs_partial()
     rocketnet_unit_check( send_runs_test_times_on_wire( test, x ) == 0 );
     rocketnet_unit_check( test->counters.sent_connected == 4 );
     rocketnet_unit_check( test->counters.dropped == 0 );
+
+    // a partial send, then the socket full: the call is kept at the first
+    // packet not taken, and only that zero-progress answer ends it
+    send_runs_test_init( test, 1, 3 );
+    send_runs_test_open( test, 0, 0 );
+    send_runs_test_stage( test, 1, 0, 0, 10 );
+    send_runs_test_stage( test, 1, 0, 0, 10 );
+    const int g = send_runs_test_stage( test, 1, 0, 0, 10 );
+    const int h = send_runs_test_stage( test, 1, 0, 0, 10 );
+    send_runs_test_sort( test );
+    send_runs_test_answer( test, 1 );
+    send_runs_test_answer( test, 1 );
+    send_runs_test_answer( test, ROCKETNET_MSGX_SEND_FULL );
+    rocketnet_unit_check( !send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->sends == 3 );
+    rocketnet_unit_check( test->cursor == 2 && test->order[test->cursor] == g );
+    rocketnet_unit_check( test->counters.sent_connected == 2 );
+
+    // the kept bank resumes at g: [g h]
+    rocketnet_unit_check( send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->cursor == test->count );
+    rocketnet_unit_check( test->num_wire == 4 && test->wire[2].packet == g && test->wire[3].packet == h );
+    rocketnet_unit_check( test->counters.sent_connected == 4 && test->counters.dropped == 0 );
     delete test;
 }
 

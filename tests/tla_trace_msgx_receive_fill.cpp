@@ -14,8 +14,10 @@
 // rocketnet_server_msgx_receive_worker runs it (a round over every socket, a
 // held drain ending the round, the round's publish through
 // rocketnet_msgx_receive_publish), and main's consume and
-// rocketnet_msgx_receive_claim. The record's act is the step the code
-// returned; a read's argument is the count it took.
+// rocketnet_msgx_receive_claim, and on even seeds main's stop
+// (rocketnet_msgx_receive_stop, after which no claim succeeds) and the
+// worker's exit, which counts what it holds. The record's act is the step
+// the code returned; a read's argument is the count it took.
 //
 // The plant (ROCKETNET_MSGX_RECEIVE_FILL_PLANT, the read size that ignores
 // the room) is in sdk/rocketnet_msgx_receive_fill.cpp. The banks are small
@@ -54,7 +56,8 @@ enum
     RF_POLL,
     RF_READ,
     RF_END,
-    RF_HELD
+    RF_HELD,
+    RF_EXIT
 };
 
 struct rf_walk_t
@@ -82,6 +85,8 @@ struct rf_walk_t
     int64_t consumed;
     int64_t full_drops;
     int64_t errors;
+    bool exited;
+    int64_t stopped;                // counted stopped: main's tail at its stop, the worker's banks at its exit
 };
 
 static int rf_banked( void * user )
@@ -180,7 +185,7 @@ static std::string rf_record_errs( const rf_walk_t * walk )
 
 static tla_record_t rf_record( const rf_walk_t * walk )
 {
-    static const char * const pcs[] = { "poll", "read", "end", "held" };
+    static const char * const pcs[] = { "poll", "read", "end", "held", "exit" };
     std::vector<std::string> bank_keys;
     std::vector<std::string> bank_values;
     for ( int b = 0; b < 3; b++ )
@@ -204,6 +209,9 @@ static tla_record_t rf_record( const rf_walk_t * walk )
     record.add( "consumed", tla_int( walk->consumed ) );
     record.add( "fullDrops", tla_int( walk->full_drops ) );
     record.add( "errors", tla_int( walk->errors ) );
+    record.add( "stopping", tla_bool( walk->hand.stopped ) );
+    record.add( "exited", tla_bool( walk->exited ) );
+    record.add( "stopped", tla_int( walk->stopped ) );
     return record;
 }
 
@@ -259,7 +267,8 @@ static int trace_msgx_receive_fill( uint64_t seed, int steps, const char * out )
     walk->pc = RF_POLL;
     walk->cur = 0;
     memset( &walk->drain, 0, sizeof( walk->drain ) );
-    walk->arrived = walk->kdrops = walk->consumed = walk->full_drops = walk->errors = 0;
+    walk->arrived = walk->kdrops = walk->consumed = walk->full_drops = walk->errors = walk->stopped = 0;
+    walk->exited = false;
 
     struct rocketnet_msgx_receive_io_t io;
     io.user = walk;
@@ -306,6 +315,23 @@ static int trace_msgx_receive_fill( uint64_t seed, int steps, const char * out )
             rf_push( records, report, walk, "error", "Error", tla_sequence( { tla_int( s + 1 ), tla_string( kind ) } ) );
             continue;
         }
+        // MainStop, on half the seeds, three quarters of the way through:
+        // main's tail counted stopped (rocketnet_server_msgx_stop), and
+        // main claims nothing from here on
+        if ( !walk->hand.stopped && seed % 2 == 0 && (int) records.size() > steps * 3 / 4 )
+        {
+            walk->stopped += walk->cnt[walk->hand.main];
+            walk->cnt[walk->hand.main] = 0;
+            rocketnet_msgx_receive_stop( &walk->hand );
+            rf_push( records, report, walk, "stop", "MainStop", "<<>>" );
+            continue;
+        }
+        if ( walk->exited )
+        {
+            // nobody runs but the kernel: main stopped calling once the
+            // worker exited
+            continue;
+        }
         if ( pick >= 14 )
         {
             // main: consume its bank, then claim the ready one
@@ -324,6 +350,23 @@ static int trace_msgx_receive_fill( uint64_t seed, int steps, const char * out )
         }
 
         // the worker's next step
+        if ( walk->pc == RF_POLL && walk->hand.stopped )
+        {
+            // Exit, as rocketnet_server_msgx_receive_worker's tail: the
+            // bank it fills and a ready bank main has not claimed are
+            // counted stopped
+            walk->stopped += walk->cnt[walk->hand.worker];
+            walk->cnt[walk->hand.worker] = 0;
+            if ( walk->hand.ready != ROCKETNET_MSGX_RECEIVE_NO_BANK )
+            {
+                walk->stopped += walk->cnt[walk->hand.ready];
+                walk->cnt[walk->hand.ready] = 0;
+            }
+            walk->exited = true;
+            walk->pc = RF_EXIT;
+            rf_push( records, report, walk, "exit", "Exit", "<<>>" );
+            continue;
+        }
         if ( walk->pc == RF_POLL )
         {
             walk->pc = RF_READ;
@@ -387,7 +430,7 @@ static int trace_msgx_receive_fill( uint64_t seed, int steps, const char * out )
     snprintf( constants, sizeof( constants ),
               "    Sockets = %d\n    Capacity = %d\n    Batch = %d\n    Budget = %d\n    Buffer = %d\n"
               "    MaxArrivals = %lld\n    MaxErrors = %lld\n    ReadPastRoom = FALSE\n    PublishOverReady = FALSE\n"
-              "    HoldWithoutPublish = FALSE\n",
+              "    HoldWithoutPublish = FALSE\n    ClaimAfterStop = FALSE\n    ReadPastBudget = FALSE\n",
               RF_SOCKETS, RF_CAPACITY, RF_BATCH, RF_BUDGET, RF_BUFFER, (long long) walk->arrived + 1, (long long) walk->errors + 1 );
     const bool written = tla_write_trace( out, "MCTraceMsgxReceiveFill", seed, "TraceRNMsgxReceiveFill", "", constants, records );
     delete walk;

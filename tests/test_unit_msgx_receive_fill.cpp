@@ -305,6 +305,62 @@ static void test_rocketnet_msgx_receive_fill_handoff()
     rocketnet_unit_check( hand.ready == 2 && hand.worker == 1 && hand.free == ROCKETNET_MSGX_RECEIVE_NO_BANK );
 }
 
+// the worker's exit after main stopped (rocketnet_server_msgx_receive_worker's
+// tail): the bank it fills and a ready bank main has not claimed are counted
+// stopped
+static uint64_t receive_fill_test_exit( struct receive_fill_test_t * test )
+{
+    uint64_t left = (uint64_t) test->bank_count[test->hand.worker];
+    test->bank_count[test->hand.worker] = 0;
+    if ( test->hand.ready != ROCKETNET_MSGX_RECEIVE_NO_BANK )
+    {
+        left += (uint64_t) test->bank_count[test->hand.ready];
+        test->bank_count[test->hand.ready] = 0;
+    }
+    return left;
+}
+
+// R69: after main stops, an update claims nothing. A bank ready at the stop,
+// or published by a round that was under way, stays the worker's and is
+// counted stopped at its exit; claimed, main would hold a tail that no later
+// update reads and no exit counts
+static void test_rocketnet_msgx_receive_fill_stop()
+{
+    for ( int published_after = 0; published_after < 2; published_after++ )
+    {
+        struct receive_fill_test_t * test = receive_fill_test_create( 1, 8 );
+        receive_fill_test_arrive( test, 0, 3, 64 );
+        if ( !published_after )
+        {
+            rocketnet_unit_check( !receive_fill_test_round( test, 4, 8 ) );
+            rocketnet_unit_check( test->hand.ready != ROCKETNET_MSGX_RECEIVE_NO_BANK );
+        }
+
+        // main stops: its own bank is empty, nothing of its tail to count
+        rocketnet_unit_check( test->bank_count[test->hand.main] == 0 );
+        rocketnet_msgx_receive_stop( &test->hand );
+
+        if ( published_after )
+        {
+            rocketnet_unit_check( !receive_fill_test_round( test, 4, 8 ) );
+            rocketnet_unit_check( test->hand.ready != ROCKETNET_MSGX_RECEIVE_NO_BANK );
+        }
+
+        // the updates main runs until the worker has exited claim nothing
+        const int ready = test->hand.ready;
+        rocketnet_unit_check( !receive_fill_test_claim( test ) );
+        rocketnet_unit_check( !receive_fill_test_claim( test ) );
+        rocketnet_unit_check( test->hand.ready == ready && test->bank_count[ready] == 3 );
+
+        const uint64_t stopped = receive_fill_test_exit( test );
+        rocketnet_unit_check( stopped == 3 );
+        rocketnet_unit_check( test->consumed == 0 );
+        rocketnet_unit_check( receive_fill_test_in_banks( test ) == 0 );
+        rocketnet_unit_check( test->arrived == receive_fill_test_in_kernel( test ) + test->consumed + stopped + test->kernel_dropped );
+        delete test;
+    }
+}
+
 // a bank of 40 and a batch of 32 over a socket of 100: the second read asks
 // for 8, the full bank is handed over, the next bank fills to 40, main has
 // not taken the last, and the drain holds with 20 left in the socket
@@ -432,6 +488,42 @@ static void test_rocketnet_msgx_receive_fill_budget()
     delete test;
 }
 
+// the budget is exact (Stella's review of 4119919c7, note 2): a batch that
+// does not divide the budget asks only for what is left of it, so a socket's
+// reads in a round never pass the budget. A budget of 6 and a batch of 4
+// over a socket of 20: reads of 4 and 2, not 4 and 4
+static void test_rocketnet_msgx_receive_fill_budget_exact()
+{
+    struct receive_fill_test_t * test = receive_fill_test_create( 1, 100 );
+    receive_fill_test_arrive( test, 0, 20, 1000 );
+    const struct rocketnet_msgx_receive_io_t io = receive_fill_test_io( test );
+
+    struct rocketnet_msgx_receive_drain_t drain;
+    rocketnet_msgx_receive_drain_start( &drain, 0 );
+    int count = 0;
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_READ );
+    rocketnet_unit_check( count == 4 && drain.reads == 4 );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_READ );
+    rocketnet_unit_check( count == 2 && drain.reads == 6 );
+    rocketnet_unit_check( drain.pc == ROCKETNET_MSGX_DRAIN_READ );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_BUDGET );
+    rocketnet_unit_check( test->bank_count[test->hand.worker] == 6 && test->sockets[0].count == 14 );
+    rocketnet_unit_check( test->asked_past_room == 0 );
+
+    // a weather error spends one, so the reads after it ask for 4, then 1
+    test->sockets[0].script[0] = EINTR;
+    test->sockets[0].num_script = 1;
+    rocketnet_msgx_receive_drain_start( &drain, 0 );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_WEATHER );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_READ );
+    rocketnet_unit_check( count == 4 && drain.reads == 5 );
+    rocketnet_unit_check( rocketnet_msgx_receive_drain_step( &drain, &io, 100, 4, 6, &count ) == ROCKETNET_MSGX_DRAIN_STEP_READ );
+    rocketnet_unit_check( count == 1 && drain.reads == 6 );
+    rocketnet_unit_check( test->bank_count[test->hand.worker] == 11 && test->sockets[0].count == 9 );
+    receive_fill_test_conserved( test );
+    delete test;
+}
+
 // the review's case (Emma, E3): 64 connected sockets of 150 datagrams each in
 // one update, 9600 in all, against the bank of one update's whole budget.
 // Every one is banked; a bank of 8192 dropped 1408 of them
@@ -539,10 +631,12 @@ static void test_rocketnet_msgx_receive_fill_walk()
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_want );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_error_kinds );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_handoff );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_stop );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_hold );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather_bounded );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_dead );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_budget );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_budget_exact );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_review_case );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_walk );

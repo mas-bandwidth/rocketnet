@@ -35,6 +35,10 @@ struct rocketnet_crypto_tally_t
 // unresolved at address 0 in optimized sanitizer builds (GCC 15 -O2 with
 // -fsanitize=undefined took it for a null object), as
 // rocketnet_server_cookie_mac_count says for its own tally.
+// Run: g++ 15.2.0 RelWithDebInfo with -fsanitize=address,undefined on Linux
+// (hetzner1, 2026-11-13) reproduced the null tally in two tests, and both pass
+// with these functions. Other compilers and sanitizer configurations were
+// read, not run.
 struct rocketnet_crypto_tally_t * rocketnet_crypto_tally_this_thread( void );
 
 static inline struct rocketnet_crypto_tally_t rocketnet_crypto_tally_get( void )

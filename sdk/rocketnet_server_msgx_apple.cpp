@@ -224,6 +224,11 @@ struct rocketnet_server_msgx_t
     uint64_t receive_refused;
     int shared_receive_buffer;                  // SO_RCVBUF the kernel granted the shared socket
 
+    // finishes refused: a pointer that names no slot of the producer bank, or
+    // a finish after stop. Each is a packet lost, folded into SEND_FAILED as
+    // the gso transport folds its own (rocketnet_server_gso_send_finish_refused)
+    std::atomic<uint64_t> finish_refused{ 0 };
+
 #if ROCKETNET_DEV
     // rocketnet_server_msgx_test_fail_sends: the next count send calls
     // (sendmsg_x or sendto, any worker) answer -1 with error
@@ -404,11 +409,29 @@ static int rocketnet_server_msgx_table_open( void * user, const rocketnet_addres
 
 // the descriptor of a retired socket is closed here, on main. The poller forgot
 // it at the retire, so what the kernel queued for it since reaches no one:
-// every datagram it still holds is read and counted (RECEIVE_DROP_RETIRED)
-// before the close. Later datagrams of that address reach the shared socket.
+// every datagram it still holds is counted (RECEIVE_DROP_RETIRED) before the
+// close. Later datagrams of that address reach the shared socket. The count
+// is one syscall, getsockopt (SO_NUMRCVPKT, the datagrams in the receive
+// buffer), not a read of each on main (R70); the kernel still walks the
+// queued records to answer it, so it is not constant time. It is a count
+// taken once before the close, not accounting atomic with concurrent arrivals: a
+// datagram the kernel queues between the count and the close goes uncounted,
+// the same boundary the bounded drain had. Only if the kernel refuses the
+// option are they read and counted, bounded
 static void rocketnet_server_msgx_table_close( void * user, int fd )
 {
     struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) user;
+    int queued = 0;
+    socklen_t queued_bytes = sizeof( queued );
+    if ( getsockopt( fd, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 && queued >= 0 )
+    {
+        if ( msgx && msgx->receiver )
+        {
+            msgx->receiver->main_retired += (uint64_t) queued;
+        }
+        close( fd );
+        return;
+    }
     uint8_t scratch[ROCKETNET_FRAME_STRIDE];
     uint64_t drained = 0;
     for ( int i = 0; i < ROCKETNET_MSGX_RETIRED_DRAIN_LIMIT; i++ )
@@ -581,12 +604,14 @@ void rocketnet_server_msgx_finish_packet( struct rocketnet_server_msgx_t * msgx,
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
     if ( msgx->stopping )
     {
+        msgx->finish_refused.fetch_add( 1, std::memory_order_relaxed );
         return;
     }
     struct rocketnet_server_msgx_send_bank_t * bank = NULL;
     const int slot = rocketnet_server_msgx_slot_of( msgx, packet_id, packet_data, &bank );
     if ( slot < 0 )
     {
+        msgx->finish_refused.fetch_add( 1, std::memory_order_relaxed );
         return;
     }
     bank->info[slot].packet_bytes = packet_bytes;
@@ -1174,8 +1199,8 @@ void rocketnet_server_msgx_receive_packets( struct rocketnet_server_msgx_t * msg
     struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
 
     // proofs/tla/RNMsgxReceiveFill.tla Claim (RNGsoHandoff.tla RxClaim and
-    // RxConsume): a retained tail is consumed before a newer ready bank is
-    // claimed. Only main moves hand.main
+    // RxConsume at 5a2dbf403): a retained tail is consumed before a newer
+    // ready bank is claimed. Only main moves hand.main
     struct rocketnet_server_msgx_recv_bank_t * held = rocketnet_server_msgx_bank( receiver, receiver->hand.main );
     if ( receiver->main_cursor >= held->num_packets )
     {
@@ -1665,6 +1690,11 @@ void rocketnet_server_msgx_stop( struct rocketnet_server_msgx_t * msgx )
             receiver->main_stopped += held->num_packets - receiver->main_cursor;
             receiver->main_cursor = held->num_packets;
         }
+        // RNMsgxReceiveFill MainStop: main claims nothing more. A bank ready
+        // now or published later stays the worker's, counted at its exit;
+        // claimed, its tail would be read by no later update and counted by
+        // nobody (R69)
+        rocketnet_msgx_receive_stop( &receiver->hand );
         receiver->quit.store( true, std::memory_order_release );
     }
 }
@@ -1800,6 +1830,8 @@ uint64_t rocketnet_server_msgx_send_failures( struct rocketnet_server_msgx_t * m
             dropped += msgx->workers[w]->dropped.load( std::memory_order_relaxed );
         }
     }
+    // and the frames a refused finish never staged
+    dropped += msgx->finish_refused.load( std::memory_order_relaxed );
     return dropped;
 }
 
