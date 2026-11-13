@@ -1977,9 +1977,12 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 // ---------------------------------------------------
 
 // UDP's ordinary weather on the receive path (TRANSPORTS.md, ICMP errors): a
-// connected client socket gets an ICMP error (port or host unreachable) on its
-// next receive, and a full buffer pool reports ENOBUFS. Each says nothing
-// about the datagrams queued behind it, so a drain skips it and reads on.
+// connected client socket gets an ICMP error (port or host unreachable, or
+// EMSGSIZE from a fragmentation-needed or packet-too-big naming its 4-tuple,
+// which anyone on the path can forge) on its next receive, and a full buffer
+// pool reports ENOBUFS. A long datagram is never EMSGSIZE here: the receive
+// reports its true size. Each says nothing about the datagrams queued behind
+// it, so a drain skips it and reads on.
 //
 // Every receive call carries one read budget, and every read spends one unit
 // of it: a datagram kept, a zero-length datagram or refused source skipped,
@@ -1992,7 +1995,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 static bool rocketnet_platform_receive_weather( int error )
 {
     return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
-           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR || error == EMSGSIZE;
 }
 
 

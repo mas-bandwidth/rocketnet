@@ -4186,9 +4186,9 @@ protocol one. See [t2.4 Transport selection](#t2.4).
 ### Segmented sends
 
 A Linux server transport may coalesce a run of one destination's packets into
-one UDP segmented send. A route that cannot carry one (an IPsec policy, or an
-interface MTU below the segment) makes the kernel refuse it for that destination
-alone. The transport resends that run unsegmented and remembers the
+one UDP segmented send. A route that cannot carry one (an IPsec policy, say)
+makes the kernel refuse it for that destination alone. The transport resends
+that run unsegmented and remembers the
 destination, so its later runs go unsegmented without a refusal, while every
 other destination keeps segmenting. It stops segmenting for all destinations
 only when a threshold of destinations refused and no segmented send was ever

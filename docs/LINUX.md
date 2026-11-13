@@ -725,7 +725,9 @@ What each path does with the errors it can see:
 - **portable** (server and client): a failed `recvfrom` or `recvmmsg` ends that
   drain and is logged at debug, except `EAGAIN` (the queue is empty) and the
   weather errnos `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EHOSTDOWN`,
-  `ENETDOWN`, `ENOBUFS` and `EINTR`, which are skipped
+  `ENETDOWN`, `ENOBUFS`, `EINTR` and `EMSGSIZE` (an ICMP
+  fragmentation-needed or packet-too-big naming a connected client's 4-tuple;
+  a long datagram is reported by size, never as `EMSGSIZE`), which are skipped
   (`sdk/rocketnet_platform.cpp`); a failed `sendto` is
   logged at debug and the packet is dropped; a `sendmmsg` refused
   with `EAGAIN`, `EWOULDBLOCK` or `ENOBUFS` drops the rest of the batch, and

@@ -351,8 +351,9 @@ which skips it as weather. A server socket is never connected, and every send
 names its destination. A failed `sendto`
 is logged at debug level and the packet is dropped
 (`rocketnet_platform_socket_send_packet`). Receive-weather errors such as
-`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENOBUFS`, and `EINTR` are
-skipped. EAGAIN, a spent read budget, or another receive error ends the
+`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENOBUFS`, `EINTR`, and
+`EMSGSIZE` (an ICMP fragmentation-needed message naming a connected client's
+4-tuple) are skipped. EAGAIN, a spent read budget, or another receive error ends the
 drain; unexpected errors are logged at debug level. A zero-length datagram or
 a refused source is skipped rather than read as "drained". Every read spends
 one unit of the call's read budget (`max_packets` for a batch, 64 for the
