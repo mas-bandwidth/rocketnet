@@ -155,7 +155,7 @@ static bool harden_pin_thread( int first, int last )
     CPU_ZERO( &set );
     for ( int c = first; c <= last; c++ )
     {
-        CPU_SET( c, &set );
+        CPU_SET( (size_t) c, &set );
     }
     return pthread_setaffinity_np( pthread_self(), sizeof( set ), &set ) == 0;
 #else
