@@ -816,6 +816,7 @@ MCSessionAcksWitOverclaim.cfg	MCSessionAcks.tla	invariant	BurnedNeverNamed	check
 MCSessionAcksWitOverclaimSurfaced.cfg	MCSessionAcks.tla	invariant	SurfacedOnlyIfOpened	check	sessionacks	required	-
 MCSessionAcksWitWalkskip.cfg	MCSessionAcks.tla	invariant	WalkVisitsUnacked	check	sessionacks	required	-
 MCSessionAcksWitStaleheld.cfg	MCSessionAcks.tla	invariant	BitsMatchRing	check	sessionacks	required	-
+MCSessionAcksWitSkipdeferred.cfg	MCSessionAcks.tla	invariant	RepeatExact	check	sessionacks	required	-
 MCRNUringSendPhases.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsendphases	required	-
 MCRNUringSendPhasesLateReap.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenOnePhase.cfg	MCRNUringSendPhases.tla	invariant	NeverRefusedUnderLateReap	check	rnuringsendphases	required	-
