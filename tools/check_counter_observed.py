@@ -77,13 +77,8 @@ ALL = ("linux", "macos", "windows")
 OWED = {
     "ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
     "ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
-    "ROCKETNET_IOCP_COMPLETION_BATCHES": (("windows",), "a completion-port dequeue that returned entries"),
-    "ROCKETNET_IOCP_RECEIVE_TOO_SHORT": (("windows",), "a datagram below the wire minimum; only subtracted from RECEIVE_DROPPED"),
     "ROCKETNET_IOCP_URO_BATCHES": (("windows",), "a receive completion split into more than one segment; checked only == 0"),
     "ROCKETNET_IOCP_USO_FALLBACKS": (("windows",), "a USO send refused and resent frame by frame; checked only == 0"),
-    "ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE": (("windows",), "a datagram outside the wire's size bounds; checked only == 0"),
-    "ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE": (("windows",), "a datagram past the receive ceiling"),
-    "ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT": (("windows",), "a datagram below the wire minimum"),
 }
 
 
