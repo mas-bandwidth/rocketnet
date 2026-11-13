@@ -3,11 +3,14 @@
 compiler named in a fixture CMakeCache.txt and a fixture tree (--root), so
 nothing is compiled: a control whose oracle accepts the planted base64
 truncation (exits 0) makes the tool exit nonzero, controls whose oracle
-refuses both mutants make it exit 0, and a tree with zero corpus files or a
-build directory with no cache exits nonzero naming the count.
+refuses both mutants make it exit 0, a message trigger the unmutated reader
+also fails, or a message control caught by some other property, exits
+nonzero, and a tree with zero corpus files or a build directory with no cache
+exits nonzero naming the count.
 
 The fake compiler copies one fake program to every -o target; the program
-reads its own name (baseline, control, control_message) and FAKE_ORACLE."""
+reads its own name (baseline, control, baseline_message, control_message) and
+FAKE_ORACLE."""
 
 import os
 import subprocess
@@ -35,8 +38,18 @@ case "$(basename "$0")" in
         if [ "$FAKE_ORACLE" = blind ]; then exit 0; fi
         echo "fuzz oracle failed: base64 overlong field must refuse" >&2
         exit 1 ;;
+    baseline_message)
+        if [ "$FAKE_ORACLE" = message-baseline-trips ]; then
+            echo "fuzz oracle failed: a record has data" >&2
+            exit 1
+        fi
+        exit 0 ;;
     control_message)
-        echo "fuzz oracle failed: message record length" >&2
+        if [ "$FAKE_ORACLE" = message-other-property ]; then
+            echo "fuzz oracle failed: RECORDS repacks to its length" >&2
+            exit 1
+        fi
+        echo "fuzz oracle failed: a record has data" >&2
         exit 1 ;;
 esac
 exit 3
@@ -103,6 +116,18 @@ class CheckFuzzOracleProcessTest(unittest.TestCase):
         result = self.run_tool(self.build, "blind")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("memory-safe truncation did not fail the exact-field oracle", result.stderr)
+
+    def test_message_trigger_tripping_the_unmutated_reader_fails(self):
+        # a control whose trigger also fails the original reader proves nothing
+        result = self.run_tool(self.build, "message-baseline-trips")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("the unmutated message reader does not replay the zero-length trigger clean", result.stderr)
+
+    def test_message_control_tripping_another_property_fails(self):
+        # the bypass must be caught by the property it breaks, by name
+        result = self.run_tool(self.build, "message-other-property")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("message length bypass did not fail the property oracle", result.stderr)
 
     def test_zero_corpus_files_fail(self):
         (self.corpus / "base64_over_key_field").unlink()

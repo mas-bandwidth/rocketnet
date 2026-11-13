@@ -108,14 +108,25 @@ int main(int argc, char** argv) {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;
     }'''))
     sources_msg = [str(ROOT / 'tests/fuzz/rocketnet_fuzz_message.cpp'), str(replay)]
+    trigger = work / 'message-zero-length-record'
+    trigger.write_bytes(bytes([0x00, 0x00, 0x00, 0x00, 0x01]))
+    # the unmutated reader replays the trigger clean: a refused record trips
+    # no oracle, so the control's failure below is the mutant's alone
+    baseline_msg = work / 'baseline_message'
+    subprocess.run(flags + sources_msg + [str(BUILD / 'librocketnet.a')] + libs + ['-o', str(baseline_msg)],
+                   check=True)
+    result = subprocess.run([str(baseline_msg), str(trigger)], env=env, capture_output=True, text=True)
+    if result.returncode != 0 or 'fuzz oracle failed:' in result.stderr:
+        raise SystemExit('the unmutated message reader does not replay the zero-length trigger clean: '
+                         + result.stderr)
     control_msg = work / 'control_message'
     subprocess.run(flags + sources_msg + [str(mutant_msg), str(BUILD / 'librocketnet.a')] + libs
                    + ['-o', str(control_msg)], check=True)
-    trigger = work / 'message-zero-length-record'
-    trigger.write_bytes(bytes([0x00, 0x00, 0x00, 0x00, 0x01]))
     result = subprocess.run([str(control_msg), str(trigger)], env=env, capture_output=True, text=True)
     (BUILD / 'fuzz-oracle-message-control.log').write_text(result.stdout + result.stderr)
-    if result.returncode == 0 or 'fuzz oracle failed:' not in result.stderr:
+    # the property the bypass breaks, by its text: any other oracle firing is
+    # not this control's catch
+    if result.returncode == 0 or 'fuzz oracle failed: a record has data' not in result.stderr:
         raise SystemExit('message length bypass did not fail the property oracle: ' + result.stderr)
     if 'ERROR: AddressSanitizer' in result.stderr or 'runtime error:' in result.stderr:
         raise SystemExit('message negative control failed memory safety rather than the property oracle')
