@@ -1,0 +1,16 @@
+# The trace check's row of tests/tla_trace_channel.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "channel",
+    "modules": ["RNChannel.tla", "Link.tla", "TraceRNChannel.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_CHANNEL_SEQUENCED_WRITE_PLANT", "ROCKETNET_CHANNEL_SEQUENCED_READ_PLANT"],
+    "untraced": {"RefuseSend": "the walk never sends into a full queue: four messages, SendCapacity 4",
+                 "ReserveBeforeRoom": "BrokenChunkBlocksSmall only: the reversed witness's early reservation",
+                 "Take": "AppMayLeave only: the walk's application takes every delivery of the update"},
+    "reach": ["ChunksReordered", "SmallPacked", "Resent", "HeldBehind", "AllDelivered", "UnreliableDelivered",
+              "UnreliableDropped", "WireDuplicate"],
+    "steps": 200,
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 2, 2: 2, 3: 2, 5: 2},
+}

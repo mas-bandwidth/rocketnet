@@ -434,7 +434,14 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
     rn_channel_send_t * send = channels->region->channel_send + channel;
     const uint32_t ordering = send->ordered_write;
     send->ordered_write = ordering + 1;
+
+    // the trace check's plant ROCKETNET_CHANNEL_SEQUENCED_WRITE_PLANT
+    // (tests/tla_trace_channel.cpp) leaves the reset out: the send half of
+    // MCRNChannelBrokenNoSequencedReset.cfg
+
+#if !defined( ROCKETNET_CHANNEL_SEQUENCED_WRITE_PLANT )
     send->sequenced_write = 0;
+#endif // #if !defined( ROCKETNET_CHANNEL_SEQUENCED_WRITE_PLANT )
 
     return ordering;
 }
@@ -476,7 +483,14 @@ void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t chan
 
     rn_channel_receive_t * receive = channels->region->channel_receive + channel;
     receive->ordered_read = ordering + 1;
+
+    // the trace check's plant ROCKETNET_CHANNEL_SEQUENCED_READ_PLANT
+    // (tests/tla_trace_channel.cpp) leaves the reset out: the receive half of
+    // MCRNChannelBrokenNoSequencedReset.cfg
+
+#if !defined( ROCKETNET_CHANNEL_SEQUENCED_READ_PLANT )
     receive->sequenced_watermark = 0;
+#endif // #if !defined( ROCKETNET_CHANNEL_SEQUENCED_READ_PLANT )
 }
 
 // proofs/tla/RNChannel.tla DeliverMessage, GhostSequencedRead: a sequenced delivery moves sequenced_watermark past zero on its channel

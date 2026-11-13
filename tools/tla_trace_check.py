@@ -80,7 +80,9 @@ TESTS = ROOT / "tests"
 # dict literal, read with ast (never run), comments allowed. Its keys:
 #   layer           the name the harness file registers (TLA_TRACE_LAYER).
 #   modules         the modules TLC reads: the spec first, any module it
-#                   extends from proofs/tla, and its Trace<Spec>.tla last.
+#                   extends or instances from proofs/tla, and its
+#                   Trace<Spec>.tla last. The spec's own names are its and
+#                   the extended modules'; an instanced module's stay its own.
 #   untraced        Next's actions no walk takes, each with the reason.
 #   ghost           (optional) the spec's variables the code does not hold
 #                   (history kept for a property), each with the reason;
@@ -228,10 +230,22 @@ def module_facts(name, layer):
     if not modules[-1].startswith("Trace") or any(m.startswith("Trace") for m in modules[:-1]):
         return None, ["the row's modules must end with its one Trace module"]
     try:
-        specs = [units((TLA / m).read_text()) for m in modules[:-1]]
+        read = {m[:-len(".tla")]: units((TLA / m).read_text()) for m in modules[:-1]}
         trace = units((TLA / modules[-1]).read_text())
     except OSError as error:
         return None, [f"a module of the row cannot be read: {error}"]
+    # the spec's own names: the spec and the modules it EXTENDS, transitively. A
+    # module it only instances (Fwd == INSTANCE Link WITH ...) is read by TLC, but
+    # its variables, definitions and constants are the instance's, not the spec's
+    order, todo = [], [modules[0][:-len(".tla")]]
+    while todo:
+        stem = todo.pop(0)
+        if stem in order or stem not in read:
+            continue
+        order.append(stem)
+        for _, body in read[stem].get("EXTENDS", []):
+            todo += [n.strip() for n in squash(body).split(",")]
+    specs = [read[s] for s in order]
 
     defined = {}
     bodies = {}

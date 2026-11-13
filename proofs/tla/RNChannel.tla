@@ -80,10 +80,10 @@ ReadySet == {m \in Messages : Ready(m)}
 \* filtered by channel (sdk/rocketnet_message_server.cpp, rn_message_object_next); EndUpdate
 \* ends the update's views and moves what the application took (Take) into
 \* trace, what the application has received on each channel in earlier
-\* updates. Trace(c) is everything received or receivable on channel c, the
+\* updates. ChannelTrace(c) is everything received or receivable on channel c, the
 \* queue's projection included.
 OnChannel(q, c) == SelectSeq(q, LAMBDA x : Channel(x) = c)
-Trace(c) == trace[c] \o OnChannel(rxQueue, c)
+ChannelTrace(c) == trace[c] \o OnChannel(rxQueue, c)
 
 Init ==
  /\ written = {} /\ waitedForRoom = FALSE /\ roomReturned = FALSE
@@ -317,10 +317,15 @@ ReceiveUsefulAck == ReceiveAckAny /\ acked' # acked
 SendAckThrough == SendAck /\ revWire' # revWire
 UpdateLoop == FixBatch \/ EndUpdate
 \* A connection ended for misuse is gone: nothing more is sent, delivered or
-\* acked on it (rn_message_object_kick).
+\* acked on it (rn_message_object_kick). Next names each action itself, not
+\* WriteAny, OpenHead, DeliverAny or ReceiveAckAny, whose bodies it repeats
+\* (the trace check reads Next's actions from its text, README-TraceCheck.md)
 Next == ~misused /\
-     ( RefuseSend \/ DropUnreliableForBudget \/ Enqueue \/ NumberRecord \/ ReserveBeforeRoom \/ WriteAny \/ OpenHead
-     \/ DeliverAny \/ FixBatch \/ Take \/ SendAck \/ EndUpdate \/ ReceiveAckAny
+     ( RefuseSend \/ DropUnreliableForBudget \/ Enqueue \/ NumberRecord \/ ReserveBeforeRoom
+     \/ (\E s \in Loads \cup {{}}, pid \in Pids, u \in BOOLEAN : WritePacket(s,pid,u))
+     \/ (fwdWire # <<>> /\ OpenPacket(Head(fwdWire).pkt))
+     \/ (\E m \in Messages : DeliverMessage(m)) \/ FixBatch \/ Take \/ SendAck \/ EndUpdate
+     \/ (revWire # <<>> /\ ReceiveAck(Head(revWire).pkt))
      \/ GhostSequencedWrite \/ GhostSequencedRead \/ FwdEnvironment \/ RevEnvironment )
 
 \* Same compact fairness as RNWindow: fair RTO/room/budget, packet opening,
@@ -340,14 +345,14 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 \* temporal action fairness only. All protocol and wire state is retained.
 SafetyView == <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
-      [c \in Channels |-> Trace(c)], chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision,
+      [c \in Channels |-> ChannelTrace(c)], chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision,
       uSent, uCount, seen, probeWrite, probeRead, resetOK, appVars, fwdWire, revWire>>
 
 SafetySpec == Init /\ [][Next]_vars
 
 OrderedExactlyOnceInOrder == \A c \in Channels :
- IF Len(Trace(c)) <= Len(sentTrace[c])
- THEN Trace(c) = SubSeq(sentTrace[c], 1, Len(Trace(c))) ELSE FALSE
+ IF Len(ChannelTrace(c)) <= Len(sentTrace[c])
+ THEN ChannelTrace(c) = SubSeq(sentTrace[c], 1, Len(ChannelTrace(c))) ELSE FALSE
 WholeMessagesOnly == whole
 ChunksPlacedByIndex == placed /\ \A n \in live : chunks[Message(n)][Index(n)] = Payload(n)
 UnreliableAtMostOnce == uCount <= 1
@@ -385,6 +390,6 @@ NoSlotCollision == ~collision /\ \A n,k \in live : n # k => n % W # k % W
 \* Single-run projection plus coupling: the ghost never enters sentTrace or
 \* application delivery; both ordered transitions reset their epoch counter.
 OrderedTraceUnchangedBySequenced == OrderedExactlyOnceInOrder /\ resetOK
-EveryOrderedMessageDelivered == <>(\A c \in Channels : Trace(c) = sentTrace[c] /\ queued = 4)
-NoHeadOfLineDeadlock == roomReturned ~> (2 \in {Trace(1)[i] : i \in DOMAIN Trace(1)} /\ 3 \in {Trace(1)[i] : i \in DOMAIN Trace(1)})
+EveryOrderedMessageDelivered == <>(\A c \in Channels : ChannelTrace(c) = sentTrace[c] /\ queued = 4)
+NoHeadOfLineDeadlock == roomReturned ~> (2 \in {ChannelTrace(1)[i] : i \in DOMAIN ChannelTrace(1)} /\ 3 \in {ChannelTrace(1)[i] : i \in DOMAIN ChannelTrace(1)})
 =============================================================================

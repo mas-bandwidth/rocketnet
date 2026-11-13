@@ -215,6 +215,18 @@ class Sources(unittest.TestCase):
                             for f in failed), failed)
 
 
+class Modules(unittest.TestCase):
+    def test_an_instanced_module_keeps_its_names(self):
+        # RNChannel instances Link twice (Fwd, Rev): Link's vars, Init and
+        # constants are the instances', never the spec's own
+        rows, _, _ = ttc.load_rows()
+        facts, failed = ttc.module_facts("channel", rows["channel"])
+        self.assertEqual(failed, [])
+        self.assertIn("FwdEnvironment", facts["actions"])
+        self.assertIn("FwdPattern", facts["constants"])
+        self.assertNotIn("Pattern", facts["constants"])
+
+
 class Repository(unittest.TestCase):
     def test_the_repository_rows_are_green(self):
         rows, stems, failed = ttc.load_rows()

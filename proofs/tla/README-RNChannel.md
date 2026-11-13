@@ -266,3 +266,42 @@ a `W = 4` window; `MCRNChannelSafety.cfg` covers `W = 4` with
 `SendCapacity = 2` under arbitrary loss, so that dimension is checked in a
 separate required case rather than in this one. Packet-ID wrap and half-range
 sequence reconstruction remain outside this module, as recorded above.
+
+## Trace check
+
+`TraceRNChannel.tla` replays the records the walk of `tests/tla_trace_channel.cpp`
+(`tla_trace --layer channel`) writes over two real endpoints back to back, A
+sending and B receiving, at this module's instance: messages 0, 2 and 3 on
+code channel 0 (model channel 1), message 1 on code channel 1, message 2 a
+block of two chunks, and one unreliable message. Each record is one model step:
+the call, the action the code's own result names, its arguments and every
+model variable read back from the code (A's send window, sent map, counters and
+send budget counter; B's window, receive descriptors, ring and deliveries) or
+from the walk's own part (the application's sends, the wires, the replay window
+and the acks owed). Packet ids are renamed as the model does ("Packet
+identities"). A call that is several model steps, a write pass that numbers and
+writes or a payload with deliveries, writes one record per step, each but the
+last the code's final state with the later steps taken back.
+
+`Next` names each of its actions itself, so the trace can name
+`WritePacket(s, pid, u)`, `OpenPacket(p)`, `DeliverMessage(m)` and
+`ReceiveAck(q)` with their arguments; `ChannelTrace(c)` is the model's
+delivered sequence of channel `c`, a name that leaves `Trace` to the trace
+module.
+
+The walk is honest where the model is: four sends at most (`RefuseSend`
+untraced), the application takes every delivery (`Take` untraced, `AppMayLeave`
+false), and `ReserveBeforeRoom` is the reversed witness's alone. On an even
+seed the unreliable message is sent right after the first chunk, with no time
+passed, and the send budget drops it; on an odd seed it is sent once every
+number is acked and is opened. On a seed 3 mod 4 the forward wire drops each
+copy of the block's first chunk until B has the second, so the chunks arrive
+out of order.
+
+Reach: `ChunksReordered`, `SmallPacked`, `Resent`, `HeldBehind`,
+`AllDelivered`, `UnreliableDelivered`, `UnreliableDropped` and
+`WireDuplicate`. The plants `ROCKETNET_CHANNEL_SEQUENCED_WRITE_PLANT` and
+`ROCKETNET_CHANNEL_SEQUENCED_READ_PLANT` in `sdk/rocketnet_channel.cpp` are
+`MCRNChannelBrokenNoSequencedReset.cfg`'s two halves: the ordered send, or the
+ordered delivery, leaves its channel's sequenced counter as it was. The check
+rejects each at the first send or delivery that leaves the probe's counter.
