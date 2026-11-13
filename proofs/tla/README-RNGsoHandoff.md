@@ -83,23 +83,24 @@ The 2026-11-13 run on amd-2 (native Linux, the fourteen cases of the two
 stale groups at once), the pinned `tlacheck` and TLC jar, one shard per
 case, two workers; the records in `RUNS.tsv`. The receive half changed that
 day (the worker commits its count at the end of each pass and main reads
-the worker's buffer in place), which took the main case from 4762152
-distinct states to 4056648.
+the worker's buffer in place, and a pass that stages nothing still
+commits a buffer main has started on and moves on, `RxMove`), which took
+the main case from 4762152 distinct states to 5291280.
 
 | Config | Expected | Distinct states | Seconds | What it shows |
 |---|---|---|---|---|
-| `MCRNGsoHandoff.cfg` | pass | 4056648 | 45.4 | Every invariant, five datagrams, four staged packets. |
-| `MCRNGsoHandoffLive.cfg` | pass | 9944 | 10.6 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
+| `MCRNGsoHandoff.cfg` | pass | 5291280 | 61.9 | Every invariant, five datagrams, four staged packets. |
+| `MCRNGsoHandoffLive.cfg` | pass | 9944 | 12.5 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
 | `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 9 | 2.1 | `PublishWhileHeld = TRUE`: the worker writes into the buffer main reads after leaving it. |
-| `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 3952 | 4.2 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
-| `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 61578 | 11.5 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
-| `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 181 | 2.5 | `NoBackoff <- TRUE`. |
-| `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 7699 | 3.2 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
-| `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 10080 | 5.3 | `BoundOnQuitOnly <- TRUE`. |
-| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 1.8 | `MainBlocks = TRUE`: main waits on the lane mutex. |
-| `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 508 | 2.5 | Reachability: a counted hard-error drop before shutdown. |
-| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 508 | 2.1 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
-| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 5140 | 3.4 | `CountTail <- FALSE`: the stop count forgets the unread tail. |
+| `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 4565 | 4.5 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
+| `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 73355 | 14.4 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
+| `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 182 | 2.3 | `NoBackoff <- TRUE`. |
+| `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 9152 | 3.5 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
+| `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 10080 | 5.7 | `BoundOnQuitOnly <- TRUE`. |
+| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 1.7 | `MainBlocks = TRUE`: main waits on the lane mutex. |
+| `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 508 | 2.4 | Reachability: a counted hard-error drop before shutdown. |
+| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 508 | 2.3 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
+| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 5994 | 3.4 | `CountTail <- FALSE`: the stop count forgets the unread tail. |
 
 ## Counterexamples checked against the code (2026-11-11)
 

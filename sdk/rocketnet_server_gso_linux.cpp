@@ -1274,6 +1274,8 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
 
 // the end of a worker pass: a buffer with results commits its count. True
 // when the worker moved to a free buffer, or when there was nothing to commit.
+// A pass that staged nothing still commits a buffer holding results, so a
+// full buffer main has started on is left (proofs/tla/RNGsoHandoff.tla RxMove).
 static bool rocketnet_server_gso_end_pass( struct rocketnet_server_gso_queue_t * queue )
 {
     struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
@@ -3304,7 +3306,8 @@ static int rocketnet_server_gso_test_delivery_call( void * user, uint32_t * ids,
     }
     for ( int i = 0; i < count; i++ )
     {
-        memcpy( &ids[i], rig->gso->process_packets.packet_data[i], sizeof( ids[i] ) );
+        const uint8_t * stamp = rig->gso->process_packets.packet_data[i];
+        ids[i] = rocketnet_read_uint32( &stamp );
     }
     return count;
 }

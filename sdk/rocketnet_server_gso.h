@@ -527,8 +527,9 @@ void rocketnet_server_gso_test_set_claim_hook( struct rocketnet_server_gso_t * g
 int rocketnet_server_gso_test_claim_losses( struct rocketnet_server_gso_t * gso );
 void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features );
 bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso );
-// Publish packets on one queue, each byte set to marker. false when a ready
-// buffer already waits, or the queue index or count is out of range.
+// Bank packets on one queue, each byte set to marker, and commit them. false
+// when the worker's buffer has no room for them (it is committed as it is),
+// or the queue index or count is out of range.
 bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 #endif // #if defined( __linux__ )
 #endif // #if ROCKETNET_DEV

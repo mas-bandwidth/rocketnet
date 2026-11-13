@@ -247,6 +247,22 @@ RxFill ==
                     txProducer, txFree, txReady, txHeld, txFinal, txContent, staged, txSent,
                     txDropped, txErrDropped, shut, quit, rxExited, txExited, joined, freed >>
 
+(* a pass that stages nothing (rocketnet_server_gso_end_pass after an    *)
+(* empty drain, or with a full buffer) while main reads the worker's      *)
+(* buffer: the buffer holds results, so the pass commits its count and    *)
+(* the worker moves to the free buffer, as RxFill's commit does.  Without *)
+(* it a full buffer main has started on would never be left               *)
+RxMove ==
+    /\ pcRx = "run" /\ ~rxExited /\ ~quit
+    /\ ~rxBackoff.owed
+    /\ rxMain = rxWorker /\ Len(rxContent[rxWorker]) > 0
+    /\ rxCommitted' = [ rxCommitted EXCEPT ![rxWorker] = Len(rxContent[rxWorker]), ![rxFree] = 0 ]
+    /\ rxWorker' = rxFree /\ rxFree' = NONE
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxMain, rxCursor, rxTail, rxContent, arrived,
+                    rxTailCursor, rxTailEnd, rxBackoff, rxConsumed,
+                    txProducer, txFree, txReady, txHeld, txFinal, txContent, staged, txSent,
+                    txDropped, txErrDropped, shut, quit, rxExited, txExited, joined, freed >>
+
 (* a stalled pass (rocketnet_server_gso_worker_step returning true): a     *)
 (* datagram waits, so poll returns at once, but the worker's buffer is     *)
 (* full and cannot be published, because a ready buffer still waits for    *)
@@ -663,7 +679,7 @@ Terminated ==
 
 Next ==
     \/ Terminated
-    \/ RxFill \/ RxStall \/ RxSleep \/ WriteHeld \/ RxCalls
+    \/ RxFill \/ RxMove \/ RxStall \/ RxSleep \/ WriteHeld \/ RxCalls
     \/ TxStage \/ TxMainLock \/ TxMainWait \/ TxPublish
     \/ TxWorkerLock \/ TxTake \/ TxTakeNone \/ TxSend \/ TxSendFull \/ TxReturn
     \/ SocketFills \/ SocketDrains \/ BeginShutdown
@@ -680,7 +696,7 @@ Spec == Init /\ [][Next]_vars
 (* never forced                                                            *)
 SpecFair ==
     /\ Spec
-    /\ WF_vars( RxFill ) /\ WF_vars( RxSleep ) /\ WF_vars( RxCalls ) /\ SF_vars( TxSend ) /\ SF_vars( TxSendFull )
+    /\ WF_vars( RxFill ) /\ WF_vars( RxMove ) /\ WF_vars( RxSleep ) /\ WF_vars( RxCalls ) /\ SF_vars( TxSend ) /\ SF_vars( TxSendFull )
     /\ SF_vars( MainStop ) /\ WF_vars( TxReturn )
     /\ SF_vars( TxWorkerLock ) /\ WF_vars( TxTake ) /\ WF_vars( TxTakeNone )
     /\ \A t \in Threads : WF_vars( Unlock(t) )

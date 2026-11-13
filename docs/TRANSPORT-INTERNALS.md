@@ -338,8 +338,9 @@ mutex, and moves to the free buffer once main has started on its buffer;
 main, with a try-acquire at each call, reads the worker's buffer in place up
 to the committed count, after the unread tail of the buffer it held before.
 A datagram committed before main's call is returned by that call unless the
-mutex was busy, the per-update budget cut the call, or older datagrams wait
-ahead of it (`RNReceiveHandoff.DeliveredByNextCall`, bound to the code by
+mutex was busy, the per-update budget cut the call, or the call began with
+datagrams left from a cut call: main then reads the tail and its own buffer
+but moves on to the worker's only at its next call (`RNReceiveHandoff.DeliveredByNextCall`, bound to the code by
 the `receive-handoff` trace check; `RNGsoHandoff.RxFill` and `RxCall` are
 the same exchange beside the send side and the stop count). A GSO worker
 pass that finds its buffer full while main has not started on it, or whose
