@@ -212,7 +212,7 @@ static int platform_socket_hygiene_ipv4_port_zero_receive( void * user, void * p
     }
     struct sockaddr_in * in4 = (struct sockaddr_in *) from;
     in4->sin_family = AF_INET;
-    in4->sin_port = htons( index == 0 ? 0 : 40001 );
+    in4->sin_port = htons( (uint16_t) ( index == 0 ? 0 : 40001 ) );
     in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
     const char * payload = index == 0 ? "zero" : "good";
     rocketnet_unit_check( max_packet_size >= 4 );
