@@ -143,7 +143,10 @@ local address, find no socket and come from any host but the other end's test ad
 
 and judges only `cell_noports`. A datagram from the other end is never a stray, so the cell's own no-port drops (a
 player's socket closed while the server still sent to it) stay in the equation; a stray count above the host's NoPorts
-is a broken counter, not applied, and fails the chain. Where no counter could be installed (no nftables or no sudo, a
+is a broken counter, not applied, and fails the chain. Each role reads the stray counter before NoPorts at its start
+and after it at each cut, so a stray that lands between two reads can only raise the gap (a fail). One miss remains, a stray in NoPorts and not
+in the counter, which would offset one unnamed loss: a stray to a socket that closes in the microseconds between the
+nftables socket lookup and UDP's. Where no counter could be installed (no nftables or no sudo, a
 Windows server) the stray count is 0 and the chain is what it was. The teardown's datagrams to the players' closed
 ports land after both cuts and are in neither.
 

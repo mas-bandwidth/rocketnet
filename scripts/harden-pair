@@ -142,6 +142,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ "$server_os" = linux ] || [ "$server_os" = windows ] || usage
+case "$plant_loss" in
+    ''|*[!0-9]*) echo "harden-pair: --plant-loss is a whole number" >&2; exit 2 ;;
+esac
 [ -n "$server_host" ] && [ -n "$client_host" ] && [ -n "$server_ip" ] && [ -n "$remote" ] && [ -n "$transport" ] && [ -n "$out" ] || usage
 [ -x "$local_bin/harden_load" ] || { echo "harden-pair: no $local_bin/harden_load here for the reconcile" >&2; exit 2; }
 mkdir -p "$out"

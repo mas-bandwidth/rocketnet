@@ -433,7 +433,7 @@ struct harden_options_t
     std::string label;
     std::string dev;
     std::string stray_table; // --stray-table NAME: the nftables table (inet NAME) whose counter "strays" counts this host's no-port UDP from outside the cell
-    std::string kinds ="garbage,prefixed,truncated,badsig,expired,reqreplay";
+    std::string kinds = "garbage,prefixed,truncated,badsig,expired,reqreplay";
     std::string capture_dev;
     int max_clients = 1000;
     int clients = 1000;
@@ -576,7 +576,12 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         }
         else if ( strcmp( a, "--stray-table" ) == 0 )
         {
-            // read through a shell (sudo -n nft): a name of letters, digits and '_' only
+            // read through a shell (sudo -n nft): a name of letters, digits and '_' only, at most 64
+            if ( strlen( v ) > 64 )
+            {
+                fprintf( stderr, "harden_load: --stray-table is at most 64 characters\n" );
+                return false;
+            }
             for ( const char * c = v; *c; c++ )
             {
                 if ( !( ( *c >= 'a' && *c <= 'z' ) || ( *c >= 'A' && *c <= 'Z' ) || ( *c >= '0' && *c <= '9' ) || *c == '_' ) )
@@ -1226,9 +1231,9 @@ static void harden_print_cut_network( const char * role, const char * cut, const
     harden_print_cut_term( role, cut, "ip_outdiscards", k.ip_outdiscards - b.ip_outdiscards );
     if ( !o.stray_table.empty() )
     {
-        // read just after NoPorts: a stray landing between the two reads (at the
-        // base or here) puts the two counts one apart and the chain's gap one
-        // off zero, so it fails; it never makes a gap pass
+        // read after NoPorts here, and before it at the base: a stray landing
+        // between two reads is in the stray delta and not the NoPorts delta,
+        // which raises the chain's gap (a fail), never lowers it
         const int64_t strays = harden_strays_read( o.stray_table );
         const bool strays_read = strays >= 0 && harden_strays_base >= 0;
         harden_print_cut_term( role, cut, "strays_read", strays_read ? 1 : 0 );
@@ -4492,7 +4497,7 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
     }
     if ( c.sender_counters && c.receiver_counters )
     {
-        printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + arrived_udp_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
+        printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + cell_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
                 " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " + device_rx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
                 direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, r.cell_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
                 duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
@@ -4673,9 +4678,12 @@ int main( int argc, char ** argv )
     {
         return harden_reconcile_main( o );
     }
+    // the strays before NoPorts here and after it at each cut: a stray that
+    // lands between the two reads is then in the stray delta and not the NoPorts
+    // delta, which raises the chain's gap (a fail), never lowers it
+    harden_strays_base = harden_strays_read( o.stray_table );
     harden_kernel_base = harden_kernel_read();
     harden_link_base = harden_link_read( o.dev );
-    harden_strays_base = harden_strays_read( o.stray_table );
     harden_payload_copy = o.payload_copy;
     if ( harden_payload_copy )
     {
