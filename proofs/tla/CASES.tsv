@@ -1002,3 +1002,10 @@ MCRNUringQueueReceiveLayoutBrokenRingNotPow2.cfg	MCRNUringQueueReceiveLayout.tla
 MCTraceRNUringQueueReceiveLayoutSelf.cfg	MCTraceRNUringQueueReceiveLayoutSelf.tla	pass	-	check	tracernuringqueuereceivelayout	required	-
 MCTraceRNUringQueueReceiveLayoutSelfBrokenRelease.cfg	MCTraceRNUringQueueReceiveLayoutSelf.tla	invariant	TraceConsistent	check	tracernuringqueuereceivelayout	required	-
 MCTraceRNUringQueueReceiveLayoutSelfBrokenShort.cfg	MCTraceRNUringQueueReceiveLayoutSelf.tla	invariant	TraceConsistent	check	tracernuringqueuereceivelayout	required	-
+MCRNRioLaneLayout.cfg	MCRNRioLaneLayout.tla	pass	-	ignore-terminal	rnriolanelayout	required	-
+MCRNRioLaneLayoutBrokenNoBound.cfg	MCRNRioLaneLayout.tla	invariant	LaneInRange	ignore-terminal	rnriolanelayout	required	-
+MCRNRioLaneLayoutBrokenModLane.cfg	MCRNRioLaneLayout.tla	invariant	FinishOwn	ignore-terminal	rnriolanelayout	required	-
+MCRNRioLaneLayoutBrokenLeastFull.cfg	MCRNRioLaneLayout.tla	invariant	OneLanePerDest	ignore-terminal	rnriolanelayout	required	-
+MCRNRioWorkerGarbage.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
+MCRNRioWorkerBrokenBankGarbage.cfg	MCRNRioWorker.tla	invariant	NoGarbageBanked	check	rnrioworker	required	-
+MCRNRioWorkerBrokenTakeBeforeRetire.cfg	MCRNRioWorker.tla	invariant	DrainedReturnedAtPost	check	rnrioworker	required	-
