@@ -296,4 +296,9 @@
    :title "Network threads placed at creation, not by their own first call"
    :text "The gso, XDP and the other transports' network threads pin themselves as their first act, so between pthread_create and that call a thread runs on its creator's mask, which may include cpu 0 (the OS's on Linux); the gso creator also raises the priority in that window. Starting the thread with its affinity already set (pthread_attr_setaffinity_np in the platform thread start, one place for every transport) closes the window. Also: _SC_NPROCESSORS_ONLN is a count, used as the highest cpu id; a machine with an offline cpu in the middle is misjudged (read the online set instead)."
    :date "2026-11-13" :origin "Piece K, cold reader")
+
+  (item "send-reserve-multi-queue-capacity" :group "proof-debt" :area "proofs"
+   :title "RNSendReserveCalls: a Capacity per send queue"
+   :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."
+   :date "2026-11-13" :origin "Piece M follow-on, cold reader")
  ))

@@ -379,6 +379,13 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 // hashes to one queue. Main thread.
 int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket );
 
+// the per-queue room for the server's send reserve (rocketnet_driver.h
+// send_queues, send_queue_of, send_room_queue): main, and fill threads during
+// the fill phase; atomics only, no lock, no write
+int rocketnet_server_socket_send_queues( struct rocketnet_server_socket_t * server_socket );
+int rocketnet_server_socket_send_queue_of( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to );
+int rocketnet_server_socket_send_room_queue( struct rocketnet_server_socket_t * server_socket, int queue );
+
 // true once every queue's producer buffer is empty, its worker has copied and
 // recycled every buffer it was handed, and the TX ring's consumer has taken
 // every descriptor the worker put on it; a queue whose worker reported a hard
