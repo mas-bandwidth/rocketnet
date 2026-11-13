@@ -6,3 +6,4 @@ MCServerSessionTwoClients.cfg	240	77.598	110.0	vision
 MCServerStopSpreadLive.cfg	200	66.166	97.145	hetzner2
 MCServerConnectionTwoSlots.cfg	200	91.002	91.002	record
 MCRNSendReserveChunkNoGuard.cfg	240	85.301	105.241	vision
+MCClientConnectionReachSFirstkind.cfg	240	72.408	75.7	bench-xdp-9
