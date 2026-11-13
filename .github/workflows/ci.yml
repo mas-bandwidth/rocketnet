@@ -1486,9 +1486,12 @@ jobs:
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every
   # trace is a behaviour of the layer's spec, and that the plant build's
   # trace of the same walk is not. tlc.yml runs a rolling range nightly.
-  # Four parallel shards over the same build (tools/tla_trace_check.py --shard I/N: the
+  # Six parallel shards over the same build (tools/tla_trace_check.py --shard I/N: the
   # layers of shard I are the sorted layer list's every Nth). One job ran 83 to 126 s
-  # under load against the 120 s cap; a shard is the build and tlacheck (about 30 s) plus
+  # under load against the 120 s cap; at four shards, shard 3/4 (fillphase,
+  # xdp-gateway-refresh, xdp-reply-macs: about 31 s a reply-macs case) ran 95 to 104 s
+  # in its check step on loaded runners and was cancelled at the cap three times
+  # running (PR #1082, run 43436280125), so six (two of the twelve layers each). A shard is the build and tlacheck (about 30 s) plus
   # its layers (about 2.6 s per example-sized layer, more for a real one). Adding a layer
   # needs no change here: it falls into the shard its sorted place picks, so the shards
   # stay within one layer of each other. When any shard's check step passes 45 s, add a
@@ -1504,7 +1507,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ['0/4', '1/4', '2/4', '3/4']
+        shard: ['0/6', '1/6', '2/6', '3/6', '4/6', '5/6']
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1584,7 +1587,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - name: All four trace check shards succeeded
+      - name: All six trace check shards succeeded
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: trace-shard-jobs.json
@@ -1594,7 +1597,7 @@ jobs:
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/4)" "TLA+ trace check (fixed seeds, shard 1/4)" "TLA+ trace check (fixed seeds, shard 2/4)" "TLA+ trace check (fixed seeds, shard 3/4)"
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/6)" "TLA+ trace check (fixed seeds, shard 1/6)" "TLA+ trace check (fixed seeds, shard 2/6)" "TLA+ trace check (fixed seeds, shard 3/6)" "TLA+ trace check (fixed seeds, shard 4/6)" "TLA+ trace check (fixed seeds, shard 5/6)"
 
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a
