@@ -361,17 +361,24 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     const struct rocketnet_uring_queue_send_queue_t * queue = &walk.send->queue[0];
     const struct rocketnet_uring_queue_worker_t * worker = &walk.worker;
 
-    // u: the held bank's runs waiting to be submitted
+    // u: the held bank's runs waiting to be submitted; p: its packets not
+    // done (staged, or in a run whose completion is not yet taken)
     int u = 0;
+    int p = 0;
     if ( queue->held >= 0 )
     {
         const size_t base = (size_t) queue->held * QWORK_SLOTS;
         for ( int s = 0; s < QWORK_SLOTS; s++ )
         {
             const struct rocketnet_uring_queue_send_entry_t * e = &queue->entry[base + (size_t) s];
-            if ( e->count > 0 && !e->kernel && queue->state[base + (size_t) s] == ROCKETNET_URING_QUEUE_SEND_SLOT_STAGED )
+            const uint8_t state = queue->state[base + (size_t) s];
+            if ( e->count > 0 && !e->kernel && state == ROCKETNET_URING_QUEUE_SEND_SLOT_STAGED )
             {
                 u++;
+            }
+            if ( state == ROCKETNET_URING_QUEUE_SEND_SLOT_STAGED || state == ROCKETNET_URING_QUEUE_SEND_SLOT_RUN )
+            {
+                p++;
             }
         }
     }
@@ -446,6 +453,7 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     record.add( "againsBefore", tla_int( walk.agains_before ) );
     record.add( "refusals", tla_int( walk.refusals ) );
     record.add( "recvEnds", tla_int( walk.recv_ends ) );
+    record.add( "p", tla_int( p ) );
     return record;
 }
 

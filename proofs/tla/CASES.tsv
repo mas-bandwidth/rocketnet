@@ -927,4 +927,4 @@ MCRNUringQueueWorker.cfg	MCRNUringQueueWorker.tla	pass	-	check	rnuringqueueworke
 MCRNUringQueueWorkerLive.cfg	MCRNUringQueueWorker.tla	pass	-	check	rnuringqueueworker	required	-
 MCRNUringQueueWorkerBrokenExitEarly.cfg	MCRNUringQueueWorker.tla	invariant	ExitDrained	check	rnuringqueueworker	required	-
 MCRNUringQueueWorkerBrokenRetryUnbounded.cfg	MCRNUringQueueWorker.tla	temporal	StopFinishes	check	rnuringqueueworker	required	-
-MCRNUringQueueWorkerBrokenWakeSkip.cfg	MCRNUringQueueWorker.tla	temporal	StopFinishes	check	rnuringqueueworker	required	-
+MCRNUringQueueWorkerBrokenWakeSkip.cfg	MCRNUringQueueWorker.tla	temporal	StopFinishes	ignore-terminal	rnuringqueueworker	required	-

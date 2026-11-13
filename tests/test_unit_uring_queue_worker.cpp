@@ -817,7 +817,8 @@ static void test_uring_queue_worker_refused_destination_goes_plain()
 
     t.post( t.sends()[0].user_data, -EIO, 0 );
     check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
-    std::vector<struct io_uring_sqe> plain = t.sends( 1 );
+    std::vector<struct io_uring_sqe> all = t.sends();
+    std::vector<struct io_uring_sqe> plain( all.begin() + 1, all.end() );
     check( plain.size() == 3 );
     for ( size_t i = 0; i < plain.size(); i++ )
     {
@@ -854,15 +855,32 @@ REGISTER_UNIT_TEST( test_uring_queue_worker_refused_destination_goes_plain );
 
 static void test_uring_queue_worker_refusals_turn_segmentation_off()
 {
+    // destinations that take distinct entries of the refused table: one that
+    // displaces another is not a new refusing destination
     const int destinations = ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD;
+    int dest[ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD];
+    bool taken[ROCKETNET_SEGMENT_REFUSED_ENTRIES] = {};
+    int found = 0;
+    for ( int d = 1; d < 250 && found < destinations; d++ )
+    {
+        const struct rocketnet_address_t to = worker_test_client( d );
+        const int e = rocketnet_segment_refused_entry( &to );
+        if ( !taken[e] )
+        {
+            taken[e] = true;
+            dest[found++] = d;
+        }
+    }
+    check( found == destinations );
+
     worker_test_t t( 4 * destinations, 4 * destinations, 2 );
     check( t.ok );
     check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
 
-    for ( int d = 1; d <= destinations; d++ )
+    for ( int i = 0; i < destinations; i++ )
     {
-        t.stage( d, 100 );
-        t.stage( d, 100 );
+        t.stage( dest[i], 100 );
+        t.stage( dest[i], 100 );
     }
     t.publish();
     check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
@@ -909,10 +927,10 @@ static void test_uring_queue_worker_refusals_turn_segmentation_off()
     check( a.settle() == ROCKETNET_URING_WORKER_SLEEP );
     a.post( a.sends()[0].user_data, 200, 0 );
     check( a.settle() == ROCKETNET_URING_WORKER_SLEEP );
-    for ( int d = 1; d <= destinations; d++ )
+    for ( int i = 0; i < destinations; i++ )
     {
-        a.stage( d, 100 );
-        a.stage( d, 100 );
+        a.stage( dest[i], 100 );
+        a.stage( dest[i], 100 );
     }
     a.publish();
     check( a.settle() == ROCKETNET_URING_WORKER_SLEEP );
