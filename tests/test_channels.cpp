@@ -10,7 +10,9 @@
     Layer 1, the region: layout, validation, the send store, the descriptor
     pool, the arena, the sizing print, and ChannelsAllocatorNoLiveAllocation
     (proofs/tla/RNConnectionMemory.tla). That case arms the allocation trap for a soak of
-    send and receive at full configured load. rocketnet_channels_prepare
+    send and receive at full configured load over the region primitives and
+    the test's own stand-in for layers 2 to 8; the shipped layers run under
+    the trap in the window lossy-simulator and lossy-soak cases. rocketnet_channels_prepare
     installs the hooks before init; the trap is quiet until a case arms it.
 
     These tests run inside ./bin/test. Each is registered under its suite
@@ -336,7 +338,10 @@ static void channels_test_violations()
         channels_check_violation( channels_bytes( { 0x13, 0x01, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x04, 0x41, 0x01 } ), &wide, ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL );
     }
 
-    // 6. type not enabled: code 2 as application data under the {0, 3} mask; CONTROL is exempt
+    // 6. type not enabled: code 2 as application data under the {0, 3} mask,
+    // and a SINGLE (code 0) message, allowed under {0, 3} and refused under
+    // {3}. CONTROL is exempt: the CONFIG record (code 2 with CONTROL, the
+    // vector above) parses clean under {3}, where code 2 is not enabled.
 
     channels_check_violation( channels_bytes( { 0x02, 0x01, 0x00, 0, 0, 0, 0x41, 0x01 } ), &limits, ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED );
     channels_check_violation( channels_bytes( { 0x41, 0x00 } ), &limits, ROCKETNET_MESSAGE_VIOLATION_NONE );
@@ -344,6 +349,9 @@ static void channels_test_violations()
     {
         const struct rocketnet_message_limits_t ordered_only = channels_limits( 32, 1u << ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
         channels_check_violation( channels_bytes( { 0x41, 0x00 } ), &ordered_only, ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED );
+        channels_check_violation( channels_bytes( { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+                                                    0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 } ),
+                                  &ordered_only, ROCKETNET_MESSAGE_VIOLATION_NONE );
     }
 
     // 7. bad block: a count of one, an index past the count, more fragments than W or than the
@@ -835,7 +843,9 @@ static void channels_test_round_trip_and_never_overreads()
         channels_check_repack( payload, length, parsed, form );
         records_checked += (int) parsed.size();
 
-        // every proper prefix: refused, or whole records inside the prefix
+        // proper prefixes: every one for a payload of at most 64 bytes, and
+        // for a longer one the prefixes from 0 at a stride of length / 48
+        // (about 48 of them): refused, or whole records inside the prefix
 
         const int prefix_step = length > 64 ? length / 48 : 1;
         for ( int prefix = 0; prefix < length; prefix += prefix_step )
@@ -1968,9 +1978,11 @@ static void test_channels_allocator_trap_witness()
 
         if ( pid == 0 )
         {
-            // the child's trap line is the witness's expected output; keep the parent's stderr clean
-            FILE * devnull = freopen( "/dev/null", "w", stderr );
-            (void) devnull;
+            // the child's trap line is the witness's expected output; keep the
+            // parent's stderr clean by closing the child's descriptor 2 (the
+            // trap's write then fails and is dropped), so the subject opens no
+            // path outside its working directory
+            close( 2 );
             rn_trap_phase = "witness";
             rn_trap_armed = 1;
 
@@ -2063,8 +2075,14 @@ static void test_channels_allocator_trap_witness_in_process()
 //                  the soak: send and receive at full load
 // ----------------------------------------------------------------
 
-// Layers 2 to 8 do not exist yet; this stands in for them by driving every
-// carve-out of layer 1 to its configured capacity, the way they will
+// This soak drives layer 1's carve-outs through the test's own stand-in for
+// layers 2 to 8 (its own send, write, receive and ack code below, not the
+// shipped modules), so it proves the region primitives alone allocate
+// nothing at full load. The shipped layers run under the trap in
+// test_channels_window_send_and_receive_over_the_lossy_simulator and in both
+// legs of test_channels_window_lossy_soak (the product leg covers
+// rn_channels_start/finish, rn_ordered_write and the window's ack free path).
+// It drives every carve-out of layer 1 to its configured capacity
 // (standard/MESSAGES.md m5, m7.3; proofs/tla/RNConnectionMemory.tla). Per tick, per connection, each way:
 // sends until the descriptor pool or the store refuses, a write of every
 // fragment from its store chunk into a frame with its number and sent-map
@@ -2966,7 +2984,7 @@ static void test_channels_window_send_any_message_fits_when_nothing_is_outstandi
 
 // -----------------------------------------
 // RNWindow Accept (standard/MESSAGES.md m5.2): each case uses the region's W=64 bitset
-// and descriptor table. These checks were added before the receive module.
+// and descriptor table.
 struct channels_window_receive_rig_t
 {
     rocketnet_counters_t counters;
@@ -4134,7 +4152,7 @@ static void test_channels_window_resend_walk_stops_at_the_first_not_due()
 
     check( ack.resend_head == 0 && ack.resend_tail == 4 && ack.resend_count == 5 );
 
-    // at t = 1.26 (resend_delay = 0.20, backoff = 1):
+    // at t = 1.26 (resend_delay = 0.20; the delay does not back off):
     // n = 0 (due 1.20) and n = 1 (due 1.25) are due; n = 2 (due 1.40) is not due
 
     uint64_t next_pkt = 10;
@@ -4834,6 +4852,14 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent, int
     int drained = 0;
     double now = 1000.0;
 
+    // The trap is armed over the whole steady state: the shipped
+    // rn_channels_start/finish, rn_ordered_write/commit/packet_failed,
+    // rn_ordered_acks (the window's ack free path), rn_ordered_receive,
+    // deliveries and end_update must not allocate.
+
+    rn_trap_phase = "window_lossy_soak_product";
+    rn_trap_armed = 1;
+
     for ( int tick = 0; tick < 20000 && drained < 16; tick++ )
     {
         now += 0.005;
@@ -4935,16 +4961,29 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent, int
             for ( uint32_t i = 0; i < n; i++ )
             {
                 const rn_delivery_t & delivery = receiver->channels.region->deliveries[i];
-                check( delivery.bytes >= 48 );
+                check( delivery.bytes >= 8 );
 
                 uint64_t id;
                 memcpy( &id, delivery.data, 8 );
                 check( id >= 1 && id <= (uint64_t) total_messages && delivery.channel == ( id - 1 ) % (uint64_t) num_channels );
+
+                // the whole message: the length the sender wrote for this id
+                // (step 2's rule), and every byte of it, so a truncated,
+                // padded or substituted delivery fails here
+
+                const int index = (int) ( id - 1 );
+                const uint32_t expected_bytes = ( index % 6 == 0 ) ? 2 * F + 32 : ( ( index % 3 == 0 ) ? 256 : 48 );
+                check( delivery.bytes == (int) expected_bytes );
                 for ( int b = 8; b < delivery.bytes; b++ )
                 {
                     check( delivery.data[b] == (uint8_t) ( id * 37u + (uint32_t) b * 13u + 1u ) );
                 }
-                check( id > last_delivered[delivery.channel] );     // ordered, once
+
+                // ordered and once, with no gap: each channel's next delivery
+                // is the next id the sender gave that channel
+
+                const uint64_t expected_id = last_delivered[delivery.channel] == 0 ? (uint64_t) delivery.channel + 1 : last_delivered[delivery.channel] + (uint64_t) num_channels;
+                check( id == expected_id );
                 last_delivered[delivery.channel] = id;
                 delivered_total++;
             }
@@ -4973,6 +5012,9 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent, int
             drained = 0;
         }
     }
+
+    rn_trap_armed = 0;
+    rn_trap_phase = "idle";
 
     check( next_message == total_messages && drained == 16 );
     check( delivered_total == total_messages );

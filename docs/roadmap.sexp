@@ -585,4 +585,19 @@
    :title "A tenth tla-trace shard, so shard 3 leaves room under the 2-minute cap"
    :text "Shard 3 of tools/tla_trace_check.py SHARDS (msgx:4, msgxsendruns, gather and msgx's reach predicates) is the slowest per-commit trace shard: 98 s on a CI runner in v1.1.53, and on v1.1.54 106 s alone on a bench and 123.5 s when three shards shared a loaded one, against the job's 120 s cap. Moving gso or gather out of it within nine shards barely helped on the bench (fix/v1.1.x/trace-shard3-lighter, not merged). Add a tenth shard (matrix.shard N/10 in .github/workflows/ci.yml and the summary's shard names) and split shard 3's entries across it, with each shard's replay time recorded."
    :date "2026-11-13" :origin "v1.1.54 replays: trace shard 3 at 106 s alone")
+
+  (item "channels-trap-hooks" :group "review-v1-2" :area "tests"
+   :title "Give every test_channels case that arms the allocation trap the library allocator hooks"
+   :text "rocketnet_channels_is_allocator_test in tests/test_channels.cpp gives the rocketnet_malloc/free hooks (rn_test_malloc_hook) only to test_channels_allocator_*, test_channels_window_send_and_receive_over_the_lossy_simulator and test_channels_window_lossy_soak. test_channels_window_receive_over_the_lossy_simulator and test_channels_window_lossy_soak_opted_in also arm rn_trap_armed (both soak legs, the product leg included), so there a library allocation is caught only by the libc net (glibc without a sanitizer) or operator new, and not on macOS, Windows or the sanitizer legs. Decide the hook list by whether a case arms the trap (or add the two names), and show a planted rocketnet_malloc inside each case firing on every leg."
+   :date "2026-11-13" :origin "Tests review before v1.2.0, row TM218 (optional)")
+
+  (item "aead-open-argument-checks" :group "review-v1-2" :area "tests"
+   :title "Isolate the open-side argument checks of the packet AEAD"
+   :text "The open-side argument checks in sdk/rocketnet_protocol.cpp (327-340 at 5a2dbf403: the sequence-0 guard, the nonce guard and the ephemeral-key discipline) are not tested on their own: the two packets the test in sdk/rocketnet_tests.cpp feeds fail the AEAD anyway, so deleting either guard passes, and the ephemeral discipline on open is never called with a mismatched argument. Add cases whose only fault is the argument each guard refuses (a packet that would open but for that argument), each shown red when its guard is deleted."
+   :date "2026-11-13" :origin "Tests review before v1.2.0, row TM220 (optional)")
+
+  (item "layer-export-table-check" :group "review-v1-2" :area "tools"
+   :title "Hold the layer NULL-audit table to rocketnet_layers.h with a tool"
+   :text "tools/check_exports.py holds rocketnet_test_exports (the public NULL audit in sdk/rocketnet_tests.cpp) to sdk/rocketnet.h, but nothing compares rocketnet_test_layer_exports with the entry points rocketnet_layers.h declares, so a new layer entry point with no row, no NULL-case list entry and no NULL call passes. Extend the tool (or add one beside it) to derive the layer entry points from the header and refuse a missing, undeclared or duplicate name, and to refuse a NULL-case name with no NULL call in rocketnet_test_public_api_null_is_a_counted_no_op."
+   :date "2026-11-13" :origin "Tests review before v1.2.0, row TM085 (follow-up)")
  ))
