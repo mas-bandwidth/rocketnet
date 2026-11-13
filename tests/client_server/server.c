@@ -1391,10 +1391,15 @@ static int run_self_test( const char * path, const char * label, uint32_t seed )
 // each transport's network thread count flag, one per config field
 #define SERVER_NUM_THREAD_FLAGS 7
 
-static const char * const server_thread_flags[SERVER_NUM_THREAD_FLAGS] = { "--num-xdp-threads",           "--num-gso-workers",
-                                                                           "--num-io-uring-workers",      "--num-rio-lanes",
-                                                                           "--num-iocp-completion-workers", "--num-iocp-send-threads",
-                                                                           "--num-msgx-transmit-workers" };
+static const char * const server_thread_flags[SERVER_NUM_THREAD_FLAGS] = {
+    "--num-xdp-threads",
+    "--num-gso-workers",
+    "--num-io-uring-workers",
+    "--num-rio-lanes",
+    "--num-iocp-completion-workers",
+    "--num-iocp-send-threads",
+    "--num-msgx-transmit-workers",
+};
 
 // the flag's index in server_thread_flags, -1 when a is none of them
 static int server_thread_flag( const char * a )

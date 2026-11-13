@@ -1924,8 +1924,8 @@ struct rocketnet_server_config_t
     /// network threads: lanes, each a socket, a registered region and an I/O
     /// worker. Default is 5 (zero selects it): the smallest count that held
     /// 1000 players at peak and average, with and without a game load, on AWS
-    /// m7i.16xlarge (2026-11-13, 3218cf5f6; 4 lanes held 545k of 900k packets
-    /// a second at peak). Range is 1 .. 32. More
+    /// m7i.16xlarge (2026-11-13, 3218cf5f6; 4 lanes fell short of the peak
+    /// rate, 545k of 900k a second). Range is 1 .. 32. More
     /// than one lane needs a specific local address in bind_ipv4_address or
     /// bind_ipv6_address: the sockets share the port, one per processor, and
     /// Windows has no exclusive form of that sharing (a process that asks for

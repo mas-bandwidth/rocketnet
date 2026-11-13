@@ -165,7 +165,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // client: actual=15394284 (the Windows unit job, MSVC, Release, DEV=ON).
 // The appended counter RECEIVE_DROPPED_RETIRED adds 64 to the server:
 // actual=1528614751 (the Windows unit job, run 43448217775).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566175 )
+// The per-transport thread counts grow the transport config, one 64-byte
+// rounding: actual=1528614815 (the Windows unit job, run 43463295653).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566239 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -367,9 +369,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The io_uring transport's rows URING_PIN_REFUSALS and
 // URING_RECEIVE_DROPPED_SOCKET add 64 more to the server: actual=5644858631
 // (amd-3, gcc, Debug, DEV ON); arm64 the same 64, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810111ULL )
+// Each transport's own network thread count, at its default (xdp 1 thread,
+// gso 1 worker, io_uring 2), lowers the server: actual=2142726194 (the Linux
+// Debug and Release DEV=ON unit jobs, run 43463295653). arm64 adds 8 for the
+// one xdp thread record in place of 56, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141677626ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810055ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141677618ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
