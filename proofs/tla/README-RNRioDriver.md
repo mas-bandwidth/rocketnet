@@ -14,12 +14,17 @@ runs on the main thread in this model.
 The runtime transport now gives every RIO call to one background I/O worker
 and exchanges bank indices and send-phase states with the caller under a
 short mutex. `RNRioWorker.tla` (`README-RNRioWorker.md`) models that design:
-the worker, the receive banks and their backpressure, the phase handoff and
-stop. This module's runs remain evidence for the slot, slice and phase rules
-the worker keeps (no reserve into a posted phase, free only when drained, a
-refused re-post never shrinks the depth). Its caller-driven bank swap and
-per-call receive bound describe the earlier design and no longer map to the
-code. The action mapping and runs below retain their historical scope.
+the worker, the three-bank receive handoff and its backpressure, the
+three-phase send handoff and the stop pass. This module is historical
+design only: no current code implements it and its runs are not evidence
+about the current code. Its two switched send phases, its two-bank swap,
+its per-call receive bound and its destroy-time close and drain all
+describe the earlier design. The rules it checked there (no reserve into
+a posted phase, free only when drained, a refused re-post never shrinks
+the depth) are checked against the current code by `RNRioWorker`
+(`FillPhaseOwnedByMain`, `FreedOnlyWhenDrained`, `SlicesAccounted`). The
+action mapping and runs below keep their historical scope, and the
+function names they cite are those of the earlier design.
 
 ## The abstraction
 
