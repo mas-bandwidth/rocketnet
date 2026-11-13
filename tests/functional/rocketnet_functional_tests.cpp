@@ -16097,6 +16097,9 @@ extern void rocketnet_test_server_bind_refused_portable();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 extern void rocketnet_test_server_bind_refused_msgx();
+extern void rocketnet_test_server_bind_dual_stack_ipv4_held();
+extern void rocketnet_test_server_bind_dual_stack_port_zero();
+extern void rocketnet_test_server_msgx_dual_stack_both_families_connect();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_server_bind_refused_gso();
@@ -16703,6 +16706,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, NULL },
+    { "test_server_bind_dual_stack_ipv4_held", rocketnet_test_server_bind_dual_stack_ipv4_held, NULL },
+    { "test_server_bind_dual_stack_port_zero", rocketnet_test_server_bind_dual_stack_port_zero, NULL },
+    { "test_server_msgx_dual_stack_both_families_connect", rocketnet_test_server_msgx_dual_stack_both_families_connect, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, NULL },
