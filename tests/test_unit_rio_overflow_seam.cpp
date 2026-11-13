@@ -183,8 +183,9 @@ static void test_rio_transport_create_failure_unposted_frees_the_lane()
 
 REGISTER_UNIT_TEST( test_rio_transport_create_failure_unposted_frees_the_lane );
 
-// At stop, three datagrams completed after the close, three in the fill
-// bank and two in a ready bank main never took: all eight are counted as
+// At stop, three datagrams completed after the close and five banked that
+// main never returned (the rest of the bank the worker left, of main's own
+// bank, and the worker's uncommitted ones): all eight are counted as
 // RECEIVE_DROP_STOPPED and no other reason moves (a fake kernel, no socket,
 // no worker thread, no clock).
 static void test_rio_transport_stop_counts_stranded_datagrams()

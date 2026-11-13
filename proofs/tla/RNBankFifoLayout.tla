@@ -20,11 +20,9 @@
 (*   rocketnet_server_iocp_send_packets and rocketnet_iocp_send_worker     *)
 (*   (sdk/rocketnet_server_iocp_windows.cpp): free LIFO stack              *)
 (*   send_free[--send_free_count] from the literal, ready FIFO of three.   *)
-(*   rocketnet_iocp_publish_receive_bank and                               *)
-(*   rocketnet_server_iocp_receive_packets: free LIFO, ready FIFO of four  *)
-(*   and an exposed list main holds until its next call.                   *)
-(*   rocketnet_rio_worker_pass and rocketnet_server_rio_receive_packets    *)
-(*   (sdk/rocketnet_server_rio_windows.cpp): the same as the iocp receive. *)
+(*   MCRNBankFifoLayoutLifoExposed.cfg (free LIFO, ready FIFO of four and  *)
+(*   an exposed list held until the next call) has no user now: the iocp  *)
+(*   and rio server receive banks moved to RNReceiveHandoff on 2026-11-13. *)
 (*   rocketnet_client_iocp_dequeue and rocketnet_client_iocp_receive_batch *)
 (*   (sdk/rocketnet_client_iocp_windows.cpp): no free queue (a buffer not  *)
 (*   ready or being copied is posted to the kernel, which completes them   *)
@@ -153,8 +151,7 @@ ReadyTail == Tl(readyHead + readyCount)
 \* bank is free or max_ready banks are ready.  portable_rx_publish,
 \* portable_tx_publish, rocketnet_server_gso_publish_send,
 \* rocketnet_xdp_buffer_exchange_t::publish, rocketnet_buffer_handoff_publish,
-\* rocketnet_server_iocp_send_packets, rocketnet_iocp_publish_receive_bank,
-\* rocketnet_rio_worker_pass (WPublish).
+\* rocketnet_server_iocp_send_packets.
 Publish ==
     /\ ~Posted
     /\ ~oob
@@ -190,8 +187,7 @@ Complete(b) ==
 \* The consumer takes the oldest ready bank onto its list.  portable_rx_acquire,
 \* portable_tx_worker, rocketnet_server_gso_take_send,
 \* rocketnet_xdp_buffer_exchange_t::claim, rocketnet_buffer_handoff_take,
-\* rocketnet_iocp_send_worker, rocketnet_server_iocp_receive_packets,
-\* rocketnet_server_rio_receive_packets, rocketnet_client_iocp_receive_batch.
+\* rocketnet_iocp_send_worker, rocketnet_client_iocp_receive_batch.
 Take ==
     /\ ~oob
     /\ readyCount > 0
@@ -208,8 +204,7 @@ Take ==
 \* for the iocp client, posts it again).  portable_rx_acquire,
 \* portable_tx_worker, rocketnet_server_gso_return_send,
 \* rocketnet_xdp_buffer_exchange_t::recycle, rocketnet_buffer_handoff_release,
-\* rocketnet_iocp_send_worker, rocketnet_server_iocp_receive_packets,
-\* rocketnet_server_rio_receive_packets, rocketnet_client_iocp_receive_batch.
+\* rocketnet_iocp_send_worker, rocketnet_client_iocp_receive_batch.
 Release ==
     /\ ~oob
     /\ exposedCount > 0
