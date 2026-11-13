@@ -277,7 +277,6 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
             {
                 const uint8_t ignored[6] = { (uint8_t) ( unusable == 1 ? 0x01 : 0x00 ), 0x00, (uint8_t) ( unusable == 1 ? 0x5e : 0x00 ), 0x00, 0x00, 0x00 };
                 rocketnet_xdp_reply_macs_learn( &walk.table, &walk.address[a], ignored );
-                report.act( "Ignored" );
                 args.push_back( reply_macs_address_name( a ) );
                 args.push_back( tla_string( "unusable" ) );
                 records.push_back( tla_step( "learn", "Ignored", tla_sequence( args ), reply_macs_state( walk ) ) );
@@ -311,7 +310,12 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
             uint64_t refused = 0;
             const uint8_t * reply = rocketnet_xdp_reply_mac( &walk.table, &walk.address[a], none ? NULL : answered, &refused );
             const char * act = reply == NULL ? "Refused" : ( reply == answered ? "Answer" : "Skip" );
-            report.act( act );
+            // the census counts the model's actions: Skip, Refused and
+            // Ignored change nothing and are no action of Next
+            if ( strcmp( act, "Answer" ) == 0 )
+            {
+                report.act( act );
+            }
             args.push_back( reply_macs_address_name( a ) );
             args.push_back( none ? tla_string( "none" ) : ( unusable ? tla_string( "unusable" ) : reply_macs_mac_name( m ) ) );
             args.push_back( tla_int( (int64_t) refused ) );
