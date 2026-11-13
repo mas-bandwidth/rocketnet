@@ -949,9 +949,10 @@ void rocketnet_test_transport_ring_exhaustion()
     rocketnet_check( capacity >= 256 );
     rocketnet_check( capacity < 20000 );
 
-    // the one client's own frame comes on top once its keep-alive is acknowledged
+    // the fill takes exactly the lane's pool less the reserve, in every build
+    // (read by value on Windows: development and production both)
 
-    rocketnet_check( completion_capacity == 0 || capacity == completion_capacity || capacity == completion_capacity + 1 );
+    rocketnet_check( completion_capacity == 0 || capacity == completion_capacity );
 
     // refusal holds until the flush -- 44 more starts all refuse, and the
     // counters attribute every refusal exactly (the game's packets already incurred
@@ -7841,6 +7842,183 @@ void rocketnet_test_gso_client_wire_plain()
     // sendmmsg message. the fallback tier is never the untested tier.
 
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", false );
+}
+
+// the gso transport's refused pins reach the server's public counters: a
+// server whose num_os_cpus names a cpu this machine does not have has every
+// queue worker's pin refused, and rocketnet_server_transport_counters reads
+// GSO_PIN_REFUSALS as at least the queue count (a refused worker is confined
+// to the cpus from 1 up, which may add a refusal where affinity is refused)
+void rocketnet_test_server_gso_pin_refusals_reach_server_counters()
+{
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 16;
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
+    server_config.num_xdp_queues = 2;
+    server_config.num_os_cpus = 256; // the config's largest: no machine here has that many cpus online, so every pin is refused
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
+    rocketnet_check( server );
+
+    const double start = rocketnet_platform_time();
+    uint64_t refused = 0;
+    while ( rocketnet_platform_time() - start < 5.0 && refused < 2 )
+    {
+        refused = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS];
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( refused >= 2 );
+    // exact where the confinement that follows a refused pin can succeed: this
+    // process may run on some cpu other than cpu 0 (the allowed set, not the
+    // online count: a runner's cpuset may allow only cpu 0), so one refusal
+    // for each queue worker
+    cpu_set_t allowed;
+    CPU_ZERO( &allowed );
+    bool other_cpu = false;
+    if ( sched_getaffinity( 0, sizeof( allowed ), &allowed ) == 0 )
+    {
+        for ( int cpu = 1; cpu < CPU_SETSIZE && cpu < sysconf( _SC_NPROCESSORS_ONLN ); cpu++ )
+        {
+            other_cpu = other_cpu || CPU_ISSET( (size_t) cpu, &allowed );
+        }
+    }
+    if ( other_cpu )
+    {
+        rocketnet_platform_sleep( 0.05 );
+        rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 2 );
+    }
+
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_GSO_PIN_REFUSALS );
+}
+
+// the workers pin themselves (rocketnet_gso_pin.h): with num_os_cpus 0 (read as 1,
+// the OS keeps cpu 0) each worker reports cpu 1 + queue; with a
+// cpu the machine does not have, every worker reports NONE, the refusal is
+// counted once for each, and no worker is ever reported on that cpu; with
+// num_os_cpus 1 each worker reports cpu 1 + queue (reported only after
+// pthread_setaffinity_np succeeded), or, on a machine without the cpus, the
+// refusal path as above.
+
+static bool rocketnet_test_gso_wait_pins( struct rocketnet_server_gso_t * gso, int queues )
+{
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        bool all = true;
+        for ( int q = 0; q < queues; q++ )
+        {
+            if ( rocketnet_server_gso_worker_cpu( gso, q ) == ROCKETNET_GSO_PIN_PENDING )
+            {
+                all = false;
+            }
+        }
+        if ( all )
+        {
+            return true;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    return false;
+}
+
+void rocketnet_test_server_gso_worker_pin()
+{
+    const int queues = 2;
+    const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+
+    // num_os_cpus 0 is read as 1 by the transport (the OS keeps cpu 0): the
+    // workers pin from cpu 1, never unpinned, and nothing is refused where the
+    // machine has the cpus
+    if ( online >= 1 + queues )
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 0 );
+        rocketnet_check( gso );
+        rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
+        for ( int q = 0; q < queues; q++ )
+        {
+            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
+            rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( gso, q ) == 0 );
+        }
+        rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == 0 );
+        rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+    }
+
+    // a cpu the machine does not have: refused by name, counted, never reported pinned
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, online + 1000 );
+        rocketnet_check( gso );
+        rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
+        for ( int q = 0; q < queues; q++ )
+        {
+            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == ROCKETNET_GSO_PIN_NONE );
+        }
+        rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) >= queues );
+        // where a refused worker runs, read from the worker thread itself:
+        // confined away from cpu 0 wherever this process may run on another
+        // cpu (the allowed set, not the online count)
+        cpu_set_t allowed;
+        CPU_ZERO( &allowed );
+        bool other_cpu = false;
+        if ( sched_getaffinity( 0, sizeof( allowed ), &allowed ) == 0 )
+        {
+            for ( int cpu = 1; cpu < CPU_SETSIZE && cpu < online; cpu++ )
+            {
+                other_cpu = other_cpu || CPU_ISSET( (size_t) cpu, &allowed );
+            }
+        }
+        if ( other_cpu )
+        {
+            for ( int q = 0; q < queues; q++ )
+            {
+                rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( gso, q ) == 0 );
+            }
+            rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == queues );
+        }
+        rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+    }
+
+    // placement: queue q on cpu 1 + q
+    if ( online >= 1 + queues )
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 1 );
+        rocketnet_check( gso );
+        rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
+        for ( int q = 0; q < queues; q++ )
+        {
+            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
+        }
+        rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == 0 );
+        rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+    }
+    // a num_os_cpus below 0 is read as 1 by the transport itself: the OS keeps cpu 0
+    if ( online >= 1 + queues )
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, -7 );
+        rocketnet_check( gso );
+        rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
+        for ( int q = 0; q < queues; q++ )
+        {
+            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
+        }
+        rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+    }
+
+    if ( online < 1 + queues )
+    {
+        printf( "test_gso_transport_worker_pin: %d cpus online, the placement needs %d; refusal paths only\n", online, 1 + queues );
+        fflush( stdout );
+    }
 }
 
 void rocketnet_test_gso_client_wire_gro()
@@ -16156,6 +16334,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_gso_client_transport_wire_plain", rocketnet_test_gso_client_wire_plain, NULL },
     { "test_gso_client_transport_wire_gro", rocketnet_test_gso_client_wire_gro, NULL },
     { "test_gso_client_transport_wire_gro_simulated", rocketnet_test_gso_client_wire_gro_simulated, NULL },
+    { "test_gso_transport_worker_pin", rocketnet_test_server_gso_worker_pin, NULL },
+    { "test_gso_transport_pin_refusals_reach_server_counters", rocketnet_test_server_gso_pin_refusals_reach_server_counters, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
 #if ROCKETNET_DEV

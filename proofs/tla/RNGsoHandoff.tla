@@ -54,6 +54,16 @@
 (* freeing any storage, and refuses (does not free) while a worker has not *)
 (* exited.                                                                 *)
 (*                                                                         *)
+(* Received and never consumed (StopCount, RxAccounted): main claims and   *)
+(* consumes nothing once stop is asked, and the first stopped call that    *)
+(* finds the workers exited (rocketnet_server_gso_count_stopped) counts    *)
+(* what is still banked, main's unread tail, the ready buffer and the      *)
+(* worker's buffer, as RECEIVE_DROP_STOPPED, so every datagram the worker  *)
+(* received was consumed or counted.  destroy calls stopped, so the count  *)
+(* is made by Join.  CountTail FALSE, the reversed witness                 *)
+(* MCRNGsoHandoffBrokenStopTail.cfg, forgets main's tail and violates      *)
+(* RxAccounted.                                                            *)
+(*                                                                         *)
 (* Defect switches, FALSE in the passing run:                              *)
 (* PublishWhileHeld (the RX worker writes a datagram into the buffer main  *)
 (* currently holds, as if it published over main's view), MainBlocks       *)
@@ -139,6 +149,12 @@ Refused(c, k, e) ==
 
 Range(s) == { s[i] : i \in DOMAIN s }
 
+(* CountTail: the stop count includes the unread tail of the buffer main  *)
+(* holds.  FALSE, the reversed witness MCRNGsoHandoffBrokenStopTail.cfg,  *)
+(* counts only the ready and the worker's buffers and violates            *)
+(* RxAccounted.                                                           *)
+CountTail == TRUE
+
 VARIABLES
     lock,        \* "none", "main" or "worker": who holds the TX mutex
     pc,          \* main and the TX worker: "run", "locked", "unlock", "waitlock", "sending", "done"
@@ -154,7 +170,8 @@ VARIABLES
                  \* before the next; spun (ghost): a pass ran while one was owed
     arrived,     \* datagrams arrived: the next is arrived + 1
     rxConsumed,  \* packets main consumed, in order
-    txProducer,  \* the TX bank main's fill threads stage into, or NONE
+    rxStopped,   \* datagrams counted RECEIVE_DROP_STOPPED at stop
+    txProducer,  \* the TX bank main's game threads stage into, or NONE
     txFree,      \* the free TX banks, oldest first
     txReady,     \* the published TX banks, oldest first
     txHeld,      \* the TX bank the worker holds, or NONE
@@ -173,8 +190,8 @@ VARIABLES
     freed        \* destroy freed the transport storage
 
 vars == << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
-           rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer, txFree, txReady,
-           txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut, quit, rxExited,
+           rxReady, rxFree, rxBackoff, arrived, rxConsumed, rxStopped, txProducer,
+           txFree, txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut, quit, rxExited,
            txExited, joined, freed >>
 
 Init ==
@@ -186,6 +203,7 @@ Init ==
     /\ rxCursor = 0 /\ rxView = << >>
     /\ rxBackoff = [ owed |-> FALSE, spun |-> FALSE ]
     /\ arrived = 0 /\ rxConsumed = << >>
+    /\ rxStopped = 0
     /\ txProducer = 0 /\ txFree = << 1, 2 >> /\ txReady = << >> /\ txHeld = NONE
     /\ txFinal = FALSE
     /\ txContent = [ b \in Buffers |-> << >> ]
@@ -205,7 +223,7 @@ RxFill ==
     /\ arrived < MaxRx
     /\ rxContent' = [ rxContent EXCEPT ![rxWorker] = Append( @, arrived + 1 ) ]
     /\ arrived' = arrived + 1
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxCursor, rxView,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxCursor, rxView,
                     rxReady, rxFree, rxBackoff, rxConsumed, txProducer, txFree, txReady,
                     txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
@@ -226,7 +244,7 @@ RxStall ==
     /\ arrived < MaxRx
     /\ NoBackoff \/ ~rxBackoff.owed
     /\ rxBackoff' = [ owed |-> TRUE, spun |-> rxBackoff.spun \/ rxBackoff.owed ]
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, shut, quit, rxExited, txExited, joined, freed >>
@@ -235,7 +253,7 @@ RxStall ==
 RxSleep ==
     /\ pcRx = "run" /\ rxBackoff.owed
     /\ rxBackoff' = [ rxBackoff EXCEPT !.owed = FALSE ]
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, shut, quit, rxExited, txExited, joined, freed >>
@@ -249,7 +267,7 @@ WriteHeld ==
     /\ arrived < MaxRx
     /\ rxContent' = [ rxContent EXCEPT ![rxMain] = Append( @, arrived + 1 ) ]
     /\ arrived' = arrived + 1
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxCursor, rxView,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxCursor, rxView,
                     rxReady, rxFree, rxBackoff, rxConsumed, txProducer, txFree, txReady,
                     txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
@@ -265,7 +283,7 @@ RxPublish ==
     /\ rxWorker # NONE /\ rxContent[rxWorker] # << >>
     /\ rxReady = NONE /\ rxFree # NONE
     /\ rxReady' = rxWorker /\ rxWorker' = rxFree /\ rxFree' = NONE
-    /\ UNCHANGED << lock, pc, pcRx, rxMain, rxContent, rxCursor, rxView,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxMain, rxContent, rxCursor, rxView,
                     rxBackoff, arrived, rxConsumed, txProducer, txFree, txReady,
                     txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
@@ -280,7 +298,7 @@ RxClaim ==
     /\ rxFree' = rxMain /\ rxMain' = rxReady /\ rxReady' = NONE
     /\ rxView' = rxContent[rxReady] /\ rxCursor' = 0
     /\ rxContent' = [ rxContent EXCEPT ![rxMain] = << >> ]
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxBackoff, arrived, rxConsumed,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxBackoff, arrived, rxConsumed,
                     txProducer, txFree, txReady, txHeld, txFinal, txContent,
                     staged, txSent, txDropped, txErrDropped, shut, quit, rxExited, txExited,
                     joined, freed >>
@@ -292,12 +310,12 @@ RxConsume ==
     /\ rxCursor < Len(rxContent[rxMain])
     /\ rxConsumed' = Append( rxConsumed, rxContent[rxMain][rxCursor + 1] )
     /\ rxCursor' = rxCursor + 1
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxView,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxContent, rxView,
                     rxReady, rxFree, rxBackoff, arrived, txProducer, txFree, txReady,
                     txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
 
-(* a fill thread stages one packet into the producer bank, outside the    *)
+(* a game thread stages one packet into the producer bank, outside the    *)
 (* mutex                                                                  *)
 TxStage ==
     /\ pc["main"] = "run" /\ ~quit
@@ -305,7 +323,7 @@ TxStage ==
     /\ staged < MaxTx
     /\ txContent' = [ txContent EXCEPT ![txProducer] = Append( @, staged + 1 ) ]
     /\ staged' = staged + 1
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txSent, txDropped, txErrDropped, shut, quit, rxExited,
                     txExited, joined, freed >>
@@ -320,7 +338,7 @@ TxMainLock ==
        ELSE /\ MainBlocks
             /\ lock' = lock
             /\ pc' = [ pc EXCEPT !["main"] = "waitlock" ]
-    /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
+    /\ UNCHANGED << rxStopped, pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
                     rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer, txFree,
                     txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
@@ -329,7 +347,7 @@ TxMainWait ==
     /\ pc["main"] = "waitlock" /\ lock = "none"
     /\ lock' = "main"
     /\ pc' = [ pc EXCEPT !["main"] = "locked" ]
-    /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
+    /\ UNCHANGED << rxStopped, pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
                     rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer, txFree,
                     txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
@@ -343,9 +361,9 @@ TxPublish ==
        THEN /\ txReady' = Append( txReady, txProducer )
             /\ txProducer' = Head( txFree )
             /\ txFree' = Tail( txFree )
-       ELSE UNCHANGED << txReady, txProducer, txFree >>
+       ELSE UNCHANGED << rxStopped, txReady, txProducer, txFree >>
     /\ pc' = [ pc EXCEPT !["main"] = "unlock" ]
-    /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txHeld,
                     txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut, quit, rxExited,
                     txExited, joined, freed >>
@@ -356,7 +374,7 @@ TxWorkerLock ==
     /\ lock = "none"
     /\ lock' = "worker"
     /\ pc' = [ pc EXCEPT !["worker"] = "locked" ]
-    /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
+    /\ UNCHANGED << rxStopped, pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
                     rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer, txFree,
                     txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
@@ -368,7 +386,7 @@ TxTake ==
     /\ \/ /\ txReady # << >>
           /\ txHeld' = Head( txReady ) /\ txReady' = Tail( txReady )
           /\ txFinal' = FALSE
-          /\ UNCHANGED << txProducer >>
+          /\ UNCHANGED << rxStopped, txProducer >>
        \/ /\ txReady = << >> /\ quit /\ txProducer # NONE
           /\ txHeld' = txProducer /\ txProducer' = NONE
           /\ txFinal' = TRUE
@@ -376,7 +394,7 @@ TxTake ==
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
     \* retries_after_quit starts at 0 for each bank the worker takes
     /\ shut' = [ shut EXCEPT !.refusals = 0 ]
-    /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txFree,
                     txContent, staged, txSent, txDropped, txErrDropped, quit, rxExited, txExited,
                     joined, freed >>
@@ -388,7 +406,7 @@ TxTakeNone ==
     /\ txReady = << >>
     /\ ( ~quit \/ txProducer = NONE )
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
-    /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, shut, quit, rxExited, txExited, joined, freed >>
@@ -399,7 +417,7 @@ Unlock(t) ==
     /\ pc[t] = "unlock" /\ lock = t
     /\ lock' = "none"
     /\ pc' = [ pc EXCEPT ![t] = IF t = "worker" /\ txHeld # NONE THEN "sending" ELSE "run" ]
-    /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
+    /\ UNCHANGED << rxStopped, pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
                     rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer, txFree,
                     txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
@@ -423,10 +441,10 @@ TxSend ==
             /\ pc' = [ pc EXCEPT !["worker"] = "done" ]
             \* the final bank stays the exited worker's: it is retired
             \* unsent-to-free and freed with the transport at destroy
-            /\ UNCHANGED << txHeld, txFinal >>
+            /\ UNCHANGED << rxStopped, txHeld, txFinal >>
        ELSE /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
-            /\ UNCHANGED << txExited, txHeld, txFinal >>
-    /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
+            /\ UNCHANGED << rxStopped, txExited, txHeld, txFinal >>
+    /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, staged, txDropped, shut, quit, rxExited, joined, freed >>
 
@@ -471,7 +489,7 @@ TxSendFull ==
                           /\ pc' = [ pc EXCEPT !["worker"] = "done" ]
                      ELSE /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
                           /\ UNCHANGED txExited
-                  /\ UNCHANGED << txReady, txHeld, txFinal >>
+                  /\ UNCHANGED << rxStopped, txReady, txHeld, txFinal >>
              ELSE \* TxRetry: the rest stays for the next attempt
                   /\ txContent' = [ txContent EXCEPT ![txHeld] = rest ]
                   /\ txDropped' = txDropped
@@ -481,8 +499,8 @@ TxSendFull ==
                      THEN /\ txReady' = Append( txReady, txHeld )
                           /\ txHeld' = NONE
                           /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
-                     ELSE UNCHANGED << txReady, txHeld, pc >>
-    /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
+                     ELSE UNCHANGED << rxStopped, txReady, txHeld, pc >>
+    /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, staged, quit, rxExited, joined, freed >>
 
@@ -491,7 +509,7 @@ TxSendFull ==
 SocketFills ==
     /\ ~shut.full /\ ~freed
     /\ shut' = [ shut EXCEPT !.full = TRUE ]
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, quit, rxExited, txExited, joined, freed >>
@@ -499,7 +517,7 @@ SocketFills ==
 SocketDrains ==
     /\ shut.full /\ ~freed
     /\ shut' = [ shut EXCEPT !.full = FALSE ]
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, quit, rxExited, txExited, joined, freed >>
@@ -511,7 +529,7 @@ SocketDrains ==
 BeginShutdown ==
     /\ pc["main"] = "run" /\ ~shut.on
     /\ shut' = [ shut EXCEPT !.on = TRUE ]
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, quit, rxExited, txExited, joined, freed >>
@@ -529,7 +547,7 @@ TxReturn ==
     /\ txContent[txHeld] = << >>
     /\ txFree' = Append( txFree, txHeld ) /\ txHeld' = NONE
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
-    /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txReady, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
@@ -543,7 +561,7 @@ MainStop ==
     /\ shut.on /\ SendIdle
     /\ quit' = TRUE
     /\ pc' = [ pc EXCEPT !["main"] = "done" ]
-    /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, shut, rxExited, txExited, joined, freed >>
@@ -554,7 +572,7 @@ RxWorkerExit ==
     /\ pcRx = "run" /\ quit /\ ~rxExited
     /\ rxExited' = TRUE
     /\ pcRx' = "done"
-    /\ UNCHANGED << lock, pc, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, lock, pc, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, shut, quit, txExited, joined, freed >>
@@ -567,10 +585,22 @@ TxWorkerExitIdle ==
     /\ ( txProducer = NONE \/ txContent[txProducer] = << >> )
     /\ txExited' = TRUE
     /\ pc' = [ pc EXCEPT !["worker"] = "done" ]
-    /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, shut, quit, rxExited, joined, freed >>
+
+(* the stop count, rocketnet_server_gso_count_stopped: what was received *)
+(* and never consumed (the unread tail of main's buffer, the ready buffer  *)
+(* and the worker's buffer), counted RECEIVE_DROP_STOPPED.  The code makes *)
+(* it in the first stopped call that finds the worker exited, and destroy  *)
+(* calls stopped before it joins; once both workers have exited and main   *)
+(* has stopped nothing moves a receive buffer, so the count is folded into *)
+(* Join, the same value without the interleavings of a separate step       *)
+StopCount ==
+    ( IF CountTail THEN Len(rxContent[rxMain]) - rxCursor ELSE 0 )
+  + ( IF rxReady # NONE THEN Len(rxContent[rxReady]) ELSE 0 )
+  + ( IF rxWorker # NONE THEN Len(rxContent[rxWorker]) ELSE 0 )
 
 (* destroy joins both workers, and only a joined transport is freed: a    *)
 (* destroy that arrives before the workers exit joins nothing and frees   *)
@@ -578,6 +608,7 @@ TxWorkerExitIdle ==
 Join ==
     /\ quit /\ rxExited /\ txExited /\ ~joined /\ ~freed
     /\ joined' = TRUE
+    /\ rxStopped' = StopCount
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
@@ -586,7 +617,7 @@ Join ==
 Free ==
     /\ joined /\ ~freed
     /\ freed' = TRUE
-    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+    /\ UNCHANGED << rxStopped, lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxReady, rxFree, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, txDropped, txErrDropped, shut, quit, rxExited, txExited, joined >>
@@ -634,6 +665,7 @@ TypeOK ==
     /\ rxMain \in Buffers /\ rxFree \in Buffers \cup { NONE }
     /\ rxBackoff \in [ owed : BOOLEAN, spun : BOOLEAN ]
     /\ arrived \in 0 .. MaxRx /\ staged \in 0 .. MaxTx
+    /\ rxStopped \in 0 .. MaxRx
     /\ txProducer \in Buffers \cup { NONE } /\ txHeld \in Buffers \cup { NONE }
     /\ shut \in [ on : BOOLEAN, full : BOOLEAN, refusals : 0 .. RetryBound + 1 ]
 
@@ -658,6 +690,17 @@ TxQueuesDistinct ==
 (* the buffer main holds never changes under it: nothing is published     *)
 (* into it while main holds it, retained tail included                    *)
 NoPublishWhileHeld == rxContent[rxMain] = rxView
+
+(* no datagram the worker received goes uncounted: each was consumed by   *)
+(* main or is still banked (main's unread tail, the ready buffer, the      *)
+(* worker's buffer), and once stopped has counted, each one not consumed   *)
+(* is in RECEIVE_DROP_STOPPED (StopCount, made by Join)                   *)
+RxAccounted ==
+    LET banked == ( Len(rxContent[rxMain]) - rxCursor )
+                + ( IF rxReady # NONE THEN Len(rxContent[rxReady]) ELSE 0 )
+                + ( IF rxWorker # NONE THEN Len(rxContent[rxWorker]) ELSE 0 )
+    IN /\ Len(rxConsumed) + banked = arrived
+       /\ joined => Len(rxConsumed) + rxStopped = arrived
 
 (* the RX worker never spins: after a stalled pass it sleeps 1ms before   *)
 (* its next pass, so a full buffer that cannot be published cannot drive *)

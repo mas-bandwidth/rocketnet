@@ -83,6 +83,16 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
+    "iocp-admit": {
+        "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
+        "untraced": {},
+        "reach": ["BankFull"],
+    },
+    "iocp-lanes": {
+        "modules": ["RNIocpSendLanes.tla", "TraceRNIocpSendLanes.tla"],
+        "untraced": {},
+        "reach": ["LaneEmpty", "EveryThreadPosts"],
+    },
     "bank": {
         "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
         "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
@@ -95,6 +105,12 @@ LAYERS = {
         "reach": ["SegCapEdge", "ByteCapEdge"],
         # seven steps a bank (six stages and the call): 100 calls a seed
         "steps": 700,
+    },
+    "gso": {
+        "modules": ["RNGsoQueueBankLayout.tla", "TraceRNGsoQueueBankLayout.tla"],
+        "untraced": {"Done": "the model's stutter once every bound is spent; the walk's flush bound is its length, so it never "
+                             "gets there, and Done is no call of the code"},
+        "reach": ["BankFull", "TurnedOverEveryBank", "NoFreeBank"],
     },
     "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],

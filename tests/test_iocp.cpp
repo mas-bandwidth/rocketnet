@@ -3,6 +3,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
+#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_server_rio.h"
 #include "rocketnet_receive_prefilter.h"
 #include "rocketnet_memory.h"
@@ -432,7 +433,7 @@ static void test_completion_owns_frames()
     // the refused address is counted SEND_FAILED, once (an address the
     // socket cannot carry, never a full staging); the sends below add none
 
-    uint64_t refused_counters[ROCKETNET_NUM_COUNTERS];
+    uint64_t refused_counters[ROCKETNET_NUM_COUNTERS] = {};
     rocketnet_server_iocp_counters( transport, refused_counters );
     CHECK( refused_counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED] == 1 );
 
@@ -471,7 +472,7 @@ static void test_completion_owns_frames()
 
     iocp_flush( transport );
 
-    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS] = {};
     rocketnet_server_iocp_counters( transport, counters );
     CHECK( counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED] == 1 );
 
@@ -571,7 +572,7 @@ static void test_uso_run_owns_frames()
 
     iocp_flush( transport );
 
-    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS] = {};
     wait_until( "worker USO submission", [&]()
                 {
         rocketnet_server_iocp_send_packets(transport);
@@ -640,7 +641,9 @@ static void test_uso_run_owns_frames()
 static void test_datagrams_and_producers()
 {
     rocketnet_address_t bind = address( "[::]:0" );
-    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    // one worker: the dual-stack wildcard is a single exclusive socket (several
+    // workers refuse the wildcard, test_iocp_endpoints_share_by_processor)
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
     CHECK( transport && bind.port );
 
     rocketnet_address_t destination = address( "127.0.0.1:0" );
@@ -675,7 +678,7 @@ static void test_datagrams_and_producers()
     CHECK( received );
     CHECK( rocketnet_server_iocp_test_receive_view_published( transport, received ) );
 
-    uint64_t before[ROCKETNET_NUM_COUNTERS], after[ROCKETNET_NUM_COUNTERS];
+    uint64_t before[ROCKETNET_NUM_COUNTERS] = {}, after[ROCKETNET_NUM_COUNTERS] = {};
     rocketnet_server_iocp_counters( transport, before );
 
     uint8_t extra[IOCP_TAGGED_BYTES];
@@ -995,7 +998,7 @@ static void test_completion_batches_counted( int flags )
     wait_until( "IOCP receives posted", [&]()
                 { return rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER; } );
 
-    uint64_t before[ROCKETNET_NUM_COUNTERS];
+    uint64_t before[ROCKETNET_NUM_COUNTERS] = {};
     rocketnet_server_iocp_counters( transport, before );
     CHECK( before[ROCKETNET_COUNTER_IOCP_COMPLETION_BATCHES] == 0 );
 
@@ -1025,13 +1028,13 @@ static void test_completion_batches_counted( int flags )
 
         // the batch is counted before its completion is published, so the
         // count is final once the datagram is seen
-        uint64_t now[ROCKETNET_NUM_COUNTERS];
+        uint64_t now[ROCKETNET_NUM_COUNTERS] = {};
         rocketnet_server_iocp_counters( transport, now );
         CHECK( now[ROCKETNET_COUNTER_IOCP_COMPLETION_BATCHES] == (uint64_t) ( i + 1 ) );
         CHECK( now[ROCKETNET_COUNTER_IOCP_RECEIVE_COMPLETED] == (uint64_t) ( i + 1 ) );
     }
 
-    uint64_t after[ROCKETNET_NUM_COUNTERS];
+    uint64_t after[ROCKETNET_NUM_COUNTERS] = {};
     rocketnet_server_iocp_counters( transport, after );
     for ( int c = ROCKETNET_SERVER_IOCP_FIRST_COUNTER; c < ROCKETNET_SERVER_IOCP_FIRST_COUNTER + ROCKETNET_SERVER_IOCP_COUNTER_ROWS; ++c )
     {
@@ -1061,6 +1064,81 @@ static void test_completion_batches_both_paths()
 {
     test_completion_batches_counted( 0 );
     test_completion_batches_counted( ROCKETNET_IOCP_DISABLE_URO );
+}
+
+static uint64_t iocp_counter( rocketnet_server_iocp_t * transport, int counter );
+
+// Every datagram the transport received is delivered to main or counted by
+// name once: datagrams banked but not taken when the transport stops (in the
+// fill bank or a ready bank) are ROCKETNET_RECEIVE_DROP_STOPPED, and the ones
+// main took before the stop are not. Five are taken, fifteen more are banked
+// and left, then stop: STOPPED is fifteen, exactly.
+static void test_stop_counts_unread_datagrams( int flags )
+{
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, flags );
+    CHECK( transport );
+
+    SOCKET client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( client != INVALID_SOCKET );
+
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons( bind.port );
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    wait_until( "IOCP receives posted", [&]()
+                { return rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER; } );
+
+    const int taken = 5;
+    const int left = 15;
+    for ( int i = 0; i < taken; ++i )
+    {
+        CHECK( iocp_send_tagged( client, to, "take" ) == IOCP_TAGGED_BYTES );
+    }
+    int received = 0;
+    wait_until( "the first datagrams delivered", [&]()
+                {
+                    rocketnet_server_iocp_receive_packets( transport );
+                    received += rocketnet_server_iocp_process_packets( transport )->num_packets;
+                    return received == taken; } );
+
+    for ( int i = 0; i < left; ++i )
+    {
+        CHECK( iocp_send_tagged( client, to, "left" ) == IOCP_TAGGED_BYTES );
+    }
+    wait_until( "the rest banked", [&]()
+                { return iocp_counter( transport, ROCKETNET_COUNTER_IOCP_RECEIVE_COMPLETED ) == (uint64_t) ( taken + left ); } );
+
+    uint64_t before[ROCKETNET_RECEIVE_NUM_DROPS] = {};
+    rocketnet_server_iocp_receive_drop_totals( transport, before );
+    CHECK( before[ROCKETNET_RECEIVE_DROP_STOPPED] == 0 );
+
+    rocketnet_server_iocp_stop( transport );
+    wait_stopped( transport );
+
+    uint64_t after[ROCKETNET_RECEIVE_NUM_DROPS] = {};
+    rocketnet_server_iocp_receive_drop_totals( transport, after );
+    printf( "stop unread: taken=%d stopped=%llu\n", received, (unsigned long long) after[ROCKETNET_RECEIVE_DROP_STOPPED] );
+    CHECK( received == taken );
+    CHECK( after[ROCKETNET_RECEIVE_DROP_STOPPED] == (uint64_t) left );
+    for ( int drop = ROCKETNET_RECEIVE_ACCEPT + 1; drop < ROCKETNET_RECEIVE_NUM_DROPS; ++drop )
+    {
+        if ( drop != ROCKETNET_RECEIVE_DROP_STOPPED )
+        {
+            CHECK( after[drop] == before[drop] );
+        }
+    }
+
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    closesocket( client );
+    printf( "test_iocp_transport_stop_counts_unread_datagrams flags=%d\n", flags );
+}
+
+static void test_stop_counts_unread_both_paths()
+{
+    test_stop_counts_unread_datagrams( 0 );
+    test_stop_counts_unread_datagrams( ROCKETNET_IOCP_DISABLE_URO );
 }
 
 // A receive posted while an oversized datagram already waits in the socket:
@@ -1530,7 +1608,7 @@ static void iocp_stage( rocketnet_server_iocp_t * transport, const rocketnet_add
 
 static void iocp_wait_sends( rocketnet_server_iocp_t * transport, uint64_t total )
 {
-    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS] = {};
     const double deadline = rocketnet_platform_time() + 10.0;
 
     do
@@ -1550,14 +1628,14 @@ static void iocp_wait_sends( rocketnet_server_iocp_t * transport, uint64_t total
 
 static uint64_t iocp_sends_retired( rocketnet_server_iocp_t * transport )
 {
-    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS] = {};
     rocketnet_server_iocp_counters( transport, counters );
     return counters[ROCKETNET_COUNTER_IOCP_SEND_COMPLETED] + counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED];
 }
 
 static uint64_t iocp_counter( rocketnet_server_iocp_t * transport, int counter )
 {
-    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS] = {};
     rocketnet_server_iocp_counters( transport, counters );
     return counters[counter];
 }
@@ -1707,7 +1785,8 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     CHECK( reused >= 0 && ids[(size_t) reused] != first_id );
 #if ROCKETNET_DEV
     rocketnet_server_iocp_test_queue_stats( transport, &empty );
-    CHECK( empty.free_count == 0 );
+    // the other lanes keep every operation free: one destination fills one lane
+    CHECK( empty.free_count == ( rocketnet_server_iocp_send_lanes( ROCKETNET_DEFAULT_MAX_CLIENTS ) - 1 ) * rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( empty.free_pops - before.free_pops == (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 #endif // #if ROCKETNET_DEV
     rocketnet_server_iocp_finish_packet( transport, first_id, frames[(size_t) reused], FAULT_BYTES );
@@ -1720,7 +1799,7 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     iocp_flush( transport );
 #if ROCKETNET_DEV
     rocketnet_server_iocp_test_queue_stats( transport, &after );
-    CHECK( after.free_count == rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    CHECK( after.free_count == rocketnet_server_iocp_send_lanes( ROCKETNET_DEFAULT_MAX_CLIENTS ) * rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( after.free_pushes - before.free_pushes == (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( after.queue_probes - before.queue_probes <= 4 * (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( after.live_run_refs == 0 );
@@ -2712,6 +2791,279 @@ static void test_windows_port_exclusive()
     printf( "test_windows_port_exclusive\n" );
 }
 
+// Several workers are as many sockets sharing one specific address and port
+// by SIO_CPU_AFFINITY. They refuse the wildcard and IPv4-mapped addresses,
+// refuse an explicit port another socket holds (the exclusive probe), keep a
+// later SO_REUSEADDR bind out, and every datagram of every client arrives,
+// each client's in order (one flow is one processor, one endpoint).
+static void test_iocp_endpoints_share_by_processor()
+{
+    const char * refused[] = { "0.0.0.0:0", "[::]:0", "[::ffff:127.0.0.1]:0" };
+    for ( int i = 0; i < 3; ++i )
+    {
+        rocketnet_address_t bind = address( refused[i] );
+        CHECK( !rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    }
+
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 4, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    CHECK( transport && bind.port != 0 );
+
+    // every worker answered where it runs, and on this host pinned
+    int pinned = 0;
+    for ( int w = 0; w < 4; ++w )
+    {
+        uint64_t mask = 0;
+        int group = -1;
+        unsigned long error = 0;
+        const int placement = rocketnet_server_iocp_worker_placement( transport, w, &mask, &group, &error );
+        CHECK( placement != ROCKETNET_IOCP_PLACEMENT_PENDING );
+        pinned += placement == ROCKETNET_IOCP_PLACEMENT_PINNED && mask != 0 && group >= 0 ? 1 : 0;
+    }
+    // four workers pin to four distinct processors only on a host with four
+    // logical processors: precondition stated, the check skipped by name below it
+    if ( GetActiveProcessorCount( ALL_PROCESSOR_GROUPS ) >= 4 )
+    {
+        CHECK( pinned == 4 );
+    }
+    else
+    {
+        printf( "test_iocp_endpoints_share_by_processor: pinned check skipped, %lu logical processors, 4 needed\n",
+                (unsigned long) GetActiveProcessorCount( ALL_PROCESSOR_GROUPS ) );
+    }
+    CHECK( rocketnet_server_iocp_worker_placement( transport, 4, NULL, NULL, NULL ) == ROCKETNET_IOCP_PLACEMENT_PENDING );
+
+    // the probe: a second create at the port the first holds is refused
+    rocketnet_address_t again = bind;
+    CHECK( !rocketnet_server_iocp_create( NULL, &again, 2, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+
+    SOCKET thief;
+    const bool stolen = port_thief_binds( &bind, &thief );
+    closesocket( thief );
+    CHECK( !stolen );
+
+    const int num_clients = 32;
+    const int per_client = 4;
+    rocketnet_platform_socket_t * clients[num_clients];
+    uint16_t ports[num_clients];
+    for ( int c = 0; c < num_clients; ++c )
+    {
+        rocketnet_address_t client_address = address( "127.0.0.1:0" );
+        clients[c] = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024 );
+        CHECK( clients[c] );
+        ports[c] = client_address.port;
+    }
+    for ( int s = 0; s < per_client; ++s )
+    {
+        for ( int c = 0; c < num_clients; ++c )
+        {
+            const uint8_t datagram[IOCP_TAGGED_BYTES] = { 0x5A, (uint8_t) c, (uint8_t) s, 1, 2, 3, 4, 5 };
+            rocketnet_platform_socket_send_packet( clients[c], &bind, datagram, sizeof( datagram ) );
+        }
+    }
+
+    int next[num_clients] = {};
+    int received = 0;
+    bool in_order = true;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( received < num_clients * per_client && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_iocp_receive_packets( transport );
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            const uint8_t * data = batch->packet_data[i];
+            CHECK( batch->packet_bytes[i] == IOCP_TAGGED_BYTES && data[0] == 0x5A && data[1] < num_clients );
+            CHECK( batch->from[i].port == ports[data[1]] );
+            in_order = in_order && data[2] == next[data[1]];
+            next[data[1]] = data[2] + 1;
+            received++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    printf( "test_iocp_endpoints_share_by_processor workers=4 pinned=%d received=%d of %d in_order=%d thief_bound=%d\n", pinned, received, num_clients * per_client, in_order ? 1 : 0,
+            stolen ? 1 : 0 );
+    CHECK( received == num_clients * per_client );
+    CHECK( in_order );
+
+    for ( int c = 0; c < num_clients; ++c )
+    {
+        rocketnet_platform_socket_destroy( clients[c] );
+    }
+    wait_stopped( transport );
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+}
+
+// The send threads: ROCKETNET_IOCP_SEND_THREADS of them (as many as there are
+// lanes when fewer), each pinned to a logical processor of its own, none the
+// completion workers'. A pin Windows refuses is warned by name, counted, and
+// the thread is never reported as pinned.
+static std::atomic<int> send_pin_warnings{ 0 };
+static std::atomic<int> send_pin_warning_threads{ 0 };
+
+static void send_pin_log( void *, rocketnet_log_level_t, const char * message, size_t )
+{
+    const char * found = strstr( message, "iocp transport: send thread " );
+    if ( found && strstr( message, " NOT pinned: SetThreadGroupAffinity" ) && strstr( message, "refused (Win32 " ) )
+    {
+        send_pin_warnings.fetch_add( 1 );
+        send_pin_warning_threads.fetch_or( 1 << atoi( found + strlen( "iocp transport: send thread " ) ) );
+    }
+}
+
+static void test_iocp_send_threads_pinned_and_refusal()
+{
+    const int lanes = rocketnet_server_iocp_send_lanes( ROCKETNET_DEFAULT_MAX_CLIENTS );
+    const int expected = lanes < ROCKETNET_IOCP_SEND_THREADS ? lanes : ROCKETNET_IOCP_SEND_THREADS;
+
+    // the count
+    CHECK( ROCKETNET_IOCP_SEND_THREADS >= 1 && expected >= 1 );
+
+    // placement: two workers and the send threads, every one on a logical
+    // processor of its own
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        CHECK( transport );
+        CHECK( rocketnet_server_iocp_send_thread_count( transport ) == expected );
+        CHECK( rocketnet_server_iocp_send_pin_refusals( transport ) == 0 );
+        uint64_t seen[ROCKETNET_IOCP_MAX_SEND_THREADS + 2] = {};
+        int groups[ROCKETNET_IOCP_MAX_SEND_THREADS + 2] = {};
+        int num_seen = 0;
+        for ( int w = 0; w < 2; ++w )
+        {
+            uint64_t mask = 0;
+            int group = -1;
+            unsigned long error = 0;
+            CHECK( rocketnet_server_iocp_worker_placement( transport, w, &mask, &group, &error ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
+            seen[num_seen] = mask;
+            groups[num_seen++] = group;
+        }
+        for ( int t = 0; t < expected; ++t )
+        {
+            uint64_t mask = 0;
+            int group = -1;
+            unsigned long error = 7;
+            CHECK( rocketnet_server_iocp_send_placement( transport, t, &mask, &group, &error ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
+            CHECK( mask != 0 && ( mask & ( mask - 1 ) ) == 0 && group >= 0 ); // one logical processor
+            for ( int i = 0; i < num_seen; ++i )
+            {
+                CHECK( !( groups[i] == group && seen[i] == mask ) ); // its own: no worker's, no earlier send thread's
+            }
+            seen[num_seen] = mask;
+            groups[num_seen++] = group;
+        }
+        CHECK( rocketnet_server_iocp_send_placement( transport, expected, NULL, NULL, NULL ) == ROCKETNET_IOCP_PLACEMENT_PENDING );
+        CHECK( rocketnet_server_iocp_send_placement( transport, -1, NULL, NULL, NULL ) == ROCKETNET_IOCP_PLACEMENT_PENDING );
+        wait_stopped( transport );
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    }
+
+    // one worker (not pinned): the send threads still take cores of their own, after it
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        CHECK( transport );
+        uint64_t first_mask = 0;
+        for ( int t = 0; t < expected; ++t )
+        {
+            uint64_t mask = 0;
+            int group = -1;
+            CHECK( rocketnet_server_iocp_send_placement( transport, t, &mask, &group, NULL ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
+            CHECK( mask != 0 );
+            CHECK( t == 0 || mask != first_mask );
+            first_mask = t == 0 ? mask : first_mask;
+        }
+        wait_stopped( transport );
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    }
+
+    // refusal: Windows refuses every pin (a processor group that does not
+    // exist). Each is named in a warning, counted, reported REFUSED with its
+    // Win32 error and never PINNED, and the transport still runs.
+    {
+        send_pin_warnings.store( 0 );
+        send_pin_warning_threads.store( 0 );
+        rocketnet_log_function( send_pin_log, NULL );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+        rocketnet_server_iocp_test_force_flags( ROCKETNET_IOCP_REFUSE_SEND_PINS );
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        rocketnet_server_iocp_test_force_flags( 0 );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+        rocketnet_log_function( NULL, NULL );
+        CHECK( transport );
+        CHECK( rocketnet_server_iocp_send_thread_count( transport ) == expected );
+        CHECK( rocketnet_server_iocp_send_pin_refusals( transport ) == (uint64_t) expected );
+
+        // the public row is the same refusals, read by value
+        {
+            uint64_t row_counters[ROCKETNET_NUM_COUNTERS] = {};
+            rocketnet_server_iocp_counters( transport, row_counters );
+            CHECK( row_counters[ROCKETNET_COUNTER_IOCP_PIN_REFUSALS] == (uint64_t) expected );
+        }
+        CHECK( send_pin_warnings.load() == expected );
+        CHECK( send_pin_warning_threads.load() == ( 1 << expected ) - 1 ); // each thread named once
+        for ( int t = 0; t < expected; ++t )
+        {
+            unsigned long error = 0;
+            CHECK( rocketnet_server_iocp_send_placement( transport, t, NULL, NULL, &error ) == ROCKETNET_IOCP_PLACEMENT_REFUSED );
+            CHECK( error != 0 );
+        }
+
+        // refused or not, the transport sends and receives
+        rocketnet_address_t client_address = address( "127.0.0.1:0" );
+        rocketnet_platform_socket_t * client = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024 );
+        CHECK( client );
+        uint64_t id = 0;
+        uint8_t * frame = rocketnet_server_iocp_start_packet( transport, &client_address, &id );
+        CHECK( frame );
+        if ( frame )
+        {
+            memset( frame, 0x5C, FAULT_BYTES );
+            rocketnet_server_iocp_finish_packet( transport, id, frame, FAULT_BYTES );
+            rocketnet_server_iocp_send_packets( transport );
+            uint8_t data[ROCKETNET_RECEIVE_CEILING];
+            rocketnet_address_t from;
+            int received = 0;
+            const double deadline = rocketnet_platform_time() + 5.0;
+            while ( received == 0 && rocketnet_platform_time() < deadline )
+            {
+                received = rocketnet_platform_socket_receive_packet( client, &from, data, (int) sizeof( data ) );
+                if ( received == 0 )
+                {
+                    rocketnet_platform_sleep( 0.001 );
+                }
+            }
+            CHECK( received == FAULT_BYTES && data[0] == 0x5C );
+        }
+        rocketnet_platform_socket_destroy( client );
+        wait_stopped( transport );
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    }
+    // a completion worker's pin refused: IOCP_PIN_REFUSALS counts it too, by
+    // value (two workers, none of the send threads refused), and the
+    // placement reads REFUSED, never PINNED
+    {
+        rocketnet_server_iocp_test_force_flags( ROCKETNET_IOCP_REFUSE_WORKER_PINS );
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        rocketnet_server_iocp_test_force_flags( 0 );
+        CHECK( transport );
+        uint64_t row_counters[ROCKETNET_NUM_COUNTERS] = {};
+        rocketnet_server_iocp_counters( transport, row_counters );
+        CHECK( rocketnet_server_iocp_send_pin_refusals( transport ) == 0 );
+        CHECK( row_counters[ROCKETNET_COUNTER_IOCP_PIN_REFUSALS] == 2 );
+        for ( int w = 0; w < 2; ++w )
+        {
+            CHECK( rocketnet_server_iocp_worker_placement( transport, w, NULL, NULL, NULL ) == ROCKETNET_IOCP_PLACEMENT_REFUSED );
+        }
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    }
+
+    printf( "test_iocp_send_threads_pinned_and_refusal threads=%d\n", expected );
+}
+
 static std::atomic<int> send_failed_logs{ 0 };
 
 static void send_failed_log( void *, rocketnet_log_level_t, const char * message, size_t )
@@ -2749,12 +3101,28 @@ static void test_windows_transports_sized_by_max_clients()
     CHECK( rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS ) >= iocp_large );
     CHECK( rocketnet_server_iocp_allocation_bytes( 1, 0 ) == 0 && rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
     CHECK( rocketnet_server_rio_allocation_bytes( 0 ) == 0 && rocketnet_server_rio_allocation_bytes( ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
-    CHECK( rocketnet_server_iocp_send_queue_size( 4 ) == 1024 &&
-           rocketnet_server_iocp_send_queue_size( large_clients ) == rocketnet_server_send_staging_packets( large_clients ) );
+    // the send lanes, sized by rate: the 512-client sizing floor is four
+    // lanes of 4096, and a lane stages at most 4096, or the smallest power of
+    // two holding every client slot and the headroom when that is more (above
+    // 3072 clients); the total stays within the 65536 operations the packet
+    // handle's index bits name
+    CHECK( rocketnet_server_iocp_send_lanes( 4 ) == 4 && rocketnet_server_iocp_send_queue_size( 4 ) == ROCKETNET_IOCP_LANE_PACKETS );
+    {
+        const int sized = rocketnet_server_sized_clients( large_clients );
+        const int floor_packets = rocketnet_power_of_two_at_least( sized + ROCKETNET_IOCP_LANE_HEADROOM );
+        const int bound = floor_packets > ROCKETNET_IOCP_LANE_PACKETS ? floor_packets : ROCKETNET_IOCP_LANE_PACKETS;
+        const int wanted = ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT * sized;
+        const int total = rocketnet_server_iocp_send_lanes( large_clients ) * rocketnet_server_iocp_send_queue_size( large_clients );
+        CHECK( rocketnet_server_iocp_send_queue_size( large_clients ) <= bound );
+        CHECK( total >= ( wanted < ROCKETNET_IOCP_MAX_OPERATIONS ? wanted : ROCKETNET_IOCP_MAX_OPERATIONS ) );
+    }
+    // the send threads the lanes get: by value, 2 at 1000 clients, 1 for the one lane of 32768
+    CHECK( rocketnet_server_iocp_send_threads( rocketnet_server_iocp_send_lanes( 1000 ) ) == 2 );
+    CHECK( rocketnet_server_iocp_lanes_for( 32768 ) == 1 && rocketnet_server_iocp_send_threads( rocketnet_server_iocp_lanes_for( 32768 ) ) == 1 );
     CHECK( rocketnet_server_rio_receives( large_clients ) == 2 * rocketnet_server_send_staging_packets( large_clients ) );
     if ( large_clients == 1000 )
     {
-        CHECK( rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
+        CHECK( rocketnet_server_iocp_send_lanes( 1000 ) == 8 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
         CHECK( rocketnet_server_rio_receives( 1000 ) == 4096 );
     }
 
@@ -2771,11 +3139,14 @@ static void test_windows_transports_sized_by_max_clients()
         const int64_t held = live_bytes.load() - before;
         rocketnet_server_iocp_test_queue_stats_t stats;
         rocketnet_server_iocp_test_queue_stats( transport, &stats );
-        CHECK( stats.free_count == rocketnet_server_iocp_send_queue_size( max_clients ) );
-        CHECK( rocketnet_server_iocp_send_room( transport ) == rocketnet_server_iocp_send_queue_size( max_clients ) );
+        CHECK( stats.free_count == rocketnet_server_iocp_send_lanes( max_clients ) * rocketnet_server_iocp_send_queue_size( max_clients ) );
+        CHECK( rocketnet_server_iocp_send_room( transport ) == rocketnet_server_iocp_send_lanes( max_clients ) * rocketnet_server_iocp_send_queue_size( max_clients ) );
         printf( "test_windows_transports_sized_by_max_clients iocp max_clients=%d held=%lld plan=%llu\n", max_clients, (long long) held,
                 (unsigned long long) rocketnet_server_iocp_allocation_bytes( 1, max_clients ) );
+        // the plan counts what create takes: held is the plan less the thread
+        // and wake records the platform keeps outside the counted allocator
         CHECK( held > 0 && (uint64_t) held <= rocketnet_server_iocp_allocation_bytes( 1, max_clients ) );
+        CHECK( rocketnet_server_iocp_allocation_bytes( 1, max_clients ) - (uint64_t) held <= 4096 );
         wait_stopped( transport );
         rocketnet_server_iocp_destroy( transport );
 
@@ -3885,6 +4256,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_stop_sends_handed_burst", test_rio_transport_stop_sends_handed_burst },
     { "test_iocp_transport_receive_boundaries", test_receive_boundaries_both_paths },
     { "test_iocp_transport_completion_batches_counted", test_completion_batches_both_paths },
+    { "test_iocp_transport_stop_counts_unread_datagrams", test_stop_counts_unread_both_paths },
     { "test_rio_transport_receive_size_drops_counted", test_rio_receive_size_drops_counted },
     { "test_rio_transport_send_waits_counted", test_rio_send_waits_counted },
     { "test_iocp_transport_socket_sets_dont_fragment", test_iocp_transport_socket_sets_dont_fragment },
@@ -3908,6 +4280,8 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_create_failure_drains_posted_receives", test_rio_create_failure_drains_posted_receives },
     { "test_windows_create_refused_for_commit_is_out_of_memory", test_windows_create_refused_for_commit_is_out_of_memory },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
+    { "test_iocp_endpoints_share_by_processor", test_iocp_endpoints_share_by_processor },
+    { "test_iocp_send_threads_pinned_and_refusal", test_iocp_send_threads_pinned_and_refusal },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
     { "test_windows_sockets_not_inherited", test_windows_sockets_not_inherited },
     { "test_platform_socket_is_non_blocking", test_platform_socket_is_non_blocking },
