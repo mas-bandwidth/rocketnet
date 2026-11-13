@@ -106,6 +106,48 @@ static void test_xdp_transport_preflight_irqaffinity_list()
     rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0-4,8-12", "5-7,9", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
     rocketnet_unit_check( isolated_cpu == 9 );
 
+    // the forms the script's cpu_list_has refuses are refused here too (its
+    // selftest holds the same cases): a trailing comma, an empty entry, a
+    // leading comma, a blank after a comma
+    {
+        const char * malformed[] = { "irqaffinity=0,", "irqaffinity=0,\n", "irqaffinity=0,,1", "irqaffinity=,0", "irqaffinity=0, 1", "irqaffinity=-1", "irqaffinity=2147483648" };
+        for ( size_t i = 0; i < sizeof( malformed ) / sizeof( malformed[0] ); i++ )
+        {
+            rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( malformed[i], "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MALFORMED );
+        }
+    }
+    preflight_cmdline( root, "irqaffinity=0, isolcpus=1-2 nohz_full=1-2\n", "1-2\n" );
+    rocketnet_unit_check( !rocketnet_server_socket_preflight_boot_line( root ) );
+
+    // the old exact token, a leading zero, and cpu 0 itself isolated
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "ro irqaffinity=0 quiet", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=00", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "ro\tirqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "ro\tirqaffinity=1", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0", "0-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( isolated_cpu == 0 );
+
+    // an isolated set that is not a cpu list judges the form only
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=1", "1-3,", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+
+    // the value's bound: 255 characters is a value, 256 is not
+    {
+        char line[300] = "irqaffinity=0";
+        size_t length = strlen( line );
+        while ( length - strlen( "irqaffinity=" ) < 255 )
+        {
+            memcpy( line + length, ",0", 2 );
+            length += 2;
+        }
+        line[strlen( "irqaffinity=" ) + 255] = '\0';
+        rocketnet_unit_check( strlen( line ) - strlen( "irqaffinity=" ) == 255 );
+        rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( line, "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+        line[strlen( "irqaffinity=" ) + 255] = ',';
+        line[strlen( "irqaffinity=" ) + 256] = '0';
+        line[strlen( "irqaffinity=" ) + 257] = '\0';
+        rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( line, "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MALFORMED );
+    }
+
     // absent, not left-bounded, empty, malformed
 
     preflight_cmdline( root, "isolcpus=1-2 nohz_full=1-2\n", "1-2\n" );
@@ -192,6 +234,21 @@ static void test_xdp_transport_preflight_rt_throttle()
     rocketnet_unit_check( !rocketnet_server_socket_preflight_rt_throttle( root ) );
     preflight_rt( root, "7.0.0-43-generic\n", "-1\n", "CONFIG_RT_GROUP_SCHED=y\n" );
     rocketnet_unit_check( rocketnet_server_socket_preflight_rt_throttle( root ) );
+
+    // a config that opens but cannot be read (a directory at the path) is
+    // unknown, never "the option is absent": unmet at 950000, met at -1
+
+    {
+        char path[256];
+        preflight_rt( root, "7.0.0-43-generic\n", "950000\n", NULL );
+        snprintf( path, sizeof( path ), "%s/boot", root );
+        rocketnet_unit_check( mkdir( path, 0755 ) == 0 );
+        snprintf( path, sizeof( path ), "%s/boot/config-7.0.0-43-generic", root );
+        rocketnet_unit_check( mkdir( path, 0755 ) == 0 );
+        rocketnet_unit_check( !rocketnet_server_socket_preflight_rt_throttle( root ) );
+        preflight_root_write( root, "/proc/sys/kernel/sched_rt_runtime_us", "-1\n" );
+        rocketnet_unit_check( rocketnet_server_socket_preflight_rt_throttle( root ) );
+    }
 
     // 6.12 or later with no build config to read: it cannot be told, so
     // it is unmet unless the sysctl already reads -1

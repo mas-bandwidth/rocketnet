@@ -861,6 +861,13 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
 
     if ( *p == ',' )
     {
+        // a comma separates two entries: one with nothing after it ("0,",
+        // "0,\n") ends the list early and is not a cpu list, as in the
+        // script's cpu_list_has
+        if ( p[1] < '0' || p[1] > '9' )
+        {
+            return false;
+        }
         *cursor = p + 1;
         return true;
     }
@@ -1078,8 +1085,10 @@ static inline int rocketnet_xdp_cmdline_irqaffinity( const char * cmdline, const
         return ROCKETNET_XDP_IRQAFFINITY_ABSENT;
     }
 
+    // left-bounded by the line start or a blank (a space or a tab, the
+    // script's word split)
     const char * match = strstr( cmdline, token );
-    while ( match && match != cmdline && match[-1] != ' ' )
+    while ( match && match != cmdline && match[-1] != ' ' && match[-1] != '\t' && match[-1] != '\n' )
     {
         match = strstr( match + 1, token );
     }

@@ -484,7 +484,11 @@ queue_irq_lines_for_interface()
 # whether the cpu list LIST ("3", "0-1,5", sysfs form) takes in CPU: prints
 # 1 or 0, or -1 when LIST is not a cpu list (empty, a stray comma, a range
 # running backwards, a number past 2147483647). Leading blanks and trailing
-# whitespace are allowed. rocketnet_xdp_cpu_list_has is the same rule.
+# whitespace are allowed. rocketnet_xdp_cpu_list_has is the same rule over
+# the numeric forms the kernel writes (this selftest and
+# tests/test_unit_xdp_preflight_rules.cpp hold the same cases); the
+# kernel's own extra forms (N, all, groups) are refused by both, never
+# taken as verified.
 
 cpu_list_has()
 {
@@ -867,7 +871,12 @@ r8_throttles()
     case "$MINOR" in
         '') return 0 ;;
     esac
-    # a longer number is as large (the library clamps the same way)
+    # a longer number is as large (the library clamps the same way); leading
+    # zeros are not length, as the library reads 0006 as 6
+    MAJOR="${MAJOR#"${MAJOR%%[!0]*}"}"
+    MINOR="${MINOR#"${MINOR%%[!0]*}"}"
+    MAJOR="${MAJOR:-0}"
+    MINOR="${MINOR:-0}"
     [ "${#MAJOR}" -gt 9 ] && MAJOR=999999999
     [ "${#MINOR}" -gt 9 ] && MINOR=999999999
     if [ "$(( 10#$MAJOR ))" -lt 6 ] || { [ "$(( 10#$MAJOR ))" -eq 6 ] && [ "$(( 10#$MINOR ))" -lt 12 ]; }; then
@@ -1713,6 +1722,29 @@ STUB
         'echo "irqaffinity=0, isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
     stub_root_case "B1 irqaffinity empty" 2 1 "irqaffinity= is not a cpu list (B1)" \
         'echo "irqaffinity= isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    # the forms the library's rocketnet_xdp_cmdline_irqaffinity refuses or
+    # takes, one for one (tests/test_unit_xdp_preflight_rules.cpp)
+    for B1_FORM in "0,,1" ",0" "-1" "2147483648"; do
+        stub_root_case "B1 irqaffinity=$B1_FORM not a cpu list" 2 1 "irqaffinity=$B1_FORM is not a cpu list (B1)" \
+            "echo \"irqaffinity=$B1_FORM isolcpus=1-3 nohz_full=1-3 nosmt\" > \"\$SR/proc/cmdline\""
+    done
+    stub_root_case "B1 irqaffinity after a tab" 2 1 "irqaffinity=1 names cpu 1, which is in the isolated set 1-3 (B1)" \
+        'printf "ro\tirqaffinity=1 isolcpus=1-3 nohz_full=1-3 nosmt\n" > "$SR/proc/cmdline"'
+    stub_root_case "B1 irqaffinity=0 with cpu 0 isolated" 2 1 "irqaffinity=0 names cpu 0, which is in the isolated set 0-3 (B1)" \
+        'echo "irqaffinity=0 isolcpus=0-3 nohz_full=0-3 nosmt" > "$SR/proc/cmdline"; echo 0-3 > "$SR/sys/devices/system/cpu/isolated"'
+    for B1_FORM in "00" "0,0"; do
+        stub_root_met "$SR"
+        echo "irqaffinity=$B1_FORM isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"
+        OUT="$(run_stub_root "$SR" 2)"
+        expect_case "stub root: irqaffinity=$B1_FORM met" $? 0 "$OUT" "carries irqaffinity=$B1_FORM, off the isolated cpus (B1)" 0
+    done
+    B1_LONG="0$(printf ',0%.0s' $(seq 1 127))"
+    stub_root_met "$SR"
+    echo "irqaffinity=$B1_LONG isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"
+    OUT="$(run_stub_root "$SR" 2)"
+    expect_case "stub root: a 255-character irqaffinity is a value (${#B1_LONG})" $? 0 "$OUT" "off the isolated cpus (B1)" 0
+    stub_root_case "B1 a 257-character irqaffinity is not" 2 1 "is not a cpu list (B1)" \
+        'echo "irqaffinity=${B1_LONG},0 isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
     stub_root_case "B1 xisolcpus is not isolcpus" 2 1 "lacks isolcpus=<range> (B1)" \
         'echo "irqaffinity=0 xisolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
     stub_root_case "B1 nohz_full without a value" 2 1 "lacks nohz_full=<range> (B1)" \
@@ -1939,6 +1971,9 @@ exit 0'
     expect_case "r8 verify 6.12 no config cannot verify" $? 1 "$OUT" "could not verify R8" 1 "R8 passes"
     OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/off" "$R8_DIR/absent")"
     expect_case "r8 verify 6.12 no config already off" $? 0 "$OUT" "already -1 (R8)" 0
+    # a config that opens but cannot be read is unknown, as in the library
+    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/sysctl_dir")"
+    expect_case "r8 verify 6.12 unreadable config cannot verify" $? 1 "$OUT" "could not verify R8" 1 "R8 passes"
 
     # releases the library's rocketnet_xdp_rt_release reads as throttling:
     # no dot, no major, no minor -- and a long number clamps, never wraps
@@ -1948,6 +1983,8 @@ exit 0'
     done
     OUT="$(run_r8 1 99999999999999999999.1-generic "$R8_DIR/stock612" "$R8_DIR/config_plain")"
     expect_case "r8 verify a huge major reads its config" $? 0 "$OUT" "has no real-time throttle (R8 passes" 0
+    OUT="$(run_r8 1 00000000005.1-generic "$R8_DIR/stock612" "$R8_DIR/config_plain")"
+    expect_case "r8 verify leading zeros are not length" $? 1 "$OUT" "want -1 (R8)" 1
     OUT="$(run_r8 0 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent")"
     expect_case "r8 provision 6.12 no config sets -1" $? 0 "$OUT" "confirmed at -1 (R8)" 0
     if [ "$(cat "$R8_DIR/stock612")" != "-1" ]; then
@@ -2077,7 +2114,13 @@ elif [ ${#IRQAFFINITY} -gt 255 ] || [ "$(cpu_list_has "$IRQAFFINITY" 0)" = "-1" 
     fail "kernel command line's irqaffinity=$IRQAFFINITY is not a cpu list (B1): $B1_GUIDANCE"
 else
     IRQAFFINITY_ISOLATED=""
-    for CPU in "${ISOLATED_CPUS[@]:-}"; do
+    IRQAFFINITY_AGAINST=("${ISOLATED_CPUS[@]:-}")
+    if [ "$(cpu_list_has "$ISOLATED" 0)" = "-1" ]; then
+        # an isolated set that is not a cpu list judges the form only, as
+        # in the library (B2 and R4 name the set)
+        IRQAFFINITY_AGAINST=()
+    fi
+    for CPU in "${IRQAFFINITY_AGAINST[@]:-}"; do
         [ -n "$CPU" ] || continue
         if [ "$(cpu_list_has "$IRQAFFINITY" "$CPU")" = "1" ]; then
             IRQAFFINITY_ISOLATED="$CPU"

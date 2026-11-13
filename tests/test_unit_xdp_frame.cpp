@@ -886,6 +886,18 @@ static void test_xdp_cpu_list_entry_takes_cpu_zero()
     rocketnet_unit_check( !rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
     cursor = "1-";
     rocketnet_unit_check( !rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+
+    // a comma with no entry after it is not a separator: "0," and "0,\n"
+    // are not cpu lists (scripts/rocketnet-provision cpu_list_has agrees)
+    cursor = "0,";
+    rocketnet_unit_check( !rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+    cursor = "0,\n";
+    rocketnet_unit_check( !rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+    cursor = "0,,1";
+    rocketnet_unit_check( !rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+    rocketnet_unit_check( rocketnet_xdp_cpu_list_has( "0,", 0 ) == -1 );
+    rocketnet_unit_check( rocketnet_xdp_cpu_list_has( "1-3,\n", 2 ) == -1 );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "1-7,", 0, 7, NULL ) );
 }
 
 // one NAT address, many clients: ports that differ only in their high byte

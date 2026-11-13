@@ -1594,6 +1594,15 @@ bool rocketnet_server_socket_preflight_rt_throttle( const char * root )
                     break;
                 }
             }
+
+            // a config that opens but cannot be read (a directory at that
+            // path, an I/O error) is not evidence the option is absent:
+            // unknown, as the script's failed cat is
+
+            if ( throttles == 1 && ferror( config ) )
+            {
+                throttles = 2;
+            }
             fclose( config );
         }
     }
@@ -3100,7 +3109,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         {
             char command[512];
             rocketnet_server_socket_provision_command( command, sizeof( command ), xdp_interface_name, num_queues, num_os_cpus, "repin" );
-            rocketnet_warn( "xdp: attaching server_xdp moved %d of %s's %d queue interrupts off their xdp threads' cpus (%s): this driver rebuilt its vectors on the attach, so each packet on those queues takes its interrupt on another core. run %s now (docs/DEPLOYING.md, step 4a)",
+            rocketnet_warn( "xdp: attaching server_xdp moved %d of %s's %d queue interrupts off their xdp threads' cpus (%s): the driver most likely rebuilt its vectors on the attach (or something changed them since the pre-flight), so each packet on those queues takes its interrupt on another core. run %s now (docs/DEPLOYING.md, step 4a)",
                             off, xdp_interface_name, num_queues, first_off, command );
         }
     }
