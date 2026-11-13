@@ -14,8 +14,10 @@
  * connection seen connected at one sample and not at the next was ended in
  * between: its last connected sample is printed with why=kick, at once,
  * because the SDK resets a slot when it ends it and the state is gone by the
- * next read. At the end of the run every connection is printed (why=end,
- * a fresh sample for a live one, the last connected sample for an ended one),
+ * next read. At the end of the run every connection is printed: why=end with
+ * a fresh sample for a live one, why=end_ended with the last connected sample
+ * for one that was connected and ended, and why=end_never for one never seen
+ * connected;
  * then the counters: the named set always, every other counter when nonzero,
  * and on a side with one counter block per connection the named set per
  * connection when nonzero.

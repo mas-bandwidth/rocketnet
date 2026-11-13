@@ -131,7 +131,10 @@ static const struct ctv_input_t ctv_inputs[] = {
         rocketnet_test_session_s2c_key,
         rocketnet_test_token_vector_ephemeral_secret[2],
     },
-    // extremes: every integer at its top, text user data, the token keys swapped
+    // extremes: the client id, expire timestamp and timeout at their tops, the
+    // protocol id at its bottom (0) and the create timestamp at 2^63 - 1 (its
+    // top bit clear, beside the expire's set one); text user data, the token
+    // keys swapped
     {
         "extreme_values_text_user_data",
         0xffffffffffffffffULL,
@@ -311,6 +314,21 @@ static bool ctv_generate_json( std::string & out )
 
 #include <stdio.h>
 
+// a failed write or rename leaves no <path>.tmp behind
+
+static void ctv_remove_temp( const std::string & temp )
+{
+#if defined( _WIN32 )
+    const std::wstring wide_temp = rocketnet_test_wide_path( temp );
+    if ( !wide_temp.empty() )
+    {
+        DeleteFileW( wide_temp.c_str() );
+    }
+#else
+    remove( temp.c_str() );
+#endif // #if defined( _WIN32 )
+}
+
 int main( int argc, char ** argv )
 {
     if ( argc != 2 || argv[1][0] == '\0' )
@@ -353,6 +371,7 @@ int main( int argc, char ** argv )
     if ( fclose( file ) != 0 || !written )
     {
         fprintf( stderr, "error: writing %s failed\n", temp.c_str() );
+        ctv_remove_temp( temp );
         return 1;
     }
 #if defined( _WIN32 )
@@ -366,6 +385,7 @@ int main( int argc, char ** argv )
 #endif // #if defined( _WIN32 )
     {
         fprintf( stderr, "error: renaming %s to %s failed\n", temp.c_str(), path.c_str() );
+        ctv_remove_temp( temp );
         return 1;
     }
 

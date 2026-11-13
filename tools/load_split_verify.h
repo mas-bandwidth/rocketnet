@@ -74,10 +74,24 @@
  * an unreliable message too large for one packet as its reliable twin. */
 #define SPLIT_VERIFY_FRAGMENTED_MODES 5u
 
-/* A small unreliable message stays within the strictest unreliable limit
- * (UNRELIABLE_SEQUENCED on a channel of 256 or more, sdk/rocketnet.h), so it
- * is never sent as a reliable one. */
-#define SPLIT_VERIFY_SMALL_UNRELIABLE_MAX_BYTES 1404u
+/* The largest message the mode sends as one record in one packet, on any
+ * channel this build has: rocketnet_max_unfragmented_message_bytes, the
+ * sequenced modes' smaller channel-256-and-above value included when the
+ * build has such channels. A small message stays within it, so it is never
+ * fragmented or promoted to its reliable twin; a fragmented one is past it.
+ * 0 for a value that names no mode. */
+static inline uint32_t split_verify_one_packet_bytes( uint32_t mode )
+{
+    int limit = rocketnet_max_unfragmented_message_bytes( (enum rocketnet_reliability_t) mode, 0 );
+#if ROCKETNET_MAX_CHANNELS > 256
+    const int high_channel_limit = rocketnet_max_unfragmented_message_bytes( (enum rocketnet_reliability_t) mode, 256 );
+    if ( high_channel_limit < limit )
+    {
+        limit = high_channel_limit;
+    }
+#endif // #if ROCKETNET_MAX_CHANNELS > 256
+    return limit > 0 ? (uint32_t) limit : 0u;
+}
 
 /* The proof's rotation: offer k of client c carries the small message in
  * mode (c + k) % 8 and the fragmented message in the reliable mode
@@ -168,12 +182,17 @@ static inline int split_verify_payload_fields_valid( const struct split_verify_p
     {
         return 0;
     }
+    const uint32_t one_packet_bytes = split_verify_one_packet_bytes( payload->mode );
+    if ( one_packet_bytes == 0 )
+    {
+        return 0;
+    }
     if ( payload->size_class == SPLIT_VERIFY_SMALL )
     {
-        return payload->length <= ( split_verify_mode_is_reliable( payload->mode ) ? (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES : SPLIT_VERIFY_SMALL_UNRELIABLE_MAX_BYTES );
+        return payload->length <= one_packet_bytes;
     }
     return split_verify_mode_is_reliable( payload->mode ) &&
-           payload->length > (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES &&
+           payload->length > one_packet_bytes &&
            payload->length <= (uint32_t) ROCKETNET_MAX_MESSAGE_BYTES;
 }
 
@@ -435,7 +454,10 @@ struct split_verify_ledger_t
     uint32_t direction;
     uint32_t sends;                 /* entries used */
     uint32_t overflow;              /* receipt sends past SPLIT_VERIFY_LEDGER_SENDS */
-    uint32_t serial_order_errors;   /* a send whose serial is not above the last */
+    uint32_t serial_order_errors;   /* a send refused by split_verify_ledger_send: serial 0, a
+                                       serial not above the last, a mode without a receipt, a
+                                       size class out of range, or sequence 0 or past
+                                       SPLIT_VERIFY_MAX_SEQUENCE */
     uint32_t unknown_serials;       /* an outcome for no recorded send */
     uint32_t repeated_outcomes;     /* a second outcome for one send */
     uint32_t reliable_losses;       /* LOSS for a reliable receipt mode */

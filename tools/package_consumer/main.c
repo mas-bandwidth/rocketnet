@@ -6,12 +6,25 @@
 // The installed-package consumer: rocketnet.h and the installed library
 // through find_package( RocketNet ), built as C and (through main.cpp) as C++
 // against both the static and the shared target, -Wall -Wextra -Werror. It
-// calls every function the header declares (the development connect token
-// only where the library is a development build): the lifecycle and logging
-// setters, the name and status tables, the server's public key and addresses, the development connect token, the config
-// refusals (a zeroed config is CONFIG_NOT_INITIALIZED), a server and a client
-// on 127.0.0.1 with one receipted message each way, every stats struct, the
-// server ending the connection, a reconnect, and a clean teardown.
+// calls the game-facing API (the development connect token only where the
+// library is a development build): the lifecycle and logging setters, the
+// name and status tables, the server's public key and addresses, the
+// development connect token, the config refusals (a zeroed config is
+// CONFIG_NOT_INITIALIZED), a server and a client on 127.0.0.1 with one
+// receipted message each way, every stats struct, the server ending the
+// connection, a reconnect, and a clean teardown. It does not call every
+// declared function: the loopback hub, key generation, connect token creation
+// and its default config, the light configs, the network simulators,
+// can_send_message, the conditions queries, max_unfragmented_message_bytes
+// and the per-slot connection id and user data are not called here. The
+// export set itself is checked by tools/check_exports.py and
+// tools/check_header_exports.py.
+//
+// Built from an installed package (find_package), it also requires the
+// package's release label (RocketNet_VERSION_STRING, passed as
+// EXPECT_VERSION_FULL) to be the installed header's ROCKETNET_VERSION_FULL in
+// a production build; a development header's label is "dev", so there it
+// requires only that the package names a v-label.
 
 #include <rocketnet.h>
 
@@ -157,6 +170,14 @@ static int frame( struct rocketnet_server_t * server, struct rocketnet_client_t 
 
 #endif // #if ROCKETNET_DEV
 
+// 1 when the name table knows the value: the four name functions return
+// "UNKNOWN" (never NULL) for a value they do not name
+
+static int name_known( const char * name )
+{
+    return name != NULL && strcmp( name, "UNKNOWN" ) != 0;
+}
+
 int main( void )
 {
     // ---- version, tables and names: no init needed
@@ -164,25 +185,50 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
+#if defined( EXPECT_VERSION_FULL )
+    // the installed package's release label is the installed header's
+    {
+        const char * package_label = EXPECT_VERSION_FULL;
+#if ROCKETNET_DEV
+        CHECK( strcmp( ROCKETNET_VERSION_FULL, "dev" ) == 0 && package_label[0] == 'v' );
+#else
+        CHECK( strcmp( ROCKETNET_VERSION_FULL, package_label ) == 0 );
+#endif // #if ROCKETNET_DEV
+    }
+#endif // #if defined( EXPECT_VERSION_FULL )
+
+    // every declared status is named; -9 and -22 are values the header leaves
+    // unassigned, and they and the values past either end read UNKNOWN
+
     for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE; i-- )
     {
-        CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
+        CHECK( name_known( rocketnet_status_name( (enum rocketnet_status_t) i ) ) == ( i != -9 && i != -22 ) );
     }
+    CHECK( !name_known( rocketnet_status_name( (enum rocketnet_status_t) ( ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE - 1 ) ) ) );
+    CHECK( !name_known( rocketnet_status_name( (enum rocketnet_status_t) 1 ) ) );
 
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
 
     for ( int i = ROCKETNET_LOG_LEVEL_NONE; i <= ROCKETNET_LOG_LEVEL_SPAM; i++ )
     {
-        CHECK( rocketnet_log_level_name( (enum rocketnet_log_level_t) i ) != NULL );
+        CHECK( name_known( rocketnet_log_level_name( (enum rocketnet_log_level_t) i ) ) );
     }
+    CHECK( !name_known( rocketnet_log_level_name( (enum rocketnet_log_level_t) ( ROCKETNET_LOG_LEVEL_SPAM + 1 ) ) ) );
 
     CHECK( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
 
     for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
     {
-        CHECK( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) != NULL );
+        CHECK( name_known( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) ) );
     }
+    CHECK( !name_known( rocketnet_client_state_name( (enum rocketnet_client_state_t) ( ROCKETNET_CLIENT_STATE_CONNECTED + 1 ) ) ) );
+
+    for ( int i = ROCKETNET_DISCONNECT_REASON_NONE; i >= ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED; i-- )
+    {
+        CHECK( name_known( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) i ) ) );
+    }
+    CHECK( !name_known( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 1 ) ) );
 
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED ), "SERVER_DISCONNECTED" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );
@@ -194,8 +240,8 @@ int main( void )
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_TIMED_OUT ), "TIMED_OUT" ) == 0 );
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED ), "CLIENT_DISCONNECTED" ) == 0 );
 
-    CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ) != NULL );
-    CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ) != NULL );
+    CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "NONE" ) == 0 );
+    CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ), "SERVER_DISCONNECTED" ) == 0 );
 
     // ---- process-wide setup, before init
 
