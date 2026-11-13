@@ -175,6 +175,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
 // bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
 // computed from the Linux reading, not measured on Windows.
+// The receive handoff (sdk/rocketnet_receive_handoff.h) gives the IOCP
+// completion workers three receive banks where they had four, one bank of
+// the server's receive queue size a worker fewer: actual=1504678759, 23936056
+// below (aws-win-ci-2, MSVC, Release, DEV=ON), measured.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527583711 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
 #elif defined( __APPLE__ )
