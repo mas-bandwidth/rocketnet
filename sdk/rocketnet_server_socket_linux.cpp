@@ -4061,7 +4061,8 @@ static void xdp_thread_leave_core_zero()
     const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &fallback );
     if ( result != 0 )
     {
-        rocketnet_error( "xdp thread: could not leave core 0: %s", strerror( result ) );
+        char error_text[128];
+        rocketnet_error( "xdp thread: could not leave core 0: %s", strerror_r( result, error_text, sizeof( error_text ) ) );
     }
 }
 
@@ -4099,7 +4100,7 @@ static void pin_thread_to_cpu( int cpu )
     {
         char call[64];
         snprintf( call, sizeof( call ), "pthread_setaffinity_np cpu %d", cpu );
-        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY, "thread affinity", call, strerror( result ), "the thread runs on any cpu but core 0" );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY, "thread affinity", call, strerror( result ), "the thread runs on any cpu" );
         xdp_thread_leave_core_zero();
     }
 }
