@@ -40,7 +40,7 @@ message exchange → integrate a frame loop → connect a backend → qualify a 
 | Outgoing message ownership and allocation | [Outgoing build](OUTGOING-BUILD.md), [sequence buffers](SEQUENCE-BUFFERS.md) |
 | Build rules, test tiers, sanitizers, and toolchains | [Contributor build reference](BUILD-REFERENCE.md), [test scaffolding](TEST-SCAFFOLDING.md) |
 | Verification models and their execution inventory | [TLA inventory](TLA-INVENTORY.md), [model guide](../proofs/tla/README.md) |
-| Development conventions | [Development notes](CLAUDE.md), [style](STYLE.md) |
+| Development conventions | [Style](STYLE.md) |
 
 For a browsable API reference, run `make docs` from the repository root and
 open `build/docs/html/index.html`. The [reference build instructions](BUILD-REFERENCE.md)
@@ -61,8 +61,7 @@ are history; [Hardening](HARDENING.md) explains the verification methods
 and their limits. A plan, model, host-shim test, or successful build is
 not interchangeable with an executed live-transport or performance result.
 
-[Run records](runs/) and [audit records](audits/) retain their tested commit,
-date, platform, and scope. They are historical evidence, not continuously
+[Run records](runs/) retain their tested commit, date, platform, and scope. They are historical evidence, not continuously
 updated API references. Their original outcomes remain intact as the guides evolve.
 
 ## Maintaining these documents

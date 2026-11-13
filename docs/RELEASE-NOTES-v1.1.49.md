@@ -11,5 +11,6 @@ endpoint.
   `URING_RECEIVE_DROPPED_SOCKET`; the contract now holds 289 counters and no
   released id moved.
 
-- Tag: `v1.1.49`, on the merged `main` commit.
-- Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.1.49).
+- Correction: `v1.1.49` was never tagged or released. The label was carried
+  on `main`, and these changes shipped in
+  [v1.1.50](RELEASE-NOTES-v1.1.50.md).
