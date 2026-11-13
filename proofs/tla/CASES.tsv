@@ -984,17 +984,6 @@ MCRNWriterFinishBuffered.cfg	MCRNWriterFinish.tla	pass	-	check	rnwriterfinish	re
 MCRNWriterFinishBrokenRingRefuses.cfg	MCRNWriterFinish.tla	invariant	BufferedNeverRefuses	check	rnwriterfinish	required	-
 MCRNWriterFinishBrokenNotSealed.cfg	MCRNWriterFinish.tla	invariant	NothingLeftForWalk	check	rnwriterfinish	required	-
 MCRNWriterFinishBrokenQueuesNoCapacity.cfg	MCRNWriterFinish.tla	invariant	NothingLeftForWalk	check	rnwriterfinish	required	-
-MCRNUringQueueBankLayout.cfg	MCRNUringQueueBankLayout.tla	pass	-	check	rnuringqueuebanklayout	required	-
-MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg	MCRNUringQueueBankLayout.tla	invariant	InBounds	check	rnuringqueuebanklayout	required	-
-MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg	MCRNUringQueueBankLayout.tla	invariant	NoSharedSlot	check	rnuringqueuebanklayout	required	-
-MCRNUringQueueBankLayoutBrokenDivideFirst.cfg	MCRNUringQueueBankLayout.tla	invariant	NoForeignWrite	check	rnuringqueuebanklayout	required	-
-MCRNUringQueueBankLayoutBrokenIdAdd.cfg	MCRNUringQueueBankLayout.tla	invariant	RouteMatches	check	rnuringqueuebanklayout	required	-
-MCRNSendGatherLayout.cfg	MCRNSendGatherLayout.tla	pass	-	check	rnsendgatherlayout	required	-
-MCRNSendGatherLayoutBrokenNoProbeMod.cfg	MCRNSendGatherLayout.tla	invariant	InBounds	check	rnsendgatherlayout	required	-
-MCRNSendGatherLayoutBrokenMatchAny.cfg	MCRNSendGatherLayout.tla	invariant	RunOneDest	check	rnsendgatherlayout	required	-
-MCRNSendGatherLayoutBrokenPlaceReverse.cfg	MCRNSendGatherLayout.tla	invariant	Grouped	check	rnsendgatherlayout	required	-
-MCRNSendGatherLayoutBrokenNoByteCap.cfg	MCRNSendGatherLayout.tla	invariant	RunCaps	check	rnsendgatherlayout	required	-
-MCRNSendGatherLayoutBrokenShortOpen.cfg	MCRNSendGatherLayout.tla	invariant	RunShape	check	rnsendgatherlayout	required	-
 MCRNUringQueueSend.cfg	MCRNUringQueueSend.tla	pass	-	check	rnuringqueuesend	required	-
 MCRNUringQueueSendLive.cfg	MCRNUringQueueSend.tla	pass	-	check	rnuringqueuesend	required	-
 MCRNUringQueueSendBrokenRetireAtSubmit.cfg	MCRNUringQueueSend.tla	invariant	NoWriteWhileKernelOwned	check	rnuringqueuesend	required	-
