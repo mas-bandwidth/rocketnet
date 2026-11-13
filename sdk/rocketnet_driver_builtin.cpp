@@ -2550,15 +2550,34 @@ void rocketnet_server_iocp_set_create_for_test( iocp_create_function_t * functio
 }
 #endif // #if ROCKETNET_DEV
 
+static int iocp_workers( int num_xdp_queues )
+{
+    return num_xdp_queues > 1 ? num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
+}
+
 static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker
+    const int workers = iocp_workers( config->transport->num_xdp_queues );
+    if ( workers > ROCKETNET_IOCP_MAX_WORKERS )
+    {
+        rocketnet_warn( "iocp transport refused: num_xdp_queues %d is past the iocp transport's %d workers", workers, ROCKETNET_IOCP_MAX_WORKERS );
+        return NULL;
+    }
 
 #if ROCKETNET_DEV
-    return iocp_create_function( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
+    rocketnet_server_iocp_t * iocp = iocp_create_function( context, bind, workers, config->transport->max_clients, 0, 0, config->status );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, config->status );
+    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( context, bind, workers, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
+
+    // the completion workers refuse what main's stateless rungs would, before
+    // it takes a bank slot (rocketnet_receive_prefilter)
+
+    if ( iocp )
+    {
+        rocketnet_server_iocp_set_packet_filter( iocp, config->transport->packet_filter );
+    }
+    return iocp;
 }
 
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t *) transport ); }
@@ -2593,11 +2612,37 @@ static void iocp_receive_drops( void * transport, uint64_t * too_short, uint64_t
     *too_large = counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE];
 }
 
+static void iocp_receive_drop_totals( void * transport, uint64_t * values )
+{
+    rocketnet_server_iocp_receive_drop_totals( (rocketnet_server_iocp_t *) transport, values );
+}
+
+// the send lanes are the server's send queues: the protocol reserve is held
+// in the lane each client's frames stage in
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_MAX_LANES <= ROCKETNET_SERVER_MAX_SEND_QUEUES, "every send lane must be a queue the server's reserve can hold" );
+
+static int iocp_send_queues( void * transport )
+{
+    return rocketnet_server_iocp_send_lane_count( (rocketnet_server_iocp_t *) transport );
+}
+
+static int iocp_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_iocp_send_lane( (rocketnet_server_iocp_t *) transport, to );
+}
+
+static int iocp_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_iocp_send_lane_room( (rocketnet_server_iocp_t *) transport, queue );
+}
+
 static const rocketnet_server_transport_io_operations_t iocp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     iocp_create, iocp_destroy, iocp_stop, iocp_stopped,
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle, NULL, iocp_receive_drop_totals,
+    iocp_send_queues, iocp_send_queue_of, iocp_send_room_queue
 };
 
 // the client column is the iocp client (sdk/rocketnet_client_iocp_windows.cpp):
@@ -2780,11 +2825,23 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if ( strcmp( transport, "iocp" ) == 0 )
     {
-        // rn-iocp-one-completion-worker: iocp always plans one completion worker plus one send worker
+        // the completion workers (iocp_workers), each with its own socket,
+        // plus the send threads the lanes get (at most ROCKETNET_IOCP_SEND_THREADS,
+        // one for a one-lane server). The plan refuses what create refuses
+        // for want of a size: more workers than ROCKETNET_IOCP_MAX_WORKERS.
 
-        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( ROCKETNET_IOCP_DEFAULT_WORKERS, config->max_clients );
-        plan.worker_threads = ROCKETNET_IOCP_DEFAULT_WORKERS + 1;
-        plan.sockets = 1;
+        const int workers = iocp_workers( config->num_xdp_queues );
+        if ( workers > ROCKETNET_IOCP_MAX_WORKERS )
+        {
+            return false;
+        }
+        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( workers, config->max_clients );
+        if ( !plan.transport_io_bytes )
+        {
+            return false;
+        }
+        plan.worker_threads = workers + rocketnet_server_iocp_send_threads( rocketnet_server_iocp_send_lanes( config->max_clients ) );
+        plan.sockets = workers;
     }
     else if ( strcmp( transport, "rio" ) == 0 )
     {

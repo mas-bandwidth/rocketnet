@@ -29,6 +29,7 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #include "rocketnet_server_iocp.h"
+#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_server_rio.h"
 
 #define NOMINMAX
@@ -338,7 +339,7 @@ static uint64_t windows_socket_errors_refusals( const struct rocketnet_counters_
         // counts, which windows_socket_errors_transport_drops reads; summed
         // here as well they would count each of those drops twice
 
-        if ( i >= ROCKETNET_COUNTER_GSO_PACKETS_SENT && i <= ROCKETNET_COUNTER_RIO_COMMITS )
+        if ( ( i >= ROCKETNET_COUNTER_GSO_PACKETS_SENT && i <= ROCKETNET_COUNTER_RIO_COMMITS ) || i == ROCKETNET_COUNTER_IOCP_PIN_REFUSALS )
         {
             continue;
         }
@@ -357,16 +358,25 @@ static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_ses
 
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
-        uint64_t counters[ROCKETNET_NUM_COUNTERS];
-        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) instance, counters );
+        // Every datagram IOCP drops reaches a public refusal counter: sizes
+        // and the completion worker's prefilter reasons, BANK_FULL and
+        // RECEIVE_FAILED through receive_drop_totals. Its own RECEIVE_DROPPED
+        // counts the same datagrams again for its direct readers, so what it
+        // counts beyond the public reasons is the transport's own drop: read
+        // by value from the transport's rows.
 
-        // Size drops now also enter the server's public prefilter counters.
-        // Keep this aggregate one event per datagram while retaining the
-        // transport's legacy RECEIVE_DROPPED total for its direct readers.
-
-        return counters[ROCKETNET_COUNTER_IOCP_RECEIVE_DROPPED] -
-               counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT] -
-               counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE];
+        uint64_t transport_rows[ROCKETNET_NUM_COUNTERS] = {};
+        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) instance, transport_rows );
+        const struct rocketnet_counters_t * public_counters = rocketnet_server_transport_counters( session->server );
+        uint64_t public_drops = 0;
+        for ( int drop = ROCKETNET_RECEIVE_ACCEPT + 1; drop < ROCKETNET_RECEIVE_NUM_DROPS; ++drop )
+        {
+            int reasons[ROCKETNET_RECEIVE_DROP_MAX_COUNTERS];
+            const int num_reasons = rocketnet_receive_drop_counters( (enum rocketnet_receive_drop_t) drop, reasons );
+            public_drops += num_reasons > 0 ? rocketnet_counter_value( public_counters, reasons[num_reasons - 1] ) : 0;
+        }
+        const uint64_t dropped = transport_rows[ROCKETNET_COUNTER_IOCP_RECEIVE_DROPPED];
+        return dropped > public_drops ? dropped - public_drops : 0;
     }
 
     // rio: RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above,
