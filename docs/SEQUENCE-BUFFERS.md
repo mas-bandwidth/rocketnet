@@ -73,13 +73,13 @@ here, and on a row that matches no site. Its syntactic limits still apply.
 
 | File | Function | Field | Why |
 |---|---|---|---|
-| sdk/rocketnet_channel.cpp | rn_ready_link | ready_next | index links in the window |
-| sdk/rocketnet_channel.cpp | rn_ready_link | ready_prev | index links in the window |
-| sdk/rocketnet_channel.cpp | rn_channel_queue_push_front | queue_next | index links in the window |
-| sdk/rocketnet_channel.cpp | rn_channel_queue_append | queue_next | index links in the window |
-| tests/test_unit_channel_dispatch.cpp | schedule_walk | queue_next | index links in the window (the test reads the channel FIFO) |
-| tests/test_channels.cpp | rn_soak_queue_append | queue_next | index links in the window (the soak's copy of the channel FIFO) |
-| sdk/rocketnet_allocator.cpp | rn_span_link | span_next | index links in the window |
+| sdk/rocketnet_channel.cpp | rn_ready_link | ready_next | index links in the fixed array of C channels (a channel index) |
+| sdk/rocketnet_channel.cpp | rn_ready_link | ready_prev | index links in the fixed array of C channels (a channel index) |
+| sdk/rocketnet_channel.cpp | rn_channel_queue_push_front | queue_next | index links in the fixed array of Q descriptors (a descriptor index) |
+| sdk/rocketnet_channel.cpp | rn_channel_queue_append | queue_next | index links in the fixed array of Q descriptors (a descriptor index) |
+| tests/test_unit_channel_dispatch.cpp | schedule_walk | queue_next | index links in the fixed array of Q descriptors (the test reads the channel FIFO) |
+| tests/test_channels.cpp | rn_soak_queue_append | queue_next | index links in the fixed array of Q descriptors (the soak's copy of the channel FIFO) |
+| sdk/rocketnet_allocator.cpp | rn_span_link | span_next | index links in the fixed array of Q descriptors (a descriptor index) |
 | sdk/rocketnet_ack.cpp | rocketnet_server_acks_apply_queued | next | index links in a fixed, bounded array (each client's received ack blocks chained by entry index through the one pending array, `rocketnet_server_ack_pending_t`; no pointers, no allocation) |
 | sdk/rocketnet_ack.cpp | rocketnet_server_acks_receive_block | next | index links in a fixed, bounded array (the append at a client's tail in the same pending array) |
 
