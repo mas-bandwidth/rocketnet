@@ -191,6 +191,20 @@ returns no reservation. Only the receive side can leave a connection's message
 memory exhausted, and only by a broken invariant of the receiver
 ([m1.9 Outage tolerance](#m1.9), rule 1).
 
+The send memory is sized from two configuration fields, declared here in the
+shape of [RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3), whose rules
+bind them: `send_queue_messages`, the limit on queued messages, and
+`send_message_buffer_bytes`, the bytes for queued messages of up to the row
+`block stride` of [m2.2 Constants](#m2.2). A larger message is held in send
+memory sized from `receive_message_buffer_bytes`
+([m5.4 Constants and configuration](#m5.4)), so `send_message_buffer_bytes`
+has no size relation to the maximum message size.
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| send_queue_messages | `1024` | integer | `ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES` and `ROCKETNET_SERVER_SEND_QUEUE_MESSAGES` | 16 to 1048576 |
+| send_message_buffer_bytes | `4194304` | integer | `ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES` and `ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES` | 12288 to 268435456 |
+
 <a id="m1.8"></a>
 ### m1.8. Per-client scope
 
@@ -380,7 +394,8 @@ A sender MUST refuse a message above the configured maximum message size. For UN
 | code RELIABLE_ORDERED | `3` | | wire code of RELIABLE_ORDERED |
 | code RELIABLE_SEQUENCED | `4` | | wire code of RELIABLE_SEQUENCED |
 
-### Vectors
+<a id="m2.3"></a>
+### m2.3. Vectors
 
 These vectors exercise the encoding capacities. The SINGLE limit vector is
 a format boundary, not a sender-policy exception: an application message
@@ -1836,7 +1851,8 @@ A sender MUST set BLOCK exactly on a record that is one fragment of a block, and
 
 Every record has exactly one encoding. A field a record does not carry is absent, not zero-filled, and every field a record carries is written with its full width. A receiver MUST parse the fields from the flags byte alone, including a flags byte it refuses, and MUST measure the header before it judges the flags.
 
-### Vectors
+<a id="m3.1"></a>
+### m3.1. Vectors
 
 ```vector m3.code0
 00 02 00 68 69 01
@@ -2230,7 +2246,7 @@ make the reconstruction unambiguous.
    unacknowledged block contains `U`, and the first number of the lowest such
    block otherwise. A sender MUST number a record with number `n` only while
    `n < U' + W`, where `W` is the connection's `reliable_messages_in_flight` field and
-   the row `window messages default` below gives its default.
+   its row in [m5.4 Constants and configuration](#m5.4) gives its default.
 4. A holdable record is a record with code 3, code 4, or a block. For a
    holdable record a sender MUST place the record in the receive ring of `B`
    bytes, where `B` is the connection's `receive_message_buffer_bytes` field, at the
@@ -2312,8 +2328,6 @@ n     = R + delta
 | half range | `8388608` | numbers | the signed half range of the 24-bit counter |
 | ring unit | `16` | bytes | the unit of the ring offset and of `len16` |
 | fragment bytes | `1152` | bytes | the block stride |
-| window messages default | `1024` | records | the default of `reliable_messages_in_flight` |
-| receive ring bytes default | `1048576` | bytes | the default of `receive_message_buffer_bytes` |
 | window messages limit | `1048576` | records | the largest valid `reliable_messages_in_flight` |
 | replay window depth minimum | `4096` | sequences | the smallest valid connection layer replay depth |
 | replay window depth maximum | `32768` | sequences | the largest valid connection layer replay depth |
@@ -2321,6 +2335,16 @@ n     = R + delta
 | numbered records per packet maximum | `202` | records | a payload's capacity divided by the minimum record |
 | block fragments maximum | `911` | records | the largest block that the largest message makes |
 | stale copy bound | `7668421` | numbers | the most a stale copy can lie behind `R` |
+
+The window `W` and the receive ring `B` are configuration fields, declared in
+the shape of [RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3). Both ends
+compare them in their CONFIG records
+([m11 CONFIG control record](#m11)).
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| reliable_messages_in_flight | `1024` | integer | `ROCKETNET_CLIENT_RELIABLE_MESSAGES_IN_FLIGHT` and `ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT` | a power of two from 64 to the row `window messages limit`, and at least the fragments of one message of `max_message_bytes` ([m8 Blocks](#m8)) |
+| receive_message_buffer_bytes | `1048576` | integer | `ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES` and `ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES` | a multiple of the row `ring unit` from 4096 to 1048576 |
 
 <a id="m5.5"></a>
 ### m5.5. Vectors
@@ -2389,9 +2413,16 @@ A sender chooses unreliable or unreliable sequenced in [m1.3 Reliability types](
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
 | sequenced hold data bytes | `1416` | bytes | the data capacity of one code 1 hold slot |
-| default sequenced holds | `16` | slots | the default number of hold slots in a connection |
-| default unreliable deliveries | `1024` | messages | the default per-update code 0 and code 1 delivery allowance |
 | counter modulus | `16777216` | values | the modulus of the ordering and sequencing indexes |
+
+The hold slots of rule 7 and the delivery allowance of rule 4 are
+configuration fields, declared in the shape of
+[RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3).
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| sequenced_messages_held | `16` | integer | `ROCKETNET_CLIENT_SEQUENCED_MESSAGES_HELD` and `ROCKETNET_SERVER_SEQUENCED_MESSAGES_HELD` | 0 to 4096; 0 gives the connection no hold slot |
+| unreliable_messages_per_update | `1024` | integer | `ROCKETNET_CLIENT_UNRELIABLE_MESSAGES_PER_UPDATE` and `ROCKETNET_SERVER_UNRELIABLE_MESSAGES_PER_UPDATE` | 1 to 65536 |
 
 <a id="m6.3"></a>
 ### m6.3. Delivery states
@@ -2719,7 +2750,10 @@ fragment, a
 
 An event a state does not list is ignored in that state.
 
-**Vectors.** Each vector is a RECORDS payload before sealing. The split
+<a id="m8.1"></a>
+### m8.1. Vectors
+
+Each vector is a RECORDS payload before sealing. The split
 vectors are fragments 1 and 2 of a three-fragment block of 2404 bytes:
 fragments 0 and 1 carry 1152 bytes and fragment 2 carries 100. The ring-wrap
 vector is two RECORDS payloads back to back, fragment 0 and then fragment 1 of
@@ -2947,6 +2981,13 @@ send; the numbers the dropped entry carried stay unacknowledged and in their
 resend queues. With at least `W` entries and a resend delay above the round
 trip, the dropped entry is one whose acknowledgement can no longer arrive.
 
+The map's entry count is the configuration field `packets_in_flight`,
+declared in the shape of [RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3).
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| packets_in_flight | `1024` | integer | `ROCKETNET_CLIENT_PACKETS_IN_FLIGHT` and `ROCKETNET_SERVER_PACKETS_IN_FLIGHT` | 64 to 1048576, and at least `reliable_messages_in_flight` |
+
 On an acknowledgement, for each number the packet carried that is still
 unacknowledged, the sender MUST mark the number acknowledged, remove it from
 its resend queue and advance the lowest unacknowledged number. The sender MUST
@@ -3007,12 +3048,24 @@ silence measures the silence, not the path. When the reliable timeout is
 configured, no acknowledgement silence ends and every acknowledged packet is
 sampled.
 
+The resend delays and the reliable timeout of
+[m9.3 Resend classes and the reliable timeout](#m9.3) are configuration
+fields, declared in the shape of
+[RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3). Each is in
+milliseconds. An endpoint refuses to create, naming the field, when one is
+outside its range, by rule 5 of that section, so a nonzero `reliable_message_timeout_ms`
+below 1000, or below `min_resend_attempts` times
+`message_resend_delay_initial_ms` (8000 at the defaults), is refused.
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| message_resend_delay_initial_ms | `2000` | integer | `ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS` and `ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS` | 10 to 60000, and from `message_resend_delay_min_ms` to `message_resend_delay_max_ms` |
+| message_resend_delay_min_ms | `0` | integer | `ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS` and `ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS` | 0 to 60000, and at most `message_resend_delay_max_ms`; 0 applies no floor |
+| message_resend_delay_max_ms | `2000` | integer | `ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS` and `ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS` | 10 to 60000 |
+| reliable_message_timeout_ms | `0` | integer | `ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS` and `ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS` | 0, which turns the reliable timeout off; or 1000 to 600000, and at least `min_resend_attempts` times `message_resend_delay_initial_ms` |
+
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| message_resend_delay_initial_ms | `2000` | ms | the resend delay before the first round-trip sample |
-| message_resend_delay_min_ms | `0` | ms | optional floor for the sampled resend delay; zero disables it |
-| message_resend_delay_max_ms | `2000` | ms | the configured largest resend delay |
-| reliable_message_timeout_ms | `0` | ms | how long the oldest unacknowledged number may stand; zero (the default) turns the reliable timeout off and the token timeout alone ends a silent connection |
 | min_resend_attempts | `4` | count | the sends of a block fragment that fit before a configured reliable timeout; a single-packet record's resend delay is not capped by it |
 
 <a id="m9.3"></a>
@@ -3139,15 +3192,28 @@ it has no acknowledgment effect ([m1.8 Per-client scope](#m1.8);
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| `client_default_kbps` | `1000` | kbps | the send budget of a new client connection |
-| `server_default_kbps` | `10000` | kbps | the send budget of a new server connection to one client |
 | `send_kbps_min` | `1` | kbps | the smallest enabled budget |
 | `send_kbps_max` | `2147483646` | kbps | the largest budget |
 | `depth_seconds` | `0.1` | s | the bucket's time depth |
 | `maximum_packet_wire_bytes` | `1452` | bytes | one maximum packet, the smallest bucket depth |
 
-The client's budget to the server defaults to client_default_kbps and the
-server's budget to each client defaults to server_default_kbps. The value
+The starting send budgets and the per-update packet allowance of
+[m9.3 Resend classes and the reliable timeout](#m9.3) are configuration
+fields, declared in the shape of
+[RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3). The client's budget to
+the server is the client field `send_kbps`, and the server's budget to each
+client is the server field `per_client_send_kbps`; each row's Value is the
+budget a value of 0 selects, which is also the default.
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| client send_kbps | `1000` | integer | `ROCKETNET_CLIENT_SEND_KBPS` | 0, which selects this default; `send_kbps_min` to `send_kbps_max`; or 2147483647, no send budget |
+| server per_client_send_kbps | `10000` | integer | `ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` | 0, which selects this default; `send_kbps_min` to `send_kbps_max`; or 2147483647, no send budget |
+| packets_per_update | `256` | integer | `ROCKETNET_CLIENT_PACKETS_PER_UPDATE` and `ROCKETNET_SERVER_PACKETS_PER_UPDATE` | 1 to 1024 |
+
+The client's budget to the server defaults to the row `client send_kbps` and
+the server's budget to each client defaults to the row
+`server per_client_send_kbps`. The value
 2147483647, one above send_kbps_max, means no send budget. A negative value
 MUST be refused and MUST leave the budget unchanged. A budget of 0 sets that direction's default
 budget. A budget of send_kbps_max is the ceiling and is NOT RECOMMENDED.
@@ -3362,8 +3428,9 @@ reliable number. The payload is 35 bytes:
 ### m11.2. Constants and defaults
 
 The library's default configuration is the one below, with the window and
-ring defaults and the fragment stride in the [m5 Message numbering and the reliable window](#m5)
-rows window messages default, receive ring bytes default and fragment bytes. Every field of the
+ring defaults in the rows `reliable_messages_in_flight` and
+`receive_message_buffer_bytes`, and the fragment stride in the row fragment
+bytes, of [m5.4 Constants and configuration](#m5.4). Every field of the
 body except the reserved fields is compared, so two ends whose configurations
 differ in any compared field end the connection with `CONFIG_MISMATCH`.
 
@@ -3374,9 +3441,15 @@ differ in any compared field end the connection with `CONFIG_MISMATCH`.
 | kind | `1` | none |
 | version | `1` | none |
 | enabled default | `0xFF` | mask |
-| num channels default | `32` | channels |
-| max message bytes default | `1048576` | bytes |
 | form | `1` | none |
+
+The channel count and the largest message are configuration fields, declared
+in the shape of [RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3).
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| num_channels | `32` | integer | `ROCKETNET_CLIENT_NUM_CHANNELS` and `ROCKETNET_SERVER_NUM_CHANNELS` | 1 to the build-specific maximum channel count of [m10 Channels and priorities](#m10); the Value is the default when that maximum is at least 32, and the default is that maximum otherwise |
+| max_message_bytes | `1048576` | integer | `ROCKETNET_CLIENT_MAX_MESSAGE_BYTES` and `ROCKETNET_SERVER_MAX_MESSAGE_BYTES` | the row `SINGLE message limit` of [m2.2 Constants](#m2.2) to 1048576, at most `receive_message_buffer_bytes`, and needing no more fragments than `reliable_messages_in_flight` |
 
 `enabled` with bit r set permits the application to send reliability r; the
 default mask sets every one of the eight reliabilities
@@ -3502,6 +3575,14 @@ promotion defined here and in [m2 Payload forms and sender size rules](#m2).
    carries the message, the message can no longer be acknowledged and the
    sender reports LOSS at the eviction. These outcomes are API semantics and
    are not carried on the wire.
+
+The count of outcomes held for the application to read, for each connection, is the
+configuration field `max_message_receipts`, declared in the shape of
+[RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3).
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| max_message_receipts | `256` | integer | `ROCKETNET_CLIENT_MAX_MESSAGE_RECEIPTS` and `ROCKETNET_SERVER_MAX_MESSAGE_RECEIPTS` | 16 to 65536 |
 
 ```vector m12.promotion
 public type: 5 (unreliable with ack receipt)

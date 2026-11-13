@@ -31,8 +31,8 @@ maximum fragments	removed: RN-1 has no fragmentation (packet type 9 is reserved)
 send budget default	transport.tsv: maximum packet size
 send budget maximum	transport.tsv: receive ceiling
 receive ceiling	transport.tsv: receive ceiling
-message config client_send_kbps default	m9.tsv: client_default_kbps
-message config server_send_kbps default	m9.tsv: server_default_kbps
+message config client_send_kbps default	m9.tsv: client send_kbps
+message config server_send_kbps default	m9.tsv: server per_client_send_kbps
 link MTU	transport.tsv: link MTU
 IPv4 packet size	transport.tsv: receive ceiling
 IPv6 packet size	carried by the RN-1 t2/t3 IPv6 sizing rows
