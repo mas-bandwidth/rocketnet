@@ -1351,6 +1351,12 @@ if(ROCKETNET_BUILD_TOOLS)
         rocketnet_use_sodium(${target})
         rocketnet_warning_floor(${target})
         target_compile_features(${target} PRIVATE cxx_std_11)
+        # the io_uring worker's layer (tests/tla_trace_queue_worker.cpp) links
+        # the driver where the library has it; its plant binary compiles the
+        # worker's source itself
+        if(TARGET RocketNet::Uring)
+            target_link_libraries(${target} PRIVATE RocketNet::Uring)
+        endif()
     endfunction()
     file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
     add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})

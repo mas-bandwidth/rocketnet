@@ -92,6 +92,14 @@ LAYERS = {
         # seven steps a bank (six stages and the call): 100 calls a seed
         "steps": 700,
     },
+    "queue-send": {
+        "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
+        "quiet": True,
+    },
+    "queue-worker": {
+        "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],
+        "quiet": True,
+    },
 }
 
 STEPS = 400

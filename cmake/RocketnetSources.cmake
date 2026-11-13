@@ -57,6 +57,7 @@ set(ROCKETNET_SDK_SOURCES_COMMON
     sdk/rocketnet_send_gather.cpp
     sdk/rocketnet_server_transport.cpp
     sdk/rocketnet_token_tables.cpp
+    sdk/rocketnet_uring_queue_send.cpp
     sdk/rocketnet_uring_send_queue.cpp)
 
 set(ROCKETNET_SDK_SOURCES_LINUX
@@ -64,6 +65,7 @@ set(ROCKETNET_SDK_SOURCES_LINUX
     sdk/rocketnet_gateway_netlink_linux.cpp
     sdk/rocketnet_server_gso_linux.cpp
     sdk/rocketnet_server_uring_linux.cpp
+    sdk/rocketnet_uring_queue_worker.cpp
     sdk/rocketnet_server_socket_linux.cpp)
 
 # No Apple-only source today: macOS and iOS use the common sources.

@@ -227,6 +227,19 @@ int rocketnet_uring_send_queues_staged( const struct rocketnet_uring_send_queues
 // (proofs/tla/README-TraceCheck.md): only tests/tla_trace_bank.cpp in the plant build
 // defines it, and its traces must fail TraceConsistent
 
+void rocketnet_uring_send_queues_turn_to( struct rocketnet_uring_send_queues_t * queues, int queue_index, int next )
+{
+    rocketnet_assert( queues );
+    rocketnet_assert( queue_index >= 0 && queue_index < queues->num_queues );
+    rocketnet_assert( next >= 0 && next < ROCKETNET_URING_SEND_BANKS );
+
+    struct rocketnet_uring_send_queue_t * queue = &queues->queue[queue_index];
+#if !defined( ROCKETNET_URING_SEND_QUEUE_PLANT )
+    queue->bank[next].num_packets.store( 0, std::memory_order_relaxed );
+#endif // #if !defined( ROCKETNET_URING_SEND_QUEUE_PLANT )
+    queue->producer = next;
+}
+
 int rocketnet_uring_send_queues_turn( struct rocketnet_uring_send_queues_t * queues )
 {
     rocketnet_assert( queues );
@@ -240,11 +253,7 @@ int rocketnet_uring_send_queues_turn( struct rocketnet_uring_send_queues_t * que
             continue;
         }
 
-        const int next = ( queue->producer + 1 ) % ROCKETNET_URING_SEND_BANKS;
-#if !defined( ROCKETNET_URING_SEND_QUEUE_PLANT )
-        queue->bank[next].num_packets.store( 0, std::memory_order_relaxed );
-#endif // #if !defined( ROCKETNET_URING_SEND_QUEUE_PLANT )
-        queue->producer = next;
+        rocketnet_uring_send_queues_turn_to( queues, q, ( queue->producer + 1 ) % ROCKETNET_URING_SEND_BANKS );
         turned++;
     }
 
