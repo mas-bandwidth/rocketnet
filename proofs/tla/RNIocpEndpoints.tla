@@ -34,7 +34,7 @@
 (*                  stored and A, seeing nothing pending, exits; B's post  *)
 (*                  then lands on A's port, which has no drainer).         *)
 (***************************************************************************)
-EXTENDS Naturals, FiniteSets
+EXTENDS Integers, FiniteSets
 
 CONSTANTS E, R, RepostOnOwner, CancelOwnSocket, CountFirst
 
