@@ -108,6 +108,23 @@ struct harden_pin_t
 
 static harden_pin_t harden_pin;
 
+// the pool threads' ids (the profile classes them as game threads): each pool thread records its own as it starts
+static std::atomic<unsigned long> harden_pool_ids[256];
+static std::atomic<int> harden_pool_id_count{ 0 };
+
+static void harden_pool_record_thread()
+{
+    unsigned long id = 0;
+#if defined( _WIN32 )
+    id = (unsigned long) GetCurrentThreadId();
+#endif // #if defined( _WIN32 )
+    const int slot = harden_pool_id_count.fetch_add( 1 );
+    if ( slot < 256 )
+    {
+        harden_pool_ids[slot].store( id );
+    }
+}
+
 static void harden_pin_this_thread( int cpu )
 {
 #if defined( __linux__ )
@@ -197,6 +214,7 @@ static void harden_pin_this_thread( int cpu )
 
 static void harden_pin_thread_start( uint32_t threadnum )
 {
+    harden_pool_record_thread();
     const int first = harden_pin.first_cpu.load();
     if ( first >= 0 )
     {

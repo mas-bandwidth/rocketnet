@@ -1909,6 +1909,7 @@ static void harden_profile_run( harden_profile_t * p )
     // every thread of this process but the profiler, with its start routine
     std::vector<harden_profile_thread_t> threads;
     HANDLE main_thread = NULL;
+    std::vector<HANDLE> net_targets, game_targets; // the network threads (the transport's I/O workers) and the game threads (the pool's), sampled besides main
     const HANDLE snapshot = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
     if ( snapshot != INVALID_HANDLE_VALUE )
     {
@@ -1946,10 +1947,48 @@ static void harden_profile_run( harden_profile_t * p )
         }
         CloseHandle( snapshot );
     }
+    {
+        // classes: a pool thread is a game thread; a thread made before the pool that has used a second of cpu is a
+        // network thread (the transport's I/O workers)
+        uint64_t pool_first = ~(uint64_t) 0;
+        const int pool_n = std::min( harden_pool_id_count.load(), 256 );
+        for ( const harden_profile_thread_t & t : threads )
+        {
+            for ( int i = 0; i < pool_n; i++ )
+            {
+                if ( harden_pool_ids[i].load() == t.id )
+                {
+                    pool_first = std::min( pool_first, t.created );
+                }
+            }
+        }
+        for ( const harden_profile_thread_t & t : threads )
+        {
+            bool pool = false;
+            for ( int i = 0; i < pool_n; i++ )
+            {
+                pool = pool || harden_pool_ids[i].load() == t.id;
+            }
+            if ( t.id == p->main_id )
+            {
+                continue;
+            }
+            if ( pool )
+            {
+                game_targets.push_back( t.handle );
+            }
+            else if ( t.created < pool_first && harden_profile_cpu( t.handle ) > 10000000 )
+            {
+                net_targets.push_back( t.handle );
+            }
+        }
+    }
 
     // the main thread's program counter, about once a millisecond, with the
     // phase of the frame it was in
     std::vector<std::pair<int, uint64_t>> samples;
+    std::vector<uint64_t> net_samples, game_samples;
+    uint64_t tick = 0;
     const double window_start = harden_profile_clock();
     double next = window_start;
     while ( main_thread && harden_profile_clock() - window_start < p->seconds && !p->stop.load() )
@@ -1976,6 +2015,29 @@ static void harden_profile_run( harden_profile_t * p )
 #endif // #if defined( _M_ARM64 )
         }
         ResumeThread( main_thread );
+        // one thread of another class at each millisecond, the network threads and the game threads in turn, each class in rotation
+        std::vector<HANDLE> * targets = tick % 2 == 0 ? &net_targets : &game_targets;
+        std::vector<uint64_t> * into = tick % 2 == 0 ? &net_samples : &game_samples;
+        if ( !targets->empty() )
+        {
+            const HANDLE other = ( *targets )[( tick / 2 ) % targets->size()];
+            if ( SuspendThread( other ) != (DWORD) -1 )
+            {
+                CONTEXT other_context;
+                memset( &other_context, 0, sizeof( other_context ) );
+                other_context.ContextFlags = CONTEXT_CONTROL;
+                if ( GetThreadContext( other, &other_context ) )
+                {
+#if defined( _M_ARM64 )
+                    into->push_back( (uint64_t) other_context.Pc );
+#else
+                    into->push_back( (uint64_t) other_context.Rip );
+#endif // #if defined( _M_ARM64 )
+                }
+                ResumeThread( other );
+            }
+        }
+        tick++;
     }
     const double window = harden_profile_clock() - window_start;
     for ( harden_profile_thread_t & t : threads )
@@ -2076,6 +2138,40 @@ static void harden_profile_run( harden_profile_t * p )
         for ( size_t i = 0; i < counts.size() && i < 60; i++ )
         {
             fprintf( f, "harden_profile_main: %6.2f%% %s\n", n ? 100.0 * counts[i].second / (double) n : 0.0, counts[i].first.c_str() );
+        }
+    }
+    // the other thread classes' flat profiles, sampled in rotation over the class's threads
+    const struct
+    {
+        const char * name;
+        const std::vector<uint64_t> * pcs;
+        size_t threads;
+    } classes[2] = { { "network", &net_samples, net_targets.size() }, { "game", &game_samples, game_targets.size() } };
+    for ( int c = 0; c < 2; c++ )
+    {
+        std::vector<std::string> names;
+        for ( uint64_t pc : *classes[c].pcs )
+        {
+            names.push_back( name_of( pc ) );
+        }
+        std::sort( names.begin(), names.end() );
+        std::vector<std::pair<std::string, int>> counts;
+        for ( size_t i = 0; i < names.size(); )
+        {
+            size_t j = i;
+            while ( j < names.size() && names[j] == names[i] )
+            {
+                j++;
+            }
+            counts.push_back( std::make_pair( names[i], (int) ( j - i ) ) );
+            i = j;
+        }
+        std::sort( counts.begin(), counts.end(), []( const std::pair<std::string, int> & a, const std::pair<std::string, int> & b )
+                   { return a.second > b.second; } );
+        fprintf( f, "harden_profile_class: %s threads=%zu samples=%zu\n", classes[c].name, classes[c].threads, names.size() );
+        for ( size_t i = 0; i < counts.size() && i < 40; i++ )
+        {
+            fprintf( f, "harden_profile_%s: %6.2f%% %s\n", classes[c].name, names.empty() ? 0.0 : 100.0 * counts[i].second / (double) names.size(), counts[i].first.c_str() );
         }
     }
     for ( int phase = HARDEN_MAIN_UPDATE; phase <= HARDEN_MAIN_SEND; phase++ )
