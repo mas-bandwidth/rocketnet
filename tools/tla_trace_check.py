@@ -89,14 +89,6 @@ LAYERS = {
         "untraced": {},
         "reach": ["LaneEmpty"],
     },
-    "bank": {
-        "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
-        "untraced": {},
-    },
-    "gather": {
-        "modules": ["RNSendGatherLayout.tla", "TraceRNSendGatherLayout.tla"],
-        "untraced": {},
-    },
     "source-snapshot": {
         "modules": ["RNSourceSnapshotLayout.tla", "TraceRNSourceSnapshotLayout.tla"],
         "untraced": {"EarlyPublish": "the HalfPublished defect's step: the code has no early publish but the plant's"},
