@@ -4365,7 +4365,7 @@ static bool rocketnet_iocp_receive_fixture( rocketnet_iocp_receive_fixture_t * f
         for ( int b = 0; b < ROCKETNET_IOCP_RECEIVE_BANKS; ++b )
         {
             rocketnet_iocp_receive_buffer_t * buffer = &worker->buffers[b];
-            buffer->data = ( uint8_t( * )[ROCKETNET_FRAME_STRIDE] ) p;
+            buffer->data = (uint8_t( * )[ROCKETNET_FRAME_STRIDE]) p;
             p += (size_t) bank * ROCKETNET_FRAME_STRIDE;
             buffer->from = (rocketnet_address_t *) p;
             p += (size_t) bank * sizeof( rocketnet_address_t );
