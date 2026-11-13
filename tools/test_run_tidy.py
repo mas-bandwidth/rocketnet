@@ -119,6 +119,16 @@ class RunTidyGateTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertGreater(len(dispositions), 0)
 
+    def test_the_repository_dispositions_cite_functions_not_line_numbers(self):
+        # rows are keyed by the site's text, so they survive moved lines; a
+        # line number in the reason would then point at the wrong code
+        import re
+        cited = re.compile(r"\blines? \d|\(\d{3,}(?:-\d+)?(?:, \d+(?:-\d+)?)*\)|\.(?:cpp|h):\d")
+        dispositions, errors = run_tidy.read_dispositions(run_tidy.DISPOSITIONS)
+        self.assertEqual(errors, [])
+        stale = sorted({key.split("\t")[1] for key, (reason, _) in dispositions.items() if cited.search(reason)})
+        self.assertEqual(stale, [])
+
     def test_heading_anchors_follow_the_rendered_slugs(self):
         doc = Path(self.tmp.name) / "triage.md"
         doc.write_text("# Static-analysis triage — 2026-10-26\n"
