@@ -11,10 +11,12 @@
 (* MCRNClientIoDecryptReduced.cfg is the required control, three datagrams.*)
 (* MCRNClientIoDecryptBrokenOpenBeforeReplay.cfg,                          *)
 (* MCRNClientIoDecryptBrokenSharedWindow.cfg,                              *)
-(* MCRNClientIoDecryptBrokenNoRetire.cfg and                               *)
-(* MCRNClientIoDecryptBrokenCountOnIo.cfg each restore one defect and must *)
-(* fail.  README-RNClientIoDecrypt.md gives the traces TLC printed and the *)
-(* check of each against the design by hand.                               *)
+(* MCRNClientIoDecryptBrokenNoRetire.cfg,                                  *)
+(* MCRNClientIoDecryptBrokenCountOnIo.cfg,                                 *)
+(* MCRNClientIoDecryptBrokenPayloadGate.cfg and                            *)
+(* MCRNClientIoDecryptBrokenPayloadMark.cfg each restore one defect and    *)
+(* must fail.  README-RNClientIoDecrypt.md gives the traces TLC printed    *)
+(* and the check of each against the design by hand.                      *)
 (***************************************************************************)
 EXTENDS RNClientIoDecrypt
 =============================================================================

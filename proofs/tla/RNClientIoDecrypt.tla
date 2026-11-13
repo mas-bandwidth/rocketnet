@@ -344,6 +344,13 @@ RetireKeys ==
 
 (* ---- update: the records ---- *)
 
+\* rocketnet_client_process_packet, right after the record that connected
+\* the client, stores the I/O thread's payloads word (relaxed,
+\* rocketnet_client_io_open_payloads), inside the update step that
+\* connects.  A late read of the word is a payload that passes raw, which
+\* update processes as at BASE.
+OpenPayloads == payloadsOpen' = (payloadsOpen \/ session' = "connected")
+
 \* update consumes the next record of the exposed buffer, in arrival order.
 \* Every verdict is counted with today's counter (nCounted).
 \*   accepts: the state check, rocketnet_client_session_state_accepts: a
@@ -433,10 +440,7 @@ UpdateConsume ==
     /\ UNCHANGED <<socket, rec, buf, snap, owed, waiting, waitReadable, fresh,
                    ioWin, ioKeys, ioSeen, openNoKeys, ackMark, earlyPayload>>
     /\ UNCHANGED netVars
-    \* OpenPayloads: rocketnet_client_set_state entering connected stores
-    \* the I/O thread's payloads word (relaxed).  A late read of the word
-    \* is a payload that passes raw, which update processes as at BASE.
-    /\ payloadsOpen' = (payloadsOpen \/ session' = "connected")
+    /\ OpenPayloads
 
 \* a fill thread builds an ack block from mainWin (rocketnet_ack_block_build
 \* under the phase contract): it reads mainWin and writes nothing the

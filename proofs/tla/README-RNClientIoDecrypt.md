@@ -28,7 +28,7 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
 - **The datagrams** (`socket`, `Arrive`). The challenge, once; the server's
   genuine session sequences, in increasing order, each a keep-alive (kind
   session) or a payload (kind payload); one replayed copy of a sent sequence,
-  which is a duplicate or, once the window has passed it, too old; one forged
+  of either kind, which is a duplicate or, once the window has passed it, too old; one forged
   session datagram with any kind, sequence and size. Reordering is the
   replayed copy. A genuine session datagram arrives only after the I/O thread
   has read the live epoch: the server sends session traffic only after the
@@ -39,7 +39,13 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   consuming the challenge: it stores the epoch live (release) and sets the
   session to sending the connection response, and sets the wake, which stands for the
   hand-off of the connection response that `update` commits next (RNClientIo's
-  `HandOff`). The first accepted keep-alive moves the session to connected.
+  `HandOff`). The first accepted keep-alive moves the session to connected,
+  and in that step `OpenPayloads` stores `payloadsOpen`: the payloads word
+  the transport stores (relaxed, `rocketnet_client_io_open_payloads`) in
+  `rocketnet_client_process_packet` right after the record that connected
+  the client. A late
+  read of the word on the I/O thread is a payload that passes raw, which
+  the model covers by interleaving.
   `RetireKeys` is disconnect, destroy or a timeout, from sending the
   connection response or connected (`rocketnet_client_protocol_disconnect`
   and every terminal `rocketnet_client_set_state` run the connection reset,
@@ -52,8 +58,9 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   `IoKeepKeys` is a read that sees no change. It never receives or blocks
   before that read.
 - **The I/O thread's rungs.** `IoCheck` runs the cheap rungs in the reading
-  order, the replay check on `ioWin` last: a handshake datagram, or any
-  datagram while the thread holds no live copy, passes through with the
+  order, the replay check on `ioWin` last: a handshake datagram, any
+  datagram while the thread holds no live copy, or a payload while it reads
+  `payloadsOpen` false (TRANSPORT.md t11.3), passes through with the
   verdict raw; a short datagram gets wrong size; sequence zero gets zero
   sequence; a sequence `ioWin` refuses gets the verdict replay; anything else
   is checked. `IoOpen` is the AEAD on a checked record: a genuine datagram
@@ -65,15 +72,17 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   passes the state check, `update`'s own replay check on `mainWin` and
   `rocketnet_replay_advance` on `mainWin`, and its sequence is accepted. The
   state check accepts a keep-alive from sending the response on and a payload
-  only once connected, so a payload opened before connected is refused without
-  touching `mainWin`; a replay record is counted as already received; a
+  only once connected; a payload before connected reaches `update` raw and
+  is refused by the state check before any open, touching neither window
+  (`earlyRefused`); a replay record is counted as already received; a
   zero-sequence or wrong-size record is refused and counted; a forged record
   runs `rocketnet_client_integrity_failure` in its position while the state
   accepts its type, and at the limit retires the keys and ends the session; a
   raw record is processed as at BASE (a handshake record outside the handshake
   is wrong state; a session record gets the state check, the size and
   zero-sequence rungs, the replay check on `mainWin` and the AEAD on the main
-  thread).
+  thread). A genuine payload `update` accepts from a raw record is in
+  `rawAccepted`.
 - **The fill threads** (`FillAckBuild`) read `mainWin`, as
   `rocketnet_ack_block_build` does under the phase contract; `ackMark` is the
   mark read.
@@ -115,16 +124,22 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   construction (a record is checked only while the copy is held, and the copy
   is dropped only between datagrams), so the NoRetire witness fails on the
   second half.
-- **`MirrorAgrees`**: while the session has not ended, `ioWin` contains
-  `mainWin` advanced by the sequences the I/O thread opened and `update` has
-  not consumed yet, in order. Containment means every sequence the latter
-  refuses as already received, `ioWin` refuses too. The two windows are one
-  function of one sequence stream, `update`'s lagging by the unconsumed
-  records. A payload the I/O thread opened while `update` was still sending
-  the connection response is refused by `update`'s state check and never
-  advances `mainWin`, so `ioWin` may stay ahead; equality would be false.
-- **`AcceptedOnce`**: `update` accepts a sequence at most once, and both
-  windows refuse every accepted sequence (`ReceivedIsRefused` for each).
+- **`MirrorExact`**: while the session has not ended, `mainWin` advanced by
+  the sequences the I/O thread opened and `update` has not consumed yet, in
+  order, contains `ioWin`: every sequence `ioWin` refuses as already
+  received, that window refuses too, so the I/O thread never marks a
+  sequence `update` will not accept. Before the payload gate the I/O thread
+  marked a payload `update` then refused by the state check, and a later copy
+  of it was dropped as already received once connected (the PayloadMark
+  witness). The other direction does not hold: a payload that passed raw
+  just before the I/O thread read `payloadsOpen` is accepted by `update`
+  alone (`rawAccepted`), so `ioWin` never marks it; a later copy of it opens
+  on the I/O thread and `update` refuses it as already received.
+- **`PayloadOpenedOnlyConnected`**: the I/O thread opens a payload only once
+  the session is connected (or ended), TRANSPORT.md t11.3.
+- **`AcceptedOnce`**: `update` accepts a sequence at most once; `mainWin`
+  refuses every accepted sequence, and `ioWin` every one not accepted from a
+  raw record (`ReceivedIsRefused` for each).
 - **`SingleWriter`**: `mainWin`, the counters and the session change only in
   `update`'s steps, `ioWin` only in the I/O thread's.
 - **`ExposedStable`** and **`NoReceiveStall`**, from RNClientIo. A stall now

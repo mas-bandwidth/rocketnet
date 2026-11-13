@@ -50,12 +50,10 @@ struct rocketnet_client_protocol_t;
 // The open block hooks of a transport whose I/O thread opens session packets
 // (proofs/tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys): publish runs where
 // the challenge commits the session keys, retire on every terminal state
-// before the keys are zeroed, open_payloads on entering connected (payloads
-// are opened only from then, TRANSPORT.md t11.3). NULL on every other path.
+// before the keys are zeroed. NULL on every other path.
 
 typedef void ( *rocketnet_client_publish_keys_t )( void * context, const struct rocketnet_client_protocol_t * client );
 typedef void ( *rocketnet_client_retire_keys_t )( void * context );
-typedef void ( *rocketnet_client_open_payloads_t )( void * context );
 
 /*
     The declaration manifest is deliberately independent of the RESET/KEEP
@@ -104,7 +102,6 @@ typedef void ( *rocketnet_client_open_payloads_t )( void * context );
     X( acked_packet_ids, uint64_t acked_packet_ids[ROCKETNET_SENT_PACKET_BUFFER_SIZE] ) \
     X( publish_keys, rocketnet_client_publish_keys_t publish_keys ) \
     X( retire_keys, rocketnet_client_retire_keys_t retire_keys ) \
-    X( open_payloads, rocketnet_client_open_payloads_t open_payloads ) \
     X( keys_context, void * keys_context ) \
     X( record_verdict, uint8_t record_verdict ) \
     X( record_sequence, uint64_t record_sequence )

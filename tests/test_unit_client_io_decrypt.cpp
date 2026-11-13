@@ -96,20 +96,11 @@ static void client_io_decrypt_teardown( client_io_decrypt_fixture_t * f )
     rocketnet_client_io_rig_destroy( f->rig );
 }
 
-// the transport's OpenPayloads hook, which the protocol runs on entering connected
-
-static void client_io_decrypt_open_payloads_hook( void * context )
-{
-    rocketnet_client_io_open_payloads( (rocketnet_client_io_t *) context );
-}
-
 // update's PublishKeys at the challenge, from the protocol's own fields. A
 // fixture left in connected has passed OpenPayloads too.
 
 static void client_io_decrypt_publish( client_io_decrypt_fixture_t * f )
 {
-    f->client.open_payloads = client_io_decrypt_open_payloads_hook;
-    f->client.keys_context = &f->io;
     rocketnet_client_io_publish_keys( &f->io, f->client.keys.session_server_to_client, f->client.signed_fields.protocol_id,
                                       f->client.connection_salt, f->client.packet_filter, &f->client.server_address );
     if ( f->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
@@ -153,14 +144,21 @@ static int client_io_decrypt_push_payload( client_io_decrypt_fixture_t * f, uint
     return client_io_decrypt_push_payload_from( f, &f->server, sequence, payload_byte, forge );
 }
 
-// update's consume of one exposed record (proofs/tla/RNClientIoDecrypt.tla UpdateConsume)
+// update's consume of one exposed record (proofs/tla/RNClientIoDecrypt.tla UpdateConsume), and the
+// transport's OpenPayloads after it (rocketnet_client_process_packet)
 
 static int client_io_decrypt_consume( client_io_decrypt_fixture_t * f, const rocketnet_client_io_received_t * buffer, int i,
                                       uint8_t * payload, int * payload_bytes )
 {
-    return rocketnet_client_protocol_process_record( &f->client, buffer->packet_data[i], (int) buffer->packet_bytes[i],
-                                                     buffer->verdict[i], buffer->sequence[i], f->clock.now,
-                                                     payload, ROCKETNET_FRAME_SIZE, payload_bytes );
+    const int state_before = f->client.state;
+    const int result = rocketnet_client_protocol_process_record( &f->client, buffer->packet_data[i], (int) buffer->packet_bytes[i],
+                                                                 buffer->verdict[i], buffer->sequence[i], f->clock.now,
+                                                                 payload, ROCKETNET_FRAME_SIZE, payload_bytes );
+    if ( state_before != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && f->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        rocketnet_client_io_open_payloads( &f->io );
+    }
+    return result;
 }
 
 // IoTakeKeys, IoCheck, IoOpen before IoCommit: two sealed datagrams, one
