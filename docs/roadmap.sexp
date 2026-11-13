@@ -496,6 +496,36 @@
    :text "Every test reads ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL only as == 0 (tests/test_unit_sequence_burn.cpp, sdk/rocketnet_tests.cpp, tests/functional/server_receive_low_tick.cpp). check_counter_observed.py counted it observed through a name a check read only as == 0; with that path closed it is listed in OWED. The server's twin, ACKED_BATCH_FULL, has a unit case (tests/test_unit_client_receive_counters.cpp, the batch that holds two). The client's batch is fixed at ROCKETNET_SENT_PACKET_BUFFER_SIZE (rocketnet_client_protocol.cpp, the ack block's process call), so the case needs a seam that shrinks it, or more acks in one update than the batch holds; then drop the OWED row."
    :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-G5 (R108)")
 
+  (item "tla-records-reverify-changed-rows" :group "review-v1-2" :area "proofs"
+   :title "The nightly re-run re-verifies every RUNS.tsv row changed since it was last verified"
+   :text "A hand edit to proofs/tla/RUNS.tsv (MCLink generated/distinct set to 1/1, shown on the bench) still passes tools/check_tla_records.py: the record carries nothing a hand edit cannot fake without re-running TLC. The guard today is the nightly re-run comparer, which checks a third of the cases each night, so a false record is caught within about three nights. Make the nightly selection always include every row changed since that row's last verified re-run, so a changed record is re-run the next night. A point release re-runs nothing (the light point-release rule, 2026-11-13)."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R105)")
+
+  (item "ruleset-apply-reconcile-light-landing" :group "review-v1-2" :area "ci"
+   :title "When .github/rulesets/main.json is applied, reconcile its required names with light landing"
+   :text "The live ruleset on main carries only deletion and non_fast_forward; the committed .github/rulesets/main.json is deliberately not applied until the first outside pull request (owner, 2026-11-12). It requires the FULL job names, which tools/land.py by default prints but does not hold (light landing, 2026-11-13). Before applying it, make the required names the per-commit names light landing holds, or applying it blocks every light landing."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R102)")
+
+  (item "release-tag-push-ruleset" :group "review-v1-2" :area "ci"
+   :title "A tag ruleset so a v* tag is made only by the release tooling"
+   :text "Nothing stops a v* tag being pushed by hand around tools/release.py and its gates. A tag ruleset that limits v* creation to the release path closes it."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R110)")
+
+  (item "wire-paths-tie-to-wire-version" :group "review-v1-2" :area "ci"
+   :title "Classify the 17 pending wire paths and tie a wire change to ROCKETNET_WIRE_VERSION"
+   :text "tools/wire_paths.txt lists 17 files as classification pending since 2026-11-12. Classify them, then make a change to a wire path that leaves ROCKETNET_WIRE_VERSION unchanged need a reviewed reason."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R103)")
+
+  (item "release-version-collision-refusal" :group "review-v1-2" :area "ci"
+   :title "Release gates refuse a minor or patch of 100 or more"
+   :text "ROCKETNET_VERSION is major * 10000 + minor * 100 + patch (sdk/rocketnet.h), so v1.0.100 and v1.1.0 would both be 10100. No release is near 100; tools/release_gates.py judge_release can refuse such a version by name when one is."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R104)")
+
+  (item "release-gates-name-every-refusal" :group "review-v1-2" :area "ci"
+   :title "Release gates and land.py name every refusal"
+   :text "tools/release_gates.py judge_release skips the required-names judgement without a line when .github/rulesets/main.json is absent at the commit (it is present on main today), and tools/land.py refuses with nothing printed when the head moves during its one re-run (the refusal itself is right). Both can say why by name."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R106, R110)")
+
   (item "message-open-model" :group "review-v1-2" :area "proofs"
    :title "A model of the open message per connection and the object's count of open starts"
    :text "sdk/rocketnet_message_object.h (the open-message fields), sdk/rocketnet_message_server.cpp (rn_message_open_line_index and the one-start-pending refusal in the start path) and tests/wide_fill_cases.cpp cited proofs/tla/RNMessageOpen.tla, which was never written; the citations now say there is no model. The state: at most one open start per connection, fill threads opening and closing on different connections at once, the object's count of open starts and its last index as atomics, a reset's cancel (RNSlots ResetCancel). A model would carry the count's arithmetic at capacity 3 with a reversed witness (a second start on one connection admitted) and a trace walk of the wide fill."

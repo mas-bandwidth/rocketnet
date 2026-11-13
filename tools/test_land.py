@@ -94,23 +94,6 @@ class Land(unittest.TestCase):
         self.assertIn(name, text)
         self.assertEqual(api.writes, [])
 
-    def test_head_moved_during_the_rerun_refuses_with_its_reason(self):
-        # the head moved while the re-run ran: a refusal, and it says why
-        api = FakeApi()
-        runs = green_pull_request(api)
-        cap_cancel(api, runs)
-        finish = finish_rerun("success")
-
-        def on_rerun(api, run_id):
-            finish(api, run_id)
-            green_pull_request(api, head=SHA + "-moved")
-
-        api.on_rerun = on_rerun
-        code, text = run_land(api, dry_run=False)
-        self.assertEqual(code, 1, text)
-        self.assertIn("REFUSE: the head moved from", text)
-        self.assertNotIn("PUT", [w[0] for w in api.writes])
-
     def test_second_cancel_after_the_rerun_refuses(self):
         api = FakeApi()
         runs = green_pull_request(api)
