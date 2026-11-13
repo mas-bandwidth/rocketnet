@@ -137,6 +137,11 @@ struct gso_walk_t
     int steps_turn;
     int steps_kept;
     int steps_return;
+    int steps_lost;         // claims whose library compare-and-swap lost to a second claimer the walk ran inside start_packet
+    int own_missed;         // exact finishes that did not write their own slot
+    std::vector<tla_record_t> * records;    // the walk's records, so a contested claim can add the steps inside its call
+    tla_report_t * report;
+    tla_random_t * random;
 };
 
 // the lanes as the library holds them
@@ -372,7 +377,49 @@ static void gso_take_claim( gso_walk_t & walk, int t, const uint8_t * frame, uin
 // thread moved since the load is the compare-and-swap that lost: op reload,
 // no call, r = None. Otherwise the code's start is called; r is what it
 // returned, the pointer (as the model addresses it) and id, or None for NULL.
-static std::string gso_claim( gso_walk_t & walk, int t, const char ** op )
+// the second claimer the walk runs inside the library's start_packet, between
+// its load of the producer's count and its compare-and-swap
+// (rocketnet_server_gso_test_set_claim_hook): thread u's whole claim, recorded
+// as the model's Claim(u) before the first thread's compare-and-swap is tried
+struct gso_hook_t
+{
+    gso_walk_t * walk;
+    int u;
+    bool fired;
+    bool refused;
+    struct rocketnet_server_gso_test_send_lane_t snap[GSO_QUEUES];
+};
+
+static void gso_claim_hook( void * user, int )
+{
+    gso_hook_t * h = (gso_hook_t *) user;
+    gso_walk_t & walk = *h->walk;
+    rocketnet_server_gso_test_set_claim_hook( walk.gso, NULL, NULL );
+    h->fired = true;
+    gso_load_t & lu = walk.load[h->u];
+    uint64_t pid = 0;
+    const uint8_t * frame = rocketnet_server_gso_start_packet( walk.gso, &walk.dest[lu.d], &pid );
+    lu.loaded = false;
+    if ( !frame )
+    {
+        h->refused = true;
+        return;
+    }
+    gso_read( walk );
+    gso_take_claim( walk, h->u, frame, pid );
+    walk.steps_claim++;
+    for ( int q = 0; q < GSO_QUEUES; q++ )
+    {
+        h->snap[q] = walk.lane[q];
+    }
+    const gso_claim_t & c = walk.claim[h->u];
+    walk.report->act( "Claim" );
+    walk.records->push_back( tla_step( "start_packet", "Claim",
+                                       gso_args( { tla_int( h->u ), "[ptr |-> " + tla_int( c.ptr ) + ", pid |-> " + tla_int( (int64_t) pid ) + "]" } ),
+                                       gso_state( walk ) ) );
+}
+
+static std::string gso_claim( gso_walk_t & walk, int t, const char ** op, const std::vector<int> & others )
 {
     gso_load_t & l = walk.load[t];
     const struct rocketnet_server_gso_test_send_lane_t & lane = walk.lane[l.q];
@@ -386,9 +433,52 @@ static std::string gso_claim( gso_walk_t & walk, int t, const char ** op )
         return gso_args( { tla_int( t ), gso_none() } );
     }
 
+    // another thread that loaded the same counter claims inside this call: the
+    // library's compare-and-swap then loses and reloads on its own, which the
+    // trace records as the model's reload step; a library that stored blindly
+    // (no loss) takes the same slot, and the state it records no model step reaches
+    gso_hook_t hook = {};
+    int loss_before = 0;
+    if ( walk.records && l.i >= 0 && l.i + 1 < GSO_SLOTS && lane.num_packets[l.b] == l.i )
+    {
+        for ( size_t k = 0; k < others.size(); k++ )
+        {
+            const int u = others[k];
+            const gso_load_t & lu = walk.load[u];
+            if ( u != t && lu.q == l.q && lu.b == l.b && lu.i == l.i && walk.random->below( 2 ) == 0 )
+            {
+                hook.walk = &walk;
+                hook.u = u;
+                loss_before = rocketnet_server_gso_test_claim_losses( walk.gso );
+                rocketnet_server_gso_test_set_claim_hook( walk.gso, gso_claim_hook, &hook );
+                break;
+            }
+        }
+    }
+
     uint64_t pid = 0;
     const uint8_t * frame = rocketnet_server_gso_start_packet( walk.gso, &walk.dest[l.d], &pid );
+    rocketnet_server_gso_test_set_claim_hook( walk.gso, NULL, NULL );
     l.loaded = false;
+    if ( hook.fired && !hook.refused && rocketnet_server_gso_test_claim_losses( walk.gso ) > loss_before )
+    {
+        // the library's own loop lost and reloaded: the model's reload step,
+        // on the lanes as the second claimer left them
+        for ( int q = 0; q < GSO_QUEUES; q++ )
+        {
+            walk.lane[q] = hook.snap[q];
+        }
+        const int reload_b = walk.lane[l.q].producer;
+        const int reload_i = walk.lane[l.q].num_packets[reload_b];
+        walk.load[t].b = reload_b;
+        walk.load[t].i = reload_i;
+        walk.load[t].loaded = true;
+        walk.steps_reload++;
+        walk.steps_lost++;
+        walk.report->act( "Claim" );
+        walk.records->push_back( tla_step( "reload", "Claim", gso_args( { tla_int( t ), gso_none() } ), gso_state( walk ) ) );
+        walk.load[t].loaded = false;
+    }
     *op = "start_packet";
     if ( !frame )
     {
@@ -485,6 +575,17 @@ static int gso_finish( gso_walk_t & walk, int t, int k, bool abort )
     if ( c.id_queue != c.q )
     {
         walk.route_bad = true;
+    }
+
+    // a finish through the exact pointer writes its own slot: the claim's slot
+    // changed from what it held before the call
+    if ( k == 0 && !abort && c.slot >= 0 && c.slot < GSO_SLOTS && c.q >= 0 && c.b >= 0 )
+    {
+        const size_t own = (size_t) ( ( c.q * GSO_BANKS + c.b ) * GSO_SLOTS + c.slot );
+        if ( after[own] == before[own] )
+        {
+            walk.own_missed++;
+        }
     }
 
     c.held = false;
@@ -592,6 +693,9 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
     tla_random_t random = { seed };
     tla_report_t report;
     std::vector<tla_record_t> records;
+    walk.records = &records;
+    walk.report = &report;
+    walk.random = &random;
     records.push_back( tla_step( "init", "init", "<<>>", gso_state( walk ) ) );
 
     for ( int step = 0; step < steps; step++ )
@@ -664,7 +768,7 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
         }
         else if ( pick < n_load + n_claim )
         {
-            args = gso_claim( walk, can_claim[(size_t) ( pick - n_load )], &op );
+            args = gso_claim( walk, can_claim[(size_t) ( pick - n_load )], &op, can_claim );
             act = "Claim";
         }
         else if ( pick < n_load + n_claim + n_finish )
@@ -723,6 +827,7 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
     printf( "WALK records=%d loads=%d claims=%d reloads=%d refused=%d finishes=%d aborts=%d flushes=%d turns=%d kept=%d returns=%d\n",
             (int) records.size(), walk.steps_load, walk.steps_claim, walk.steps_reload, walk.steps_refused, walk.steps_finish,
             walk.steps_abort, walk.steps_flush, walk.steps_turn, walk.steps_kept, walk.steps_return );
+    fprintf( stderr, "tla_trace: gso: %d claims lost their compare-and-swap inside start_packet to a second claimer (library loop), %d exact finishes missed their own slot\n", walk.steps_lost, walk.own_missed );
     report.print();
 
     std::string threads = "{";
@@ -744,6 +849,12 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
                                   "    MaxFlush = " + tla_int( walk.max_flush ) + "\n" + "    SkewSpan = " + tla_int( GSO_SKEW_SPAN ) + "\n" +
                                   "    ClaimCmp = \"ge\"\n    ClaimRule = \"cas\"\n    SlotRule = \"check\"\n    IdRule = \"mul\"\n"
                                   "    FlushRule = \"joined\"\n";
+
+    if ( walk.own_missed > 0 )
+    {
+        fprintf( stderr, "tla_trace: gso: a finish through the exact pointer did not write its own slot\n" );
+        return 1;
+    }
 
     return tla_write_trace( out, "MCTraceGso", seed, "TraceRNGsoQueueBankLayout", "", constants, records ) ? 0 : 1;
 }

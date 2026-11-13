@@ -272,7 +272,10 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 // the builtin driver. A refusal (cpu outside the set or not online, affinity
 // or priority refused) is a warning naming the queue and the cpu, is counted
 // in rocketnet_server_gso_pin_refusals, and the worker is never reported
-// pinned.
+// pinned. A refused worker is confined to the online cpus from num_os_cpus up
+// (rocketnet_gso_pin_fallback), never left on a mask that includes cpu 0; a
+// confinement the system refuses is counted too. A num_os_cpus below 0 is read
+// as 1 (the OS keeps cpu 0 on Linux).
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
                                                                     int * status = NULL, const uint8_t * packet_filter = NULL );
@@ -282,7 +285,8 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
 // until its thread has run the pin. Any thread.
 int rocketnet_server_gso_worker_cpu( struct rocketnet_server_gso_t * gso, int queue );
 
-// the pins and priorities the workers asked for and the system refused. Any thread.
+// the pins (not priorities) the workers asked for and the system refused,
+// and confinements refused after a refused pin. Any thread.
 int rocketnet_server_gso_pin_refusals( struct rocketnet_server_gso_t * gso );
 
 // the datagrams the queue workers dropped before banking, by reason
@@ -290,8 +294,9 @@ int rocketnet_server_gso_pin_refusals( struct rocketnet_server_gso_t * gso );
 // cumulative. Main thread.
 void rocketnet_server_gso_receive_drop_totals( struct rocketnet_server_gso_t * gso, uint64_t * values );
 
-// the queue count (fixed after create), and one queue's producer room. Main
-// thread for the room.
+// the queue count (fixed after create), and one queue's producer room. Any
+// thread for the count; the room on the threads send_room is read on (the main
+// thread and the game threads between main thread calls, sdk/rocketnet_driver.h).
 int rocketnet_server_gso_send_queues( struct rocketnet_server_gso_t * gso );
 int rocketnet_server_gso_send_room_queue( struct rocketnet_server_gso_t * gso, int queue );
 
@@ -457,6 +462,10 @@ void rocketnet_server_gso_test_return_send( struct rocketnet_server_gso_t * gso,
 void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
                                          void * user );
+// The claim seam: hook runs inside start_packet between its load and its compare-and-swap;
+// the losses are the compare-and-swaps that lost, cumulative.
+void rocketnet_server_gso_test_set_claim_hook( struct rocketnet_server_gso_t * gso, void ( *hook )( void * user, int queue ), void * user );
+int rocketnet_server_gso_test_claim_losses( struct rocketnet_server_gso_t * gso );
 void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features );
 bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso );
 // Publish packets on one queue, each byte set to marker. false when a ready
