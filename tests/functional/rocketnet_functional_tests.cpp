@@ -5702,6 +5702,24 @@ void rocketnet_test_server_rio_lanes_through_the_server()
         rn_cli_server_stop_and_destroy( refused );
     }
 
+    // the bind address from the environment, as an operator sets it, makes
+    // the same four lanes as the config field
+    {
+        struct rocketnet_test_env_guard_t bind_guard;
+        rocketnet_test_env_save( &bind_guard, "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" );
+        rocketnet_check( setenv( "ROCKETNET_SERVER_BIND_IPV4_ADDRESS", "127.0.0.1", 1 ) == 0 );
+        const uint64_t before = rocketnet_server_rio_test_lanes_made();
+        struct rocketnet_server_t * from_env = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+        rocketnet_check( from_env );
+        const enum rocketnet_status_t start_status = rocketnet_server_start( from_env );
+        const uint64_t made = rocketnet_server_rio_test_lanes_made() - before;
+        printf( "    rio lanes from the bind environment: start %s, lanes=%llu\n", rocketnet_status_name( start_status ), (unsigned long long) made );
+        rn_cli_server_stop_and_destroy( from_env );
+        rocketnet_test_env_restore( &bind_guard );
+        rocketnet_check( start_status == ROCKETNET_STATUS_OK );
+        rocketnet_check( made == 4 );
+    }
+
     server_config.bind_ipv4_address = "127.0.0.1";
     {
         rocketnet_address_t held_address;
@@ -12845,6 +12863,44 @@ static void rocketnet_test_public_client_reads_server_disconnected()
 // finished sending it. A transport this build or host cannot create is
 // skipped.
 
+// The bind address environment variable reaches the start of a server that
+// serves one family: ROCKETNET_SERVER_BIND_IPV4_ADDRESS set to a multicast
+// address, which no server may bind, makes start of an IPv4-only server
+// refuse with INVALID_ADDRESS, at port 0 and at an explicit port. Exported in
+// the process environment, as an operator sets it.
+void rocketnet_test_server_bind_environment_reaches_single_family_start()
+{
+    struct rocketnet_test_env_guard_t server_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    struct rocketnet_test_env_guard_t bind_guard;
+    rocketnet_test_env_save( &bind_guard, "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" );
+    rocketnet_check( setenv( "ROCKETNET_SERVER_BIND_IPV4_ADDRESS", "224.0.0.1", 1 ) == 0 );
+
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    server_config.max_clients = 4;
+    server_config.transport = "portable";
+
+    for ( const char * address : { "127.0.0.1:0", "127.0.0.1:40731" } )
+    {
+        enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+        struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &server_config, &create_status );
+        const enum rocketnet_status_t start_status = server ? rocketnet_server_start( server ) : ROCKETNET_STATUS_OK;
+        printf( "    bind environment 224.0.0.1, server %s: create %s, start %s\n", address, rocketnet_status_name( create_status ), rocketnet_status_name( start_status ) );
+        if ( server )
+        {
+            rn_cli_server_stop_and_destroy( server );
+        }
+        rocketnet_check( !server || start_status == ROCKETNET_STATUS_INVALID_ADDRESS );
+        rocketnet_check( server || create_status == ROCKETNET_STATUS_INVALID_ADDRESS );
+    }
+
+    rocketnet_test_env_restore( &bind_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
+}
+
 static void rocketnet_test_server_stop_disconnects_every_client( const char * transport )
 {
     const int num_clients = 8;
@@ -14993,6 +15049,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_client_io_threaded_batch_flushes_mid_ring", rocketnet_test_client_io_threaded_batch_flushes_mid_ring, NULL },
     { "test_client_io_threaded_single_datagrams", rocketnet_test_client_io_threaded_single_datagrams, NULL },
     { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
+    { "test_server_bind_environment_reaches_single_family_start", rocketnet_test_server_bind_environment_reaches_single_family_start, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, NULL },
     { "test_session_reconnect_isolation_gso", rocketnet_test_session_reconnect_isolation_gso, NULL },
