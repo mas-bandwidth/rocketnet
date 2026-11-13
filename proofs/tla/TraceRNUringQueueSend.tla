@@ -100,8 +100,10 @@ TraceConsistent == ~rejected
 \* the row's reach predicates: some clean trace fills the producer, so the
 \* next start is refused (Full), and has an eagain completion posted, so a
 \* reap hands its run back to be submitted again (AgainPosted), and has
-\* a publish kept because the worker held the handoff mutex with a staged
-\* producer and a free bank (KeptLocked: the walk tries the publish there)
+\* reached a state where a publish would be kept (the worker holds the
+\* handoff mutex after a flush, with a staged producer and a free bank: the
+\* opportunity, which the walk likely but not surely takes; the refused
+\* publish itself is tests/test_unit_uring_queue_send.cpp's) (KeptLocked)
 Full == num[producer] = S
 AgainPosted == \E i \in 1..Len(cq) : cq[i].res = "eagain"
 KeptLocked == locked /\ num[producer] # 0 /\ free # <<>> /\ flushes > 0

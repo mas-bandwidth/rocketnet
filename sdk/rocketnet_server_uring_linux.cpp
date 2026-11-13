@@ -201,7 +201,8 @@ static std::atomic<int> rocketnet_server_uring_test_multishot_res{ 0 };
 // submit does not take both, and were it to, the receive would end -EINVAL;
 // either is a no. Nothing can arrive on the unbound socket, and the cancel
 // ends the receive either way, so the wait is for two completions; a wait
-// past a second is a refusal too
+// for either that passes a second is a refusal too (each completion has its
+// own second, so the probe can take up to two)
 static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int bgid )
 {
     const int fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
@@ -278,8 +279,9 @@ static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int 
 
 bool rocketnet_server_uring_available()
 {
-    // the probe: a ring, the five opcodes the workers submit, a provided
-    // buffer ring and a multishot receive over it.
+    // the probe: a ring, the five opcodes the workers submit (SENDMSG,
+    // RECVMSG, ASYNC_CANCEL, the wake's READ and the retry TIMEOUT), a
+    // provided buffer ring and a multishot receive over it.
 
     std::atomic<int> & available = rocketnet_server_uring_probed;
 
@@ -300,7 +302,7 @@ bool rocketnet_server_uring_available()
                  io_uring_opcode_supported( probe, IORING_OP_RECVMSG ) &&
                  io_uring_opcode_supported( probe, IORING_OP_ASYNC_CANCEL ) &&
                  io_uring_opcode_supported( probe, IORING_OP_READ ) &&
-                 io_uring_opcode_supported( probe, IORING_OP_POLL_ADD );
+                 io_uring_opcode_supported( probe, IORING_OP_TIMEOUT );
 
             io_uring_free_probe( probe );
         }

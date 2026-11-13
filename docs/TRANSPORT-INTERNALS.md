@@ -586,9 +586,13 @@ refusal, no lock). A queue turns segmentation off for its destinations, with
 one warning (`GSO_FALLBACKS`), only when
 `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` of its destinations refused
 and no segmented send was ever accepted on any queue: a kernel that cannot
-segment at all. The flag is read when the refusal is reaped, so an acceptance
-another queue has not yet reaped does not count: a queue can still turn off
-in that window, and stays off.
+segment at all. The guarantee is for an acceptance the refusing worker
+observes: the flag is read when the refusal is reaped, with no ordering
+between workers, so an acceptance another queue has not yet reaped, or has
+set but this worker does not yet see, does not count, and a queue can still
+turn off in that window and stays off. RNSegmentRefusal steps the workers one
+at a time, so its NoFallbackAfterAccepted holds for the acceptance a refusal
+observes, not for one only reaped elsewhere.
 `rocketnet_server_uring_features` reports `ROCKETNET_SERVER_URING_FEATURE_SEGMENT`
 until any queue has turned segmentation off.
 

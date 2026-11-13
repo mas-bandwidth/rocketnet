@@ -63,7 +63,11 @@ addresses, so a destination that never refused is never in it.
   no queue's refusals turn its segmentation off (t2.4 rule 7 is the
   transport's: "none was ever accepted"). A fallback taken before any was
   accepted stays, as the rule allows, which is why the two-queue control
-  does not check `OtherDestinationUnaffected`.
+  does not check `OtherDestinationUnaffected`. The model takes one step at
+  a time, so "was accepted" is an acceptance the refusing queue observes:
+  the code's workers share a relaxed flag with no ordering between them, and
+  a refusal reaped while another queue's acceptance is unreaped or not yet
+  visible can still turn its queue off (docs/TRANSPORT-INTERNALS.md).
 - `NothingDropped`: a refused run is resent, never dropped.
 - `RefusedOnce`: each destination pays at most one refusal (no two
   destinations sharing an entry).
