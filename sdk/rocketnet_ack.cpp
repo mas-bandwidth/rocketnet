@@ -1469,15 +1469,22 @@ int rocketnet_ack_popcount64_portable( uint64_t v )
     return (int) ( ( v * 0x0101010101010101ull ) >> 56 );
 }
 
+// gcc and clang inline __builtin_popcountll on arm64 (cnt) and on x86 when
+// the target has POPCNT (__POPCNT__); an x86 build without it would call
+// libgcc's __popcountdi2 per word, so it takes the inline portable sum.
+// MSVC on x64 has __popcnt64; MSVC on ARM64 takes the portable sum.
+
 static inline int rn_popcount64( uint64_t v )
 {
-#if defined( __GNUC__ ) || defined( __clang__ )
+#if ( defined( __GNUC__ ) || defined( __clang__ ) ) && ( defined( __x86_64__ ) || defined( __i386__ ) ) && !defined( __POPCNT__ )
+    return rocketnet_ack_popcount64_portable( v );
+#elif defined( __GNUC__ ) || defined( __clang__ )
     return __builtin_popcountll( v );
 #elif defined( _MSC_VER ) && defined( _M_X64 )
     return (int) __popcnt64( v );
 #else
     return rocketnet_ack_popcount64_portable( v );
-#endif // #if defined( __GNUC__ ) || defined( __clang__ )
+#endif // #if ( defined( __GNUC__ ) || defined( __clang__ ) ) && ( defined( __x86_64__ ) || defined( __i386__ ) ) && !defined( __POPCNT__ )
 }
 
 // popcount of one bitmap over the linear slot range [a,b] (a<=b), masking the
@@ -1554,6 +1561,49 @@ static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint3
         {
             break;
         }
+    }
+}
+
+// read hints for the records of the unacknowledged slots in [a, b] (a <= b)
+// and their rtt history entries: for each nonzero masked word, the lines
+// from its lowest to its highest set slot, at most
+// ROCKETNET_ACK_PREFETCH_LINES lines in all. No effect on any value.
+
+#define ROCKETNET_ACK_PREFETCH_LINES 32
+
+static inline void rn_ack_prefetch_unacked( const struct rocketnet_ack_endpoint_t * endpoint, uint32_t a, uint32_t b )
+{
+    int lines = 0;
+    for ( uint32_t w = a >> 6; w <= ( b >> 6 ) && lines < ROCKETNET_ACK_PREFETCH_LINES; w++ )
+    {
+        uint64_t word = endpoint->sent_unacked[w];
+        if ( w == ( a >> 6 ) )
+        {
+            word &= ~0ull << ( a & 63 );
+        }
+
+        if ( w == ( b >> 6 ) && ( b & 63 ) != 63 )
+        {
+            word &= ( 1ull << ( ( b & 63 ) + 1 ) ) - 1;
+        }
+
+        if ( !word )
+        {
+            continue;
+        }
+
+        const uint32_t first = w * 64 + (uint32_t) rocketnet_ack_ctz64( word );
+        const uint32_t last = w * 64 + 63 - (uint32_t) rocketnet_platform_clz64( word );
+        const uintptr_t low = (uintptr_t) &endpoint->sent[first] & ~(uintptr_t) 63;
+        const uintptr_t high = (uintptr_t) &endpoint->sent[last];
+        for ( uintptr_t line = low; line <= high && lines < ROCKETNET_ACK_PREFETCH_LINES; line += 64 )
+        {
+            rocketnet_ack_stats_prefetch( (const void *) line );
+            lines++;
+        }
+
+        rocketnet_ack_stats_prefetch( &endpoint->rtt_history[first % ROCKETNET_RTT_HISTORY_SIZE] );
+        rocketnet_ack_stats_prefetch( &endpoint->rtt_history[last % ROCKETNET_RTT_HISTORY_SIZE] );
     }
 }
 
@@ -1709,6 +1759,20 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             }
         }
     };
+
+    // the records the walk will visit were written by the filling threads,
+    // so their lines are cold here: fetch them, and their rtt history
+    // entries, before the walk reads them one at a time. A hint only.
+
+    if ( slot_high >= slot_low )
+    {
+        rn_ack_prefetch_unacked( endpoint, slot_low, slot_high );
+    }
+    else
+    {
+        rn_ack_prefetch_unacked( endpoint, slot_low, ROCKETNET_SENT_PACKET_BUFFER_SIZE - 1 );
+        rn_ack_prefetch_unacked( endpoint, 0, slot_high );
+    }
 
     // visit the set bits (the base order: highest sequence first), word by word with clz, splitting the slot range where it wraps at the ring
 
