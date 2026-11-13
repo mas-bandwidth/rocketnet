@@ -55,7 +55,10 @@ every RIO call after create.
   otherwise (`rocketnet_rio_idle_wait`). The model keeps no timeout for an
   idle worker with nothing outstanding, so where a run shows the worker
   waiting forever, the code waits up to 50 ms (about three updates at
-  60 Hz) and runs its next pass.
+  60 Hz) and runs its next pass. While a full bank's worker waits, its
+  queued completions hold their slices unposted, so under load the kernel
+  can drop later arrivals for want of a posted slice (an OS count,
+  `ArriveDropped`), not only delay them.
 - **Stop.**
   1. Stop sets `stopping` and signals the wake.
   2. Each stop pass (`rocketnet_rio_stop_pass`) posts handed phases in
@@ -128,8 +131,9 @@ every RIO call after create.
     kernel cancelled: `SendComplete` on a closed socket completes a send
     failed.
   - A send completion carries no status. On an open socket the kernel may
-    also complete a send failed (a non-zero `Status` or a short
-    `BytesTransferred`); `rocketnet_rio_retire_send` counts it
+    also complete a send failed (a non-zero `Status`, or a
+    `BytesTransferred` other than the slot's length);
+    `rocketnet_rio_retire_send` counts it
     `SEND_FAILED` instead of `PACKETS_SENT` and frees its slot and the
     phase's outstanding count exactly as for a good one, so the model does
     not tell the two apart. Its send properties are about ownership and
@@ -217,10 +221,15 @@ Left out:
 - A completion queue the kernel reports corrupt (`RIO_CORRUPT_CQ`). The
   code names it once (`rocketnet_rio_corrupt_queue`) and counts it
   (`rocketnet_server_rio_corrupt_queues`); the worker pass stops dequeuing
-  that queue for the pass, and the stop pass fails every time, so the lane
-  never reports stopped and its region is never freed (the safe direction:
-  memory the kernel may still write is never freed). The model's stop
-  liveness assumes no corrupt queue.
+  that queue for the pass, and the stop pass fails every time, so the
+  worker's lane never reports stopped and its region is never freed (the
+  safe direction: memory the kernel may still write is never freed).
+  `StopCompletesUnlessRefused` assumes no corrupt queue. On create's
+  failure path the drain still ends, by leaking the lane once its bound is
+  spent, so `StopCompletes` holds there; but that leak can come with
+  nothing kernel owned (a closed socket and no receive posted), which
+  `LeakOnlyAfterStalls` does not allow: the code may leak where the model
+  says it frees, again the safe direction.
 - The idle wait's 50 ms timeout with nothing outstanding (see the idle
   wait above).
 
@@ -403,8 +412,10 @@ Each reversed witness was read against the code by hand (2026-10-22):
     and moves to the free bank, the next idle wait arms `RIONotify` on the
     non-empty receive queue, and datagram 3 is banked. So the wake removes
     a delay of up to 50 ms (about three updates at 60 Hz) before a full
-    bank's worker moves on; the model, with no timeout on that wait, shows
-    the same missing wake as a datagram never consumed.
+    bank's worker moves on, during which the queued completions hold their
+    slices unposted and, under load, the kernel can drop later arrivals;
+    the model, with no timeout on that wait, shows the same missing wake
+    as a datagram never consumed.
 - **ReadOnlyLeft** (2026-11-13).
   - In the trace, bank 0 holds datagram 1, committed, and the worker moved
     to bank 1, which holds datagram 2, committed. A call that takes the

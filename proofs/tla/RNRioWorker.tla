@@ -63,9 +63,11 @@
 (* Destroy frees the registered region only after                          *)
 (* stopped.  No fairness says a refused commit or close later succeeds.    *)
 (* A completion queue the kernel reports corrupt (RIO_CORRUPT_CQ) is       *)
-(* outside the model: the code then never reports stopped and never frees  *)
-(* the region (rocketnet_rio_corrupt_queue), so StopCompletesUnlessRefused *)
-(* assumes no corrupt queue.                                               *)
+(* outside the model: the worker's lane then never reports stopped and     *)
+(* never frees the region (rocketnet_rio_corrupt_queue), so                *)
+(* StopCompletesUnlessRefused assumes no corrupt queue; create's inline    *)
+(* drain then leaks the lane, possibly with nothing kernel owned, which    *)
+(* LeakOnlyAfterStalls does not allow (the safe direction).                *)
 (*                                                                         *)
 (* Rule switches, each FALSE in one reversed witness:                      *)
 (*   SwitchOnIdle   main opens the next phase only when it is idle         *)
@@ -298,7 +300,8 @@ ArriveDropped ==
 \* completion queued, which covers that notification.  Once the socket is
 \* closed, a send still in flight completes cancelled (failed).
 \* The completion carries no status: on an open socket the kernel may also
-\* complete a send failed (a non-zero Status or a short BytesTransferred),
+\* complete a send failed (a non-zero Status, or a BytesTransferred other
+\* than the slot's length),
 \* which rocketnet_rio_retire_send counts SEND_FAILED instead of
 \* PACKETS_SENT and otherwise retires exactly as a good one (the slot and
 \* the phase's outstanding count are freed the same way).  So the model
@@ -624,7 +627,9 @@ WArm ==
 \* here).  The model's wait has no other timeout: the code waits at most
 \* 50 ms even with nothing to do, which the model leaves out, so a run
 \* where the worker waits forever is, in the code, a wait of up to 50 ms
-\* (about three updates at 60 Hz) before the next pass.
+\* (about three updates at 60 Hz) before the next pass; meanwhile a full
+\* bank's queued completions hold their slices unposted, so under load the
+\* kernel can drop later arrivals (ArriveDropped), not only delay them.
 WWait ==
     /\ wpc = "wait"
     /\ \/ /\ evt
@@ -796,7 +801,11 @@ OpenWithNothingPosted == ~closed /\ posted = 0 /\ rcq = <<>> /\ scq = <<>> /\ ~K
 \* (rio->socket = INVALID_SOCKET, counted
 \* rocketnet_server_rio_create_abandoned_sockets), and one more pass
 \* (rocketnet_rio_lane_stopped) finds nothing to close and drains, so the
-\* lane stops and create frees the rest of it.  Otherwise it leaks the
+\* lane stops and create frees the rest of it.  The model goes straight to
+\* the drain: that pass's posting of handed phases and its close are no-ops
+\* here, since on create's failure path stopping is set before anything is
+\* staged (Stage and SendPackets need ~stopping) and the socket is now
+\* treated as closed.  Otherwise it leaks the
 \* transport instead of freeing memory the kernel may still write.
 WLeak ==
     /\ Bounded
