@@ -27,6 +27,8 @@
    :text "What proofs/tla/README-TraceCheck.md says the trace check trusts rather than enforces (v2, 2026-11-12, after three cold reads). Each item says what enforcing it would take.")
   (group "decisions" :title "Decisions for Glenn"
    :text "Choices that change behavior, remove machinery, or touch repository and fleet settings.")
+  (group "after-v1-1-landing" :title "Found while landing and re-measuring the v1.1.x pieces"
+   :text "Known and not done after the transport work landed on main as v1.1.x point releases and was measured again from main (2026-11-13). Each says where it is and how it was found.")
  )
 
  :items
@@ -97,15 +99,10 @@
    :text "Unit cases still reach the environment through the public creates, safe only because the runner clears every name the SDK reads. Stricter: route about 320 creates through the injected-environment variants. Recommended: keep the runner boundary. Also move the XDP gateway address read from socket open to create."
    :date "2026-10-31" :origin "#794")
 
-  (item "branch-protection" :group "decisions" :area "github"
-   :title "Branch protection on main"
-   :text "No ruleset requires any check on main (audit 44)."
-   :date "2026-10-31" :origin "Audit item 44")
-
   (item "apply-main-ruleset" :group "decisions" :area "github"
    :title "Apply the main ruleset before the first outside pull request"
-   :text "Apply .github/rulesets/main.json on GitHub before the first outside pull request. Left off for now (owner, 2026-11-12)."
-   :date "2026-11-12" :origin "Owner, 2026-11-12")
+   :text "Main has no ruleset on GitHub that requires a check (audit 44), on purpose for now. Apply .github/rulesets/main.json on GitHub before the first outside pull request. Left off for now (owner, 2026-11-12)."
+   :date "2026-11-12" :origin "Audit item 44; owner, 2026-11-12")
 
   (item "frame-budget-runner-label" :group "decisions" :area "fleet"
    :title "A runner label for the nightly frame budget held only by amd-2 and amd-3"
@@ -228,8 +225,8 @@
    :date "2026-11-11" :origin "v1.0.1 review")
 
   (item "stale-ci-tooling" :group "after-v1-0-1" :area "tools"
-   :title "Stale nightly dispositions and roadmap regeneration"
-   :text "Every row of tools/nightly_dispositions.txt names a pull request that is now merged or closed, so the nightly watch reports each as STALE. The roadmap workflow commits ROADMAP.md to main, while docs/CLAUDE.md says ROADMAP.md is not committed and it is not in the tree: settle which is meant."
+   :title "Stale nightly dispositions"
+   :text "Every row of tools/nightly_dispositions.txt names a pull request that is now merged or closed, so the nightly watch reports each as STALE; and the nightly workflows added since (fuzz, msan, toolchains, real-load, frame-budget and others) have no row at all, so the watch is red on them (seen by the release cutter on main 659e0b8d6, 2026-11-13). Give each a current row or retire it."
    :date "2026-11-11" :origin "v1.0.1 review")
 
   (item "xdp-private-link" :group "quiet-host" :area "fleet"
@@ -302,11 +299,6 @@
    :text "The gso packet id is ( turn * slots + slot ) * queues + queue, so the first packet of the first turn on queue 0 has id 0. Nothing treats 0 as no packet today (finish and abort check the pointer against the slot), but a caller that keeps 0 as its own empty value would lose that packet. Decide whether the id should start at 1."
    :date "2026-11-13" :origin "Piece K, cold reader")
 
-  (item "pin-network-threads-at-creation" :group "audit-remaining" :area "sdk"
-   :title "Network threads placed at creation, not by their own first call"
-   :text "The gso, XDP and the other transports' network threads pin themselves as their first act, so between pthread_create and that call a thread runs on its creator's mask, which may include cpu 0 (the OS's on Linux); the gso creator also raises the priority in that window. Starting the thread with its affinity already set (pthread_attr_setaffinity_np in the platform thread start, one place for every transport) closes the window. Also: _SC_NPROCESSORS_ONLN is a count, used as the highest cpu id; a machine with an offline cpu in the middle is misjudged (read the online set instead)."
-   :date "2026-11-13" :origin "Piece K, cold reader")
-
   (item "send-reserve-multi-queue-capacity" :group "proof-debt" :area "proofs"
    :title "RNSendReserveCalls: a Capacity per send queue"
    :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."
@@ -344,8 +336,8 @@
 
   (item "transport-thread-start-mask" :group "audit-remaining" :area "sdk"
    :title "A transport thread runs on its creator's mask until its first call"
-   :text "Every transport thread (io_uring and gso queue workers, the XDP thread) pins itself as its first call, so between rocketnet_platform_thread_create and that call it runs on the creating thread's mask, which may hold cpu 0. Give rocketnet_platform_thread_create an optional affinity (pthread_attr_setaffinity_np on Linux) so the thread starts on its placement, and use it in every transport."
-   :date "2026-11-13" :origin "Piece L (io_uring), second cold reader")
+   :text "Every transport thread (io_uring and gso queue workers, the XDP thread, and the other transports' network threads) pins itself as its first call, so between rocketnet_platform_thread_create and that call it runs on the creating thread's mask, which may hold cpu 0 (the OS's on Linux); the gso creator also raises the priority in that window. Give rocketnet_platform_thread_create an optional affinity (pthread_attr_setaffinity_np on Linux) so the thread starts on its placement: one place in the platform layer, used by every transport. Also: _SC_NPROCESSORS_ONLN is a count, used as the highest cpu id, so a machine with an offline cpu in the middle is misjudged (read the online set instead)."
+   :date "2026-11-13" :origin "Piece K cold reader; piece L (io_uring) second cold reader")
 
   (item "uring-receive-folds" :group "audit-remaining" :area "sdk"
    :title "io_uring receive refusals that are not in the server's drop reasons"
@@ -376,4 +368,59 @@
    :title "Reconcile: tell a refused-then-resent send from a real drop"
    :text "The harden_load reconcile counts the kernel's SndbufErrors as named drops in the server-to-client chain. When the 1 MB socket send buffer is full the kernel refuses a gso send and the gso worker sends it again, so nothing is lost: on main 3218cf5f6 (X710 pair) library_sent equals library_received and players deliver 100%, yet every gso row reports chains=FAIL on 124k to 571k of them (REMEASURE-MAIN.md, gso). Count the refusals the transport resent in their own term, apart from sends the kernel refused and nothing sent again, so the chain still fails a real drop."
    :date "2026-11-13" :origin "gso re-measure on main 3218cf5f6")
+
+  (item "uring-peak-qdisc-drops" :group "after-v1-1-landing" :area "rocketnet"
+   :title "io_uring at peak: whole segmented sends dropped at the server's device queue"
+   :text "On the X710 pair with 2 io_uring threads, peak load and no game load, the server's fq_codel queue drops whole UDP_SEGMENT sends: each is one player's 15-packet tick, so 2 to 13 drops in a 60 second row lose 30 to 195 packets (s2c 99.9997 to 100%; players whole, rows pass). The kernel accepted the sendmsg, so the transport counts the packets sent and nothing names the loss. The same rows also see 8.6 to 10.7 million EAGAIN completions a peak row against the documented 1,000,000-byte send buffer, where gso on the same pair and buffer sees 124k to 571k; a 4096-entry ring of sends in flight per queue is the likely reason, not measured. gso and XDP on the same pair: sent equals received. Tuning deferred by the owner ('we can do fine tuning later')."
+   :date "2026-11-13" :origin "io_uring re-measure on main 3afea2aed, rows U1 and r2-r4 (REMEASURE-MAIN, io_uring)")
+
+  (item "reconcile-segmented-drops" :group "after-v1-1-landing" :area "tests/load"
+   :title "Reconcile: a dropped segmented send is 15 packets, not 1"
+   :text "The harden_load reconcile names the server's qdisc drops by the qdisc's count, which counts a dropped GSO skb once. At peak each skb carries 15 packets, so every such drop leaves 14 packets in the unnamed gap and the s2c chain fails on a loss it could name. Count the segments of a dropped skb (or read the qdisc's byte or packet drop totals), so the chain names the whole loss. Separate from reconcile-sndbuf-resends."
+   :date "2026-11-13" :origin "io_uring re-measure on main 3afea2aed: lost = 15 x qdisc dropped in every run")
+
+  (item "uring-send-deferred-row-text" :group "after-v1-1-landing" :area "sdk"
+   :title "URING_SEND_DEFERRED: the row text says something other than what is counted"
+   :text "sdk/rocketnet_counters.h says the row counts send calls that returned with sends not yet completed or staged slots not yet submitted. The code adds the worker's SOCKET_FULL to it (sdk/rocketnet_uring_counters.h), which sdk/rocketnet_uring_queue_worker.cpp counts once per send completion that came back -EAGAIN (send buffer full; the run is sent again after POLLOUT); in every re-measure row it equals the kernel's SndbufErrors exactly. Make the text say what is counted, or count what the text says."
+   :date "2026-11-13" :origin "io_uring re-measure on main 3afea2aed")
+
+  (item "uring-prefilter-wrong-value-once" :group "after-v1-1-landing" :area "sdk"
+   :title "PREFILTER_WRONG_VALUE seen once on io_uring under heavy bench load"
+   :text "A Debug functional row of the io_uring piece reported PREFILTER_WRONG_VALUE 1274 once, under heavy load on amd-3; 12 reruns did not reproduce it and the cause was not found. A DEV-only sampler now records the first refused datagrams (source, length, first 16 bytes) in sdk/rocketnet_receive_prefilter.h and prints them in the clean-run report. When it recurs, read the samples; the open question is whether a datagram can reach the io_uring prefilter with wrong bytes or length (provided-buffer index, completion length, GRO split, a buffer returned while still referenced)."
+   :date "2026-11-13" :origin "Piece L (io_uring), gate at ad93b2ad6")
+
+  (item "server-update-task-callbacks" :group "after-v1-1-landing" :area "sdk"
+   :title "Distribute the server update with task callbacks in the config, only on measured need"
+   :text "The split server update (update_receive, update_client, update_finish) landed as an opt-in; rocketnet runs no job system of its own. If a measured row shows the game's own job system cannot spread the update well enough through the public calls, add box3d-style task callbacks to the server config, off by default (see how box3d and fixed3d do it), and not before."
+   :date "2026-11-13" :origin "Owner rulings on piece I, 2026-11-13 (V12-ON-MAIN)")
+
+  (item "windows-threads-wildcard-bind" :group "after-v1-1-landing" :area "rocketnet"
+   :title "Windows: RIO and IOCP reach their measured thread counts only with a specific bind address"
+   :text "RIO with more than one lane and IOCP with more than one completion worker refuse the wildcard bind, so a server bound to the wildcard runs one RIO lane or one IOCP completion worker. The peak row needs 6 RIO lanes and 2 IOCP completion workers with 2 send threads (AWS m7i.16xlarge rows, 2026-11-13). Either make the measured count the default when the server binds a specific address and say plainly that the wildcard runs one, or lift the wildcard refusal."
+   :date "2026-11-13" :origin "Network threads per transport survey on main 5488a5443")
+
+  (item "gso-plan-worker-threads" :group "after-v1-1-landing" :area "sdk"
+   :title "gso memory plan counts one worker thread more than create starts"
+   :text "rocketnet_driver_builtin.cpp's plan for gso says worker_threads = queues + 1, while the gso create was read as starting one worker a queue. Check against create, then make the plan count what create starts, with a test on the planned count (as IOCP has)."
+   :date "2026-11-13" :origin "Network threads per transport survey on main 5488a5443")
+
+  (item "space-frame-row-transports" :group "after-v1-1-landing" :area "scripts"
+   :title "scripts/space-frame-row runs XDP only"
+   :text "space-frame-row passes --transport xdp fixed, so the gso and io_uring re-measures called scripts/harden-pair with the same server arguments by hand. Take the transport (and its queue count) as an argument so every Linux transport's row is one command."
+   :date "2026-11-13" :origin "gso and io_uring re-measures on main")
+
+  (item "release-notes-v1-1-49" :group "after-v1-1-landing" :area "docs"
+   :title "v1.1.49 release notes name only io_uring"
+   :text "docs/RELEASE-NOTES-v1.1.49.md describes the io_uring piece (#1104) only, but four other pull requests ride in the same release: #1106 (the trace check reruns a plant that printed no behaviour), #1107 (load test reconcile names stray no-port drops), #1047 (ASan red zones between carved arrays) and #1109 (reconcile lint fix). Add a line for each before the release is cut, or in the next one's notes."
+   :date "2026-11-13" :origin "Release cutter record, v1.1.49 at 6d1139871")
+
+  (item "performance-doc-main-rows" :group "after-v1-1-landing" :area "docs"
+   :title "docs/PERFORMANCE.md: rows from the re-measure on main"
+   :text "Update the performance document's rows from the re-measure on main (XDP 59890655d, gso 3218cf5f6, io_uring 3afea2aed, and RIO, IOCP and macOS as their rows on main come in), with the minimum network threads each transport needs for the peak row. Done by the document's author."
+   :date "2026-11-13" :origin "Re-measure on main, 2026-11-13")
+
+  (item "trace-reach-vacuous" :group "trace-check" :area "tools"
+   :title "Refuse a reach predicate that already holds in the first state"
+   :text "tools/tla_trace_check.py checks that each row's reach predicates are reached in some clean trace (a TLC run with ~predicate as the invariant). A predicate that holds in the initial state, or always, passes that check without proving any edge was walked. Refuse a predicate that holds at the first record, with a planted row."
+   :date "2026-11-13" :origin "Piece A (#1074) cold reader, item 5")
  ))
