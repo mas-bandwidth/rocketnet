@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <atomic>
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "extension check failed: %s, line %d\n", #x, __LINE__); exit(1); } } while (0)
 extern int external_test_creates;
@@ -22,7 +23,7 @@ extern bool external_test_replay_has_forgotten;
 
 #define EXPECT( x, ... ) do { if (!(x)) { fprintf(stderr, "mutation gap fault: " __VA_ARGS__); fprintf(stderr, "\n"); } CHECK( x ); } while (0)
 
-static int extension_live_blocks = 0;
+static std::atomic<int> extension_live_blocks( 0 );
 static void * extension_malloc( void *, size_t bytes )
 {
     void * p = malloc( bytes );
@@ -59,20 +60,18 @@ static void extension_log( void *, enum rocketnet_log_level_t, const char * mess
 // holds the records, and destroy frees every block create allocated.
 static void budget_ignores_a_planless_transport( const rocketnet_server_transport_config_t * config )
 {
-    rocketnet_term();
-    CHECK( rocketnet_init( NULL, extension_malloc, extension_free ) == ROCKETNET_STATUS_OK );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     rocketnet_log_function( extension_log, NULL );
 
     CHECK( rocketnet_server_transport_required_memory( config, "external_test" ) == 0 );
-    const int live_before = extension_live_blocks;
+    const int live_before = extension_live_blocks.load();
     int status = -1;
     auto * server = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", config, 1, &status );
     EXPECT( server != NULL, "a 1-byte operator budget refused external_test, which has no memory plan (status %s)", rocketnet_status_name( (enum rocketnet_status_t) status ) );
     EXPECT( !extension_budget_refusal_logged, "a 1-byte operator budget logged \"" BUDGET_EXHAUSTED_PREFIX "\" for external_test, which has no memory plan" );
     CHECK( strcmp( rocketnet_server_transport_io_name( server ), "external_test" ) == 0 );
     rn_native_server_transport_stop_and_destroy( server );
-    EXPECT( extension_live_blocks == live_before, "an external_test server (it takes replay marks) leaked %d blocks at destroy", extension_live_blocks - live_before );
+    EXPECT( extension_live_blocks.load() == live_before, "an external_test server (it takes replay marks) leaked %d blocks at destroy", extension_live_blocks.load() - live_before );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
@@ -81,7 +80,7 @@ static void budget_ignores_a_planless_transport( const rocketnet_server_transpor
 int main()
 {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_init( NULL, extension_malloc, extension_free ) == ROCKETNET_STATUS_OK ); // counts live blocks for budget_ignores_a_planless_transport
     rocketnet_forbid_xdp_commit();
 
     rocketnet_server_transport_config_t server_config;
