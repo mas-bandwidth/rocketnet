@@ -48,7 +48,6 @@
 #include <mach/mach.h>
 #include <libproc.h>
 #include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
 #else
 #include <dirent.h>
@@ -511,56 +510,6 @@ static int load_census_take( struct load_census_t * census )
 }
 
 #endif // #if defined(_WIN32)
-
-/* How many 1 ms waits a later phase's census spends, at most, for joined
-   threads to leave the task (macOS; load_census_take_after). A margin, not a
-   measurement: a thread still running never leaves, so a leak is red whatever
-   the bound, and the bound only has to outlast the kernel's end of a thread
-   already joined. */
-#define LOAD_CENSUS_SETTLE_WAITS 2000
-
-static int load_census_holds( const struct load_census_entry_t * entries, int count, const struct load_census_entry_t * wanted );
-
-/* The census at a phase that follows `before`. On macOS pthread_join returns
-   when the exiting thread's __bsdthread_terminate signals the join semaphore,
-   before that kernel thread terminates, so for a moment the joined thread is
-   still in task_threads and still answers its identity. Nothing a census can
-   read tells that thread from a live one, so on macOS this retakes the census
-   while it holds a thread `before` did not, until none is left or `waits`
-   1 ms waits are spent (LOAD_CENSUS_SETTLE_WAITS for a harness phase): a
-   joined thread leaves, a leaked one stays and is counted. Linux reads the
-   exiting flag (load_census_thread_exiting) and Windows' join waits for the
-   thread to end, so one take is exact there. */
-static int load_census_take_after( const struct load_census_t * before, struct load_census_t * after, int waits )
-{
-#if defined( __APPLE__ )
-    for ( int wait = 0;; wait++ )
-    {
-        if ( !load_census_take( after ) )
-        {
-            return 0;
-        }
-
-        int new_threads = 0;
-        for ( int i = 0; i < after->threads && before->valid; ++i )
-        {
-            new_threads += !after->thread[i].os_pool && !load_census_holds( before->thread, before->threads, &after->thread[i] );
-        }
-
-        if ( new_threads == 0 || !before->valid || wait >= waits )
-        {
-            return 1;
-        }
-
-        const struct timespec millisecond = { 0, 1000000 };
-        nanosleep( &millisecond, NULL );
-    }
-#else
-    (void) before;
-    (void) waits;
-    return load_census_take( after );
-#endif // #if defined( __APPLE__ )
-}
 
 static int load_census_holds( const struct load_census_entry_t * entries, int count, const struct load_census_entry_t * wanted )
 {

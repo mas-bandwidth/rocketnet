@@ -1,0 +1,30 @@
+-- The C compiler identification is AppleClang 21.0.0.21000401
+-- The CXX compiler identification is AppleClang 21.0.0.21000401
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Performing Test ROCKETNET_C_STACK_PROTECTOR
+-- Performing Test ROCKETNET_C_STACK_PROTECTOR - Success
+-- Performing Test ROCKETNET_C_CF_PROTECTION
+-- Performing Test ROCKETNET_C_CF_PROTECTION - Failed
+-- Performing Test ROCKETNET_CXX_STACK_PROTECTOR
+-- Performing Test ROCKETNET_CXX_STACK_PROTECTOR - Success
+-- Performing Test ROCKETNET_CXX_CF_PROTECTION
+-- Performing Test ROCKETNET_CXX_CF_PROTECTION - Failed
+-- Performing Test ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES
+-- Performing Test ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES - Success
+-- Found Python3: /opt/homebrew/Frameworks/Python.framework/Versions/3.15/bin/python3.15 (found version "3.15.2") found components: Interpreter
+-- Floating-point floor (AppleClang) on all 84 compiled targets
+-- Configuring done (1.3s)
+-- Generating done (0.1s)
+-- Build files have been written to: /Volumes/nova/ai/rowan/working/review-2026-11-10/final-fable/piece-g/wt-before/build-b
