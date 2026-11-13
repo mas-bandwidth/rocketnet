@@ -119,8 +119,12 @@ not locations in the current source.
   in `withdrawn` and `WithdrawnNeverStaged` says it is never also flushed.
   `AbortReturnsSlot = FALSE` leaves it in the staging:
   `MCRNDriverSendStagingBrokenAbortKeepsSlot.cfg` must fail
-  `WithdrawnNeverStaged` (a datagram the simulator sent and the flush sent
-  again, or an aborted frame flushed). The simulator choice is drawn at
+  `WithdrawnNeverStaged`: TLC's trace is one `Update` whose maintenance
+  aborts a frame that then stays in the staging (depth 2), so the next flush
+  would send an empty frame; on the simulator arm the flush would send again
+  a datagram the simulator already sent. In the passing model the invariant
+  holds by construction of the two arms; the witness shows it is the abort's
+  slot return that keeps it. The simulator choice is drawn at
   `Commit`; the disconnect burst and maintenance commit through the same
   helper and are not given a second arm.
 - **The disconnect burst.** `disconnect_client` runs out of band, between

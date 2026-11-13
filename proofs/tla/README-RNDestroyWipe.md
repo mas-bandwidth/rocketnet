@@ -24,16 +24,26 @@ client's slot on `SlotPage[m]`. Every write in the model touches the page it
 writes, destroy's wipes included. Nothing in a run gives a page of the
 pre-allocated block back, so the pages written since create (`touched`) are
 the pages resident, and the run's peak is the pages written before destroy
-(`runTouched`). `ShutdownPeakWithinRun` can therefore fail: a wipe whose
-extent reaches a page the run never wrote shows in `touched` and not in
+(`runTouched`). `ShutdownPeakWithinRun` can therefore fail when destroy
+wipes an object the run never wrote: its page shows in `touched` and not in
 `runTouched`, which is what `MCRNDestroyWipeBrokenWipeEverySlot.cfg` shows.
-The model counts writes only: destroy also reads `connected[]` and the map's
-addresses over their whole capacity, and those reads are not modelled.
+The model has no byte offsets or lengths: it checks which objects destroy
+wipes, not the extent of each wipe, so a wipe that overran its object into
+an unused page is not visible here. The extents are held by
+`test_unit_secrets_wiped.cpp`, which checks that destroy writes at most a
+handful of bytes of any allocation. The model counts
+writes only: destroy also reads `connected[]` and the map's addresses over
+their whole capacity, and those reads are not modelled.
+
+The ring key copy is kept per mapping in the model, so `Add(m)` waits until
+`m`'s earlier burst has left the ring. The code keys the copy by ring entry
+and can reuse a freed encryption-map index while the old copy still waits;
+that reuse is not explored.
 
 ## Actions
 
 - **Init**: create writes the server keys and zeroes the ring's key array
-  (`memset` in `rocketnet_server_transport_create`), so `KeyPage` and
+  (`memset` in `rocketnet_server_transport_allocate`), so `KeyPage` and
   `RingPages` are resident from the start.
 - **Use(p)**: a connection writes a page of the block.
 - **Add(m)**: a mapping is written whole, its session keys, nonce and
