@@ -1,10 +1,11 @@
 # Refuses an embedded XDP object whose byte order is not the library's.
 #
-# cmake/EmbedXdp.cmake compiles server_xdp.o with clang's BPF target, and the
-# bare "bpf" target takes the byte order of the machine clang runs on, not of
-# the library being built. A cross build for a big-endian target on a
-# little-endian build machine would embed a little-endian object that libbpf
-# refuses to load on the target. This reads byte 5 of the object's ELF
+# cmake/EmbedXdp.cmake compiles server_xdp.o with clang's explicit bpfel or
+# bpfeb target, chosen from the target's byte order (CMakeLists.txt), so the
+# object should already match. This is the backstop for a toolchain that did
+# not honour that target: a cross build for a big-endian target on a
+# little-endian build machine would then embed an object that libbpf refuses
+# to load on the target. This reads byte 5 of the object's ELF
 # header (EI_DATA: 1 little endian, 2 big endian) and fails the build when it
 # is not the target's, removing the generated header so the next build runs
 # the compile again instead of keeping the wrong object.
@@ -34,5 +35,5 @@ if(NOT magic STREQUAL "7f454c46")
 endif()
 if(NOT data STREQUAL expected)
     file(REMOVE "${HEADER}")
-    message(FATAL_ERROR "server_xdp.o: the object's ELF data encoding is ${data} (01 little endian, 02 big endian) but the library targets ${BYTE_ORDER}: the BPF compile took the build machine's byte order, and libbpf on the target would refuse the object")
+    message(FATAL_ERROR "server_xdp.o: the object's ELF data encoding is ${data} (01 little endian, 02 big endian) but the library targets ${BYTE_ORDER}: the BPF compile did not produce the bpfel/bpfeb byte order it was asked for, and libbpf on the target would refuse the object")
 endif()
