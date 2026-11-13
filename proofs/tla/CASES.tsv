@@ -351,6 +351,8 @@ MCRNOutgoingBuildOwnQuota.cfg	MCRNOutgoingBuild.tla	invariant	PacketQuota	ignore
 MCRNOutgoingBuildNoReserve.cfg	MCRNOutgoingBuild.tla	action	ReliableSentWithinOneUpdate	ignore-terminal	rnoutgoingbuild	required	-
 MCRNOutgoingBuildBrokenMovesPriorRecord.cfg	MCRNOutgoingBuild.tla	action	PriorRecordsUnmoved	ignore-terminal	rnoutgoingbuild	required	-
 MCRNOutgoingBuildBrokenReuseCommitted.cfg	MCRNOutgoingBuild.tla	invariant	BytesUnchangedInPlace	ignore-terminal	rnoutgoingbuild	required	-
+MCRNOutgoingBuildBuffered.cfg	MCRNOutgoingBuild.tla	pass	-	ignore-terminal	rnoutgoingbuild	required	-
+MCRNOutgoingBuildBrokenNoExcuse.cfg	MCRNOutgoingBuild.tla	action	ReliableSentWithinOneUpdate	ignore-terminal	rnoutgoingbuild	required	-
 MCRNSimFaults.cfg	MCRNSimFaults.tla	pass	-	check	rnsimfaults	required	-
 MCRNSimFaultsBrokenRestartKeepsSession.cfg	MCRNSimFaults.tla	invariant	RestartIsFresh	check	rnsimfaults	required	-
 MCRNSimFaultsBrokenCrashedSends.cfg	MCRNSimFaults.tla	invariant	CrashedEndpointSilent	check	rnsimfaults	required	-

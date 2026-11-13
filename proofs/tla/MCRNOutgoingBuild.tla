@@ -12,9 +12,13 @@
 (* their own, PacketQuota), MCRNOutgoingBuildNoReserve.cfg (no packet kept *)
 (* for due reliable work, ReliableSentWithinOneUpdate),                    *)
 (* MCRNOutgoingBuildBrokenMovesPriorRecord.cfg (a finish moves committed   *)
-(* records, PriorRecordsUnmoved) and                                       *)
+(* records, PriorRecordsUnmoved),                                          *)
 (* MCRNOutgoingBuildBrokenReuseCommitted.cfg (a reservation overlays       *)
-(* committed bytes, BytesUnchangedInPlace).                                *)
+(* committed bytes, BytesUnchangedInPlace) and                             *)
+(* MCRNOutgoingBuildBrokenNoExcuse.cfg (the deadline with no excuse for a  *)
+(* pass the transport cut, ReliableSentWithinOneUpdate).  The controls     *)
+(* are MCRNOutgoingBuild.cfg on a staged transport and                     *)
+(* MCRNOutgoingBuildBuffered.cfg on the buffered one.                      *)
 (***************************************************************************)
 EXTENDS RNOutgoingBuild
 
@@ -23,4 +27,5 @@ MCFits == << TRUE, TRUE, TRUE, TRUE, TRUE, TRUE >>
 MCDecl == << 2, 2, 1, 2, 1, 1 >>
 CopyStepDesign   == FALSE
 CopyStepReversed == TRUE
+ExcusedNever     == FALSE
 =============================================================================
