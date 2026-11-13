@@ -126,7 +126,11 @@ mainv == <<mpc, ms, mi, mk>>
 kernv == <<kfd, kdead, poller>>
 holdv == <<pass, pkts, cur, rep, rxEv, rxFd>>
 ghostv == <<crossed, onClosed, attempts>>
-vars == <<slotv, tabv, mainv, kernv, holdv, ghostv>>
+\* every variable, flat (the trace check reads it); the groups above are for UNCHANGED
+vars == <<word, deadRep, state, fd, gen, addr, snap,
+          deadReports, freeSlots, numFree, retired, numRetired, numOpen, index, coolAddr, coolUntil,
+          counters, update, opensLeft, mpc, ms, mi, mk, kfd, kdead, poller,
+          pass, pkts, cur, rep, rxEv, rxFd, crossed, onClosed, attempts>>
 
 -----------------------------------------------------------------------------
 (* The index: open addressing, linear probing, backward-shift delete.      *)
