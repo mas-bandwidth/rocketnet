@@ -1211,7 +1211,6 @@ static void test_writer_finish_no_capacity_refused()
     writer_finish_run( WRITER_FINISH_CLIENT, 1, 2, frames, per_client, &writer );
     writer_finish_run( WRITER_FINISH_CLIENT, 4, 2, frames, per_client, &wide );
 
-    for ( const writer_finish_trace_t * t : { &serial, &writer, &wide } ) { printf( "DBG finished %llu refused %llu nocap %llu fallback %llu walk %llu sent0 %llu acked0 %llu recv0 %u\n", (unsigned long long) t->finished, (unsigned long long) t->refused, (unsigned long long) t->no_capacity, (unsigned long long) t->fallback, (unsigned long long) t->walk_packets, (unsigned long long) t->packets_sent[0], (unsigned long long) t->acked[0], t->received[0][0] ); }
     check( serial.refused == 0 );
     check( serial.no_capacity == 0 );
     check( serial.fallback >= (uint64_t) frames * WRITER_FINISH_CLIENTS * 2 );
