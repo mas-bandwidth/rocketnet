@@ -224,4 +224,9 @@
    :title "Private 10G link for XDP packet blaster and bare-metal LAN runs"
    :text "The XDP packet blaster, bare-metal XDP LAN runs and the zero-copy load_split ladder need a private 10G link between the XDP bench and a second 10G machine; today the XDP bench's only cabled port is its uplink."
    :date "2026-11-10" :origin "Owner request, 2026-11-10; docs/runs/xdp-zero-copy.md")
+
+  (item "harden-chain-ambient-noports" :group "after-v1-0-1" :area "tests"
+   :title "harden_load reconcile fails a chain on ambient kernel noports"
+   :text "Rows p02..p05 of the XDP pair report chains=FAIL with players PASS. The judged term is library_gap = sent - (received + named_drops), required to be at least 0; named_drops includes the host-wide kernel UDP noports counter, so a stray UDP datagram to a closed port on either host (server noports 1 to 2, clients noports 2 to 3 in those cells) makes library_gap negative although the library received every packet it sent (p02: sent 4553346 = received 4553346, noports 2, gap -2). The cause is not XDP bypassing the kernel counters: that zeroes only printed, unjudged steps (send_gap, path_gap, receive_gap, wire_gap); the failing noports are on the clients host as well, and the one row with noports 0 on both hosts (p01) passes. A fix needs a choice: named drops may explain at most the library's shortfall (sent - received), with received above sent still a failure, which loosens the exact accounting the 'never below zero' comment asks for."
+   :date "2026-11-12" :origin "harden-pair cells p01..p05 (final-fable/harden-pair-cells)")
  ))
