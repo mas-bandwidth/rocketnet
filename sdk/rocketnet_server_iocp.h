@@ -217,13 +217,15 @@ enum rocketnet_server_iocp_counter_t
 // banked, so the datagrams Windows delivered = RECEIVE_COMPLETED +
 // RECEIVE_DROPPED (a failed URO completion counts one: its datagram count is
 // unknown). Its reasons: RECEIVE_TOO_SHORT and RECEIVE_TOO_LARGE for the
-// zero-byte and oversize datagrams (the size hook), and the worker
+// datagrams shorter than ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES and past
+// ROCKETNET_RECEIVE_CEILING (the size hook), and the worker
 // prefilter's and the full bank's reasons in the drop totals below.
 
 void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * counters );
 
 // Turns on the completion workers' prefilter: from the next completion batch
-// each received datagram of 1 to ROCKETNET_RECEIVE_CEILING bytes passes
+// each received datagram of ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES to
+// ROCKETNET_RECEIVE_CEILING bytes passes
 // rocketnet_receive_prefilter (sdk/rocketnet_receive_prefilter.h) before it
 // may take a bank slot, so garbage cannot evict a player's datagram. The
 // filter is the server's configured value, fixed for the transport's life:
