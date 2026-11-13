@@ -129,7 +129,7 @@ static bool rocketnet_uring_receive_queue_layout( const struct rocketnet_uring_r
     rocketnet_carve_t carve = { 0, false };
     rocketnet_carve( carve, 1, sizeof( struct rocketnet_uring_receive_queue_t ) );
     layout->slot = rocketnet_carve( carve, (uint64_t) config->slots, sizeof( struct rocketnet_uring_receive_slot_t ) );
-    layout->slot_data = rocketnet_carve( carve, (uint64_t) config->slots, ROCKETNET_FRAME_STRIDE, 16 );
+    layout->slot_data = rocketnet_carve( carve, (uint64_t) config->slots, (uint64_t) ROCKETNET_FRAME_STRIDE, 16 );
     layout->buffer = rocketnet_carve( carve, (uint64_t) config->buffers, (uint64_t) config->buffer_bytes );
     layout->buf_ring = fake_ring ? rocketnet_carve( carve, (uint64_t) config->buffers, sizeof( struct io_uring_buf ) ) : 0;
     layout->bytes = carve.bytes;
@@ -276,7 +276,7 @@ void rocketnet_uring_receive_buf_ring_free( struct io_uring * ring, struct io_ur
 
 static void rocketnet_uring_receive_queue_give( struct rocketnet_uring_receive_queue_t * queue, int buffer_id )
 {
-    struct io_uring_buf * bufs = (struct io_uring_buf *) (void *) queue->buf_ring;
+    struct io_uring_buf * bufs = reinterpret_cast<struct io_uring_buf *>( queue->buf_ring );
     const uint16_t tail = queue->buf_ring->tail;
     struct io_uring_buf * entry = &bufs[tail & ( queue->buffers - 1 )];
     entry->addr = (uint64_t) (uintptr_t) ( queue->buffer + (size_t) buffer_id * (size_t) queue->buffer_bytes );
@@ -354,7 +354,7 @@ struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( v
     {
         memcpy( queue->packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     }
-    queue->slot = (struct rocketnet_uring_receive_slot_t *) ( base + layout.slot );
+    queue->slot = reinterpret_cast<struct rocketnet_uring_receive_slot_t *>( base + layout.slot );
     queue->slot_data = base + layout.slot_data;
     queue->buffer = base + layout.buffer;
     queue->memory = base;
@@ -374,7 +374,7 @@ struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( v
 
     if ( ring == NULL )
     {
-        queue->buf_ring = (struct io_uring_buf_ring *) (void *) ( base + layout.buf_ring );
+        queue->buf_ring = reinterpret_cast<struct io_uring_buf_ring *>( base + layout.buf_ring );
     }
     else
     {
@@ -382,7 +382,7 @@ struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( v
         queue->buf_ring = rocketnet_uring_receive_buf_ring_setup( ring, (unsigned int) config->buffers, config->bgid, &queue->buf_ring_inverted_resv, &error );
         if ( !queue->buf_ring )
         {
-            rocketnet_error( "io_uring receive queue %d: the buffer ring setup failed: %s", config->queue_index, strerror( -error ) );
+            rocketnet_error( "io_uring receive queue %d: the buffer ring setup failed: %s", config->queue_index, rocketnet_platform_socket_error_text( -error ).text );
             queue->~rocketnet_uring_receive_queue_t();
             rocketnet_free( context, base );
             return NULL;
@@ -508,7 +508,7 @@ static bool rocketnet_uring_receive_queue_bank( struct rocketnet_uring_receive_q
     const uint64_t index = tail % slots;
     queue->slot[index].from = *from;
     queue->slot[index].packet_bytes = bytes;
-    memcpy( queue->slot_data + index * ROCKETNET_FRAME_STRIDE, data, (size_t) bytes );
+    memcpy( queue->slot_data + (size_t) index * (size_t) ROCKETNET_FRAME_STRIDE, data, (size_t) bytes );
 
     queue->tail.store( tail + 1, std::memory_order_release );
     rocketnet_uring_receive_queue_count( queue, ROCKETNET_URING_RECEIVE_COUNTER_BANKED );
@@ -756,7 +756,7 @@ int rocketnet_uring_receive_queue_drain( struct rocketnet_uring_receive_queue_t 
         const uint64_t index = ( head + (uint64_t) i ) % slots;
         from[i] = queue->slot[index].from;
         packet_bytes[i] = queue->slot[index].packet_bytes;
-        packet_data[i] = queue->slot_data + index * ROCKETNET_FRAME_STRIDE;
+        packet_data[i] = queue->slot_data + (size_t) index * (size_t) ROCKETNET_FRAME_STRIDE;
     }
 
     queue->exposed = head + (uint64_t) n;
@@ -799,7 +799,7 @@ int rocketnet_uring_receive_queue_test_take( const struct rocketnet_uring_receiv
         return -1;
     }
 
-    const struct io_uring_buf * bufs = (const struct io_uring_buf *) (const void *) queue->buf_ring;
+    const struct io_uring_buf * bufs = reinterpret_cast<const struct io_uring_buf *>( queue->buf_ring );
     const int buffer_id = (int) bufs[*head & ( queue->buffers - 1 )].bid;
     *head = (uint16_t) ( *head + 1 );
     return buffer_id;

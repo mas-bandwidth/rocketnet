@@ -86,7 +86,7 @@ struct io_uring_buf_ring;
 
 // the control area the multishot reserves in each buffer: one UDP_GRO cmsg
 // (an int) and one SO_RXQ_OVFL cmsg (a uint32)
-#define ROCKETNET_URING_RECEIVE_CONTROL_BYTES          ( 2 * 32 )
+#define ROCKETNET_URING_RECEIVE_CONTROL_BYTES          ( 64 ) // two cmsgs of 32 bytes
 
 // a queue's counters, cumulative for its life; indexes into the array
 // rocketnet_uring_receive_queue_counters fills. One writer, the worker; main

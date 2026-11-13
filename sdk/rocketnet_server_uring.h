@@ -115,7 +115,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES <= ROCKETNET_URING_SEND_MAX_
 // the kernel writes it).
 
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
-#define ROCKETNET_URING_RECV_BUFFER_BYTES                          ( 66 * 1024 )
+#define ROCKETNET_URING_RECV_BUFFER_BYTES                          ( 67584 ) // 66 KiB
 
 // the floor of a receive bank: each queue's bank, and the process view, hold
 // at least this many datagrams whatever the client count

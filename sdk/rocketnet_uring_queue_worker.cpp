@@ -557,7 +557,7 @@ void rocketnet_uring_queue_worker_run( struct rocketnet_uring_queue_worker_t * w
         rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_SUBMITS );
         if ( result < 0 && result != -EINTR && result != -EAGAIN && result != -EBUSY && !logged )
         {
-            rocketnet_error( "io_uring transport: queue %d: submit refused: %s", worker->config.queue_index, strerror( -result ) );
+            rocketnet_error( "io_uring transport: queue %d: submit refused: %s", worker->config.queue_index, rocketnet_platform_socket_error_text( -result ).text );
             logged = true;
         }
     }

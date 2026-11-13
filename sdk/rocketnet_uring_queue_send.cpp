@@ -132,7 +132,7 @@ struct rocketnet_uring_queue_send_t * rocketnet_uring_queue_send_create( void * 
     send->slots = queues->slots;
     send->max_segments = max_segments;
     send->max_bytes = max_bytes;
-    send->queue = (struct rocketnet_uring_queue_send_queue_t *) ( base + layout.queue );
+    send->queue = reinterpret_cast<struct rocketnet_uring_queue_send_queue_t *>( base + layout.queue );
     send->memory = base;
 
     const size_t cells = (size_t) ROCKETNET_URING_SEND_BANKS * (size_t) send->slots;
@@ -144,13 +144,13 @@ struct rocketnet_uring_queue_send_t * rocketnet_uring_queue_send_create( void * 
         rocketnet_buffer_handoff_init( &queue->handoff, queues->queue[q].producer );
         queue->held = -1;
         queue->state = (uint8_t *) ( base + layout.state ) + (size_t) q * cells;
-        queue->order = (int *) ( base + layout.order ) + (size_t) q * cells;
-        queue->entry = (struct rocketnet_uring_queue_send_entry_t *) ( base + layout.entry ) + (size_t) q * cells;
-        queue->runs = (struct rocketnet_send_gather_run_t *) ( base + layout.runs ) + (size_t) q * (size_t) send->slots;
+        queue->order = reinterpret_cast<int *>( base + layout.order ) + (size_t) q * cells;
+        queue->entry = reinterpret_cast<struct rocketnet_uring_queue_send_entry_t *>( base + layout.entry ) + (size_t) q * cells;
+        queue->runs = reinterpret_cast<struct rocketnet_send_gather_run_t *>( base + layout.runs ) + (size_t) q * (size_t) send->slots;
         queue->max_segments = max_segments;
 #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
-        queue->message = (struct rocketnet_uring_queue_send_message_t *) ( base + layout.message ) + (size_t) q * cells;
-        queue->iovecs = (struct iovec *) ( base + layout.iovecs ) + (size_t) q * cells;
+        queue->message = reinterpret_cast<struct rocketnet_uring_queue_send_message_t *>( base + layout.message ) + (size_t) q * cells;
+        queue->iovecs = reinterpret_cast<struct iovec *>( base + layout.iovecs ) + (size_t) q * cells;
 #else  // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
         queue->message = NULL;
         queue->iovecs = NULL;
@@ -709,7 +709,7 @@ struct msghdr * rocketnet_uring_queue_send_message( struct rocketnet_uring_queue
     for ( int i = 0; i < run->count; i++ )
     {
         const int slot = order[run->first + i];
-        iovecs[run->first + i].iov_base = bank->data + (size_t) slot * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
+        iovecs[run->first + i].iov_base = bank->data + (size_t) slot * (size_t) ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
         iovecs[run->first + i].iov_len = (size_t) bank->slot[slot].packet_bytes;
     }
 

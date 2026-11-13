@@ -295,7 +295,7 @@ static inline socklen_t rocketnet_uring_address_to_sockaddr( const struct rocket
     }
 
     memset( out, 0, sizeof( struct sockaddr_in6 ) );
-    rocketnet_platform_address_to_sockaddr_in( &to, (struct sockaddr_in *) out );
+    rocketnet_platform_address_to_sockaddr_in( &to, reinterpret_cast<struct sockaddr_in *>( out ) );
     return sizeof( struct sockaddr_in );
 }
 
