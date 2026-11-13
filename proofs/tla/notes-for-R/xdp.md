@@ -64,13 +64,13 @@ prints []. A later merge of the same heads should take the same records.
 
 ## Package C: comment-only re-citations
 
-- sdk/rocketnet_xdp_replay_sink.h:53-55, current text cites
+- sdk/rocketnet_xdp_replay_sink.h (rocketnet_xdp_replay_sink_mark, the comment inside it), current text cites
   "proofs/tla/RNXdpReplay.tla HoldGreetingUntilMarked, markOwed". New text:
   "a new session's zero mark the buffer refused: its key is not held
   anywhere, so the next publish holds every keep-alive (proofs/tla/RNXdpReplay.tla
   HoldGreetingUntilMarked, ZeroMarkUnqueued); the walk owes the mark and asks
   again".
-- sdk/rocketnet_server_socket_linux.cpp:3247-3249, current text "drop each
+- sdk/rocketnet_server_socket_linux.cpp (the comment above rocketnet_server_socket_hold_greetings), current text "drop each
   keep-alive to a session whose first mark (a zero) the kernel refused, or
   that the buffer could not queue". New text: "drop each keep-alive to a
   session whose first mark (a zero) the kernel refused, and every keep-alive
