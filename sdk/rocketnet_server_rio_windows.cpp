@@ -2590,7 +2590,7 @@ bool rocketnet_server_rio_test_receive_source( uint16_t port, int * banked, uint
     result.RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, 0 );
     rocketnet_rio_complete_receive( rio, &result );
 
-    *banked = rio->banks[rio->fill_bank].num_packets;
+    *banked = rocketnet_rio_worker_bank( rio )->num_packets;
     *failed = rio->counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED - ROCKETNET_SERVER_RIO_FIRST_COUNTER].load( std::memory_order_relaxed );
 
     rocketnet_rio_test_fixture_free( rio );
