@@ -1,6 +1,7 @@
 ---------------------------- MODULE RNPortableTx ----------------------------
 (***************************************************************************)
-(* The portable (and macOS msgx) server transmit handoff of               *)
+(* The portable server transmit handoff (and msgx off macOS; on macOS the *)
+(* msgx server is its own, RNMsgxSendRuns and RNBankFifoLayout) of       *)
 (* sdk/rocketnet_driver_builtin.cpp: portable_send, portable_tx_publish,  *)
 (* portable_tx_worker, the publish retry in portable_receive, and the TX  *)
 (* half of portable_stop and portable_stopped.  RNPortableRx covers the   *)

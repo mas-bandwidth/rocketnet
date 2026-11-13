@@ -8,8 +8,10 @@
 (* MCRNIocpRetryStopBrokenStopOffByOne.cfg (PassBounded),                  *)
 (* MCRNIocpRetryStopBrokenClaimBeforeStop.cfg (the lost retry, RetryOwned),*)
 (* MCRNIocpRetryStopBrokenStopWrap.cfg (the stop ticket wraps,             *)
-(* PassBounded) and MCRNIocpRetryStopBrokenRefuseRetires.cfg (a push a     *)
-(* stalled pass refuses retires the receive, RetiredOnlyByStop).           *)
+(* PassBounded), MCRNIocpRetryStopBrokenRefuseRetires.cfg (a push a       *)
+(* stalled pass refuses retires the receive, RetiredOnlyByStop) and       *)
+(* MCRNIocpRetryStopBrokenCheckBeforeCount.cfg (a post tests stopping     *)
+(* before it counts itself pending, AdmittedPostHoldsExit).               *)
 (***************************************************************************)
 EXTENDS RNIocpRetryStop
 =============================================================================

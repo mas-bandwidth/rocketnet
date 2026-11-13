@@ -131,6 +131,14 @@ on:
         description: "Run the nightly tier (every job and step) instead of the per-commit tier"
         type: boolean
         default: false
+      # The API lists every job of a called workflow under the name of the caller job
+      # ("full / linux / Debug / unit (0/4)"), so the shard summary jobs look their shards
+      # up under this prefix (tools/check_debug_unit_shards.py --prefix). Empty per commit,
+      # where the names are the job names.
+      job_name_prefix:
+        description: "The caller job name and \" / \" (nightly-ci.yml passes \"full / \")"
+        type: string
+        default: ""
 
 # a superseded commit's run is not a gate on anything -- the gate is the head
 # of the branch -- so it yields its runners to the run that replaced it
@@ -1491,13 +1499,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEBUG_UNIT_JOBS: debug-unit-jobs.json
+          SHARD_JOB_PREFIX: ${{ inputs.job_name_prefix }}
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$DEBUG_UNIT_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$DEBUG_UNIT_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$DEBUG_UNIT_JOBS"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$DEBUG_UNIT_JOBS"
 
   # The required checks "linux / Debug / functional" and "linux / Release / functional" are
   # the two summary jobs below: each Linux functional leg runs as two shard rows of
@@ -1541,13 +1550,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: debug-functional-shard-jobs.json
+          SHARD_JOB_PREFIX: ${{ inputs.job_name_prefix }}
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Debug / functional (0/4)" "linux / Debug / functional (1/4)" "linux / Debug / functional (2/4)" "linux / Debug / functional (3/4)"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "linux / Debug / functional (0/4)" "linux / Debug / functional (1/4)" "linux / Debug / functional (2/4)" "linux / Debug / functional (3/4)"
 
   release-functional:
     name: linux / Release / functional
@@ -1587,13 +1597,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: release-functional-shard-jobs.json
+          SHARD_JOB_PREFIX: ${{ inputs.job_name_prefix }}
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / functional (0/3)" "linux / Release / functional (1/3)" "linux / Release / functional (2/3)"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "linux / Release / functional (0/3)" "linux / Release / functional (1/3)" "linux / Release / functional (2/3)"
 
   # The required checks "linux / Debug / transport_matrix", "linux / Release /
   # transport_matrix" and "macos / Debug / unit" are the summary jobs below:
@@ -1638,13 +1649,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: debug-transport-matrix-shard-jobs.json
+          SHARD_JOB_PREFIX: ${{ inputs.job_name_prefix }}
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Debug / transport_matrix (0/2)" "linux / Debug / transport_matrix (1/2)"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "linux / Debug / transport_matrix (0/2)" "linux / Debug / transport_matrix (1/2)"
 
   release-transport-matrix:
     name: linux / Release / transport_matrix
@@ -1684,13 +1696,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: release-transport-matrix-shard-jobs.json
+          SHARD_JOB_PREFIX: ${{ inputs.job_name_prefix }}
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / transport_matrix (0/2)" "linux / Release / transport_matrix (1/2)"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "linux / Release / transport_matrix (0/2)" "linux / Release / transport_matrix (1/2)"
 
   # Runs on the Linux fleet: it reads the job list only, and per commit the
   # macOS runners hold the macOS build-and-test rows.
@@ -1732,13 +1745,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: macos-debug-unit-shard-jobs.json
+          SHARD_JOB_PREFIX: ${{ inputs.job_name_prefix }}
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "macos / Debug / unit (0/2)" "macos / Debug / unit (1/2)"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "macos / Debug / unit (0/2)" "macos / Debug / unit (1/2)"
 
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every
@@ -1760,7 +1774,8 @@ jobs:
   # floor of any partition of whole layers. Their PR run (#1117): msgx with
   # xdp-receive-ring 85 s, xdp-reply-macs with two small layers 66 s. So a shard is now a
   # set of (layer, seed) pairs, the SHARDS table in tools/tla_trace_check.py: msgx's four
-  # seeds are in four shards (its first, with its coverage and reach, alone) and
+  # seeds are in four shards (its first, with its coverage, alone; its reach moved to
+  # shard 3 by a "msgx:reach" entry) and
   # xdp-reply-macs's in three; every other layer is whole. Every layer still runs every
   # seed: the table is red unless each pair is in exactly one shard, and a shard with no
   # pair is red. A shard is the build and tlacheck (about 30 s) plus its pairs. Adding a
@@ -1862,13 +1877,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: trace-shard-jobs.json
+          SHARD_JOB_PREFIX: ${{ inputs.job_name_prefix }}
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/9)" "TLA+ trace check (fixed seeds, shard 1/9)" "TLA+ trace check (fixed seeds, shard 2/9)" "TLA+ trace check (fixed seeds, shard 3/9)" "TLA+ trace check (fixed seeds, shard 4/9)" "TLA+ trace check (fixed seeds, shard 5/9)" "TLA+ trace check (fixed seeds, shard 6/9)" "TLA+ trace check (fixed seeds, shard 7/9)" "TLA+ trace check (fixed seeds, shard 8/9)"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/9)" "TLA+ trace check (fixed seeds, shard 1/9)" "TLA+ trace check (fixed seeds, shard 2/9)" "TLA+ trace check (fixed seeds, shard 3/9)" "TLA+ trace check (fixed seeds, shard 4/9)" "TLA+ trace check (fixed seeds, shard 5/9)" "TLA+ trace check (fixed seeds, shard 6/9)" "TLA+ trace check (fixed seeds, shard 7/9)" "TLA+ trace check (fixed seeds, shard 8/9)"
 
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a
@@ -4350,6 +4366,7 @@ jobs:
           cat > "$list" <<'SUITES'
           python3 tools/check_client_frame_time.py --self-test
           python3 tools/check_debug_unit_shards.py --self-test
+          python3 tools/fetch_run_jobs.py --self-test
           python3 tools/test_check_dll_consumer.py -v
           python3 tools/test_check_driver_extension.py -v
           python3 tools/test_check_examples.py -v
@@ -4933,13 +4950,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: lint-shard-jobs.json
+          SHARD_JOB_PREFIX: ${{ inputs.job_name_prefix }}
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "lint (0/4)" "lint (1/4)" "lint (2/4)" "lint (3/4)"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "lint (0/4)" "lint (1/4)" "lint (2/4)" "lint (3/4)"
 
   # Every registered unit case runs in at least one CI configuration. Each job
   # that runs the unit suite uploads `bin/test --list` (or, for a leg that

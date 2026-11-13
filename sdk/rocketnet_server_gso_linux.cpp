@@ -52,6 +52,11 @@
 #include "rocketnet_xdp_frame.h"
 #include "rocketnet_receive_prefilter.h"
 #include "rocketnet_send_gather.h"
+#include "rocketnet_receive_handoff.h"
+#include "rocketnet_read_write.h"
+#if ROCKETNET_DEV
+#include "rocketnet_receive_delivery_check.h"
+#endif // #if ROCKETNET_DEV
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -255,16 +260,16 @@ struct rocketnet_server_gso_queue_t
 
     uint8_t padding_2[4096];
 
-    // Only ownership is protected by receive_mutex. The worker fills one
-    // buffer, can publish one ready buffer, and the main thread holds one
-    // view buffer. One of ready/free is null at each handoff.
-    struct rocketnet_server_gso_recv_buffer_t * worker_buffer = NULL;
-    struct rocketnet_server_gso_recv_buffer_t * ready_buffer = NULL;
-    struct rocketnet_server_gso_recv_buffer_t * main_buffer = NULL;
-    struct rocketnet_server_gso_recv_buffer_t * free_buffer = NULL;
+    // The receive handoff over buffers[] (sdk/rocketnet_receive_handoff.h):
+    // the worker appends to its buffer and commits its count under
+    // receive_mutex; main reads the worker's buffer up to that count, and the
+    // tail of the buffer the worker left. receive_lock_busy counts main's
+    // calls that found the mutex busy and read only what they held (main's
+    // alone).
+    struct rocketnet_receive_handoff_t receive_handoff = {};
     rocketnet_platform_mutex_t receive_mutex = {};
-    uint32_t main_cursor = 0; // retained tail in main_buffer, main thread only
-    // Idle EAGAIN calls still count without publishing an empty ready buffer.
+    uint64_t receive_lock_busy = 0;
+    // Idle EAGAIN calls still count without committing an empty buffer.
     std::atomic<uint64_t> receive_syscalls{ 0 };
 
     uint8_t padding_3b[4096];
@@ -282,7 +287,9 @@ struct rocketnet_server_gso_queue_t
     struct mmsghdr messages[ROCKETNET_GSO_RECV_BATCH] = {};
     struct iovec iovecs[ROCKETNET_GSO_RECV_BATCH] = {};
     struct sockaddr_storage names[ROCKETNET_GSO_RECV_BATCH] = {};
-    char controls[ROCKETNET_GSO_RECV_BATCH][CMSG_SPACE( sizeof( int ) )] = {};
+    // a UDP_GRO cmsg (an int) and a SO_RXQ_OVFL cmsg (a uint32)
+    char controls[ROCKETNET_GSO_RECV_BATCH][CMSG_SPACE( sizeof( int ) ) + CMSG_SPACE( sizeof( uint32_t ) )] = {};
+    uint32_t socket_drops_seen = 0; // the worker's alone: the last SO_RXQ_OVFL count it read
     uint8_t scratch[ROCKETNET_GSO_RECV_BATCH][ROCKETNET_GSO_RECV_BUFFER_BYTES]; // filled by the kernel before it is read
 
     uint8_t padding_4[4096];
@@ -293,6 +300,13 @@ struct rocketnet_server_gso_queue_t
 
     struct rocketnet_server_gso_send_lane_t send;
 };
+
+// the buffer the queue's worker appends to; the worker's own index, which
+// only the worker changes (rocketnet_receive_handoff_commit)
+static inline struct rocketnet_server_gso_recv_buffer_t * rocketnet_server_gso_worker_buffer( struct rocketnet_server_gso_queue_t * queue )
+{
+    return &queue->buffers[queue->receive_handoff.worker];
+}
 
 struct rocketnet_server_gso_t
 {
@@ -449,10 +463,30 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
     {
         return false;
     }
-    const bool ready = queue->ready_buffer && queue->ready_buffer->num_packets > 0;
+    // a datagram committed that main's last call did not see
+    const struct rocketnet_receive_handoff_t * handoff = &queue->receive_handoff;
+    const bool ready = handoff->committed[handoff->main] > handoff->main_limit ||
+                       ( handoff->worker != handoff->main && handoff->committed[handoff->worker] > 0 );
     rocketnet_platform_mutex_release( &queue->receive_mutex );
 
     return ready;
+}
+
+int rocketnet_server_gso_test_receive_committed( struct rocketnet_server_gso_t * gso, int queue_index )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( queue_index >= 0 && queue_index < gso->num_queues );
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
+    if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
+    {
+        return -1;
+    }
+    const struct rocketnet_receive_handoff_t * handoff = &queue->receive_handoff;
+    const int committed = (int) handoff->committed[handoff->worker];
+    rocketnet_platform_mutex_release( &queue->receive_mutex );
+
+    return committed;
 }
 
 #endif // #if ROCKETNET_DEV
@@ -926,15 +960,18 @@ bool rocketnet_server_gso_buffer_note( char * line, int line_bytes, bool receive
 
 // ---------------------------------------------------------------------------
 
-// proofs/tla/RNGsoHandoff.tla RxFill: the receive worker drains the socket with
-// recvmmsg, staging each segment into its own buffer outside the mutex.
+// proofs/tla/RNGsoHandoff.tla RxFill and proofs/tla/RNReceiveHandoff.tla Bank:
+// the receive worker drains the socket with recvmmsg, staging each segment
+// into its own buffer outside the mutex.
 // the receive worker: drain the socket with recvmmsg, split GRO runs at the
 // kernel-reported segment stride, stage each segment into the worker buffer.
-// A brief ownership lock publishes the completed buffer to the main thread
-// and takes a free one. Socket I/O, GRO splitting, copying, and counters run
-// outside the lock. While a ready buffer waits, the worker continues filling
-// its own buffer; once full, it stops reading until the main thread returns
-// a free buffer, retaining the queue's bounded backpressure behavior.
+// A brief lock at the end of each pass commits the buffer's count to the main
+// thread, which reads it in place, and moves the worker to the free buffer
+// once main has started on its own (sdk/rocketnet_receive_handoff.h). Socket
+// I/O, GRO splitting, copying, and counters run outside the lock. While it
+// cannot move, the worker continues filling its own buffer; once full, it
+// stops reading until main frees a buffer, retaining the queue's bounded
+// backpressure behavior.
 
 // The GRO stride of one recvmmsg message. A truncated control buffer, or a
 // UDP_GRO cmsg whose length does not hold an int, is one fault and the
@@ -985,29 +1022,23 @@ int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_
     return segment_bytes;
 }
 
-// proofs/tla/RNGsoHandoff.tla RxPublish: the worker's filled buffer becomes the
-// ready buffer and it takes the free buffer, under the mutex, only when no
-// ready buffer waits and a free buffer exists; otherwise nothing moves and
-// the worker retains its buffer (the queue's bounded backpressure). The
-// defect WriteHeld has no such step: the guard below is what excludes it.
-// proofs/tla/RNGsoRecvFill.tla Publish: the worker fills a free buffer from slot 0;
-// Done is a drained socket whose last buffer is published.
-static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_queue_t * queue )
+// proofs/tla/RNGsoHandoff.tla RxFill (the commit that ends its pass) and
+// proofs/tla/RNReceiveHandoff.tla Commit: under the mutex the worker makes its buffer's count visible to main
+// and, when main has started on that buffer, moves to the free one, which main
+// emptied before freeing it. Otherwise it keeps its buffer and appends to it;
+// full, it reads no more until main starts on it (the queue's bounded
+// backpressure). Only indices and counts move under the mutex. Returns true
+// when the worker moved.
+// proofs/tla/RNGsoRecvFill.tla Publish: the worker fills a moved-to buffer from slot 0;
+// Done is a drained socket whose last count is committed.
+static bool rocketnet_server_gso_commit_receive( struct rocketnet_server_gso_queue_t * queue )
 {
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    const uint32_t count = rocketnet_server_gso_worker_buffer( queue )->num_packets;
     rocketnet_platform_mutex_acquire( &queue->receive_mutex );
-
-    const bool published = !queue->ready_buffer && queue->free_buffer;
-    if ( published )
-    {
-        queue->ready_buffer = buffer;
-        queue->worker_buffer = queue->free_buffer;
-        queue->free_buffer = NULL;
-    }
-
+    const int next = rocketnet_receive_handoff_commit( &queue->receive_handoff, count );
     rocketnet_platform_mutex_release( &queue->receive_mutex );
 
-    return published;
+    return next >= 0;
 }
 
 // the worker's screen of one datagram before it takes a bank slot. First the
@@ -1069,16 +1100,43 @@ static void rocketnet_server_gso_count_drop( struct rocketnet_server_gso_queue_t
 // accepted or dropped, and so does an interrupted call: the drain ends when
 // the budget is spent, the buffer has no room for one more message, the
 // socket is empty or a call fails, so no stream of discarded datagrams holds
-// the worker away from its publish and its quit test. Each call asks for at
+// the worker away from its commit and its quit test. Each call asks for at
 // most the messages whose every segment fits (rocketnet_server_gso_recv_vlen),
 // so nothing read is dropped for want of room.
 // proofs/tla/RNGsoRecvFill.tla Read: one message of a call, its segments
 // staged from the fill index; Vlen is rocketnet_server_gso_recv_vlen, and
 // Arrive is the kernel queueing a GRO run on the socket between calls.
 
+// the socket's drop count in a SO_RXQ_OVFL cmsg of one received message.
+// false when there is none or the control area was truncated
+static bool rocketnet_server_gso_socket_drops( struct msghdr * header, uint32_t * drops )
+{
+    if ( header->msg_flags & MSG_CTRUNC )
+    {
+        return false;
+    }
+    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg != NULL; cmsg = CMSG_NXTHDR( header, cmsg ) )
+    {
+        if ( cmsg->cmsg_len < sizeof( struct cmsghdr ) )
+        {
+            return false;
+        }
+        if ( cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SO_RXQ_OVFL )
+        {
+            if ( cmsg->cmsg_len < CMSG_LEN( sizeof( uint32_t ) ) )
+            {
+                return false;
+            }
+            memcpy( drops, CMSG_DATA( cmsg ), sizeof( *drops ) );
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * queue, bool * full )
 {
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     const bool gro = ( queue->gso->features.load( std::memory_order_relaxed ) & ROCKETNET_SERVER_GSO_FEATURE_GRO ) != 0;
 
     int reads = 0;
@@ -1165,6 +1223,17 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
         for ( int i = 0; i < count; i++ )
         {
             const int message_bytes = (int) queue->messages[i].msg_len;
+
+            // the socket's drops before this datagram was queued, counted
+            // whatever becomes of the datagram: the count is cumulative and
+            // 32-bit, so the rise since the last one seen is taken modulo 2^32
+
+            uint32_t socket_drops = 0;
+            if ( rocketnet_server_gso_socket_drops( &queue->messages[i].msg_hdr, &socket_drops ) && socket_drops != queue->socket_drops_seen )
+            {
+                buffer->dropped_overflow += (uint32_t) ( socket_drops - queue->socket_drops_seen );
+                queue->socket_drops_seen = socket_drops;
+            }
 
             // a truncated message would split into a plausible but
             // short final segment -- corruption, not loss -- so it is
@@ -1257,27 +1326,36 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
 }
 
 // proofs/tla/RNGsoHandoff.tla RxStall and RxSleep: a pass whose buffer is full
-// and could not be published, or whose receive failed, returns true and the
+// and could not move to a free one, or whose receive failed, returns true and the
 // worker sleeps 1ms before it reads again instead of polling a readable socket.
 
-static bool rocketnet_server_gso_worker_step( struct rocketnet_server_gso_queue_t * queue )
+// the end of a worker pass: a buffer with results commits its count. True
+// when the worker moved to a free buffer, or when there was nothing to commit.
+// A pass that staged nothing still commits a buffer holding results, so a
+// full buffer main has started on is left (proofs/tla/RNGsoHandoff.tla RxMove).
+static bool rocketnet_server_gso_end_pass( struct rocketnet_server_gso_queue_t * queue )
 {
-    bool full = false;
-    const bool failed = rocketnet_server_gso_drain( queue, &full );
-
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
 
     const bool has_results = buffer->num_packets || buffer->dropped_size || buffer->dropped_overflow ||
                              buffer->dropped_source || buffer->dropped_prefilter || buffer->gro_batches || buffer->gro_cmsg_faults ||
                              buffer->receive_errors;
     if ( !has_results )
     {
-        return failed;
+        return true;
     }
 
-    const bool published = rocketnet_server_gso_publish_receive( queue );
+    return rocketnet_server_gso_commit_receive( queue );
+}
 
-    return failed || ( full && !published );
+static bool rocketnet_server_gso_worker_step( struct rocketnet_server_gso_queue_t * queue )
+{
+    bool full = false;
+    const bool failed = rocketnet_server_gso_drain( queue, &full );
+
+    const bool moved = rocketnet_server_gso_end_pass( queue );
+
+    return failed || ( full && !moved );
 }
 
 // drains the queue's eventfd so the next poll waits again; the wake is only a
@@ -1656,9 +1734,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
         gso->queues[i].fd = -1;
         gso->queues[i].wake_fd = -1;
         gso->queues[i].index = i;
-        gso->queues[i].worker_buffer = &gso->queues[i].buffers[0];
-        gso->queues[i].main_buffer = &gso->queues[i].buffers[1];
-        gso->queues[i].free_buffer = &gso->queues[i].buffers[2];
+        rocketnet_receive_handoff_init( &gso->queues[i].receive_handoff );
     }
 
     // open the reuseport group. the first socket may discover an ephemeral
@@ -1678,6 +1754,19 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
         {
             rocketnet_server_gso_abort_create( gso );
             return NULL;
+        }
+
+        // SO_RXQ_OVFL: each datagram then carries the socket's count of the
+        // datagrams the kernel dropped at it (a full receive buffer while the
+        // worker stopped reading), which the drain counts in the overflow
+        // tally, as io_uring does. A refusal leaves those drops uncounted, so
+        // it is said
+        {
+            int one = 1;
+            if ( setsockopt( queue->fd, SOL_SOCKET, SO_RXQ_OVFL, &one, sizeof( one ) ) != 0 )
+            {
+                rocketnet_warn( "gso transport: queue %d: SO_RXQ_OVFL refused (errno %d): drops at its socket are not counted", i, errno );
+            }
         }
 
         // a grant short of the request on any socket is asked again past the
@@ -1817,35 +1906,41 @@ static void rocketnet_server_gso_fold_buffer( rocketnet_server_gso_t * gso, rock
 }
 
 // proofs/tla/RNGsoHandoff.tla StopCount: main, once, when stopped first
-// finds every queue worker exited (its acquire), so main owns every bank.
-// What the workers received that main never took (a bank a worker could not
-// publish, the ready bank, the unread tail of main's bank) is counted
-// RECEIVE_DROP_STOPPED, and each bank's drop tallies are folded: no datagram
-// a socket delivered goes uncounted. Main takes nothing after stop
-// (rocketnet_server_gso_receive_packets), so nothing is counted twice.
+// finds every queue worker exited (its acquire), so main owns every buffer.
+// What the workers received that main never returned (the unread tail of the
+// buffer the worker left, main's buffer past its cursor, whether committed or
+// not, and the worker's own buffer when it had moved on) is counted
+// RECEIVE_DROP_STOPPED, and the tallies of every buffer not yet folded are
+// folded: no datagram a socket delivered goes uncounted. Main takes nothing
+// after stop (rocketnet_server_gso_receive_packets), so nothing is counted
+// twice.
 static void rocketnet_server_gso_count_stopped( rocketnet_server_gso_t * gso )
 {
     for ( int i = 0; gso->queues && i < gso->num_queues; ++i )
     {
         rocketnet_server_gso_queue_t * queue = &gso->queues[i];
+        struct rocketnet_receive_handoff_t * handoff = &queue->receive_handoff;
 
-        rocketnet_server_gso_recv_buffer_t * held = queue->main_buffer;
-        if ( held && queue->main_cursor < held->num_packets )
+        // the tail's tallies were folded when the worker left it
+        gso->receive_dropped_stopped += handoff->tail_end - handoff->tail_cursor;
+        handoff->tail_cursor = handoff->tail_end;
+
+        rocketnet_server_gso_recv_buffer_t * held = &queue->buffers[handoff->main];
+        if ( handoff->main_cursor < held->num_packets )
         {
-            gso->receive_dropped_stopped += held->num_packets - queue->main_cursor;
-            queue->main_cursor = held->num_packets;
+            gso->receive_dropped_stopped += held->num_packets - handoff->main_cursor;
         }
+        held->num_packets = 0;
+        handoff->main_cursor = 0;
+        handoff->main_limit = 0;
+        rocketnet_server_gso_fold_buffer( gso, held );
 
-        rocketnet_server_gso_recv_buffer_t * banks[2] = { queue->worker_buffer, queue->ready_buffer };
-        for ( int b = 0; b < 2; ++b )
+        if ( handoff->worker != handoff->main )
         {
-            if ( !banks[b] )
-            {
-                continue;
-            }
-            gso->receive_dropped_stopped += banks[b]->num_packets;
-            banks[b]->num_packets = 0;
-            rocketnet_server_gso_fold_buffer( gso, banks[b] );
+            rocketnet_server_gso_recv_buffer_t * filling = &queue->buffers[handoff->worker];
+            gso->receive_dropped_stopped += filling->num_packets;
+            filling->num_packets = 0;
+            rocketnet_server_gso_fold_buffer( gso, filling );
         }
     }
 }
@@ -1991,10 +2086,11 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     rocketnet_assert( gso );
     rocketnet_assert( counters );
 
-    // The tallies a worker left in its buffers are folded once, at stop
-    // (rocketnet_server_gso_count_stopped, run by the first rocketnet_server_gso_stopped
-    // that finds every worker exited), so a datagram dropped after main's last
-    // claim is still counted.
+    // A buffer's tallies are folded once: when main makes it the tail after
+    // the worker has left it (rocketnet_server_gso_receive_from_queue), or at
+    // stop for the buffers still held (rocketnet_server_gso_count_stopped, run
+    // by the first rocketnet_server_gso_stopped that finds every worker
+    // exited), so a datagram dropped after main's last read is still counted.
 
     // every row of the gso range (GSO_PACKETS_SENT .. GSO_GRO_CMSG_FAULTS) is
     // written below, and GSO_PIN_REFUSALS, which sits after the other
@@ -2693,10 +2789,31 @@ void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso )
 // receive
 // ---------------------------------------------------------------------------
 
-// proofs/tla/RNGsoHandoff.tla RxClaim and RxConsume: consume a retained bank
-// before claiming a newer ready bank. The previous
-// public view expires at this receive call, but a partial tail remains owned by
-// main and cannot be recycled. Counters are folded exactly once when claimed.
+// main's copy of buffer slots [*cursor, end) into the process view, within
+// the budget and the view's room
+static void rocketnet_server_gso_take_range( rocketnet_server_gso_t * gso, rocketnet_server_gso_recv_buffer_t * buffer,
+                                             uint32_t * cursor, uint32_t end, int * budget )
+{
+    while ( *cursor < end && *budget > 0 && gso->process_packets.num_packets < gso->process_packets.capacity )
+    {
+        const uint32_t source = ( *cursor )++;
+        const int index = gso->process_packets.num_packets++;
+        gso->process_packets.from[index] = buffer->from[source];
+        gso->process_packets.packet_data[index] = buffer->packet_data[source];
+        gso->process_packets.packet_bytes[index] = buffer->packet_bytes[source];
+        --*budget;
+    }
+}
+
+// proofs/tla/RNGsoHandoff.tla RxCalls (one RxCall), proofs/tla/RNReceiveHandoff.tla Call
+// (bound by the trace check tests/tla_trace_receive_handoff.cpp): the previous call's view has expired, so a finished tail is
+// emptied for the worker's later use; then one try of the mutex brings main up
+// to what the worker has committed (rocketnet_receive_handoff_begin), and main
+// returns the tail of the buffer the worker left, then its own buffer up to
+// the committed count. A busy mutex leaves main returning what it already
+// held; the next call catches up. Each datagram is counted received once, when
+// main first sees it, and a buffer's tallies are folded once, when the worker
+// has left it.
 static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gso,
                                                      rocketnet_server_gso_queue_t * queue, int budget )
 {
@@ -2704,40 +2821,46 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
     {
         return;
     }
-    if ( queue->main_cursor >= queue->main_buffer->num_packets )
-    {
-        queue->main_buffer->num_packets = 0;
-        queue->main_cursor = 0;
-        if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
-        {
-            return;
-        }
-        if ( !queue->ready_buffer )
-        {
-            rocketnet_platform_mutex_release( &queue->receive_mutex );
-            return;
-        }
 
-        rocketnet_server_gso_recv_buffer_t * buffer = queue->ready_buffer;
-        queue->ready_buffer = NULL;
-        queue->free_buffer = queue->main_buffer;
-        queue->main_buffer = buffer;
+    struct rocketnet_receive_handoff_t * handoff = &queue->receive_handoff;
+
+    if ( rocketnet_receive_handoff_tail_finished( handoff ) )
+    {
+        queue->buffers[handoff->tail].num_packets = 0;
+    }
+
+    if ( rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
+    {
+        const uint32_t seen = handoff->main_limit;
+        const int left = rocketnet_receive_handoff_begin( handoff );
+#if defined( ROCKETNET_RECEIVE_HANDOFF_PLANT )
+        // the trace check's plant (tests/tla_trace_receive_handoff.cpp): main
+        // reads only a buffer the worker has left, as the old ready-slot rule
+        // did (proofs/tla/RNReceiveHandoff.tla ReadOnlyLeft)
+        if ( handoff->main == handoff->worker )
+        {
+            handoff->main_limit = left >= 0 ? 0 : seen;
+        }
+#endif // #if defined( ROCKETNET_RECEIVE_HANDOFF_PLANT )
         rocketnet_platform_mutex_release( &queue->receive_mutex );
 
-        gso->counter_packets_received += buffer->num_packets;
-        rocketnet_server_gso_fold_buffer( gso, buffer );
+        if ( left >= 0 )
+        {
+            gso->counter_packets_received += handoff->tail_end - seen + handoff->main_limit;
+            rocketnet_server_gso_fold_buffer( gso, &queue->buffers[left] );
+        }
+        else
+        {
+            gso->counter_packets_received += handoff->main_limit - seen;
+        }
+    }
+    else
+    {
+        queue->receive_lock_busy++;
     }
 
-    rocketnet_server_gso_recv_buffer_t * buffer = queue->main_buffer;
-    while ( queue->main_cursor < buffer->num_packets && budget-- > 0 &&
-            gso->process_packets.num_packets < gso->process_packets.capacity )
-    {
-        const uint32_t source = queue->main_cursor++;
-        const int index = gso->process_packets.num_packets++;
-        gso->process_packets.from[index] = buffer->from[source];
-        gso->process_packets.packet_data[index] = buffer->packet_data[source];
-        gso->process_packets.packet_bytes[index] = buffer->packet_bytes[source];
-    }
+    rocketnet_server_gso_take_range( gso, &queue->buffers[handoff->tail], &handoff->tail_cursor, handoff->tail_end, &budget );
+    rocketnet_server_gso_take_range( gso, &queue->buffers[handoff->main], &handoff->main_cursor, handoff->main_limit, &budget );
 }
 
 void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
@@ -2748,7 +2871,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
     gso->process_packets.num_packets = 0;
 
     // proofs/tla/RNGsoHandoff.tla: once stop is asked main claims and
-    // consumes nothing (RxClaim and RxConsume); what is still banked is
+    // consumes nothing (RxCall); what is still banked is
     // counted RECEIVE_DROP_STOPPED when the workers have exited (StopCount)
     if ( gso->stopping )
     {
@@ -2795,18 +2918,18 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 
 // The RNGsoHandoff transitions, stepped on the calling thread with a faked
 // transport: packet bytes are written straight into the worker's buffer
-// (the staged result of a receive pass) and the real publish, claim,
-// consume, stage, take, return, stop and destroy functions run in order.
+// (the staged result of a receive pass) and the real commit, receive,
+// stage, take, return, stop and destroy functions run in order.
 // No socket is opened, no thread is started and no clock is read.
 
+// appends packets marked with marker to the buffer, as the worker's drain does
 static void rocketnet_server_gso_test_fill( struct rocketnet_server_gso_recv_buffer_t * buffer, uint8_t marker, uint32_t packets )
 {
-    buffer->num_packets = packets;
-
     for ( uint32_t i = 0; i < packets; i++ )
     {
-        buffer->packet_bytes[i] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
-        memset( buffer->packet_data[i], marker, (size_t) ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+        const uint32_t index = buffer->num_packets++;
+        buffer->packet_bytes[index] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+        memset( buffer->packet_data[index], marker, (size_t) ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
     }
 }
 
@@ -2848,9 +2971,7 @@ static bool rocketnet_server_gso_test_init_queue( struct rocketnet_server_gso_t 
     queue->wake_fd = -1;
     queue->index = index;
     queue->gso = gso;
-    queue->worker_buffer = &queue->buffers[0];
-    queue->main_buffer = &queue->buffers[1];
-    queue->free_buffer = &queue->buffers[2];
+    rocketnet_receive_handoff_init( &queue->receive_handoff );
     queue->stopped.store( true, std::memory_order_relaxed );
     if ( !rocketnet_platform_mutex_create( &queue->receive_mutex ) )
     {
@@ -3114,6 +3235,163 @@ static bool rocketnet_server_gso_test_run_send( struct rocketnet_server_gso_t * 
     return false;
 }
 
+// The receive delivery check (sdk/rocketnet_receive_delivery_check.h) on the
+// one-queue fixture: a worker pass appends datagrams to the worker's buffer
+// and ends as the worker's pass does (rocketnet_server_gso_end_pass); a
+// receive call is rocketnet_server_gso_receive_packets. Each datagram carries
+// its id in its first four bytes.
+
+struct rocketnet_server_gso_test_delivery_t
+{
+    struct rocketnet_server_gso_t * gso;
+};
+
+static bool rocketnet_server_gso_test_delivery_reset( void * user )
+{
+    auto * rig = (struct rocketnet_server_gso_test_delivery_t *) user;
+    rocketnet_server_gso_test_close( rig->gso );
+    rig->gso = rocketnet_server_gso_test_create();
+    return rig->gso != NULL;
+}
+
+bool rocketnet_server_gso_test_receive_bank( struct rocketnet_server_gso_t * gso, uint32_t first, int count )
+{
+    rocketnet_assert( gso );
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( &gso->queues[0] );
+    if ( count < 0 || (uint64_t) buffer->num_packets + (uint64_t) count > (uint64_t) ROCKETNET_GSO_RECV_QUEUE_SIZE )
+    {
+        return false;
+    }
+    for ( int i = 0; i < count; i++ )
+    {
+        const uint32_t index = buffer->num_packets;
+        const uint32_t id = first + (uint32_t) i;
+        buffer->packet_bytes[index] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+        memset( buffer->packet_data[index], 0, (size_t) ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+        uint8_t * stamp = buffer->packet_data[index];
+        rocketnet_write_uint32( &stamp, id );
+        buffer->num_packets++;
+    }
+    return true;
+}
+
+bool rocketnet_server_gso_test_receive_end_pass( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+    return rocketnet_server_gso_end_pass( &gso->queues[0] );
+}
+
+int rocketnet_server_gso_test_receive_call( struct rocketnet_server_gso_t * gso, int budget, bool busy, uint32_t * first )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( first );
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
+    const int capacity = gso->process_packets.capacity;
+    gso->process_packets.capacity = budget < capacity ? budget : capacity;
+    if ( busy )
+    {
+        rocketnet_platform_mutex_acquire( &queue->receive_mutex );
+    }
+    rocketnet_server_gso_receive_packets( gso );
+    if ( busy )
+    {
+        rocketnet_platform_mutex_release( &queue->receive_mutex );
+    }
+    gso->process_packets.capacity = capacity;
+    const int count = gso->process_packets.num_packets;
+    *first = 0;
+    for ( int i = 0; i < count; i++ )
+    {
+        const uint8_t * stamp = gso->process_packets.packet_data[i];
+        const uint32_t id = rocketnet_read_uint32( &stamp );
+        if ( i == 0 )
+        {
+            *first = id;
+        }
+        else if ( id != *first + (uint32_t) i )
+        {
+            return -1;
+        }
+    }
+    return count;
+}
+
+void rocketnet_server_gso_test_receive_state( struct rocketnet_server_gso_t * gso, struct rocketnet_server_gso_test_receive_state_t * state )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( state );
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
+    const struct rocketnet_receive_handoff_t * handoff = &queue->receive_handoff;
+    state->worker = handoff->worker;
+    state->main = handoff->main;
+    state->tail = handoff->tail;
+    state->free = handoff->free;
+    state->main_cursor = handoff->main_cursor;
+    state->main_limit = handoff->main_limit;
+    state->tail_cursor = handoff->tail_cursor;
+    state->tail_end = handoff->tail_end;
+    state->consecutive = true;
+    for ( int b = 0; b < ROCKETNET_RECEIVE_HANDOFF_BUFFERS; b++ )
+    {
+        const struct rocketnet_server_gso_recv_buffer_t * buffer = &queue->buffers[b];
+        state->committed[b] = handoff->committed[b];
+        state->count[b] = buffer->num_packets;
+        state->first[b] = 0;
+        for ( uint32_t i = 0; i < buffer->num_packets; i++ )
+        {
+            const uint8_t * stamp = buffer->packet_data[i];
+            const uint32_t id = rocketnet_read_uint32( &stamp );
+            if ( i == 0 )
+            {
+                state->first[b] = id;
+            }
+            else if ( id != state->first[b] + i )
+            {
+                state->consecutive = false;
+            }
+        }
+    }
+    state->lock_busy = queue->receive_lock_busy;
+    state->capacity = gso->process_packets.capacity;
+}
+
+static bool rocketnet_server_gso_test_delivery_pass( void * user, uint32_t first, int count )
+{
+    auto * rig = (struct rocketnet_server_gso_test_delivery_t *) user;
+    if ( !rocketnet_server_gso_test_receive_bank( rig->gso, first, count ) )
+    {
+        return false;
+    }
+    rocketnet_server_gso_end_pass( &rig->gso->queues[0] );
+    return true;
+}
+
+static int rocketnet_server_gso_test_delivery_call( void * user, uint32_t * ids, int capacity )
+{
+    auto * rig = (struct rocketnet_server_gso_test_delivery_t *) user;
+    rocketnet_server_gso_receive_packets( rig->gso );
+    const int count = rig->gso->process_packets.num_packets;
+    if ( count > capacity )
+    {
+        return -1;
+    }
+    for ( int i = 0; i < count; i++ )
+    {
+        const uint8_t * stamp = rig->gso->process_packets.packet_data[i];
+        ids[i] = rocketnet_read_uint32( &stamp );
+    }
+    return count;
+}
+
+bool rocketnet_server_gso_test_receive_delivery()
+{
+    struct rocketnet_server_gso_test_delivery_t fixture = { NULL };
+    struct rocketnet_receive_delivery_rig_t rig = { &fixture, rocketnet_server_gso_test_delivery_pass, rocketnet_server_gso_test_delivery_call };
+    const bool valid = rocketnet_receive_delivery_check_all( &rig, "gso server", rocketnet_server_gso_test_delivery_reset );
+    rocketnet_server_gso_test_close( fixture.gso );
+    return valid;
+}
+
 void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso )
 {
     if ( !gso )
@@ -3136,16 +3414,26 @@ bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * g
         return false;
     }
 
+    // appended only where the worker's buffer has room, as the drain does; a
+    // full buffer is committed as it is (the worker moves on once main has
+    // started on it) and the call refuses
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
-    rocketnet_server_gso_test_fill( queue->worker_buffer, marker, packets );
-    return rocketnet_server_gso_publish_receive( queue );
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
+    const bool room = buffer->num_packets + packets <= (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE;
+    if ( room )
+    {
+        rocketnet_server_gso_test_fill( buffer, marker, packets );
+    }
+    rocketnet_server_gso_commit_receive( queue );
+    return room;
 }
 
-// StopCount: a bank the worker could not publish, the ready bank and the
-// unread tail of main's bank, all still banked when stop is asked, are
-// counted RECEIVE_DROP_STOPPED, with the banks' drop tallies folded, once
-// every worker has exited; main takes nothing after stop, and the count is
-// made once.
+// StopCount: the unread tail of the buffer the worker left, the committed
+// datagrams main has not yet seen and the worker's datagrams not yet
+// committed, all still banked when stop is asked, are counted
+// RECEIVE_DROP_STOPPED, with the buffers' drop tallies folded, once every
+// worker has exited; main takes nothing after stop, and the count is made
+// once.
 bool rocketnet_server_gso_test_stop_counts_unreceived()
 {
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
@@ -3159,35 +3447,37 @@ bool rocketnet_server_gso_test_stop_counts_unreceived()
 
     bool valid = true;
 
-    // main claims three packets and reads one: a tail of two stays in its bank
+    // main sees three packets and reads one: a tail of two stays unread
 
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'a', 3 );
-    valid = valid && rocketnet_server_gso_publish_receive( queue );
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'a', 3 );
+    valid = valid && rocketnet_server_gso_commit_receive( queue );
     gso->process_packets.num_packets = 0;
     rocketnet_server_gso_receive_from_queue( gso, queue, 1 );
-    valid = valid && gso->process_packets.num_packets == 1 && queue->main_cursor == 1 && gso->counter_packets_received == 3;
+    valid = valid && gso->process_packets.num_packets == 1 && queue->receive_handoff.tail_cursor == 1 &&
+            gso->counter_packets_received == 3;
 
-    // two more wait in the ready bank; four, with a size drop, in the
-    // worker's bank, which cannot be published behind them
+    // two more are committed in the buffer main shares with the worker, which
+    // moves on; four, with a size drop, are banked in its next buffer and not
+    // yet committed
 
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'b', 2 );
-    valid = valid && rocketnet_server_gso_publish_receive( queue );
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'c', 4 );
-    queue->worker_buffer->dropped_size = 1;
-    valid = valid && !rocketnet_server_gso_publish_receive( queue );
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'b', 2 );
+    valid = valid && rocketnet_server_gso_commit_receive( queue );
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'c', 4 );
+    rocketnet_server_gso_worker_buffer( queue )->dropped_size = 1;
 
     // after stop main takes nothing, and nothing is counted while the
     // worker still runs
 
     rocketnet_server_gso_stop( gso );
     rocketnet_server_gso_receive_packets( gso );
-    valid = valid && gso->process_packets.num_packets == 0 && queue->main_cursor == 1;
+    valid = valid && gso->process_packets.num_packets == 0 && queue->receive_handoff.tail_cursor == 1;
     valid = valid && !rocketnet_server_gso_stopped( gso );
     rocketnet_server_gso_receive_drop_totals( gso, totals );
     valid = valid && totals[ROCKETNET_RECEIVE_DROP_STOPPED] == 0;
 
-    // the worker exits: the tail, the ready bank and the worker's bank are
-    // counted, 2 + 2 + 4, with the worker bank's size drop folded
+    // the worker exits: the tail, main's unseen datagrams and the worker's
+    // uncommitted ones are counted, 2 + 2 + 4, with the worker buffer's size
+    // drop folded
 
     queue->stopped.store( true, std::memory_order_release );
     valid = valid && rocketnet_server_gso_stopped( gso );
@@ -3218,52 +3508,53 @@ bool rocketnet_server_gso_test_worker_handoff()
 
     bool valid = true;
 
-    // Receive: the worker publishes a filled buffer and takes the free one.
+    // Receive (proofs/tla/RNReceiveHandoff.tla): main and the worker start on
+    // buffer 0, so the worker's first commit moves it to the free buffer 1.
 
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'a', 2 );
-    valid = valid && rocketnet_server_gso_publish_receive( queue );
-    valid = valid && queue->ready_buffer == &queue->buffers[0] && queue->worker_buffer == &queue->buffers[2] &&
-            queue->free_buffer == NULL;
+    const struct rocketnet_receive_handoff_t * handoff = &queue->receive_handoff;
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'a', 2 );
+    valid = valid && rocketnet_server_gso_commit_receive( queue );
+    valid = valid && handoff->worker == 1 && handoff->main == 0 && handoff->free < 0 && handoff->tail == 2;
 
-    // While a ready buffer waits, the worker retains its next filled buffer.
+    // Main has not started on buffer 1: the worker keeps it and appends.
 
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'b', 1 );
-    valid = valid && !rocketnet_server_gso_publish_receive( queue );
-    valid = valid && queue->ready_buffer == &queue->buffers[0] && queue->worker_buffer == &queue->buffers[2];
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'b', 1 );
+    valid = valid && !rocketnet_server_gso_commit_receive( queue );
+    valid = valid && handoff->worker == 1;
 
-    // Main claims the ready buffer; its previous buffer becomes free.
+    // One call returns every committed datagram, oldest first: buffer 0,
+    // which the worker left, then buffer 1 up to its count. Buffer 2, main's
+    // finished tail, is freed.
 
     rocketnet_server_gso_receive_packets( gso );
-    valid = valid && gso->process_packets.num_packets == 2 &&
+    valid = valid && gso->process_packets.num_packets == 3 &&
             gso->process_packets.packet_data[0] == queue->buffers[0].packet_data[0] &&
-            queue->main_buffer == &queue->buffers[0] && queue->free_buffer == &queue->buffers[1] &&
-            gso->counter_packets_received == 2;
+            gso->process_packets.packet_data[2] == queue->buffers[1].packet_data[0] &&
+            handoff->tail == 0 && handoff->main == 1 && handoff->free == 2 && gso->counter_packets_received == 3;
 
-    // A retained tail stays in main's buffer: with one packet consumed, the
-    // next receive delivers the tail and claims nothing new.
+    // Main shares buffer 1 now: the worker appends past the committed count,
+    // so the slot main returned keeps its bytes, and its commit moves it to
+    // buffer 2.
 
-    queue->main_cursor = 1;
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'c', 1 );
+    valid = valid && rocketnet_server_gso_commit_receive( queue );
+    valid = valid && handoff->worker == 2 && queue->buffers[1].packet_data[0][0] == (uint8_t) 'b';
+
+    // A budget that ends inside a buffer keeps the rest for the next call,
+    // and the worker's buffer waits behind it, oldest first.
+
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'd', 2 );
+    valid = valid && !rocketnet_server_gso_commit_receive( queue );
     gso->process_packets.num_packets = 0;
-    rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
+    rocketnet_server_gso_receive_from_queue( gso, queue, 1 );
     valid = valid && gso->process_packets.num_packets == 1 &&
-            gso->process_packets.packet_data[0] == queue->buffers[0].packet_data[1] &&
-            queue->main_buffer == &queue->buffers[0] && queue->main_cursor == 2;
-
-    // Publishing while main holds that buffer lands in the ready slot only:
-    // the held buffer's packets and bytes are untouched.
-
-    valid = valid && rocketnet_server_gso_publish_receive( queue );
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'c', 1 );
-    valid = valid && !rocketnet_server_gso_publish_receive( queue );
-    valid = valid && queue->main_buffer == &queue->buffers[0] && queue->buffers[0].num_packets == 2 &&
-            queue->buffers[0].packet_data[0][0] == (uint8_t) 'a';
-
-    // Once the held buffer is exhausted, main claims the waiting buffer.
-
+            gso->process_packets.packet_data[0] == queue->buffers[1].packet_data[1] &&
+            handoff->tail == 1 && handoff->main == 2 && handoff->main_cursor == 0;
     gso->process_packets.num_packets = 0;
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
-    valid = valid && gso->process_packets.num_packets == 1 && queue->main_buffer == &queue->buffers[2] &&
-            queue->free_buffer == &queue->buffers[0] && gso->counter_packets_received == 3;
+    valid = valid && gso->process_packets.num_packets == 2 &&
+            gso->process_packets.packet_data[0] == queue->buffers[2].packet_data[0] &&
+            handoff->main_cursor == 2 && gso->counter_packets_received == 6;
 
     // Transmit: two publishes empty the free FIFO; the third retains the
     // producer bank instead of waiting or overwriting a bank in flight.
@@ -3402,6 +3693,100 @@ static int rocketnet_server_gso_test_source_receive( struct rocketnet_server_gso
     return count;
 }
 
+// SO_RXQ_OVFL: the kernel's count of the datagrams it dropped at the queue's
+// socket (a full receive buffer while the worker had stopped reading) rides
+// on the next datagram it delivers, cumulative and 32-bit. The drain counts
+// the rise since the last count it saw into the overflow tally
+// (GSO_RECEIVE_DROPPED_OVERFLOW), across a wrap, and banks the datagrams that
+// carried it.
+
+struct rocketnet_server_gso_test_overflow_source_t
+{
+    const uint32_t * counts; // each message's SO_RXQ_OVFL count; 0: no cmsg
+    int remaining;
+    int next;
+};
+
+static int rocketnet_server_gso_test_overflow_receive( struct rocketnet_server_gso_queue_t * queue, int vlen, void * user )
+{
+    struct rocketnet_server_gso_test_overflow_source_t * source = (struct rocketnet_server_gso_test_overflow_source_t *) user;
+    if ( source->remaining <= 0 )
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    const int count = source->remaining < vlen ? source->remaining : vlen;
+    for ( int i = 0; i < count; i++ )
+    {
+        struct msghdr * header = &queue->messages[i].msg_hdr;
+        header->msg_flags = 0;
+        header->msg_controllen = 0;
+        struct sockaddr_in in4;
+        memset( &in4, 0, sizeof( in4 ) );
+        in4.sin_family = AF_INET;
+        in4.sin_port = htons( 40000 );
+        in4.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        memset( &queue->names[i], 0, sizeof( queue->names[i] ) );
+        memcpy( &queue->names[i], &in4, sizeof( in4 ) );
+
+        const uint32_t drops = source->counts[source->next++];
+        if ( drops != 0 )
+        {
+            header->msg_control = queue->controls[i];
+            header->msg_controllen = CMSG_SPACE( sizeof( uint32_t ) );
+            struct cmsghdr * cmsg = CMSG_FIRSTHDR( header );
+            cmsg->cmsg_level = SOL_SOCKET;
+            cmsg->cmsg_type = SO_RXQ_OVFL;
+            cmsg->cmsg_len = CMSG_LEN( sizeof( uint32_t ) );
+            memcpy( CMSG_DATA( cmsg ), &drops, sizeof( drops ) );
+        }
+
+        memset( queue->scratch[i], 'v', (size_t) ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+        queue->messages[i].msg_len = (unsigned int) ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+    }
+    source->remaining -= count;
+    return count;
+}
+
+bool rocketnet_server_gso_test_socket_overflow_counted()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+    {
+        return false;
+    }
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
+
+    // 5 dropped; a message with no count; 5 again (nothing new); then the
+    // count wraps past 2^32 to 3
+    const uint32_t counts[] = { 5, 0, 5, 0xFFFFFFFEu, 3 };
+    struct rocketnet_server_gso_test_overflow_source_t source = { counts, 5, 0 };
+    gso->test_receive = rocketnet_server_gso_test_overflow_receive;
+    gso->test_receive_user = &source;
+
+    bool full = false;
+    const bool failed = rocketnet_server_gso_drain( queue, &full );
+
+    bool valid = !failed && !full && buffer->num_packets == 5 && buffer->dropped_overflow == ( 1ull << 32 ) + 3 && buffer->receive_errors == 0;
+
+    // the tally reaches the transport's GSO_RECEIVE_DROPPED_OVERFLOW count
+    // when the buffer's tallies are folded, here by the stop count (no worker
+    // ran, so stop is complete once both stopped flags are set)
+
+    gso->test_receive = NULL;
+    gso->test_receive_user = NULL;
+    rocketnet_server_gso_stop( gso );
+    queue->stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+    valid = valid && gso->counter_receive_dropped_overflow == ( 1ull << 32 ) + 3;
+
+    rocketnet_server_gso_test_destroy( gso );
+    return valid;
+}
+
 bool rocketnet_server_gso_test_drain_budget()
 {
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
@@ -3411,7 +3796,7 @@ bool rocketnet_server_gso_test_drain_budget()
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     gso->test_receive = rocketnet_server_gso_test_source_receive;
 
     bool valid = true;
@@ -3509,7 +3894,7 @@ bool rocketnet_server_gso_test_drain_prefilter()
     memcpy( gso->packet_filter, filter, sizeof( filter ) );
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     gso->test_receive = rocketnet_server_gso_test_datagram_receive;
 
     uint8_t keep_alive[ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES];
@@ -3563,9 +3948,9 @@ bool rocketnet_server_gso_test_drain_prefilter()
         valid = valid && totals[drop] == expect;
     }
 
-    // the transport's own counters fold the buffer once main claims it
+    // the transport's own counters fold the buffer once the worker has left it
 
-    valid = valid && rocketnet_server_gso_publish_receive( queue );
+    valid = valid && rocketnet_server_gso_commit_receive( queue );
     rocketnet_server_gso_receive_packets( gso );
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
@@ -3601,7 +3986,7 @@ bool rocketnet_server_gso_test_drain_room()
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     gso->test_receive = rocketnet_server_gso_test_source_receive;
 
     bool valid = true;
@@ -3658,8 +4043,8 @@ bool rocketnet_server_gso_test_drain_room()
 
 // The GRO cmsg faults reach the counters, on the fixture with the receive
 // seam: three datagrams whose UDP_GRO control was truncated are each one
-// fault and one datagram. The worker step drains and publishes them, main's
-// receive folds the bank, and GRO_CMSG_FAULTS reads 3, as io_uring's does.
+// fault and one datagram. The worker step drains and commits them, main's
+// receive folds the bank once the worker has left it, and GRO_CMSG_FAULTS reads 3, as io_uring's does.
 
 bool rocketnet_server_gso_test_gro_cmsg_faults()
 {
@@ -3679,7 +4064,7 @@ bool rocketnet_server_gso_test_gro_cmsg_faults()
     bool valid = true;
 
     valid = valid && !rocketnet_server_gso_worker_step( queue );
-    valid = valid && source.delivered == 3 && queue->ready_buffer != NULL;
+    valid = valid && source.delivered == 3 && queue->receive_handoff.committed[0] == 3;
 
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
 
@@ -3710,7 +4095,6 @@ bool rocketnet_server_gso_test_receive_backoff()
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
     gso->test_receive = rocketnet_server_gso_test_source_receive;
 
     bool valid = true;
@@ -3718,12 +4102,13 @@ bool rocketnet_server_gso_test_receive_backoff()
     struct rocketnet_server_gso_test_source_t source = { ROCKETNET_SERVER_GSO_TEST_VALID, 1000, 0, 0 };
     gso->test_receive_user = &source;
 
-    // A full worker buffer with a published bank main has not claimed and no
-    // free buffer cannot be published: every pass reads nothing, leaves the
-    // buffer as it is and asks the worker to sleep.
+    // A full worker buffer main has not started on cannot move: every pass
+    // reads nothing, leaves the buffer as it is and asks the worker to sleep.
+    // The worker is on buffer 1 and main on buffer 0, as after a first commit.
 
-    queue->ready_buffer = &queue->buffers[2];
-    queue->free_buffer = NULL;
+    queue->receive_handoff.worker = 1;
+    queue->receive_handoff.free = -1;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     buffer->num_packets = ROCKETNET_GSO_RECV_QUEUE_SIZE;
     buffer->dropped_size = 0;
     buffer->dropped_overflow = 0;
@@ -3739,23 +4124,24 @@ bool rocketnet_server_gso_test_receive_backoff()
     }
 
     valid = valid && waits == 1000 && source.delivered == 0 &&
-            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE && queue->ready_buffer == &queue->buffers[2];
+            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE && queue->receive_handoff.worker == 1;
 
-    // Main's claim frees a buffer: the next pass publishes the full buffer and
-    // does not back off, and the pass after it reads the waiting packets.
+    // Main's call starts on the full buffer and frees its finished tail: the
+    // next pass moves the worker to that buffer and does not back off, and
+    // the pass after it reads the waiting packets.
 
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
-    valid = valid && queue->main_buffer == &queue->buffers[2] && queue->free_buffer == &queue->buffers[1];
+    valid = valid && queue->receive_handoff.main == 1 && queue->receive_handoff.free == 2;
     valid = valid && !rocketnet_server_gso_worker_step( queue );
-    valid = valid && queue->ready_buffer == buffer && queue->worker_buffer == &queue->buffers[1];
+    valid = valid && queue->receive_handoff.worker == 2;
     valid = valid && !rocketnet_server_gso_worker_step( queue );
-    valid = valid && source.delivered == 1000 && queue->worker_buffer->num_packets == 1000;
+    valid = valid && source.delivered == 1000 && rocketnet_server_gso_worker_buffer( queue )->num_packets == 1000;
 
     // A failed receive backs off too, though the buffer is not full.
 
     rocketnet_server_gso_test_fail_receives( gso, 1, EIO );
     valid = valid && rocketnet_server_gso_worker_step( queue );
-    valid = valid && queue->worker_buffer->receive_errors == 1;
+    valid = valid && rocketnet_server_gso_worker_buffer( queue )->receive_errors == 1;
 
     gso->test_receive = NULL;
     gso->test_receive_user = NULL;

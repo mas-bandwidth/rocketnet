@@ -20,8 +20,21 @@
 #if ROCKETNET_DEV
 // Unit-library instrumentation only: each sequence visit during process_block.
 // Per thread, so independent endpoints on different threads never share it;
-// production and development libraries carry no such state.
-thread_local unsigned long long g_ack_visit_count = 0;
+// production and development libraries carry no such state. Static to this
+// file: tests read and clear it through the two functions below, never by an
+// extern thread_local, which can leave a weak initializer unresolved at
+// address 0 in optimized sanitizer builds (rocketnet_server_cookie_mac_count).
+static thread_local unsigned long long g_ack_visit_count = 0;
+
+unsigned long long rocketnet_ack_visit_count()
+{
+    return g_ack_visit_count;
+}
+
+void rocketnet_ack_visit_count_reset()
+{
+    g_ack_visit_count = 0;
+}
 #endif // #if ROCKETNET_DEV
 
 // -----------------------------------------

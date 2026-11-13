@@ -18,7 +18,13 @@
 #include <string.h>
 
 #if ROCKETNET_DEV
-thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
+static thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
+
+// the one way into the tally from another file (sdk/rocketnet_crypto_tally.h)
+struct rocketnet_crypto_tally_t * rocketnet_crypto_tally_this_thread( void )
+{
+    return &rocketnet_crypto_tally;
+}
 #endif // #if ROCKETNET_DEV
 
 // The packet header already carries the filter field a keyed check reads:

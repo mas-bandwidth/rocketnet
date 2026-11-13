@@ -27,8 +27,11 @@
 #include "rocketnet_uring_codec.h"
 
 #include <errno.h>
-#include <poll.h>
 #include <unistd.h>
+
+// the retry timer's timeout (ArmTimer), the same for every worker: the kernel
+// copies it when the timeout is submitted, and nothing writes it
+static struct __kernel_timespec rocketnet_uring_queue_worker_retry_timeout = { 0, (long long) ( ROCKETNET_URING_SEND_RETRY_SECONDS * 1000000000.0 ) };
 
 bool rocketnet_uring_queue_worker_init( struct rocketnet_uring_queue_worker_t * worker, const struct rocketnet_uring_queue_worker_config_t * config )
 {
@@ -48,15 +51,15 @@ bool rocketnet_uring_queue_worker_init( struct rocketnet_uring_queue_worker_t * 
     }
 
     worker->config = *config;
+    worker->shutdown.store( false, std::memory_order_relaxed );
     worker->quit.store( false, std::memory_order_relaxed );
     worker->seen = false;
     worker->blocked = false;
     worker->starved = false;
-    worker->poll_armed = false;
+    worker->timer_armed = false;
     worker->wake_armed = false;
     worker->cancelled_recv = false;
     worker->cancelled_wake = false;
-    worker->cancelled_poll = false;
     worker->in_kernel = 0;
     worker->cancels = 0;
     worker->agains = 0;
@@ -131,13 +134,14 @@ static bool rocketnet_uring_queue_worker_cancel( struct rocketnet_uring_queue_wo
     return true;
 }
 
-// RNUringQueueWorker.tla ReapOk, ReapAgain: a run's completion. -EAGAIN hands it
-// back; before the stop it blocks submits until a POLLOUT poll fires, after
-// it the run is retried at once and the answer counts toward the bound (a
-// socket that stays full fires no poll, so a poll must not hold the stop);
-// a segmented run its
-// destination refused comes back as one plain run per packet, and the
-// destination is remembered so its later runs leave plain
+// RNUringQueueWorker.tla ReapOk, ReapAgain: a run's completion. A full
+// answer (-EAGAIN, -EINTR, -ENOBUFS, -ENOMEM) hands it back and blocks
+// submits until the retry timer fires (ArmTimer, ReapTimer); after shutdown
+// the answer that starts a wait counts toward the bound, one a wait, not
+// each answer of the burst refused with it. A run done (sent or failed)
+// starts the count again: only a socket that stays full loses what waits. A
+// segmented run its destination refused comes back as one plain run per
+// packet, and the destination is remembered so its later runs leave plain
 // (proofs/tla/RNSegmentRefusal.tla Refuse).
 
 static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_worker_t * worker, uint32_t tag, int32_t res )
@@ -166,6 +170,13 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
         worker->refused.accepted = true;
     }
 
+    // ReapOk: complete has made a refused one-packet run failed, so a run
+    // done is any class but AGAIN and SPLIT
+    if ( worker->last_send_class == ROCKETNET_URING_QUEUE_SEND_CLASS_OK )
+    {
+        worker->agains = 0;
+    }
+
     if ( result == ROCKETNET_URING_QUEUE_SEND_REFUSED && packets > 1 )
     {
         const int slots = send->slots;
@@ -185,14 +196,11 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
     if ( result == ROCKETNET_URING_QUEUE_SEND_AGAIN )
     {
         rocketnet_uring_queue_worker_count( worker, ROCKETNET_URING_WORKER_COUNTER_SOCKET_FULL );
-        if ( !worker->seen )
-        {
-            worker->blocked = true;
-        }
-        else if ( worker->agains < worker->config.max_retry )
+        if ( !worker->blocked && worker->agains < worker->config.max_retry && worker->shutdown.load( std::memory_order_acquire ) )
         {
             worker->agains++;
         }
+        worker->blocked = true;
     }
 }
 
@@ -230,7 +238,15 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
             rocketnet_assert( cqe->res != -EAGAIN );
             if ( worker->wake_armed )
             {
+                // main's wake ends a wait until shutdown begins (it published);
+                // from then only the timer does, so each wait counted toward
+                // the bound is a whole retry period, however often main wakes
+                // the worker with its last disconnect batches
                 worker->wake_armed = false;
+                if ( !worker->shutdown.load( std::memory_order_acquire ) )
+                {
+                    worker->blocked = false;
+                }
             }
             else
             {
@@ -238,11 +254,11 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
             }
             break;
 
-        case ROCKETNET_URING_TAG_POLL:
-            // RNUringQueueWorker.tla ReapPoll
-            if ( worker->poll_armed )
+        case ROCKETNET_URING_TAG_TIMER:
+            // RNUringQueueWorker.tla ReapTimer: the wait is over (-ETIME)
+            if ( worker->timer_armed )
             {
-                worker->poll_armed = false;
+                worker->timer_armed = false;
                 worker->blocked = false;
             }
             else
@@ -253,7 +269,7 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
 
         case ROCKETNET_URING_TAG_CANCEL:
             // RNUringQueueWorker.tla ReapCancel: the completion of a cancel the
-            // worker submitted (CancelRecv, CancelWake, CancelPoll)
+            // worker submitted (CancelRecv, CancelWake)
             if ( worker->cancels > 0 )
             {
                 worker->cancels--;
@@ -270,11 +286,12 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
     }
 }
 
-// abandon: the stop seen and the socket full past the bound
+// abandon (RNUringQueueWorker.tla Abandoning): shutdown begun and the socket
+// full past the bound
 
 static bool rocketnet_uring_queue_worker_abandoning( const struct rocketnet_uring_queue_worker_t * worker )
 {
-    return worker->seen && worker->agains >= worker->config.max_retry;
+    return worker->agains >= worker->config.max_retry && worker->shutdown.load( std::memory_order_acquire );
 }
 
 // what the worker has in the kernel or waiting, the stop seen: RNUringQueueWorker.tla
@@ -282,7 +299,7 @@ static bool rocketnet_uring_queue_worker_abandoning( const struct rocketnet_urin
 
 static bool rocketnet_uring_queue_worker_drained( const struct rocketnet_uring_queue_worker_t * worker )
 {
-    return worker->in_kernel == 0 && !worker->wake_armed && !worker->poll_armed &&
+    return worker->in_kernel == 0 && !worker->wake_armed && !worker->timer_armed &&
            !rocketnet_uring_queue_worker_receive_armed( worker ) && rocketnet_uring_queue_send_held( worker->config.send, worker->config.queue_index ) < 0;
 }
 
@@ -338,10 +355,9 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
 
     if ( !worker->seen && worker->quit.load( std::memory_order_acquire ) )
     {
-        // from here -EAGAIN retries at once: no block, and the poll is
-        // cancelled (CancelPoll)
+        // from here the receive and the wake read are cancelled; a wait
+        // goes on until its timer fires
         worker->seen = true;
-        worker->blocked = false;
         if ( rocketnet_uring_queue_worker_has_receive( worker ) )
         {
             worker->config.receive.stop( worker->config.receive.context );
@@ -381,6 +397,8 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
 
     if ( held < 0 && rocketnet_uring_queue_send_claim( send, q ) >= 0 )
     {
+        // a new bank gets the bound's waits afresh (the gso worker's per-bank count)
+        worker->agains = 0;
         return ROCKETNET_URING_WORKER_STEP_CLAIM;
     }
 
@@ -405,18 +423,20 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
         }
     }
 
-    // RNUringQueueWorker.tla ArmPoll: the poll a -EAGAIN asked for before the
-    // stop (after it nothing blocks)
+    // RNUringQueueWorker.tla ArmTimer: the retry timer a full answer asked
+    // for, before the stop and after it. A timeout, never a POLLOUT poll: a
+    // socket reports room while the device queue behind it refuses
+    // (-ENOBUFS), and the poll would fire again and again
 
-    if ( worker->blocked && !worker->poll_armed && !worker->seen )
+    if ( worker->blocked && !worker->timer_armed )
     {
         struct io_uring_sqe * sqe = rocketnet_uring_queue_worker_sqe( worker );
         if ( sqe )
         {
-            io_uring_prep_poll_add( sqe, worker->config.fd, POLLOUT );
-            io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_POLL, q, 0 ) );
-            worker->poll_armed = true;
-            return ROCKETNET_URING_WORKER_STEP_ARM_POLL;
+            io_uring_prep_timeout( sqe, &rocketnet_uring_queue_worker_retry_timeout, 0, 0 );
+            io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_TIMER, q, 0 ) );
+            worker->timer_armed = true;
+            return ROCKETNET_URING_WORKER_STEP_ARM_TIMER;
         }
     }
 
@@ -453,7 +473,7 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
         return ROCKETNET_URING_WORKER_STEP_NONE;
     }
 
-    // RNUringQueueWorker.tla CancelRecv, CancelWake, CancelPoll
+    // RNUringQueueWorker.tla CancelRecv, CancelWake (the timer fires on its own)
 
     if ( rocketnet_uring_queue_worker_receive_armed( worker ) && !worker->cancelled_recv &&
          rocketnet_uring_queue_worker_cancel( worker, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, q, 0 ), ROCKETNET_URING_CANCEL_RECV ) )
@@ -467,13 +487,6 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
     {
         worker->cancelled_wake = true;
         return ROCKETNET_URING_WORKER_STEP_CANCEL_WAKE;
-    }
-
-    if ( worker->poll_armed && !worker->cancelled_poll &&
-         rocketnet_uring_queue_worker_cancel( worker, rocketnet_uring_tag( ROCKETNET_URING_TAG_POLL, q, 0 ), ROCKETNET_URING_CANCEL_POLL ) )
-    {
-        worker->cancelled_poll = true;
-        return ROCKETNET_URING_WORKER_STEP_CANCEL_POLL;
     }
 
     // RNUringQueueWorker.tla Exit (ExitRule "drained"): no completion ready, no
@@ -581,9 +594,17 @@ void rocketnet_uring_queue_worker_wake( struct rocketnet_uring_queue_worker_t * 
     (void) written;
 }
 
+void rocketnet_uring_queue_worker_begin_shutdown( struct rocketnet_uring_queue_worker_t * worker )
+{
+    rocketnet_assert( worker );
+    worker->shutdown.store( true, std::memory_order_release );
+    rocketnet_uring_queue_worker_wake( worker );
+}
+
 void rocketnet_uring_queue_worker_stop( struct rocketnet_uring_queue_worker_t * worker )
 {
     rocketnet_assert( worker );
+    worker->shutdown.store( true, std::memory_order_release );
     worker->quit.store( true, std::memory_order_release );
     rocketnet_uring_queue_worker_wake( worker );
 }
@@ -616,6 +637,11 @@ void rocketnet_uring_queue_worker_run( struct rocketnet_uring_queue_worker_t * w
 }
 
 void rocketnet_uring_queue_worker_wake( struct rocketnet_uring_queue_worker_t * worker )
+{
+    (void) worker;
+}
+
+void rocketnet_uring_queue_worker_begin_shutdown( struct rocketnet_uring_queue_worker_t * worker )
 {
     (void) worker;
 }

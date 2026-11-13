@@ -61,9 +61,11 @@ struct rocketnet_server_gso_t;
 // receive staging per queue per buffer: twice the send staging, gso's own
 // size (the shared per-update receive budget does not size it). One update
 // takes at most that budget from the queues into the process array; the rest
-// waits in the queue buffers, so a single flooded queue fills its pair
-// between drains and drops counted -- correct behaviour under flood, ample
-// at design load where the reuseport hash spreads flows
+// waits in the queue buffers. A single flooded queue fills its buffers
+// between drains; its worker then stops reading and the kernel drops at the
+// queue's socket, counted from SO_RXQ_OVFL in GSO_RECEIVE_DROPPED_OVERFLOW --
+// correct behaviour under flood, ample at design load where the reuseport
+// hash spreads flows
 
 #define ROCKETNET_GSO_RECV_QUEUE_SIZE                                    32768
 
@@ -390,6 +392,8 @@ void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gs
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
 // Observe publication without consuming it; returns false on lock contention.
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
+// The count the worker last committed in the buffer it fills; -1 on lock contention.
+int rocketnet_server_gso_test_receive_committed( struct rocketnet_server_gso_t * gso, int queue_index );
 // Main thread: no staged packet, no ready bank, no bank held by a queue worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
@@ -397,6 +401,9 @@ bool rocketnet_server_gso_test_worker_handoff();
 // StopCount: what is still banked at stop is counted RECEIVE_DROP_STOPPED
 // once every worker has exited, and main takes nothing after stop.
 bool rocketnet_server_gso_test_stop_counts_unreceived();
+// The receive delivery check (sdk/rocketnet_receive_delivery_check.h): every
+// receive call returns every datagram a worker pass banked before it began.
+bool rocketnet_server_gso_test_receive_delivery();
 // A refused sendmmsg: an errno other than a full socket's drops the one
 // refused message and sends the rest.
 bool rocketnet_server_gso_test_send_refusals();
@@ -413,6 +420,7 @@ bool rocketnet_server_gso_test_send_retry_quit();
 bool rocketnet_server_gso_test_send_queues();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
+bool rocketnet_server_gso_test_socket_overflow_counted();
 bool rocketnet_server_gso_test_drain_room();
 // Receives whose UDP_GRO control is truncated reach the GRO_CMSG_FAULTS
 // counter once each, through the drain, the publish and main's fold.
@@ -456,6 +464,41 @@ struct rocketnet_server_gso_test_send_lane_t
 };
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open_slots( int num_queues, int send_slots );
 
+// The receive handoff's trace seams (tests/tla_trace_receive_handoff.cpp,
+// proofs/tla/RNReceiveHandoff.tla), on queue 0 of a test_open fixture.
+// test_receive_bank appends count datagrams to the worker's buffer, each
+// carrying its id (first, first + 1, ...) in its first four bytes, as a
+// worker pass stages them; false when the buffer has no room for them all.
+// test_receive_end_pass ends the pass as the worker does (it commits a buffer
+// with results); true when the worker moved or had nothing to commit.
+// test_receive_call is one rocketnet_server_gso_receive_packets with the
+// per-update budget cut to budget, and with the receive mutex held by the
+// caller's side when busy, so main's try-acquire fails; it returns how many
+// datagrams the call gave and their first id in *first, or -1 when their ids
+// are not consecutive. test_receive_state reads the handoff as the queue
+// holds it.
+struct rocketnet_server_gso_test_receive_state_t
+{
+    int worker;
+    int main;
+    int tail;
+    int free;
+    uint32_t committed[3];
+    uint32_t main_cursor;
+    uint32_t main_limit;
+    uint32_t tail_cursor;
+    uint32_t tail_end;
+    uint32_t count[3];  // each buffer's num_packets
+    uint32_t first[3];  // the id of each buffer's first datagram, 0 when it holds none
+    bool consecutive;   // every buffer's ids run on from its first
+    uint64_t lock_busy; // the queue's receive_lock_busy
+    int capacity;       // the per-update budget of a call that cuts none
+};
+bool rocketnet_server_gso_test_receive_bank( struct rocketnet_server_gso_t * gso, uint32_t first, int count );
+bool rocketnet_server_gso_test_receive_end_pass( struct rocketnet_server_gso_t * gso );
+int rocketnet_server_gso_test_receive_call( struct rocketnet_server_gso_t * gso, int budget, bool busy, uint32_t * first );
+void rocketnet_server_gso_test_receive_state( struct rocketnet_server_gso_t * gso, struct rocketnet_server_gso_test_receive_state_t * state );
+
 // The bytes rocketnet_server_gso_test_open holds for num_queues queues (the
 // transport and each queue's send banks and receive buffers), for the
 // resident-set bound of a case that opens several (tests/suite_runner.h).
@@ -489,8 +532,9 @@ void rocketnet_server_gso_test_set_claim_hook( struct rocketnet_server_gso_t * g
 int rocketnet_server_gso_test_claim_losses( struct rocketnet_server_gso_t * gso );
 void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features );
 bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso );
-// Publish packets on one queue, each byte set to marker. false when a ready
-// buffer already waits, or the queue index or count is out of range.
+// Bank packets on one queue, each byte set to marker, and commit them. false
+// when the worker's buffer has no room for them (it is committed as it is),
+// or the queue index or count is out of range.
 bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 #endif // #if defined( __linux__ )
 #endif // #if ROCKETNET_DEV

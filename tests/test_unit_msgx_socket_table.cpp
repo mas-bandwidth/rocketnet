@@ -42,6 +42,14 @@ struct msgx_test_kernel_t
     int refused;
     int hooks;
     int hooked_fd;
+
+    // a holder's late step, run inside the sweep's close loop when late_fd is
+    // closed: it reports late_slot dead at late_generation and ends its pass
+    struct rocketnet_msgx_socket_table_t * late_table;
+    int late_fd;
+    int late_slot;
+    uint32_t late_generation;
+    int late_holder;
 };
 
 static int msgx_test_open( void * user, const struct rocketnet_address_t * address )
@@ -76,6 +84,13 @@ static void msgx_test_close( void * user, int fd )
     rocketnet_unit_check( kernel->open[fd] );
     kernel->open[fd] = false;
     kernel->closes++;
+    if ( kernel->late_table && fd == kernel->late_fd )
+    {
+        struct rocketnet_msgx_socket_table_t * table = kernel->late_table;
+        kernel->late_table = NULL;
+        rocketnet_msgx_socket_table_report_dead( table, kernel->late_slot, kernel->late_generation );
+        rocketnet_msgx_socket_table_holder_end( table, kernel->late_holder );
+    }
 }
 
 static void msgx_test_hook( void * user, int fd )
@@ -367,6 +382,76 @@ static void test_rocketnet_msgx_socket_table_dead_report()
     msgx_test_destroy( &test );
 }
 
+// a holder's report about the generation a slot is freed at, landing after
+// the sweep's dead scan and before its close loop frees the slot, does not
+// stay in the slot: when the slot reopens and main reports the new socket
+// dead (its poller registration failed), the report is taken and the socket
+// retired, never left open and unpolled (RNMsgxSocketTable
+// MCRNMsgxSocketTableBrokenStaleReport.cfg)
+static void test_rocketnet_msgx_socket_table_stale_dead_report()
+{
+    struct msgx_test_t test = msgx_test_create( 2, 1, 4, 8 );
+    const struct rocketnet_address_t a = msgx_test_address( 1 );
+    const struct rocketnet_address_t b = msgx_test_address( 2 );
+    const struct rocketnet_address_t c = msgx_test_address( 3 );
+    rocketnet_msgx_socket_table_begin_update( test.table, 100 );
+
+    // b on slot 0, a on slot 1; b retired with every holder quiescent
+    rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &b ) );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &a ) );
+    const int slot_b = rocketnet_msgx_socket_table_lookup( test.table, &b );
+    const int slot = rocketnet_msgx_socket_table_lookup( test.table, &a );
+    rocketnet_unit_check( slot_b == 0 && slot == 1 );
+    const int fd_b = test.table->slots[slot_b].fd;
+    int retired_fd = -1;
+    rocketnet_unit_check( rocketnet_msgx_socket_table_forget( test.table, &b, &retired_fd ) );
+
+    // the holder resolves a's socket at generation 0 inside its pass, then
+    // main retires it (generation 1)
+    uint32_t generation = 99;
+    rocketnet_unit_check( rocketnet_msgx_socket_table_stamp( test.table, &a, &generation ) == slot );
+    rocketnet_unit_check( generation == 0 );
+    rocketnet_msgx_socket_table_holder_begin( test.table, 0 );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_resolve( test.table, slot, generation ) >= 0 );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_forget( test.table, &a, &retired_fd ) );
+
+    // the sweep's dead scan finds nothing; inside its close loop (b's close)
+    // the holder reports a's socket dead at generation 0 and ends its pass, so
+    // the same loop frees a's slot
+    test.kernel->late_table = test.table;
+    test.kernel->late_fd = fd_b;
+    test.kernel->late_slot = slot;
+    test.kernel->late_generation = generation;
+    test.kernel->late_holder = 0;
+    rocketnet_unit_check( rocketnet_msgx_socket_table_sweep( test.table, msgx_test_hook, test.kernel ) == 2 );
+    rocketnet_unit_check( test.kernel->late_table == NULL );
+    rocketnet_unit_check( test.table->slots[slot].state == ROCKETNET_MSGX_SLOT_FREE );
+    rocketnet_unit_check( test.table->slots[slot].dead_report.load() == 0 );
+
+    // the free stack is last in, first out: c reopens a's slot at generation 1
+    rocketnet_msgx_socket_table_begin_update( test.table, 101 );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &c ) );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &c ) == slot );
+    rocketnet_unit_check( test.table->slots[slot].generation == 1 );
+    const int fd_c = test.table->slots[slot].fd;
+
+    // the poller cannot watch c's socket: main reports it dead at once
+    rocketnet_msgx_socket_table_report_dead( test.table, slot, 1 );
+    rocketnet_unit_check( test.table->slots[slot].dead_report.load() == 2 );
+
+    // the next sweep retires it and cools c down
+    rocketnet_unit_check( rocketnet_msgx_socket_table_sweep( test.table, msgx_test_hook, test.kernel ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).retired_dead == 1 );
+    rocketnet_unit_check( test.kernel->hooks == 1 && test.kernel->hooked_fd == fd_c );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &c ) == -1 );
+    rocketnet_unit_check( test.table->slots[slot].state == ROCKETNET_MSGX_SLOT_FREE );
+    rocketnet_unit_check( !test.kernel->open[fd_c] );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &c ) );
+    rocketnet_unit_check( msgx_test_counts( test ).cooldown == 1 );
+
+    msgx_test_destroy( &test );
+}
+
 // past the update's open budget a mark is deferred (false, counted, nothing
 // opened); the next update opens it
 static void test_rocketnet_msgx_socket_table_open_budget()
@@ -593,6 +678,7 @@ REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_lifecycle );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_quarantine );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_stale_stamp );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_dead_report );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_stale_dead_report );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_open_budget );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_refused_and_full );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_index_reference );

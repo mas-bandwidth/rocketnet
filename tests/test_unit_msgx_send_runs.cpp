@@ -27,6 +27,7 @@
 
 #include "rocketnet_msgx_send_runs.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -284,7 +285,9 @@ static void test_rocketnet_msgx_send_runs_runs()
 static void test_rocketnet_msgx_send_runs_partial()
 {
     // the run [a x b c] with x aborted, batch 3: the send takes 2 (a, b), so
-    // the cursor stops at c, past exactly two live packets
+    // the cursor moves past exactly two live packets, to c. The socket took
+    // data, so the same call goes on at once with [c d] (review R124: a
+    // positive partial send made progress and is not a reason to wait)
     struct send_runs_test_t * test = new send_runs_test_t();
     send_runs_test_init( test, 1, 3 );
     send_runs_test_open( test, 0, 0 );
@@ -295,13 +298,10 @@ static void test_rocketnet_msgx_send_runs_partial()
     const int d = send_runs_test_stage( test, 1, 0, 0, 10 );
     send_runs_test_sort( test );
     send_runs_test_answer( test, 2 );
-    rocketnet_unit_check( !send_runs_test_send_bank( test ) );
-    rocketnet_unit_check( test->cursor == 3 );
-    rocketnet_unit_check( test->order[test->cursor] == c );
-    rocketnet_unit_check( test->counters.sent_connected == 2 );
-
-    // the kept bank resumes at c: [c d]
     rocketnet_unit_check( send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->cursor == test->count );
+    rocketnet_unit_check( test->sends == 2 );
+    rocketnet_unit_check( test->last_run_size == 2 && test->last_run[0] == c && test->last_run[1] == d );
     rocketnet_unit_check( test->num_wire == 4 );
     const int expected[] = { a, b, c, d };
     for ( int w = 0; w < 4; w++ )
@@ -311,6 +311,29 @@ static void test_rocketnet_msgx_send_runs_partial()
     rocketnet_unit_check( send_runs_test_times_on_wire( test, x ) == 0 );
     rocketnet_unit_check( test->counters.sent_connected == 4 );
     rocketnet_unit_check( test->counters.dropped == 0 );
+
+    // a partial send, then the socket full: the call is kept at the first
+    // packet not taken, and only that zero-progress answer ends it
+    send_runs_test_init( test, 1, 3 );
+    send_runs_test_open( test, 0, 0 );
+    send_runs_test_stage( test, 1, 0, 0, 10 );
+    send_runs_test_stage( test, 1, 0, 0, 10 );
+    const int g = send_runs_test_stage( test, 1, 0, 0, 10 );
+    const int h = send_runs_test_stage( test, 1, 0, 0, 10 );
+    send_runs_test_sort( test );
+    send_runs_test_answer( test, 1 );
+    send_runs_test_answer( test, 1 );
+    send_runs_test_answer( test, ROCKETNET_MSGX_SEND_FULL );
+    rocketnet_unit_check( !send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->sends == 3 );
+    rocketnet_unit_check( test->cursor == 2 && test->order[test->cursor] == g );
+    rocketnet_unit_check( test->counters.sent_connected == 2 );
+
+    // the kept bank resumes at g: [g h]
+    rocketnet_unit_check( send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->cursor == test->count );
+    rocketnet_unit_check( test->num_wire == 4 && test->wire[2].packet == g && test->wire[3].packet == h );
+    rocketnet_unit_check( test->counters.sent_connected == 4 && test->counters.dropped == 0 );
     delete test;
 }
 
@@ -369,6 +392,57 @@ static void test_rocketnet_msgx_send_runs_refused()
     rocketnet_unit_check( test->sends == 3 );
     rocketnet_unit_check( test->num_wire == 1 && test->wire[0].packet == other );
     rocketnet_unit_check( test->counters.refused == 1 && test->counters.dropped == 2 && test->counters.sent_connected == 1 );
+    delete test;
+}
+
+static void test_rocketnet_msgx_send_runs_error_kinds()
+{
+    // what a connected send's errno means for that one client's run
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EAGAIN ) == ROCKETNET_MSGX_SEND_FULL );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EWOULDBLOCK ) == ROCKETNET_MSGX_SEND_FULL );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( ENOBUFS ) == ROCKETNET_MSGX_SEND_FULL );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EINTR ) == ROCKETNET_MSGX_SEND_FULL );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( ECONNREFUSED ) == ROCKETNET_MSGX_SEND_REFUSED );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EHOSTUNREACH ) == ROCKETNET_MSGX_SEND_REFUSED );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( ENETUNREACH ) == ROCKETNET_MSGX_SEND_REFUSED );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( ENETDOWN ) == ROCKETNET_MSGX_SEND_REFUSED );
+#if defined( EHOSTDOWN )
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EHOSTDOWN ) == ROCKETNET_MSGX_SEND_REFUSED );
+#endif // #if defined( EHOSTDOWN )
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( ENOTCONN ) == ROCKETNET_MSGX_SEND_DEAD );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EPIPE ) == ROCKETNET_MSGX_SEND_DEAD );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EDESTADDRREQ ) == ROCKETNET_MSGX_SEND_DEAD );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EINVAL ) == ROCKETNET_MSGX_SEND_ERROR );
+    rocketnet_unit_check( rocketnet_msgx_send_error_kind( EMSGSIZE ) == ROCKETNET_MSGX_SEND_ERROR );
+
+    // a host unreachable queued on the client's socket answers one send of an
+    // eight-packet run: the run goes again and all eight leave, none dropped
+    struct send_runs_test_t * test = new send_runs_test_t();
+    send_runs_test_init( test, 1, 8 );
+    send_runs_test_open( test, 0, 0 );
+    for ( int i = 0; i < 8; i++ )
+    {
+        send_runs_test_stage( test, 1, 0, 0, 10 );
+    }
+    send_runs_test_sort( test );
+    send_runs_test_answer( test, rocketnet_msgx_send_error_kind( EHOSTUNREACH ) );
+    rocketnet_unit_check( send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->sends == 2 && test->num_wire == 8 );
+    rocketnet_unit_check( test->counters.refused == 1 && test->counters.sent_connected == 8 && test->counters.dropped == 0 );
+
+    // an interrupted send keeps the run for the next attempt: nothing dropped
+    send_runs_test_init( test, 1, 8 );
+    send_runs_test_open( test, 0, 0 );
+    for ( int i = 0; i < 8; i++ )
+    {
+        send_runs_test_stage( test, 1, 0, 0, 10 );
+    }
+    send_runs_test_sort( test );
+    send_runs_test_answer( test, rocketnet_msgx_send_error_kind( EINTR ) );
+    rocketnet_unit_check( !send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->cursor == 0 && test->num_wire == 0 && test->counters.dropped == 0 );
+    rocketnet_unit_check( send_runs_test_send_bank( test ) );
+    rocketnet_unit_check( test->num_wire == 8 && test->counters.sent_connected == 8 && test->counters.dropped == 0 );
     delete test;
 }
 
@@ -658,6 +732,7 @@ REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_runs );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_partial );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_kept );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_refused );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_error_kinds );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_error );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_dead );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_retired );
