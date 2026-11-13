@@ -604,6 +604,10 @@ uint64_t rocketnet_server_transport_send_reserve_for_test( const struct rocketne
 void rocketnet_server_transport_set_keep_alive_acked_for_test( struct rocketnet_server_transport_t * server_transport, int client_index, int acked );
 /** @brief The own frames (RNSendReserve) the open fill phase has not yet given out, for a test. */
 uint64_t rocketnet_server_transport_fill_own_frames_for_test( const struct rocketnet_server_transport_t * server_transport );
+/** @brief A send queue's claims on its budget, for a unit test (RNSendReserve); add claims as if other threads held them (wrapping: a negative delta as its two's complement); take claims back, as another thread would, between the next claim's refusal and its retest. */
+uint64_t rocketnet_server_transport_fill_claims_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims );
+void rocketnet_server_transport_retest_take_back_for_test( struct rocketnet_server_transport_t * server_transport, uint64_t claims );
 #endif // #if ROCKETNET_DEV
 
 // a NULL client_transport is a counted no-op that returns 0

@@ -376,6 +376,9 @@ struct rocketnet_server_transport_t
     // client's one filler (rocketnet_fill_phase.h, one filler per client).
     uint8_t fill_own_frame[ROCKETNET_MAX_CLIENTS] = {};
     uint64_t fill_own_frames_left = 0;                      // own frames not yet taken this phase (atomic on the fill threads)
+#if ROCKETNET_DEV
+    uint64_t retest_take_back_for_test = 0;                 // claims taken back, as by another thread, between a claim's refusal and its retest
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_payloads_t payloads;
     // payloads.capacity slots of ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES, plus 8:
@@ -1033,14 +1036,33 @@ static uint64_t rocketnet_server_transport_refresh_fill_budget( struct rocketnet
     return rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] );
 }
 
-// proofs/tla/RNSendReserve.tla OwnClaim, Claim, Check, Read1-3: a client's
-// first frame this phase takes its own reserved frame when it has one;
-// otherwise one atomic add on the queue's claims, granted below the budget.
+// proofs/tla/RNSendReserve.tla Claim, Check, Read1-3, Decide, Refuse,
+// TakeBack: one atomic add on the queue's claims, granted below the budget.
 // At or past it the budget is raised to what the queue's state allows now,
 // and the claims outstanding, this one among them, are tested against it:
 // not this claim's index, which a refused claim ahead of it has raised
-// (witness IndexTest). Still past it, the claim is refused, counted and
-// taken back. Returns the queue (with *own set for an own frame), or -1
+// (witness IndexTest). Still past it, the claim is taken back and false.
+static bool rocketnet_server_transport_claim_frame( struct rocketnet_server_transport_t * server_transport, int queue )
+{
+    const uint64_t claim = rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], 1 );
+    if ( claim < rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] ) )
+    {
+        return true;
+    }
+    const uint64_t budget = rocketnet_server_transport_refresh_fill_budget( server_transport, queue );
+    if ( rocketnet_server_transport_load_u64( &server_transport->fill_claims[queue] ) <= budget )
+    {
+        return true;
+    }
+    rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], UINT64_MAX );
+    return false;
+}
+
+// proofs/tla/RNSendReserve.tla OwnClaim, Claim, Check, Read1-3, Decide,
+// Refuse, TakeBack, Retest: a client's first frame this phase takes its own
+// reserved frame when it has one; otherwise it claims one frame of its
+// queue's budget. A claim still past the raised budget is refused and
+// counted. Returns the queue (with *own set for an own frame), or -1
 // refused.
 static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transport_t * server_transport, int client_index, const rocketnet_address_t * to, bool * own )
 {
@@ -1055,18 +1077,35 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
     }
 
     *own = false;
-    const uint64_t claim = rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], 1 );
-    if ( claim < rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] ) )
+
+    // TakeBack, Retest: a claim refused was taken back inside claim_frame;
+    // the test that refused it may have counted another thread's claim that
+    // has since been taken back too, so the claims and the budget are read
+    // again and a frame now under the budget is claimed again. Without the
+    // retest two threads refused by each other's claims are both refused
+    // with a frame left (witness NoRetry). A pass comes back only when
+    // another thread took a claim back, or the budget rose, between this
+    // claim's test and its retest.
+    for ( ;; )
     {
-        return queue;
-    }
-    const uint64_t budget = rocketnet_server_transport_refresh_fill_budget( server_transport, queue );
-    if ( rocketnet_server_transport_load_u64( &server_transport->fill_claims[queue] ) <= budget )
-    {
-        return queue;
+        if ( rocketnet_server_transport_claim_frame( server_transport, queue ) )
+        {
+            return queue;
+        }
+#if ROCKETNET_DEV
+        if ( server_transport->retest_take_back_for_test > 0 )
+        {
+            rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], 0 - server_transport->retest_take_back_for_test );
+            server_transport->retest_take_back_for_test = 0;
+        }
+#endif // #if ROCKETNET_DEV
+        const uint64_t claims_now = rocketnet_server_transport_load_u64( &server_transport->fill_claims[queue] );
+        if ( claims_now + 1 > rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] ) )
+        {
+            break;
+        }
     }
 
-    rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], UINT64_MAX );
     rocketnet_spam( "server start packet refused. send room is down to the protocol reserve" );
     rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED], 1 );
     return -1;
@@ -1094,9 +1133,16 @@ static void rocketnet_server_transport_fill_refused( struct rocketnet_server_tra
 }
 
 // A refused start with room left refused that one frame; without room, or
-// from a transport that does not report it, it is a full staging.
-static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_transport_t * server_transport )
+// from a transport that does not report it, it is a full staging. With
+// several send queues the room that matters is the destination's queue: a
+// start refused because its queue is full while another has room is a full
+// staging, not a refusal of the frame. NULL to asks the whole room.
+static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_transport_t * server_transport, const rocketnet_address_t * to )
 {
+    if ( to && server_transport->send_queues > 1 )
+    {
+        return rocketnet_server_transport_queue_room( server_transport, rocketnet_server_transport_send_queue_of( server_transport, to ) ) <= 0;
+    }
     return !server_transport->io.operations || !server_transport->io.operations->send_room ||
            server_transport->io.operations->send_room( server_transport->io.instance ) <= 0;
 }
@@ -1153,13 +1199,13 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 // cannot carry), which the transport counts in its own send_failures,
 // SEND_FAILED. None is ever sent or counted as sent. An uncounted start (the
 // receive path's response frame) is counted by its caller.
-static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, uint64_t id )
+static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t id )
 {
     if ( id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
     {
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
     }
-    else if ( rocketnet_server_transport_io_refused_full( transport ) )
+    else if ( rocketnet_server_transport_io_refused_full( transport, to ) )
     {
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
     }
@@ -1171,7 +1217,7 @@ static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_tr
     uint8_t * frame = transport->io.operations->start_packet( transport->io.instance, to, id );
     if ( !frame && counted )
     {
-        rocketnet_server_transport_io_count_refused( transport, *id );
+        rocketnet_server_transport_io_count_refused( transport, to, *id );
     }
     return frame;
 }
@@ -1361,6 +1407,24 @@ uint64_t rocketnet_server_transport_fill_own_frames_for_test( const struct rocke
 {
     rocketnet_assert( server_transport );
     return rocketnet_server_transport_load_u64( &server_transport->fill_own_frames_left );
+}
+
+uint64_t rocketnet_server_transport_fill_claims_for_test( const struct rocketnet_server_transport_t * server_transport, int queue )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    return rocketnet_server_transport_load_u64( &server_transport->fill_claims[queue] );
+}
+
+void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    server_transport->fill_claims[queue] += claims;
+}
+
+void rocketnet_server_transport_retest_take_back_for_test( struct rocketnet_server_transport_t * server_transport, uint64_t claims )
+{
+    rocketnet_assert( server_transport );
+    server_transport->retest_take_back_for_test = claims;
 }
 
 // See rocketnet_dev_fail_disconnect_sealed_writes in rocketnet_test_seams.h.
@@ -3109,7 +3173,7 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
         {
             if ( server_transport->disconnect_bursts[server_transport->disconnect_burst_head].sealed < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
             {
-                rocketnet_server_transport_io_count_refused( server_transport, 0 );
+                rocketnet_server_transport_io_count_refused( server_transport, &server_transport->disconnect_bursts[server_transport->disconnect_burst_head].to, 0 );
             }
             sodium_memzero( server_transport->disconnect_burst_keys[server_transport->disconnect_burst_head], ROCKETNET_KEY_BYTES );
             server_transport->disconnect_burst_head = ( server_transport->disconnect_burst_head + 1 ) % server_transport->disconnect_burst_capacity;
@@ -3427,7 +3491,7 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     }
     else if ( response_bytes > 0 )
     {
-        rocketnet_server_transport_io_count_refused( server_transport, frame.packet_id );
+        rocketnet_server_transport_io_count_refused( server_transport, from, frame.packet_id );
     }
 
     if ( payload_slot_free && payload && payload_bytes > 0 )
@@ -4491,7 +4555,7 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         {
             // a full staging: the burst waits for the next update or stop step
 
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport ) )
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, &burst->to ) )
             {
                 break;
             }
@@ -4635,14 +4699,19 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     // proofs/tla/ServerSession.tla DisconnectAll and SealWaiting, and
     // proofs/tla/ServerStopSpread.tla Kick and Stop: the slot ends now; its
     // burst is sealed now only while this update's allowance and the
-    // transport's send room hold the whole burst and no earlier burst waits,
+    // transport's send room (with several send queues, the room of the
+    // queue its address stages in too) hold the whole burst and no earlier
+    // burst waits,
     // else it waits in the ring for the following updates. A running server
     // keeps at most max_clients waiting; the stop's bursts always
     // wait, in the half of the ring kept for them, for the stop steps.
 
     if ( shutdown || server_transport->disconnect_burst_count > 0 ||
          server_transport->disconnect_seals_left < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ||
-         rocketnet_server_transport_io_send_room( server_transport ) < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
+         rocketnet_server_transport_io_send_room( server_transport ) < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ||
+         ( server_transport->send_queues > 1 &&
+           rocketnet_server_transport_queue_room( server_transport, rocketnet_server_transport_send_queue_of( server_transport, &client_address ) ) <
+               ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) )
     {
         if ( shutdown || server_transport->disconnect_burst_count < server_transport->disconnect_burst_steady_cap )
         {
