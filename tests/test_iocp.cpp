@@ -2767,6 +2767,20 @@ static void test_iocp_endpoints_share_by_processor()
     rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 4, ROCKETNET_DEFAULT_MAX_CLIENTS );
     CHECK( transport && bind.port != 0 );
 
+    // every worker answered where it runs, and on this host pinned
+    int pinned = 0;
+    for ( int w = 0; w < 4; ++w )
+    {
+        uint64_t mask = 0;
+        int group = -1;
+        unsigned long error = 0;
+        const int placement = rocketnet_server_iocp_worker_placement( transport, w, &mask, &group, &error );
+        CHECK( placement != ROCKETNET_IOCP_PLACEMENT_PENDING );
+        pinned += placement == ROCKETNET_IOCP_PLACEMENT_PINNED && mask != 0 && group >= 0 ? 1 : 0;
+    }
+    CHECK( pinned == 4 );
+    CHECK( rocketnet_server_iocp_worker_placement( transport, 4, NULL, NULL, NULL ) == ROCKETNET_IOCP_PLACEMENT_PENDING );
+
     // the probe: a second create at the port the first holds is refused
     rocketnet_address_t again = bind;
     CHECK( !rocketnet_server_iocp_create( NULL, &again, 2, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
@@ -2815,7 +2829,7 @@ static void test_iocp_endpoints_share_by_processor()
         }
         rocketnet_platform_sleep( 0.001 );
     }
-    printf( "test_iocp_endpoints_share_by_processor workers=4 received=%d of %d in_order=%d thief_bound=%d\n", received, num_clients * per_client, in_order ? 1 : 0,
+    printf( "test_iocp_endpoints_share_by_processor workers=4 pinned=%d received=%d of %d in_order=%d thief_bound=%d\n", pinned, received, num_clients * per_client, in_order ? 1 : 0,
             stolen ? 1 : 0 );
     CHECK( received == num_clients * per_client );
     CHECK( in_order );

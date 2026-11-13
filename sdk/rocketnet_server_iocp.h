@@ -241,6 +241,19 @@ int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
 // The ROCKETNET_IOCP_FEATURE_* bits in use now. USO clears itself when a live
 // segmented send is refused.
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
+// where a completion worker runs, as the worker found it: PINNED to *mask in
+// *group, NOT_ASKED (one worker, or the development knob "none"), REFUSED
+// (SetThreadGroupAffinity failed; *error is its Win32 error) or PENDING (not
+// reached yet, or no such worker). Create waits for every worker's answer
+// and logs it; a start can read it here.
+enum
+{
+    ROCKETNET_IOCP_PLACEMENT_PENDING = 0,
+    ROCKETNET_IOCP_PLACEMENT_PINNED = 1,
+    ROCKETNET_IOCP_PLACEMENT_NOT_ASKED = 2,
+    ROCKETNET_IOCP_PLACEMENT_REFUSED = 3,
+};
+int rocketnet_server_iocp_worker_placement( rocketnet_server_iocp_t * iocp, int worker, uint64_t * mask, int * group, unsigned long * error );
 
 #if ROCKETNET_DEV
 // A development test control: flags every later create ORs into its own (the
