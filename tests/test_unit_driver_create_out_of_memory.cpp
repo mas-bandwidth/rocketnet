@@ -13,8 +13,11 @@
 //     at each with nothing live, and a create that refuses without a failed
 //     allocation leaves the status untouched;
 //   * test_transport_create_server_order_stops_on_out_of_memory: the loopback
-//     transport under rocketnet_server_transport_create_internal, pinned and as the
-//     first of two candidates;
+//     transport under rocketnet_server_transport_create_internal, pinned as
+//     the one candidate. A list that fell through to the next candidate on a
+//     failed allocation would end NO_TRANSPORT_FOUND here, not OUT_OF_MEMORY;
+//     a second candidate is not walked, since every other transport would
+//     open a socket;
 //   * test_transport_create_client_order_stops_on_out_of_memory: the same for
 //     rocketnet_client_transport_create_internal;
 //   * test_platform_init_survives_a_refusing_allocator: rocketnet_init_internal under an
