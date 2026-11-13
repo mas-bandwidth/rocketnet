@@ -13,7 +13,8 @@ One parameterized module covers every shape the code uses:
 
 | Instance | Code | Free queue | Ready | Consumer | Init |
 |---|---|---|---|---|---|
-| `MCRNBankFifoLayout.cfg` | `portable_rx_publish`, `portable_rx_acquire`, `portable_tx_publish`, `portable_tx_worker` (`sdk/rocketnet_driver_builtin.cpp`); `rocketnet_server_gso_publish_send`, `rocketnet_server_gso_take_send`, `rocketnet_server_gso_return_send` (`sdk/rocketnet_server_gso_linux.cpp`) | FIFO of 3 | FIFO of 3 | one bank | literal `{ 1, 2, 0 }` |
+| `MCRNBankFifoLayout.cfg` | `portable_rx_publish`, `portable_rx_acquire`, `portable_tx_publish`, `portable_tx_worker` (`sdk/rocketnet_driver_builtin.cpp`) | FIFO of 3 | FIFO of 3 | one bank | literal `{ 1, 2, 0 }` |
+| `MCRNBankFifoLayoutGsoStop.cfg` | `rocketnet_server_gso_publish_send`, `rocketnet_server_gso_take_send`, `rocketnet_server_gso_return_send` (`sdk/rocketnet_server_gso_linux.cpp`), with the stop's final transfer of the producer (`StopKind = "code"`) | FIFO of 3 | FIFO of 3 | one bank | literal `{ 1, 2, 0 }` |
 | `MCRNBankFifoLayoutLoopFour.cfg` | `rocketnet_xdp_buffer_exchange_t` (`sdk/rocketnet_server_socket_linux.cpp`), `rocketnet_buffer_handoff_t` (`sdk/rocketnet_buffer_handoff.h`) | FIFO of 4 | FIFO of 4 | one bank | loop |
 | `MCRNBankFifoLayoutHandoff.cfg` | `rocketnet_buffer_handoff_publish` with `max_ready` 1 | FIFO of 3 | FIFO of 3, at most 1 | one buffer | loop |
 | `MCRNBankFifoLayoutHandoffMaxReadyAll.cfg` | the same with `max_ready` = N, which its assert refuses | FIFO of 3 | FIFO of 3 | one buffer | loop |
@@ -33,6 +34,7 @@ One parameterized module covers every shape the code uses:
 | `ArrLen` | the arrays' length: N, except the iocp client's `ROCKETNET_CLIENT_IOCP_RECEIVES` |
 | `oob` | a position outside an array was read or written; every action stops |
 | `absReady` | ghost: the banks published and not yet taken, in order |
+| `finalTaken` | the gso worker took the producer at stop (`take_send`'s `*final`); the producer is then -1 (`NoBank`) |
 
 A FIFO is a head and a count: the tail is `( head + count ) % N` (`TailMod`),
 a head advances `( head + 1 ) % N` (`HeadMod`). A stack is a count: push at
@@ -56,6 +58,15 @@ producer it is given; the model's producer is 0, where it is the loop.
   advancing modulo N. `portable_rx_acquire`, `portable_tx_worker`,
   `rocketnet_server_gso_take_send`, `claim`, `rocketnet_buffer_handoff_take`,
   `rocketnet_iocp_send_worker` and `rocketnet_client_iocp_receive_batch`.
+  Its second branch is `rocketnet_server_gso_take_send`'s final one (only
+  where `StopKind` is not `"none"`): holding no bank, with none ready and
+  `quit` stored, the worker takes the producer itself and the producer becomes
+  -1. The worker sends that bank and never returns it, so `Release` is off
+  from then on, and `Publish` is too (the code refuses from stop on:
+  `stopping`, and `producer < 0`). The model keeps no `quit` of its own: main
+  may publish until the take that observes it, which includes every order the
+  code allows (`rocketnet_server_gso_stop` sets `stopping` before it stores
+  `quit`, so the code stops publishing earlier).
 - **`Release`**: the consumer returns every bank it holds, in order, to the
   free tail (or the stack), or for the iocp client posts it again.
   `portable_rx_acquire`, `portable_tx_worker`, `rocketnet_server_gso_return_send`,
@@ -66,6 +77,15 @@ The code runs some of these together under one lock (`portable_rx_acquire`
 releases then takes). The model lets every action interleave, which includes
 those orders.
 
+A refused call changes nothing, so it has no action: it is a stuttering step
+of `Spec`, which no invariant can see. The refusals are a publish with no free
+bank or with `max_ready` banks ready (`Publish`'s guard), and in
+`rocketnet_server_gso_publish_send` also a contended lane mutex (the
+try-acquire) and a stopping transport; and a take with nothing ready and no
+`quit` (`TxTakeNone` in `RNGsoHandoff.tla`). What the worker does with a bank
+it holds (a full socket keeping its tail, the bounded retries after shutdown)
+changes no index here: the bank stays the consumer's until `Release`.
+
 ## Invariants
 
 - **`ExactlyOnePlace`**: read through the arrays, every bank is in exactly one
@@ -75,12 +95,16 @@ those orders.
   array, are the banks published and not yet taken, in publish order.
 - **`InBounds`**: no position outside an array is read or written.
 - **`CountsInRange`**: the free and ready counts stay in 0..N.
+- **`FinalLast`**: the stop's final producer goes to the worker only once every
+  published bank was taken: the worker's send side ends with that bank, so a
+  bank still ready then would never be sent.
 
 ## The instances
 
 Each control bounds the publishes (`MaxPub`, 2N + 2: every queue wraps at
-least twice) and is checked with every invariant. Terminal states are the
-harness's bound, so the deadlock check is off (`ignore-terminal`).
+least twice) and is checked with every invariant (`FinalLast` where there is a
+stop: `MCRNBankFifoLayoutGsoStop.cfg`). Terminal states are the harness's
+bound, so the deadlock check is off (`ignore-terminal`).
 
 `MCRNBankFifoLayoutHandoffMaxReadyAll.cfg` answers whether `max_ready == N`
 overflows the ready ring: it passes. The producer always holds one buffer, so
@@ -129,10 +153,25 @@ counterexample was checked against the C by hand.
    again, 0 and 2 complete; buffer 2 lands at `ready[( 1 + 2 ) % 4 = 3]`, and
    `rocketnet_client_iocp_receive_batch` reads positions 1, 2, 0: buffer 0
    twice, buffer 2 never. Fails `ReadyMatches`.
+7. **`MCRNBankFifoLayoutBrokenStopEarly.cfg`** (`StopKind = "early"`, the
+   final branch taken while banks are ready): publish bank 0 (producer 1,
+   ready 0); the worker, holding nothing, takes the producer, bank 1, as the
+   final bank while bank 0 is still ready. Its send side ends there and bank 0
+   is never sent. `rocketnet_server_gso_take_send` tests `ready_count > 0`
+   first and would take bank 0. Fails `FinalLast`.
+8. **`MCRNBankFifoLayoutBrokenPublishAfterStop.cfg`** (`StopKind =
+   "publishafter"`, a publish after the final take): the worker takes the
+   producer, bank 0, at once (nothing ready), leaving producer -1; main
+   publishes: bank 1 becomes the producer and `ready[0] = -1`. Without its
+   `stopping` and `producer < 0` tests, `rocketnet_server_gso_publish_send`
+   reads `banks[-1].num_packets` and writes `lane->ready[...] = old` with
+   `old` -1, a ready entry no bank stands behind. Fails `ExactlyOnePlace`
+   (four places for three banks).
 
 ## Findings
 
-No counterexample against the code's arithmetic. Two notes:
+No counterexample against the code's arithmetic, nor against the gso stop's
+final transfer (`MCRNBankFifoLayoutGsoStop.cfg`). Two notes:
 
 - The `{ 1, 2, 0 }` literals are right only at three banks, and nothing but
   the constant's value keeps them so (witness 4).

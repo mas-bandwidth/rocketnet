@@ -144,7 +144,8 @@ part at full size:
 
 | Config | Instance | What it holds |
 |---|---|---|
-| `MCRNMsgxSocketTable.cfg` | 2 slots, 2 addresses, 2 descriptors, TX holders {1, 2} and RX holder 3, one pass each, one packet, 2 opens | every holder against reuse of a slot and a descriptor |
+| `MCRNMsgxSocketTable.cfg` | 2 slots, 2 addresses, 2 descriptors, TX holders {1, 2} and RX holder 3, one pass each, one packet, 2 opens, no `BeginUpdate` | every holder against reuse of a slot and a descriptor |
+| `MCRNMsgxSocketTableUpdate.cfg` | the same with TX holder 1 and RX holder 2, and one `BeginUpdate` (with two TX holders and an update it is over the 110 s budget) | marks, forgets and sweeps after the update at the control's budget and cooldown |
 | `MCRNMsgxSocketTableLayout.cfg` | 3 slots, 4 addresses (homes 6, 7, 7, 0 of 8: collision and wrap), 3 descriptors, one other descriptor of the process, 2 opens per budget and two `BeginUpdate`s; every registration succeeds (`RegisterMayFail <- MCRegisterAlways`: refused registrations take it past the budget, and the other configs check them) | the index, free stack, EADDRINUSE and EMFILE, budget, counters |
 | `MCRNMsgxSocketTableQuarantine.cfg` | 3 slots, 3 addresses, 3 descriptors, TX holder 1 and RX holder 2, one pass each, 3 opens | the retired list compacted around kept entries |
 | `MCRNMsgxSocketTableDead.cfg` | 2 slots, 2 addresses, TX 1 and RX 2, ICMP, cooldown 1, 1 open per budget and one `BeginUpdate` | dead reports, stale reports, cooldown |

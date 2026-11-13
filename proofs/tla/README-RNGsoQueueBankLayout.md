@@ -21,8 +21,13 @@ producer turn-over in `rocketnet_server_gso_publish_send` share:
 - the turn-over at the frame boundary (`Flush`, send_packets with the game threads
   joined): a queue that staged anything hands its producer to its worker and
   takes a free bank, whose count the worker reset when it gave it back
-  (`WorkerReturn`); a queue with no free bank keeps its producer, and main
-  never waits.
+  (`WorkerReturn`). A queue keeps its producer when it has no free bank, and
+  also when `rocketnet_server_gso_publish_send`'s try-acquire of the lane mutex
+  fails (the worker holds it) or the transport is stopping: main never waits,
+  and the kept producer goes on filling in the next frame from its count. The
+  model lets any staged queue keep its producer at any flush. The stop's final
+  transfer of the producer to the worker is not here: it is
+  `RNBankFifoLayout.tla`'s `Take` (its second branch) and `RNGsoHandoff.tla`'s.
 
 The banks of every queue are laid out end to end, the worst case for a stray
 pointer: one byte before a bank lands inside its neighbour. The order of the
@@ -65,34 +70,40 @@ first finish or abort that writes another claim's slot.
 
 Each switch of the model is the code's in the controls; each witness changes
 one: `ClaimCmp` ("ge"), `ClaimRule` ("cas"), `SlotRule` ("check"), `IdRule`
-("mul"), `FlushRule` ("joined").
+("mul"), `FlushRule` ("joined"). `MCRNGsoQueueBankLayoutReachKeptProducer.cfg`
+is the control's instance with the reach predicate `NoKeptProducer`
+(`MCRNGsoQueueBankLayout.tla`), which must fail: a flush keeps a staged
+producer while free banks wait.
 
-## Results (bench-nyc-6, x86; pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-13, each case its own bounded run; RUNS.tsv)
+## Results (aws-mut-3, x86; pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-13, each case its own bounded run; RUNS.tsv)
 
-The model's move to the trace check's v2 record (`QueueOf` and `Skew` as
-definitions over the plain constants `Dests` and `SkewSpan`, `ClaimResult` as
-`Claim`'s argument) left every state count as it was before it.
+The kept producer at a flush with a free bank (MM141 of the 2026-11-13 models
+review) took the control from 7,285,611 states generated (1,323,990 distinct,
+bench-nyc-6) to the count below: at 86.7 s it is inside the 110 s per-case
+budget with less room than before.
 
 | cfg | expected | result | states generated (distinct) | seconds |
 |---|---|---|---|---|
-| MCRNGsoQueueBankLayout.cfg | pass | pass | 7,285,611 (1,323,990) | 29.6 |
+| MCRNGsoQueueBankLayout.cfg | pass | pass | 23,269,801 (4,664,902) | 86.7 |
 | MCRNGsoQueueBankLayoutFlush3.cfg | pass | timeout at the 110 s budget: FAIL, exit 124, declared bench debt | - | 110.2 |
-| MCRNGsoQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 6,817 (2,915) | 1.4 |
-| MCRNGsoQueueBankLayoutBrokenBlindStore.cfg | NoSharedSlot | NoSharedSlot violated | 69 (49) | 1.1 |
-| MCRNGsoQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 204 (118) | 1.2 |
-| MCRNGsoQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 204 (118) | 1.3 |
-| MCRNGsoQueueBankLayoutBrokenOpenFlush.cfg | NoWorkerWrite | NoWorkerWrite violated | 432 (259) | 1.0 |
+| MCRNGsoQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 9,622 (4,302) | 1.0 |
+| MCRNGsoQueueBankLayoutBrokenBlindStore.cfg | NoSharedSlot | NoSharedSlot violated | 69 (49) | 0.7 |
+| MCRNGsoQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 208 (122) | 0.7 |
+| MCRNGsoQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 208 (122) | 0.7 |
+| MCRNGsoQueueBankLayoutBrokenOpenFlush.cfg | NoWorkerWrite | NoWorkerWrite violated | 483 (265) | 0.8 |
+| MCRNGsoQueueBankLayoutReachKeptProducer.cfg | NoKeptProducer | NoKeptProducer violated | 92 (57) | 0.7 |
 | MCTraceRNGsoQueueBankLayoutSelf.cfg | pass | pass | 7 (6) | 0.7 |
-| MCTraceRNGsoQueueBankLayoutSelfBrokenTurn.cfg | TraceConsistent | TraceConsistent violated | 5 (5) | 0.8 |
+| MCTraceRNGsoQueueBankLayoutSelfBrokenTurn.cfg | TraceConsistent | TraceConsistent violated | 5 (5) | 0.7 |
 
 Deadlock is checked in every case (no cfg turns it off): `Done` stutters at the
 bound, and no other state is without a successor.
 
-The three-flush instance run to the end outside the record runner (the same
-bench, the pinned jar, 28 workers, deadlock checked): pass, 190,010,293 states
-generated, 32,245,891 distinct, depth 55, 1 min 47 s. With tlacheck's two
-workers it does not fit the 110 s per-case budget, so its record stays the
-bounded FAIL/124 of a `bench` case.
+The three-flush instance stays a `bench` case with declared debt. Before the
+kept producer it ran to the end outside the record runner (bench-nyc-6, the
+pinned jar, 28 workers, deadlock checked): pass, 190,010,293 states
+generated, 32,245,891 distinct, depth 55, 1 min 47 s; with the kept producer
+it has not been run to the end. With tlacheck's two workers it does not fit
+the 110 s per-case budget, so its record stays the bounded FAIL/124.
 
 ## The witnesses, as TLC printed them
 
@@ -112,6 +123,11 @@ Each was checked by hand against the broken rule.
   turns queue 0 over while the claim is in flight; bank 0 is now its worker's,
   and thread 2's claim writes slot 1 of it. The code turns over only in
   send_packets, after the game threads joined, and only onto a free bank.
+- **ReachKeptProducer** (the code's rules, a reach witness). Thread 1 claims
+  slot 0 of queue 0's producer, bank 0, and finishes; the flush keeps bank 0
+  as queue 0's producer although banks 1 and 2 are free (turn stays 0, count
+  stays 1), as `rocketnet_server_gso_publish_send` does when its try-acquire
+  fails; the next frame's starts claim from slot 1.
 
 ## The trace check
 
