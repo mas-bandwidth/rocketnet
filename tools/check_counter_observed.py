@@ -93,8 +93,6 @@ OWED = {
 # list names which transport's contribution is missing, is printed with every
 # verdict, and only shrinks as each transport counts at its site.
 OWED_TRANSPORT_FEEDS = {
-    ("ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL", "iocp"): "IOCP_RECEIVE_DROPPED counts a full bank together with size and failed receives; no tally of its own",
-    ("ROCKETNET_COUNTER_RECEIVE_FAILED", "iocp"): "IOCP_RECEIVE_DROPPED counts a failed or unreadable receive together with size and full-bank drops; no tally of its own",
 }
 
 
