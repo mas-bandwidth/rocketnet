@@ -15,7 +15,6 @@ EXTENDS TraceRNMsgxSocketTable, TLC
 
 Rec(op, act, args, st) == [op |-> op, act |-> act, args |-> args, state |-> st]
 F3(x, y, z) == [s \in 0..2 |-> CASE s = 0 -> x [] s = 1 -> y [] OTHER -> z]
-F2(x, y) == [e \in 0..1 |-> IF e = 0 THEN x ELSE y]
 H3(x, y, z) == [h \in 1..3 |-> CASE h = 1 -> x [] h = 2 -> y [] OTHER -> z]
 Z3 == H3(0, 0, 0)
 
@@ -23,7 +22,7 @@ V1 == [word |-> F3(<<0, 0>>, <<0, 0>>, <<0, 0>>), deadRep |-> F3(0, 0, 0), state
        fd |-> F3(-1, -1, -1), gen |-> F3(0, 0, 0), addr |-> F3(0, 0, 0), snap |-> F3(Z3, Z3, Z3),
        pass |-> Z3, deadReports |-> 0, freeSlots |-> F3(2, 1, 0), numFree |-> 3,
        retired |-> F3(0, 0, 0), numRetired |-> 0, numOpen |-> 0, index |-> << >>,
-       coolAddr |-> F2(0, 0), coolUntil |-> F2(0, 0),
+       coolAddr |-> << >>, coolUntil |-> << >>,
        counters |-> [c \in 0..7 |-> 0], update |-> 0, opensLeft |-> 1, mpc |-> "idle",
        ms |-> 0, mi |-> 0, mk |-> 0, kfd |-> F3(-1, -1, -1), kdead |-> F3(FALSE, FALSE, FALSE),
        poller |-> {}, pkts |-> << >>, cur |-> [h \in 1..2 |-> 0], rep |-> H3(<< >>, << >>, << >>),

@@ -263,9 +263,14 @@ static tla_record_t msgx_state( const msgx_walk_t & walk )
     std::vector<std::string> cool_keys, cool_addr, cool_until;
     for ( int e = 0; e < ROCKETNET_MSGX_TABLE_COOLDOWN_ENTRIES; e++ )
     {
-        cool_keys.push_back( tla_int( e ) );
-        cool_addr.push_back( tla_int( msgx_address_id( walk, &table->cooldown_address[e] ) ) );
-        cool_until.push_back( tla_int( (int64_t) table->cooldown_until[e] ) );
+        // the entries in use: the model's cooldown table is empty where the code holds zero
+        const int a = msgx_address_id( walk, &table->cooldown_address[e] );
+        if ( a != 0 || table->cooldown_until[e] != 0 )
+        {
+            cool_keys.push_back( tla_int( e ) );
+            cool_addr.push_back( tla_int( a ) );
+            cool_until.push_back( tla_int( (int64_t) table->cooldown_until[e] ) );
+        }
     }
 
     std::vector<std::string> counter_keys, counters;

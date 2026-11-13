@@ -100,7 +100,7 @@ VARIABLES
     retired, numRetired,    \* retired[], num_retired: oldest first, compacted by the sweep
     numOpen,
     index,          \* index[entry]: the slot, for each entry in use (an empty entry, -1 in the code, is outside the domain)
-    coolAddr, coolUntil,    \* cooldown_address[], cooldown_until[]
+    coolAddr, coolUntil,    \* cooldown_address[], cooldown_until[], for the entries in use (not zero) only
     counters,
     update, opensLeft,
     \* main's place inside a call (not code state: "idle" between calls)
@@ -149,7 +149,8 @@ LookupFrom(ix, ad, a, e, n) ==
 \* rocketnet_msgx_socket_table_lookup
 Lookup(a) == LookupFrom(index, addr, a, Home(a), 0)
 
-IxSet(ix, e, v) == [x \in DOMAIN ix \cup {e} |-> IF x = e THEN v ELSE ix[x]]
+\* a function with the value at e set, added to the domain if need be
+FnSet(f, e, v) == [x \in DOMAIN f \cup {e} |-> IF x = e THEN v ELSE f[x]]
 
 IxDel(ix, e) == [x \in DOMAIN ix \ {e} |-> ix[x]]
 
@@ -157,7 +158,7 @@ RECURSIVE EmptyFrom(_, _)
 EmptyFrom(ix, e) == IF e \notin DOMAIN ix THEN e ELSE EmptyFrom(ix, (e + 1) % IS)
 
 \* rocketnet_msgx_socket_table_index_insert, the slot's address being a
-IxInsert(ix, slot, a) == IxSet(ix, EmptyFrom(ix, Home(a)), slot)
+IxInsert(ix, slot, a) == FnSet(ix, EmptyFrom(ix, Home(a)), slot)
 
 RECURSIVE SlotFrom(_, _, _)
 SlotFrom(ix, slot, e) == IF ix[e] = slot THEN e ELSE SlotFrom(ix, slot, (e + 1) % IS)
@@ -172,7 +173,7 @@ Shift(ix, ad, hole, entry) ==
              inRange == IF hole <= next THEN home > hole /\ home <= next
                                         ELSE home > hole \/ home <= next
          IN IF inRange THEN Shift(ix, ad, hole, next)
-            ELSE Shift(IxSet(ix, hole, moving), ad, next, next)
+            ELSE Shift(FnSet(ix, hole, moving), ad, next, next)
 
 \* rocketnet_msgx_socket_table_index_remove
 IxRemove(ix, ad, slot) ==
@@ -228,8 +229,8 @@ Init ==
     /\ numRetired = 0
     /\ numOpen = 0
     /\ index = [e \in {} |-> 0]
-    /\ coolAddr = [e \in 0..(CoolEntries - 1) |-> 0]
-    /\ coolUntil = [e \in 0..(CoolEntries - 1) |-> 0]
+    /\ coolAddr = [e \in {} |-> 0]
+    /\ coolUntil = [e \in {} |-> 0]
     /\ counters = [c \in Counters |-> 0]
     /\ update = 0
     /\ opensLeft = Budget
@@ -262,7 +263,7 @@ Mark(a) ==
     /\ Idle
     /\ IF Lookup(a) >= 0 THEN UNCHANGED vars
        ELSE LET e == CoolOf(a) IN
-       IF coolUntil[e] > update /\ coolAddr[e] = a THEN
+       IF e \in DOMAIN coolUntil /\ coolUntil[e] > update /\ coolAddr[e] = a THEN
             /\ RefusedMarks
             /\ counters' = [counters EXCEPT ![C_COOLDOWN] = @ + 1]
             /\ UNCHANGED <<slotv, deadReports, freeSlots, numFree, retired, numRetired, numOpen, index,
@@ -414,8 +415,8 @@ RetireDeadF(R) ==
     IN IF r = 0 \/ R.state[s] # OPEN \/ r - 1 # R.gen[s]
           THEN NextDeadF(taken, s)
           ELSE RetireFirstF([taken EXCEPT
-                   !.coolAddr = [R.coolAddr EXCEPT ![CoolOf(R.addr[s])] = R.addr[s]],
-                   !.coolUntil = [R.coolUntil EXCEPT ![CoolOf(R.addr[s])] = update + Cooldown],
+                   !.coolAddr = FnSet(R.coolAddr, CoolOf(R.addr[s]), R.addr[s]),
+                   !.coolUntil = FnSet(R.coolUntil, CoolOf(R.addr[s]), update + Cooldown),
                    !.poller = {e \in R.poller : e[2] # s}], s, <<"ssnap", "sword">>)
 
 \* the close loop at retired[mi]: closed and freed once quiescent, else kept
@@ -714,7 +715,8 @@ TypeOK ==
     /\ retired \in [Slots -> Slots] /\ numRetired \in 0..Cap
     /\ numOpen \in 0..Cap
     /\ DOMAIN index \subseteq Entries /\ \A e \in DOMAIN index : index[e] \in Slots
-    /\ coolAddr \in [0..(CoolEntries - 1) -> {0} \cup Addrs]
+    /\ DOMAIN coolAddr \subseteq 0..(CoolEntries - 1) /\ DOMAIN coolUntil = DOMAIN coolAddr
+    /\ \A e \in DOMAIN coolAddr : coolAddr[e] \in {0} \cup Addrs
     /\ counters \in [Counters -> Nat]
     /\ mpc \in {"idle", "fsnap", "fword", "fdereg", "sdead", "ssnap", "sword", "sclose"}
     /\ kfd \in [Fds -> {KClosed, KEnv} \cup Addrs]
@@ -810,7 +812,7 @@ SafetyView ==
       [i \in Slots |-> IF i < numFree THEN freeSlots[i] ELSE -1], numFree,
       [i \in Slots |-> IF i < numRetired THEN retired[i] ELSE -1], numRetired,
       numOpen, index,
-      [e \in 0..(CoolEntries - 1) |-> IF coolUntil[e] > update THEN <<coolAddr[e], coolUntil[e] - update>> ELSE 0],
+      [e \in 0..(CoolEntries - 1) |-> IF e \in DOMAIN coolUntil /\ coolUntil[e] > update THEN <<coolAddr[e], coolUntil[e] - update>> ELSE 0],
       CounterView, update, opensLeft, mainv, kernv,
       [i \in 1..Len(pkts) |-> IF pkts[i].st \in {"queued", "resolved"} THEN pkts[i]
                                                                        ELSE [st |-> pkts[i].st, h |-> pkts[i].h]],
