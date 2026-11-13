@@ -67,12 +67,15 @@
 #   build-and-test          the suite on ubuntu and macos, in BOTH Debug and
 #                           Release. Release-only bugs are real: the assert
 #                           that fires in Debug is compiled out, and the
-#                           optimizer is a different compiler. The ubuntu
-#                           Release row runs as two parallel legs.
-#   build-and-test-windows  nightly: the build and the unit suite under MSVC,
+#                           optimizer is a different compiler. Every row
+#                           runs as four parallel jobs (unit, functional,
+#                           checks, builds; see EVERY ROW IS FOUR PARALLEL
+#                           JOBS below).
+#   build-and-test-windows  nightly: the build and the suites under MSVC,
 #                           Release, as three parallel legs. Per commit, happy
-#                           path / windows runs the build, the unit suite and
-#                           the happy path; Debug and functional are nightly.yml.
+#                           path / windows builds the whole tree under MSVC and
+#                           runs the happy path, and windows / Release / unit
+#                           runs the unit suite; Debug is nightly.yml.
 #   sanitizers              asan + ubsan over focused transport recovery,
 #                           lifecycle, driver, sodium and XDP controls; the
 #                           exhaustive functional suite is in nightly-leaks
@@ -320,7 +323,7 @@ jobs:
             fi
             exit "$missing"
           fi
-          for tool in cmake gcc g++ clang xxd pkg-config; do
+          for tool in cmake gcc g++ clang xxd pkg-config python3; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
@@ -1340,32 +1343,47 @@ jobs:
       - if: always()
         uses: ./.github/actions/ccache-stats
 
-  # The windows leg (#81's baseline doctrine): the portable driver built with
-  # MSVC — the first machine ever to compile the windows arm — and the full
-  # test suite run on the runner, Debug and Release. /fp:precise comes from
-  # CMakeLists.txt's MSVC branch, the family's floor per the -ffp-contract=off
-  # policy. Sodium is compiled from the pinned vendor with the same CRT; the
-  # multi-config generator puts binaries under bin/<config>. The #106
-  # config and driver tests run here too -- setenv/unsetenv are shimmed
-  # over _putenv_s in the test file, so the windows leg proves the env
-  # engine and the portable rung on the one platform whose only rung is
-  # portable -- EXCEPT the empty-value distinction, which windows cannot
-  # represent: its CRT has no set-but-empty variable, so that one case is
-  # not checked there. Tests windows does not build are not registered
-  # there, so they are neither run nor printed:
-  # the refused-destination and zero-length-chaff pump tests, whose
-  # raw-socket injector is posix-only, and the gso/xdp and msgx rung
-  # tests windows does not build.
+  # The windows legs (#81's baseline doctrine): the library built with MSVC
+  # and its suites run on the runner, in Release; MSVC Debug runs in leg (a)'s
+  # "Unit suite, MSVC Debug" step, in leg (c)'s dialog cases, and in
+  # nightly.yml's windows / Debug. /fp:precise comes from CMakeLists.txt's
+  # MSVC branch, the family's floor per the -ffp-contract=off policy. Sodium
+  # is compiled from the pinned vendor with the same CRT; the multi-config
+  # generator puts binaries under bin/<config>. Windows has three transports
+  # (sdk/rocketnet_drivers.inc): portable, iocp (server and client) and rio
+  # (server only). The #106 config and driver tests run here too --
+  # setenv/unsetenv are shimmed over _putenv_s in the test file, so the
+  # windows leg proves the env engine and the Windows rungs -- EXCEPT the
+  # empty-value distinction, which windows cannot represent: its CRT has no
+  # set-but-empty variable, so that one case is not checked there. Tests
+  # windows does not build are not registered there, so they are neither run
+  # nor printed: the refused-destination and zero-length-chaff pump tests,
+  # whose raw-socket injector is posix-only, and the gso/xdp and msgx rung
+  # tests.
   #
-  # RELEASE ONLY, IN TWO PARALLEL LEGS (2026-09-13).
+  # NIGHTLY, RELEASE, IN THREE PARALLEL LEGS. The job runs only in the
+  # nightly tier (inputs.full; NIGHTLY TIER below says why). Per commit,
+  # happy path / windows builds the whole tree under MSVC and runs the happy
+  # path, and windows / Release / unit runs the unit suite.
   #
-  # The Debug row moved to nightly.yml under the same name, and so did the
-  # out-of-tree driver backend check on THIS platform -- see below. Windows
-  # keeps Release on every commit because Release is what ships and what the
-  # optimizer rewrites.
+  #   (a)  the unit suite and sodium, the don't-fragment socket options, the
+  #        MSVC Debug unit suite, the committed XDP fallback source, the
+  #        public header, the lifecycle binary, memory plans
+  #   (b)  the production library (ROCKETNET_DEV=OFF): the committed sodium
+  #        pair, the library boundary, release hardening, C and C++ callers,
+  #        install and relocate the SDK, ambient config isolation, the native
+  #        driver contract, functional_production (auto ladder and portable
+  #        pin), the production Windows transports, the transport family
+  #        matrix
+  #   (c)  the failure cases that must exit without a dialog (Release and
+  #        Debug), and the functional suite
   #
-  # THE HISTORY IS WORTH KEEPING, because it is three measurements and each
-  # one ruled out a cheaper answer than the last:
+  # Legs (a) and (b) also replay the fuzz corpora and save their registered
+  # unit cases.
+  #
+  # THE HISTORY IS WORTH KEEPING (2026-09-13, when this job ran per commit),
+  # because it is three measurements and each one ruled out a cheaper answer
+  # than the last:
   #
   #   one row              174s.
   #   two legs             136s EACH, balanced to the second (52s and 51s of
@@ -1376,7 +1394,7 @@ jobs:
   #                        fourth leg with zero checks would still have landed
   #                        at 92s. Splitting had done all it could.
   #
-  # So the last cut is not a split. `tools/check_driver_extension.py` -- which
+  # So the last cut was not a split. `tools/check_driver_extension.py` -- which
   # configures and builds an out-of-tree backend against the installed SDK, a
   # second MSVC build inside a check, 42-48s of it -- moved to nightly.yml.
   # It is a CONTRACT CHECK ON A FIXED INPUT: it asks whether the driver
@@ -1385,30 +1403,12 @@ jobs:
   # a given commit is likely to trip.
   #
   # AND IT STILL GATES EVERY COMMIT, on Linux and macOS. Only the WINDOWS
-  # spelling went nightly, where it cost 42s on top of a 92s floor; the same
-  # script runs per commit in build-and-test's `Functional: native driver
-  # contract and external backend` step, 15s there. What waits until morning is
-  # specifically "does the out-of-tree backend still build under MSVC", and
-  # nothing else. That is a much smaller hole than moving the check itself.
+  # spelling went nightly; the same script runs per commit in
+  # build-and-test's `Functional: native driver contract and external
+  # backend` step. Here `Functional: native driver contract` keeps the two
+  # exes of that step; the python check is the thing that left.
   #
-  # With it gone the legs are ~67s of checks over a 71-92s floor, halved by
-  # measured duration:
-  #
-  #   (a)  ~32s  the suite and sodium (13s), the full suite over IOCP (14s;
-  #              moved to nightly.yml 2026-10-24, see leg (a) below),
-  #              IOCP allocation and shutdown, the committed XDP fallback
-  #              source, the serialization surface, memory plans
-  #   (b)  ~35s  the library boundary (10s), install and relocate the SDK
-  #              (12s), ambient config isolation (12s), the native driver
-  #              contract itself (test_transport; transport control is inside functional)
-  #
-  # `Functional: native driver contract and external backend` was ONE step
-  # running three commands. The two exes stay here as `Functional: native
-  # driver contract`; the python
-  # check is the thing that left. Same commands, same order, one of them on a
-  # different clock.
-  #
-  # BOTH LEGS RUN THE FULL `cmake --build` rather than only their own targets.
+  # EVERY LEG RUNS THE FULL `cmake --build` rather than only its own targets.
   # Narrowing it would buy each leg perhaps fifteen seconds and would cost
   # "everything in the tree compiles under MSVC", which is coverage, not
   # duplication -- the one thing this file's header says a gate may never
@@ -1420,22 +1420,6 @@ jobs:
   # Studio generator honours no compiler launcher, so the configure step
   # passes ROCKETNET_VS_CCACHE_GLOBALS (set by the action) as CMAKE_VS_GLOBALS
   # and MSBuild runs ccache under cl.exe's name; unset, the build is uncached.
-  #
-  # The doctrine the row itself carries (#81's baseline): the portable driver
-  # built with MSVC, the full test suite run on the runner. /fp:precise comes
-  # from CMakeLists.txt's MSVC branch, the family's floor per the
-  # -ffp-contract=off policy. Sodium is compiled from the pinned vendor with
-  # the same CRT; the multi-config generator puts binaries under bin/<config>.
-  # The #106 config and driver tests run here too -- setenv/unsetenv are
-  # shimmed over _putenv_s in the test file, so the windows leg proves the env
-  # engine and the portable rung on the one platform whose only rung is
-  # portable -- EXCEPT the empty-value distinction, which windows cannot
-  # represent: its CRT has no set-but-empty variable, so that one case is
-  # not checked there. Tests windows does not build are not registered
-  # there, so they are neither run nor printed:
-  # the refused-destination and zero-length-chaff pump tests, whose
-  # raw-socket injector is posix-only, and the gso/xdp and msgx rung
-  # tests windows does not build.
 
   build-and-test-windows:
     name: windows / Release (${{ matrix.leg }})
@@ -1654,9 +1638,10 @@ jobs:
           fi
           exit $failed
 
-      # Leg (c), 2026-10-29: the functional suite is back on every commit, its
+      # Leg (c), 2026-10-29: the functional suite came back to this job, its
       # cases in parallel (tests/functional/main.cpp), the slowest RIO and IOCP x1000
-      # cycles in the nightly tier. The note below is its history.
+      # cycles in the nightly tier. Since 2026-10-31 the whole job is nightly
+      # (NIGHTLY TIER above). The note below is its history.
       - name: Run functional suite (parallel)
         if: matrix.leg == 'c'
         shell: bash
@@ -1959,17 +1944,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # tools/happy_path/go.mod says go 1.22: any Go at or above 1.23 builds it (the fleet pins 1.26 on Linux and macOS)
+          # tools/happy_path/go.mod says go 1.22: any Go at or above 1.22 builds it (the fleet pins 1.26 on Linux and macOS)
           if ! command -v go >/dev/null 2>&1; then
-            echo "TOOL-MISSING go >= 1.23 (missing) on $RUNNER_NAME"
+            echo "TOOL-MISSING go >= 1.22 (missing) on $RUNNER_NAME"
             exit 1
           fi
           got="$(go version)"
           echo "$got"
           echo "GOCACHE=$(go env GOCACHE) GOMODCACHE=$(go env GOMODCACHE)"
           minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\).*/\1/p')"
-          if [ -z "$minor" ] || [ "$minor" -lt 23 ]; then
-            echo "TOOL-MISSING go >= 1.23 $got on $RUNNER_NAME"; exit 1
+          if [ -z "$minor" ] || [ "$minor" -lt 22 ]; then
+            echo "TOOL-MISSING go >= 1.22 $got on $RUNNER_NAME"; exit 1
           fi
 
       - name: Build (Linux and macOS, through the Makefile)
@@ -2167,17 +2152,16 @@ jobs:
           go vet ./...
           go test -c -o "$RUNNER_TEMP/backend.test$(go env GOEXE)" .
 
+      - name: Start combined unit and functional timing (Go)
+        if: matrix.backend == 'go'
+        run: *start_unit_functional_timing
+
       - name: Unit tests (Go)
         if: matrix.backend == 'go'
         working-directory: examples/backend/go
         shell: bash
         run: |
           set -euo pipefail
-          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
-          rm -f "$timing_receipt"
-          timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
-          [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
-          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
           # go test's own default per-commit; none in the nightly tier
           test_timeout=(-test.timeout=10m)
           if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
@@ -2194,17 +2178,16 @@ jobs:
           dotnet build Backend -c Release
           dotnet build Tests -c Release
 
+      - name: Start combined unit and functional timing (C#)
+        if: matrix.backend == 'csharp'
+        run: *start_unit_functional_timing
+
       - name: Unit tests (C#)
         if: matrix.backend == 'csharp'
         working-directory: examples/backend/csharp
         shell: bash
         run: |
           set -euo pipefail
-          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
-          rm -f "$timing_receipt"
-          timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
-          [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
-          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
           dotnet run --project Tests -c Release --no-build
 
       - name: Enforce combined unit and functional timing
@@ -2226,12 +2209,15 @@ jobs:
   # printing and continuing, so the leg cannot go green over a warning nobody
   # read.
   #
-  # LEAK DETECTION IS OFF HERE, deliberately and not silently: ASAN's leak
-  # check is duration-independent in exactly the wrong way -- it reports at
-  # exit, on a suite that creates and destroys transports, and its findings
-  # are for the nightly leak pass (#124) where a human is reading them
-  # against a known baseline. The per-commit gate takes asan's memory-safety
-  # findings and ubsan's, both of which are immediate and unambiguous.
+  # LEAK DETECTION IS OFF FOR THE SUITES HERE, deliberately and not silently:
+  # ASAN's leak check is duration-independent in exactly the wrong way -- it
+  # reports at exit, on a suite that creates and destroys transports, and its
+  # findings are for the nightly leak pass (#124) where a human is reading
+  # them against a known baseline. The unit suite and the focused functional
+  # cases run with detect_leaks=0 and give the per-commit gate asan's
+  # memory-safety findings and ubsan's, both immediate and unambiguous. The
+  # lifecycle, driver-contract and sodium binaries run with detect_leaks=1,
+  # so a leak in any of those three reds the per-commit gate.
 
   # SPLIT INTO TWO PARALLEL LEGS. One job ran the unit suite, the
   # functional suite, three lifecycle binaries and a python control in series
@@ -2278,7 +2264,7 @@ jobs:
               missing=1
             fi
           done
-          for lib in libbpf libxdp libsodium; do
+          for lib in libbpf libxdp; do
             if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
               echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
               missing=1
@@ -2506,16 +2492,14 @@ jobs:
       - name: The committed corpora kill the replay and AEAD mutants
         run: python3 tools/check_fuzz_mutants.py --build build-fuzz --jobs 4
 
-      - name: Upload crash reproducers
+      # the replay drivers are not libFuzzer drivers and write no crash-*
+      # files: a failing replay's evidence is its log (also printed above)
+      - name: Upload the replay logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: fuzz-smoke-crashes
-          path: |
-            crash-*
-            oom-*
-            timeout-*
-            leak-*
+          name: fuzz-smoke-replay-logs
+          path: fuzz-replay-*.log
           if-no-files-found: ignore
 
       - if: always()
@@ -2629,9 +2613,11 @@ jobs:
           done
           exit $failed
 
-      # The connect token and receive/structured targets are built only in
-      # this job, so their time-boxed mutation pass lives here, after the
-      # replay: a copy of the seed corpus, a fixed seed, a few seconds.
+      # A time-boxed mutation pass over the NDEBUG connect token and
+      # receive/structured builds, after the replay: a copy of the seed
+      # corpus, a fixed seed, a few seconds. fuzz-nightly.yml mutates both
+      # targets for hours (its NDEBUG campaign among them); this is the
+      # per-commit few seconds of it on the two token-facing parsers.
 
       - name: Connect token mutation pass (time-boxed, fixed seed)
         env:
@@ -2768,7 +2754,7 @@ jobs:
           else
             echo "QEMU_S390X=$qemu" >> "$GITHUB_ENV"
           fi
-          for lib in libsodium libbpf libxdp; do
+          for lib in libbpf libxdp; do
             if ! PKG_CONFIG_LIBDIR=/usr/lib/s390x-linux-gnu/pkgconfig:/usr/share/pkgconfig pkg-config --exists "$lib" >/dev/null 2>&1; then
               echo "TOOL-MISSING $lib (s390x) (pkg-config --exists failed) on $RUNNER_NAME"
               missing=1
@@ -2783,7 +2769,7 @@ jobs:
       # CMAKE_SYSTEM_NAME=Linux keeps the linux branch of CMakeLists.txt --
       # this leg builds the same library the ubuntu leg does, xdp dataplane
       # and all, not a reduced one. pkg-config is pointed at the s390x
-      # multiarch tree so libsodium resolves for the target, not the host.
+      # multiarch tree so libbpf and libxdp resolve for the target, not the host.
 
       - name: Configure
         timeout-minutes: 2
@@ -2895,18 +2881,6 @@ jobs:
       - if: always()
         uses: ./.github/actions/ccache-stats
 
-  # The standard in standard/ (RN-1, RN-2, RN-R). The checker reads each document as a DOCUMENT -- its
-  # published tables, parsed as markdown, with no reference to the source tree
-  # -- and compares every pinned row against the same constants as the
-  # compiler expands them. A row deleted from the document fails as loudly as
-  # a value that disagrees, because deleting the row would otherwise be the
-  # cheapest way to pass.
-  #
-  # A failure means the document and the code disagree. Decide which is wrong
-  # and fix that one. A specification nothing verifies drifts, and a drifted
-  # spec is worse than none, because independent implementations are built on
-  # it.
-
   # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
   # story or leaves the threads to luck; this is the only leg that watches the
   # transport's concurrency directly. rocketnet spawns real threads -- the
@@ -2919,13 +2893,15 @@ jobs:
   # in a soak months later.
   #
   # WHAT CARRIES THE THREADS, and what does not. bin/test is the unit suite
-  # and starts no driver. bin/functional is the surface that used to live in
-  # that run: on this linux runner the ladder falls to the gso rung (xdp
-  # refused for privilege, gso granted), so the server's GSO worker threads
-  # run, the client receive thread runs, and the hammer tests drive the
-  # concurrent path on purpose. bin/soak adds the real-UDP loopback -- a
-  # client and a server transport, each with its receive thread and its
-  # socket, exchanging over the loopback -- bounded so the leg ends.
+  # and starts no driver. bin/functional carries the threaded transports: on
+  # a linux runner the ladder falls to the gso rung (xdp refused for
+  # privilege, gso granted), so the server's GSO worker threads run, the
+  # client receive thread runs, and the hammer tests drive the concurrent
+  # path on purpose; it runs under tsan each night in nightly.yml (below).
+  # Per commit this job runs bin/soak, the real-UDP loopback -- a client and
+  # a server transport, each with its receive thread and its socket,
+  # exchanging over the loopback -- bounded so the leg ends, and the
+  # lifecycle harness bin/test_lifecycle.
   # soak_sim is DELIBERATELY NOT here: it drives the protocol layer in memory
   # with no threads and no sockets, so under tsan it is a single-threaded
   # program with no race surface at all, and a leg that cannot find the thing
@@ -2941,26 +2917,19 @@ jobs:
   # touches shared state is instrumented; an uninstrumented unit is where tsan
   # goes quietly blind.
 
-  # SPLIT INTO TWO PARALLEL LEGS (2026-09-13), not shortened. Measured on run
-  # 34759562592 the single job was 149s: 30s to install, configure and build,
-  # then 46s for the suite, 49s for the bounded loopback soak and 18s for the
-  # lifecycle harness -- three sequential runs of the same instrument over
-  # different surfaces, on one runner, for no reason but that they had always
-  # been steps in one job. Split, each leg pays the 30s build once in parallel
-  # and lands near 76s and 97s, so tsan stops being a per-commit wall. NOTHING
-  # WAS DROPPED OR SHORTENED: the same three runs, the same halt_on_error, the
-  # same ./bin/soak 20000 count, still per commit, still no suppressions file.
-  # Each leg builds only the targets it runs, which is also why the second
-  # build is not the full 16s.
-  #
-  # THE THREADED-TRANSPORT LEG MOVED TO nightly.yml (2026-10-22), unchanged:
-  # the unit and functional suites under tsan, halt_on_error=1, no
-  # suppressions. On the fleet's 16-core runner hosts it measured 345-454s
-  # against this file's 3-minute law, and its live message matrix case (a
-  # 50s tsan wall-clock bound, 35s alone) failed on the machine, not the
-  # code, when the suite ran beside it. Per commit, tsan runs the loopback
-  # soak and the lifecycle harness below; each night it runs the threaded
-  # transports.
+  # ONE LEG PER COMMIT. History: on 2026-09-13 the single job (149s on run
+  # 34759562592: a 30s build, 46s for the suite, 49s for the bounded loopback
+  # soak, 18s for the lifecycle harness) was split into two parallel legs,
+  # each building only the targets it runs. On 2026-10-22 the threaded-
+  # transport leg moved to nightly.yml, unchanged: the unit and functional
+  # suites under tsan, halt_on_error=1, no suppressions. On the fleet's
+  # 16-core runner hosts it measured 345-454s against the per-commit bound,
+  # and its live message matrix case (a 50s tsan wall-clock bound, 35s
+  # alone) failed on the machine, not the code, when the suite ran beside
+  # it. What is left per commit is the one leg below, the loopback soak and
+  # the lifecycle harness, inside the two-minute per-commit bound; each
+  # night tsan runs the threaded transports. The matrix keeps the one leg's
+  # name, which the check name and the timing row carry.
 
   tsan:
     name: tsan (${{ matrix.leg }})
@@ -2985,7 +2954,7 @@ jobs:
               missing=1
             fi
           done
-          for lib in libbpf libxdp libsodium; do
+          for lib in libbpf libxdp; do
             if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
               echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
               missing=1
@@ -3231,7 +3200,8 @@ jobs:
   # build-type story, so the Debug row and the Release row were running the
   # same assertions twice per OS:
   #
-  #   benchmarks/selftest.sh drives `make -C bench`, which has its OWN Makefile and
+  #   benchmarks/selftest.sh drives harnesses built by `make -C benchmarks`
+  #   (locally, `make -C benchmarks selftest`), which has its OWN Makefile and
   #   its own flags and never reads CMAKE_BUILD_TYPE -- so the Debug row and
   #   the Release row compiled and drove BIT-IDENTICAL harness binaries. That
   #   half was a literal duplicate.
@@ -3717,7 +3687,14 @@ jobs:
       # standard/STYLE.md, every pinned constant against the compiler, every
       # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
       # the cross-references and the normative language. Pending sections are
-      # listed, not failed. One compile; well under ten seconds.
+      # listed, not failed. One compile; well under ten seconds. The checker
+      # reads each document as a DOCUMENT -- its published tables, parsed as
+      # markdown -- and a pinned row deleted from it fails as loudly as a
+      # value that disagrees, because deleting the row would otherwise be the
+      # cheapest way to pass. A failure means the document and the code
+      # disagree: decide which is wrong and fix that one. A specification
+      # nothing verifies drifts, and independent implementations are built
+      # on it.
       - name: Verify the RocketNet standard against the implementation
         run: |
           python3 tools/conformance/test_check_rn_standard.py
