@@ -19,7 +19,9 @@ import (
 	"time"
 )
 
-const commit = "ef7fc1eb1bd9b898fb5916796759dd80950859a9"
+var useReserve = true
+
+const commit ="ef7fc1eb1bd9b898fb5916796759dd80950859a9"
 
 type job struct {
 	name     string
@@ -55,14 +57,14 @@ var asanEnv = []string{
 	"LSAN_OPTIONS=suppressions=tools/lsan.supp:print_suppressions=1",
 	"ROCKETNET_TEST_NIGHTLY=1",
 	"ROCKETNET_TEST_KEEP_GOING=1",
-	"ROCKETNET_TEST_JOBS=4",
+	"ROCKETNET_TEST_JOBS=6",
 }
 
 var tsanEnv = []string{
 	"TSAN_OPTIONS=halt_on_error=0:second_deadlock_stack=1",
 	"ROCKETNET_TEST_NIGHTLY=1",
 	"ROCKETNET_TEST_KEEP_GOING=1",
-	"ROCKETNET_TEST_JOBS=4",
+	"ROCKETNET_TEST_JOBS=6",
 	"ROCKETNET_TEST_CASE_TIME_SCALE=4",
 }
 
@@ -109,7 +111,7 @@ func planB4(p *plan) {
 				"cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=" + bt, "-DCMAKE_C_COMPILER=" + cc, "-DCMAKE_CXX_COMPILER=" + cxx(cc),
 				"-DCMAKE_C_FLAGS=" + asanFlags, "-DCMAKE_CXX_FLAGS=" + asanFlags}})
 			b := p.add(&job{name: n + "-build", after: []string{cfg.name}, dir: n, cores: 4, reserve: true, argv: []string{
-				"cmake", "--build", "build", "--target", "test", "functional", "test_lifecycle", "test_transport", "test_sodium", "--parallel", "4"}})
+				"cmake", "--build", "build", "--target", "test", "functional", "test_lifecycle", "test_transport", "test_sodium", "--parallel", "6"}})
 			u := p.add(&job{name: n + "-unit", after: []string{b.name}, dir: n, cores: 4, reserve: true, env: asanEnv, argv: []string{"./bin/test"}})
 			f := p.add(&job{name: n + "-functional", after: []string{b.name}, afterAny: []string{u.name}, dir: n, cores: 4, reserve: true,
 				env: with(asanEnv, "ROCKETNET_TEST_CASE_TIME_SCALE=2"),
@@ -138,7 +140,7 @@ func planB4(p *plan) {
 	for _, t := range fuzzTargets {
 		replayTargets = append(replayTargets, "fuzz_replay_"+t.target)
 	}
-	fb := p.add(&job{name: "fuzz-build", after: []string{mk.name}, dir: "fuzz", cores: 4, reserve: true, argv: append(replayTargets, "--parallel", "4")})
+	fb := p.add(&job{name: "fuzz-build", after: []string{mk.name}, dir: "fuzz", cores: 4, reserve: true, argv: append(replayTargets, "--parallel", "6")})
 	xo := p.add(&job{name: "fuzz-xdp-host-obj", after: []string{fb.name}, dir: "fuzz", cores: 1, reserve: true, argv: []string{
 		"clang", "-g", "-O1", "-std=gnu11", "-ffreestanding", "-ffp-contract=off", "-D__linux__", "-D__BPF__",
 		"-fsanitize=fuzzer-no-link,address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer",
@@ -176,12 +178,12 @@ func planB4(p *plan) {
 	// 5: the whole functional suite forced onto each Linux server transport, 5 times, Release
 	rl := p.worktree("release")
 	rc := p.add(&job{name: "release-configure", after: []string{rl}, dir: "release", cores: 1, reserve: true, argv: []string{"cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"}})
-	rb := p.add(&job{name: "release-build", after: []string{rc.name}, dir: "release", cores: 4, reserve: true, argv: []string{"cmake", "--build", "build", "--target", "functional", "test", "--parallel", "4"}})
+	rb := p.add(&job{name: "release-build", after: []string{rc.name}, dir: "release", cores: 4, reserve: true, argv: []string{"cmake", "--build", "build", "--target", "functional", "test", "--parallel", "6"}})
 	prev := ""
 	for _, tr := range []string{"gso", "io_uring"} {
 		for i := 1; i <= 5; i++ {
 			j := &job{name: fmt.Sprintf("release-functional-%s-%d", tr, i), after: []string{rb.name}, dir: "release", cores: 4, reserve: true,
-				env:  []string{"ROCKETNET_SERVER_TRANSPORT=" + tr, "ROCKETNET_TEST_NIGHTLY=1", "ROCKETNET_TEST_KEEP_GOING=1", "ROCKETNET_TEST_JOBS=4"},
+				env:  []string{"ROCKETNET_SERVER_TRANSPORT=" + tr, "ROCKETNET_TEST_NIGHTLY=1", "ROCKETNET_TEST_KEEP_GOING=1", "ROCKETNET_TEST_JOBS=6"},
 				argv: []string{"./bin/functional"}}
 			if prev != "" {
 				j.afterAny = []string{prev}
@@ -190,8 +192,31 @@ func planB4(p *plan) {
 			prev = j.name
 		}
 	}
-	p.add(&job{name: "release-xdp-cell-x5", after: []string{rb.name}, afterAny: []string{prev}, dir: "release", cores: 2, reserve: true,
-		argv: []string{"scripts/transport-cells-repeat", "--runs", "5", "--cell", "xdp/portable"}})
+	if os.Getenv("AUDITRUN_XDP_CELL") == "1" {
+		p.add(&job{name: "release-xdp-cell-x5", after: []string{rb.name}, afterAny: []string{prev}, dir: "release", cores: 2, reserve: true,
+			argv: []string{"scripts/transport-cells-repeat", "--runs", "5", "--cell", "xdp/portable"}})
+	}
+}
+
+// the rented pair (no CI runners): x9 = ASan, fuzz, forced transports; x8 = TSan, MSan
+func planX9(p *plan) { planB4(p); p.drop("msan") }
+
+func planX8(p *plan) {
+	planH2(p)
+	ms := p.worktree("msan")
+	lib := filepath.Join(p.root, "msan-libcxx-21.1.8")
+	lb := p.add(&job{name: "msan-libcxx", after: []string{ms}, dir: "msan", cores: 11, argv: []string{"bash", "tools/build_msan_libcxx.sh", lib}})
+	p.add(&job{name: "msan-run", after: []string{lb.name}, dir: "msan", cores: 8, env: []string{"RUN_MSAN_LIBCXX=" + lib}, argv: []string{"bash", "tools/run_msan.sh"}})
+}
+
+func (p *plan) drop(prefix string) {
+	var kept []*job
+	for _, j := range p.jobs {
+		if !strings.HasPrefix(j.name, prefix) && j.name != "wt-"+prefix {
+			kept = append(kept, j)
+		}
+	}
+	p.jobs = kept
 }
 
 func planH2(p *plan) {
@@ -203,7 +228,7 @@ func planH2(p *plan) {
 			"cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Debug", "-DCMAKE_C_COMPILER=" + cc, "-DCMAKE_CXX_COMPILER=" + cxx(cc),
 			"-DCMAKE_C_FLAGS=" + tsanFlags, "-DCMAKE_CXX_FLAGS=" + tsanFlags, "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"}})
 		b := p.add(&job{name: n + "-build", after: []string{cfg.name}, dir: n, cores: 4, reserve: true, argv: []string{
-			"cmake", "--build", "build", "--target", "test", "functional", "soak", "test_lifecycle", "test_wide_fill", "--parallel", "4"}})
+			"cmake", "--build", "build", "--target", "test", "functional", "soak", "test_lifecycle", "test_wide_fill", "--parallel", "6"}})
 		sa := []string{"setarch", "x86_64", "-R"}
 		last := ""
 		steps := []*job{
@@ -250,13 +275,19 @@ func runMain(args []string) {
 	root := fs.String("root", "", "job root")
 	budget := fs.Int("budget", 12, "cores")
 	only := fs.String("only", "", "comma list of job name prefixes to run (default all)")
+	reserve := fs.Bool("reserve", true, "run jobs under nova-reserve (false on machines without it)")
 	fs.Parse(args)
+	useReserve = *reserve
 	p := &plan{root: *root}
 	switch *name {
 	case "b4":
 		planB4(p)
 	case "h2":
 		planH2(p)
+	case "x9":
+		planX9(p)
+	case "x8":
+		planX8(p)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown plan")
 		os.Exit(2)
@@ -407,7 +438,7 @@ func execute(root string, j *job, self string) int {
 		}
 		argv = append(argv, a)
 	}
-	if j.reserve {
+	if j.reserve && useReserve {
 		argv = append([]string{"nova-reserve", "run", "--why", "audit-run " + j.name, "--"}, argv...)
 	}
 	fmt.Fprintf(logf, "### %s dir=%s env=%v\n### argv=%q\n", time.Now().UTC().Format(time.RFC3339), dir, j.env, argv)
