@@ -198,8 +198,9 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
 void rn_endpoint_in_place_sent( struct rn_endpoint_t * endpoint, uint64_t packet_id, int wire_bytes, double now );
 void rn_endpoint_in_place_failed( struct rn_endpoint_t * endpoint );
 
-// The transport acked packet_id (R1: the only ack).
-void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, double now );
+// The transport acked these packet ids, in order (R1: the only ack). One
+// call with count ids is the same as count calls with one id each.
+void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, const uint64_t * packet_ids, uint32_t count, double now );
 
 // One payload the transport opened. Its deliveries are appended to the
 // region's delivery table; out, when not NULL, also gets a copy of up to

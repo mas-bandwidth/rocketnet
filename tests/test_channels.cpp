@@ -4978,6 +4978,131 @@ static void channels_window_witness_setup( channels_window_witness_rig_t * rig, 
     rn_window_receive_init( &rig->receive, &rig->region, 0 );
 }
 
+// The server's ack drain hands a client's acked ids to the window a run at a
+// time (rn_message_object_update): one rn_window_ack_on_acks call with n ids
+// must leave exactly the state n calls with one id each leave. Two identical
+// rigs take the same sends; every ack list goes to one id by id and to the
+// other in one call, and the whole state is compared after each list. The
+// lists mix live, already-acked, evicted and never-sent ids, duplicates and
+// reordering, and the clock jumps past RN_PROBE_SECONDS so the ack-silence
+// rule fires, with the reliable timeout off and on.
+
+static void channels_window_ack_rigs_equal( const channels_window_witness_rig_t * a, const channels_window_witness_rig_t * b )
+{
+    check( memcmp( a->send_numbers, b->send_numbers, sizeof( a->send_numbers ) ) == 0 );
+    check( memcmp( a->send_first_sends, b->send_first_sends, sizeof( a->send_first_sends ) ) == 0 );
+    check( memcmp( a->sent_packets, b->sent_packets, sizeof( a->sent_packets ) ) == 0 );
+    check( memcmp( a->sent_index, b->sent_index, sizeof( a->sent_index ) ) == 0 );
+    check( memcmp( a->sent_refs, b->sent_refs, sizeof( a->sent_refs ) ) == 0 );
+    check( memcmp( a->resend_fifo, b->resend_fifo, sizeof( a->resend_fifo ) ) == 0 );
+    check( memcmp( &a->counters, &b->counters, sizeof( a->counters ) ) == 0 );
+
+    rn_window_send_t send_a = a->send;
+    rn_window_send_t send_b = b->send;
+    send_a.region = NULL;
+    send_b.region = NULL;
+    check( memcmp( &send_a, &send_b, sizeof( send_a ) ) == 0 );
+
+    rn_window_ack_t ack_a = a->ack;
+    rn_window_ack_t ack_b = b->ack;
+    ack_a.send = NULL;
+    ack_a.region = NULL;
+    ack_b.send = NULL;
+    ack_b.region = NULL;
+    check( memcmp( &ack_a, &ack_b, sizeof( ack_a ) ) == 0 );
+}
+
+static void channels_window_ack_run_matches_one_by_one( double reliable_timeout, uint64_t seed )
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    static channels_window_witness_rig_t one;
+    static channels_window_witness_rig_t run;
+    channels_window_witness_setup( &one, 8, 8 * F );
+    channels_window_witness_setup( &run, 8, 8 * F );
+    one.ack.reliable_timeout = reliable_timeout;
+    run.ack.reliable_timeout = reliable_timeout;
+
+    uint64_t state = seed;
+    auto next = [&state]() -> uint32_t
+    {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return (uint32_t) ( state >> 33 );
+    };
+
+    uint64_t next_packet_id = 1;
+    double now = 1.0;
+    int lists = 0;
+    int long_lists = 0;
+
+    for ( int step = 0; step < 4000; step++ )
+    {
+        now += ( next() % 50 == 0 ) ? 1.5 : 0.004 * (double) ( 1 + next() % 8 );
+
+        if ( next() % 3 != 0 )
+        {
+            // a send: a reliable number when the window takes one, else a packet with none
+
+            uint64_t n_one = 0, ring_one = 0, n_run = 0, ring_run = 0;
+            const int numbered_one = rn_window_send_first_write( &one.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n_one, &ring_one );
+            const int numbered_run = rn_window_send_first_write( &run.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n_run, &ring_run );
+            check( numbered_one == numbered_run );
+
+            const uint64_t packet_id = next_packet_id++;
+            if ( numbered_one == RN_WINDOW_SEND_NUMBERED )
+            {
+                check( n_one == n_run );
+                rn_window_ack_commit_packet( &one.ack, packet_id, &n_one, 1, now );
+                rn_window_ack_commit_packet( &run.ack, packet_id, &n_run, 1, now );
+            }
+            else
+            {
+                rn_window_ack_commit_packet( &one.ack, packet_id, NULL, 0, now );
+                rn_window_ack_commit_packet( &run.ack, packet_id, NULL, 0, now );
+            }
+        }
+        else
+        {
+            // an ack list: ids from well below the newest (evicted or acked
+            // already) to above it (never sent), with repeats
+
+            uint64_t ids[12];
+            const uint32_t count = 1 + next() % 12;
+            for ( uint32_t i = 0; i < count; i++ )
+            {
+                const uint64_t back = next() % 14;
+                const uint64_t id = next_packet_id + 2 > back ? next_packet_id + 2 - back : 0;
+                ids[i] = ( next() % 9 == 0 && i > 0 ) ? ids[i - 1] : id;
+            }
+
+            uint32_t matched_one = 0;
+            for ( uint32_t i = 0; i < count; i++ )
+            {
+                matched_one += rn_window_ack_on_acks( &one.ack, &ids[i], 1, now );
+            }
+            const uint32_t matched_run = rn_window_ack_on_acks( &run.ack, ids, count, now );
+            check( matched_one == matched_run );
+
+            lists++;
+            if ( count > 1 )
+            {
+                long_lists++;
+            }
+        }
+
+        channels_window_ack_rigs_equal( &one, &run );
+    }
+
+    check( lists > 1000 && long_lists > 900 );
+}
+
+static void test_channels_window_ack_run_matches_one_by_one()
+{
+    channels_window_ack_run_matches_one_by_one( 0.0, 0xACC0FFEEULL );
+    channels_window_ack_run_matches_one_by_one( 0.0, 0x5EEDF00DULL );
+    channels_window_ack_run_matches_one_by_one( 2.5, 0xACC0FFEEULL );
+    channels_window_ack_run_matches_one_by_one( 2.5, 0xBADC0DEULL );
+}
+
 // RNWindow Witness 1 (MCRNWindowBrokenBlockUPrime.cfg, KeepBlockUPrime = FALSE):
 // W = 2, block {1, 2}. Single 0 is numbered, sent, opened, delivered, released
 // at EndUpdate, and acked (U = U' = 1). Block {1, 2} takes numbers 1 and 2;
@@ -5294,6 +5419,7 @@ static const struct channels_test_t channels_tests[] = {
     { "test_channels_window_reliable_timeout_enters_the_error_state", "ChannelsWindowReliableTimeoutEntersTheErrorState", test_channels_window_reliable_timeout_enters_the_error_state },
     { "test_channels_window_lossy_soak", "ChannelsWindowLossySoak", test_channels_window_lossy_soak },
     { "test_channels_window_lossy_soak_opted_in", "ChannelsWindowLossySoakOptedIn", test_channels_window_lossy_soak_opted_in },
+    { "test_channels_window_ack_run_matches_one_by_one", "ChannelsWindowAckRunMatchesOneByOne", test_channels_window_ack_run_matches_one_by_one },
     { "test_channels_window_witness_u_prime_holds_at_a_partial_block", "ChannelsWindowWitnessUPrimeHoldsAtAPartialBlock", test_channels_window_witness_u_prime_holds_at_a_partial_block },
     { "test_channels_window_witness_reply_opens_next_update", "ChannelsWindowWitnessReplyOpensNextUpdate", test_channels_window_witness_reply_opens_next_update },
     { "test_channels_window_witness_floor_is_u_prime", "ChannelsWindowWitnessFloorIsUPrime", test_channels_window_witness_floor_is_u_prime },
