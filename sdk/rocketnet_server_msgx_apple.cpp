@@ -411,9 +411,13 @@ static int rocketnet_server_msgx_table_open( void * user, const rocketnet_addres
 // it at the retire, so what the kernel queued for it since reaches no one:
 // every datagram it still holds is counted (RECEIVE_DROP_RETIRED) before the
 // close. Later datagrams of that address reach the shared socket. The count
-// is one getsockopt (SO_NUMRCVPKT, the datagrams in the receive buffer), not
-// a read of each on main (R70); only if the kernel refuses the option are
-// they read and counted, bounded
+// is one syscall, getsockopt (SO_NUMRCVPKT, the datagrams in the receive
+// buffer), not a read of each on main (R70); the kernel still walks the
+// queued records to answer it, so it is not constant time. It is a snapshot
+// taken before the close, not accounting atomic with concurrent arrivals: a
+// datagram the kernel queues between the count and the close goes uncounted,
+// the same boundary the bounded drain had. Only if the kernel refuses the
+// option are they read and counted, bounded
 static void rocketnet_server_msgx_table_close( void * user, int fd )
 {
     struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) user;

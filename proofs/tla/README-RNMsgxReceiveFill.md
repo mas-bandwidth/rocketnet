@@ -78,8 +78,9 @@ once it is set, so a ready bank stays the worker's and is counted
   for no more than the budget leaves (Stella's review of 4119919c7, note 2;
   before, a read asked for the whole batch and could pass the budget by up
   to `Batch - 1`).
-- `Conserved`: every datagram is in a socket, a bank, main's hands, or a
-  kernel drop.
+- `Conserved`: every datagram is in a socket, a bank, main's hands, a
+  kernel drop, or counted stopped (main's tail at the stop, and the worker's
+  and ready banks at its exit).
 - `HeldOnlyWhenFull`: a held worker's bank is full. Main may take the ready
   bank while the worker sleeps; the next round hands the full bank over.
 - `HoldOnlyWhenNowhere` (an action property): the drain holds only with the
@@ -117,7 +118,14 @@ once it is set, so a ready bank stays the worker's and is counted
 of six and a batch of four, so reads meet a room below a batch. On even
 seeds main stops three quarters of the way through (`rocketnet_msgx_receive_stop`)
 and the worker exits at its next poll, so `MainStop` and `Exit` are traced and
-a claim after the stop would be rejected. The plant
+a claim after the stop would be rejected. The stop and the exit are
+handwritten in the walk: `rocketnet_msgx_receive_stop` and the claim's refusal
+are the library's, but main's tail count and the exit's count of the worker
+and ready banks are the walk's copies of what `rocketnet_server_msgx_stop` and
+`rocketnet_server_msgx_receive_worker` do, so the trace binds the flag and the
+refused claim to the model, not those two counts in the Apple transport
+(`test_rocketnet_msgx_receive_fill_stop` and the functional cases check the
+counts there). The plant
 (`ROCKETNET_MSGX_RECEIVE_FILL_PLANT`, `rocketnet_msgx_receive_want` in
 `sdk/rocketnet_msgx_receive_fill.cpp` asking for a whole batch) must be
 rejected at the first read that takes past the room. The reach predicates
