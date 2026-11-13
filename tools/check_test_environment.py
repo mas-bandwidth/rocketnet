@@ -200,6 +200,7 @@ PRODUCTION_ABSENT_FIXED = {
     "test_unit_driver_results_checked.cpp",
     "test_unit_server_stop_spread.cpp",
     "test_unit_gaps_st_ring_transport.cpp",
+    "test_unit_gaps_r2_st_transport.cpp",
     "test_unit_rio_overflow_seam.cpp",
 }
 DEV_ONLY_LIST_RE = re.compile(r"set\(\s*ROCKETNET_DEV_ONLY_\w+_TEST_SOURCES\s+([^)]*)\)")
