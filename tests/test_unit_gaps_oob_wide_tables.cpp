@@ -24,7 +24,7 @@
 
 extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_used_token_history_t * history,
                                                       const uint8_t * token_identifier );
-extern "C" uint64_t rocketnet_dev_token_claim_erase_steps( const struct rocketnet_used_token_history_t * history );
+extern "C" uint64_t rocketnet_dev_token_erase_steps();
 
 static struct rocketnet_address_t gaps_oob_wide_address( int ordinal )
 {
@@ -136,9 +136,9 @@ static void test_gaps_oob_wide_token_claim_erase_stops_at_the_empty_cell()
         rocketnet_unit_check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, now + 10.0, now ) == 1 );
     }
 
-    const uint64_t before = rocketnet_dev_token_claim_erase_steps( history );
+    const uint64_t before = rocketnet_dev_token_erase_steps();
     rocketnet_used_token_history_claim_release( history, ids[2], &holder );
-    const uint64_t steps = rocketnet_dev_token_claim_erase_steps( history ) - before;
+    const uint64_t steps = rocketnet_dev_token_erase_steps() - before;
     if ( steps != 2 )
     {
         printf( "fault: releasing a claim scanned %llu index cells, expected 2 (its follower and the empty cell after it): the erase did not stop at the empty cell ending the cluster\n",
