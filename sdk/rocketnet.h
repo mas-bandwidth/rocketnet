@@ -1335,8 +1335,10 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 ///
 /// Create allocates the hub as one block through the configured allocator:
 /// one server endpoint and max_clients client endpoints, each with its full
-/// datagram queue. Each client endpoint's queue is 2048 slots of 1476 bytes.
-/// The server endpoint's queue is 16 slots of 1476 bytes for each client,
+/// datagram queue. A slot is 1476 bytes: the largest datagram the library
+/// receives (1452 bytes, a 1500-byte link less the IPv6 and UDP headers)
+/// with its source address and length. Each client endpoint's queue is 2048
+/// slots. The server endpoint's queue is 16 slots for each client,
 /// rounded up to a power of two and never fewer than a client's 2048 (16384
 /// slots at max_clients 1000). At
 /// max_clients 1000 the block is about 3.05 GB, nearly all of it the client
