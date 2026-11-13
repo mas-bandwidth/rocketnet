@@ -8,7 +8,7 @@
 // banks of sdk/rocketnet_uring_send_queue.cpp, the model
 // proofs/tla/RNUringQueueSend.tla), checked by
 // proofs/tla/TraceRNUringQueueSend.tla (proofs/tla/README-TraceCheck.md).
-// No socket, no ring, no clock, no thread: the walk is the fill, main, the
+// No socket, no ring, no clock, no thread: the walk is the game threads, main, the
 // worker and the kernel, one call per step, and one record per step
 // (tla_step): the call, what it took and gave back, the action its own
 // result says it took, and every model variable after it. A stage (start,
@@ -58,7 +58,7 @@
 
 // the instance: one queue (the queues share nothing but main's loop), its
 // three banks of three slots, two destinations, runs of at most two
-// packets, four claims a fill (so a full bank refuses one), every bank
+// packets, four claims a game thread (so a full bank refuses one), every bank
 // reused, and handed-back runs. The model's bound on flushes is the walk's
 // length, which no walk reaches, so a step is always enabled
 
@@ -152,7 +152,7 @@ static std::string qsend_string( const char * text )
 }
 
 // the slot's model state, read from the code: the worker's view of the bank
-// it holds and of a free bank (empty since its retire); the fill's records
+// it holds and of a free bank (empty since its retire); the game threads' records
 // of the producer and of a ready bank (staged when finished, aborted when
 // not, empty past the claims)
 static const char * qsend_slot_state( const qsend_walk_t & walk, int b, int s, int role )
@@ -185,7 +185,7 @@ static const char * qsend_slot_state( const qsend_walk_t & walk, int b, int s, i
     return bank->slot[s].packet_bytes > 0 ? "staged" : "aborted";
 }
 
-// 0: the worker's view (held or free), 1: the fill's records (producer or ready)
+// 0: the worker's view (held or free), 1: the game threads' records (producer or ready)
 static int qsend_role( const qsend_walk_t & walk, int b )
 {
     const struct rocketnet_uring_queue_send_queue_t * queue = &walk.send->queue[0];

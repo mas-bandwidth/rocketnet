@@ -24,11 +24,11 @@
 // Send: start_packet hashes the destination to a queue (the XDP hash,
 // rocketnet_send_queue_of) and claims a slot of that queue's producer bank
 // of ROCKETNET_URING_SEND_QUEUE_SIZE (rocketnet_uring_send_queue.h);
-// send_packets, with the fill joined, publishes each queue's producer to its
+// send_packets, with the game threads joined, publishes each queue's producer to its
 // worker and wakes it (rocketnet_uring_queue_send.h). The worker groups a
 // bank's packets by destination in staged order (rocketnet_send_gather.h)
 // and sends each run as one SENDMSG, segmented with UDP_SEGMENT when the
-// create probe found it; a bank goes back to the fill only after the last
+// create probe found it; a bank goes back to the game threads only after the last
 // completion of its sends (rocketnet_uring_queue_worker.h).
 //
 // Receive: each worker keeps its socket's multishot RECVMSG armed over a
@@ -63,7 +63,7 @@ struct rocketnet_server_uring_t;
 #define ROCKETNET_URING_ENTRIES                                           4096
 
 // send staging: per queue, a producer bank of this many frame-stride slots
-// (and two more banks the worker sends from while the fill uses the
+// (and two more banks the worker sends from while the game threads use the
 // producer). A destination always stages in its own queue, so the fullest
 // queue bounds what one update may stage to any destination.
 

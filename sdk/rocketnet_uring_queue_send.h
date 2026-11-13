@@ -10,10 +10,10 @@
 
 // The io_uring server's per-queue send handoff (layer L1 of the per-queue
 // send): each queue's banks (rocketnet_uring_send_queue.h, layer L0) move
-// between the fill, main and the queue's worker through the shared bank
+// between the game threads, main and the queue's worker through the shared bank
 // exchange (rocketnet_buffer_handoff.h) under the queue's handoff mutex.
 //
-//   main     publish: with the fill joined, a producer that staged anything
+//   main     publish: with the game threads joined, a producer that staged anything
 //            goes to the back of the ready FIFO and the head of the free FIFO
 //            becomes the producer, reset; with no free bank the producer is
 //            kept with its slots for the next send_packets.
@@ -51,8 +51,8 @@ struct rocketnet_uring_queue_send_message_t;
 
 // a slot of a bank, as the worker sees it (RNUringQueueSend st)
 
-#define ROCKETNET_URING_QUEUE_SEND_SLOT_EMPTY                                0      // not claimed by the fill since the bank was last free
-#define ROCKETNET_URING_QUEUE_SEND_SLOT_STAGED                               1      // finished by the fill, waiting to be submitted
+#define ROCKETNET_URING_QUEUE_SEND_SLOT_EMPTY                                0      // not claimed by a game thread since the bank was last free
+#define ROCKETNET_URING_QUEUE_SEND_SLOT_STAGED                               1      // finished by a game thread, waiting to be submitted
 #define ROCKETNET_URING_QUEUE_SEND_SLOT_ABORTED                              2      // claimed and aborted, or never finished: in no run
 #define ROCKETNET_URING_QUEUE_SEND_SLOT_RUN                                  3      // in a run the kernel owns until its completion is taken
 #define ROCKETNET_URING_QUEUE_SEND_SLOT_SENT                                 4
@@ -154,7 +154,7 @@ uint64_t rocketnet_uring_queue_send_allocation_bytes( int num_queues, int slots 
 // no worker running
 void rocketnet_uring_queue_send_destroy( struct rocketnet_uring_queue_send_t * send );
 
-// main, the fill joined. RNUringQueueSend Publish: true when the queue staged
+// main, the game threads joined. RNUringQueueSend Publish: true when the queue staged
 // anything and a free bank replaced its producer; false keeps the producer.
 bool rocketnet_uring_queue_send_publish( struct rocketnet_uring_queue_send_t * send, int queue );
 

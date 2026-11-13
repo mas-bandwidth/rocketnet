@@ -218,7 +218,7 @@ static inline void rocketnet_uring_queue_send_count( struct rocketnet_uring_queu
 
 // RNUringQueueSend Publish when it returns true: the producer goes to the
 // ready FIFO only when it staged anything and a free bank replaces it; the
-// replacement is reset before any fill sees it (L0's turn_to, outside the
+// replacement is reset before any game thread sees it (L0's turn_to, outside the
 // mutex: no one else holds that bank). PublishKept when it returns false
 
 bool rocketnet_uring_queue_send_publish( struct rocketnet_uring_queue_send_t * send, int queue_index )

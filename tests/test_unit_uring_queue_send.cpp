@@ -238,7 +238,7 @@ static void test_uring_queue_send_retire_waits_for_every_completion()
     check( rocketnet_uring_queue_send_complete( t.send, 0, run[0].tag, ROCKETNET_URING_QUEUE_SEND_FAILED ) == 1 );
     check( !rocketnet_uring_queue_send_retire( t.send, 0 ) );            // one still in the kernel
 
-    // the bank cannot come back to the fill meanwhile: two banks turn and
+    // the bank cannot come back to the game threads meanwhile: two banks turn and
     // the third publish finds no spare
     check( t.stage( 1, 100 ) == 0 );
     check( rocketnet_uring_queue_send_publish( t.send, 0 ) );
