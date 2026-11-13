@@ -134,12 +134,12 @@ Bench runs of this version (aws-mut-3, 2026-11-13):
 
 | Case | Result | Distinct | Seconds |
 |---|---|---|---|
-| `MCRNXdpReceiveRing.cfg` | pass | 6,551 | 2.0 |
-| `MCRNXdpReceiveRingPendBinds.cfg` | pass | 12,798 | 1.9 |
-| `MCRNXdpReceiveRingBrokenPeekPastStaging.cfg` | `StagingInBounds`, exit 12 | 303 | 1.0 |
+| `MCRNXdpReceiveRing.cfg` | pass | 6,551 | 1.3 |
+| `MCRNXdpReceiveRingPendBinds.cfg` | pass | 12,798 | 1.6 |
+| `MCRNXdpReceiveRingBrokenPeekPastStaging.cfg` | `StagingInBounds`, exit 12 | 303 | 0.7 |
 | `MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg` | `FillNeverEmptyWhileFramesFree`, exit 12 | 39 | 0.7 |
 | `MCRNXdpReceiveRingBrokenRefusedRefilled.cfg` | `FillHoldsOnlyReceiveFrames`, exit 12 | 21 | 0.7 |
-| `MCRNXdpReceiveRingBrokenPeekPastPending.cfg` | `PendingInBounds`, exit 12 | 93 | 1.0 |
+| `MCRNXdpReceiveRingBrokenPeekPastPending.cfg` | `PendingInBounds`, exit 12 | 93 | 0.7 |
 
 The records are in `RUNS.tsv` (group `rnxdpreceivering`), made with the pinned
 runner as `proofs/tla/README.md` describes.
