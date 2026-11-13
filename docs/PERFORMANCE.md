@@ -456,7 +456,9 @@ scripts/harden-pair \
 
 Unlike XDP, these worker counts do not require matching the NIC queue
 count. The measured NIC retained two combined queues. Run unprivileged
-to repeat the reported default-priority GSO/io_uring setup.
+to repeat the reported default-priority GSO/io_uring setup. Read the limits
+before changing them with `sysctl net.core.rmem_max net.core.wmem_max` and
+restore those recorded values after the session.
 
 ### Windows rows
 
@@ -475,23 +477,55 @@ processor 10 and six processors/queues. IOCP used two RSS queues spanning
 processors 2 and 4. Retain the read-back output, rather than assuming the
 request was granted.
 
-Use the host/path options from the Linux controller command, with these
-transport-specific arguments. The server argument string retains the same
-frame shape, wide send, split update and top-of-frame network task.
+From a POSIX controller with SSH access to both machines, use a Windows
+checkout path such as `C:/rn/main` for `SERVER_CHECKOUT`, and the Linux
+checkout path for `CLIENT_CHECKOUT`. `SERVER_IP` is the server's private
+IPv4 address without a port; the controller uses port 40000. `LOCAL_BIN`
+is the controller's directory containing the matching `harden_load`.
+Select the four workloads with `LOAD=peak` or `average` and
+`GAME_LOAD=0 WORLD_MS=0` or `GAME_LOAD=0.5 WORLD_MS=10`.
 
-| Setting | IOCP measured configuration | RIO five-lane configuration |
-| --- | --- | --- |
-| Controller transport | `--transport iocp --row bar --xdp-queues 2` | `--transport rio --row space --xdp-queues 5` |
-| Client count / threads | `--clients 1000 --threads 16` | `--clients 1000 --threads 32` |
-| Server pool and main CPU | `--game-threads 54 --pin-first-cpu 10` | `--game-threads 54 --pin-first-cpu 10` |
-| Server environment | `ROCKETNET_SERVER_BIND_IPV4_ADDRESS` and `ROCKETNET_TEST_IOCP_LAYOUT=2,4/3,5` | `ROCKETNET_SERVER_BIND_IPV4_ADDRESS`; no layout override |
-| Client arguments | `--input-bytes 256` | `--input-bytes 256` |
+For IOCP, set the measured RSS layout on the Windows server (replace the
+adapter name), then run the controller command:
 
-Pass each environment entry as `--server-env "NAME=value"`. Select the
-four workloads with `--load peak|average`, `--game-load 0|0.5` and
-`--world-ms 0|10`, using the paired values defined above. For six RIO lanes,
-use `--xdp-queues 6`, pool 52 and main processor 12; for four, use count 4,
-pool 56 and main processor 8.
+```powershell
+Set-NetAdapterRss -Name 'Ethernet 2' -BaseProcessorNumber 2 -MaxProcessorNumber 4 -MaxProcessors 2 -NumberOfReceiveQueues 2
+Get-NetAdapterRss -Name 'Ethernet 2'
+```
+
+```sh
+scripts/harden-pair \
+  --server-host "$SERVER_HOST" --client-host "$CLIENT_HOST" \
+  --server-ip "$SERVER_IP" --remote "$SERVER_CHECKOUT" \
+  --client-remote "$CLIENT_CHECKOUT" --local-bin "$LOCAL_BIN" --out "$OUT_DIR" \
+  --server-os windows --transport iocp --row bar --xdp-queues 2 \
+  --client-dev ens5 --seconds 60 --clients 1000 --threads 16 \
+  --server-env "ROCKETNET_SERVER_BIND_IPV4_ADDRESS=$SERVER_IP" \
+  --server-env "ROCKETNET_TEST_IOCP_LAYOUT=2,4/3,5" \
+  --server-args "--frame-shape space --load $LOAD --game-threads 54 --pin-first-cpu 10 --game-load $GAME_LOAD --world-ms $WORLD_MS --space-send wide --space-update split --space-net task --space-split top" \
+  --client-args "--input-bytes 256"
+```
+
+For RIO, apply the five-lane RSS command above and run:
+
+```sh
+scripts/harden-pair \
+  --server-host "$SERVER_HOST" --client-host "$CLIENT_HOST" \
+  --server-ip "$SERVER_IP" --remote "$SERVER_CHECKOUT" \
+  --client-remote "$CLIENT_CHECKOUT" --local-bin "$LOCAL_BIN" --out "$OUT_DIR" \
+  --server-os windows --transport rio --row space --xdp-queues 5 \
+  --client-dev ens34 --seconds 60 --clients 1000 --threads 32 \
+  --server-env "ROCKETNET_SERVER_BIND_IPV4_ADDRESS=$SERVER_IP" \
+  --server-args "--frame-shape space --load $LOAD --game-threads 54 --pin-first-cpu 10 --game-load $GAME_LOAD --world-ms $WORLD_MS --space-send wide --space-update split --space-net task --space-split top" \
+  --client-args "--input-bytes 256"
+```
+
+`ens5` and `ens34` are the recorded client interfaces; substitute the actual
+interface when repeating on another host. For six RIO lanes, set six RSS
+queues through processor 10 and use `--xdp-queues 6`, pool 52 and main
+processor 12. For four, set four RSS queues through processor 6 and use
+count 4, pool 56 and main processor 8. Restore the original RSS settings
+after a comparison session.
 
 ### macOS rows
 
@@ -499,6 +533,36 @@ At the measured commit, use the direct server arguments below, with a
 reachable `SERVER_ADDRESS` and a common Unix end timestamp `END_AT`.
 Select `TX=3`, `POOL_THREADS=13` for M5 Pro, or `TX=2`, `POOL_THREADS=25`
 for the M3 Ultra's best set. Match load and game-work variables as above.
+`SERVER_ADDRESS` includes the port, for example `192.168.1.33:40000`.
+Choose one end timestamp on the controller and use that same value on both
+machines, allowing time to start the roles and join 1000 players:
+
+```sh
+END_AT=$(python3 -c 'import time; print(int(time.time()) + 90)')
+printf '%s\n' "$END_AT"
+```
+
+Use idle machines. On the recorded 16-CPU Linux client, enable receive
+steering on its single queue for the session, saving the original mask:
+
+```sh
+RPS_FILE=/sys/class/net/enp173s0/queues/rx-0/rps_cpus
+RPS_BEFORE=$(cat "$RPS_FILE")
+printf '%s\n' ffff | sudo tee "$RPS_FILE"
+cat "$RPS_FILE"
+```
+
+That mask selects the recorded client's 16 CPUs; select a mask appropriate
+to the host when using different hardware. After all rows have drained,
+restore the saved mask in the same shell:
+
+```sh
+printf '%s\n' "$RPS_BEFORE" | sudo tee "$RPS_FILE"
+```
+
+Run the server and clients below in separate sessions, copying `END_AT`
+to both. Redirect their output to separate fresh log files. Start clients
+as soon as the server prints its public key.
 
 ```sh
 bin/harden_load server --address "$SERVER_ADDRESS" --transport msgx \
@@ -540,11 +604,18 @@ Check all of the following together:
 - `harden_players`: connected players, loss and delivery in each direction.
 - Reconciliation chains: named drops and gaps, with the known limits above.
 
+### Linux CPU profiles: XDP, GSO and io_uring
+
 A short Linux CPU profile can explain where network and game threads spend
 time. Record it during a steady interval of the same row, using the actual
-server process ID and a new output directory:
+server process ID and a new output directory. Start when `harden_tick`
+reaches about t=40, keeping the capture inside the load interval. Obtain
+the PID from the server session and verify it identifies the server role;
+several `harden_load` processes can otherwise be confused.
 
 ```sh
+mkdir -p "$PROFILE_DIR"
+ps -L -p "$SERVER_PID" -o pid,tid,psr,comm > "$PROFILE_DIR/threads.txt"
 sudo perf record -F 999 -g -p "$SERVER_PID" -o "$PROFILE_DIR/perf.data" -- sleep 8
 sudo perf report -f -i "$PROFILE_DIR/perf.data" --no-children \
   --sort pid,symbol -n --stdio -g none > "$PROFILE_DIR/perf.rep"
@@ -557,6 +628,93 @@ Self samples are usable without reliable stack unwinding; call graphs need
 a suitable build. Requested sample frequency is not an exact CPU timer.
 Use the capture's actual duration and frame rate when estimating time per
 frame, and keep kernel work in the accounting.
+
+For a rough sampling estimate, sum a function's self samples over one
+thread class and divide by `999 * capture_seconds * measured_frames_per_second`,
+then multiply by 1000 for core-ms/frame. Divide again by the number of game
+or network workers only when reporting the mean worker. This assumes the
+requested sampling frequency; elapsed-call timings and sampled CPU time
+measure different things. Preserve total CPU cost and the unlisted tail.
+
+### Windows profiles: IOCP and RIO
+
+Repeat the chosen controller command in a new output directory, adding
+these controller options before the command ends:
+
+```sh
+--profile-after 30 --profile-seconds 10
+```
+
+These are options to `scripts/harden-pair`, not a separate shell command.
+The script forwards them to the Windows server and copies its `profile.txt`
+into `OUT_DIR`. For a direct Windows server invocation, the equivalent
+arguments are `--profile-after 30 --profile-seconds 10 --profile-out profile.txt`.
+Keep the matching executable and its symbols together; retain the recorded
+Release optimization settings when comparing runs.
+
+The built-in profiler in `tests/load/harden_load.cpp` takes a ten-second
+window starting 30 seconds after its profiler starts. It samples the main
+thread's program counter approximately once per millisecond and reads CPU
+time for every accessible process thread. It does not sample the game or
+network workers' call stacks.
+
+Read the output as follows:
+
+- `harden_profile`: actual window duration, main sample count and whether
+  DbgHelp was available. A nonempty file with zero samples is not a profile.
+- `harden_profile_thread`: thread ID, CPU percentage of one core, main-thread
+  marker, creation time and start routine. Match the worker count and creation
+  order to the startup layout. A raw address indicates unresolved symbols.
+- `harden_profile_phase`: main-thread samples by update, receive, write,
+  send, sleep and other phase.
+- `harden_profile_main` / `harden_profile_in`: flat main-thread function
+  shares overall and within each phase. Sleep samples are elapsed waiting,
+  not networking CPU consumption.
+
+Convert a thread's CPU percentage to core-ms/frame with
+`cpu_percent / 100 * 1000 / measured_frames_per_second`, and sum the network
+workers for total network-worker CPU cost. The profiler periodically
+suspends the main thread and itself uses a thread and handles. Keep an
+unprofiled rate/delivery row beside it; its handle growth and timing changes
+are not evidence of a transport leak or an unprofiled performance result.
+The main-run evidence above supplies elapsed row timings; it does not
+supply a new Windows per-function table.
+
+### macOS profiles: M5 Pro and M3 Ultra
+
+During a separate repeat of the selected row, record thread CPU usage at
+about t=55, matching the method used for the reported worker observations:
+
+```sh
+mkdir -p "$PROFILE_DIR"
+ps -M -p "$SERVER_PID" > "$PROFILE_DIR/threads-cpu.txt"
+```
+
+`SERVER_PID` is the Mac server process, not the Linux clients. Keep its
+startup thread-count lines with the reading. `ps` CPU percentages are an
+observation of thread usage, not exact CPU time integrated over the
+25–55-second summary window.
+
+For stacks, repeat the same load in another fresh output directory. At
+about t=40, run the system sampling tool for ten seconds at a 1 ms interval:
+
+```sh
+/usr/bin/sample "$SERVER_PID" 10 1 -file "$PROFILE_DIR/sample.txt"
+```
+
+Use a build with matching symbols when function names are needed. Check
+that the file names the intended process, contains a nonzero sample count
+and has a complete capture interval. Read each thread's call tree: the
+transmit workers include `sendmsg_x`, the receive worker includes
+`recvmsg_x`/`kevent`, and game workers include message building and crypto.
+Waiting stacks are not busy CPU time; combine stacks with the thread CPU
+reading instead of interpreting every sample as consumed CPU.
+
+Earlier macOS sampling runs measurably disturbed throughput and frame
+rate. Keep their profiles separate from the unprofiled acceptance rows.
+The new main measurements above include thread CPU observations; native
+sampling of the current M3 Ultra send path is still being investigated,
+so no new per-function main profile is claimed here.
 
 The older [function profiles](https://github.com/mas-bandwidth/rocketnet/blob/2da198e234dab41c118f58fa3e0ec263b562c1d4/docs/PERFORMANCE.md#profiles)
 and [hostile-traffic experiment](https://github.com/mas-bandwidth/rocketnet/blob/2da198e234dab41c118f58fa3e0ec263b562c1d4/docs/PERFORMANCE.md#xdp-under-hostile-traffic)
