@@ -215,8 +215,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // segment of acked ids a client, the pending entries and their ranges) and
 // each ack endpoint the last block it applied in full; the client gains one
 // 64-byte rounding: 34160412 and 64 above (studio, AppleClang, Debug, DEV=ON).
+// The appended counter GSO_PIN_REFUSALS adds 64 to the client (one 64-byte
+// rounding): actual=15041738 (the macOS unit job, AppleClang, Debug, DEV=ON).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863099 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993098 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993162 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
