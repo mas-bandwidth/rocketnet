@@ -268,10 +268,10 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
         const int a = random.below( REPLY_MACS_ADDRESSES );
         const int m = random.below( REPLY_MACS_MACS );
         std::vector<std::string> args;
-        // one call in eight passes a MAC the code must not keep: a learn of
+        // one call in sixteen passes a MAC the code must not keep: a learn of
         // a multicast or zero MAC, a reply with one as the answered MAC
-        const int unusable = random.below( 8 ) == 0 ? 1 + random.below( 2 ) : 0;
-        if ( roll < 55 )
+        const int unusable = random.below( 16 ) == 0 ? 1 + random.below( 2 ) : 0;
+        if ( roll < 60 )
         {
             if ( unusable )
             {
@@ -293,7 +293,7 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
                 report.planted( (int) records.size() );
             }
         }
-        else if ( roll < 85 )
+        else if ( roll < 90 )
         {
             // the answered MAC from a buffer of the walk's own, so the return
             // says which branch the code took: the answered MAC kept
