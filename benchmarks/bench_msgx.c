@@ -198,9 +198,15 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 result = 0;
             }
 
+            // A positive short count is back pressure: xnu's sendmsg_x stops
+            // at the first refused message and returns the count sent only
+            // when that refusal was ENOBUFS, ERESTART or EMSGSIZE (every
+            // size here fits), dropping the errno. Zero sent with no error
+            // is not a shape the kernel returns for a full batch.
+
             sent += bench_send_batch_observe( &health, "sendmsg_x",
                                               result >= 0 ? (int) result : 0, BENCH_BATCH_SIZE,
-                                              result < 0 ? error : EIO );
+                                              result < 0 ? error : ( result > 0 ? ENOBUFS : EIO ) );
         }
     }
 

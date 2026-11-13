@@ -237,22 +237,33 @@ for partial_harness in bench_portable bench_kqueue bench_msgx bench_gso bench_ur
 done
 
 # ---------------------------------------------------------------------------
-# Positive short batch results must account for each unsent message. Zero
-# results have no successful prefix and must also fail instead of earning credit.
-leg bench_msgx send send-short "send health: refused=" "one accepted message from a full batch"
+# Positive short batch results must account for each unsent message. A short
+# GSO write is a refusal. A short sendmsg_x count is back pressure (xnu returns
+# a positive count only after ENOBUFS, ERESTART or EMSGSIZE), so it is checked
+# by the accounting control below instead. Zero results have no successful
+# prefix and must fail instead of earning credit.
 leg bench_gso  send send-short "send health: refused=" "one accepted segment from a full GSO write"
 leg bench_msgx send send-zero sendmsg_x "zero accepted messages from a batch"
 leg bench_gso  send send-zero UDP_SEGMENT "zero accepted bytes from a GSO write"
 
-# Back-pressure remains legal, but failed completions earn no sent credit.
-# The plant accepts exactly one of every 32 completed sends.
-if [ -x ./bench_nw ]; then
+# Back-pressure remains legal, but unsent messages earn no sent credit. Each
+# plant accepts exactly one of every 32 sends: bench_nw's send-backpressure
+# completions, and bench_msgx's send-short batch counts.
+accounting_control()
+{
+    local harness="$1" fault="$2" description="$3"
+    local out="$WORK/${harness}_${fault}_accounting.txt"
+    if [ ! -x "./$harness" ]; then
+        echo "SKIP  $harness $fault accounting -- not built on this host"
+        skipped=$(( skipped + 1 ))
+        return
+    fi
     next_port
-    BENCH_FAULT=send-backpressure ./bench_nw send 127.0.0.1 "$PORT" 1 > "$WORK/nw-backpressure.txt" 2>&1
-    status=$?
+    BENCH_FAULT="$fault" ./"$harness" send 127.0.0.1 "$PORT" 1 > "$out" 2>&1
+    local status=$?
     if [ "$status" -ne 0 ]; then
-        fail "nw back-pressure control failed with exit $status"
-    elif python3 - "$WORK/nw-backpressure.txt" <<'PYCONTROL'
+        fail "$harness $fault accounting control failed with exit $status"
+    elif python3 - "$out" <<'PYCONTROL'
 import pathlib, sys
 lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
 rows = [line for line in lines if line.startswith('SENDER ')]
@@ -264,14 +275,14 @@ if sent <= 0 or refused != 31 * sent or refused != pressure:
     sys.exit('failed completions were credited as sent packets')
 PYCONTROL
     then
-        echo "leg   bench_nw back-pressure completion accounting: green"
+        echo "leg   $harness $fault accounting ($description): green"
     else
-        fail "nw back-pressure completion accounting credited refused packets"
+        fail "$harness $fault accounting credited unsent packets ($description)"
     fi
-else
-    echo "SKIP  bench_nw back-pressure completion accounting -- not built on this host"
-    skipped=$(( skipped + 1 ))
-fi
+}
+
+accounting_control bench_nw send-backpressure "back-pressure completions"
+accounting_control bench_msgx send-short "a positive short sendmsg_x count"
 
 # ---------------------------------------------------------------------------
 # and the control on the control: with NO fault armed, a short healthy pair
