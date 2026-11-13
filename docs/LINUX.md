@@ -338,17 +338,17 @@ refuses by name on any unmet condition (`BUILDING.md`,
 
 | condition | what | script |
 | --- | --- | --- |
-| B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); grub and reboot | `:27-37` |
+| B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); `irqaffinity=` may be any cpu list with no isolated cpu; grub and reboot | `:27-37` |
 | B2 | `/sys/devices/system/cpu/isolated` is non-empty | `:38-39` |
 | B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:40-45` |
 | R1 | euid 0 | `:49` |
 | R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act; the pre-flight checks it carries the public address | `:50-53` |
 | R3 | no XDP program already attached | `:54-64` |
-| R4 | each queue IRQ pinned to its own isolated CPU | `:65-74` |
+| R4 | each queue IRQ (`<iface>-TxRx-<k>`) pinned to cpu `num_os_cpus + k`, the cpu its XDP thread pins to, and the interface's other IRQs off those cpus; a NIC without queue names: each IRQ on its own isolated CPU | `:65-74` |
 | R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:75-77` |
 | R6 | SMT off | `:78-81` |
 | R7 | the NIC's combined channel count equals the server's `num_xdp_threads` | `:82-85` |
-| R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12; checked by the script only (below) | `:86-95` |
+| R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12, or a later one built with `CONFIG_RT_GROUP_SCHED` (read from `/boot/config-<release>`) (below) | `:86-95` |
 | K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:97-101` |
 
 The script's modes are `provision` (the default), `verify`, `sweep` and
@@ -566,8 +566,11 @@ echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/90-rocketnet-xdp
 ```
 
 `scripts/rocketnet-provision` sets the running value and `verify` reports it
-unmet; only the file keeps it across a reboot. The library's pre-flight does
-not check it. What it costs: an ordinary task on a worker's CPU no longer
+unmet; only the file keeps it across a reboot. The library's pre-flight
+checks the same rule from the same files and refuses `xdp` while it is unmet:
+a kernel of 6.12 or later passes unless `/boot/config-<release>` carries
+`CONFIG_RT_GROUP_SCHED=y`, and one whose `/boot` config cannot be read is
+unmet unless the value is already -1. What it costs: an ordinary task on a worker's CPU no longer
 gets any time while the worker spins. On the isolated CPUs of this layout
 that leaves only per-CPU kernel work there, which waits too, so keep every
 other thread and IRQ off the worker CPUs. From 6.12 the throttle is gone: a

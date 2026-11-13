@@ -550,7 +550,8 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
         {
             strcpy( gateway_ip_string, "?" );
         }
-        rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s", family_name, gateway_ip_string, interface_name );
+        rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s: the server does not resolve it. send the gateway one packet (ping -c 1 %s) and start again, check it with `ip neigh show %s dev %s`, or set ROCKETNET_GATEWAY_ETHERNET_ADDRESS to its MAC",
+                         family_name, gateway_ip_string, interface_name, gateway_ip_string, gateway_ip_string, interface_name );
         return false;
     }
 
@@ -1101,9 +1102,16 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
 
 bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char * interface_name, int * irq )
 {
+    int queue = -1;
+    return rocketnet_server_socket_interrupt_next_vector( interrupts, interface_name, irq, &queue );
+}
+
+bool rocketnet_server_socket_interrupt_next_vector( FILE * interrupts, const char * interface_name, int * irq, int * queue )
+{
     rocketnet_assert( interrupts );
     rocketnet_assert( interface_name );
     rocketnet_assert( irq );
+    rocketnet_assert( queue );
 
     // a line longer than the buffer is read in parts: its IRQ is taken from
     // the first, and the token a part ends in is carried, from the blank
@@ -1153,6 +1161,10 @@ bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char *
             carry = 0;
             if ( line_irq && named )
             {
+                // a queue vector's name is the line's last token, so this
+                // last part holds it whole
+
+                *queue = rocketnet_xdp_queue_vector( line, interface_name );
                 return true;
             }
             continue;
@@ -1168,28 +1180,6 @@ bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char *
     return false;
 }
 
-// a kernel command line token, bounded: preceded by start or space,
-// followed by space or end -- "irqaffinity=0" must not match
-// "irqaffinity=0-3" or "irqaffinity=012"
-
-static bool rocketnet_server_socket_cmdline_has_token( const char * cmdline, const char * token )
-{
-    const size_t token_length = strlen( token );
-    const char * match = strstr( cmdline, token );
-    while ( match )
-    {
-        const char before = match == cmdline ? ' ' : match[-1];
-        const char after = match[token_length];
-        if ( ( before == ' ' ) && ( after == ' ' || after == '\n' || after == '\0' ) )
-        {
-            return true;
-        }
-        match = strstr( match + 1, token );
-    }
-
-    return false;
-}
-
 // a /proc or /sys path under the pre-flight's root ("" in production)
 
 static bool rocketnet_server_socket_root_path( char * path, size_t path_size, const char * root, const char * suffix )
@@ -1198,10 +1188,12 @@ static bool rocketnet_server_socket_root_path( char * path, size_t path_size, co
     return written > 0 && (size_t) written < path_size;
 }
 
-// B1: the boot tier's kernel command line -- irqaffinity=0 exactly,
-// isolcpus= and nohz_full= with values (nosmt's effect is verified by
-// state under R6). grub changes, so the script can only verify these
-// too; the errand is a reboot, named as one.
+// B1: the boot tier's kernel command line -- irqaffinity=<cpu-list> with no
+// cpu of the isolated set (irqaffinity=0 for the default num_os_cpus of 1,
+// irqaffinity=0-1 for 2; rocketnet_xdp_cmdline_irqaffinity), isolcpus= and
+// nohz_full= with values (nosmt's effect is verified by state under R6).
+// grub changes, so the script can only verify these too; the errand is a
+// reboot, named as one.
 
 bool rocketnet_server_socket_preflight_boot_line( const char * root )
 {
@@ -1214,9 +1206,28 @@ bool rocketnet_server_socket_preflight_boot_line( const char * root )
     if ( rocketnet_server_socket_root_path( path, sizeof( path ), root, "/proc/cmdline" ) &&
          rocketnet_server_socket_read_sysfs( path, value, sizeof( value ) ) )
     {
-        if ( !rocketnet_server_socket_cmdline_has_token( value, "irqaffinity=0" ) )
+        // an unreadable or empty isolated set judges the list's form only:
+        // B2 names the missing set
+
+        char isolated[1024];
+        const bool have_isolated = rocketnet_server_socket_root_path( path, sizeof( path ), root, "/sys/devices/system/cpu/isolated" ) &&
+                                   rocketnet_server_socket_read_sysfs( path, isolated, sizeof( isolated ) ) && isolated[0] != '\0';
+
+        int isolated_cpu = -1;
+        const int irqaffinity = rocketnet_xdp_cmdline_irqaffinity( value, have_isolated ? isolated : NULL, &isolated_cpu );
+        if ( irqaffinity == ROCKETNET_XDP_IRQAFFINITY_ABSENT )
         {
-            rocketnet_warn( "xdp pre-flight: kernel command line lacks irqaffinity=0 -- exactly that token (B1): grub + reboot, per scripts/rocketnet-provision" );
+            rocketnet_warn( "xdp pre-flight: kernel command line lacks irqaffinity=<cpus> (B1): irqaffinity=0 keeps the machine's interrupts on cpu 0, off the isolated cpus -- grub + reboot, per scripts/rocketnet-provision" );
+            provisioned = false;
+        }
+        else if ( irqaffinity == ROCKETNET_XDP_IRQAFFINITY_MALFORMED )
+        {
+            rocketnet_warn( "xdp pre-flight: kernel command line's irqaffinity= is not a cpu list (B1): irqaffinity=0 -- grub + reboot, per scripts/rocketnet-provision" );
+            provisioned = false;
+        }
+        else if ( irqaffinity == ROCKETNET_XDP_IRQAFFINITY_ISOLATED )
+        {
+            rocketnet_warn( "xdp pre-flight: kernel command line's irqaffinity= names cpu %d, which is in the isolated set %s (B1): it would put interrupts on the xdp threads' cpus -- name only cpus outside the isolated set (irqaffinity=0), grub + reboot, per scripts/rocketnet-provision", isolated_cpu, isolated );
             provisioned = false;
         }
 
@@ -1256,20 +1267,121 @@ bool rocketnet_server_socket_preflight_boot_line( const char * root )
     return provisioned;
 }
 
-// R4: each of the interface's queue IRQs is pinned to exactly one cpu
-// FROM THE ISOLATED SET, no cpu doubled -- a range or comma is the
-// scheduler default, a non-isolated cpu (0 included, which
-// irqaffinity=0 parks everything on) is not a pin, and two queues on
-// one core is not one-queue-one-core. interfaces with no per-queue
-// IRQs (VMs) pass. the interface name matches as a whole token, never
-// a substring ("lo" must not match "velocity0").
+// the provision command a refusal names: the script reads the server's cpu
+// split from the same variable the server does, so it rides in front when
+// it is not the default
+
+static void rocketnet_server_socket_provision_command( char * command, size_t command_bytes, const char * interface_name, int num_queues, int num_os_cpus, const char * mode )
+{
+    char os_cpus[64] = "";
+    if ( num_os_cpus > 1 )
+    {
+        snprintf( os_cpus, sizeof( os_cpus ), "ROCKETNET_SERVER_NUM_OS_CPUS=%d ", num_os_cpus );
+    }
+    snprintf( command, command_bytes, "sudo %sscripts/rocketnet-provision %s %d%s%s", os_cpus, interface_name, num_queues, mode[0] ? " " : "", mode );
+}
+
+// one irq's smp_affinity_list under root
+
+static bool rocketnet_server_socket_read_affinity( const char * root, int irq, char * affinity, size_t affinity_bytes )
+{
+    char suffix[64];
+    char path[1024];
+    snprintf( suffix, sizeof( suffix ), "/proc/irq/%d/smp_affinity_list", irq );
+    return rocketnet_server_socket_root_path( path, sizeof( path ), root, suffix ) &&
+           rocketnet_server_socket_read_sysfs( path, affinity, affinity_bytes );
+}
+
+// an affinity that names exactly one cpu ("3", the sysfs newline allowed)
+
+static bool rocketnet_server_socket_single_cpu( const char * affinity, int * cpu )
+{
+    if ( strchr( affinity, '-' ) || strchr( affinity, ',' ) )
+    {
+        return false;
+    }
+
+    errno = 0;
+
+    char * affinity_end = NULL;
+    const long parsed_cpu = strtol( affinity, &affinity_end, 10 );
+
+    while ( *affinity_end == ' ' || *affinity_end == '\t' ||
+            *affinity_end == '\r' || *affinity_end == '\n' )
+    {
+        affinity_end++;
+    }
+
+    if ( affinity_end == affinity || *affinity_end != '\0' ||
+         errno == ERANGE || parsed_cpu < INT_MIN || parsed_cpu > INT_MAX )
+    {
+        return false;
+    }
+
+    *cpu = (int) parsed_cpu;
+    return true;
+}
+
+// the interface's IRQs, as many as R4 judges in one read
+
+#define ROCKETNET_XDP_PREFLIGHT_MAX_VECTORS 1024
+
+struct rocketnet_server_socket_vector_t
+{
+    int irq;
+    int queue;
+};
+
+// read every IRQ line naming the interface; -1 when the table is unreadable,
+// -2 when it names more than max
+
+static int rocketnet_server_socket_read_vectors( const char * root, const char * interface_name, rocketnet_server_socket_vector_t * vectors, int max )
+{
+    char path[1024];
+    FILE * interrupts = rocketnet_server_socket_root_path( path, sizeof( path ), root, "/proc/interrupts" ) ? fopen( path, "r" ) : NULL;
+    if ( !interrupts )
+    {
+        return -1;
+    }
+
+    int count = 0;
+    int irq = 0;
+    int queue = -1;
+    while ( rocketnet_server_socket_interrupt_next_vector( interrupts, interface_name, &irq, &queue ) )
+    {
+        if ( count == max )
+        {
+            fclose( interrupts );
+            return -2;
+        }
+        vectors[count].irq = irq;
+        vectors[count].queue = queue;
+        count++;
+    }
+
+    fclose( interrupts );
+    return count;
+}
+
+// R4: the interface's IRQs. When the interface names its queue vectors
+// <interface>-TxRx-<k> (ixgbe, i40e, ice), queue k's vector is pinned to
+// exactly the cpu xdp thread k pins to, num_os_cpus + k
+// (rocketnet_xdp_thread_cpu), and every other vector of the interface (the
+// misc vector, XDP's tx-only vectors) is off those worker cpus. An
+// interface whose vectors carry no such name keeps the rule by count: each
+// vector pinned to exactly one cpu FROM THE ISOLATED SET, no cpu doubled --
+// a range or comma is the scheduler default, a non-isolated cpu (0
+// included, which irqaffinity=0 parks everything on) is not a pin, and two
+// queues on one core is not one-queue-one-core. interfaces with no IRQ
+// naming them (VMs, mlx5-class) pass, and say so. the interface name
+// matches as a whole token, never a substring ("lo" must not match
+// "velocity0"). scripts/rocketnet-provision's R4 is the same rule.
 
 bool rocketnet_server_socket_preflight_irqs( const char * root, const char * interface_name, int num_queues, int num_os_cpus )
 {
     rocketnet_assert( root );
     rocketnet_assert( interface_name );
-
-    (void) num_os_cpus;
+    rocketnet_assert( num_queues >= 1 );
 
     bool provisioned = true;
 
@@ -1278,8 +1390,12 @@ bool rocketnet_server_socket_preflight_irqs( const char * root, const char * int
     const bool have_isolated = rocketnet_server_socket_root_path( path, sizeof( path ), root, "/sys/devices/system/cpu/isolated" ) &&
                                rocketnet_server_socket_read_sysfs( path, isolated, sizeof( isolated ) ) && isolated[0] != '\0';
 
-    FILE * interrupts = rocketnet_server_socket_root_path( path, sizeof( path ), root, "/proc/interrupts" ) ? fopen( path, "r" ) : NULL;
-    if ( !interrupts )
+    char command[512];
+    rocketnet_server_socket_provision_command( command, sizeof( command ), interface_name, num_queues, num_os_cpus, "" );
+
+    rocketnet_server_socket_vector_t vectors[ROCKETNET_XDP_PREFLIGHT_MAX_VECTORS];
+    const int num_vectors = rocketnet_server_socket_read_vectors( root, interface_name, vectors, ROCKETNET_XDP_PREFLIGHT_MAX_VECTORS );
+    if ( num_vectors == -1 )
     {
         // silence must never verify: an unreadable interrupt table is
         // an unmet condition, not a pass
@@ -1287,60 +1403,110 @@ bool rocketnet_server_socket_preflight_irqs( const char * root, const char * int
         rocketnet_warn( "xdp pre-flight: /proc/interrupts is unreadable (R4): cannot verify irq pinning" );
         return false;
     }
+    if ( num_vectors == -2 )
+    {
+        rocketnet_warn( "xdp pre-flight: more than %d /proc/interrupts lines name %s (R4): cannot verify irq pinning", ROCKETNET_XDP_PREFLIGHT_MAX_VECTORS, interface_name );
+        return false;
+    }
 
-    int matched_irqs = 0;
+    if ( num_vectors == 0 )
+    {
+        // HONESTY over a false rationale: some transports' IRQ names
+        // never carry the netdev name (mlx5-class), and VMs may
+        // have no per-queue vectors at all -- R4 cannot be
+        // verified BY NAME here, and saying so is different from
+        // claiming there is nothing to pin
+
+        rocketnet_info( "xdp pre-flight: no /proc/interrupts line names %s (R4): either this NIC has no per-queue vectors, or its transport's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be verified by name here; pin and verify via the NIC transport's own tooling", interface_name );
+        return true;
+    }
+
+    bool named_queues = false;
+    for ( int i = 0; i < num_vectors; i++ )
+    {
+        named_queues = named_queues || vectors[i].queue >= 0;
+    }
+
+    const int first_worker = rocketnet_xdp_thread_cpu( num_os_cpus, 0 );
 
     uint8_t cpu_seen[1024];
     memset( cpu_seen, 0, sizeof( cpu_seen ) );
 
-    int irq = 0;
-    while ( rocketnet_server_socket_interrupt_next_irq( interrupts, interface_name, &irq ) )
+    for ( int i = 0; i < num_vectors; i++ )
     {
-        matched_irqs++;
-
-        char affinity_suffix[256];
-        snprintf( affinity_suffix, sizeof( affinity_suffix ), "/proc/irq/%d/smp_affinity_list", irq );
+        const int irq = vectors[i].irq;
+        const int queue = vectors[i].queue;
 
         char affinity[256];
-        if ( !rocketnet_server_socket_root_path( path, sizeof( path ), root, affinity_suffix ) ||
-             !rocketnet_server_socket_read_sysfs( path, affinity, sizeof( affinity ) ) )
+        if ( !rocketnet_server_socket_read_affinity( root, irq, affinity, sizeof( affinity ) ) )
         {
             rocketnet_warn( "xdp pre-flight: irq %d affinity is unreadable (R4): cannot verify its pin", irq );
             provisioned = false;
             continue;
         }
+
+        int cpu = -1;
+
+        if ( named_queues && queue >= 0 )
+        {
+            if ( queue >= num_queues )
+            {
+                rocketnet_warn( "xdp pre-flight: irq %d is queue %d of %s, past the %d queues the server runs (R4, R7): run %s", irq, queue, interface_name, num_queues, command );
+                provisioned = false;
+                continue;
+            }
+
+            const int worker = rocketnet_xdp_thread_cpu( num_os_cpus, queue );
+            if ( !rocketnet_server_socket_single_cpu( affinity, &cpu ) || cpu != worker )
+            {
+                rocketnet_warn( "xdp pre-flight: irq %d (queue %d of %s) affinity is '%s', want cpu %d, the cpu xdp thread %d pins to (R4): run %s", irq, queue, interface_name, affinity, worker, queue, command );
+                provisioned = false;
+            }
+            continue;
+        }
+
+        if ( named_queues )
+        {
+            // not a queue's vector: anywhere but a worker's cpu
+
+            if ( rocketnet_xdp_cpu_list_has( affinity, 0 ) < 0 )
+            {
+                rocketnet_warn( "xdp pre-flight: irq %d affinity is unreadable (R4): cannot verify it is off the xdp threads' cpus", irq );
+                provisioned = false;
+                continue;
+            }
+
+            for ( int worker = first_worker; worker < first_worker + num_queues; worker++ )
+            {
+                if ( rocketnet_xdp_cpu_list_has( affinity, worker ) == 1 )
+                {
+                    rocketnet_warn( "xdp pre-flight: irq %d of %s is not a queue's and its affinity '%s' takes in cpu %d, an xdp thread's (R4): run %s", irq, interface_name, affinity, worker, command );
+                    provisioned = false;
+                    break;
+                }
+            }
+            continue;
+        }
+
+        // no queue names: the rule by count
 
         if ( strchr( affinity, '-' ) || strchr( affinity, ',' ) )
         {
-            rocketnet_warn( "xdp pre-flight: irq %d affinity is '%s', want a single isolated cpu (R4): run scripts/rocketnet-provision %s %d", irq, affinity, interface_name, num_queues );
+            rocketnet_warn( "xdp pre-flight: irq %d affinity is '%s', want a single isolated cpu (R4): run %s", irq, affinity, command );
             provisioned = false;
             continue;
         }
 
-        errno = 0;
-
-        char * affinity_end = NULL;
-        const long parsed_cpu = strtol( affinity, &affinity_end, 10 );
-
-        while ( *affinity_end == ' ' || *affinity_end == '\t' ||
-                *affinity_end == '\r' || *affinity_end == '\n' )
-        {
-            affinity_end++;
-        }
-
-        if ( affinity_end == affinity || *affinity_end != '\0' ||
-             errno == ERANGE || parsed_cpu < INT_MIN || parsed_cpu > INT_MAX )
+        if ( !rocketnet_server_socket_single_cpu( affinity, &cpu ) )
         {
             rocketnet_warn( "xdp pre-flight: irq %d affinity is unreadable (R4): cannot verify its pin", irq );
             provisioned = false;
             continue;
         }
 
-        const int cpu = (int) parsed_cpu;
-
         if ( have_isolated && !rocketnet_server_socket_cpu_in_list( isolated, cpu ) )
         {
-            rocketnet_warn( "xdp pre-flight: irq %d is pinned to cpu %d, which is not in the isolated set %s (R4): run scripts/rocketnet-provision %s %d", irq, cpu, isolated, interface_name, num_queues );
+            rocketnet_warn( "xdp pre-flight: irq %d is pinned to cpu %d, which is not in the isolated set %s (R4): run %s", irq, cpu, isolated, command );
             provisioned = false;
         }
 
@@ -1356,7 +1522,7 @@ bool rocketnet_server_socket_preflight_irqs( const char * root, const char * int
         {
             if ( cpu_seen[cpu] )
             {
-                rocketnet_warn( "xdp pre-flight: two of %s's IRQs are pinned to cpu %d (R4): one queue, one core -- run scripts/rocketnet-provision %s %d", interface_name, cpu, interface_name, num_queues );
+                rocketnet_warn( "xdp pre-flight: two of %s's IRQs are pinned to cpu %d (R4): one queue, one core -- run %s", interface_name, cpu, command );
                 provisioned = false;
             }
 
@@ -1364,53 +1530,154 @@ bool rocketnet_server_socket_preflight_irqs( const char * root, const char * int
         }
     }
 
-    fclose( interrupts );
-
-    if ( matched_irqs == 0 )
-    {
-        // HONESTY over a false rationale: some transports' IRQ names
-        // never carry the netdev name (mlx5-class), and VMs may
-        // have no per-queue vectors at all -- R4 cannot be
-        // verified BY NAME here, and saying so is different from
-        // claiming there is nothing to pin
-
-        rocketnet_info( "xdp pre-flight: no /proc/interrupts line names %s (R4): either this NIC has no per-queue vectors, or its transport's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be verified by name here; pin and verify via the NIC transport's own tooling", interface_name );
-    }
-    else if ( have_isolated && matched_irqs > rocketnet_server_socket_count_cpu_list( isolated ) )
+    if ( !named_queues && have_isolated && num_vectors > rocketnet_server_socket_count_cpu_list( isolated ) )
     {
         // the same refusal the script gives a round robin that
         // would wrap: more queue irqs than isolated cores IS the
         // doubling
 
-        rocketnet_warn( "xdp pre-flight: %d of %s's IRQs but only %d isolated cpus (R4): one queue, one core -- grow the isolated range or shrink the queue count", matched_irqs, interface_name, rocketnet_server_socket_count_cpu_list( isolated ) );
+        rocketnet_warn( "xdp pre-flight: %d of %s's IRQs but only %d isolated cpus (R4): one queue, one core -- grow the isolated range or shrink the queue count", num_vectors, interface_name, rocketnet_server_socket_count_cpu_list( isolated ) );
         provisioned = false;
     }
 
     return provisioned;
 }
 
-// R8: the real-time throttle. scripts/rocketnet-provision checks it; the
-// pre-flight does not refuse on it.
+// R8: the real-time throttle (scripts/rocketnet-provision r8_throttles and
+// r8_enforce, the same rule, reading the same files). Each xdp thread spins
+// at SCHED_RR without sleeping; a kernel with the real-time throttle (before
+// 6.12, or a later one built with CONFIG_RT_GROUP_SCHED) stops it
+// sched_rt_period_us - sched_rt_runtime_us in every period: about 50 ms in
+// every second at the stock 950000, 0.2 to 1 s at a time on a nohz_full
+// cpu, and its queue receives and sends nothing meanwhile. Met when the
+// kernel has no throttle or kernel.sched_rt_runtime_us reads -1. A kernel
+// of 6.12 or later whose build config (/boot/config-<release>) cannot be
+// read cannot be told, and is unmet unless the sysctl is already -1, which
+// meets R8 either way.
 
 bool rocketnet_server_socket_preflight_rt_throttle( const char * root )
 {
     rocketnet_assert( root );
-    return true;
+
+    static const char * fix = "sysctl -w kernel.sched_rt_runtime_us=-1, and to keep it across reboots: echo 'kernel.sched_rt_runtime_us = -1' > /etc/sysctl.d/90-rocketnet-xdp.conf (or run scripts/rocketnet-provision)";
+
+    char path[1024];
+    char release[256];
+    if ( !rocketnet_server_socket_root_path( path, sizeof( path ), root, "/proc/sys/kernel/osrelease" ) ||
+         !rocketnet_server_socket_read_sysfs( path, release, sizeof( release ) ) || release[0] == '\0' )
+    {
+        rocketnet_warn( "xdp pre-flight: the kernel release is unreadable (R8): cannot tell whether real-time threads are throttled" );
+        return false;
+    }
+
+    // 0 throttles, 1 does not, 2 cannot be told
+
+    int throttles = 0;
+    if ( rocketnet_xdp_rt_release( release ) == ROCKETNET_XDP_RT_READ_CONFIG )
+    {
+        char config_suffix[512];
+        snprintf( config_suffix, sizeof( config_suffix ), "/boot/config-%s", release );
+        FILE * config = rocketnet_server_socket_root_path( path, sizeof( path ), root, config_suffix ) ? fopen( path, "r" ) : NULL;
+        if ( !config )
+        {
+            throttles = 2;
+        }
+        else
+        {
+            throttles = 1;
+            char line[512];
+            while ( fgets( line, (int) sizeof( line ), config ) )
+            {
+                if ( rocketnet_xdp_rt_config_line( line ) )
+                {
+                    throttles = 0;
+                    break;
+                }
+            }
+            fclose( config );
+        }
+    }
+
+    if ( throttles == 1 )
+    {
+        return true;
+    }
+
+    char runtime[64];
+    if ( !rocketnet_server_socket_root_path( path, sizeof( path ), root, "/proc/sys/kernel/sched_rt_runtime_us" ) ||
+         !rocketnet_server_socket_read_sysfs( path, runtime, sizeof( runtime ) ) )
+    {
+        rocketnet_warn( "xdp pre-flight: kernel.sched_rt_runtime_us is unreadable (R8): cannot verify the real-time throttle is off" );
+        return false;
+    }
+
+    if ( strcmp( runtime, "-1" ) == 0 )
+    {
+        return true;
+    }
+
+    if ( throttles == 2 )
+    {
+        rocketnet_warn( "xdp pre-flight: kernel %s is 6.12 or later and /boot/config-%s is unreadable, so whether it throttles real-time threads (CONFIG_RT_GROUP_SCHED=y) is unknown, and kernel.sched_rt_runtime_us is %s (R8): %s", release, release, runtime, fix );
+    }
+    else
+    {
+        rocketnet_warn( "xdp pre-flight: kernel.sched_rt_runtime_us is %s, want -1 (R8): kernel %s stops each spinning xdp thread about 50 ms in every second (0.2 to 1 s at a time on a nohz_full cpu): %s", runtime, release, fix );
+    }
+    return false;
 }
 
-// after the attach: create does not read the queue vectors again
+// after the attach: a driver that rebuilds its queue vectors when a program
+// attaches (ixgbe) gives the new vectors the default affinity, cpu 0 under
+// irqaffinity=0, after the pre-flight passed. The library never changes
+// interrupt affinity (standard/TRANSPORT.md t2 rule 5): create reads the
+// queue vectors again and warns, naming the repin command.
 
 int rocketnet_server_socket_queue_irqs_off_worker( const char * root, const char * interface_name, int num_queues, int num_os_cpus, char * first, size_t first_bytes )
 {
     rocketnet_assert( root );
     rocketnet_assert( interface_name );
-    (void) num_queues;
-    (void) num_os_cpus;
+
     if ( first && first_bytes > 0 )
     {
         first[0] = '\0';
     }
-    return 0;
+
+    rocketnet_server_socket_vector_t vectors[ROCKETNET_XDP_PREFLIGHT_MAX_VECTORS];
+    const int num_vectors = rocketnet_server_socket_read_vectors( root, interface_name, vectors, ROCKETNET_XDP_PREFLIGHT_MAX_VECTORS );
+
+    int off = 0;
+    for ( int i = 0; i < num_vectors; i++ )
+    {
+        const int queue = vectors[i].queue;
+        if ( queue < 0 || queue >= num_queues )
+        {
+            continue;
+        }
+
+        const int worker = rocketnet_xdp_thread_cpu( num_os_cpus, queue );
+
+        char affinity[256];
+        int cpu = -1;
+        const bool read = rocketnet_server_socket_read_affinity( root, vectors[i].irq, affinity, sizeof( affinity ) );
+        if ( read && rocketnet_server_socket_single_cpu( affinity, &cpu ) && cpu == worker )
+        {
+            continue;
+        }
+
+        if ( off == 0 && first && first_bytes > 0 )
+        {
+            char * newline = read ? strchr( affinity, '\n' ) : NULL;
+            if ( newline )
+            {
+                *newline = '\0';
+            }
+            snprintf( first, first_bytes, "irq %d, queue %d, on '%s', want cpu %d", vectors[i].irq, queue, read ? affinity : "unreadable", worker );
+        }
+        off++;
+    }
+
+    return off;
 }
 
 // THE PRE-FLIGHT: non-mutating, checking the two-tier condition
@@ -2455,8 +2722,15 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     const int ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->xdp_interface_index, false );
     if ( ret != 0 )
     {
+        // the driver's refusal is named as it came (errno and the device's
+        // MTU): a driver with native XDP also refuses it for its own
+        // reasons, an MTU above its XDP limit among them, so the message
+        // does not guess
+
         char attach_error[128];
-        rocketnet_error( "xdp transport refused: server_xdp could not attach in native mode to %s (%s); generic (skb) mode is not used. use a NIC whose driver supports native XDP, or another transport", xdp_interface_name, strerror_r( ret < 0 ? -ret : ret, attach_error, sizeof( attach_error ) ) );
+        const int attach_errno = ret < 0 ? -ret : ret;
+        rocketnet_error( "xdp transport refused: server_xdp could not attach in native mode to %s (errno %d, %s; mtu %d); generic (skb) mode is not used. the driver refused the attach: it may lack native XDP, or refuse it at this MTU or channel setup. use a NIC and setup its driver attaches natively, or another transport",
+                         xdp_interface_name, attach_errno, strerror_r( attach_errno, attach_error, sizeof( attach_error ) ), get_interface_mtu( xdp_interface_name ) );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
@@ -2811,6 +3085,24 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     else
     {
         rocketnet_info( "server xdp sockets bound in zero copy mode on %d of %d queues and copy mode on the rest on %s", zero_copy_queues, num_queues, xdp_interface_name );
+    }
+
+    // R4 again, read only, now the program is attached and the sockets are
+    // bound: a driver that rebuilds its queue vectors on the attach (ixgbe)
+    // has put them back on the default affinity after the pre-flight passed.
+    // The library never changes interrupt affinity (standard/TRANSPORT.md
+    // t2 rule 5); one warning names the command that does.
+
+    {
+        char first_off[256];
+        const int off = rocketnet_server_socket_queue_irqs_off_worker( "", xdp_interface_name, num_queues, num_os_cpus, first_off, sizeof( first_off ) );
+        if ( off > 0 )
+        {
+            char command[512];
+            rocketnet_server_socket_provision_command( command, sizeof( command ), xdp_interface_name, num_queues, num_os_cpus, "repin" );
+            rocketnet_warn( "xdp: attaching server_xdp moved %d of %s's %d queue interrupts off their xdp threads' cpus (%s): this driver rebuilt its vectors on the attach, so each packet on those queues takes its interrupt on another core. run %s now (docs/DEPLOYING.md, step 4a)",
+                            off, xdp_interface_name, num_queues, first_off, command );
+        }
     }
 
     // the server has started successfully

@@ -291,6 +291,11 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
 
 bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char * interface_name, int * irq );
 
+// the same, and the line's queue: k when its name is <interface>-TxRx-<k>
+// (rocketnet_xdp_queue_vector), else -1.
+
+bool rocketnet_server_socket_interrupt_next_vector( FILE * interrupts, const char * interface_name, int * irq, int * queue );
+
 // The pre-flight's file-reading conditions, each reading its /proc, /sys and
 // /boot files under root ("" in production; a unit case's directory holds a
 // fake tree with the same paths), so every arm is driven with no machine

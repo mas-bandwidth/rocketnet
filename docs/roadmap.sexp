@@ -423,7 +423,7 @@
 
   (item "xdp-gateway-refresh-main-thread" :group "review-v1-2" :area "rocketnet"
    :title "XDP: the gateway refresh blocks the main thread every 5 seconds"
-   :text "On XDP, rocketnet_server_socket_receive_packets (sdk/rocketnet_server_socket_linux.cpp about 4745) runs the gateway refresh on the main thread every 5 s (rocketnet_xdp_gateway_refresh, sdk/rocketnet_xdp_frame.h about 1473, through rocketnet_server_socket_resolve_gateway about 648). rocketnet_gateway_netlink_refresh opens a NETLINK_ROUTE socket, dumps the whole route table for the family (RTM_GETROUTE with NLM_F_DUMP), then queries the neighbour (RTM_GETNEIGH), each receive blocking with a 1 s timeout (sdk/rocketnet_gateway_netlink_linux.cpp about 751-840, 1006); with both families, twice. The cost grows with the host's route count and can block the main thread up to the timeout under rtnl contention; it does not show on a bench with a small table. Resolve it off the main thread (on a network thread), or query the one destination without blocking."
+   :text "On XDP, rocketnet_server_socket_receive_packets (sdk/rocketnet_server_socket_linux.cpp about 4745) runs the gateway refresh on the main thread every 5 s (rocketnet_xdp_gateway_refresh, sdk/rocketnet_xdp_frame.h about 1473, through rocketnet_server_socket_resolve_gateway about 648). rocketnet_gateway_netlink_refresh opens a NETLINK_ROUTE socket, dumps the whole route table for the family (RTM_GETROUTE with NLM_F_DUMP), then queries the neighbour (RTM_GETNEIGH); with both families, twice. The refresh's sockets are non-blocking, but that covers only the receive: the kernel handles each request inside sendto, building the first part of the dump there, and a kernel that takes the rtnl lock for these dumps makes sendto wait while another task holds it (route or link changes, other netlink dumps). The cost grows with the host's route count and can hold up the main thread under rtnl contention; it does not show on a bench with a small table. Resolve it off the main thread (on a network thread), or query the one destination without a dump. Rated medium by the wave 2 reader (W2-35)."
    :date "2026-11-13" :origin "Review before v1.2.0, finding X5")
 
   (item "iocp-stop-repost-hang" :group "review-v1-2" :area "rocketnet"
@@ -505,4 +505,39 @@
    :title "A strict option: refuse to start when a Linux transport worker cannot be kept off CPU 0"
    :text "When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run)."
    :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
+
+  (item "xdp-provision-restart-mode" :group "review-v1-2" :area "rocketnet"
+   :title "XDP: one provision step for a restart on NICs whose attach rebuilds the queue vectors"
+   :text "On ixgbe-class NICs the XDP attach and detach rebuild the queue vectors onto the default affinity (cpu 0 under irqaffinity=0), so a safe start is three steps: provision, start the server, repin; and a restart needs provision again first, because the old server's detach moved the vectors back (docs/DEPLOYING.md step 4a). The library only warns after its attach and never changes affinity (standard/TRANSPORT.md t2 rule 5). A script mode that provisions, waits for the new server's attach, then repins (what repin already waits for: the program, the carrier, one queue vector a thread) would make it one operator step, for example a systemd ExecStartPost. Needs an ixgbe bench to show it."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, findings W2-36 and W2-71")
+
+  (item "xdp-capabilities-not-root" :group "review-v1-2" :area "rocketnet"
+   :title "XDP: accept a server with the needed capabilities instead of euid 0"
+   :text "The pre-flight's R1 and the script refuse any euid but 0. What the XDP transport needs is a capability set: CAP_NET_ADMIN (attach, ethtool reads), CAP_BPF (program and map loads, with CAP_PERFMON on some kernels), CAP_NET_RAW (AF_XDP sockets), CAP_SYS_RESOURCE (the memlock rlimit), CAP_SYS_NICE (SCHED_RR and affinity), plus write access to the root-owned bpffs directory for the instance's pin root. Read the effective set (capget) in R1 and name the missing capabilities. Needs a run on a provisioned XDP bench as a non-root user with those capabilities, to find which the kernel really asks for."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-45")
+
+  (item "xdp-config-map-after-xsk-map" :group "review-v1-2" :area "rocketnet"
+   :title "XDP: write the config map after the sockets are in the XSK map"
+   :text "create writes the program's config map (address and port the program redirects) before every queue's socket is in the XSK map, so for a few microseconds before create returns a datagram to the port on a queue whose socket is not yet in the map is redirected to an empty slot and counted DROPPED_NO_SOCKET, where with the order reversed it would pass to the kernel stack and find no socket there either. Not shown red: the window is before create returns, and frames in it are lost either way. Reorder (sockets into the XSK map first, config map last) and cover it in the create-order unit seam."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-43")
+
+  (item "xdp-preflight-mtu" :group "review-v1-2" :area "rocketnet"
+   :title "XDP: a pre-flight rule for an MTU native XDP refuses"
+   :text "A driver refuses a native XDP attach when the link MTU is above what it can serve with one buffer a frame (ENA at 9001, i40e and ixgbe above about 3000 to 3500 without multi-buffer support). v1.2 names the errno and the link MTU in the attach refusal, so the operator can see it, but the pre-flight does not check it, and auto falls to gso only after the attach fails. A pre-flight rule reading /sys/class/net/IF/mtu against the transport's frame size would name it before anything is loaded. Needs the per-driver limits measured on the benches before it can refuse rightly."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-44")
+
+  (item "xdp-gateway-neighbour-probe" :group "review-v1-2" :area "rocketnet"
+   :title "XDP: resolve a missing gateway neighbour entry instead of refusing"
+   :text "create refuses the XDP transport when the gateway's neighbour entry is missing or unusable, and nothing makes the kernel resolve it; v1.2 says so and names the fix (ping the gateway once, ip neigh show, or ROCKETNET_GATEWAY_ETHERNET_ADDRESS). A probe at create (one datagram to the gateway through an ordinary socket, then the neighbour query again with a bounded retry) would resolve it the way the kernel would for any socket. Also from the same reading: only the first default route on the interface is used, and a multipath route's RTNH_F_DEAD and RTNH_F_LINKDOWN next hops are not skipped."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-40")
+
+  (item "xdp-rr-worker-napi-softirq" :group "review-v1-2" :area "rocketnet"
+   :title "XDP: a spinning SCHED_RR worker shares its core with its queue's interrupt"
+   :text "R4 pins queue k's interrupt to the cpu xdp thread k spins on at SCHED_RR. The NAPI softirq runs on that cpu on interrupt exit, ahead of the thread, and is fine; but when softirq work is deferred to ksoftirqd (SCHED_OTHER) under overload, the spinning real-time worker can starve it, and the queue's receive stalls behind its own worker. Unsure: busy polling (R5) and the zero-copy path may keep the work out of ksoftirqd. Measure first: a peak run on the X710 pair with the worker at SCHED_RR against SCHED_OTHER, reading ksoftirqd's run time on the worker cpus (/proc/PID/schedstat) and the receive drops."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-38")
+
+  (item "xdp-queue-change-after-start" :group "review-v1-2" :area "rocketnet"
+   :title "XDP: a queue-count change or device unregister after start is silent"
+   :text "After start, an ethtool -L on the interface or the device going away (driver reload, hot unplug) leaves the server bound to queues that no longer exist or to a dead device: datagrams on new queues count DROPPED_NO_SOCKET and nothing else says so, and nothing recovers. Watch the link with an RTNLGRP_LINK subscription on a network thread, log once by name, and say in the docs that a channel change needs a restart."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-42")
  ))

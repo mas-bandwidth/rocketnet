@@ -134,8 +134,8 @@ acts are the runtime resources (its embedded BPF program loaded and attached, AF
 the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
 step; no application using XDP reconstructs it. The
 script's header carries the authoritative
-condition list; the pre-flight checks exactly those conditions, except R8
-(the real-time throttle), which only the script checks.
+condition list; the pre-flight checks exactly those conditions, R8 (the
+real-time throttle) included.
 
 `xdp` runs one thread per NIC queue, so the NIC is provisioned to the
 server's thread count before the server starts. In order:
@@ -167,6 +167,9 @@ after the interface name for more):
     # 1. BOOT TIER (once, then reboot): edit GRUB_CMDLINE_LINUX in /etc/default/grub
     #    to carry: nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
     #    then: update-grub && reboot
+    #    (irqaffinity= may be any cpu list naming no isolated cpu: with
+    #    ROCKETNET_SERVER_NUM_OS_CPUS=2 the XDP threads start at cpu 2, so
+    #    irqaffinity=0-1 isolcpus=2-16 nohz_full=2-16)
     #    (the NIC driver needs AF_XDP zero copy: on an X710 the in-tree i40e
     #    of Ubuntu's 7.0.0-43-generic binds it, while Intel's i40e 2.30.18
     #    compiles it out on Ubuntu; LINUX.md section 6 has what was measured)
@@ -200,15 +203,37 @@ after the interface name for more):
     # 4a. ON IXGBE (and any NIC whose XDP attach resets the port): the attach
     #    rebuilds the interrupt vectors after the pre-flight has passed, and
     #    with irqaffinity=0 every queue vector lands on cpu 0, away from the
-    #    worker that polls it. Once the server is up, as root:
+    #    worker that polls it. The library never changes interrupt affinity;
+    #    after its attach it reads the queue vectors again and, when one has
+    #    left its worker's cpu, logs one warning naming this step:
+    #
+    #      xdp: attaching server_xdp moved 1 of eth0's 1 queue interrupts off
+    #      their xdp threads' cpus (irq 120, queue 0, on '0', want cpu 1): ...
+    #      run sudo scripts/rocketnet-provision eth0 1 repin now (docs/DEPLOYING.md, step 4a)
+    #
+    #    Once the server is up, as root:
     scripts/rocketnet-provision eth0 repin
     #    It waits (ROCKETNET_REPIN_WAIT_SECONDS, default 60) for the attached
     #    program, the carrier and one queue vector a thread, pins <if>-TxRx-k
-    #    to the k-th isolated cpu (the cpu XDP worker k pins itself to),
+    #    to cpu num_os_cpus + k (the cpu XDP worker k pins itself to; give the
+    #    script the server's ROCKETNET_SERVER_NUM_OS_CPUS when it is not 1),
     #    moves any other vector of the port off the worker cpus, and reads
     #    them back. It writes only smp_affinity_list, so it runs beside the
     #    live server. Provision itself runs R7 (channels) before R4 (IRQs), so
     #    a port left with many channels provisions on the first run.
+    #
+    #    On such a NIC the order is always: provision, start the server,
+    #    repin. A RESTART needs provision first again: the old server's
+    #    detach rebuilds the vectors once more, and they come back on cpu 0.
+    #    Skip it and the new server's pre-flight refuses R4, one line a
+    #    vector, then the summary, and `auto` falls to gso:
+    #
+    #      xdp pre-flight: irq 120 (queue 0 of eth0) affinity is '0', want cpu 1, the cpu xdp thread 0 pins to (R4): run sudo scripts/rocketnet-provision eth0 1
+    #      xdp pre-flight failed: this machine is not provisioned ...
+    #
+    #    Provision refuses to unload rocketnet's own program while a
+    #    rocketnet server on this host is live (R3): stop the server first,
+    #    or set ROCKETNET_PROVISION_UNLOAD_LIVE=1 to unload it anyway.
 
     # 5. AFTER A CRASH (a server that died without destroy): its XDP program
     #    stays ATTACHED to the interface, and it is NOT inert: it drops every

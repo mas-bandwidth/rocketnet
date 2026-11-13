@@ -27,7 +27,9 @@
 #   B1. kernel command line   /proc/cmdline carries
 #                             irqaffinity=0 isolcpus=<range> nohz_full=<range>
 #                             (and nosmt, whose effect condition R6 verifies
-#                             by state): edit GRUB_CMDLINE_LINUX in
+#                             by state). irqaffinity= may be any cpu list
+#                             with no cpu in the isolated set (0-1 when
+#                             ROCKETNET_SERVER_NUM_OS_CPUS is 2): edit GRUB_CMDLINE_LINUX in
 #                             /etc/default/grub, update-grub, reboot. The
 #                             range is a PARAMETER of this script, default
 #                             1-15 -- the verified 10 Gbps point ("this is
@@ -62,9 +64,20 @@
 #                             script (not verify) unloads it. its pin roots are
 #                             SWEEP's alone (pid liveness is unreliable where
 #                             bpffs is shared into containers); they are inert.
+#                             the unload is refused while the attached program
+#                             is rocketnet's server_xdp and a rocketnet
+#                             instance on this host is live (the sweep's rule
+#                             4): it would stop a running server receiving.
+#                             ROCKETNET_PROVISION_UNLOAD_LIVE=1 unloads anyway.
 #   R4. irq pinning           each of the interface's queue IRQs pinned to
-#                             its own CPU from the isolated set, one queue
-#                             one CPU (/proc/interrupts ->
+#                             the cpu its xdp thread pins to: <iface>-TxRx-<k>
+#                             to cpu num_os_cpus + k (ROCKETNET_SERVER_NUM_OS_CPUS,
+#                             the server's variable, default 1), and every
+#                             other IRQ of the interface (misc, XDP's tx-only
+#                             vectors) off those cpus. a NIC whose vectors
+#                             carry no -TxRx-<k> name: each IRQ pinned to its
+#                             own CPU from the isolated set, one queue one
+#                             CPU (/proc/interrupts ->
 #                             /proc/irq/N/smp_affinity_list). IRQ lines are
 #                             matched by the bounded-token rule stated at
 #                             the matcher below; transports whose irq names do
@@ -89,8 +102,11 @@
 #                             worker spins at SCHED_RR without sleeping, and
 #                             the stock 950000 stops it about 50 ms in every
 #                             second, 0.2 to 1 s at a time on a nohz_full
-#                             cpu. Later kernels pass. Checked by this script
-#                             only: the pre-flight does not refuse on it.
+#                             cpu. Later kernels pass (the build config is
+#                             read from /boot/config-<release>; a 6.12 or
+#                             later kernel without it cannot be told, and
+#                             only -1 meets R8 there). The pre-flight checks
+#                             the same rule from the same files.
 #                             Not kept across reboots (nor are R4 to R7):
 #                             /etc/sysctl.d keeps it (docs/LINUX.md).
 #
@@ -117,8 +133,8 @@
 #     repin:               R4 again, by vector name, after the server's XDP
 #                          attach: waits (ROCKETNET_REPIN_WAIT_SECONDS,
 #                          default 60) for the attach, the link and the
-#                          queue vectors, then pins <iface>-TxRx-<k> to the
-#                          k-th isolated cpu and moves every other vector of
+#                          queue vectors, then pins <iface>-TxRx-<k> to cpu
+#                          num_os_cpus + k and moves every other vector of
 #                          the interface off those cpus. touches only
 #                          /proc/irq/N/smp_affinity_list, so it runs beside
 #                          a live server (rules inline at the repin block)
@@ -138,6 +154,11 @@
 #                          touches only a private temp dir it creates and
 #                          removes; CI runs it); also invocable bare as
 #                          `rocketnet-provision selftest`
+#     num_os_cpus:         not an argument: ROCKETNET_SERVER_NUM_OS_CPUS, the
+#                          variable the server reads (pass it through sudo
+#                          like the thread count), else the server's default
+#                          (1). xdp thread k pins to cpu num_os_cpus + k, so
+#                          R4 and repin pin queue k's IRQ there
 #     isolated-range:      the isolcpus/nohz_full range this box should boot
 #                          with, default 1-15 (the 10 Gbps point) -- used in
 #                          the B1 guidance and the scaling check below
@@ -209,17 +230,40 @@ if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ] || [ "$MODE" = "repin" ];
     fi
 fi
 
+# THE CPU SPLIT is the server's too: xdp thread k pins to cpu num_os_cpus + k
+# (rocketnet_xdp_thread_cpu, sdk/rocketnet_xdp_frame.h), and R4 and repin pin
+# queue k's IRQ to that cpu. ROCKETNET_SERVER_NUM_OS_CPUS when set (the
+# variable the server reads, 1 to 256; 0 selects the default), else 1.
+
+OS_CPUS=1
+if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ] || [ "$MODE" = "repin" ]; then
+    OS_CPUS_ENV="${ROCKETNET_SERVER_NUM_OS_CPUS:-}"
+    if [ -n "$OS_CPUS_ENV" ]; then
+        case "$OS_CPUS_ENV" in
+            *[!0-9]*) echo "ROCKETNET_SERVER_NUM_OS_CPUS='$OS_CPUS_ENV' is not a count from 0 to 256 (the server refuses it too)" >&2; exit 2 ;;
+        esac
+        if [ "${#OS_CPUS_ENV}" -gt 3 ] || [ "$OS_CPUS_ENV" -gt 256 ]; then
+            echo "ROCKETNET_SERVER_NUM_OS_CPUS='$OS_CPUS_ENV' is not a count from 0 to 256 (the server refuses it too)" >&2; exit 2
+        fi
+        if [ "$OS_CPUS_ENV" -gt 0 ]; then
+            OS_CPUS=$(( 10#$OS_CPUS_ENV ))
+        fi
+        echo "rocketnet-provision: xdp thread k on cpu $OS_CPUS + k, from ROCKETNET_SERVER_NUM_OS_CPUS"
+    fi
+fi
+
 case "$MODE" in
     provision|verify|repin|sweep|selftest) ;;
     *) echo "unknown mode '$MODE' (provision, verify, repin, sweep, or selftest; a misspelled mode must never mutate)" >&2; exit 2 ;;
 esac
 
-# R8's release and file names come from the environment in the selftest only:
-# elsewhere they are the running kernel's, never a file an inherited variable
-# names (sudo -E would otherwise write -1 as root wherever R8_RUNTIME points)
+# R8's release and file names, and R3's bpffs directory, come from the
+# environment in the selftest only: elsewhere they are the running kernel's,
+# never a file an inherited variable names (sudo -E would otherwise write -1
+# as root wherever R8_RUNTIME points)
 
 if [ "$MODE" != "selftest" ]; then
-    unset R8_RELEASE R8_RUNTIME R8_CONFIG R8_PROC_CONFIG
+    unset R8_RELEASE R8_RUNTIME R8_CONFIG R3_PIN_ROOTS
 fi
 
 # THE STUB ROOT, for the selftest's whole-script cases: with
@@ -246,7 +290,6 @@ if [ -n "${ROCKETNET_PROVISION_STUB_ROOT:-}" ]; then
     R8_RELEASE="$(cat "$FS/proc/sys/kernel/osrelease" 2>/dev/null || echo unreadable)"
     R8_RUNTIME="$FS/proc/sys/kernel/sched_rt_runtime_us"
     R8_CONFIG="$FS/boot/config-$R8_RELEASE"
-    R8_PROC_CONFIG="$FS/proc/config.gz"
     echo "rocketnet-provision: STUB ROOT $FS: every /proc and /sys read below is the stub's, not this machine's"
 else
     CALLER_EUID="$(id -u)"
@@ -436,6 +479,170 @@ queue_irq_lines_for_interface()
         }'
 }
 
+# whether the cpu list LIST ("3", "0-1,5", sysfs form) takes in CPU: prints
+# 1 or 0, or -1 when LIST is not a cpu list (empty, a stray comma, a range
+# running backwards, a number past 2147483647). Leading blanks and trailing
+# whitespace are allowed. rocketnet_xdp_cpu_list_has is the same rule.
+
+cpu_list_has()
+{
+    local LIST="$1" CPU="$2" FOUND=0 ENTRY FIRST LAST NUMBER
+    local -a ENTRIES
+    LIST="${LIST#"${LIST%%[! $'\t']*}"}"
+    LIST="${LIST%"${LIST##*[! $'\t'$'\n'$'\r']}"}"
+    case "$LIST" in
+        ""|*,|*[!0-9,-]*) echo -1; return ;;
+    esac
+    IFS=',' read -ra ENTRIES <<< "$LIST"
+    for ENTRY in "${ENTRIES[@]}"; do
+        if ! [[ "$ENTRY" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+            echo -1; return
+        fi
+        FIRST="${ENTRY%-*}"
+        LAST="${ENTRY#*-}"
+        for NUMBER in "$FIRST" "$LAST"; do
+            NUMBER="${NUMBER#"${NUMBER%%[!0]*}"}"
+            if [ ${#NUMBER} -gt 10 ] || { [ ${#NUMBER} -eq 10 ] && [ "$NUMBER" \> "2147483647" ]; }; then
+                echo -1; return
+            fi
+        done
+        FIRST=$(( 10#$FIRST ))
+        LAST=$(( 10#$LAST ))
+        if [ "$LAST" -lt "$FIRST" ]; then
+            echo -1; return
+        fi
+        if [ "$CPU" -ge "$FIRST" ] && [ "$CPU" -le "$LAST" ]; then
+            FOUND=1
+        fi
+    done
+    echo "$FOUND"
+}
+
+# the first worker cpu (WORKERS, " 1 2 " form) the affinity list LIST takes
+# in; "malformed" when LIST is not a cpu list; empty when it takes in none
+
+list_takes_worker()
+{
+    local LIST="$1" WORKERS="$2" WORKER HAS
+    if [ "$(cpu_list_has "$LIST" 0)" = "-1" ]; then
+        echo malformed
+        return
+    fi
+    for WORKER in $WORKERS; do
+        HAS="$(cpu_list_has "$LIST" "$WORKER")"
+        if [ "$HAS" = "1" ]; then
+            echo "$WORKER"
+            return
+        fi
+    done
+}
+
+# the cpu a vector that is not a queue's moves to: the lowest online cpu
+# under ROOT ("" for the host) that is outside the isolated set and is not
+# one of WORKERS (" 1 2 " form); empty when there is none
+
+housekeeping_cpu()
+{
+    local ROOT="$1" WORKERS="$2" CPU_DIR CPU ONLINE CANDIDATE BEST="" IS_ISOLATED
+    for CPU_DIR in "$ROOT"/sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$CPU_DIR" ] || continue
+        CPU="${CPU_DIR##*cpu}"
+        case "$CPU" in
+            *[!0-9]*) continue ;;
+        esac
+        ONLINE="$(cat "$CPU_DIR/online" 2>/dev/null || echo 1)"
+        IS_ISOLATED=0
+        for CANDIDATE in "${ISOLATED_CPUS[@]:-}"; do
+            [ "$CANDIDATE" = "$CPU" ] && IS_ISOLATED=1
+        done
+        case "$WORKERS" in
+            *" $CPU "*) IS_ISOLATED=1 ;;
+        esac
+        if [ "$ONLINE" = "1" ] && [ $IS_ISOLATED -eq 0 ] && { [ -z "$BEST" ] || [ "$CPU" -lt "$BEST" ]; }; then
+            BEST="$CPU"
+        fi
+    done
+    echo "$BEST"
+}
+
+# THE SWEEP'S JUDGEMENT of one pin root, by the rules at the sweep block,
+# shared with R3's live-server refusal so the two cannot disagree. Prints
+# one line: "live PID", "stale REASON", or "leave REASON" (not provably
+# rocketnet's, or not provably stale).
+
+pin_root_judge()
+{
+    local PIN_ROOT="$1" NAME FIELD_COUNT PIN_PID PIN_START PIN_BOOT BOOT_WELL_FORMED HOST_BOOT_ID LIVE_START
+    NAME="${PIN_ROOT##*/rocketnet_xdp_}"
+    FIELD_COUNT="$(echo "$NAME" | awk -F_ '{print NF}')"
+    PIN_PID="$(echo "$NAME" | cut -d_ -f2)"
+    PIN_START="$(echo "$NAME" | cut -d_ -f3)"
+    PIN_BOOT="$(echo "$NAME" | cut -d_ -f4)"
+    if [ "$FIELD_COUNT" != "4" ]; then
+        echo "leave name does not carry parseable instance metadata -- judge and remove it by hand"
+        return
+    fi
+    case "${PIN_PID}${PIN_START}" in
+        ''|*[!0-9]*)
+            echo "leave name does not carry parseable instance metadata -- judge and remove it by hand"
+            return
+            ;;
+    esac
+    # rule 1 fires only on a well-formed boot id: a recorder that could
+    # not read boot_id writes "unknown", and sweeping a LIVE instance
+    # because its recorder was blind would break the live-and-matching
+    # rule -- malformed boot fields fall through to the pid rules
+    HOST_BOOT_ID="$(tr -d '-' < /proc/sys/kernel/random/boot_id 2>/dev/null)"
+    BOOT_WELL_FORMED=0
+    case "$PIN_BOOT" in
+        *[!0-9a-f]*|"") BOOT_WELL_FORMED=0 ;;
+        *) [ "${#PIN_BOOT}" = "32" ] && BOOT_WELL_FORMED=1 ;;
+    esac
+    if [ $BOOT_WELL_FORMED -eq 1 ] && [ -n "$HOST_BOOT_ID" ] && [ "$PIN_BOOT" != "$HOST_BOOT_ID" ]; then
+        echo "stale boot id $PIN_BOOT is not this boot"
+        return
+    fi
+    if [ ! -d "/proc/$PIN_PID" ]; then
+        echo "stale pid $PIN_PID is gone"
+        return
+    fi
+    # fields resume after the LAST ')' -- comm may contain
+    # anything, including a ') ' -- matching the C recorder exactly
+    LIVE_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$PIN_PID/stat 2>/dev/null)"
+    if [ -z "$LIVE_START" ]; then
+        # rule 5's principle: an unreadable start time is not
+        # PROVABLY stale, and we never delete what we cannot judge
+        echo "leave pid $PIN_PID is alive but its start time is unreadable -- not provably stale"
+        return
+    fi
+    # string-compared, accepted: a leading-zero spelling difference
+    # (never produced by the C recorder or by /proc) would grade
+    # stale -- erring on the loud, operator-visible side
+    if [ "$LIVE_START" != "$PIN_START" ]; then
+        echo "stale pid $PIN_PID was recycled (start time $LIVE_START, instance recorded $PIN_START)"
+        return
+    fi
+    echo "live $PIN_PID"
+}
+
+# the pids of the rocketnet instances on this host the sweep would leave as
+# live (its rule 4), or whose start time it cannot read (not provably gone),
+# space-separated; empty when there are none
+
+live_rocketnet_instances()
+{
+    local PIN_ROOT JUDGEMENT PIDS=""
+    for PIN_ROOT in "${R3_PIN_ROOTS:-/sys/fs/bpf}"/rocketnet_xdp_*; do
+        [ -e "$PIN_ROOT" ] || continue
+        JUDGEMENT="$(pin_root_judge "$PIN_ROOT")"
+        case "$JUDGEMENT" in
+            "live "*) PIDS="$PIDS ${JUDGEMENT#live }" ;;
+            "leave pid "*) PIDS="$PIDS $(echo "$JUDGEMENT" | cut -d' ' -f3)" ;;
+        esac
+    done
+    echo "${PIDS# }"
+}
+
 # R3 ENFORCEMENT AS A FUNCTION (the round-twelve boundary move): the
 # consumer is no longer live-only -- the selftest drives this exact
 # function end to end, verify and provision modes alike, against stub
@@ -472,8 +679,21 @@ r3_enforce()
             # "occupied" or "clean" is UNMET -- never clean by default
             case "$XDP_GRADE" in
                 occupied)
+                    # a live server's own program: unloading it stops that
+                    # server receiving, so a re-run of provision beside it
+                    # refuses unless asked in so many words. rocketnet's
+                    # program is named server_xdp; a crashed server's
+                    # leftover has no live instance and unloads as before
+
+                    LIVE_PIDS=""
+                    if query_xdp_slot_stdout "$INTERFACE" | grep -qw server_xdp; then
+                        LIVE_PIDS="$(live_rocketnet_instances)"
+                    fi
+
                     if [ $VERIFY -eq 1 ]; then
                         fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
+                    elif [ -n "$LIVE_PIDS" ] && [ "${ROCKETNET_PROVISION_UNLOAD_LIVE:-}" != "1" ]; then
+                        fail "rocketnet's server_xdp is attached to $INTERFACE and a rocketnet server is running on this host (pid $LIVE_PIDS) (R3): unloading it would stop that server receiving. stop the server first; to unload anyway, run again with ROCKETNET_PROVISION_UNLOAD_LIVE=1"
                     else
                         # the act half of R3 lives under the same law as its
                         # query half: a failed unload is UNMET, and the slot is
@@ -594,32 +814,44 @@ r7_enforce()
 
 # R8 ENFORCEMENT AS A FUNCTION, same contract: VERIFY in; say/fail out.
 # The kernel release, the sysctl's file and the kernel's build config are
-# read through R8_RELEASE, R8_RUNTIME, R8_CONFIG and R8_PROC_CONFIG, so the
-# selftest drives every arm against files in its own temp dir; every other
-# mode clears them at the start, so the environment never names the file
-# this script writes as root.
+# read through R8_RELEASE, R8_RUNTIME and R8_CONFIG, so the selftest drives
+# every arm against files in its own temp dir; every other mode clears them
+# at the start, so the environment never names the file this script writes
+# as root. The library's pre-flight checks the same rule from the same files
+# (rocketnet_server_socket_preflight_rt_throttle, rocketnet_xdp_rt_release):
+# the build config is read from /boot only, which the library can read
+# without a decompressor, so the two cannot disagree.
 
 # 0 when the kernel stops a real-time thread that never sleeps: every
 # kernel before 6.12, and a later one built with CONFIG_RT_GROUP_SCHED; a
-# release that does not parse is taken as throttling (fails closed). 1 when
-# it does not. 2 when it cannot be told: 6.12 or later, and its build config
-# is readable neither at $2 (/boot) nor at $3 (/proc/config.gz)
+# release that does not parse as <major>.<minor> (digits each side of the
+# first dot) is taken as throttling (fails closed). 1 when it does not. 2
+# when it cannot be told: 6.12 or later, and its build config at $2
+# (/boot/config-<release>) is unreadable
 r8_throttles()
 {
+    case "$1" in
+        *.*) ;;
+        *) return 0 ;;
+    esac
     local MAJOR="${1%%.*}"
     local REST="${1#*.}"
     local MINOR="${REST%%[!0-9]*}"
-    case "$MAJOR$MINOR" in
+    case "$MAJOR" in
         ''|*[!0-9]*) return 0 ;;
     esac
-    if [ "$MAJOR" -lt 6 ] || { [ "$MAJOR" -eq 6 ] && [ "$MINOR" -lt 12 ]; }; then
+    case "$MINOR" in
+        '') return 0 ;;
+    esac
+    # a longer number is as large (the library clamps the same way)
+    [ "${#MAJOR}" -gt 9 ] && MAJOR=999999999
+    [ "${#MINOR}" -gt 9 ] && MINOR=999999999
+    if [ "$(( 10#$MAJOR ))" -lt 6 ] || { [ "$(( 10#$MAJOR ))" -eq 6 ] && [ "$(( 10#$MINOR ))" -lt 12 ]; }; then
         return 0
     fi
     local KCONFIG
     if [ -r "$2" ]; then
         KCONFIG="$(cat "$2" 2>/dev/null)" || return 2
-    elif [ -r "$3" ]; then
-        KCONFIG="$(gzip -dc "$3" 2>/dev/null)" || return 2
     else
         return 2
     fi
@@ -634,11 +866,10 @@ r8_enforce()
     local RELEASE="${R8_RELEASE:-$(uname -r)}"
     local RUNTIME_FILE="${R8_RUNTIME:-/proc/sys/kernel/sched_rt_runtime_us}"
     local CONFIG="${R8_CONFIG:-/boot/config-$RELEASE}"
-    local PROC_CONFIG="${R8_PROC_CONFIG:-/proc/config.gz}"
     local PERSIST="echo 'kernel.sched_rt_runtime_us = -1' > /etc/sysctl.d/90-rocketnet-xdp.conf"
 
     local THROTTLES=0
-    r8_throttles "$RELEASE" "$CONFIG" "$PROC_CONFIG" || THROTTLES=$?
+    r8_throttles "$RELEASE" "$CONFIG" || THROTTLES=$?
     if [ $THROTTLES -eq 1 ]; then
         say "kernel $RELEASE has no real-time throttle (R8 passes; any ordinary task runnable on a worker's cpu still takes 50 ms in every second from it: keep other tasks off the isolated cpus)"
         return
@@ -652,7 +883,7 @@ r8_enforce()
     if [ "$R8_CURRENT" = "-1" ]; then
         say "kernel.sched_rt_runtime_us already -1 (R8)"
     elif [ $VERIFY -eq 1 ] && [ $THROTTLES -eq 2 ]; then
-        fail "could not verify R8: kernel $RELEASE is 6.12 or later and its build config is readable at neither $CONFIG nor $PROC_CONFIG, so whether it throttles real-time threads (CONFIG_RT_GROUP_SCHED=y) is unknown, and kernel.sched_rt_runtime_us is ${R8_CURRENT:-unreadable}: sysctl -w kernel.sched_rt_runtime_us=-1 meets R8 either way, and to keep it across reboots: $PERSIST"
+        fail "could not verify R8: kernel $RELEASE is 6.12 or later and its build config $CONFIG is unreadable, so whether it throttles real-time threads (CONFIG_RT_GROUP_SCHED=y) is unknown, and kernel.sched_rt_runtime_us is ${R8_CURRENT:-unreadable}: sysctl -w kernel.sched_rt_runtime_us=-1 meets R8 either way, and to keep it across reboots: $PERSIST"
     elif [ $VERIFY -eq 1 ]; then
         fail "kernel.sched_rt_runtime_us is ${R8_CURRENT:-unreadable}, want -1 (R8): kernel $RELEASE stops each spinning xdp worker about 50 ms in every second (0.2 to 1 s at a time on a nohz_full cpu): sysctl -w kernel.sched_rt_runtime_us=-1, and to keep it across reboots: $PERSIST"
     else
@@ -913,6 +1144,9 @@ case "$1" in
             foreign)
                 echo "$IFACE                     xdp_pass_prog     skb      115  d4f8542f2b42fac5 "
                 ;;
+            rocketnet)
+                echo "$IFACE                     server_xdp        native   140  5a1f07c3e2b9d841 "
+                ;;
         esac
         echo ""
         exit 0
@@ -1049,6 +1283,35 @@ STUB
 
     echo foreign > "$STUB_STATE_DIR/state.p2"; echo lies > "$STUB_STATE_DIR/unload_mode"
     OUT="$(run_r3 0 p2)"; expect_case "r3 provision unload-lies" $? 1 "$OUT" "still attached" 1
+
+    # --- r3, rocketnet's own server_xdp: provision refuses to unload it while
+    # a rocketnet instance on this host is live (W2-70). The pin roots are a
+    # temp dir; the live one names this selftest's own pid, start time and
+    # boot id, exactly as the C recorder names a server's ---
+
+    R3_PIN_ROOTS="$STUB_DIR/bpffs"
+    mkdir -p "$R3_PIN_ROOTS"
+    SELF_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$$/stat 2>/dev/null)"
+    SELF_BOOT="$(tr -d '-' < /proc/sys/kernel/random/boot_id 2>/dev/null)"
+    echo works > "$STUB_STATE_DIR/unload_mode"
+
+    mkdir -p "$R3_PIN_ROOTS/rocketnet_xdp_7_$$_${SELF_START}_${SELF_BOOT}"
+    echo rocketnet > "$STUB_STATE_DIR/state.live0"
+    OUT="$(run_r3 0 live0)"; expect_case "r3 provision refuses a live server's program" $? 1 "$OUT" "a rocketnet server is running on this host (pid $$) (R3)" 1 "unloading XDP programs"
+    expect_case "r3 provision live refusal leaves it attached" "$(cat "$STUB_STATE_DIR/state.live0")" rocketnet "" ""
+    echo rocketnet > "$STUB_STATE_DIR/state.live1"
+    OUT="$(ROCKETNET_PROVISION_UNLOAD_LIVE=1 run_r3 0 live1)"; expect_case "r3 provision unloads a live server's program when told to" $? 0 "$OUT" "confirmed clear after unload"
+    echo foreign > "$STUB_STATE_DIR/state.live2"
+    OUT="$(run_r3 0 live2)"; expect_case "r3 provision unloads a foreign program beside a live server" $? 0 "$OUT" "confirmed clear after unload"
+    echo rocketnet > "$STUB_STATE_DIR/state.live3"
+    OUT="$(run_r3 1 live3)"; expect_case "r3 verify with a live server's program" $? 1 "$OUT" "run without verify" 1
+    rm -rf "$R3_PIN_ROOTS/rocketnet_xdp_7_$$_${SELF_START}_${SELF_BOOT}"
+
+    mkdir -p "$R3_PIN_ROOTS/rocketnet_xdp_7_999999999_12345_${SELF_BOOT}"
+    echo rocketnet > "$STUB_STATE_DIR/state.dead0"
+    OUT="$(run_r3 0 dead0)"; expect_case "r3 provision unloads a crashed server's program" $? 0 "$OUT" "confirmed clear after unload"
+    rm -rf "$R3_PIN_ROOTS"
+    unset R3_PIN_ROOTS
 
     # --- r3, query failure (unknown interface: the stub asserts its args) ---
 
@@ -1335,7 +1598,7 @@ STUB
             echo " 121:          0          0        800          0  IR-PCI-MSIX-0000:01:00.0    2-edge      stubiface2-TxRx-1"
             echo " 130:          0          0          0          5  IR-PCI-MSIX-0000:02:00.0    1-edge      stubiface20-TxRx-0"
         } > "$1/proc/interrupts"
-        echo 3 > "$1/proc/irq/119/smp_affinity_list"
+        echo 0 > "$1/proc/irq/119/smp_affinity_list"
         echo 1 > "$1/proc/irq/120/smp_affinity_list"
         echo 2 > "$1/proc/irq/121/smp_affinity_list"
         echo 2 > "$1/sys/class/net/stubiface2/napi_defer_hard_irqs"
@@ -1355,14 +1618,16 @@ STUB
 
     SR="$STUB_DIR/root"
 
-    # the irq at 119 is the misc vector (named exactly stubiface2): it is an
-    # irq of the interface, so it must be pinned too -- the met tree pins
-    # it to an isolated cpu, cpu 3
+    # the irq at 119 is the misc vector (named exactly stubiface2): not a
+    # queue's, so it must stay off the xdp threads' cpus -- the met tree has
+    # it on cpu 0. 120 and 121 are queues 0 and 1, on cpus 1 and 2: the
+    # cpus xdp threads 0 and 1 pin to at the default num_os_cpus of 1
     stub_root_met "$SR"
     OUT="$(run_stub_root "$SR" 2)"
     expect_case "stub root: every condition met" $? 0 "$OUT" "verify passed: machine is provisioned" 0
-    for MET_LINE in "STUB ROOT" "carries irqaffinity=0 (B1)" "isolated cpu set is 1-3 (B2)" "stubiface2 present and up (R2)" \
-                    "irq 120 pinned to isolated cpu 1 (R4)" "napi_defer_hard_irqs already 2 (R5)" \
+    for MET_LINE in "STUB ROOT" "carries irqaffinity=0, off the isolated cpus (B1)" "isolated cpu set is 1-3 (B2)" "stubiface2 present and up (R2)" \
+                    "irq 120 (queue 0) pinned to cpu 1, xdp thread 0's (R4)" "irq 121 (queue 1) pinned to cpu 2, xdp thread 1's (R4)" \
+                    "irq 119 of stubiface2 is not a queue's and is off the xdp threads' cpus ('0') (R4)" "napi_defer_hard_irqs already 2 (R5)" \
                     "gro_flush_timeout already 200000 (R5)" "smt already off (R6)" "already -1 (R8)"; do
         expect_case "stub root met: $MET_LINE" 0 0 "$OUT" "$MET_LINE" 0
     done
@@ -1380,8 +1645,18 @@ STUB
 
     stub_root_case "R1 caller not root" 2 1 "not root (R1)" \
         'echo 1000 > "$SR/stub-euid"'
-    stub_root_case "B1 irqaffinity is not 0" 2 1 "lacks irqaffinity=0" \
+    stub_root_case "B1 irqaffinity names an isolated cpu" 2 1 "irqaffinity=1 names cpu 1, which is in the isolated set 1-3 (B1)" \
         'echo "irqaffinity=1 isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 irqaffinity range reaching an isolated cpu" 2 1 "irqaffinity=0-2 names cpu 1, which is in the isolated set 1-3 (B1)" \
+        'echo "irqaffinity=0-2 isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 irqaffinity absent" 2 1 "lacks irqaffinity=<cpus> (B1)" \
+        'echo "isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 xirqaffinity is not irqaffinity" 2 1 "lacks irqaffinity=<cpus> (B1)" \
+        'echo "xirqaffinity=0 isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 irqaffinity not a cpu list" 2 1 "irqaffinity=0, is not a cpu list (B1)" \
+        'echo "irqaffinity=0, isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 irqaffinity empty" 2 1 "irqaffinity= is not a cpu list (B1)" \
+        'echo "irqaffinity= isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
     stub_root_case "B1 xisolcpus is not isolcpus" 2 1 "lacks isolcpus=<range> (B1)" \
         'echo "irqaffinity=0 xisolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
     stub_root_case "B1 nohz_full without a value" 2 1 "lacks nohz_full=<range> (B1)" \
@@ -1396,16 +1671,59 @@ STUB
         'echo foreign > "$STUB_STATE_DIR/state.stubiface2"'
     stub_root_case "R7 queue count" 2 1 "combined queue count is 4, want 2 (R7)" \
         'echo 4 > "$STUB_STATE_DIR/combined.stubiface2"'
-    stub_root_case "R4 irq on a range" 2 1 "irq 121 affinity is '1-3', want a single isolated cpu (R4)" \
+    stub_root_case "R4 queue vector on a range" 2 1 "irq 121 (queue 1 of stubiface2) affinity is '1-3', want cpu 2, the cpu xdp thread 1 pins to (R4)" \
         'echo 1-3 > "$SR/proc/irq/121/smp_affinity_list"'
-    stub_root_case "R4 irq unpinned (housekeeping cpu)" 2 1 "irq 120 is pinned to cpu 0, which is not in the isolated set" \
+    stub_root_case "R4 queue vector unpinned (housekeeping cpu)" 2 1 "irq 120 (queue 0 of stubiface2) affinity is '0', want cpu 1, the cpu xdp thread 0 pins to (R4)" \
         'echo 0 > "$SR/proc/irq/120/smp_affinity_list"'
-    stub_root_case "R4 two irqs on one cpu" 2 1 "two IRQs pinned to cpu 1 (R4)" \
+    stub_root_case "R4 queue vector on another thread's cpu" 2 1 "irq 121 (queue 1 of stubiface2) affinity is '1', want cpu 2" \
         'echo 1 > "$SR/proc/irq/121/smp_affinity_list"'
+    stub_root_case "R4 queue vectors swapped" 2 2 "irq 120 (queue 0 of stubiface2) affinity is '2', want cpu 1" \
+        'echo 2 > "$SR/proc/irq/120/smp_affinity_list"; echo 1 > "$SR/proc/irq/121/smp_affinity_list"'
+    stub_root_case "R4 queue vector on an isolated cpu no thread uses" 2 1 "irq 121 (queue 1 of stubiface2) affinity is '3', want cpu 2" \
+        'echo 3 > "$SR/proc/irq/121/smp_affinity_list"'
+    stub_root_case "R4 misc vector on a worker cpu" 2 1 "irq 119 of stubiface2 is not a queue's and its affinity '1' takes in cpu 1, an xdp thread's (R4)" \
+        'echo 1 > "$SR/proc/irq/119/smp_affinity_list"'
+    stub_root_case "R4 misc vector on a range over the workers" 2 1 "irq 119 of stubiface2 is not a queue's and its affinity '0-3' takes in cpu 1, an xdp thread's (R4)" \
+        'echo 0-3 > "$SR/proc/irq/119/smp_affinity_list"'
+    stub_root_case "R4 tx-only vector on a worker cpu" 2 1 "irq 123 of stubiface2 is not a queue's and its affinity '2' takes in cpu 2, an xdp thread's (R4)" \
+        'echo " 123:  0  0  0  0  IR-PCI-MSIX-0000:01:00.0  4-edge  stubiface2-tx-5" >> "$SR/proc/interrupts"; mkdir -p "$SR/proc/irq/123"; echo 2 > "$SR/proc/irq/123/smp_affinity_list"'
     stub_root_case "R4 interrupt table unreadable" 2 1 "/proc/interrupts is unreadable (R4)" \
         'rm -f "$SR/proc/interrupts"'
-    stub_root_case "R4 more irqs than isolated cpus" 2 1 "4 IRQs on stubiface2 but only 3 isolated cpus (R4)" \
-        'echo " 122:  0  0  0  0  IR-PCI-MSIX-0000:01:00.0  3-edge  stubiface2-TxRx-2" >> "$SR/proc/interrupts"; echo 1 > "$SR/proc/irq/122/smp_affinity_list"'
+    stub_root_case "R4 queue vector past the queues" 2 1 "irq 122 is queue 2 of stubiface2, past the 2 queues the server runs (R4, R7)" \
+        'echo " 122:  0  0  0  0  IR-PCI-MSIX-0000:01:00.0  3-edge  stubiface2-TxRx-2" >> "$SR/proc/interrupts"; echo 3 > "$SR/proc/irq/122/smp_affinity_list"'
+
+    # an interface whose vectors carry no queue names keeps the rule by count:
+    # one isolated cpu each, none doubled, no more of them than isolated cpus
+    stub_root_unnamed='printf "%s\n" "            CPU0       CPU1       CPU2       CPU3" " 120:  0  9  0  0  IR-PCI-MSIX-0000:01:00.0  1-edge  stubiface2-0" " 121:  0  0  8  0  IR-PCI-MSIX-0000:01:00.0  2-edge  stubiface2-1" > "$SR/proc/interrupts"'
+    stub_root_met "$SR"
+    eval "$stub_root_unnamed"
+    OUT="$(run_stub_root "$SR" 2)"
+    expect_case "stub root: unnamed vectors on isolated cpus met" $? 0 "$OUT" "irq 120 pinned to isolated cpu 1 (R4)" 0
+    stub_root_case "R4 unnamed vectors on one cpu" 2 1 "two IRQs pinned to cpu 1 (R4)" \
+        "$stub_root_unnamed"'; echo 1 > "$SR/proc/irq/121/smp_affinity_list"'
+    stub_root_case "R4 unnamed vector on the housekeeping cpu" 2 1 "irq 120 is pinned to cpu 0, which is not in the isolated set" \
+        "$stub_root_unnamed"'; echo 0 > "$SR/proc/irq/120/smp_affinity_list"'
+    stub_root_case "R4 unnamed vectors past the isolated cpus" 2 1 "4 IRQs on stubiface2 but only 3 isolated cpus (R4)" \
+        "$stub_root_unnamed"'; echo " 122:  0  0  0  0  x  3-edge  stubiface2-2" >> "$SR/proc/interrupts"; echo " 119:  0  0  0  0  x  0-edge  stubiface2" >> "$SR/proc/interrupts"; echo 3 > "$SR/proc/irq/122/smp_affinity_list"; echo 0-3 > "$SR/proc/irq/119/smp_affinity_list"'
+
+    # num_os_cpus 2 (ROCKETNET_SERVER_NUM_OS_CPUS, as the server reads it):
+    # the xdp threads take cpus 2 and 3, so queue k's vector belongs on
+    # 2 + k, and irqaffinity=0-1 keeps the machine's interrupts off them
+    stub_root_two_os='echo "irqaffinity=0-1 isolcpus=2-3 nohz_full=2-3 nosmt" > "$SR/proc/cmdline"; echo 2-3 > "$SR/sys/devices/system/cpu/isolated"; echo 2 > "$SR/proc/irq/120/smp_affinity_list"; echo 3 > "$SR/proc/irq/121/smp_affinity_list"; echo 0-1 > "$SR/proc/irq/119/smp_affinity_list"'
+    stub_root_met "$SR"
+    eval "$stub_root_two_os"
+    OUT="$( ROCKETNET_SERVER_NUM_OS_CPUS=2 run_stub_root "$SR" 2 )"
+    expect_case "stub root: num_os_cpus 2 met" $? 0 "$OUT" "irq 120 (queue 0) pinned to cpu 2, xdp thread 0's (R4)" 0
+    expect_case "stub root: num_os_cpus 2 met, irqaffinity=0-1" 0 0 "$OUT" "carries irqaffinity=0-1, off the isolated cpus (B1)" 0
+    stub_root_met "$SR"
+    eval "$stub_root_two_os"
+    OUT="$( run_stub_root "$SR" 2 )"
+    expect_case "stub root: num_os_cpus 2 tree read at the default 1" $? 1 "$OUT" "irq 120 (queue 0 of stubiface2) affinity is '2', want cpu 1" "" "verify passed"
+    stub_root_met "$SR"
+    eval "$stub_root_two_os"
+    echo "irqaffinity=0-2 isolcpus=2-3 nohz_full=2-3 nosmt" > "$SR/proc/cmdline"
+    OUT="$( ROCKETNET_SERVER_NUM_OS_CPUS=2 run_stub_root "$SR" 2 )"
+    expect_case "stub root: num_os_cpus 2, irqaffinity=0-2 refused" $? 1 "$OUT" "irqaffinity=0-2 names cpu 2, which is in the isolated set 2-3 (B1)" 1
     stub_root_case "R4 fewer isolated cpus than queues" 4 1 "only 3 isolated cpus for 4 queues" \
         'echo 4 > "$STUB_STATE_DIR/combined.stubiface2"'
     stub_root_case "R5 napi_defer_hard_irqs unset" 2 1 "napi_defer_hard_irqs is 0, want 2 (R5)" \
@@ -1513,9 +1831,9 @@ exit 0'
     # --- R8: the real-time throttle, every arm, against a sysctl file and
     # a build config in the temp dir ---
 
-    run_r8()        # $1 verify-flag  $2 release  $3 sysctl file  $4 config  [$5 /proc/config.gz]  -> rc = UNMET
+    run_r8()        # $1 verify-flag  $2 release  $3 sysctl file  $4 config  -> rc = UNMET
     {
-        ( UNMET=0; VERIFY="$1"; R8_RELEASE="$2"; R8_RUNTIME="$3"; R8_CONFIG="$4"; R8_PROC_CONFIG="${5:-$R8_DIR/absent}"
+        ( UNMET=0; VERIFY="$1"; R8_RELEASE="$2"; R8_RUNTIME="$3"; R8_CONFIG="$4"
           r8_enforce; exit $UNMET ) 2>&1
     }
 
@@ -1548,23 +1866,24 @@ exit 0'
     OUT="$(run_r8 0 6.8.0-147-generic "$R8_DIR/sysctl_dir" "$R8_DIR/config_plain")"
     expect_case "r8 provision write refused" $? 1 "$OUT" "could not set kernel.sched_rt_runtime_us (R8)" 1
 
-    # 6.12 or later with no build config in /boot: /proc/config.gz decides
-    # when it is there; with neither, verify cannot tell and says so (never a
-    # pass), unless the throttle is already off
+    # 6.12 or later with no build config in /boot: verify cannot tell and
+    # says so (never a pass), unless the throttle is already off. /boot is
+    # the only config read, as in the library pre-flight's R8
+    # (rocketnet_server_socket_preflight_rt_throttle), so the two agree
     echo 950000 > "$R8_DIR/stock612"
-    gzip -c "$R8_DIR/config_groups" > "$R8_DIR/proc_groups.gz"
-    gzip -c "$R8_DIR/config_plain" > "$R8_DIR/proc_plain.gz"
-    echo "not gzip" > "$R8_DIR/proc_garbage.gz"
     OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent")"
     expect_case "r8 verify 6.12 no config cannot verify" $? 1 "$OUT" "could not verify R8" 1 "R8 passes"
-    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent" "$R8_DIR/proc_garbage.gz")"
-    expect_case "r8 verify 6.12 unreadable proc config cannot verify" $? 1 "$OUT" "could not verify R8" 1 "R8 passes"
     OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/off" "$R8_DIR/absent")"
     expect_case "r8 verify 6.12 no config already off" $? 0 "$OUT" "already -1 (R8)" 0
-    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent" "$R8_DIR/proc_groups.gz")"
-    expect_case "r8 verify 6.12 rt groups from proc config" $? 1 "$OUT" "want -1 (R8)" 1
-    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent" "$R8_DIR/proc_plain.gz")"
-    expect_case "r8 verify 6.12 plain from proc config passes" $? 0 "$OUT" "has no real-time throttle (R8 passes" 0
+
+    # releases the library's rocketnet_xdp_rt_release reads as throttling:
+    # no dot, no major, no minor -- and a long number clamps, never wraps
+    for RELEASE in 7 .5 6. 6.x; do
+        OUT="$(run_r8 1 "$RELEASE" "$R8_DIR/stock612" "$R8_DIR/config_plain")"
+        expect_case "r8 verify release '$RELEASE' throttles" $? 1 "$OUT" "want -1 (R8)" 1
+    done
+    OUT="$(run_r8 1 99999999999999999999.1-generic "$R8_DIR/stock612" "$R8_DIR/config_plain")"
+    expect_case "r8 verify a huge major reads its config" $? 0 "$OUT" "has no real-time throttle (R8 passes" 0
     OUT="$(run_r8 0 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent")"
     expect_case "r8 provision 6.12 no config sets -1" $? 0 "$OUT" "confirmed at -1 (R8)" 0
     if [ "$(cat "$R8_DIR/stock612")" != "-1" ]; then
@@ -1590,64 +1909,26 @@ if [ "$MODE" = "sweep" ]; then
         say "sweep must run as root"; exit 1
     fi
     say "CAVEAT: pids and start times are read from THIS host's /proc; with bpffs shared into containers, sweep from the namespace that owns the servers"
-    HOST_BOOT_ID="$(tr -d '-' < /proc/sys/kernel/random/boot_id 2>/dev/null)"
     SWEPT=0
     for PIN_ROOT in /sys/fs/bpf/rocketnet_xdp_*; do
         [ -e "$PIN_ROOT" ] || continue
-        NAME="${PIN_ROOT##*/rocketnet_xdp_}"
-        FIELD_COUNT="$(echo "$NAME" | awk -F_ '{print NF}')"
-        PIN_PID="$(echo "$NAME" | cut -d_ -f2)"
-        PIN_START="$(echo "$NAME" | cut -d_ -f3)"
-        PIN_BOOT="$(echo "$NAME" | cut -d_ -f4)"
-        if [ "$FIELD_COUNT" != "4" ]; then
-            say "leaving $PIN_ROOT: name does not carry parseable instance metadata -- judge and remove it by hand"
-            continue
-        fi
-        case "${PIN_PID}${PIN_START}" in
-            ''|*[!0-9]*)
-                say "leaving $PIN_ROOT: name does not carry parseable instance metadata -- judge and remove it by hand"
-                continue
+        # the rules live in pin_root_judge, shared with R3's live-server
+        # refusal so the two cannot disagree
+        JUDGEMENT="$(pin_root_judge "$PIN_ROOT")"
+        case "$JUDGEMENT" in
+            "stale "*)
+                say "sweeping $PIN_ROOT (${JUDGEMENT#stale })"
+                rm -f "$PIN_ROOT"/* 2>/dev/null
+                rmdir "$PIN_ROOT" 2>/dev/null || fail "could not sweep $PIN_ROOT"
+                SWEPT=1
+                ;;
+            "live "*)
+                say "leaving $PIN_ROOT: instance pid ${JUDGEMENT#live } is alive with a matching start time"
+                ;;
+            *)
+                say "leaving $PIN_ROOT: ${JUDGEMENT#leave }"
                 ;;
         esac
-        # rule 1 fires only on a well-formed boot id: a recorder that could
-        # not read boot_id writes "unknown", and sweeping a LIVE instance
-        # because its recorder was blind would break the live-and-matching
-        # rule -- malformed boot fields fall through to the pid rules
-        BOOT_WELL_FORMED=0
-        case "$PIN_BOOT" in
-            *[!0-9a-f]*|"") BOOT_WELL_FORMED=0 ;;
-            *) [ "${#PIN_BOOT}" = "32" ] && BOOT_WELL_FORMED=1 ;;
-        esac
-        REASON=""
-        if [ $BOOT_WELL_FORMED -eq 1 ] && [ -n "$HOST_BOOT_ID" ] && [ "$PIN_BOOT" != "$HOST_BOOT_ID" ]; then
-            REASON="boot id $PIN_BOOT is not this boot"
-        elif [ ! -d "/proc/$PIN_PID" ]; then
-            REASON="pid $PIN_PID is gone"
-        else
-            # fields resume after the LAST ')' -- comm may contain
-            # anything, including a ') ' -- matching the C recorder exactly
-            LIVE_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$PIN_PID/stat 2>/dev/null)"
-            if [ -z "$LIVE_START" ]; then
-                # rule 5's principle: an unreadable start time is not
-                # PROVABLY stale, and we never delete what we cannot judge
-                say "leaving $PIN_ROOT: pid $PIN_PID is alive but its start time is unreadable -- not provably stale"
-                continue
-            fi
-            # string-compared, accepted: a leading-zero spelling difference
-            # (never produced by the C recorder or by /proc) would grade
-            # stale -- erring on the loud, operator-visible side
-            if [ "$LIVE_START" != "$PIN_START" ]; then
-                REASON="pid $PIN_PID was recycled (start time $LIVE_START, instance recorded $PIN_START)"
-            fi
-        fi
-        if [ -n "$REASON" ]; then
-            say "sweeping $PIN_ROOT ($REASON)"
-            rm -f "$PIN_ROOT"/* 2>/dev/null
-            rmdir "$PIN_ROOT" 2>/dev/null || fail "could not sweep $PIN_ROOT"
-            SWEPT=1
-        else
-            say "leaving $PIN_ROOT: instance pid $PIN_PID is alive with a matching start time"
-        fi
     done
     [ $SWEPT -eq 0 ] && say "nothing to sweep"
     exit $UNMET
@@ -1665,18 +1946,14 @@ fi
 
 # B1. kernel command line
 
-# the values are checked, not just the knobs: irqaffinity must be exactly
-# 0, and the range parameters must carry a value -- matching the library
+# the values are checked, not just the knobs: irqaffinity must be a cpu list
+# naming no isolated cpu (judged below, once the isolated set is read), and
+# the range parameters must carry a value -- matching the library
 # pre-flight's B1 check exactly
 
 CMDLINE="$(cat "$FS/proc/cmdline" 2>/dev/null)"
 
 B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)"
-
-case " $CMDLINE " in
-    *" irqaffinity=0 "*) say "kernel command line carries irqaffinity=0 (B1)" ;;
-    *) fail "kernel command line lacks irqaffinity=0 -- exactly that token (B1): $B1_GUIDANCE" ;;
-esac
 
 for TOKEN in isolcpus nohz_full; do
     # left-bounded like irqaffinity: "xisolcpus=" is not the parameter.
@@ -1714,6 +1991,40 @@ if [ -n "$ISOLATED" ]; then
             *) ISOLATED_CPUS+=("$RANGE") ;;
         esac
     done
+fi
+
+# B1's irqaffinity: the first left-bounded irqaffinity= and its value up to
+# the next blank, a cpu list of at most 255 characters with no cpu in the
+# isolated set (irqaffinity=0 for the default num_os_cpus of 1, 0-1 for 2).
+# rocketnet_xdp_cmdline_irqaffinity is the same rule; an empty isolated set
+# judges the list's form only (B2 names the missing set).
+
+IRQAFFINITY_FOUND=0
+IRQAFFINITY=""
+read -ra CMDLINE_WORDS <<< "$CMDLINE"
+for WORD in "${CMDLINE_WORDS[@]:-}"; do
+    case "$WORD" in
+        irqaffinity=*) IRQAFFINITY="${WORD#irqaffinity=}"; IRQAFFINITY_FOUND=1; break ;;
+    esac
+done
+if [ $IRQAFFINITY_FOUND -eq 0 ]; then
+    fail "kernel command line lacks irqaffinity=<cpus> (B1): irqaffinity=0 keeps the machine's interrupts on cpu 0, off the isolated cpus -- $B1_GUIDANCE"
+elif [ ${#IRQAFFINITY} -gt 255 ] || [ "$(cpu_list_has "$IRQAFFINITY" 0)" = "-1" ]; then
+    fail "kernel command line's irqaffinity=$IRQAFFINITY is not a cpu list (B1): $B1_GUIDANCE"
+else
+    IRQAFFINITY_ISOLATED=""
+    for CPU in "${ISOLATED_CPUS[@]:-}"; do
+        [ -n "$CPU" ] || continue
+        if [ "$(cpu_list_has "$IRQAFFINITY" "$CPU")" = "1" ]; then
+            IRQAFFINITY_ISOLATED="$CPU"
+            break
+        fi
+    done
+    if [ -n "$IRQAFFINITY_ISOLATED" ]; then
+        fail "kernel command line's irqaffinity=$IRQAFFINITY names cpu $IRQAFFINITY_ISOLATED, which is in the isolated set $ISOLATED (B1): it would put interrupts on the xdp threads' cpus -- name only cpus outside the isolated set (irqaffinity=0); $B1_GUIDANCE"
+    else
+        say "kernel command line carries irqaffinity=$IRQAFFINITY, off the isolated cpus (B1)"
+    fi
 fi
 
 # R2, the device: the interface named, or the parent of its 802.1Q VLAN
@@ -1779,10 +2090,12 @@ fi
 #      before all three hold, and running out of time is UNMET
 #   2. pin by NAME, not by table order: XDP adds per-cpu tx-only vectors
 #      (ixgbe "<iface>-tx-<n>"), so order no longer pairs vectors with
-#      queues. <iface>-TxRx-<k> goes to the k-th isolated cpu, the cpu the
-#      server's xdp thread k pins itself to
-#   3. every other vector of the interface found on one of those worker
-#      cpus moves to the first online cpu outside the isolated set
+#      queues. <iface>-TxRx-<k> goes to cpu num_os_cpus + k, the cpu the
+#      server's xdp thread k pins itself to (rocketnet_xdp_thread_cpu), and
+#      every one of those worker cpus must be in the isolated set
+#   3. every other vector of the interface whose affinity takes in one of
+#      those worker cpus moves to the lowest online cpu outside the
+#      isolated set and the worker cpus (housekeeping_cpu)
 #   4. read every queue vector back; a mismatch is UNMET
 #   5. touch nothing but /proc/irq/N/smp_affinity_list
 #
@@ -1796,8 +2109,20 @@ if [ "$MODE" = "repin" ]; then
     fi
     UNMET=0
     UNMET_COUNT=0
-    if [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
-        fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (repin): one queue wants one isolated core"
+    WORKER_CPUS=" "
+    for (( K=0; K<NUM_QUEUES; K++ )); do
+        WORKER_CPUS="$WORKER_CPUS$(( OS_CPUS + K )) "
+    done
+    for WORKER in $WORKER_CPUS; do
+        IS_ISOLATED=0
+        for CPU_CANDIDATE in "${ISOLATED_CPUS[@]:-}"; do
+            [ "$CPU_CANDIDATE" = "$WORKER" ] && IS_ISOLATED=1
+        done
+        if [ $IS_ISOLATED -eq 0 ]; then
+            fail "cpu $WORKER, an xdp thread's (num_os_cpus $OS_CPUS), is not in the isolated set '$ISOLATED' (repin): grow the isolated range (B1)"
+        fi
+    done
+    if [ $UNMET -eq 1 ]; then
         exit 1
     fi
     WAIT_LIMIT="${ROCKETNET_REPIN_WAIT_SECONDS:-60}"
@@ -1821,22 +2146,7 @@ if [ "$MODE" = "repin" ]; then
         HALF_SECONDS=$(( HALF_SECONDS + 1 ))
     done
     say "xdp attached, carrier up, $NUM_QUEUES queue vectors after about $(( HALF_SECONDS / 2 ))s (repin)"
-    WORKER_CPUS=" "
-    for (( K=0; K<NUM_QUEUES; K++ )); do
-        WORKER_CPUS="$WORKER_CPUS${ISOLATED_CPUS[$K]} "
-    done
-    HOUSEKEEPING=""
-    for CPU_DIR in /sys/devices/system/cpu/cpu[0-9]*; do
-        CPU="${CPU_DIR##*cpu}"
-        ONLINE="$(cat "$CPU_DIR/online" 2>/dev/null || echo 1)"
-        IS_ISOLATED=0
-        for CPU_CANDIDATE in "${ISOLATED_CPUS[@]}"; do
-            [ "$CPU_CANDIDATE" = "$CPU" ] && IS_ISOLATED=1
-        done
-        if [ "$ONLINE" = "1" ] && [ $IS_ISOLATED -eq 0 ] && { [ -z "$HOUSEKEEPING" ] || [ "$CPU" -lt "$HOUSEKEEPING" ]; }; then
-            HOUSEKEEPING="$CPU"
-        fi
-    done
+    HOUSEKEEPING="$(housekeeping_cpu "" "$WORKER_CPUS")"
     QUEUE_IRQS=" "
     while read -r IRQ QUEUE; do
         [ -n "$IRQ" ] || continue
@@ -1845,7 +2155,7 @@ if [ "$MODE" = "repin" ]; then
             fail "irq $IRQ is queue $QUEUE, past the $NUM_QUEUES queues the server uses (repin): R7 first"
             continue
         fi
-        CPU="${ISOLATED_CPUS[$QUEUE]}"
+        CPU=$(( OS_CPUS + QUEUE ))
         CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
         if [ "$CURRENT" = "$CPU" ]; then
             say "irq $IRQ (queue $QUEUE) already pinned to cpu $CPU (repin)"
@@ -1859,22 +2169,21 @@ if [ "$MODE" = "repin" ]; then
             *" $IRQ "*) continue ;;
         esac
         CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
-        case "$WORKER_CPUS" in
-            *" $CURRENT "*)
-                if [ -z "$HOUSEKEEPING" ]; then
-                    fail "irq $IRQ sits on worker cpu $CURRENT and no cpu outside the isolated set is online (repin)"
-                else
-                    say "moving irq $IRQ off worker cpu $CURRENT to cpu $HOUSEKEEPING (repin)"
-                    echo "$HOUSEKEEPING" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $HOUSEKEEPING (repin)"
-                fi
-                ;;
-        esac
+        ON_WORKER="$(list_takes_worker "$CURRENT" "$WORKER_CPUS")"
+        if [ -n "$ON_WORKER" ]; then
+            if [ -z "$HOUSEKEEPING" ]; then
+                fail "irq $IRQ affinity '$CURRENT' takes in worker cpu $ON_WORKER and no cpu outside the isolated set is online (repin)"
+            else
+                say "moving irq $IRQ off worker cpu $ON_WORKER ('$CURRENT') to cpu $HOUSEKEEPING (repin)"
+                echo "$HOUSEKEEPING" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $HOUSEKEEPING (repin)"
+            fi
+        fi
     done
     while read -r IRQ QUEUE; do
         [ -n "$IRQ" ] || continue
         [ "$QUEUE" -lt "$NUM_QUEUES" ] || continue
         READ_BACK="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
-        [ "$READ_BACK" = "${ISOLATED_CPUS[$QUEUE]}" ] || fail "irq $IRQ (queue $QUEUE) reads '$READ_BACK' after repin, want ${ISOLATED_CPUS[$QUEUE]}"
+        [ "$READ_BACK" = "$(( OS_CPUS + QUEUE ))" ] || fail "irq $IRQ (queue $QUEUE) reads '$READ_BACK' after repin, want $(( OS_CPUS + QUEUE ))"
     done <<< "$QUEUE_VECTORS"
     if [ $UNMET -eq 1 ]; then
         say "repin FAILED: $UNMET_COUNT unmet condition(s) above"
@@ -1900,7 +2209,9 @@ r7_enforce
 # them (containerized pid views make host liveness unreliable). they are
 # inert until a create collides with one, and create refuses that loudly.
 
-# R4. per-queue irq pinning: one queue irq, one isolated cpu, round robin
+# R4. per-queue irq pinning: by name where the interface names its queue
+# vectors (<iface>-TxRx-k on cpu num_os_cpus + k, every other vector off
+# those cpus); otherwise one irq, one isolated cpu, round robin
 
 # THE BOUNDARY DEFINITION (single source, implemented twice, held by the
 # C fixture test rocketnet_test_xdp_interrupt_matcher AND this script's own
@@ -1921,7 +2232,9 @@ if [ ! -r "$FS/proc/interrupts" ]; then
 else
     INTERRUPTS_READABLE=1
     IRQS="$(irq_lines_for_interface "$INTERFACE" < "$FS/proc/interrupts")"
+    QUEUE_VECTORS="$(queue_irq_lines_for_interface "$INTERFACE" < "$FS/proc/interrupts")"
 fi
+QUEUE_VECTORS="${QUEUE_VECTORS:-}"
 if [ ${#ISOLATED_CPUS[@]} -gt 0 ] && [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
     fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (B1/R4 scale together): one queue wants one isolated core"
 fi
@@ -1930,6 +2243,55 @@ IRQ_COUNT=$(echo "$IRQS" | grep -c .)
 
 if [ -z "$IRQS" ]; then
     [ $INTERRUPTS_READABLE -eq 1 ] && say "no /proc/interrupts line names $INTERFACE (R4): either this NIC has no per-queue vectors, or its transport's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be performed or verified BY NAME here; pin and verify via the NIC transport's own tooling"
+elif [ -n "$QUEUE_VECTORS" ]; then
+    # NAMED QUEUE VECTORS (<iface>-TxRx-<k>: ixgbe, i40e, ice): queue k's
+    # vector on exactly cpu num_os_cpus + k, the cpu xdp thread k pins to,
+    # and every other vector of the interface (the misc vector, XDP's
+    # tx-only vectors) off those worker cpus. The library pre-flight's R4
+    # is the same rule (rocketnet_server_socket_preflight_irqs).
+    WORKER_CPUS=" "
+    for (( K=0; K<NUM_QUEUES; K++ )); do
+        WORKER_CPUS="$WORKER_CPUS$(( OS_CPUS + K )) "
+    done
+    HOUSEKEEPING="$(housekeeping_cpu "$FS" "$WORKER_CPUS")"
+    QUEUE_IRQS=" "
+    while read -r IRQ QUEUE; do
+        [ -n "$IRQ" ] || continue
+        QUEUE_IRQS="$QUEUE_IRQS$IRQ "
+        if [ "$QUEUE" -ge "$NUM_QUEUES" ]; then
+            fail "irq $IRQ is queue $QUEUE of $INTERFACE, past the $NUM_QUEUES queues the server runs (R4, R7)"
+            continue
+        fi
+        CPU=$(( OS_CPUS + QUEUE ))
+        CURRENT="$(cat "$FS/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null)"
+        if [ "$CURRENT" = "$CPU" ]; then
+            say "irq $IRQ (queue $QUEUE) pinned to cpu $CPU, xdp thread $QUEUE's (R4)"
+        elif [ $VERIFY -eq 1 ]; then
+            fail "irq $IRQ (queue $QUEUE of $INTERFACE) affinity is '$CURRENT', want cpu $CPU, the cpu xdp thread $QUEUE pins to (R4)"
+        else
+            say "pinning irq $IRQ (queue $QUEUE) to cpu $CPU (R4)"
+            echo "$CPU" > "$FS/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $CPU (R4)"
+        fi
+    done <<< "$QUEUE_VECTORS"
+    for IRQ in $IRQS; do
+        case "$QUEUE_IRQS" in
+            *" $IRQ "*) continue ;;
+        esac
+        CURRENT="$(cat "$FS/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null)"
+        ON_WORKER="$(list_takes_worker "$CURRENT" "$WORKER_CPUS")"
+        if [ -z "$ON_WORKER" ]; then
+            say "irq $IRQ of $INTERFACE is not a queue's and is off the xdp threads' cpus ('$CURRENT') (R4)"
+        elif [ $VERIFY -eq 1 ] && [ "$ON_WORKER" = "malformed" ]; then
+            fail "irq $IRQ affinity '$CURRENT' is unreadable (R4): cannot verify it is off the xdp threads' cpus"
+        elif [ $VERIFY -eq 1 ]; then
+            fail "irq $IRQ of $INTERFACE is not a queue's and its affinity '$CURRENT' takes in cpu $ON_WORKER, an xdp thread's (R4)"
+        elif [ -z "$HOUSEKEEPING" ]; then
+            fail "irq $IRQ affinity '$CURRENT' takes in an xdp thread's cpu and no online cpu outside the isolated set is free to take it (R4)"
+        else
+            say "moving irq $IRQ off the xdp threads' cpus ('$CURRENT') to cpu $HOUSEKEEPING (R4)"
+            echo "$HOUSEKEEPING" > "$FS/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $HOUSEKEEPING (R4)"
+        fi
+    done
 elif [ ${#ISOLATED_CPUS[@]} -eq 0 ]; then
     fail "cannot pin $INTERFACE IRQs (R4): no isolated cpus (B1/B2 first)"
 elif [ "$IRQ_COUNT" -gt ${#ISOLATED_CPUS[@]} ]; then
