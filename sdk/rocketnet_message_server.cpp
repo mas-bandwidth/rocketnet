@@ -2774,6 +2774,20 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
     return server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call ? (rocketnet_server_transport_t *) server->object.link.transport : NULL;
 }
 
+// The window of the update in three calls follows the update's stage, set as
+// an update call's work ends (proofs/tla/RNFillPhase.tla MainEpoch): open
+// while the update is open, whether or not the transport opened its own
+// (an update_receive whose first time is not finite, or whose transport is
+// not running, returns before the transport stores it), shut once it is
+// closed. The transport stores the same window for its own split calls.
+static void rn_message_window_follows_stage( struct rn_message_object_t * object )
+{
+    if ( object->fill_phase )
+    {
+        rocketnet_fill_phase_window( object->fill_phase, object->update_stage != RN_MESSAGE_UPDATE_CLOSED );
+    }
+}
+
 // proofs/tla/RNWriterFinish.tla BeginFill: after this main thread call the game threads may start and finish messages.
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time )
 {
@@ -2797,7 +2811,9 @@ int rocketnet_message_server_update( struct rocketnet_message_server_t * server,
     {
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     }
-    return rn_message_object_update( &server->object, time );
+    const int result = rn_message_object_update( &server->object, time );
+    rn_message_window_follows_stage( &server->object );
+    return result;
 }
 
 void rocketnet_message_server_update_receive( struct rocketnet_message_server_t * server, double time )
@@ -2822,6 +2838,7 @@ void rocketnet_message_server_update_receive( struct rocketnet_message_server_t 
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     }
     rn_message_object_update_begin( &server->object, time );
+    rn_message_window_follows_stage( &server->object );
 }
 
 int rocketnet_message_server_update_client_acks( struct rocketnet_message_server_t * server, int client_index )
@@ -2869,7 +2886,9 @@ int rocketnet_message_server_update_finish( struct rocketnet_message_server_t * 
     {
         return ROCKETNET_UPDATE_OK;
     }
-    return rn_message_object_update_end( &server->object );
+    const int result = rn_message_object_update_end( &server->object );
+    rn_message_window_follows_stage( &server->object );
+    return result;
 }
 
 void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server )

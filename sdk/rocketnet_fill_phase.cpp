@@ -152,8 +152,8 @@ bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase
     }
 
     // the window of the update in three calls: only update_client and the
-    // update calls run in it. Only a main operation writes window, and none
-    // runs now but this one, so the load sees the last one's store
+    // update calls run in it. Only the main thread's update calls write
+    // window, and none runs now but this one, so the load sees the last store
     if ( !update_call && fill_phase->window.load() != 0 )
     {
         fill_phase->main_calls.fetch_sub( 1 );
@@ -171,11 +171,18 @@ bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase
 }
 
 // proofs/tla/RNFillPhase.tla MainEpoch: the window's store is the work of the
-// receive or finish operation that MainEpoch ends
+// update call that MainEpoch ends. Only the main thread's update calls write
+// window (inside their main operation once the check is armed), so the
+// relaxed load here reads this thread's own last store, and a whole update,
+// which leaves the window shut as it found it, writes nothing
 void rocketnet_fill_phase_window( struct rocketnet_fill_phase_t * fill_phase, bool open )
 {
     rocketnet_assert( fill_phase );
-    fill_phase->window.store( open ? 1 : 0 );
+    const uint32_t value = open ? 1 : 0;
+    if ( fill_phase->window.load( std::memory_order_relaxed ) != value )
+    {
+        fill_phase->window.store( value );
+    }
 }
 
 // proofs/tla/RNFillPhase.tla TakeCount, TakeLook: update_client counts itself

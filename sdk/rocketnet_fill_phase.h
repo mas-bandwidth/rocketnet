@@ -99,8 +99,10 @@
 //     rocketnet_server_update_client on any thread, then
 //     rocketnet_server_update_finish) opens a window: from update_receive's
 //     main operation to update_finish's. window is 1 in it, stored by the
-//     main thread inside those operations (the main operation's own work:
-//     MainEpoch of a receive or a finish). In the window the only calls are
+//     main thread inside the update calls (the main operation's own work:
+//     MainEpoch), by the transport's split calls and by the message server
+//     from its stage as each update call's work ends, so it is 1 while the
+//     update is open even when update_receive returned early. In the window the only calls are
 //     update_client (a take: take_begin, take_end) and the update calls (a
 //     main operation begun with update_call: update_finish, and an
 //     update_receive or update that finishes the open update first). Any
@@ -214,9 +216,10 @@ inline bool rocketnet_fill_phase_armed( const struct rocketnet_fill_phase_t * fi
 bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase, bool update_call = false );
 void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase );
 
-// the window of the update in three calls: opened at the end of
-// update_receive's work, closed by update_finish's, each by the thread inside
-// that main operation (or, not armed, the server's one thread)
+// the window of the update in three calls: open while the update is open
+// (from update_receive's work to update_finish's, or the next update call's),
+// stored by the main thread inside the update call's main operation (or, not
+// armed, the server's one thread); a store of the value it holds writes nothing
 void rocketnet_fill_phase_window( struct rocketnet_fill_phase_t * fill_phase, bool open );
 
 // update_client: false: refused and counted (and asserted), a main operation

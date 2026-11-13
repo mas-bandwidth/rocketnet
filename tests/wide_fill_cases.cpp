@@ -36,6 +36,7 @@
 #include "rocketnet_layers.h"
 #include "rocketnet_message_object.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1567,6 +1568,51 @@ static void test_wide_fill_plain_finish_checked()
     rocketnet_assert_function( NULL );
 }
 
+// The window follows the update's stage: an update_receive that returns
+// before the transport opens its update (the first update's time not
+// finite, so the clock does not start; or the transport not running) still
+// leaves the update open until update_finish, and every call the window
+// refuses is refused and counted in it. Before, the window was stored only
+// by the transport's receive, so on those paths it stayed shut
+static void test_wide_fill_split_update_window_on_early_return()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 0 );
+    rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) ) );
+    check( phase != NULL );
+
+    // the server's first update, with a time that is not finite: clamped,
+    // the clock not started, nothing received; the update is open
+
+    rocketnet_server_update_receive( world.server, NAN );
+    check( rocketnet_fill_phase_armed( phase ) );
+    g_wide_fill_asserts = 0;
+    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
+    rocketnet_server_send_packets( world.server );
+    check( rocketnet_server_receive_messages( world.server ) == NULL );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 2 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 2 ) );
+
+    // update_finish closes it: the same calls run
+
+    check( rocketnet_server_update_client( world.server, 0 ) == 0 );
+    rocketnet_server_update_finish( world.server );
+    rocketnet_server_send_packets( world.server );
+    check( rocketnet_server_receive_messages( world.server ) == NULL );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 2 );
+
+    // and a whole update leaves it shut
+
+    rocketnet_server_update( world.server, world.time );
+    rocketnet_server_send_packets( world.server );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 2 );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
 // a finish the check refuses leaves its start open; the next main-thread
 // operation closes it, counted MESSAGE_SEND_REFUSED; and a refused transport
 // start names no client, so its finish and abort claim none
@@ -2330,4 +2376,5 @@ REGISTER_UNIT_TEST( test_wide_fill_main_refused_during_fill );
 REGISTER_UNIT_TEST( test_wide_fill_split_update_window );
 REGISTER_UNIT_TEST( test_wide_fill_split_update_open_update_call );
 REGISTER_UNIT_TEST( test_wide_fill_plain_finish_checked );
+REGISTER_UNIT_TEST( test_wide_fill_split_update_window_on_early_return );
 REGISTER_UNIT_TEST( test_wide_fill_refused_finish_and_start );
