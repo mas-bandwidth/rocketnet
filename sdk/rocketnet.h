@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.27"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.28"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        27
+    #define ROCKETNET_VERSION_PATCH                        28
 
 #else // !ROCKETNET_DEV
 
@@ -327,12 +327,16 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED = -17,
 
-    /// Every transport in the candidate list refused to start, including any
-    /// over the ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
-    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget. Set the log level to
-    /// ROCKETNET_LOG_LEVEL_WARN to see why each one refused.
+    /// No transport found: every transport this server or client was allowed
+    /// to try failed to start, including any over the
+    /// ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
+    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget, and they failed for
+    /// different reasons. When they all failed for one reason, the status
+    /// names it instead (TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_NOT_BUILT,
+    /// TRANSPORT_PORT_ZERO_UNSUPPORTED). Set the log level to
+    /// ROCKETNET_LOG_LEVEL_WARN to read why each one failed.
 
-    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED = -18,
+    ROCKETNET_STATUS_NO_TRANSPORT_FOUND = -18,
 
     /// An allocation the operation needs failed. Nothing it allocated stays
     /// live. Free memory or lower the config's sizes, then retry.
@@ -346,7 +350,7 @@ enum rocketnet_status_t
 
     /// Connect refused: the platform refused a thread. Retry after freeing
     /// system resources. Server start reports a transport that cannot start
-    /// its thread as ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED.
+    /// its thread as ROCKETNET_STATUS_NO_TRANSPORT_FOUND.
 
     ROCKETNET_STATUS_THREAD_CREATE_FAILED = -21,
 
@@ -2438,7 +2442,7 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// ROCKETNET_STATUS_INVALID_CONNECT_TOKEN, ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED,
 /// ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO,
 /// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION for a development token in a
-/// production build, ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no
+/// production build, ROCKETNET_STATUS_NO_TRANSPORT_FOUND when no
 /// transport can open,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY, ROCKETNET_STATUS_MUTEX_CREATE_FAILED or
 /// ROCKETNET_STATUS_THREAD_CREATE_FAILED.
@@ -2916,9 +2920,9 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// bind of at least one transport and no other transport tried, except the
 /// xdp transport, failed for another reason (a server whose port another
 /// socket holds reads this where it read
-/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED, whether or not it sets
+/// ROCKETNET_STATUS_NO_TRANSPORT_FOUND, whether or not it sets
 /// bind_ipv4_address or bind_ipv6_address),
-/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no transport can start for
+/// ROCKETNET_STATUS_NO_TRANSPORT_FOUND when no transport can start for
 /// other reasons,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY or ROCKETNET_STATUS_MUTEX_CREATE_FAILED.
 

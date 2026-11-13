@@ -204,7 +204,7 @@ jobs:
   #
   #   unit        sodium, the unit suite (under strace on Linux), the purity
   #               and ambient config checks
-  #   functional  the functional suites (auto ladder, portable pin, and the
+  #   functional  the functional suites (automatic transport order, portable pin, and the
   #               production library's on Release), the family matrix on
   #               macOS, the lifecycle binary
   #   transport_matrix  (Linux) the transport family matrix and its libxdp
@@ -595,7 +595,7 @@ jobs:
       # Per commit the Linux Release row runs functional_production only; the
       # development suite runs per commit on the Linux Debug row and on the
       # macOS Release row (the one macOS functional row per commit).
-      - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
+      - name: Run functional suite (automatic transport order — the fall, on Linux; RSS enforced)
         if: matrix.leg == 'functional' && (inputs.full || matrix.build_type == 'Debug' || runner.os == 'macOS')
         # Nightly (full) Linux Debug only: scale 2, as nightly.yml scales its
         # TSan leg. test_loopback_transport_live_message_matrix's window takes
@@ -621,9 +621,9 @@ jobs:
 
       # functional_production links the production (ROCKETNET_DEV=OFF)
       # library, so it exists only on the Release rows; it runs the same
-      # auto ladder and the same pinned-portable pass as the DEV suite. On
+      # automatic transport order and the same pinned-portable pass as the DEV suite. On
       # macOS it is the functional_production row's, beside the functional row.
-      - name: Run functional_production suite (auto ladder, production library)
+      - name: Run functional_production suite (automatic transport order, production library)
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
         run: |
           set -euo pipefail
@@ -1793,7 +1793,7 @@ jobs:
           ./bin/Release/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run functional_production suite (auto ladder, production library)
+      - name: Run functional_production suite (automatic transport order, production library)
         if: matrix.leg == 'b'
         shell: bash
         run: |
@@ -2984,7 +2984,7 @@ jobs:
   #
   # WHAT CARRIES THE THREADS, and what does not. bin/test is the unit suite
   # and starts no driver. bin/functional is the surface that used to live in
-  # that run: on this linux runner the ladder falls to the gso rung (xdp
+  # that run: on this linux runner the transport order falls to the gso rung (xdp
   # refused for privilege, gso granted), so the server's GSO worker threads
   # run, the client receive thread runs, and the hammer tests drive the
   # concurrent path on purpose. bin/soak adds the real-UDP loopback -- a
@@ -3221,7 +3221,7 @@ jobs:
           path: unit-cases/
           if-no-files-found: error
 
-      - name: Run tests (auto ladder) against the pinned sodium
+      - name: Run tests (automatic transport order) against the pinned sodium
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test

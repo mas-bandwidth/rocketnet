@@ -5514,7 +5514,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // ----------------------------------------------------------------
 
-// pump-request socket create: the transport ladder's entry into the
+// pump-request socket create: the transport list's entry into the
 // platform pump selection. pump NULL or "auto" is the pre-existing
 // behavior -- offer the platform's batch pump. "portable" forces the portable pump: the
 // request wins and no batch decision matters. "msgx" REQUIRES the darwin

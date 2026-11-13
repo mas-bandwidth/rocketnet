@@ -1541,7 +1541,7 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     return plan.total_bytes <= SIZE_MAX;
 }
 
-uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_server_transport_config_t * config )
+uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_server_transport_config_t * config )
 {
     rocketnet_server_transport_config_t defaults;
 
@@ -1553,8 +1553,8 @@ uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_serv
 
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
-    struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available, num_available, &ladder ) )
+    struct rocketnet_transport_order_t ladder;
+    if ( !rocketnet_transport_order_parse( config->transport, available, num_available, &ladder ) )
     {
         return 0;
     }
@@ -1758,7 +1758,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved
 
 // The inputs a server create starts from, resolved before anything is
 // allocated or opened: the layered config (DEFAULT < STRUCT < ENV) validated,
-// the served addresses and the bind they share, the parsed transport ladder,
+// the served addresses and the bind they share, the parsed transport list,
 // and which candidates the operator memory budget refuses.
 
 struct rocketnet_server_transport_resolved_t
@@ -1770,7 +1770,7 @@ struct rocketnet_server_transport_resolved_t
     rocketnet_address_t bind_address;
     int serves_both;
     int max_clients;
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
 };
 
@@ -2043,8 +2043,8 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     int num_available_transports = 0;
     const int * available_transports = rocketnet_server_transport_io_availability( &num_available_transports );
 
-    struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder ) )
+    struct rocketnet_transport_order_t ladder;
+    if ( !rocketnet_transport_order_parse( config->transport, available_transports, num_available_transports, &ladder ) )
     {
         if ( status )
         {
@@ -2178,9 +2178,9 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     {
         if ( status )
         {
-            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+            *status = ROCKETNET_STATUS_NO_TRANSPORT_FOUND;
         }
-        rocketnet_error( "server transport ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+        rocketnet_error( "server transport: no transport found: every candidate's memory plan exceeds the %llu byte operator budget",
                          (unsigned long long) memory_budget );
         return false;
     }
@@ -2219,14 +2219,14 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
 // holding what it bound; -1 when none granted, with *status saying why (an
 // open that ran out of memory ends the ladder rather than falling).
 
-static int rocketnet_server_transport_open_ladder( struct rocketnet_server_transport_t * server_transport, void * context,
-                                                   const struct rocketnet_server_transport_resolved_t * resolved,
-                                                   rocketnet_address_t * bind_address, int * status )
+static int rocketnet_server_transport_open_in_order( struct rocketnet_server_transport_t * server_transport, void * context,
+                                                     const struct rocketnet_server_transport_resolved_t * resolved,
+                                                     rocketnet_address_t * bind_address, int * status )
 {
     const struct rocketnet_server_transport_config_t * config = &resolved->config;
     const char * public_address_string = resolved->public_address_string;
     const rocketnet_address_t * public_address = &resolved->public_address;
-    const struct rocketnet_transport_ladder_t * ladder = &resolved->ladder;
+    const struct rocketnet_transport_order_t * ladder = &resolved->ladder;
     const bool * budget_refused = resolved->budget_refused;
 
     // candidates tried left to right, first grant wins.
@@ -2423,7 +2423,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
             snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( ladder->skipped[i] ) );
         }
 
-        rocketnet_error( "server transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
+        rocketnet_error( "server transport: no transport found. refused: %s. skipped for platform: %s",
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
 
@@ -2468,7 +2468,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
             }
             else
             {
-                *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+                *status = ROCKETNET_STATUS_NO_TRANSPORT_FOUND;
             }
         }
 
@@ -2477,7 +2477,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
 
     if ( refused_names[0] != '\0' )
     {
-        rocketnet_info( "server transport ladder granted %s after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
+        rocketnet_info( "server transport %s granted after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
     }
 
     return granted_transport;
@@ -2579,7 +2579,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
 #endif // #if ROCKETNET_DEV
     }
 
-    const int granted_transport = rocketnet_server_transport_open_ladder( server_transport, context, &resolved, &bind_address, status );
+    const int granted_transport = rocketnet_server_transport_open_in_order( server_transport, context, &resolved, &bind_address, status );
     if ( granted_transport < 0 )
     {
         rocketnet_server_transport_abort_create( server_transport );

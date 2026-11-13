@@ -368,7 +368,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * 
  * @param config [in] Optional full config; NULL selects defaults.
  * @param time [in] Finite, monotonic time in seconds for the initial update clock.
  * @param status [out] Optional status destination; receives OK on success or the specific failure code on every failure.
- * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
+ * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, NO_TRANSPORT_FOUND, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
  * @code
  * // token, context, config, time, and status are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
@@ -710,7 +710,7 @@ struct rocketnet_address_t
 // count from 1, the gso transport refuses past 32.
 //
 // public_address, empty by default, displaces the create call's address
-// parameter when set, so the address the transport ladder verifies, the
+// parameter when set, so the address the transport list verifies, the
 // address the transport binds and the address connect tokens validate
 // against are always the same one. It has no environment override.
 //
@@ -917,7 +917,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, TEST_PACKET_FILTER_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, TEST_PACKET_FILTER_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, NO_TRANSPORT_FOUND, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
