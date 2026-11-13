@@ -42,7 +42,9 @@ writes the length; the model starts a packet finished and `Abort` leaves it
 zero, which covers the code because the caller finishes or aborts every start
 before `send_packets` publishes the bank. Not modelled: `start_packet`'s
 refusal after its pop (an address the socket cannot carry), which releases the
-operation to its lane's tail and starts no packet; and a refused post (no
+operation to its lane's tail and starts no packet; its refusal of a slot at or
+past the send queue size, which cannot happen while each lane holds exactly
+`send_queue_size` operations; and a refused post (no
 completion), which releases the operation as `Complete` does.
 
 ## Invariants
@@ -81,8 +83,10 @@ each post names, and the code's walk gives both.
 ## What the trace binds
 
 The trace layer `iocp-lanes` (`tests/tla_trace_iocp_lanes.cpp`) calls the
-code's lane free queues (the transport's own ref queue, through
-`rocketnet_server_iocp_test_lanes_*`), its destination hash, its release lane
+code's ref queue functions over a test set of lane free queues
+(`rocketnet_server_iocp_test_lanes_*`; a release there is a plain
+`rocketnet_iocp_queue_push` to the lane `rocketnet_iocp_op_lane` names, not
+`rocketnet_iocp_release_send` with its state check), its destination hash, its release lane
 and its send threads' lane walk, and reads every free queue back after each
 step. The banks, the in-flight set, the started and posted orders, `zeroed`
 and `postedBy` are the walk's own, written from the model's rules: it calls

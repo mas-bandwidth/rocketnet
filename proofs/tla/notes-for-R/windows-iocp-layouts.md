@@ -13,12 +13,12 @@ R or package C; this package did not make them.
 
   (item "trace-iocp-lanes-real-post" :group "proof-debt" :area "proofs"
    :title "Trace layer iocp-lanes drives the lane arithmetic, not the bank and post"
-   :text "tests/tla_trace_iocp_lanes.cpp calls the lane, op-lane, release and owner arithmetic through the development seams; the free queues, the banks, start_packet, abort_packet, rocketnet_iocp_send_bank and the completion path are the walk's own. Bind them: seams over a real rocketnet_iocp_send_lane_t that run start_packet, finish and abort, the send bank's zero-byte release and post, and rocketnet_iocp_retire_send, with the record read from the lane. Audit rows MM176, MM177."
+   :text "tests/tla_trace_iocp_lanes.cpp drives the code's ref queue functions over a test set of free queues (rocketnet_server_iocp_test_lanes_*) and the lane, op-lane and send-thread arithmetic, and reads the free queues back after each step; the banks, the in-flight set, the posted orders and zeroed are the walk's own, and start_packet, finish_packet, abort_packet, rocketnet_iocp_send_bank, the gather, the post and rocketnet_iocp_release_send are never called. Bind them: seams over a real rocketnet_iocp_lane_t that run start_packet, finish and abort, the send bank's zero-byte release and post, and rocketnet_iocp_retire_send, with the record read from the lane. Audit rows MM176, MM177."
    :date "2026-11-13" :origin "proofs/tla/README-RNIocpSendLanes.md, What the trace binds; MM176")
 
   (item "trace-rio-lane-real-start" :group "proof-debt" :area "proofs"
    :title "Trace layer rio-lane drives the lane arithmetic, not start, finish and post"
-   :text "tests/tla_trace_rio_lane.cpp calls LaneOf, Encode and Decode through the development seams; the slots, the next counter, slot_bytes and the post walk are the walk's own. rocketnet_server_rio_start_packet, finish_packet, abort_packet, rocketnet_rio_send_packets and rocketnet_rio_post_phase are never called. Bind them with seams over a rocketnet_rio_lane_t that run those paths with RIOSendEx replaced by a recorder. Audit row MM187."
+   :text "tests/tla_trace_rio_lane.cpp calls the LaneOf, Encode and Decode functions of sdk/rocketnet_rio_layout.h directly; the slots, the next counter, slot_bytes and the post walk are the walk's own. rocketnet_server_rio_start_packet, finish_packet, abort_packet, rocketnet_rio_send_packets and rocketnet_rio_post_phase are never called. Bind them with seams over a rocketnet_rio_lane_t that run those paths with RIOSendEx replaced by a recorder. Audit row MM187."
    :date "2026-11-13" :origin "proofs/tla/README-RNRioLaneLayout.md, What the trace binds; MM187")
 ```
 

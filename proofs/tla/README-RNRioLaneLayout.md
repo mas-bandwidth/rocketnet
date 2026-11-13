@@ -15,7 +15,7 @@ slots in, at a small capacity.
 | Model | Code |
 |---|---|
 | `L` | `rocketnet_server_rio_t.num_lanes` (`rocketnet_server_rio_lane_count` of `options.lanes`, the server's `num_rio_lanes`) |
-| `F` | `rocketnet_server_rio_t.lane_slots`: the send phases times a lane's send queue size |
+| `F` | `rocketnet_server_rio_t.lane_slots`: the send phases times a lane's send queue size, the span of a lane's ids; the slots `Start` takes are one phase's (see below) |
 | `Hashes` | the destinations, each named by its `rocketnet_rio_lane_hash` (of its family, port and address) |
 | `slot[l][i]` | send slot `i` of lane `l`: `<<>>` when free, else `<<dest, start, state>>`: reserved (`"res"`), finished with its length (`"live"`, `slot_bytes > 0`) or aborted (`"zero"`) |
 | `next[l]` | lane `l`'s reservation counter (`rio->next[fill]`) |
@@ -31,8 +31,10 @@ slots in, at a small capacity.
   `rocketnet_rio_lane_of( hash, L )` (the high half folded in, then `% L`),
   that lane's next slot `i = next[lane]` (`rocketnet_rio_lane_start_packet`,
   `next[fill].fetch_add( 1 )`), id `rocketnet_rio_lane_packet_id( lane, i, F )`
-  = `lane * F + i`. A lane whose slots are used refuses (`SEND_FULL`); the
-  code's counter still advances, which changes nothing here.
+  = `lane * F + i`. Here a lane refuses once its `F` slots are used; the code
+  refuses (`SEND_FULL`) once the open phase's slot reaches the send queue size
+  `Q`, which is `F / 3` (the abstraction below), and its counter still
+  advances, which changes nothing here.
 - **`Finish(id, keep)`**: `rocketnet_server_rio_finish_packet` (keep: the
   slot's length) or `rocketnet_server_rio_abort_packet` (the slot stays zero):
   `rocketnet_rio_lane_packet_decode` refuses an id at or past `L * F`,
@@ -68,7 +70,9 @@ turns and the slot's hold until its completion are
 - **`OneLanePerDest`**: every frame reserved and not yet sent for one
   destination is in one lane.
 - **`InOrder`**: each destination's frames are posted in the order they were
-  started (a zero slot is skipped, never posted).
+  started: the start numbers posted to it strictly increase. It does not say
+  that every finished frame is posted or that no aborted one is; `Send` skips
+  the zero slots, and no invariant here checks that.
 
 ## The instances
 

@@ -21,14 +21,17 @@
 //   rocketnet_iocp_send_thread_lanes (lane l is thread l % threads's), and
 //   the thread count from rocketnet_server_iocp_send_threads, the functions
 //   the transport's send threads call at create. Each zero-byte entry's
-//   operation is released through the code's release (to the lane its
-//   index names), as rocketnet_iocp_send_bank releases it unposted.
+//   operation is pushed back through the test seam's release (a plain queue
+//   push to the lane rocketnet_iocp_op_lane names, not
+//   rocketnet_iocp_release_send), as rocketnet_iocp_send_bank releases it
+//   unposted.
 // - release: a completion releases one in-flight operation to the lane its
 //   index names (Complete).
 // Every lane's free queue is read back from the code after each step; the
 // code's hash of every destination is the cfg's DestLaneAt.
 //
-// What this binds, and what it does not: the free queues, the destination
+// What this binds, and what it does not: the free queues (the code's ref
+// queue functions over the test seam's lanes, not the transport's), the destination
 // hash, the carve's release lane and the send threads' lane walk are the
 // code's. The banks, the in-flight set, the started and posted orders, the
 // zeroed set and postedBy are the walk's own, written from the model's
