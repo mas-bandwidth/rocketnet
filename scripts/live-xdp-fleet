@@ -420,19 +420,38 @@ while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
     [ "$head" = "$commit" ] || fail "client $label on $ssh_name reported HEAD '$head', not $commit"
 done < "$tmp/sorted.tsv"
 
-# 3. skew: every bench within 2 s of the test server (section 11).
+# 3. skew: every bench within 2 s of the test server (section 11). Each
+# host's clock is read with the remote skew step and taken as a signed
+# offset from this machine's; a bench is judged by its offset minus the
+# server's, so this machine's own clock cancels out.
+local_now()
+{
+    # a date without %N (macOS) prints a literal N: use python3's clock then
+    local now
+    now=$( date +%s.%N 2>/dev/null )
+    case "$now" in
+        *[!0-9.]*|'') python3 -c 'import time; print("%.9f" % time.time())' ;;
+        *) echo "$now" ;;
+    esac
+}
 clock_offset()
 {
     local host=$1 t0 t1 t
-    t0=$( date +%s.%N )
-    t=$( ssh_run "$host" date +%s.%N ) || fail "cannot read the clock on $host"
-    t1=$( date +%s.%N )
-    awk -v a="$t0" -v b="$t1" -v t="$t" 'BEGIN { o = t - (a + b) / 2; if (o < 0) o = -o; printf "%.3f", o }'
+    t0=$( local_now )
+    t=$( ssh_run "$host" "$remote_path" skew ) || return 1
+    t1=$( local_now )
+    case "$t" in
+        [0-9]*.[0-9]*) : ;;
+        *) return 1 ;;
+    esac
+    awk -v a="$t0" -v b="$t1" -v t="$t" 'BEGIN { printf "%.3f", t - (a + b) / 2 }'
 }
+server_offset=$( clock_offset "$server_ssh" ) || fail "cannot read the clock on $server_ssh"
 while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
-    offset=$( clock_offset "$ssh_name" )
-    echo "skew $label: $offset s"
-    awk -v o="$offset" 'BEGIN { exit (o > 2.0) ? 1 : 0 }' || fail "bench $label is more than 2 s off the test server"
+    offset=$( clock_offset "$ssh_name" ) || fail "cannot read the clock on $ssh_name"
+    skew=$( awk -v c="$offset" -v s="$server_offset" 'BEGIN { o = c - s; if (o < 0) o = -o; printf "%.3f", o }' )
+    echo "skew $label: $skew s from the test server"
+    awk -v o="$skew" 'BEGIN { exit (o > 2.0) ? 1 : 0 }' || fail "bench $label is more than 2 s off the test server"
 done < "$tmp/sorted.tsv"
 
 # 4. server pre-flight, dead-man timer, watchdog, load, ssh check, listen.

@@ -72,7 +72,7 @@ case "$sub" in
     skew)
         offset=0
         [ "$host" = "${FAKE_SKEW_HOST:-}" ] && offset=$FAKE_SKEW_SECONDS
-        awk -v t="$( date +%s )" -v o="$offset" 'BEGIN { printf "%.3f\n", t + o }' ;;
+        python3 -c 'import sys, time; print("%.6f" % (time.time() + float(sys.argv[1])))' "$offset" ;;
     preflight)
         if [ -n "${FAKE_PREFLIGHT_FAIL:-}" ]; then
             echo "live-xdp-fleet-remote: preflight: an XDP program is already attached to eth0" >&2

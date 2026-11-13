@@ -108,7 +108,13 @@ cmd_build()
 
 cmd_skew()
 {
-    date +%s.%N 2>/dev/null || python3 -c 'import time; print("%.9f" % time.time())'
+    # a date without %N (macOS) prints a literal N: use python3's clock then
+    local now
+    now=$( date +%s.%N 2>/dev/null )
+    case "$now" in
+        *[!0-9.]*|'') python3 -c 'import time; print("%.9f" % time.time())' ;;
+        *) echo "$now" ;;
+    esac
 }
 
 # ------------------------------------------------------------------------
