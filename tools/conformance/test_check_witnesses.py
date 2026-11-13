@@ -16,6 +16,7 @@ Run:  python3 tools/conformance/test_check_witnesses.py
 """
 
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -67,6 +68,7 @@ HEADER = "section\trule\ttla_invariant\tcode_function\ttest\ttier\n"
 class CheckerFixture(unittest.TestCase):
     def build(self, rows):
         root = tempfile.mkdtemp(prefix="witnesses-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         os.makedirs(os.path.join(root, "docs"))
         os.makedirs(os.path.join(root, "standard"))
         os.makedirs(os.path.join(root, "proofs", "tla"))
@@ -123,6 +125,13 @@ class CheckerFixture(unittest.TestCase):
         code, report = check_witnesses.run(root)
         self.assertEqual(code, 0, report)
         self.assertIn("SOURCE REVIEWS (not executable proof): 1", report)
+        # the anchor goes and the word stays: prose naming the floor is no
+        # disposition
+        with open(path, "w") as handle:
+            handle.write("The floor disposition was removed.\n")
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 1, report)
+        self.assertIn("review disposition 'docs/audits/review.md:floor' has no <a id=\"floor\"> anchor", report)
         with open(path, "w") as handle:
             handle.write("The disposition was removed.\n")
         code, report = check_witnesses.run(root)

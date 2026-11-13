@@ -7,9 +7,11 @@
 
 The checker reads RN-1 (standard/TRANSPORT.md), RN-2 (standard/MESSAGES.md)
 and RN-R (standard/RATIONALE.md) as documents, and the outline from
-standard/STYLE.md. It reads nothing else of the source tree but the pin files
-(standard/pins/*.tsv) and the vector twins (test_unit_standard_*.cpp). It
-checks, and fails with one line per fault naming the section id:
+standard/STYLE.md. Of the rest of the source tree it reads the pin files
+(standard/pins/*.tsv), the vector twins (test_unit_standard_*.cpp), the sdk
+headers the pins compile through, and the counter registry
+(sdk/rocketnet_counters.h). It checks, and fails with one line per fault
+naming the section id:
 
   outline     every document's section headings are the outline's, in order,
               each with its anchor; subsection anchors also exist and their
@@ -28,7 +30,11 @@ checks, and fails with one line per fault naming the section id:
               its id names, and equals the RN_STANDARD_VECTOR twin of that id
               in a test file; every twin has a block; a twin counts only
               outside comments, in a file that calls rn_standard_vectors_walk
-  index       each Appendix A vector index is the one the vectors imply
+  counters    the RN-1 t18 counter table (name, class, family) is
+              sdk/rocketnet_counters.h's registry, in index order
+  index       no document commits an Appendix A vector index (no index
+              markers): the index the vectors imply is printed on demand by
+              --print-index
   references  every link is a section link that resolves and carries its
               target's heading; no bare section id in running text
   language    RN-1 and RN-2 use no lower-case 'must', 'shall', 'should' or

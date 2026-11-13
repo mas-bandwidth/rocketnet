@@ -12,7 +12,8 @@ function, and the test. This checker holds those anchors to the tree. It
 fails when an anchor is stale -- the section id no longer resolves through
 check_rn_standard.py's resolver, the named section (or, where the standard
 keeps the rule's text only in standard/RATIONALE.md under the same section
-id, that rationale section) no longer carries the rule text, or the
+id, or failing that under its top-level section, as t15 for t15.1, that
+rationale section) no longer carries the rule text, or the
 function, test or invariant is gone. A citation Module.tla:Property, or
 proofs/tla/Module.tla:Property, is stale unless that module defines
 Property; a bare name still resolves in any proofs/tla module. That is a
@@ -99,7 +100,9 @@ def section_text(doc, ident):
 
 def rule_carried(docs, rationale, ident, rule):
     """True when the anchored section, or the rationale section of the same
-    id where the standard keeps the text there, carries the rule text."""
+    id where the standard keeps the text there (or, failing that, the
+    rationale section of its top-level id: t15 for t15.1), carries the rule
+    text."""
     needle = normalize(rule)
     for doc in docs:
         text = section_text(doc, ident)
@@ -163,6 +166,17 @@ def anchor_name_exists(root, anchor):
     if re.search(r"\b" + re.escape(function) + r"\b", text):
         return path
     return None
+
+
+def review_anchor_exists(root, path, anchor):
+    """True when the docs/audits disposition holds <a id="anchor">: the word
+    alone in its prose is no disposition."""
+    full = os.path.join(root, path)
+    if not os.path.isfile(full):
+        return False
+    with open(full, "r", encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    return re.search(r'<a\s+id="' + re.escape(anchor) + r'"\s*>', text) is not None
 
 
 CFG_KEYWORDS = ("SPECIFICATION", "INIT", "NEXT", "CONSTANT", "CONSTANTS", "INVARIANT", "INVARIANTS",
@@ -358,6 +372,9 @@ def run(root=None):
                 path, separator, anchor = test.partition(":")
                 if not path.startswith("docs/audits/") or not path.endswith(".md") or not separator or not anchor:
                     failures.append("%s: a review needs a named docs/audits Markdown disposition" % where)
+                elif not review_anchor_exists(root, path, anchor):
+                    failures.append("%s: review disposition %r has no <a id=\"%s\"> anchor in %s"
+                                    % (where, test, anchor, path))
             if tier in dispositions:
                 dispositions[tier].append((section_id, rule, test))
 
