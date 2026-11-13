@@ -307,9 +307,15 @@ A sender MUST aggregate fitting messages into back-to-back records of a
 shared RECORDS payload when room remains. Start reserves the declared maximum
 after the committed prefix; finish commits only the actual length, and abort
 leaves the prefix unchanged. Neither operation moves committed payloads.
-Seal the payload when the next reservation cannot fit, when it holds 16
-records, when its reliable numbers and receipt references together reach 16,
-or when send_packets or update closes the build. A sender MAY seal a fitting
+Seal the in-place payload when the next record and its header cannot fit,
+when it already holds 16 receipt references and the next message asks for a
+receipt, when the send budget of [m9.4 Send budget](#m9.4) cannot pay the
+grown payload, or when send_packets or update closes the build. The in-place
+build has no record-count limit of its own: a plain unreliable record
+carries no reliable number and no receipt reference. The queued builder,
+which writes reliable records and every message that is not written in
+place, seals a payload at 16 records, or when its reliable numbers and
+receipt references together reach 16. A sender MAY seal a fitting
 unreliable message alone when the application finishes it from a thread that
 writes its own packets: the reference implementation's per-client finish does
 so, and when the update's send limits leave no room it drops the message and
@@ -379,8 +385,8 @@ A sender MUST refuse a message above the configured maximum message size. For UN
 These vectors exercise the encoding capacities. The SINGLE limit vector is
 a format boundary, not a sender-policy exception: an application message
 above the unreliable record limit is promoted under
-[m2.1 One-record limits and promotion](#m2.1). In every vector, data byte i of
-a message is (7i + 3) mod 256.
+[m2.1 One-record limits and promotion](#m2.1). In every vector, data byte i of a message is (7i + 3) mod 256, and the ring
+field of every record that carries one is 0.
 
 ```vector m2.single-limit
 input: SINGLE form, one UNRELIABLE message of 1415 bytes
@@ -2692,8 +2698,12 @@ delivered whole. Each fragment is one record ([m3 Record format](#m3)).
    its channel supersedes before it completes, is released undelivered and
    counted as [m7.3 Code 4, RELIABLE_SEQUENCED](#m7.3) states. A
    receiver MUST NOT deliver an incomplete block. A receiver MUST count a
-   duplicate fragment once. A receiver MUST refuse a fragment whose fragment
-   count, first number or base disagrees with the block's first fragment, a
+   duplicate fragment once. The checks below apply to a fragment that reaches block reassembly; a code 4
+fragment reaches it only after the stale and superseded classification of
+[m7.3 Code 4, RELIABLE_SEQUENCED](#m7.3), and one that classification
+releases or counts is never checked here. A receiver MUST refuse a fragment
+whose fragment count, first number or base disagrees with the block's first
+fragment, a
    fragment of a code 4 block whose ordering index or sequencing index
    disagrees with it, and a fragment whose reconstructed number is below its
    fragment index ([m4 Receiver checks](#m4) check 7).
@@ -2701,7 +2711,7 @@ delivered whole. Each fragment is one record ([m3 Record format](#m3)).
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
 | collecting | a fragment arrives | no block state exists, or its count, first number and base agree | copy the fragment to base_bytes + fragment × F and count it | collecting |
-| collecting | a fragment arrives | a block state exists and the count, first number or base disagrees, or for code 4 the ordering or sequencing index | refuse the payload as a violation | connection ends |
+| collecting | a fragment reaches reassembly | a retained block state exists for its block and the count, first number or base disagrees, or for code 4 the ordering or sequencing index | refuse the payload as a violation | connection ends |
 | collecting | a duplicate fragment arrives | its number was already counted | count it once and change nothing | collecting |
 | collecting | the last missing fragment arrives | every fragment has arrived and the exact message length exceeds the configured maximum | refuse with MESSAGE_BAD_BLOCK | connection ends |
 | collecting | the last missing fragment arrives | every fragment has arrived and the exact message length is within the configured maximum | deliver the block whole at its ordering slot | complete |
@@ -3018,11 +3028,12 @@ When the reliable timeout is configured, the resend delay of a chunk MUST be
 seconds, with real-valued division; when it is disabled, the resend delay of a
 chunk MUST be `resend_delay_seconds`. A number is due at the first update
 whose time is at least its last send plus its resend delay, the earliest time
-it is resent; a sender MUST NOT resend it before then. A sender MUST resend a
-due number at that update unless probe pacing below holds it, the send budget
-of [m9.4 Send budget](#m9.4) cannot pay it, or the update's
-`packets_per_update` allowance is spent; a number so postponed stays due and
-is resent at a later update. A resend MUST use a fresh
+it is resent; a sender MUST NOT resend it before then. A sender MUST resend a due number in the first update, from the one at which
+it falls due, in which probe pacing below does not hold it and the packet that
+carries it is admitted: by the send budget of [m9.4 Send budget](#m9.4), by the
+update's `packets_per_update` allowance, and by the transport's send capacity
+for that update. Until then the number stays due; a postponement never drops
+it. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.
 
 A `reliable_message_timeout_ms` of 0 disables the reliable timeout, and the
@@ -3040,8 +3051,8 @@ that newly acknowledged one and the first send of the oldest unacknowledged
 number `U`, a sender MUST NOT resend any number other than `U` that it has already
 sent; it MUST resend `U` when `U` is due. It MAY send numbers it has never sent,
 within the window ([m5.1 Sender numbering](#m5.1)). The first update that newly
-acknowledges a reliable number ends the hold, and every held number that is due
-is then resent within the send budget ([m9.4 Send budget](#m9.4)). When the
+acknowledges a reliable number ends the hold, and every held number that is due is then resent under the admission rule
+above. When the
 reliable timeout is configured, a sender MUST NOT hold a number by probe pacing.
 
 <a id="m9.4"></a>
