@@ -45,6 +45,10 @@ measurements use library-owned pinning; earlier GSO rows retain their
 original build provenance below. XDP and io_uring clients run 32 unpinned threads;
 GSO uses 32 client threads, with affinity confirmation pending.
 
+The profiled XDP server ran kernel `7.0.0-43`, booted with `nosmt irqaffinity=0
+isolcpus=1-2 nohz_full=1-2`. These settings are part of that measured
+environment; retain them when comparing its profile with another run.
+
 IOCP uses ten network threads: two receive/completion threads, each with its
 own socket, and eight send threads. The baseline Linux rows use two network
 threads each; GSO also holds peak with one, as detailed below.
@@ -160,8 +164,9 @@ from the reported rounded means: 0.424 / 3.12 and 0.384 / 1.70. The other
 ratios were supplied with the rows. Percentile aggregation for these loaded
 rows is awaiting confirmation.
 
-The tool's `leftover_core_ms` field is excluded: these builds omit the game
-threads' network work from that calculation, overstating the time available.
+The earlier builds' `leftover_core_ms` field is excluded because it omitted
+game-thread network work and overstated the time available. Corrected XDP
+reruns are recorded separately below.
 
 | Rows | Build | Steady window |
 | --- | --- | --- |
@@ -181,6 +186,31 @@ The XDP loaded rows reported no frame overruns. In GSO's earlier loaded peak
 run at `aad649f62`, the world update took 11.4 ms and the network task finished in
 11.2 ms; these operations overlap. Its reported state-to-send delay was
 about 10 ms; exact per-row latency and input-age summaries are pending.
+
+#### XDP rerun with corrected remaining-time accounting
+
+The calculation was fixed in [03a29f651](https://github.com/mas-bandwidth/rocketnet/commit/03a29f651a83c47aac92134c0bc321c9ddfbb352)
+and in measurement-branch [f46d820ba](https://github.com/mas-bandwidth/rocketnet/commit/f46d820ba851bb09db3a488c7bcd9ff36b8ad2c0).
+The run owner supplied these reruns with game threads half busy and the
+corrected frame order. Both report 100% delivery in each direction and no
+frame overruns. Packet rates, steady windows, and confirmation of which
+fixed binary produced the rows are pending.
+
+| XDP load | Frames/s | Main mean / p99 / max (ms) | Game threads min / mean / max (ms) | Pool network work (core-ms/frame) | Mean game-thread time left (ms/frame) |
+| --- | ---: | --- | --- | ---: | ---: |
+| Peak | 60.6 | 0.422 / 0.481 / 0.659 | 2.64 / 3.09 / 4.06 | 62.5 | 5.23 |
+| Average | 60.5 | 0.403 / 0.526 / 0.651 | 0.92 / 1.68 / 4.43 | 33.9 | 6.66 |
+
+The remaining-time column is calculated as `16.67 ms − measured game work
+per game thread − mean network work per game thread`, using the unrounded
+measurements. It is an average frame-budget estimate, not a guaranteed
+contiguous idle interval on every thread. The pool network total sums
+instrumented main/game-thread work; it excludes the two dedicated XDP
+threads and is not the wall duration of a frame.
+
+For the reported old-order comparison, starting network work after the world
+update reached 797,000 packets/s at 53.7 frames/s with 1,611 late frames at
+peak, and 467,000 packets/s at 58.9 frames/s at average load.
 
 IOCP's results with game work remain separate because its peak run does not
 yet hold the target. The average row reaches the target with the input loss
@@ -272,7 +302,8 @@ selects optimization; `ROCKETNET_DEV` enables development helpers and
 `ROCKETNET_BUILD_TOOLS` includes the load tool. The runtime output option
 chooses the binary directory; `--target` builds `harden_load`, and `-j`
 sets compiler parallelism. The run commands below assume that binary is
-available at `./bin/harden_load`. Additional profiling build flags are pending.
+available at `./bin/harden_load`. The XDP profiling build's flags are recorded
+in the profiling section below.
 
 The current `--game-threads N` flag counts the main thread plus N−1 game
 threads. XDP uses 21; io_uring and GSO use 29; IOCP uses 58.
@@ -452,6 +483,8 @@ affinity was granted.
 | `harden_frame world_ms avg/max` | Elapsed world-update time, including waiting for its game jobs; may exceed the nominal 10 ms. |
 | `harden_threads game_net_ms min/mean/max` | Minimum, mean, and maximum across game threads of each thread's network work per frame. |
 | `harden_threads ratio` | `main_net_ms` / mean `game_net_ms`. |
+| `harden_threads leftover_ms` | On the corrected XDP builds only: frame budget minus measured game work per game thread minus mean network work per game thread. |
+| `harden_frame rn_core_ms` | On the corrected XDP builds: summed instrumented network work across the main/game pool, excluding dedicated network threads. |
 | `harden_thread_net_ms` | Per-thread network work; index 0 is the main thread's contribution to jobs. |
 
 For example, the io_uring peak row delivers 900,316 packets/s at 60.60
@@ -465,12 +498,19 @@ to obtain elapsed frame time.
 ### Record and inspect a Linux profile
 
 The XDP profiles below used the same machines and thread layout as its rows
-without game work. The server was sampled for eight seconds, from t=40 to
-t=48 of the 60-second run. The exact profiled commit, perf version, selected
-event, and any profiling-only build flags are awaiting confirmation. The
-command did not specify `-e`, so retain the event reported in the capture
-when repeating it. The launcher and row script still await their repository
-commit.
+without game work. The profiled binary was [186a4f364](https://github.com/mas-bandwidth/rocketnet/commit/186a4f3646632119d64633e9e9404cd93e61c4ee),
+on the measurement branch, built as target `harden_load` with
+`ROCKETNET_DEV=ON`, Release `-O3 -DNDEBUG`, no `-g`, and no frame pointers.
+The profiled peak and average rows had no game work and used the default
+earlier frame order. This is a separate capture from the earlier throughput
+rows at `79888a398`.
+
+The server was sampled for eight seconds, from t=40 to t=48 of the
+60-second run, using perf `7.0.14` and event `cpu/cycles/P`. The record
+command omitted `-e`; the worker identified the selected event with
+`perf evlist`. Although recording requested call graphs, this build does
+not support reliable unwinding: use the self-time report below. The launcher
+and row script still await their repository commit.
 
 Start the chosen server and client row. On the server machine, the recorded
 process-selection command was:
@@ -559,32 +599,31 @@ The two XDP threads busy-poll: each occupies a full core at both measured
 loads, and this polling design keeps them busy even when traffic is low.
 Their cost is additional to the main and game threads' work.
 
-The leading game-thread self times are below. Average-load symbol names are
-the run owner's abbreviated labels where supplied; their full-name mapping
-is awaiting confirmation.
+The leading game-thread self times are below. `rn_bitmap_walk_bits_desc`
+appears in acknowledgment application.
 
-| Peak function | Peak ms/frame per game thread | Average-load label | Average ms/frame per game thread |
-| --- | ---: | --- | ---: |
-| `harden_write_message` (load test) | 0.746 | `harden_write_message` | 0.404 |
-| `chacha20_encrypt_bytes` (AVX2) | 0.650 | `chacha20` | 0.353 |
-| `rocketnet_server_transport_start_packet` | 0.310 | `start_packet` | 0.177 |
-| `poly1305_blocks` | 0.292 | `poly1305` | 0.161 |
-| `rocketnet_ack_block_build` | 0.205 | `ack_block_build` | 0.113 |
-| `rocketnet_next_packet_lease_id` | 0.153 | `next_packet_lease_id` | 0.085 |
-| `rocketnet_server_transport_queue_budget_now` | 0.112 | `queue_budget_now` | 0.073 |
-| `rocketnet_server_socket_send_room` | 0.063 | `send_room` | 0.034 |
-| `rocketnet_fill_phase_fill_end` | 0.055 | `fill_end` | 0.033 |
-| `send_room_queue` | 0.045 | Not supplied | — |
-| `rn_bitmap_walk_bits_desc` | 0.042 | `rn_bitmap_walk_bits_desc` | 0.030 |
-| `rocketnet_server_transport_finish_packet` | 0.031 | Not supplied | — |
+| Function | Peak ms/frame per game thread | Average ms/frame per game thread |
+| --- | ---: | ---: |
+| `harden_write_message` (load test) | 0.746 | 0.404 |
+| `chacha20_encrypt_bytes__avx2` | 0.650 | 0.353 |
+| `rocketnet_server_transport_start_packet` | 0.310 | 0.177 |
+| `poly1305_blocks__sse2` | 0.292 | 0.161 |
+| `rocketnet_ack_block_build` | 0.205 | 0.113 |
+| `rocketnet_next_packet_lease_id` | 0.153 | 0.085 |
+| `rocketnet_server_transport_queue_budget_now` | 0.112 | 0.073 |
+| `rocketnet_server_socket_send_room` | 0.063 | 0.034 |
+| `rocketnet_fill_phase_fill_end` | 0.055 | 0.033 |
+| `send_room_queue` | 0.045 | Not supplied |
+| `rn_bitmap_walk_bits_desc` | 0.042 | 0.030 |
+| `rocketnet_server_transport_finish_packet` | 0.031 | Not supplied |
 
 The main-thread leaders are:
 
-| Peak function | Peak ms/frame | Average-load label | Average ms/frame |
-| --- | ---: | --- | ---: |
-| `harden_read_message` (load test) | 0.194 | `harden_read_message` | 0.213 |
-| `rn_message_object_receive_messages` | 0.058 | `receive_messages` | 0.050 |
-| `harden_server_main` (load test) | 0.025 | `harden_server_main` | 0.021 |
+| Function | Peak ms/frame | Average ms/frame |
+| --- | ---: | ---: |
+| `harden_read_message` (load test) | 0.194 | 0.213 |
+| `rn_message_object_receive_messages` | 0.058 | 0.050 |
+| `harden_server_main` (load test) | 0.025 | 0.021 |
 
 The remaining peak main-thread functions each contribute less than 0.01 ms.
 The peak XDP-thread leaders, averaged over its two threads, are:
