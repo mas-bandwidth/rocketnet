@@ -89,7 +89,7 @@ done
 [ "$split" = top ] || [ "$split" = bottom ] || usage
 mkdir -p "$out"
 
-server_args="--frame-shape space --game-threads $game_threads --pin-first-cpu $first_cpu --space-send wide --space-update split --space-net task"
+server_args="--frame-shape space --game-threads $game_threads --pin-first-cpu $first_cpu"
 server_args="$server_args --space-split $split --game-load $game_load --world-ms $world_ms --load $load"
 
 # the profile (--profile): on the server machine, find the harden_load process (the
@@ -97,40 +97,38 @@ server_args="$server_args --space-split $split --game-load $game_load --world-ms
 # 20 s), list its threads with the cpu each last ran on (the first is the main
 # thread), then record 8 s of every thread's cpu samples at 999 Hz with call
 # graphs, and print each sample count by thread and function. Run beside the row.
+# Every file of the run is in a directory made for this run on the server machine
+# (mktemp -d), so a run never reads what another run left. Any step that fails fails
+# the profile and the row; nothing is copied back from a run that did not end ok.
+remote_dir=""
 profile_remote()
 {
     # shellcheck disable=SC2016
-    $ssh_command "$server_host" 'bash -s' <<'EOF'
-pid=""
+    $ssh_command "$server_host" 'bash -s -- '"$remote_dir" <<'EOF'
+set -euo pipefail
+dir=$1
+found=0
 for i in $(seq 1 180); do
-    pid=$(pgrep -x harden_load | tail -n 1)
-    [ -n "$pid" ] && break
+    if pid=$(pgrep -x harden_load | tail -n 1) && [ -n "$pid" ]; then
+        found=1
+        break
+    fi
     sleep 1
 done
-[ -n "$pid" ] || exit 1
+[ "$found" = 1 ] || { echo "space-frame-row: no harden_load process to profile" >&2; exit 1; }
 sleep 40
-for t in /proc/$pid/task/*; do echo "$(basename "$t") $(awk '{print $39}' "$t/stat")"; done > /tmp/space-frame-row.tids
-sudo -n perf record -F 999 -g -p "$pid" -o /tmp/space-frame-row.data -- sleep 8 > /dev/null 2>&1
-sudo -n perf report -f -i /tmp/space-frame-row.data --no-children --sort pid,symbol -n --stdio -g none 2> /dev/null | grep -v '^#' | grep -v '^$' > /tmp/space-frame-row.rep
+[ -d "/proc/$pid" ] || { echo "space-frame-row: harden_load $pid ended before the profile" >&2; exit 1; }
+for t in /proc/$pid/task/*; do echo "$(basename "$t") $(awk '{print $39}' "$t/stat")"; done > "$dir/tids"
+sudo -n perf record -F 999 -g -p "$pid" -o "$dir/data" -- sleep 8 > "$dir/record.log" 2>&1
+sudo -n perf report -f -i "$dir/data" --no-children --sort pid,symbol -n --stdio -g none 2> "$dir/report.err" | grep -v '^#' | grep -v '^$' > "$dir/rep"
+{ [ -s "$dir/tids" ] && [ -s "$dir/rep" ]; } || { echo "space-frame-row: the profile has no samples" >&2; exit 1; }
+echo ok > "$dir/ok"
 EOF
 }
 
-if [ "$profile" = 1 ]; then
-    profile_remote > "$out/profile.log" 2>&1 &
-    profile_pid=$!
-fi
-
-status=0
-"$(dirname "${BASH_SOURCE[0]}")/harden-pair" --ssh "$ssh_command" --server-host "$server_host" --client-host "$client_host" \
-    --server-ip "$server_ip" --remote "$remote" --client-remote "${client_remote:-$remote}" --transport xdp --row space \
-    --xdp-queues "$queues" --server-dev "$server_dev" --client-dev "$client_dev" --seconds "$seconds" --clients "$clients" \
-    --threads "$threads" --server-sudo --server-args "$server_args" --client-args "--input-bytes $input_bytes" \
-    --local-bin "$local_bin" --out "$out" || status=$?
-
-if [ "$profile" = 1 ]; then
-    wait "$profile_pid" || true
-    $ssh_command "$server_host" 'cat /tmp/space-frame-row.tids' > "$out/profile.tids"
-    $ssh_command "$server_host" 'cat /tmp/space-frame-row.rep' > "$out/profile.rep"
+# the ranked lists from the copied files; the last command's status is the function's
+profile_report()
+{
     # milliseconds a frame: samples / 999 Hz, divided by the frames in the 8 s window (the
     # row's steady frame rate x 8). Classes: the main thread (the first thread listed), the
     # XDP threads (a cpu below the main thread's), the game threads (the rest, averaged per
@@ -144,6 +142,43 @@ if [ "$profile" = 1 ]; then
         "$out/profile.tids" "$out/profile.rep" | sort -t "$(printf '\t')" -k1,1 -k2,2nr | awk -F '\t' '
         { if ($3 == "TOTAL") { total[$1] = $2; next } if (shown[$1]++ < 12) line[$1] = line[$1] sprintf("  %7.3f ms  %s\n", $2, $3) }
         END { for (c in total) printf "== %s: %.2f ms per frame (per thread)\n%s", c, total[c], line[c] }' > "$out/profile.txt"
-    echo "space-frame-row: profile in $out/profile.txt (frames a second $fps)"
+}
+
+# a profile file of an earlier run in this directory is never this run's
+rm -f "$out/profile.log" "$out/profile.tids" "$out/profile.rep" "$out/profile.txt"
+
+if [ "$profile" = 1 ]; then
+    remote_dir=$($ssh_command "$server_host" 'mktemp -d /tmp/space-frame-row.XXXXXX')
+    [ -n "$remote_dir" ] || { echo "space-frame-row: no temporary directory on $server_host" >&2; exit 1; }
+    profile_remote > "$out/profile.log" 2>&1 &
+    profile_pid=$!
+fi
+
+status=0
+"$(dirname "${BASH_SOURCE[0]}")/harden-pair" --ssh "$ssh_command" --server-host "$server_host" --client-host "$client_host" \
+    --server-ip "$server_ip" --remote "$remote" --client-remote "${client_remote:-$remote}" --transport xdp --row space \
+    --xdp-queues "$queues" --server-dev "$server_dev" --client-dev "$client_dev" --seconds "$seconds" --clients "$clients" \
+    --threads "$threads" --server-sudo --server-args "$server_args" --client-args "--input-bytes $input_bytes" \
+    --local-bin "$local_bin" --out "$out" || status=$?
+
+if [ "$profile" = 1 ]; then
+    profile_status=0
+    wait "$profile_pid" || profile_status=$?
+    if [ "$profile_status" -ne 0 ]; then
+        echo "space-frame-row: the profile failed (exit $profile_status, $out/profile.log); no profile written" >&2
+        status=1
+    elif $ssh_command "$server_host" "test -f '$remote_dir/ok'" &&
+        $ssh_command "$server_host" "cat '$remote_dir/tids'" > "$out/profile.tids" &&
+        $ssh_command "$server_host" "cat '$remote_dir/rep'" > "$out/profile.rep" &&
+        profile_report; then
+        echo "space-frame-row: profile in $out/profile.txt (frames a second $fps)"
+    else
+        echo "space-frame-row: the profile could not be copied or ranked; no profile written" >&2
+        rm -f "$out/profile.tids" "$out/profile.rep" "$out/profile.txt"
+        status=1
+    fi
+    if ! $ssh_command "$server_host" "rm -rf '$remote_dir'"; then
+        echo "space-frame-row: $remote_dir was not removed from $server_host" >&2
+    fi
 fi
 exit "$status"
