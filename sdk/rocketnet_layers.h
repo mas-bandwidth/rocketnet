@@ -527,25 +527,31 @@ uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_trans
 uint8_t * rocketnet_client_transport_packet_payload( struct rocketnet_client_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
 // a NULL client_transport or context is a counted no-op that returns 0.
-// An unstarted, consumed, stale, modified or wrong-owner context asserts in a
-// debug build and returns 0 in a release build
+// A lease reset by update, send_packets or stop is caller misuse: finish
+// returns 0 in every build, counts one api_misuse and logs, and does not
+// assert. An unstarted, consumed, modified or wrong-owner context asserts in
+// a debug build and, in every build, returns 0 and counts one api_misuse
 /**
  * @brief Seals and stages bytes written into a client packet lease.
  *
  * @param client_transport Client transport that created the lease; NULL is a counted no-op.
- * @param context Active, unmodified lease from start_packet; this call consumes it. Invalid or stale leases assert in a debug build and return zero in a release build.
+ * @param context Active, unmodified lease from start_packet; this call consumes it. A lease reset by update, send_packets or stop returns zero, counts api_misuse and logs in every build. Other invalid leases assert in a debug build and return zero and count api_misuse in every build.
  * @param payload_bytes Initialized byte count, from 1 through reported capacity.
  * @return Sealed wire size, or zero when refused or dropped.
  */
 int rocketnet_client_transport_finish_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
-// a NULL client_transport or context is a counted no-op
+// a NULL client_transport or context is a counted no-op. A lease reset by
+// update, send_packets or stop is caller misuse: abort does nothing in every
+// build, counts one api_misuse and logs, and does not assert. An unstarted,
+// consumed, modified or wrong-owner context asserts in a debug build and, in
+// every build, does nothing and counts one api_misuse
 /**
  * @brief Releases an unused client packet lease.
  *
  * @param client_transport Client transport that created the lease; NULL is a counted no-op.
  * @param context Active, unmodified lease to release; NULL is a counted no-op.
- * @return No value. Invalid or stale leases are refused and counted.
+ * @return No value. A lease reset by update, send_packets or stop is refused, counted and logged in every build. Other invalid leases assert in a debug build and are refused and counted in every build.
  */
 void rocketnet_client_transport_abort_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
@@ -584,6 +590,8 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
 void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends );
 /** @brief Makes the next `takes` reads of the link setting meet the simulator's lock held, for a unit test. */
 void rocketnet_server_transport_link_setting_busy_for_test( struct rocketnet_server_transport_t * server_transport, int takes );
+/** @brief The link sends a development build dropped because the simulator's lock was busy (no public counter: a production build has no link simulator). */
+uint64_t rocketnet_server_transport_link_lock_misses_for_test( struct rocketnet_server_transport_t * server_transport );
 struct rocketnet_server_transport_io_operations_t;
 /** @brief Exchanges the server's io operations and instance with the given pair, for a unit test with a fake staged transport. */
 void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transport_t * server_transport,
@@ -619,8 +627,8 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( struct 
 // loss as a percentage, and the last second's packet rates and bandwidth
 // both ways. The rates come from elapsed-time buckets (about 4 ms boundary
 // resolution) over the trailing second, so the cost per update is flat.
-// rtt seeds from the handshake's round trips and is continuously refreshed
-// by the acks; jitter and packet loss are computed from the ACK history.
+// rtt is the minimum first-ack sample, zero before the first one (standard
+// t15.5); jitter and packet loss are computed from the ACK history.
 // These numbers feed time synchronization. The cumulative totals count every
 // wire datagram and byte over the client's current connection, handshake
 // included
@@ -1095,12 +1103,13 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
 //
 // update, send_packets and stop each reset the packet-lease epoch before
 // they do their own work, and none of them may run while a fill is open.
-// A finish_packet of a lease that reset already retired is caller misuse:
-// it returns 0 in every build, counts one api_misuse, and logs. It does
-// not assert, and it does not seal the frame. The lease does not outlive
-// the reset. A context that was never started, already consumed, aborted,
-// modified, or owned by another transport still asserts in a debug build
-// and returns 0 in a release build.
+// A finish_packet or abort_packet of a lease that reset already retired is
+// caller misuse: finish returns 0 and abort does nothing, in every build,
+// and each counts one api_misuse and logs. Neither asserts, and finish does
+// not seal the frame. The lease does not outlive the reset. A context that
+// was never started, already consumed, aborted, modified, or owned by
+// another transport asserts in a debug build, and in every build finish
+// returns 0, abort does nothing, and each counts one api_misuse.
 //
 // Threading contract: update and send_packets run on the main thread, and
 // so do disconnect, disconnect_client and stop -- never while a fill is
@@ -1180,24 +1189,28 @@ uint8_t * rocketnet_server_transport_packet_payload( struct rocketnet_server_tra
 // A lease reset by update, send_packets or stop is caller misuse: finish
 // returns 0 in every build, counts one api_misuse and logs, and does not
 // assert. An unstarted, consumed, modified or wrong-owner context asserts
-// in a debug build and returns 0 in a release build
+// in a debug build and, in every build, returns 0 and counts one api_misuse
 /**
  * @brief Seals and stages bytes written into a server packet lease.
  *
  * @param server_transport Server transport that created the lease; NULL is a counted no-op.
- * @param context Active, unmodified lease from start_packet; this call consumes it. A lease reset by update, send_packets or stop returns zero, counts api_misuse and logs in every build. Other invalid leases assert in a debug build and return zero in a release build.
+ * @param context Active, unmodified lease from start_packet; this call consumes it. A lease reset by update, send_packets or stop returns zero, counts api_misuse and logs in every build. Other invalid leases assert in a debug build and return zero and count api_misuse in every build.
  * @param payload_bytes Initialized byte count, from 1 through reported capacity.
  * @return Sealed wire size, or zero when refused or dropped.
  */
 int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
-// a NULL server_transport or context is a counted no-op
+// a NULL server_transport or context is a counted no-op. A lease reset by
+// update, send_packets or stop is caller misuse: abort does nothing in every
+// build, counts one api_misuse and logs, and does not assert. An unstarted,
+// consumed, modified or wrong-owner context asserts in a debug build and, in
+// every build, does nothing and counts one api_misuse
 /**
  * @brief Releases an unused server packet lease.
  *
  * @param server_transport Server transport that created the lease; NULL is a counted no-op.
  * @param context Active, unmodified lease to release; NULL is a counted no-op.
- * @return No value. Invalid or stale leases are refused and counted.
+ * @return No value. A lease reset by update, send_packets or stop is refused, counted and logged in every build. Other invalid leases assert in a debug build and are refused and counted in every build.
  */
 void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context );
 
@@ -1916,8 +1929,8 @@ static inline struct rocketnet_server_client_stats_t rn_server_client_stats_of( 
     return stats;
 }
 
-// seconds since the last accepted session packet from the remote endpoint; -1 when none
-// or not connected (rocketnet_conditions_t)
+// seconds since the last accepted session packet from the remote endpoint; -1 when none,
+// not connected or no transport (rocketnet_conditions_t)
 double rocketnet_server_transport_heard_age( const struct rocketnet_server_transport_t * server_transport, int client_index );
 double rocketnet_client_transport_heard_age( const struct rocketnet_client_transport_t * client_transport );
 

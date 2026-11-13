@@ -1446,13 +1446,13 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_check( rocketnet_server_transport_packet_payload( server, &changed, &checked_capacity ) == NULL );
 
         auto aborted = changed;
-        rocketnet_server_transport_abort_packet( server, &aborted );
-        rocketnet_check( aborted.frame == NULL );
         rocketnet_test_shape_asserts = 0;
         rocketnet_assert_function( rocketnet_test_shape_assert_hook );
+        rocketnet_server_transport_abort_packet( server, &aborted );
+        rocketnet_check( aborted.frame == NULL );
         rocketnet_check( rocketnet_server_transport_finish_packet( server, &changed, 1 ) == 0 );
         rocketnet_functional_restore_assert_function();
-        rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+        rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 2 : 0 ) );
     }
 
     rocketnet_check( rocketnet_server_transport_packet_payload( server, &context, &checked_capacity ) == frame + context.payload_index );
@@ -3930,8 +3930,9 @@ void rocketnet_test_transport_ipv6_loopback()
 void rocketnet_test_transport_dual_stack_ipv4_client()
 {
     // a server bound to the IPv6 wildcard is dual-stack: it serves IPv4 as
-    // well, so a connect token naming its IPv4 loopback is accepted and the
-    // handshake completes over the v4-mapped path, on every transport
+    // well, so a connect token naming the IPv4 loopback it advertises is
+    // accepted and the handshake completes over the v4-mapped path, on every
+    // transport
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -3939,6 +3940,12 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     // the hub is read only when a pin names loopback, as the CI transport
     // matrix's loopback cell does
     server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    // the server advertises the IPv4 loopback the token names beside the
+    // IPv6 wildcard: an IPv6-wildcard server alone advertises the IPv4
+    // wildcard, and a token for 127.0.0.1 names an address it does not
+    // (t12 rule 6)
+    snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", "127.0.0.1" );
 
     // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 client
 
@@ -6243,6 +6250,37 @@ void rocketnet_test_server_transport_io_pin_xdp()
 
     rocketnet_test_env_restore( &transport_guard );
 }
+
+#if ROCKETNET_XDP && ROCKETNET_DEV
+
+// a server's public address is global: create refuses a link-local address
+// of either family by name, before its pre-flight (forced unavailable here,
+// so nothing is attached whatever the address)
+
+void rocketnet_test_xdp_create_refuses_link_local()
+{
+    static const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0 };
+    const char * const link_local[] = { "169.254.10.20:40000", "[fe80::1]:40000" };
+
+    rocketnet_server_socket_set_preflight_test_result( 0 );
+    rocketnet_server_socket_allow_commit();
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
+        struct rocketnet_server_socket_t * server_socket = rocketnet_server_socket_create( NULL, link_local[i], packet_filter, 1 );
+        rocketnet_test_xdp_capture_end( saved_level );
+
+        rocketnet_check( server_socket == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "link-local" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "development control selects unavailable" ) == NULL );
+    }
+
+    rocketnet_server_socket_forbid_commit();
+    rocketnet_server_socket_clear_preflight_test_result();
+}
+
+#endif // #if ROCKETNET_XDP && ROCKETNET_DEV
 
 void rocketnet_test_server_transport_io_ladder_fall()
 {
@@ -12715,6 +12753,8 @@ extern void windows_server_counts_oversize_as_prefilter_too_large_rio();
 extern void windows_server_counts_runt_as_prefilter_too_short_rio();
 extern void windows_client_drops_oversize_and_garbage_ipv4();
 extern void windows_client_drops_oversize_and_garbage_ipv6();
+extern void windows_client_drops_oversize_and_garbage_iocp_ipv4();
+extern void windows_client_drops_oversize_and_garbage_iocp_ipv6();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv6();
 // Windows lifecycle stress: 1000 cycles per case with handles, threads and
@@ -12925,6 +12965,22 @@ static struct rocketnet_client_t * rocketnet_test_oom_sweep_client( rocketnet_te
     struct rocketnet_client_t * client = rocketnet_client_create( state, &config, &status );
     rocketnet_check( client );
     return client;
+}
+
+// rocketnet_time keeps the origin of the first init across term and init:
+// it never goes backwards (rocketnet.h: monotonic elapsed seconds). Real
+// clock, so functional.
+
+void rocketnet_test_time_keeps_its_origin_across_reinit()
+{
+    while ( rocketnet_time() < 0.02 )
+    {
+    }
+
+    const double before = rocketnet_time();
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_time() >= before );
 }
 
 static void rocketnet_test_oom_sweep( const char * server_transport, const char * client_transport )
@@ -14227,6 +14283,13 @@ static void msgx_client_pair_create( struct msgx_client_pair_t * pair, const cha
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", server_transport );
     rocketnet_loss_gate_begin( &pair->gate, "msgx client wire" );
+    // a server created at the IPv6 wildcard advertises the IPv4 wildcard;
+    // an IPv4 token names an address the server advertises only when the
+    // server is created naming it too (t12 rule 6)
+    if ( server_bind[0] == '[' && token_host[0] != '[' )
+    {
+        snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", token_host );
+    }
     pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( pair->server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), server_transport ) == 0 );
@@ -14631,6 +14694,13 @@ static void iocp_client_pair_create( struct iocp_client_pair_t * pair, const cha
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
+    // a server created at the IPv6 wildcard advertises the IPv4 wildcard;
+    // an IPv4 token names an address the server advertises only when the
+    // server is created naming it too (t12 rule 6)
+    if ( server_bind[0] == '[' && token_host[0] != '[' )
+    {
+        snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", token_host );
+    }
     pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( pair->server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), "portable" ) == 0 );
@@ -15063,6 +15133,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
     { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
+    { "test_time_keeps_its_origin_across_reinit", rocketnet_test_time_keeps_its_origin_across_reinit, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, rocketnet_test_server_pin_allows_gso },
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
@@ -15266,6 +15337,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_gso_transport_server_io_pin", rocketnet_test_server_transport_io_pin_gso, rocketnet_test_server_pin_allows_gso },
     { "test_io_uring_transport_server_io_pin", rocketnet_test_server_transport_io_pin_io_uring, rocketnet_test_server_pin_allows_io_uring },
     { "test_xdp_transport_server_io_pin", rocketnet_test_server_transport_io_pin_xdp, rocketnet_test_server_pin_allows_xdp },
+#if ROCKETNET_XDP && ROCKETNET_DEV
+    { "test_xdp_transport_create_refuses_link_local", rocketnet_test_xdp_create_refuses_link_local, NULL },
+#endif // #if ROCKETNET_XDP && ROCKETNET_DEV
     { "test_server_transport_io_ladder_fall", rocketnet_test_server_transport_io_ladder_fall, rocketnet_test_server_pin_allows_gso },
     { "test_gso_transport_server_probe", rocketnet_test_server_gso_probe, NULL },
     { "test_gso_transport_server_wire_ipv4", rocketnet_test_server_gso_wire_ipv4, NULL },
@@ -15388,6 +15462,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_windows_server_counts_runt_as_prefilter_too_short_rio", windows_server_counts_runt_as_prefilter_too_short_rio, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6, NULL },
+    { "test_windows_client_drops_oversize_and_garbage_iocp_ipv4", windows_client_drops_oversize_and_garbage_iocp_ipv4, NULL },
+    { "test_windows_client_drops_oversize_and_garbage_iocp_ipv6", windows_client_drops_oversize_and_garbage_iocp_ipv6, NULL },
     { "test_windows_per_packet_receive_counts_empty_datagram_ipv4", windows_per_packet_receive_counts_empty_datagram_ipv4, NULL },
     { "test_windows_per_packet_receive_counts_empty_datagram_ipv6", windows_per_packet_receive_counts_empty_datagram_ipv6, NULL },
     { "test_windows_lifecycle_ledger", rocketnet_test_windows_lifecycle_ledger, NULL },

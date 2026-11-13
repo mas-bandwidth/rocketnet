@@ -908,6 +908,16 @@ static void test_conditions_values_follow_a_dark_remote_endpoint()
 
 REGISTER_UNIT_TEST( test_conditions_values_follow_a_dark_remote_endpoint );
 
+// the heard age of no transport is -1, as for one with nothing heard
+
+static void test_conditions_heard_age_of_no_transport()
+{
+    check( rocketnet_server_transport_heard_age( NULL, 0 ) == -1.0 );
+    check( rocketnet_client_transport_heard_age( NULL ) == -1.0 );
+}
+
+REGISTER_UNIT_TEST( test_conditions_heard_age_of_no_transport );
+
 // ---------------------------------------------------------------------------
 // m1.7 through the public API: a start that finds no room is refused at each
 // send path, nothing accepted is lost across a refusal, and no amount or

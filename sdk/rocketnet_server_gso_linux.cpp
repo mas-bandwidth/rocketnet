@@ -1737,7 +1737,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
 
                 if ( rocketnet_segment_refused_add( &gso->segment_refused, &bank->info[refused_slot].to ) )
                 {
-                    rocketnet_warn( "gso transport: live GSO send refused (%s). %d destinations refused and none accepted, degrading to plain sendmmsg", reason, gso->segment_refused.destinations );
+                    rocketnet_warn( "gso transport: live GSO send refused (%s). %d refusals from destinations not yet remembered and none accepted, degrading to plain sendmmsg", reason, gso->segment_refused.destinations );
                     *disable_gso = true;
                     return refused_slot;
                 }

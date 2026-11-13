@@ -13167,6 +13167,71 @@ void rocketnet_test_xdp_interrupt_matcher()
         " 34:  0  0  IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0\n", "ens1f0" ) );
 }
 
+// the R4 reader over /proc/interrupts lines longer than its buffer, as a host
+// with more than about 372 cpus prints them (11 bytes a cpu): each line yields
+// its own IRQ once, wherever the read splits the interface name, and a line
+// whose number is not followed by ':' is not an IRQ line
+
+static char interrupt_reader_text[65536];
+
+static int interrupt_reader_append( int length, const char * text )
+{
+    const int written = snprintf( interrupt_reader_text + length, sizeof( interrupt_reader_text ) - (size_t) length, "%s", text );
+    rocketnet_check( written >= 0 && length + written < (int) sizeof( interrupt_reader_text ) );
+    return length + written;
+}
+
+void rocketnet_test_xdp_interrupt_reader_long_lines()
+{
+    // the name split by the read at each of its bytes
+
+    for ( int split = 1; split <= 12; split++ )
+    {
+        int length = interrupt_reader_append( 0, "  45:" );
+        while ( length < 4095 - split )
+        {
+            length = interrupt_reader_append( length, " " );
+        }
+        length = interrupt_reader_append( length, " eth0-TxRx-0\n" );
+        length = interrupt_reader_append( length, "98765 eth0\n" );
+
+        FILE * interrupts = fmemopen( interrupt_reader_text, (size_t) length, "r" );
+        rocketnet_check( interrupts );
+
+        int irq = 0;
+        rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+        rocketnet_check( irq == 45 );
+        rocketnet_check( !rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+
+        (void) fclose( interrupts );
+    }
+
+    // 400 cpus in the kernel's layout: the continuation of the line is not
+    // an IRQ line of its own
+
+    int length = interrupt_reader_append( 0, "  45:" );
+    for ( int cpu = 0; cpu < 400; cpu++ )
+    {
+        char count[16];
+        (void) snprintf( count, sizeof( count ), " %10u", 1000u + (unsigned) cpu );
+        length = interrupt_reader_append( length, count );
+    }
+    length = interrupt_reader_append( length, "  IR-PCI-MSI 524288-edge      eth0-TxRx-0\n" );
+    length = interrupt_reader_append( length, "  46:          0  IR-PCI-MSI 524289-edge      eth0-TxRx-1\n" );
+
+    FILE * interrupts = fmemopen( interrupt_reader_text, (size_t) length, "r" );
+    rocketnet_check( interrupts );
+
+    int irq = 0;
+    rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+    rocketnet_check( irq == 45 );
+    rocketnet_check( rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+    rocketnet_check( irq == 46 );
+    rocketnet_check( !rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
+
+    (void) fclose( interrupts );
+}
+
 #endif // #if ROCKETNET_XDP
 
 #if ROCKETNET_DEV
@@ -14617,6 +14682,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_server_port_zero_needs_a_discovering_transport", rocketnet_test_server_port_zero_needs_a_discovering_transport },
 #if ROCKETNET_XDP
     { "test_xdp_transport_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
+    { "test_xdp_transport_interrupt_reader_long_lines", rocketnet_test_xdp_interrupt_reader_long_lines },
 #endif // #if ROCKETNET_XDP
 #if ROCKETNET_DEV
     { "test_config_override_logging", rocketnet_test_config_override_logging },

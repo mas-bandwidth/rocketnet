@@ -38,6 +38,7 @@ struct stop_spread_fixture_t
     int in_flight;                                      // frames flushed and not yet finished
     int staged[STOP_SPREAD_MAX_CLIENTS];                // disconnect packets staged, by client
     int flushed[STOP_SPREAD_MAX_CLIENTS];               // disconnect packets flushed, by client
+    int control[STOP_SPREAD_MAX_CLIENTS];               // other frames finished (keep-alives, acks), by client
     int order[STOP_SPREAD_MAX_PACKETS];                 // the client of each disconnect packet, in seal order
     int num_order;
     rocketnet_server_socket_process_packets_t received;
@@ -83,12 +84,13 @@ static uint8_t * stop_spread_start_packet( void * p, const rocketnet_address_t *
 static void stop_spread_finish_packet( void * p, uint64_t, uint8_t * frame, int )
 {
     stop_spread_fixture_t * f = (stop_spread_fixture_t *) p;
-    if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] != ROCKETNET_CONNECTION_DISCONNECT_PACKET )
-    {
-        return;
-    }
     const int client = f->reserved_to.port - 1000;
     rocketnet_unit_check( client >= 0 && client < STOP_SPREAD_MAX_CLIENTS );
+    if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] != ROCKETNET_CONNECTION_DISCONNECT_PACKET )
+    {
+        f->control[client]++;
+        return;
+    }
     f->staged[client]++;
     rocketnet_unit_check( f->num_order < STOP_SPREAD_MAX_PACKETS );
     f->order[f->num_order++] = client;
@@ -812,6 +814,50 @@ REGISTER_UNIT_TEST( test_server_stop_spreads_disconnect_bursts_across_updates );
 REGISTER_UNIT_TEST( test_server_stop_abandons_a_burst_when_the_sealed_write_fails );
 REGISTER_UNIT_TEST( test_server_stop_waits_for_flushed_sends );
 REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
+
+// proofs/tla/RNServerMaintenanceSweep.tla, the refused-with-room class. The
+// transport refuses every start to client 1 with room left (an address its
+// socket cannot carry, rocketnet_driver.h). That refusal is the one frame's,
+// not a full staging: the sweep passes the slot and serves clients 0 and 2
+// every update. It used to break there with the cursor on client 1, so every
+// later sweep began and ended at client 1 and no slot was served again.
+static void test_server_sweep_passes_a_destination_refused_with_room()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 16;
+    f->refused_port = 1001;
+    const int clients = 3;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t ring_full = server->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    // every client keeps sending, so no slot times out and the refused one
+    // never ends on its own
+
+    const int updates = 4;
+    for ( int step = 1; step <= updates; step++ )
+    {
+        const double time = 1000.0 + step;
+        for ( int i = 0; i < clients; i++ )
+        {
+            const int index = rocketnet_client_slots_mapping_index( server->protocol.client_slots, i );
+            rocketnet_encryption_map_entry( server->protocol.encryption_map, index )->control->last_receive_time = time;
+        }
+        rocketnet_server_transport_update( server, time );
+    }
+
+    rocketnet_unit_check( f->control[0] == updates );
+    rocketnet_unit_check( f->control[1] == 0 );
+    rocketnet_unit_check( f->control[2] == updates );
+    rocketnet_unit_check( f->refused_for_room == 0 );
+    rocketnet_unit_check( server->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full );
+    rocketnet_unit_check( rocketnet_server_transport_num_connected_clients( server ) == clients );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_sweep_passes_a_destination_refused_with_room );
 REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
 REGISTER_UNIT_TEST( test_server_stop_abandons_an_unreachable_burst );
 REGISTER_UNIT_TEST( test_server_stop_abandons_bursts_without_send_room );
@@ -1113,7 +1159,12 @@ REGISTER_UNIT_TEST( test_server_transport_misuse_refused_without_asserts );
 
 typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                             uint64_t * dropped );
+typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * commit_failed, uint64_t * greetings_held );
+bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                  uint64_t * commit_failed, uint64_t * greetings_held );
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
 
 static rocketnet_server_transport_t * g_frames_dropped_server;
@@ -1159,7 +1210,8 @@ static void test_server_transport_counts_xdp_frames_dropped()
     rocketnet_unit_check( xdp && xdp->backend && xdp->backend->server );
     g_frames_dropped_server = server;
     g_frames_dropped_reads = 0;
-    rocketnet_unit_check( rocketnet_server_socket_test_receive_dropped( stop_spread_frames_dropped_read, xdp->backend->server ) );
+    rocketnet_unit_check( rocketnet_server_socket_test_receive_dropped( stop_spread_frames_dropped_read, rocketnet_server_transport_io_replay_counts,
+                                                                       xdp->backend->server ) );
     rocketnet_unit_check( g_frames_dropped_reads == 9 );
     g_frames_dropped_server = NULL;
 

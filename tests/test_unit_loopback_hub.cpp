@@ -247,13 +247,6 @@ static void test_loopback_hub_null_refused()
     check( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING );
     check( rocketnet_client_required_memory( &client_config ) == 0 );
 
-    // a list with loopback as a later candidate is refused the same way
-
-    client_config.transport = "portable,loopback";
-    status = ROCKETNET_STATUS_OK;
-    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING );
-
     // the transport layer refuses a loopback endpoint with no hub too
 
     rocketnet_server_transport_config_t transport_config;
@@ -390,6 +383,72 @@ static void test_loopback_hub_mismatch_refused()
 
     check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
 }
+
+#if ROCKETNET_DEV
+// a token naming 127.0.0.1:40000, [::1]:40000, or both
+static void loopback_hub_family_token( uint8_t * token, bool ipv4, bool ipv6 )
+{
+    struct rocketnet_signed_connect_data_t fields;
+    memset( &fields, 0, sizeof( fields ) );
+    fields.version = ROCKETNET_WIRE_VERSION;
+    fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    fields.create_timestamp = 1;
+    fields.expire_timestamp = 1ULL << 40;
+    fields.timeout_seconds = 300;
+    fields.address_flags = (uint8_t) ( ( ipv4 ? ROCKETNET_ADDRESS_FLAG_IPV4 : 0 ) | ( ipv6 ? ROCKETNET_ADDRESS_FLAG_IPV6 : 0 ) );
+    fields.ipv4_address[0] = 127;
+    fields.ipv4_address[3] = 1;
+    fields.ipv4_address[4] = 0x40;
+    fields.ipv4_address[5] = 0x9c;
+    fields.ipv6_address[14] = 1;
+    fields.ipv6_address[16] = 0x40;
+    fields.ipv6_address[17] = 0x9c;
+    memcpy( fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES );
+    memset( token, 0, ROCKETNET_CONNECT_TOKEN_BYTES );
+    rocketnet_write_signed_connect_data( &fields, token );
+}
+
+static rocketnet_client_transport_t * loopback_hub_family_client( rocketnet_loopback_hub_t * hub, bool ipv4, bool ipv6, int * status )
+{
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    loopback_hub_family_token( token, ipv4, ipv6 );
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.step_driven = 1;
+    config.loopback_hub = hub;
+    return rocketnet_client_transport_create_resolved( NULL, token, &config, 1000.0, 0, 2, status );
+}
+
+// loopback opens no socket and runs no family race (the client memory plan
+// plans none): a token naming both families takes one hub endpoint, so a hub
+// made for two clients holds two, whatever their tokens name
+
+static void test_loopback_two_family_client_takes_one_endpoint()
+{
+    rocketnet_quiet( 1 );
+
+    rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 2, NULL );
+    check( hub != NULL );
+
+    int first_status = -1;
+    rocketnet_client_transport_t * first = loopback_hub_family_client( hub, true, true, &first_status );
+    check( first != NULL && first_status == ROCKETNET_STATUS_OK );
+    loopback_hub_check_live( hub, 1 );
+
+    int second_status = -1;
+    rocketnet_client_transport_t * second = loopback_hub_family_client( hub, true, false, &second_status );
+    check( second != NULL && second_status == ROCKETNET_STATUS_OK );
+    loopback_hub_check_live( hub, 2 );
+
+    rn_test_client_transport_stop_and_destroy( second );
+    rn_test_client_transport_stop_and_destroy( first );
+    loopback_hub_check_live( hub, 0 );
+    check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_loopback_two_family_client_takes_one_endpoint );
+#endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_loopback_hub_create_and_destroy );
 REGISTER_UNIT_TEST( test_loopback_hub_refuses_out_of_range );

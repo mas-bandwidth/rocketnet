@@ -381,6 +381,45 @@ static void test_loopback_server_resend_delay_seeded_from_transport_rtt( void )
 }
 
 REGISTER_UNIT_TEST( test_loopback_server_resend_delay_seeded_from_transport_rtt );
+
+// standard/TRANSPORT.md t15.5: the reported RTT is the minimum strictly
+// positive first-ack sample, and zero while none is retained. The client's
+// stats report exactly that at every step from the first request through
+// connected and its first acks: the handshake's round trips are no sample
+// (rocketnet_client_transport_rtt reads the same ack endpoint in seconds).
+static void test_client_stats_rtt_is_zero_before_an_ack_sample( void )
+{
+    struct loopback_rtt_pair_t pair;
+    rocketnet_unit_check( loopback_rtt_pair_setup( &pair ) );
+
+    struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( pair.client );
+    int zero_steps = 0;
+    int sampled_steps = 0;
+    for ( int i = 0; i < 100; i++ )
+    {
+        loopback_rtt_step( &pair, LOOPBACK_RTT_SERVER, false, NULL );
+
+        struct rocketnet_client_transport_stats_t stats;
+        rocketnet_client_transport_stats( transport, &stats );
+        const float sample_ms = (float) ( rocketnet_client_transport_rtt( transport ) * 1000.0 );
+        if ( stats.rtt != sample_ms )
+        {
+            printf( "    step %d: state %d stats rtt %.6f, ack sample %.6f\n", i, rocketnet_message_client_state( pair.client ), (double) stats.rtt,
+                    (double) sample_ms );
+        }
+        rocketnet_unit_check( stats.rtt == sample_ms );
+        zero_steps += sample_ms == 0.0f ? 1 : 0;
+        sampled_steps += sample_ms > 0.0f ? 1 : 0;
+    }
+
+    rocketnet_unit_check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_unit_check( zero_steps > 0 && sampled_steps > 0 );
+
+    rn_test_message_client_stop_and_destroy( pair.client );
+    rn_test_message_server_stop_and_destroy( pair.server );
+}
+
+REGISTER_UNIT_TEST( test_client_stats_rtt_is_zero_before_an_ack_sample );
 #endif // #if ROCKETNET_DEV
 
 // Retain a full maximum resend delay payload budget without acknowledging any record.

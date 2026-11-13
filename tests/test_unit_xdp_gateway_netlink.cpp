@@ -37,6 +37,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/if_link.h>
 #include <linux/neighbour.h>
+#include <linux/nexthop.h>
 
 // the request's sequence number and the port id the kernel assigned this
 // socket; replies carry both
@@ -448,11 +449,13 @@ static void test_xdp_transport_gateway_netlink_only_the_main_unicast_default_rou
 }
 
 // a multipath default route: two next hops, each an rtnexthop plus an
-// RTA_GATEWAY of the family's address size
+// RTA_GATEWAY of the family's address size, or of gateway_bytes when it is
+// not zero
 
-static void netlink_multipath_route( netlink_datagram_t * datagram, int family, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway )
+static void netlink_multipath_route( netlink_datagram_t * datagram, int family, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway,
+                                     size_t gateway_bytes = 0 )
 {
-    const size_t address_bytes = family == AF_INET ? 4 : 16;
+    const size_t address_bytes = gateway_bytes != 0 ? gateway_bytes : ( family == AF_INET ? 4 : 16 );
     const size_t start = netlink_begin( datagram, RTM_NEWROUTE, NLM_F_MULTI );
     struct rtmsg message;
     memset( &message, 0, sizeof( message ) );
@@ -547,6 +550,14 @@ static void test_xdp_transport_gateway_netlink_gateway_wrong_size_refuses()
         uint8_t gateway[16];
         int error = -1;
         check( parse_route( datagram, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+        // a multipath hop on this interface with the wrong size refuses the
+        // same way, never read as no route
+
+        netlink_datagram_t multipath;
+        netlink_multipath_route( &multipath, family, server_interface, gateway_ipv6, other_interface, gateway_ipv6, family == AF_INET ? 16 : 4 );
+        netlink_done( &multipath );
+        check( parse_route( multipath, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
     }
 }
 
@@ -1915,5 +1926,212 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_never_blocks );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_eagain_fails_and_keeps_the_gateway );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_follows_a_gateway_ip_change );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_discover_records_the_gateway );
+
+// ---------------------------------------------------------------------------
+// a default route that names a nexthop object (RTA_NH_ID, the form
+// "ip route add default nhid N" makes) carries no RTA_OIF or RTA_GATEWAY of
+// its own: the gateway and interface are the nexthop object's, asked with
+// RTM_GETNEXTHOP and NHA_ID (ip nexthop get id N). An object that cannot be
+// resolved (on another interface, a group, a blackhole, no gateway, or
+// none) is the no-gateway path: DONE, as with no default route.
+
+static const uint32_t nexthop_id = 7;
+
+static netlink_datagram_t nexthop_route_datagram( int family )
+{
+    netlink_datagram_t datagram;
+    const size_t start = netlink_begin( &datagram, RTM_NEWROUTE, NLM_F_MULTI );
+    struct rtmsg message;
+    memset( &message, 0, sizeof( message ) );
+    message.rtm_family = (unsigned char) family;
+    message.rtm_table = RT_TABLE_MAIN;
+    message.rtm_protocol = RTPROT_BOOT;
+    message.rtm_scope = RT_SCOPE_UNIVERSE;
+    message.rtm_type = RTN_UNICAST;
+    netlink_append( &datagram, &message, sizeof( message ) );
+    netlink_attribute_u32( &datagram, RTA_TABLE, RT_TABLE_MAIN );
+    netlink_attribute_u32( &datagram, RTA_NH_ID, nexthop_id );
+    netlink_end( &datagram, start );
+    netlink_done( &datagram );
+    return datagram;
+}
+
+struct netlink_nexthop_t
+{
+    int family = AF_INET;
+    uint32_t id = nexthop_id;
+    int output_interface = server_interface;       // 0: no NHA_OIF
+    const uint8_t * gateway = gateway_ipv4;         // NULL: no NHA_GATEWAY
+    bool group = false;                             // an NHA_GROUP of one member
+    bool blackhole = false;
+};
+
+static netlink_datagram_t nexthop_reply( const netlink_nexthop_t & nexthop )
+{
+    netlink_datagram_t datagram;
+    const size_t start = netlink_begin( &datagram, RTM_NEWNEXTHOP, 0 );
+    struct nhmsg message;
+    memset( &message, 0, sizeof( message ) );
+    message.nh_family = (unsigned char) nexthop.family;
+    message.nh_protocol = RTPROT_BOOT;
+    netlink_append( &datagram, &message, sizeof( message ) );
+    netlink_attribute_u32( &datagram, NHA_ID, nexthop.id );
+    if ( nexthop.group )
+    {
+        struct nexthop_grp member;
+        memset( &member, 0, sizeof( member ) );
+        member.id = nexthop.id + 1;
+        netlink_attribute( &datagram, NHA_GROUP, &member, sizeof( member ) );
+    }
+    if ( nexthop.blackhole )
+    {
+        netlink_attribute( &datagram, NHA_BLACKHOLE, NULL, 0 );
+    }
+    if ( nexthop.output_interface )
+    {
+        netlink_attribute_u32( &datagram, NHA_OIF, (uint32_t) nexthop.output_interface );
+    }
+    if ( nexthop.gateway )
+    {
+        netlink_attribute( &datagram, NHA_GATEWAY, nexthop.gateway, netlink_address_bytes( nexthop.family ) );
+    }
+    netlink_end( &datagram, start );
+    return datagram;
+}
+
+static int nexthop_route_query( fake_netlink_t * fake, int family, uint8_t * gateway, int * error )
+{
+    fake_netlink = fake;
+    memset( gateway, 0xEE, 16 );
+    *error = -1;
+    const int result = rocketnet_gateway_netlink_route_with( &fake_netlink_system, family, server_interface, gateway, error );
+    fake_netlink = NULL;
+    return result;
+}
+
+// the second request is RTM_GETNEXTHOP, not a dump, naming the route's id
+
+static void check_nexthop_asked( const fake_netlink_t & fake )
+{
+    check( fake.requests.size() == 2 );
+    struct nlmsghdr header;
+    memcpy( &header, fake.requests[1].bytes.data(), sizeof( header ) );
+    check( header.nlmsg_type == RTM_GETNEXTHOP );
+    check( ( header.nlmsg_flags & NLM_F_DUMP ) == 0 );
+    struct rtattr attribute;
+    memcpy( &attribute, fake.requests[1].bytes.data() + NLMSG_SPACE( sizeof( struct nhmsg ) ), sizeof( attribute ) );
+    check( attribute.rta_type == NHA_ID );
+    check( attribute.rta_len == RTA_LENGTH( 4 ) );
+    uint32_t id = 0;
+    memcpy( &id, fake.requests[1].bytes.data() + NLMSG_SPACE( sizeof( struct nhmsg ) ) + RTA_LENGTH( 0 ), sizeof( id ) );
+    check( id == nexthop_id );
+}
+
+static void check_nexthop_resolved( int family )
+{
+    const uint8_t * want = family == AF_INET ? gateway_ipv4 : gateway_ipv6;
+    netlink_nexthop_t nexthop;
+    nexthop.family = family;
+    nexthop.gateway = want;
+
+    fake_netlink_t fake;
+    fake.script.push_back( nexthop_route_datagram( family ) );
+    fake.script.push_back( nexthop_reply( nexthop ) );
+
+    uint8_t gateway[16];
+    int error = 0;
+    check( nexthop_route_query( &fake, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( error == 0 );
+    check( memcmp( gateway, want, netlink_address_bytes( family ) ) == 0 );
+    check_nexthop_asked( fake );
+}
+
+static void test_xdp_transport_gateway_netlink_ipv4_nexthop_object_resolved()
+{
+    check_nexthop_resolved( AF_INET );
+}
+
+static void test_xdp_transport_gateway_netlink_ipv6_nexthop_object_resolved()
+{
+    check_nexthop_resolved( AF_INET6 );
+}
+
+static void check_nexthop_unresolved( const netlink_datagram_t & reply )
+{
+    fake_netlink_t fake;
+    fake.script.push_back( nexthop_route_datagram( AF_INET ) );
+    fake.script.push_back( reply );
+
+    uint8_t gateway[16];
+    int error = -1;
+    check( nexthop_route_query( &fake, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+    check( error == 0 );
+    check_nexthop_asked( fake );
+}
+
+static void test_xdp_transport_gateway_netlink_nexthop_object_unresolved_is_no_gateway()
+{
+    netlink_nexthop_t other;
+    other.output_interface = other_interface;
+    check_nexthop_unresolved( nexthop_reply( other ) );
+
+    netlink_nexthop_t group;
+    group.group = true;
+    group.output_interface = 0;
+    group.gateway = NULL;
+    check_nexthop_unresolved( nexthop_reply( group ) );
+
+    netlink_nexthop_t blackhole;
+    blackhole.blackhole = true;
+    blackhole.output_interface = 0;
+    blackhole.gateway = NULL;
+    check_nexthop_unresolved( nexthop_reply( blackhole ) );
+
+    netlink_nexthop_t no_gateway;
+    no_gateway.gateway = NULL;
+    check_nexthop_unresolved( nexthop_reply( no_gateway ) );
+
+    netlink_nexthop_t other_family;
+    other_family.family = AF_INET6;
+    other_family.gateway = gateway_ipv6;
+    check_nexthop_unresolved( nexthop_reply( other_family ) );
+
+    netlink_datagram_t missing;
+    netlink_error( &missing, -ENOENT );
+    check_nexthop_unresolved( missing );
+
+    netlink_datagram_t unsupported;
+    netlink_error( &unsupported, -EOPNOTSUPP );
+    check_nexthop_unresolved( unsupported );
+}
+
+// a gateway of the wrong size in the nexthop object refuses, as in a route
+
+static void test_xdp_transport_gateway_netlink_nexthop_gateway_wrong_size_refuses()
+{
+    netlink_datagram_t reply;
+    const size_t start = netlink_begin( &reply, RTM_NEWNEXTHOP, 0 );
+    struct nhmsg message;
+    memset( &message, 0, sizeof( message ) );
+    message.nh_family = AF_INET;
+    netlink_append( &reply, &message, sizeof( message ) );
+    netlink_attribute_u32( &reply, NHA_ID, nexthop_id );
+    netlink_attribute_u32( &reply, NHA_OIF, (uint32_t) server_interface );
+    netlink_attribute( &reply, NHA_GATEWAY, gateway_ipv6, 16 );
+    netlink_end( &reply, start );
+
+    fake_netlink_t fake;
+    fake.script.push_back( nexthop_route_datagram( AF_INET ) );
+    fake.script.push_back( reply );
+
+    uint8_t gateway[16];
+    int error = -1;
+    check( nexthop_route_query( &fake, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_nexthop_object_resolved );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_nexthop_object_resolved );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_nexthop_object_unresolved_is_no_gateway );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_nexthop_gateway_wrong_size_refuses );
 
 #endif // #if ROCKETNET_XDP

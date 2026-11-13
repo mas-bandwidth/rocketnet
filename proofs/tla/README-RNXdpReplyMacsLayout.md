@@ -37,8 +37,9 @@ MAC, else none).
 
 - **`Learn(a, m)`**: `rocketnet_xdp_reply_macs_learn` of a usable MAC: the
   address's `LIVE` entry, else its `ANSWERED` entry
-  (`rocketnet_xdp_reply_macs_find_state`), else the first slot of the window
-  that is not `LIVE`, else the `LIVE` entry with the smallest stamp. The slot
+  (`rocketnet_xdp_reply_macs_find_state`), else the first `EMPTY` slot of the
+  window, else the `ANSWERED` entry with the smallest stamp, else the `LIVE`
+  entry with the smallest stamp. The slot
   becomes `LIVE` with the MAC and the next stamp. A learn that takes another
   address's slot removes that address from the contract.
 - **`Answer(a, m)`**: `rocketnet_xdp_reply_mac` with a usable answered MAC and
@@ -61,8 +62,10 @@ operators (`Find`, `Lookup`), not actions.
 - **`NoEntryPastEmpty`**: every used slot lies within `P` probes of its
   address's home, with no `EMPTY` slot before it on the way.
 - **`EvictOnlyOldest`**: a learn evicts a `LIVE` entry only from a window
-  that is all `LIVE`, and only the one with the smallest stamp; an answer never
-  takes a `LIVE` slot.
+  that is all `LIVE`, and only the one with the smallest stamp; a learn takes
+  another address's `ANSWERED` entry only from a window with no `EMPTY`
+  slot, and only the one with the smallest stamp; an answer never takes a
+  `LIVE` slot.
 
 ## The instance
 
@@ -92,6 +95,16 @@ counterexample below was checked against the C by hand.
    takes slot 0, `a3` (home 1) slot 1; `a2` (home 0) finds both window slots
    `LIVE` and takes slot 2, offset 2; every lookup of `a2` stops after slots 0
    and 1 and returns nothing, and its next learn would insert a second entry.
+4. **`MCRNXdpReplyMacsLayoutBrokenLearnTakesAnswered.cfg`**
+   (`LearnTakesEmptyFirst = FALSE`): learn's insert taking the first slot of
+   the window that is not `LIVE`, the code before. Violates
+   `EvictOnlyOldest`: `a1` and `a2` share home 0; `a1` is answered into
+   slot 0; learning `a2` takes slot 0 while slot 1 is `EMPTY`, and `a1`'s
+   answered MAC is gone. In the C before, the loop's `candidate->state !=
+   ROCKETNET_XDP_REPLY_MAC_LIVE` took the answered entry, and a reply the
+   link simulator held for `a1` was refused
+   (`test_xdp_transport_reply_mac_learn_keeps_a_colliding_answered_entry` in
+   `tests/test_unit_xdp_reply_macs_simulated.cpp` is that case on the code).
 
 ## Runs
 

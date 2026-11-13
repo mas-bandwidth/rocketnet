@@ -347,6 +347,112 @@ static void test_client_io_destroy_hands_off_deferred_slots()
 
 REGISTER_UNIT_TEST( test_client_io_destroy_hands_off_deferred_slots );
 
+// The final ring stop hands to the I/O thread is sent at its exit, so its
+// datagrams are counted like any other ring that leaves the main thread:
+// packets_sent after stop matches the three the fake sent, the deferred one
+// included. A datagram that arrives after stop is read and discarded at the
+// worker's exit and reaches ROCKETNET_COUNTER_CLIENT_RECEIVE_DISCARDED_AT_STOP.
+
+static void test_client_io_stop_counts_final_ring()
+{
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_io, &clock );
+
+    rocketnet_client_transport_update( transport, 1000.0 );
+    rocketnet_client_transport_update( transport, 1001.0 );
+    rocketnet_client_transport_update( transport, 1002.0 );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 1 );
+    check( fake->num_sent == 0 );
+
+    rocketnet_client_transport_stop( transport );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_DISCARDED_AT_STOP ) == 0 );
+
+    const uint8_t datagram[16] = { 0 };
+    rocketnet_address_t from = {};
+    rocketnet_address_load_ipv4( &from, 0x7f000001, 9100 );
+    rocketnet_fake_client_push( fake, &from, datagram, 16 );
+
+    rn_test_client_transport_wait_stopped( transport );
+    check( fake->num_sent == 3 );
+    check( fake->inbound_count == 0 );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_DISCARDED_AT_STOP ) == 1 );
+
+    struct rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_stats( transport, &stats );
+    check( stats.packets_sent == 3 );
+
+    rocketnet_client_transport_destroy( transport );
+    delete fake;
+}
+
+REGISTER_UNIT_TEST( test_client_io_stop_counts_final_ring );
+
+// packets_sent counts datagrams sent (rocketnet.h): a slot deferred behind
+// two queued rings is counted when it leaves, never before. The connection
+// ending with the slot still deferred (a disconnect, or the attempt timing
+// out inside update) drops it unsent, so it is never counted: after the I/O
+// steps the stats match the datagrams the fake sent, 2 of the 3 committed.
+
+static void client_io_transport_deferred_then_ended( bool disconnect )
+{
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    client_io_transport_token( token );
+    struct rocketnet_signed_connect_data_t signed_fields;
+    rocketnet_read_signed_connect_data( &signed_fields, token );
+    signed_fields.timeout_seconds = 1;
+    rocketnet_write_signed_connect_data( &signed_fields, token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = client_io_transport_time;
+    rocketnet_client_transport_t * transport =
+        rocketnet_client_transport_create_step_driven( &clock, token, &config, clock.now, &rocketnet_fake_client_operations_batch, fake );
+    check( transport != NULL );
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
+
+    rocketnet_client_transport_update( transport, 1000.0 );
+    rocketnet_client_transport_update( transport, 1000.2 );
+    rocketnet_client_transport_update( transport, 1000.4 );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 1 );
+    check( fake->num_sent == 0 );
+
+    if ( disconnect )
+    {
+        rocketnet_client_transport_disconnect( transport );
+    }
+    else
+    {
+        rocketnet_client_transport_update( transport, 1100.0 );
+        check( rocketnet_client_transport_state( transport ) < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    }
+
+    for ( int i = 0; i < 4; i++ )
+    {
+        rocketnet_client_io_step( io, false );
+    }
+
+    struct rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_stats( transport, &stats );
+    check( fake->num_sent == 2 );
+    check( stats.packets_sent == 2 );
+
+    rn_test_client_transport_stop_and_destroy( transport );
+    check( fake->num_sent == 2 );
+    delete fake;
+}
+
+static void test_client_io_deferred_slot_counted_only_when_sent()
+{
+    client_io_transport_deferred_then_ended( true );
+    client_io_transport_deferred_then_ended( false );
+}
+
+REGISTER_UNIT_TEST( test_client_io_deferred_slot_counted_only_when_sent );
+
 // The receive path through update: a datagram from the server, drained and
 // published by the step (stamped by the config's time_callback), is exposed by
 // the next update and reaches the protocol (PACKETS_RECEIVED moves by one);

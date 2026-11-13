@@ -10,8 +10,10 @@
    only once none is held, and past the first slot only while a message of
    MaxSeg segments would fit (room - total >= MaxSeg). A message read is held
    from then on, so what does not fit in this call's slots is the next
-   call's. Datagrams are the integers 1, 2, ... in arrival order; a message is
-   a run of them.
+   call's. MaxSeg is GRO's segment count; a message can hold up to MaxMsg
+   (a local sender's segmented send, UDP_MAX_SEGMENTS) and is carried the
+   same way. Datagrams are the integers 1, 2, ... in arrival order; a
+   message is a run of them.
 
    Each call has one read budget, `room` reads (reads_remaining): every read
    of the socket spends one, a message kept (Read) or a read that delivers
@@ -28,14 +30,18 @@
                   the call's room: InRoom
      "skipbudget" a skip does not spend the call's read budget (the code
                   before v1.1.8 kept separate weather and skip counts, up to
-                  2 * max_packets + 8 reads in one call): ReadBudget *)
+                  2 * max_packets + 8 reads in one call): ReadBudget
+     "collapse"   a message of more than MaxSeg segments is held as one
+                  segment, its first (the code before it was cut past GRO's
+                  count: one record of all its bytes): Conservation *)
 EXTENDS Integers, Sequences
 CONSTANTS Cap,      \* the largest room a call is given (max_packets)
-          MaxSeg,   \* segments in one message at most (ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS)
+          MaxSeg,   \* segments a GRO message holds at most, the read's threshold (ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS)
+          MaxMsg,   \* segments any message holds at most (a local segmented send: UDP_MAX_SEGMENTS)
           MaxIds,   \* datagrams that arrive in the whole behavior
           Defect
-ASSUME Cap \in Nat \ {0} /\ MaxSeg \in Nat \ {0} /\ MaxIds \in Nat
-ASSUME Defect \subseteq {"droptail", "readoverheld", "pastroom", "skipbudget"}
+ASSUME Cap \in Nat \ {0} /\ MaxSeg \in Nat \ {0} /\ MaxMsg \in Nat /\ MaxMsg >= MaxSeg /\ MaxIds \in Nat
+ASSUME Defect \subseteq {"droptail", "readoverheld", "pastroom", "skipbudget", "collapse"}
 
 VARIABLES socket,    \* the messages in the socket, oldest first, each a sequence of datagrams
           next,      \* the next datagram's number
@@ -100,7 +106,10 @@ Read ==
     /\ MayRead
     /\ reads < room
     /\ socket # <<>>
-    /\ coalesce' = Head(socket) /\ seg' = 0 /\ nseg' = Len(Head(socket))
+    /\ LET held == IF "collapse" \in Defect /\ Len(Head(socket)) > MaxSeg
+                   THEN SubSeq(Head(socket), 1, 1)
+                   ELSE Head(socket)
+       IN coalesce' = held /\ seg' = 0 /\ nseg' = Len(held)
     /\ socket' = Tail(socket)
     /\ reads' = reads + 1
     /\ UNCHANGED <<next, phase, room, total, slots, out>>
@@ -129,7 +138,7 @@ Done ==
     /\ UNCHANGED vars
 
 Next ==
-    \/ \E k \in 1 .. MaxSeg : Arrive(k)
+    \/ \E k \in 1 .. MaxMsg : Arrive(k)
     \/ \E r \in 1 .. Cap : Begin(r)
     \/ Deliver \/ Read \/ Skip \/ End
     \/ Done
@@ -138,7 +147,7 @@ Spec == Init /\ [][Next]_vars
 
 TypeOK ==
     /\ next \in 1 .. MaxIds + 1
-    /\ seg \in 0 .. MaxSeg /\ nseg \in 0 .. MaxSeg /\ seg <= nseg /\ Len(coalesce) = nseg
+    /\ seg \in 0 .. MaxMsg /\ nseg \in 0 .. MaxMsg /\ seg <= nseg /\ Len(coalesce) = nseg
     /\ phase \in {"idle", "call"} /\ room \in 1 .. Cap /\ total \in 0 .. Cap + 1
     /\ reads \in Nat
     /\ slots \in [Slots -> 0 .. MaxIds]

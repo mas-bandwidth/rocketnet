@@ -80,4 +80,48 @@ static void test_loopback_shutdown_send_drops_contended_without_waiting()
 }
 
 REGISTER_UNIT_TEST( test_loopback_shutdown_send_drops_contended_without_waiting );
+
+// A size outside 1 .. ROCKETNET_RECEIVE_CEILING is never a send: with the
+// lock taken it is skipped uncounted, and contention does not make it a
+// counted failure either. Of one valid, one empty and one oversize packet,
+// a contended shutdown batch counts the valid one only, as does an
+// uncontended batch whose destination is gone.
+
+static void test_loopback_shutdown_contended_counts_only_valid_sizes()
+{
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    const rocketnet_server_transport_io_config_t setup = { "loopback", &config, NULL, NULL };
+    rocketnet_address_t a, gone;
+    rocketnet_unit_check( rocketnet_address_parse( &a, "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &gone, "127.0.0.1:40999" ) );
+
+    rocketnet_server_transport_io_t sender = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( rocketnet_loopback_transport.server, NULL, &setup, &a, &sender ) );
+
+    static uint8_t data[ROCKETNET_RECEIVE_CEILING + 1] = { 1, 2, 3 };
+    rocketnet_platform_send_t packets[3] = {};
+    const int sizes[3] = { 32, 0, ROCKETNET_RECEIVE_CEILING + 1 };
+    for ( int i = 0; i < 3; ++i )
+    {
+        packets[i].to = &gone;
+        packets[i].packet_data = data;
+        packets[i].packet_bytes = sizes[i];
+    }
+
+    rocketnet_loopback_test_send_contention( true );
+    sender.operations->send_batch_shutdown( sender.instance, packets, 3 );
+    rocketnet_loopback_test_send_contention( false );
+    rocketnet_unit_check( sender.operations->send_failures( sender.instance ) == 1 );
+
+    sender.operations->send_batch_shutdown( sender.instance, packets, 3 );
+    rocketnet_unit_check( sender.operations->send_failures( sender.instance ) == 2 );
+
+    rocketnet_server_transport_io_stop( &sender );
+    rocketnet_unit_check( rocketnet_server_transport_io_stopped( &sender ) );
+    rocketnet_server_transport_io_close( &sender );
+}
+
+REGISTER_UNIT_TEST( test_loopback_shutdown_contended_counts_only_valid_sizes );
 #endif // #if ROCKETNET_DEV

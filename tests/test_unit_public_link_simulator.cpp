@@ -275,8 +275,10 @@ static void test_public_link_simulator_server_switch_off_delivers_held()
 }
 
 // A datagram is counted sent only once the link took it: a send that meets the
-// simulator's lock busy is dropped, counted as SEND_RING_FULL, and never
-// reaches packets_sent or bytes_sent. The flush is called alone, without an
+// simulator's lock busy is dropped and never reaches packets_sent or
+// bytes_sent. The link simulator exists only in a development build, so the
+// drop is counted by the development count link_lock_misses, never by
+// SEND_RING_FULL, which names a full send ring. The flush is called alone, without an
 // update, so the one busy send is the payload's and nothing else's.
 static void test_public_link_simulator_server_lock_miss_not_counted_sent()
 {
@@ -288,6 +290,7 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     struct rocketnet_server_transport_stats_t after;
     rocketnet_server_transport_stats( pair.server, &before );
     const uint64_t ring_full_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    const uint64_t misses_before = rocketnet_server_transport_link_lock_misses_for_test( pair.server );
 
     // a nonzero latency keeps the simulator active, so the send goes through
     // the link and its lock
@@ -302,7 +305,8 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     rocketnet_server_transport_stats( pair.server, &after );
     check( after.packets_sent == before.packets_sent );
     check( after.bytes_sent == before.bytes_sent );
-    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 1 );
+    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before );
+    check( rocketnet_server_transport_link_lock_misses_for_test( pair.server ) == misses_before + 1 );
 
     // the next send meets a free lock: it is counted sent once and arrives
 
@@ -311,7 +315,8 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     rocketnet_server_transport_stats( pair.server, &after );
     check( after.packets_sent == before.packets_sent + 1 );
     check( after.bytes_sent > before.bytes_sent );
-    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 1 );
+    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before );
+    check( rocketnet_server_transport_link_lock_misses_for_test( pair.server ) == misses_before + 1 );
     check( live_link_client_bytes_seen( &pair, 20 ) == (int) sizeof( payload ) );
 
     live_link_pair_teardown( &pair );

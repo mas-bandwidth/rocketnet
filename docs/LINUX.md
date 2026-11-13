@@ -222,9 +222,10 @@ policy say) logs
 (once; later refusals are spam), resends that one run as plain packets, and
 is remembered so its later runs leave plain; every other destination keeps
 segmenting. Only when `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8)
-destinations have refused and no segmented send was ever accepted (a kernel
+refusals have come from destinations the table did not hold (a destination
+displaced from its entry counts again) and no segmented send was ever accepted (a kernel
 that cannot segment) it logs
-`gso transport: live GSO send refused (...). <n> destinations refused and none accepted, degrading to plain sendmmsg`,
+`gso transport: live GSO send refused (...). <n> refusals from destinations not yet remembered and none accepted, degrading to plain sendmmsg`,
 turns segmentation off for the life of the transport, and resends from the
 refused run plain (`sdk/rocketnet_server_gso_linux.cpp`, `sdk/rocketnet_server_gso.h`).
 The degradation is inside the transport, below the ladder (`BUILDING.md`).
@@ -572,8 +573,8 @@ startup and an `xdp` transport label alone do not establish zero-copy.
   ends in `xdp pre-flight failed: this machine is not provisioned for the XDP data plane`
   (`sdk/rocketnet_server_socket_linux.cpp`). On an unprivileged host
   `auto` therefore falls to `gso` (`.github/workflows/ci.yml`).
-- A real port and a global address: port 0 refuses `xdp` (section 2), and an
-  IPv6 link-local address is refused by name
+- A real port and a global address: port 0 refuses `xdp` (section 2), and a
+  link-local address (IPv4 169.254.0.0/16, IPv6 fe80::/10) is refused by name
   (`sdk/rocketnet_server_socket_linux.cpp`).
 - The gateway's neighbour entry: create refuses `xdp` with `no neighbor entry
   with a link-layer address` when the host has not yet talked to its gateway
@@ -716,6 +717,22 @@ What each path does with the errors it can see:
   `sdk/rocketnet_server_uring.h`); a multishot receive that ends is armed
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp`).
+
+**Where a full interface queue's drops are counted.** On Linux a UDP send
+that the interface's queue refuses does not fail: without `IP_RECVERR` the
+kernel turns that `ENOBUFS` into success (`udp_send_skb` in
+`net/ipv4/udp.c`, `udp_v6_send_skb` in `net/ipv6/udp.c`) and counts the
+datagram in `SndbufErrors` of `Udp` in `/proc/net/snmp` (`Udp6SndbufErrors`
+in `/proc/net/snmp6` for IPv6). The queue that dropped it counts it too, in
+the interface's TX dropped (`ip -s link show dev <if>`) or its queueing
+discipline's statistics (`tc -s qdisc show dev <if>`). rocketnet's sockets
+never set `IP_RECVERR`, so these drops are not in `SEND_FAILED` on the
+client's `portable` and `gso` transports or the server's `portable`, `gso`
+and `io_uring` transports; `SEND_FAILED` there counts only sends the call
+itself refused. The kernel's counters are per host and per interface, so a
+drop cannot be attributed to one socket or one server. The `xdp` transport
+writes its own TX ring and is not affected. On macOS and Windows whether a
+full interface queue fails the send call is not verified.
 
 `tests/functional/posix_hard_killed_client.cpp` and `tests/functional/posix_socket_errors.cpp`
 cover a hard-killed client and the socket error paths per transport cell.

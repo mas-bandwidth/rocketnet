@@ -140,8 +140,9 @@ static int fuzz_xdp_run( const uint8_t * data, size_t size )
     const bool taken = rocketnet_xdp_frame_receive( f, frame_bytes, address_type, &taken_from, &taken_payload, &taken_bytes, &drops );
 
     const bool served = parsed && ( address_type < 0 || from.type == address_type );
-    const bool due = served && payload_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
-    rocketnet_fuzz_require( taken == due, "receive takes exactly the parsed, served frames that hold the smallest server packet" );
+    const bool mapped = parsed && rocketnet_address_is_ipv4_in_ipv6( &from );
+    const bool due = served && payload_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES && !mapped;
+    rocketnet_fuzz_require( taken == due, "receive takes exactly the parsed, served frames that hold the smallest server packet from a source that is not IPv4-mapped" );
 
     if ( taken )
     {

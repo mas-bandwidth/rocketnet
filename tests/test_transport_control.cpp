@@ -2038,8 +2038,7 @@ static bool control_client_owned_by_reset( size_t offset )
             return true;
         }
     }
-    const size_t stats = offsetof( rocketnet_client_transport_t, stats_counted );
-    return offset >= stats && offset < stats + sizeof( ( (rocketnet_client_transport_t *) 0 )->stats_counted );
+    return false;
 }
 
 static void test_client_connection_reset_writes_only_what_it_owns()
@@ -2060,7 +2059,6 @@ static void test_client_connection_reset_writes_only_what_it_owns()
 
     memset( client->stop_burst, 0xA5, sizeof( client->stop_burst ) );
     client->payload_ring[0].num_packets = 3;
-    client->stats_counted = 3;
 
     const size_t bytes = sizeof( rocketnet_client_transport_t );
     uint8_t * before = (uint8_t *) malloc( bytes );
@@ -2070,7 +2068,6 @@ static void test_client_connection_reset_writes_only_what_it_owns()
     rocketnet_client_connection_reset( client );
 
     CHECK( client->payload_ring[0].num_packets == 0 );
-    CHECK( client->stats_counted == 0 );
 
     const uint8_t * after = (const uint8_t *) client;
     size_t changed = 0;

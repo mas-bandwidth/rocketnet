@@ -41,8 +41,9 @@ in a build without XDP) is not skipped: its pin refuses at start with
 `auto` inside a list refuses the create.
 
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
-(1000) is pin-only: it stays in the availability list, so an explicit name
-always selects it, but `auto` never chooses it. The loopback transport is the
+(1000) is pin-only: it stays in the availability list, so a list of that one
+name selects it, but `auto` never chooses it, and in a longer list it is
+skipped with one log line (standard/TRANSPORT.md t2.4). The loopback transport is the
 one row pin-only on both endpoints. The pin-only check reads the
 endpoint's own column, so a transport can rank in one endpoint's `auto` order
 and be pin-only on the other. The loopback transport is in-process, carries datagrams through memory with no
@@ -712,7 +713,7 @@ main thread makes no call for it. The flush builds
 each reply with the server address of the destination's family as the source,
 and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or
-`AF_INET6` and refuse an IPv6 link-local address (fe80::/10) by name. Each
+`AF_INET6` and refuse a link-local address (169.254.0.0/16, fe80::/10) by name. Each
 family's gateway MAC comes from that family's default route and neighbour
 table, read at create through rtnetlink (`sdk/rocketnet_gateway_netlink.h`: an
 `RTM_GETROUTE` dump for the default route's gateway on the interface, then an
@@ -776,7 +777,10 @@ replay window (`ROCKETNET_HISTORY_PACKETS`, 4096 by default) or more behind
 the high-water the userspace window sets, and never writes the map. The
 kernel window is the userspace window, so a reordered packet that every other
 transport accepts is accepted on XDP too. The transport marks each connected
-client after every update.
+client after every update. A forget or mark the commit cannot apply is kept,
+applied again at the next commit, and counted as `XDP_REPLAY_COMMIT_FAILED`; a
+keep-alive held because its session's first mark is not yet applied is counted
+as `XDP_REPLAY_GREETING_HELD`.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which

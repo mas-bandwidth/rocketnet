@@ -63,6 +63,7 @@ struct windows_socket_errors_transport_t
 {
     const char * transport;
     bool ipv6;
+    const char * client; // the client transport; NULL is portable
 };
 
 static const char * windows_socket_errors_host( bool ipv6 )
@@ -287,7 +288,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", transport->client ? transport->client : "portable" );
     session->client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     windows_socket_errors_require( session->client != NULL );
 
@@ -639,9 +640,12 @@ static void windows_socket_errors_prefilter_read( struct rocketnet_client_transp
 // prefilter. On an unconnected socket each would count
 // CLIENT_RECEIVE_FOREIGN_SOURCE. The case proves each server datagram is
 // counted once, the I/O thread keeps receiving and the client stays connected.
-static void windows_client_drops_oversize_and_garbage( bool ipv6 )
+// It runs with the portable client and with the iocp client, whose receive
+// posts a second buffer so a datagram past its record reaches the prefilter
+// as too large at its true length.
+static void windows_client_drops_oversize_and_garbage( bool ipv6, const char * client )
 {
-    windows_socket_errors_transport_t transport = { "portable", ipv6 };
+    windows_socket_errors_transport_t transport = { "portable", ipv6, client };
     windows_socket_errors_session_t session;
     windows_socket_errors_session_start( &session, &transport );
 
@@ -744,8 +748,8 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
         windows_socket_errors_tick( &session );
     }
 
-    printf( "windows_client_drops_oversize_and_garbage %s: from the server %llu (too short %llu of %llu, too large %llu of %llu, wrong epoch %llu of %llu, wrong value %llu of %llu, refusals %llu, foreign %llu); from a foreign source %llu (foreign source %llu, refusals %llu, prefilter %s); client received %llu payloads during and %llu after, server received %llu\n",
-            ipv6 ? "ipv6" : "ipv4", (unsigned long long) sent_from_server,
+    printf( "windows_client_drops_oversize_and_garbage %s %s client: from the server %llu (too short %llu of %llu, too large %llu of %llu, wrong epoch %llu of %llu, wrong value %llu of %llu, refusals %llu, foreign %llu); from a foreign source %llu (foreign source %llu, refusals %llu, prefilter %s); client received %llu payloads during and %llu after, server received %llu\n",
+            ipv6 ? "ipv6" : "ipv4", client, (unsigned long long) sent_from_server,
             (unsigned long long) too_short, (unsigned long long) expect.too_short, (unsigned long long) too_large, (unsigned long long) expect.too_large,
             (unsigned long long) wrong_epoch, (unsigned long long) expect.wrong_epoch, (unsigned long long) wrong_value, (unsigned long long) expect.wrong_value,
             (unsigned long long) server_leg_refusals, (unsigned long long) server_leg_foreign,
@@ -844,8 +848,10 @@ void windows_server_counts_oversize_as_prefilter_too_large_iocp() { windows_serv
 void windows_server_counts_oversize_as_prefilter_too_large_rio() { windows_server_counts_oversize_as_prefilter_too_large_rio_case(); }
 void windows_server_counts_runt_as_prefilter_too_short_rio() { windows_server_counts_runt_as_prefilter_too_short_rio_case(); }
 
-void windows_client_drops_oversize_and_garbage_ipv4() { windows_client_drops_oversize_and_garbage( false ); }
-void windows_client_drops_oversize_and_garbage_ipv6() { windows_client_drops_oversize_and_garbage( true ); }
+void windows_client_drops_oversize_and_garbage_ipv4() { windows_client_drops_oversize_and_garbage( false, "portable" ); }
+void windows_client_drops_oversize_and_garbage_ipv6() { windows_client_drops_oversize_and_garbage( true, "portable" ); }
+void windows_client_drops_oversize_and_garbage_iocp_ipv4() { windows_client_drops_oversize_and_garbage( false, "iocp" ); }
+void windows_client_drops_oversize_and_garbage_iocp_ipv6() { windows_client_drops_oversize_and_garbage( true, "iocp" ); }
 
 void windows_per_packet_receive_counts_empty_datagram_ipv4() { windows_per_packet_receive_counts_empty_datagram( false ); }
 void windows_per_packet_receive_counts_empty_datagram_ipv6() { windows_per_packet_receive_counts_empty_datagram( true ); }

@@ -120,6 +120,11 @@
    :text "When xdp stop gives up on a transmit ring that has stopped draining, the handoff buffers it abandons are counted in no counter. Count them, so a stop that dropped packets says so."
    :date "2026-11-11" :origin "v1.0.1 xdp worker fixes (stop bound for a stalled TX ring)")
 
+  (item "linux-send-ip-recverr" :group "after-v1-0-1" :area "rocketnet"
+   :title "Linux UDP sends: count interface queue drops per socket"
+   :text "On Linux a datagram a full interface queue drops is reported to the send call only with IP_RECVERR set; without it the kernel counts the drop per host (Udp SndbufErrors) and SEND_FAILED never sees it (docs/LINUX.md section 7). Set IP_RECVERR on the portable, gso and io_uring sockets, so the send call returns ENOBUFS and the drop counts in SEND_FAILED, and drain the socket's error queue (MSG_ERRQUEUE). Cost: with IP_RECVERR every ICMP error for a destination (port or host unreachable) is queued on the socket and reported by its next receive call, so each receive path needs an error-queue drain (one more call per drain while the queue is not empty) and a classification of what it reads, where today those errors never reach the socket (section 7)."
+   :date "2026-11-12" :origin "read-everything review: SEND_FAILED's claim about a full interface queue")
+
   (item "xdp-carrier-off-ebusy" :group "after-v1-0-1" :area "rocketnet"
    :title "xdp: EBUSY with the carrier off is counted per frame"
    :text "With the link carrier off, each frame's transmit wakeup EBUSY counts in SEND_FAILED on its own, so a down link inflates the counter by its send rate. Decide whether such a run counts once, as a hard wakeup error does."

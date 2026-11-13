@@ -253,25 +253,36 @@ static void test_xdp_transport_preflight_refuses_any_attached_mode()
 #if ROCKETNET_DEV
 // The frames each queue's userspace receive dropped, by reason, reach the
 // transport's ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED through the builtin dispatch the
-// counter read calls, once each queue's worker publishes them: two synthetic
-// queues, no socket, no worker (sdk/rocketnet_server_socket_linux.cpp)
+// counter read calls, once each queue's worker publishes them; the replay
+// writer's commit failures and held keep-alives reach ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED
+// and ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD through a second one: two synthetic queues, no
+// socket, no worker, no map (sdk/rocketnet_server_socket_linux.cpp)
 bool rocketnet_server_transport_io_receive_frames_dropped( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                            uint64_t * dropped );
+bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                  uint64_t * commit_failed, uint64_t * greetings_held );
 typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                             uint64_t * dropped );
+typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * commit_failed, uint64_t * greetings_held );
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
 
 static void test_xdp_transport_receive_frames_dropped_counted()
 {
     const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
-    check( rocketnet_server_socket_test_receive_dropped( rocketnet_server_transport_io_receive_frames_dropped, xdp->backend->server ) );
+    check( rocketnet_server_socket_test_receive_dropped( rocketnet_server_transport_io_receive_frames_dropped, rocketnet_server_transport_io_replay_counts,
+                                                         xdp->backend->server ) );
 
     // no other transport answers the dispatch
 
     const rocketnet_transport_definition_t * gso = rocketnet_transport_definition( ROCKETNET_TRANSPORT_GSO );
     uint64_t dropped = 0;
     check( !rocketnet_server_transport_io_receive_frames_dropped( gso->backend->server, NULL, &dropped ) );
+    uint64_t commit_failed = 0;
+    uint64_t greetings_held = 0;
+    check( !rocketnet_server_transport_io_replay_counts( gso->backend->server, NULL, &commit_failed, &greetings_held ) );
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_receive_frames_dropped_counted );

@@ -53,6 +53,10 @@ struct rocketnet_client_transport_io_operations_t;
 #define ROCKETNET_CLIENT_IOCP_RECEIVES                                      64
 // bytes in one receive buffer: the largest datagram the client accepts
 #define ROCKETNET_CLIENT_IOCP_RECEIVE_BYTES                ROCKETNET_RECEIVE_CEILING
+// bytes past a receive buffer the binding reads into one shared discard
+// buffer: a receive buffer and this hold any UDP payload, so a datagram's
+// completion carries its true length
+#define ROCKETNET_CLIENT_IOCP_OVERFLOW_BYTES               ( 65535 - ROCKETNET_CLIENT_IOCP_RECEIVE_BYTES )
 // a destroy that has not drained after this many stalled dequeues of
 // ROCKETNET_CLIENT_IOCP_DRAIN_SECONDS leaks its buffers rather than free
 // memory the kernel may still write

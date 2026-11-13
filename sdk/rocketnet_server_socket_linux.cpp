@@ -183,7 +183,7 @@ template <int N> struct rocketnet_xdp_buffer_exchange_t
 
     void recycle( int index )
     {
-        rocketnet_assert( index >= 0 && index < N && free_count < N );
+        rocketnet_assert( index >= 0 && index < N && free_count < N - 1 ); // the producer holds one
         free_index[( free_head + free_count ) % N] = index;
         ++free_count;
     }
@@ -708,12 +708,16 @@ static void rocketnet_server_socket_ipv6_bytes( const rocketnet_address_t * addr
     }
 }
 
-// a server's public address is global: an IPv6 link-local address
-// (fe80::/10) names no route off the link, so the pre-flight and create
-// refuse it by name
+// a server's public address is global: a link-local address (IPv4
+// 169.254.0.0/16, IPv6 fe80::/10) names no route off the link, so the
+// pre-flight and create refuse it by name
 
-static bool rocketnet_server_socket_ipv6_link_local( const rocketnet_address_t * address )
+static bool rocketnet_server_socket_link_local( const rocketnet_address_t * address )
 {
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        return address->data.ipv4[0] == 169 && address->data.ipv4[1] == 254;
+    }
     return address->type == ROCKETNET_ADDRESS_IPV6 && ( address->data.ipv6[0] & 0xFFC0 ) == 0xFE80;
 }
 
@@ -1014,12 +1018,10 @@ static int rocketnet_server_socket_count_cpu_list( const char * list )
 // or '-' (transport-prefixed names like i40e-ens1f0-TxRx-0, the exact
 // family B3 tells operators to build) and followed by '-', ':', '@',
 // whitespace, or end. pure string logic, exported for the fixture test.
-// accepted asymmetries with the script's form, recorded: this reader
-// splits lines past its 4096-byte buffer where awk is unbounded (real
-// /proc/interrupts lines are far shorter); '\r' rides this after-set for
-// fgets robustness but is unreachable through awk (no CRLF procfs); the
-// empty interface name refuses here and is unreachable in the script
-// (empty arguments refuse at the door).
+// accepted asymmetries with the script's form, recorded: '\r' rides this
+// after-set for fgets robustness but is unreachable through awk (no CRLF
+// procfs); the empty interface name refuses here and is unreachable in the
+// script (empty arguments refuse at the door).
 
 bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line, const char * interface_name )
 {
@@ -1044,6 +1046,75 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
             return true;
         }
         match = strstr( match + 1, interface_name );
+    }
+
+    return false;
+}
+
+bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char * interface_name, int * irq )
+{
+    rocketnet_assert( interrupts );
+    rocketnet_assert( interface_name );
+    rocketnet_assert( irq );
+
+    // a line longer than the buffer is read in parts: its IRQ is taken from
+    // the first, and the token a part ends in is carried, from the blank
+    // before it, to the front of the next, so the name is matched whole
+
+    char line[4096];
+    size_t carry = 0;
+    bool line_start = true;
+    bool line_irq = false;
+    bool named = false;
+
+    while ( fgets( line + carry, (int) ( sizeof( line ) - carry ), interrupts ) )
+    {
+        const size_t length = carry + strlen( line + carry );
+        const bool line_end = ( length > 0 && line[length - 1] == '\n' ) || feof( interrupts );
+
+        if ( line_start )
+        {
+            char * number_end = NULL;
+            const long number = strtol( line, &number_end, 10 );
+            line_irq = number_end != line && *number_end == ':' && number >= 0 && number <= INT_MAX;
+            if ( line_irq )
+            {
+                *irq = (int) number;
+            }
+            named = false;
+        }
+
+        size_t judged = length;
+        if ( !line_end )
+        {
+            while ( judged > 0 && line[judged - 1] != ' ' && line[judged - 1] != '\t' )
+            {
+                judged--;
+            }
+            judged = judged > 0 ? judged - 1 : 0;
+        }
+
+        const char kept = line[judged];
+        line[judged] = '\0';
+        named = named || rocketnet_server_socket_interrupt_line_matches_interface( line, interface_name );
+        line[judged] = kept;
+
+        if ( line_end )
+        {
+            line_start = true;
+            carry = 0;
+            if ( line_irq && named )
+            {
+                return true;
+            }
+            continue;
+        }
+
+        // a token longer than a name could be is not carried
+
+        line_start = false;
+        carry = length - judged <= 256 ? length - judged : 0;
+        memmove( line, line + length - carry, carry );
     }
 
     return false;
@@ -1312,9 +1383,9 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
         return false;
     }
 
-    if ( rocketnet_server_socket_ipv6_link_local( &public_address ) )
+    if ( rocketnet_server_socket_link_local( &public_address ) )
     {
-        rocketnet_warn( "xdp pre-flight: public address %s is ipv6 link-local (fe80::/10); a server's public address is global (R2 of scripts/rocketnet-provision)", public_address_string );
+        rocketnet_warn( "xdp pre-flight: public address %s is link-local (169.254.0.0/16, fe80::/10); a server's public address is global (R2 of scripts/rocketnet-provision)", public_address_string );
         return false;
     }
 
@@ -1498,20 +1569,9 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
             uint8_t cpu_seen[1024];
             memset( cpu_seen, 0, sizeof( cpu_seen ) );
 
-            char line[4096];
-            while ( fgets( line, sizeof( line ), interrupts ) )
+            int irq = 0;
+            while ( rocketnet_server_socket_interrupt_next_irq( interrupts, interface_name, &irq ) )
             {
-                if ( !rocketnet_server_socket_interrupt_line_matches_interface( line, interface_name ) )
-                {
-                    continue;
-                }
-
-                int irq = 0;
-                if ( sscanf( line, " %d:", &irq ) != 1 )
-                {
-                    continue;
-                }
-
                 matched_irqs++;
 
                 char affinity_path[256];
@@ -1785,9 +1845,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    if ( rocketnet_server_socket_ipv6_link_local( &public_address ) )
+    if ( rocketnet_server_socket_link_local( &public_address ) )
     {
-        rocketnet_error( "server public address is ipv6 link-local (fe80::/10); a server's public address is global" );
+        rocketnet_error( "server public address is link-local (169.254.0.0/16, fe80::/10); a server's public address is global" );
         return NULL;
     }
 
@@ -1823,9 +1883,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        if ( rocketnet_server_socket_ipv6_link_local( &second_address ) )
+        if ( rocketnet_server_socket_link_local( &second_address ) )
         {
-            rocketnet_error( "server public address is ipv6 link-local (fe80::/10); a server's public address is global" );
+            rocketnet_error( "server public address is link-local (169.254.0.0/16, fe80::/10); a server's public address is global" );
             if ( create_status )
             {
                 *create_status = ROCKETNET_STATUS_INVALID_ADDRESS;
@@ -3332,6 +3392,12 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
     return server_socket->replay_commit_failures;
 }
 
+uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    return server_socket->replay_greetings_held;
+}
+
 #if ROCKETNET_DEV
 // A fixture's server socket in the caller's raw storage, with its sized parts
 // for the default configuration; the destruct frees them and leaves the
@@ -3351,6 +3417,19 @@ static void rocketnet_server_socket_test_destruct( rocketnet_server_socket_t * s
     server->~rocketnet_server_socket_t();
 }
 
+#if ROCKETNET_ASSERTS
+static int rocketnet_server_socket_test_asserts;
+
+static void rocketnet_server_socket_test_count_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    rocketnet_server_socket_test_asserts++;
+}
+#endif // #if ROCKETNET_ASSERTS
+
 // Exercise the native staging entry points without creating kernel resources.
 bool rocketnet_server_socket_test_buffer_exchange()
 {
@@ -3368,6 +3447,19 @@ bool rocketnet_server_socket_test_buffer_exchange()
     exchange.recycle( 0 );
     valid &= exchange.publish() && exchange.producer == 0;
     valid &= exchange.claim() == 2;
+
+#if ROCKETNET_ASSERTS
+    // the producer always holds one buffer, so the free list holds at most
+    // N - 1: a second recycle of a claimed buffer past that is caught
+    rocketnet_server_socket_test_asserts = 0;
+    rocketnet_assert_function( rocketnet_server_socket_test_count_assert );
+    exchange.recycle( 2 );
+    exchange.recycle( 1 );
+    valid &= rocketnet_server_socket_test_asserts == 0;
+    exchange.recycle( 1 );
+    valid &= rocketnet_server_socket_test_asserts == 1;
+    rocketnet_assert_function( NULL );
+#endif // #if ROCKETNET_ASSERTS
 
     void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
     void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
@@ -4043,6 +4135,7 @@ uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket
 
 #if ROCKETNET_DEV
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const rocketnet_server_transport_io_operations_t * xdp )
 {
     // two synthetic queues, no worker: each queue's receive drops by reason
@@ -4109,6 +4202,17 @@ bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_
 
     rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, 3 * sizeof( uint64_t ) );
     valid = valid && dispatch( xdp, server, &dropped ) && dropped == 63;
+
+    // the replay writer's counts, which the main thread keeps on the server
+    // socket (rocketnet_server_socket_replay_commit, hold_greetings), reach
+    // XDP_REPLAY_COMMIT_FAILED and XDP_REPLAY_GREETING_HELD the same way
+
+    uint64_t commit_failed = 99;
+    uint64_t greetings_held = 99;
+    valid = valid && replay_dispatch( xdp, server, &commit_failed, &greetings_held ) && commit_failed == 0 && greetings_held == 0;
+    server->replay_commit_failures = 5;
+    server->replay_greetings_held = 3;
+    valid = valid && replay_dispatch( xdp, server, &commit_failed, &greetings_held ) && commit_failed == 5 && greetings_held == 3;
 
     queues[1].~rocketnet_server_xdp_socket_t();
     queues[0].~rocketnet_server_xdp_socket_t();

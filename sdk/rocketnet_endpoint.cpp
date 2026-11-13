@@ -890,6 +890,7 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
                 rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, serial ); // local budget drop before wire send
             }
             endpoint->in_place_receipt = 0;
+            endpoint->written++;                                // the frame start took counts, as a packed build's drop does
             return serial;
         }
 

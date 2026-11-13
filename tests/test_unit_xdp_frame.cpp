@@ -769,6 +769,50 @@ static void test_xdp_transport_receive_dispatches_both_families_counted()
     rocketnet_unit_check( drops.ipv6_extension == 0 && drops.other_family == 2 && drops.malformed == 3 );
 }
 
+// sdk/rocketnet_address.h: where the real IPv6 header is seen, as here, an
+// IPv4-mapped source (::ffff:a.b.c.d, RFC 4291 2.5.5.2) never occurs
+// legitimately; it is spoofed and dropped, as every socket transport drops
+// it. Dropped at an IPv6 server and at one serving both families, counted
+// malformed; the same frame from a native IPv6 source is taken.
+
+static void test_xdp_transport_receive_drops_mapped_source()
+{
+    rocketnet_address_t mapped, native, dst6;
+    memset( &mapped, 0, sizeof( mapped ) );
+    mapped.type = ROCKETNET_ADDRESS_IPV6;
+    mapped.data.ipv6[5] = 0xFFFF;
+    mapped.data.ipv6[6] = 0x0A00;
+    mapped.data.ipv6[7] = 0x0001;
+    mapped.port = 50000;
+    rocketnet_unit_check( rocketnet_address_is_ipv4_in_ipv6( &mapped ) );
+    rocketnet_unit_check( rocketnet_address_parse( &native, "[2001:db8::1]:50000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &dst6, "[2001:db8::2]:40001" ) );
+
+    const int packet = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 16;
+    rocketnet_address_t from;
+    const uint8_t * payload = NULL;
+    int payload_bytes = 0;
+    struct rocketnet_xdp_receive_drops_t drops;
+    memset( &drops, 0, sizeof( drops ) );
+
+    uint8_t frame[256];
+    memset( frame, 0, sizeof( frame ) );
+    const int len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &mapped, &dst6, packet );
+    rocketnet_unit_check( len == 62 + packet );
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame, (size_t) len, ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame, (size_t) len, -1, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( drops.malformed == 2 );
+    rocketnet_unit_check( drops.not_ip == 0 && drops.ipv6_extension == 0 && drops.other_family == 0 && drops.descriptor == 0 );
+
+    memset( frame, 0, sizeof( frame ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &native, &dst6, packet ) == len );
+    rocketnet_unit_check( rocketnet_xdp_frame_receive( frame, (size_t) len, -1, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV6 && from.port == 50000 && payload_bytes == packet );
+    rocketnet_unit_check( drops.malformed == 2 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_receive_drops_mapped_source );
+
 // The server ladder keeps xdp for either family: the list parses the same
 // for an IPv4 and an IPv6 server, with xdp first under "auto".
 

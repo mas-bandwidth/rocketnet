@@ -54,7 +54,7 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
     int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
     if ( fd < 0 )
     {
-        rocketnet_error( "%s transport: failed to create socket: %s", transport, strerror( errno ) );
+        rocketnet_error( "%s transport: failed to create socket: %s", transport, rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
         return -1;
     }
 
@@ -74,7 +74,7 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
     int one = 1;
     if ( !first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
     {
-        rocketnet_error( "%s transport: failed to set SO_REUSEPORT: %s", transport, strerror( errno ) );
+        rocketnet_error( "%s transport: failed to set SO_REUSEPORT: %s", transport, rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
         close( fd );
         return -1;
     }
@@ -84,7 +84,7 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
         int zero = 0;
         if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) != 0 )
         {
-            rocketnet_error( "%s transport: failed to clear socket ipv6 only: %s", transport, strerror( errno ) );
+            rocketnet_error( "%s transport: failed to clear socket ipv6 only: %s", transport, rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
             close( fd );
             return -1;
         }
@@ -105,14 +105,14 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
     {
-        rocketnet_error( "%s transport: failed to set socket send buffer size: %s", transport, strerror( errno ) );
+        rocketnet_error( "%s transport: failed to set socket send buffer size: %s", transport, rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
         close( fd );
         return -1;
     }
 
     if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 0 )
     {
-        rocketnet_error( "%s transport: failed to set socket receive buffer size: %s", transport, strerror( errno ) );
+        rocketnet_error( "%s transport: failed to set socket receive buffer size: %s", transport, rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
         close( fd );
         return -1;
     }
@@ -153,14 +153,14 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
 
     if ( socklen == 0 || bind( fd, (struct sockaddr *) &sockaddr, (socklen_t) socklen ) < 0 )
     {
-        rocketnet_error( "%s transport: failed to bind socket (%s): %s", transport, ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
+        rocketnet_error( "%s transport: failed to bind socket (%s): %s", transport, ipv6 ? "ipv6" : "ipv4", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
         close( fd );
         return -1;
     }
 
     if ( first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
     {
-        rocketnet_error( "%s transport: failed to set SO_REUSEPORT: %s", transport, strerror( errno ) );
+        rocketnet_error( "%s transport: failed to set SO_REUSEPORT: %s", transport, rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
         close( fd );
         return -1;
     }
@@ -172,7 +172,7 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
         socklen_t bound_length = sizeof( bound );
         if ( getsockname( fd, (struct sockaddr *) &bound, &bound_length ) != 0 )
         {
-            rocketnet_error( "%s transport: failed to get bound socket port: %s", transport, strerror( errno ) );
+            rocketnet_error( "%s transport: failed to get bound socket port: %s", transport, rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
             close( fd );
             return -1;
         }
@@ -190,7 +190,7 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
 
     if ( fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == -1 )
     {
-        rocketnet_error( "%s transport: failed to set socket non-blocking: %s", transport, strerror( errno ) );
+        rocketnet_error( "%s transport: failed to set socket non-blocking: %s", transport, rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
         close( fd );
         return -1;
     }

@@ -385,6 +385,15 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
                               (int) ( p - plaintext ), standard_server_to_client_key, out );
     }
 
+    if ( strcmp( id, "t10.keep-alive-count-top-bit" ) == 0 )
+    {
+        uint8_t * p = plaintext + standard_fresh_block( plaintext );
+        rocketnet_write_uint32( &p, 0 );
+        rocketnet_write_uint32( &p, 0x80000000u );
+        return standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext,
+                              (int) ( p - plaintext ), standard_server_to_client_key, out );
+    }
+
     if ( strcmp( id, "t10.wrong-opened-size" ) == 0 )
     {
         const int plaintext_bytes = standard_wrong_opened_size_plaintext( plaintext );
@@ -709,6 +718,24 @@ static void standard_receive_processing_counters()
         rocketnet_unit_check( client.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         rocketnet_unit_check( client.client.client_index == 32767 );
         rocketnet_unit_check( client.client.max_clients == 32768 );
+
+        standard_client_teardown( &client );
+    }
+
+    // the fields are u32 (t10 step 17, t13.1): slot count at least 1, index
+    // below it. A count with the top bit set is a count like any other, and
+    // the client echoes it back bit for bit in its own keep-alives
+    {
+        static struct standard_client_t client;
+        standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+        int bytes = standard_receive_processing_generate( "t10.keep-alive-count-top-bit", packet, (int) sizeof( packet ) );
+        standard_client_process( &client, packet, bytes );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 0 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED] == 1 );
+        rocketnet_unit_check( client.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        rocketnet_unit_check( client.client.client_index == 0 );
+        rocketnet_unit_check( (uint32_t) client.client.max_clients == 0x80000000u );
 
         standard_client_teardown( &client );
     }
