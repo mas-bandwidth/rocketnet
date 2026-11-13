@@ -120,12 +120,12 @@ static void test_max_clients_derived_limits()
     check( ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
     check( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
 
-    // a server of 1000 clients is sized as it was when ROCKETNET_MAX_CLIENTS
-    // was a fixed 1000, in every build that holds 1000
+    // a server of 1000 clients is sized the same in every build that holds
+    // 1000 (the receive budget is 64 a client since the XDP send queue fix)
 
     if ( clients >= 1000 )
     {
-        check( rocketnet_server_receive_packets_per_update( 1000 ) == 16000 );
+        check( rocketnet_server_receive_packets_per_update( 1000 ) == 64000 );
         check( rocketnet_server_send_batch_packets( 1000 ) == 1000 );
         check( rocketnet_server_send_staging_packets( 1000 ) == 2048 );
         check( rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
@@ -134,8 +134,8 @@ static void test_max_clients_derived_limits()
         check( rocketnet_server_rio_receives( 1000 ) == 4096 );
         check( rocketnet_xdp_replay_entries( 1000 ) == 1024 );
         check( rocketnet_xdp_reply_mac_entries( 1000 ) == 4096 );
-        check( rocketnet_server_uring_bank_packets( 1000 ) == 16000 );
-        check( rocketnet_loopback_server_queue_packets( 1000 ) == 16384 );
+        check( rocketnet_server_uring_bank_packets( 1000 ) == 64000 );
+        check( rocketnet_loopback_server_queue_packets( 1000 ) == 65536 );
     }
 
     // the default build's fixed tables are unchanged

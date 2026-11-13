@@ -2,7 +2,7 @@
 // The server's worst-case receive update: max_clients connected clients on the
 // loopback transport, each delivering ROCKETNET_RECEIVE_PACKETS_PER_CLIENT
 // payload packets, so one update processes the whole receive budget
-// (rocketnet_server_receive_packets_per_update, 16,000 at 1000 clients).
+// (rocketnet_server_receive_packets_per_update, 64,000 at 1000 clients).
 //
 // The loopback queue holds less than a full budget, so the packets the
 // clients seal are captured first, outside the timed window, by a receive
