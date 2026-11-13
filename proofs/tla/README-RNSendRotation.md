@@ -278,15 +278,25 @@ defaults to `K` (the fixed capacity), so every earlier case is unchanged.
 `FairService` keeps its bound, `ceil(|Conn on q| / Kq)`, over the flushes
 that had the full capacity from their start: a flush that began with less
 room serves fewer slots and is not counted (`CountsAllFlushes = FALSE`),
-even when its room grew back inside it. That last clause is needed: with
-two queues (`MCRNServerSendFairQueuesLive.cfg`, a first version counted a
-flush whose room ended full), the first queue's room is 0 when the walk
-reaches slot 2, so slot 2 is held and the walk goes past it; the room then
-grows to 1, and the next flush, at full room from slot 0, spends the first
-queue on slot 0 and holds slot 2 again, two counted flushes. No bound in
-flushes is owed under a live room: a transport whose room stays at 0 sends
-nothing. The second queue's capacity `K1` stays fixed in the model; only the
-first queue's room is read live.
+even when its room grew back inside it (a slot the walk passed while the
+room was short is not owed that flush). No bound in flushes is owed under a
+live room: a transport whose room stays at 0 sends nothing. The second
+queue's capacity `K1` stays fixed in the model; only the first queue's room
+is read live.
+
+With several queues the bound does not hold under a live room, and the
+case `MCRNServerSendFairQueuesLiveSkip.cfg` records the code as it is (not a
+reversed witness; handed up as code-wrong under MM057). A slot held for its
+queue before any frame of the flush was written does not hold the cursor
+(`rn_message_object_send_packets`, by design: a queue full for many updates
+would pin the rotation). TLC, 13 states, four slots, two queues of one
+frame (0 and 2 on the first, 1 and 3 on the second): flush 1 at full room
+writes 0 and 1 and cuts at 2 with the cursor there; flush 2, the first
+queue's room 0, holds slot 2 with nothing written yet, writes slot 3 on the
+second queue and cuts at 0; flush 3 at full room writes 0 and 1 and cuts at
+2 again. Slot 2 has waited two counted flushes, and the pattern repeats
+while the first queue's room alternates. The comment above that loop ("One
+full queue ... starves none of its own") holds for a fixed capacity only.
 
 | Case | Expected | Distinct | Seconds |
 |---|---|---:|---:|

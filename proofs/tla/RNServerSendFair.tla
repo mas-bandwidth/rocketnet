@@ -93,12 +93,16 @@
 (* and Grow adds one unit, once, inside the flush.  RoomMin = K (the       *)
 (* default) is the fixed capacity; MCRNServerSendFairLive.cfg overrides it *)
 (* with 0.  FairService's window is ceil(|Conn on q| / Kq) flushes that    *)
-(* had the full capacity from their start: a flush that began with less   *)
+(* had the full capacity from their start: a flush that began with less    *)
 (* room serves fewer slots and does not count, even when its room grew     *)
 (* back inside it (CountsAllFlushes FALSE).  The reversed                  *)
 (* witness MCRNServerSendFairBrokenFixedWindow.cfg counts every flush and  *)
 (* fails FairService: the fixed-capacity window is not owed under a live   *)
-(* room.                                                                   *)
+(* room.  MCRNServerSendFairBrokenLiveFromZero.cfg shows the live window   *)
+(* still catches a rotation bug.  With two queues the window fails under   *)
+(* a live room for the code as it is: a slot held before any frame was     *)
+(* written does not hold the cursor (MCRNServerSendFairQueuesLiveSkip.cfg, *)
+(* handed up under MM057).  Only the first queue's room is live; K1 stays. *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 

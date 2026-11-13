@@ -179,11 +179,11 @@ opens a frame, fills it and is sealed (see the abstractions below for when).
 
 | Case | Expected | Instance | Distinct states | Seconds |
 |---|---|---|---|---|
-| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R) declaring 2, 2, 1, 2, 1, 1 units, two frames of 3 units, one packet per update, one ack, one fault, a staged transport | 1,366,347 | 27.0 |
-| `MCRNOutgoingBuildBuffered.cfg` | pass | the same on the buffered transport: an aborted or dropped frame spent until the flush | 1,444,143 | 27.6 |
+| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R) declaring 2, 2, 1, 2, 1, 1 units, two frames of 3 units, one packet per update, one ack, one fault, a staged transport | 1,366,347 | 22.7 |
+| `MCRNOutgoingBuildBuffered.cfg` | pass | the same on the buffered transport: an aborted or dropped frame spent until the flush | 1,446,007 | 24.4 |
 | `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before the in-place change | 13 | 0.7 |
 | `MCRNOutgoingBuildOwnQuota.cfg` | `PacketQuota` violated | the same with `SharedQuota` FALSE: in-place packets on an allowance of their own | 426 | 0.8 |
-| `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work | 5,324 | 1.4 |
+| `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work | 5,324 | 1.2 |
 | `MCRNOutgoingBuildBrokenMovesPriorRecord.cfg` | `PriorRecordsUnmoved` violated | the same with `MovePrior` TRUE: a finish moves the committed records | 93 | 0.8 |
 | `MCRNOutgoingBuildBrokenReuseCommitted.cfg` | `BytesUnchangedInPlace` violated | the same with `ReuseCommitted` TRUE: a finish leaves the committed end in place | 98 | 0.7 |
 | `MCRNOutgoingBuildBrokenNoExcuse.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Excused` FALSE: the deadline with no excuse for a pass the transport cut | 3,493 | 1.1 |
