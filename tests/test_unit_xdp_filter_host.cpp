@@ -54,8 +54,9 @@ static const int XDP_HOST_REDIRECT = 4;
 
 // A row names the counter it must move with XDP_HOST_COUNTS(counter), and a
 // row that must move none with XDP_HOST_NO_COUNTER.
-// test_xdp_transport_host_every_counter_has_a_case reads this file for the XDP_HOST_COUNTS
-// spelling of every counter sdk/rocketnet_wire.h defines.
+// test_xdp_transport_host_every_counter_has_a_case (a source audit,
+// tests/source_audit_xdp_filter_host.cpp) reads this file for the
+// XDP_HOST_COUNTS spelling of every counter sdk/rocketnet_wire.h defines.
 
 #define XDP_HOST_COUNTS( counter ) ( counter )
 #define XDP_HOST_NO_COUNTER ( -1 )
@@ -520,22 +521,23 @@ static void xdp_host_redirect_rows( int family, std::vector<xdp_host_row_t> & ro
     }
 }
 
-static void xdp_host_ipv4_rocketnet_packet_redirects_case()
+static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_redirect_rows( 4, rows );
     xdp_host_run_rows( rows );
 }
 
-// The master registered unit executes every registered host-filter case in
-// this file. xdp_host_run_row records a counter only after its verdict and
-// complete counter table assertions pass, so the final mask is an execution
-// result rather than a lexical inventory.
-static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
+// Every counter moves: this case runs every other registered host-filter case
+// in this file again, in process, so each row runs twice a suite.
+// xdp_host_run_row records a counter only after its verdict and complete
+// counter table assertions pass, so the final mask is an execution result
+// rather than a lexical inventory (the lexical check is
+// test_xdp_transport_host_every_counter_has_a_case, a source audit).
+static void test_xdp_transport_host_cases_move_every_counter()
 {
     xdp_host_runtime_counter_mask = 0;
     xdp_host_runtime_counter_rows = 0;
-    xdp_host_ipv4_rocketnet_packet_redirects_case();
 
     const char host_prefix[] = "test_xdp_transport_host_";
     const char filter_prefix[] = "test_xdp_filter_host_";
@@ -548,7 +550,7 @@ static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
         const bool host_case = strncmp( test_name, host_prefix, sizeof( host_prefix ) - 1 ) == 0;
         const bool filter_case = strncmp( test_name, filter_prefix, sizeof( filter_prefix ) - 1 ) == 0;
         if ( ( host_case || filter_case ) &&
-             strcmp( test_name, "test_xdp_transport_host_ipv4_rocketnet_packet_redirects" ) != 0 )
+             strcmp( test_name, "test_xdp_transport_host_cases_move_every_counter" ) != 0 )
         {
             struct rocketnet_unit_file_test_t * test = rocketnet_unit_file_find( test_name );
             rocketnet_unit_check( test != NULL );
@@ -1990,10 +1992,9 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
 }
 
 // ---------------------------------------------------------------------------
-// every counter has a case: each ROCKETNET_SERVER_XDP_COUNTER_* that
-// sdk/rocketnet_wire.h defines (other than the count) must appear in this
-// file as a row's XDP_HOST_COUNTS(...), so a new counter cannot land without
-// a case that makes it move.
+// the UDP length: below the header is too small; past the frame, or past the
+// IP payload, is a forged length and too large; link-layer padding past it
+// is not payload.
 
 static void test_xdp_transport_host_udp_length_drops()
 {
@@ -2135,6 +2136,7 @@ static void test_xdp_transport_queue_default_matches_memory_plan()
 
 #if defined( ROCKETNET_XDP_FILTER_HOST ) && ROCKETNET_XDP_FILTER_HOST
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_rocketnet_packet_redirects );
+REGISTER_UNIT_TEST( test_xdp_transport_host_cases_move_every_counter );
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( test_xdp_transport_host_both_destinations_redirect_and_a_third_passes );
 REGISTER_UNIT_TEST( test_xdp_transport_host_redirect_needs_a_populated_slot );
@@ -2165,32 +2167,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_replay_drops_behind_the_window );
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_never_writes_the_map );
 
 REGISTER_UNIT_TEST( test_xdp_transport_host_udp_length_drops );
-
-// A UDP length past the IP payload, and a UDP length past the frame, are
-// forged lengths. Both count as too large. A length below the UDP header
-// stays too small, and that row lives in test_xdp_transport_host_udp_length_drops.
-
-static void test_xdp_filter_host_udp_length_past_bounds_counts_too_large()
-{
-    std::vector<xdp_host_row_t> rows;
-    const int families[2] = { 4, 6 };
-
-    for ( int f = 0; f < 2; f++ )
-    {
-        xdp_host_row_t past_frame = xdp_host_row( "UDP length past the frame counts too large", families[f] );
-        past_frame.frame.override_udp_len = 8 + past_frame.frame.payload_bytes + 20;
-        rows.push_back( xdp_host_expect( past_frame, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
-
-        xdp_host_row_t past_ip = xdp_host_row( "UDP length past the IP payload counts too large", families[f] );
-        past_ip.frame.pad_bytes = 6;
-        past_ip.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + past_ip.frame.payload_bytes - 4;
-        rows.push_back( xdp_host_expect( past_ip, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
-    }
-
-    xdp_host_run_rows( rows );
-}
-
-REGISTER_UNIT_TEST( test_xdp_filter_host_udp_length_past_bounds_counts_too_large );
 #endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
 #if defined( ROCKETNET_XDP ) && ROCKETNET_XDP
