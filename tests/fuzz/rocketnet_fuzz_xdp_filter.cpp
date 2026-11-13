@@ -316,26 +316,10 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
     // DIFFERENTIAL, every frame: what the filter redirects, the AF_XDP
     // transport's own frame reader accepts, and its payload view passes the
     // userspace prefilter rungs (else the filter spends a ring slot on a frame
-    // userspace throws away)
+    // userspace throws away). Strict: a broadcast destination MAC and a wrong
+    // IP version nibble, which the reader refuses, are in the oracle too
 
-    // known difference, reported separately (HUNT-FUZZ.md): the frame reader
-    // refuses a broadcast destination MAC, the filter never reads the MAC.
-    // FZ_XDP_STRICT_MAC=1 keeps it in the oracle.
-
-    static const int strict_mac = getenv( "FZ_XDP_STRICT_MAC" ) != NULL;
-    const bool broadcast = frame_bytes >= 2 && fz_frame[0] == 0xff && fz_frame[1] == 0xff;
-
-    // known difference F1: the filter never reads the IPv4 or IPv6 version nibble.
-    // FZ_XDP_STRICT_VERSION=1 keeps it in the oracle.
-
-    static const int strict_version = getenv( "FZ_XDP_STRICT_VERSION" ) != NULL;
-    // the version nibble after one tag of the server's VLAN when there is one
-
-    const int e = frame_bytes >= 18 && fz_frame[12] == 0x81 && fz_frame[13] == 0x00 ? 4 : 0;
-    const bool ipv4_bad_version = frame_bytes > 14 + e && fz_frame[12 + e] == 0x08 && fz_frame[13 + e] == 0x00 && ( fz_frame[14 + e] >> 4 ) != 4;
-    const bool ipv6_bad_version = frame_bytes > 14 + e && fz_frame[12 + e] == 0x86 && fz_frame[13 + e] == 0xdd && ( fz_frame[14 + e] >> 4 ) != 6;
-
-    if ( verdict == FZ_XDP_REDIRECT && ( strict_mac || !broadcast ) && ( strict_version || ( !ipv4_bad_version && !ipv6_bad_version ) ) )
+    if ( verdict == FZ_XDP_REDIRECT )
     {
         uint8_t * copy = (uint8_t *) malloc( (size_t) frame_bytes );
         memcpy( copy, fz_frame, (size_t) frame_bytes );
