@@ -108,7 +108,17 @@ cannot name.
 
 ## Cases (CASES.tsv, group rnuringqueueworker)
 
-RESULTS_TABLE
+Results (amd-3, pinned jar 936a2620..., tlacheck at nova-tools 0c97d595, 2 workers,
+2026-11-13):
+
+| cfg | expected | result | states (distinct) |
+|---|---|---|---|
+| MCRNUringQueueWorker.cfg | pass | pass | 2,246,201 (406,541), 4.7 s |
+| MCRNUringQueueWorkerLive.cfg | pass (ShutdownDrains, StopFinishes, Drains) | pass | 2,246,201 (406,541), 46.1 s |
+| MCRNUringQueueWorkerBrokenExitEarly.cfg | ExitDrained violated: the witness "exit before drain" | violated | 130 (70) |
+| MCRNUringQueueWorkerBrokenRetryUnbounded.cfg | StopFinishes violated: a socket that stays full is retried forever | violated (temporal) | 2,441,461 (440,237) |
+| MCRNUringQueueWorkerBrokenWakeSkip.cfg | StopFinishes violated: the worker sleeps with no wake read armed | violated (temporal) | 2,309,986 (422,279) |
+| MCRNUringQueueWorkerBrokenShutdownNone.cfg | ShutdownDrains violated: the witness "stop never completes", no begin_shutdown (the transport before the fix) | violated (temporal) | 1,987,872 (364,713) |
 
 Status: the model, its trace module and the code are written; the trace check binds
 the code to the model (tools/tla_trace_check.py, layer queue-worker). RUNS.tsv holds
