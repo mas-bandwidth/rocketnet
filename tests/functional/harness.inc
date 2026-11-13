@@ -16,6 +16,7 @@
 #include "rocketnet_counters.h"
 
 #include <climits>
+#include <mutex>
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_server_iocp.h"
@@ -178,6 +179,9 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 
 static char rocketnet_test_log_ring[ROCKETNET_FUNCTIONAL_LOG_RING_LINES][ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES];
 static int rocketnet_test_log_ring_lines;
+// the library logs from its transports' worker threads too (two io_uring queue
+// workers may log a refused receive at once): the ring is written under this
+static std::mutex rocketnet_test_log_ring_mutex;
 static rocketnet_log_function_t rocketnet_test_suite_log_function = NULL;
 static char rocketnet_test_captured_log[16384];
 
@@ -200,6 +204,7 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
         return;
     }
 
+    std::lock_guard<std::mutex> lock( rocketnet_test_log_ring_mutex );
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_FUNCTIONAL_LOG_RING_LINES];
     const int slot_length = snprintf( slot, ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
     if ( slot_length < 0 || (size_t) slot_length >= ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES )
@@ -211,11 +216,13 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
 
 static void rocketnet_test_log_ring_clear()
 {
+    std::lock_guard<std::mutex> lock( rocketnet_test_log_ring_mutex );
     rocketnet_test_log_ring_lines = 0;
 }
 
 static void rocketnet_test_log_ring_dump()
 {
+    std::lock_guard<std::mutex> lock( rocketnet_test_log_ring_mutex );
     const int lines = rocketnet_test_log_ring_lines < ROCKETNET_FUNCTIONAL_LOG_RING_LINES ? rocketnet_test_log_ring_lines : ROCKETNET_FUNCTIONAL_LOG_RING_LINES;
     const int first = rocketnet_test_log_ring_lines - lines;
     for ( int i = 0; i < lines; i++ )
