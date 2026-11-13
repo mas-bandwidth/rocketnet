@@ -261,6 +261,23 @@ static uint8_t harden_copy_body[HARDEN_COPY_BODY_BYTES];
 static bool harden_input_stamp = false;
 static std::atomic<int64_t> harden_stamp_offset_ns( 0 );
 static std::atomic<bool> harden_stamp_offset_valid( false );
+// --s2c-stamp on (both roles, with --input-stamp): the mirror. Each burst
+// message the server writes carries its wall clock at the write in the same
+// 8 bytes; the clients read, per stamped burst, its wait to the start of the
+// client update that returned it (the harden_s2c_delay_total line)
+static bool harden_s2c_stamp = false;
+
+// the wall clock in nanoseconds (the stamp's clock)
+static int64_t harden_wall_ns()
+{
+    return (int64_t) std::chrono::duration_cast<std::chrono::nanoseconds>( std::chrono::system_clock::now().time_since_epoch() ).count();
+}
+
+// whether a message of this kind and size carries a stamp after its header
+static bool harden_stamped( uint32_t kind, int bytes )
+{
+    return ( harden_input_stamp && kind == HARDEN_KIND_INPUT ) || ( harden_s2c_stamp && kind == HARDEN_KIND_BURST && bytes >= HARDEN_HEADER_BYTES + HARDEN_STAMP_BYTES );
+}
 
 static void harden_copy_body_build()
 {
@@ -282,16 +299,24 @@ static void harden_write_message( uint8_t * p, int bytes, uint32_t kind, uint64_
     if ( harden_payload_copy )
     {
         memcpy( p + HARDEN_HEADER_BYTES, harden_copy_body + HARDEN_HEADER_BYTES, (size_t) ( bytes - HARDEN_HEADER_BYTES ) );
-        return;
     }
-    uint64_t word = 0;
-    for ( int i = HARDEN_HEADER_BYTES; i < bytes; i++ )
+    else
     {
-        if ( i == HARDEN_HEADER_BYTES || i % 8 == 0 )
+        uint64_t word = 0;
+        for ( int i = HARDEN_HEADER_BYTES; i < bytes; i++ )
         {
-            word = harden_pattern_word( client_id, connection, kind, sequence, i / 8 );
+            if ( i == HARDEN_HEADER_BYTES || i % 8 == 0 )
+            {
+                word = harden_pattern_word( client_id, connection, kind, sequence, i / 8 );
+            }
+            p[i] = (uint8_t) ( word >> ( 8 * ( i % 8 ) ) );
         }
-        p[i] = (uint8_t) ( word >> ( 8 * ( i % 8 ) ) );
+    }
+    // --s2c-stamp: the server's own clock (the reference), so no offset
+    if ( harden_s2c_stamp && kind == HARDEN_KIND_BURST && bytes >= HARDEN_HEADER_BYTES + HARDEN_STAMP_BYTES )
+    {
+        uint8_t * stamp_cursor = p + HARDEN_HEADER_BYTES;
+        rocketnet_write_uint64( &stamp_cursor, (uint64_t) harden_wall_ns() );
     }
 }
 
@@ -314,8 +339,8 @@ static int harden_read_message( const uint8_t * p, int bytes, struct harden_mess
     {
         return 0;
     }
-    // a stamped input's first body bytes are its stamp, not the pattern
-    const int body = harden_input_stamp && out->kind == HARDEN_KIND_INPUT ? HARDEN_HEADER_BYTES + HARDEN_STAMP_BYTES : HARDEN_HEADER_BYTES;
+    // a stamped message's first body bytes are its stamp, not the pattern
+    const int body = harden_stamped( out->kind, bytes ) ? HARDEN_HEADER_BYTES + HARDEN_STAMP_BYTES : HARDEN_HEADER_BYTES;
     if ( bytes < body )
     {
         return 0;
@@ -337,12 +362,6 @@ static int harden_read_message( const uint8_t * p, int bytes, struct harden_mess
         }
     }
     return 1;
-}
-
-// the wall clock in nanoseconds (the stamp's clock)
-static int64_t harden_wall_ns()
-{
-    return (int64_t) std::chrono::duration_cast<std::chrono::nanoseconds>( std::chrono::system_clock::now().time_since_epoch() ).count();
 }
 
 // a stamped input's stamp: the server's wall clock now, 0 before the offset is measured
@@ -487,6 +506,7 @@ struct harden_options_t
     int messages = 1;
     int input_bytes = HARDEN_INPUT_BYTES; // --input-bytes N: each player's unreliable input message a tick (honest input: about 300 B a tick, 100-200 kbps)
     int input_stamp_port = 0;             // --input-stamp PORT: stamp inputs on the server's clock, measured against the server's echo on PORT (both roles)
+    bool s2c_stamp = false;               // --s2c-stamp on|off: stamp the server's bursts too, the clients read their receive delay (needs --input-stamp)
     double delay_from = 25.0;             // --delay-window FROM,TO: the server's harden_delay_total sums the per-second reports in [FROM, TO] seconds
     double delay_to = 55.0;
     std::string load;         // --load peak|average|custom: space game's real server-to-client load (see harden_apply_load); custom keeps the flags
@@ -777,6 +797,15 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--input-stamp" ) == 0 )
         {
             o->input_stamp_port = atoi( v );
+        }
+        else if ( strcmp( a, "--s2c-stamp" ) == 0 )
+        {
+            if ( strcmp( v, "on" ) != 0 && strcmp( v, "off" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --s2c-stamp takes on or off\n" );
+                return false;
+            }
+            o->s2c_stamp = strcmp( v, "on" ) == 0;
         }
         else if ( strcmp( a, "--delay-window" ) == 0 )
         {
@@ -3555,6 +3584,8 @@ struct harden_client_t
     bool was_connected = false;
     double connect_called_at = 0.0;
     harden_stream_t streams[HARDEN_KINDS];
+    int64_t receive_call_ns = 0;       // --s2c-stamp: the start of the last client update on the server's clock, and of the one before
+    int64_t receive_call_prev_ns = 0;
 };
 
 struct harden_client_totals_t
@@ -3573,6 +3604,7 @@ struct harden_client_totals_t
     uint64_t end_states[32] = {};
     uint64_t inputs_sent = 0, inputs_refused = 0;
     uint64_t connections_read = 0;
+    harden_delay_t s2c_delay; // --s2c-stamp: every thread's bursts in --delay-window
     std::atomic<int> connected[HARDEN_MAX_THREADS];
     std::atomic<uint64_t> delivered_live[HARDEN_MAX_THREADS];
     std::atomic<bool> stop_traffic{ false };
@@ -3645,6 +3677,7 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
     uint64_t connections_read = 0, inputs_sent = 0, inputs_refused = 0, joins = 0, connects = 0, connect_max_us = 0;
     uint64_t clean_leaves = 0, silent_stops = 0, reconnects = 0, silent_timed_out = 0, unplanned_ends = 0, stable_ends = 0, end_of_run_ends = 0;
     uint64_t end_states[32] = {};
+    std::unique_ptr<harden_delay_t> s2c_delay( new harden_delay_t() ); // --s2c-stamp (heap: 4 KB of bins)
 
     struct rocketnet_client_config_t config;
     rocketnet_client_default_config( &config );
@@ -3833,6 +3866,12 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
                 }
                 continue;
             }
+            const bool s2c_sample = harden_s2c_stamp && harden_stamp_offset_valid.load( std::memory_order_relaxed ) && t - started >= o->delay_from && t - started <= o->delay_to;
+            if ( s2c_sample )
+            {
+                c.receive_call_prev_ns = c.receive_call_ns;
+                c.receive_call_ns = harden_wall_ns() + harden_stamp_offset_ns.load( std::memory_order_relaxed );
+            }
             rocketnet_client_update( c.client, t );
             const struct rocketnet_message_batch_t * batch;
             while ( ( batch = rocketnet_client_receive_messages( c.client ) ) != NULL )
@@ -3852,6 +3891,19 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
                         continue;
                     }
                     harden_stream_take( &c.streams[header.kind], &header, header.kind != HARDEN_KIND_BURST, &verify );
+                    if ( s2c_sample && harden_stamped( header.kind, batch->bytes[m] ) )
+                    {
+                        // the first update in the window has no previous call: unstamped, like the server's first
+                        const int64_t stamp = harden_read_stamp( batch->data[m] );
+                        if ( stamp == 0 || c.receive_call_prev_ns == 0 )
+                        {
+                            s2c_delay->unstamped++;
+                        }
+                        else
+                        {
+                            harden_delay_add( s2c_delay.get(), c.receive_call_ns - stamp, c.receive_call_ns - c.receive_call_prev_ns, o->hz );
+                        }
+                    }
                 }
             }
 
@@ -4043,6 +4095,7 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
     totals->verify.reliable_gaps += verify.reliable_gaps;
     totals->verify.back += verify.back;
     totals->verify.duplicates += verify.duplicates;
+    harden_delay_merge( &totals->s2c_delay, *s2c_delay );
     for ( int k = 0; k < HARDEN_CLIENT_SLOTS; k++ )
     {
         totals->counters[k] += counters[(size_t) k];
@@ -4186,6 +4239,10 @@ static int harden_clients_main( const harden_options_t & o )
         harden_print_term( role, name, (int64_t) v.reordered[k] );
         snprintf( name, sizeof( name ), "late_past_window_kind%d", k );
         harden_print_term( role, name, (int64_t) v.late_past_window[k] );
+    }
+    if ( harden_s2c_stamp )
+    {
+        harden_delay_print( "harden_s2c_delay_total", o.delay_to, totals.s2c_delay );
     }
     harden_print_term( role, "errors", (int64_t) v.errors );
     harden_print_term( role, "reliable_gaps", (int64_t) v.reliable_gaps );
@@ -5073,6 +5130,12 @@ int main( int argc, char ** argv )
     if ( harden_input_stamp && ( o.input_bytes < HARDEN_HEADER_BYTES + HARDEN_STAMP_BYTES || o.input_stamp_port > 65535 ) )
     {
         fprintf( stderr, "harden_load: --input-stamp needs --input-bytes of at least %d and a port up to 65535\n", HARDEN_HEADER_BYTES + HARDEN_STAMP_BYTES );
+        return 2;
+    }
+    harden_s2c_stamp = o.s2c_stamp;
+    if ( harden_s2c_stamp && !harden_input_stamp )
+    {
+        fprintf( stderr, "harden_load: --s2c-stamp on needs --input-stamp (the clock offset)\n" );
         return 2;
     }
 
