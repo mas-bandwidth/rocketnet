@@ -45,6 +45,9 @@ class CheckPlatformPolicyTest(unittest.TestCase):
             lines.setdefault(name, []).append(line)
         for name, listed in lines.items():
             (self.root / name).write_text("\n".join(listed) + "\n")
+        for name in check_platform_policy.FUNCTIONAL_TIER_SOURCES:
+            if not (self.root / name).exists():
+                (self.root / name).write_text("int tier_source = 0;\n")
         (self.root / ".github" / "workflows").mkdir(parents=True)
         (self.root / ".github" / "workflows" / "ci.yml").write_text(WORKFLOW)
         (self.root / "docs").mkdir()
@@ -58,6 +61,15 @@ class CheckPlatformPolicyTest(unittest.TestCase):
 
     def write_table(self, rows):
         (self.root / "docs" / "PLATFORMS.md").write_text("# Platforms\n\n" + HEADER + rows + "\n")
+
+    def test_a_wildcard_bind_in_a_tier_source_outside_functional_is_refused(self):
+        # the macOS transport binary is built from tests/test_msgx.cpp, not tests/functional/
+        self.write_table(SUPPORTED.format(label="ubuntu-24.04"))
+        (self.root / "tests" / "test_msgx.cpp").write_text('const char * bind = "0.0.0.0:40000";\n')
+        result = self.run_tool(self.root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("tests/test_msgx.cpp:1: wildcard address in the functional tier is not on the listed set",
+                      result.stderr)
 
     def test_backed_claims_pass(self):
         self.write_table(SUPPORTED.format(label="ubuntu-24.04") + UNSUPPORTED)

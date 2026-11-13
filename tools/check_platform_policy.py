@@ -18,11 +18,26 @@ DOCUMENT = ROOT / "docs" / "PLATFORMS.md"
 FUNCTIONAL = ROOT / "tests" / "functional"
 FUNCTIONAL_SUFFIXES = (".cpp", ".h", ".inc")
 
+# The functional tier's sources outside tests/functional/: the test binaries
+# CMakeLists.txt names in "Functional-tier binaries" (test_lifecycle,
+# test_transport, test_transport_control, test_xdp, test_xdp_filter,
+# test_msgx, test_iocp). Their wildcard literals are held to the same list.
+FUNCTIONAL_TIER_SOURCES = (
+    "tests/test_lifecycle.cpp",
+    "tests/test_driver.cpp",
+    "tests/test_transport_control.cpp",
+    "tests/test_xdp.cpp",
+    "tests/test_xdp_filter.cpp",
+    "tests/test_msgx.cpp",
+    "tests/test_iocp.cpp",
+)
+
 # A string literal naming a wildcard address, with or without a port: "0.0.0.0",
 # "::", "[::]", "0.0.0.0:40000", "[::]:0".
 WILDCARD = re.compile(r'"(?:0\.0\.0\.0|::|\[::\])(?::\d+)?"')
 
-# Every wildcard literal tests/functional/ may hold, keyed by file and stripped line,
+# Every wildcard literal the functional tier (tests/functional/ and
+# FUNCTIONAL_TIER_SOURCES) may hold, keyed by file and stripped line,
 # with the reason it stays. A wildcard bind on macOS is subject to the
 # application firewall, so a case that only needs loopback binds the loopback
 # address of its family (127.0.0.1 or ::1) with port 0 instead. A line here
@@ -50,6 +65,12 @@ WILDCARD_ALLOWED = {
     ("tests/functional/rocketnet_functional_tests.cpp",
      'void rocketnet_test_iocp_client_transport_wire_dual_stack() { iocp_client_wire( "[::]", "127.0.0.1" ); }'):
         "iocp dual-stack case (Windows): an ipv4 client of the ipv6 wildcard",
+    ("tests/test_iocp.cpp",
+     'rocketnet_address_t bind = address( "[::]:0" );'):
+        "iocp datagrams case (Windows only, no macOS firewall): the ipv6 wildcard takes ipv4 and ipv6 clients",
+    ("tests/test_iocp.cpp",
+     'const char * binds[] = { "0.0.0.0:0", "[::]:0" };'):
+        "Windows port-exclusivity case: it is about wildcard binds, so it binds them",
 }
 
 TIERS = {"supported", "nightly", "unsupported"}
@@ -262,22 +283,32 @@ def check_row(row, workflow_cache, root=ROOT):
     return []
 
 
-def check_wildcard_binds(root=ROOT, allowed=None):
-    """Return the failures for wildcard address literals in tests/functional/.
+def check_wildcard_binds(root=ROOT, allowed=None, tier_sources=None):
+    """Return the failures for wildcard address literals in the functional tier:
+    tests/functional/ and the FUNCTIONAL_TIER_SOURCES in tests/.
 
-    Every line of tests/functional/ holding a WILDCARD literal must be a key of
+    Every line of those files holding a WILDCARD literal must be a key of
     WILDCARD_ALLOWED, at most as many times as the list names it, and every
-    listed line must still occur. The allowed set defaults to WILDCARD_ALLOWED;
-    only the self-check passes another.
+    listed line must still occur; a listed tier source that no longer exists
+    fails. The allowed set and the tier sources default to the module's;
+    only the self-check passes others.
     """
     if allowed is None:
         allowed = WILDCARD_ALLOWED
+    if tier_sources is None:
+        tier_sources = FUNCTIONAL_TIER_SOURCES
     found = Counter()
     where = {}
+    failures = []
     directory = root / "tests" / "functional"
-    for path in sorted(directory.iterdir()):
-        if path.suffix not in FUNCTIONAL_SUFFIXES or not path.is_file():
-            continue
+    paths = [path for path in sorted(directory.iterdir()) if path.suffix in FUNCTIONAL_SUFFIXES and path.is_file()]
+    for relative in tier_sources:
+        if (root / relative).is_file():
+            paths.append(root / relative)
+        else:
+            failures.append(f"{relative}: functional-tier source does not exist; "
+                            "update FUNCTIONAL_TIER_SOURCES from CMakeLists.txt")
+    for path in paths:
         relative = path.relative_to(root).as_posix()
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if WILDCARD.search(line):
@@ -285,12 +316,11 @@ def check_wildcard_binds(root=ROOT, allowed=None):
                 found[key] += 1
                 where.setdefault(key, []).append(number)
 
-    failures = []
     for key, count in found.items():
         if key not in allowed or count > 1:
             for number in where[key][0 if key not in allowed else 1:]:
                 failures.append(
-                    f"{key[0]}:{number}: wildcard address in tests/functional/ is not on "
+                    f"{key[0]}:{number}: wildcard address in the functional tier is not on "
                     f"the listed set; bind 127.0.0.1 or ::1 with port 0, or list "
                     f"it in WILDCARD_ALLOWED with its reason: {key[1]}"
                 )
@@ -310,33 +340,48 @@ def self_check(check=check_wildcard_binds):
     import tempfile
 
     name = "tests/functional/case.cpp"
+    tier = "tests/test_tier.cpp"
     listed_line = 'void listed_case() { wire( "[::]", "127.0.0.1" ); }'
     unlisted_line = 'rocketnet_check( rocketnet_address_parse( &bind_address, "0.0.0.0:40000" ) );'
     allowed = {(name, listed_line): "listed for the self-check"}
 
+    # (label, file, lines, the expected failure text)
     cases = [
-        ("unlisted wildcard literal", [unlisted_line, listed_line], "is not on the listed set"),
-        ("listed line beyond its count", [listed_line, listed_line], "is not on the listed set"),
-        ("listed line absent", ["int unrelated = 0;"], "no longer occurs"),
+        ("unlisted wildcard literal", name, [unlisted_line, listed_line], "is not on the listed set"),
+        ("listed line beyond its count", name, [listed_line, listed_line], "is not on the listed set"),
+        ("listed line absent", name, ["int unrelated = 0;"], "no longer occurs"),
+        ("unlisted wildcard in a tier source outside tests/functional/", tier, [unlisted_line],
+         "is not on the listed set"),
     ]
     problems = []
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         (root / "tests" / "functional").mkdir(parents=True)
+
+        def write_clean():
+            (root / name).write_text(listed_line + "\n", encoding="utf-8")
+            (root / tier).write_text("int tier_case = 0;\n", encoding="utf-8")
+
         # The clean tree must pass, or the cases below prove nothing.
-        (root / name).write_text(listed_line + "\n", encoding="utf-8")
-        clean = check(root=root, allowed=allowed)
+        write_clean()
+        clean = check(root=root, allowed=allowed, tier_sources=(tier,))
         if clean:
             problems.append(f"self-check: clean tree was reported: {clean}")
-        for label, lines, expected in cases:
-            (root / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
-            reported = check(root=root, allowed=allowed)
+        for label, path, lines, expected in cases:
+            write_clean()
+            (root / path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+            reported = check(root=root, allowed=allowed, tier_sources=(tier,))
             if not any(expected in failure for failure in reported):
                 problems.append(f"self-check: {label} was not reported ({expected!r})")
+        write_clean()
+        (root / tier).unlink()
+        reported = check(root=root, allowed=allowed, tier_sources=(tier,))
+        if not any("functional-tier source does not exist" in failure for failure in reported):
+            problems.append("self-check: a listed tier source that is gone was not reported")
     return problems
 
 
-def accept_everything(root=ROOT, allowed=None):
+def accept_everything(root=ROOT, allowed=None, tier_sources=None):
     """A deliberately broken check, used to see the self-check fail."""
     return []
 
@@ -362,7 +407,7 @@ def main():
         for problem in problems:
             print(f"check_platform_policy: {problem}", file=sys.stderr)
         if not problems:
-            print("check_platform_policy: self-check: 3 violations reported, clean tree passes")
+            print("check_platform_policy: self-check: 5 violations reported, clean tree passes")
         return 1 if problems else 0
 
     root = args.root
@@ -395,7 +440,7 @@ def main():
     print(
         f"check_platform_policy: {supported} supported, {nightly} nightly, "
         f"{unsupported} unsupported row(s) match their named workflows; "
-        f"{len(WILDCARD_ALLOWED)} listed wildcard line(s) in tests/functional/"
+        f"{len(WILDCARD_ALLOWED)} listed wildcard line(s) in the functional tier"
     )
     return 0
 
