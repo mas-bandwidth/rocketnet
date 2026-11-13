@@ -5,10 +5,11 @@
 (* something to do, 96 the maximal message, the whole ring, as SR = B at   *)
 (* the defaults), and four send descriptors, so four spans can be live    *)
 (* and freed in any order.                                                 *)
-(* MCRNSendSpans.cfg is the committed run with every rule on.             *)
-(* MCRNSendSpansBrokenFloorAtNewest.cfg and                               *)
-(* MCRNSendSpansBrokenNoPadding.cfg are the reversed witnesses, each the   *)
-(* committed file with one rule's constant flipped.                        *)
+(* MCRNSendSpans.cfg is the committed run with every rule on;             *)
+(* MCRNSendSpansRefuse.cfg and MCRNSendSpansAbort.cfg are the controls of  *)
+(* the refusal and the abort.  Each MCRNSendSpansBroken*.cfg (CASES.tsv    *)
+(* group rnsendspans) flips one rule's constant and must violate the       *)
+(* property it names.                                                      *)
 (***************************************************************************)
 EXTENDS RNSendSpans
 =============================================================================

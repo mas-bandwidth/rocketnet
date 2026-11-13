@@ -69,6 +69,11 @@ A client owns one region; it is the same machine with one slot.
   exhaustion), never the previous connection's end. A free slot's region may
   still hold the ended connection's state (the lazy reset); the `Connect`
   that takes it carves it first.
+- **`ConnectStartsFresh`** (action property): a slot that goes from `Free`
+  to `Connected` has a fresh region (no room used, not exhausted, no reason,
+  no records) and a zero refusal count. It sees what `ReusedSlotStartsClean`
+  cannot: an inherited room, or an inherited exhaustion with its reason when
+  the same client comes back to the slot.
 - **`RefusalLeavesStateUnchanged`** (action property): a start the fit
   refuses leaves its slot as it was; `refused` moves by one for a refusal for
   no room and not at all for a refusal of an exhausted region.
@@ -76,7 +81,7 @@ A client owns one region; it is the same machine with one slot.
   slot. One slot's use or exhaustion never changes another slot's state or
   region.
 - **`ExhaustedEventuallyFree`** (liveness): an exhausted slot is eventually
-  `Free`, kicked and then reset.
+  `Free`, kicked and then freed.
 - **`ExhaustedReasonNamed`** (invariant): a slot is exhausted exactly when its
   reason is `MESSAGE_MEMORY_EXHAUSTED`.
 - **`UsedBounded`** and **`TypeOK`**.
@@ -88,6 +93,7 @@ A client owns one region; it is the same machine with one slot.
 | `MCRNConnectionMemoryBrokenNoReset.cfg` | `Reset = FALSE`: `Connect` binds a reused slot without the carve | `ReusedSlotStartsClean` |
 | `MCRNConnectionMemoryBrokenCarryOn.cfg` | `CarryOn = TRUE`: an exhausted connection keeps taking room (`Use`, `UseSpan`) | `ExhaustionOnlyLeadsToDisconnect` |
 | `MCRNConnectionMemoryBrokenCountExhausted.cfg` | `CountExhausted = TRUE`: a refusal of an exhausted region is counted in `send_refused` | `RefusalLeavesStateUnchanged` |
+| `MCRNConnectionMemoryBrokenNoCarve.cfg` | `Reset = FALSE`, checked against `ConnectStartsFresh` alone (two slots, two clients) | `ConnectStartsFresh` |
 
 The traces TLC printed, checked against the code by hand:
 
@@ -136,9 +142,11 @@ still takes a slot another client freed), a region of three records.
 
 - `Capacity` stands for every part of the region at once. The code has
   several pools (the three store classes, the descriptor pool, the receive
-  ring, the holds). Any one of them refusing is `Exhaust`.
-- The receive side's no-room sites are not wired to `rn_region_exhaust` yet;
-  the objects layer wires them with the kick.
+  ring, the holds). A send that any of them refuses is `Refuse`; a receive
+  placement that one of them cannot hold is `Exhaust`.
+- The receive side's no-room sites call `rn_region_exhaust`
+  (sdk/rocketnet_channel.cpp, sdk/rocketnet_channel_sequenced.cpp), and the
+  owner kicks on `rn_connection_memory_decide`.
 - `Connect`, `Leave` and the disconnect itself are the objects' (layer 8). The
   region provides the state, the reason, the decision and the reset.
 

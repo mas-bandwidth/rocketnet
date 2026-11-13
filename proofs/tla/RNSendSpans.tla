@@ -24,8 +24,11 @@
 (* spell out (ListInAllocationOrder).                                      *)
 (*                                                                         *)
 (* The region reset (Reset, rn_region_carve) clears the roots only: the    *)
-(* descriptors keep their span fields and links as dead bytes, and a span  *)
-(* linked later writes every one of its own before anything reads it.     *)
+(* descriptors keep their span fields and links as dead bytes.  A span     *)
+(* linked later writes every one of its own before anything reads it: the  *)
+(* descriptor take (rn_region_descriptor_take) memsets the descriptor and  *)
+(* rn_span_link writes span_start, span_prev and span_next, which Alloc    *)
+(* does in one step.                                                       *)
 (*                                                                         *)
 (* These constants flip one rule each for the reversed witnesses:          *)
 (*   FloorAtOldest = FALSE  the floor (head) follows the newest span's     *)
@@ -42,12 +45,7 @@
 (*                          no room undoes it with rn_span_unlink;         *)
 (*   UndoTail       = FALSE  freeing the newest span leaves the tail where  *)
 (*                          it was (v1.0.0 to v1.1.3): an aborted start's  *)
-(*                          bytes stay taken until the older spans go;     *)
-(*   LinkClearsNext = FALSE  the link leaves the new span's span_next as   *)
-(*                          the descriptor held it, as if the pool were    *)
-(*                          clear; a carve leaves a span live at it with   *)
-(*                          its links (Reset), so the new newest span      *)
-(*                          names a dead next.                             *)
+(*                          bytes stay taken until the older spans go.     *)
 (*                                                                         *)
 (* A refused start runs the code's steps in the code's order:              *)
 (* rn_region_send_fit_span takes a const region (exhausted, then           *)
@@ -69,13 +67,12 @@ CONSTANTS
     RefuseExhausts, \* FALSE in the code (TRUE: v1.0's send-side kick)
     LinkFirst,      \* FALSE in the code (TRUE: link before the floor test, unlink on no room)
     CountMod,       \* the refusal counter and the calls ghost run 0..CountMod-1
-    UndoTail,       \* TRUE in the code (FALSE: v1.0.0 to v1.1.3)
-    LinkClearsNext  \* TRUE in the code: rn_span_link writes span_next = RN_DESCRIPTOR_NONE
+    UndoTail        \* TRUE in the code (FALSE: v1.0.0 to v1.1.3)
 
 ASSUME SR > 0 /\ SR % 16 = 0
 ASSUME Lengths \subseteq 1..SR
 ASSUME Q \in Nat \ {0}
-ASSUME LinkFirst \in BOOLEAN /\ CountMod \in Nat \ {0} /\ LinkClearsNext \in BOOLEAN
+ASSUME LinkFirst \in BOOLEAN /\ CountMod \in Nat \ {0}
 
 NONE == 0
 D == 1..Q
@@ -113,12 +110,10 @@ Ring == <<head, tail, first, last, live, order,
           [d \in live |-> prv[d]], [d \in live |-> nxt[d]],
           [d \in live |-> start[d]], [d \in live |-> len[d]], exhausted, tailUndo>>
 
-\* The fingerprint for the passing configurations (VIEW View): a descriptor
-\* that is not live holds dead span fields (a carve leaves them; Reset), and
-\* with LinkClearsNext no action and no property reads them before the link
-\* writes them, so states that differ only there are one state.  The
-\* LinkClearsNext = FALSE witness reads a dead span_next and runs without
-\* the view.
+\* The fingerprint for MCRNSendSpans.cfg (VIEW View): a descriptor that is
+\* not live holds dead span fields (a carve leaves them; Reset), and no
+\* action and no property reads them before the take and the link write
+\* them (Alloc), so states that differ only there are one state.
 View == <<Ring, refused, calls, fresh, admitted>>
 
 \* rn_span_round16
@@ -172,8 +167,7 @@ Alloc(l, d) ==
     /\ start' = [start EXCEPT ![d] = s]
     /\ len'   = [len EXCEPT ![d] = l16]
     /\ prv' = [prv EXCEPT ![d] = last]
-    /\ nxt' = [x \in D |-> IF x = d THEN (IF LinkClearsNext THEN NONE ELSE nxt[d])
-                           ELSE IF x = last THEN d ELSE nxt[x]]
+    /\ nxt' = [x \in D |-> IF x = d THEN NONE ELSE IF x = last THEN d ELSE nxt[x]]
     /\ first' = IF last = NONE THEN d ELSE first
     /\ head'  = IF last = NONE THEN s
                 ELSE IF FloorAtOldest THEN head ELSE s
@@ -322,7 +316,8 @@ StartStep(l) == (\E d \in D : Alloc(l, d)) \/ Refuse(l)
 \* before it, leaves the ring, its links and the region exactly as they
 \* were (standard/MESSAGES.md m1.7, rule 2), whatever it did on the way;
 \* the refusal counter alone moves, by one (design (L)1). Reversed by
-\* LinkFirst (span_tail left past the unlinked span) and RefuseExhausts.
+\* LinkFirst (the link and unlink give the tail back but spend
+\* span_tail_undo, which Ring carries) and RefuseExhausts.
 RefuseLeavesRing ==
     [][\A l \in Lengths : StartStep(l) /\ ~FitOK(l) =>
           /\ Ring' = Ring

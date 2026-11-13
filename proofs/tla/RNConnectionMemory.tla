@@ -266,6 +266,22 @@ ReusedSlotStartsClean ==
             /\ records[s] \subseteq {owner[s]}
             /\ reason[s] \in {"none", Exhausted}
 
+\* What the carve guarantees, named by the slot's change rather than by the
+\* action: a slot that goes from Free to Connected has a fresh region (no
+\* room used, not exhausted, no reason, no records) and a zero refusal
+\* count, whatever the ended connection left in it.  ReusedSlotStartsClean
+\* cannot see an inherited room or an inherited exhaustion with its reason
+\* (the same client back on the slot); this does.  Reversed by Reset = FALSE
+\* (MCRNConnectionMemoryBrokenNoCarve.cfg).
+ConnectStartsFresh ==
+    [][\A s \in Slots :
+          (state[s] = "Free" /\ state'[s] = "Connected") =>
+              /\ used'[s] = 0
+              /\ ~exhausted'[s]
+              /\ reason'[s] = "none"
+              /\ records'[s] = {}
+              /\ refused'[s] = 0]_vars
+
 \* A send start of n records: the take with room (Use for one record,
 \* UseSpan for a span), or the start the region refuses.
 StartStep(s, n) ==

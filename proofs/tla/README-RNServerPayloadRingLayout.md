@@ -102,8 +102,13 @@ Frame stride 2 (the broken recovery divides by 1), a chunk of two slots.
 `MCRNServerPayloadRingLayout.cfg` runs three threads on one line at a capacity
 of four, the ring exactly the capacity (as configured client counts at or
 above 512 produce), the guard for one line and five as the take bound: the
-chunk branch, its clip at the capacity, a lost install, the single fetch-add
-and refused takes of both kinds are reached. `MCRNServerPayloadRingLayoutSpare.cfg`
+chunk branch, a lost install, the single fetch-add and refused takes of both
+kinds are reached. The counter moves by two until the guard trips, so no claim
+there is clipped. `MCRNServerPayloadRingLayoutClip.cfg` runs two threads on one
+line at an odd capacity of five (ring five, take bound six): both can pass the
+guard at count 2, one claims base 2, and the other's claim gets base 4, clipped
+to end 5, the one-slot claim that returns `base` with no install.
+`MCRNServerPayloadRingLayoutSpare.cfg`
 runs three threads on two lines, two sharing one, with the guard for two
 lines and a ring one larger than the capacity of four (the relation below the
 ring's allocation floor). The witnesses run one or two threads on one line.
