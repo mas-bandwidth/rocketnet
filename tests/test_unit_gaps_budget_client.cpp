@@ -562,6 +562,69 @@ static void test_gaps_budget_client_plan_is_what_create_allocates()
 
 REGISTER_UNIT_TEST( test_gaps_budget_client_plan_is_what_create_allocates );
 
+// defects/budget-6783: the portable client's required memory is exactly what
+// a create racing both families allocates with the portable client's real
+// records (its socket, its three-pointer record, the platform's wake). Today
+// the plan's mirror of the wake is short of the real one on Linux (16 bytes
+// against 24) and on a Windows development build (32 against 48), so the
+// plan is one wake gap short per socket. Registered expected-fail on those
+// platforms: the suite stays green while the defect is open, and the case
+// fails ("expected to fail ... but passed; remove the marker") once the fix
+// lands, so whoever lands it removes the marker below. macOS's mirror matches
+// its wake, so there it is an ordinary case. The check is the case's last
+// statement, after the heap and environment are put back, and it prints
+// nothing of its own while expected to fail (the passing output is names only).
+
+static void test_gaps_budget_client_portable_plan_is_the_real_allocation()
+{
+    gc_env_saved_t saved[GC_ENV_NAMES];
+    gc_env_set_aside( saved );
+    gc_begin();
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    gc_make_token( token, GC_FAMILY_IPV4 | GC_FAMILY_IPV6, rocketnet_dev_server_public_key );
+
+    struct rocketnet_client_transport_config_t portable;
+    gc_client_config( &portable, "portable", 1 );
+    portable.time_callback = gc_clock;
+    const uint64_t plan = rocketnet_client_transport_required_memory( &portable, "portable" );
+
+    const rocketnet_client_transport_io_operations_t operations = gc_io_operations();
+    const uint64_t bytes_before = gc_heap.bytes;
+    const int opens_before = gc_io_opens;
+    int status = -1;
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_internal( &gc_heap, token, &portable, 1000.0, &operations, &gc_heap, &status );
+    const bool created = client != NULL;
+    const uint64_t allocated = gc_heap.bytes - bytes_before;
+    const int opens = gc_io_opens - opens_before;
+    rn_test_client_transport_stop_and_destroy( client );
+
+    gc_end();
+    gc_env_put_back( saved );
+
+    // the setup and the shape of the shortfall are ordinary checks even while
+    // the marker stands: the create raced both families, and the plan is
+    // short by at most the two wakes (the defect), never over and never more
+
+    bool * expecting = rocketnet_unit_expected_fail_active();
+    const bool expected_fail = *expecting;
+    *expecting = false;
+    check( plan > 0 );
+    check( created );
+    check( opens == 2 );
+    check( allocated >= plan );
+    check( allocated - plan <= 2 * rocketnet_platform_wake_allocation_bytes() );
+    *expecting = expected_fail;
+
+    check( plan == allocated );
+}
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+REGISTER_UNIT_TEST_EXPECTED_FAIL( test_gaps_budget_client_portable_plan_is_the_real_allocation, "budget-6783 (library fix worker a54007afeee832af3)" );
+#else  // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+REGISTER_UNIT_TEST( test_gaps_budget_client_portable_plan_is_the_real_allocation );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 // ---------------------------------------------------------------------------
 // The budget
 // ---------------------------------------------------------------------------

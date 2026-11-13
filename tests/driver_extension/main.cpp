@@ -3,6 +3,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +19,64 @@ extern rocketnet_address_t external_test_replay_last_address;
 extern rocketnet_address_t external_test_replay_forgotten_address;
 extern bool external_test_replay_has_address;
 extern bool external_test_replay_has_forgotten;
+
+#define EXPECT( x, ... ) do { if (!(x)) { fprintf(stderr, "mutation gap fault: " __VA_ARGS__); fprintf(stderr, "\n"); } CHECK( x ); } while (0)
+
+static int extension_live_blocks = 0;
+static void * extension_malloc( void *, size_t bytes )
+{
+    void * p = malloc( bytes );
+    if ( p )
+    {
+        ++extension_live_blocks;
+    }
+    return p;
+}
+static void extension_free( void *, void * p )
+{
+    if ( p )
+    {
+        --extension_live_blocks;
+    }
+    free( p );
+}
+
+#define BUDGET_EXHAUSTED_PREFIX "server transport ladder exhausted: every candidate's memory plan exceeds"
+static bool extension_budget_refusal_logged = false;
+static void extension_log( void *, enum rocketnet_log_level_t, const char * message, size_t )
+{
+    if ( strstr( message, BUDGET_EXHAUSTED_PREFIX ) )
+    {
+        extension_budget_refusal_logged = true;
+    }
+}
+
+// mutation gap: hunt 2/4990 (a budget refusal counted before any rung is
+// refused), hunt 2/5005 (no rung refused taken as a refusal): the extension
+// has no memory plan, so the operator budget neither refuses nor allows it,
+// and a 1-byte budget opens it. mutation gap: hunt 2/5327 (destroy leaves
+// the replay-mark records): the extension takes replay marks, so its server
+// holds the records, and destroy frees every block create allocated.
+static void budget_ignores_a_planless_transport( const rocketnet_server_transport_config_t * config )
+{
+    rocketnet_term();
+    CHECK( rocketnet_init( NULL, extension_malloc, extension_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( extension_log, NULL );
+
+    CHECK( rocketnet_server_transport_required_memory( config, "external_test" ) == 0 );
+    const int live_before = extension_live_blocks;
+    int status = -1;
+    auto * server = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", config, 1, &status );
+    EXPECT( server != NULL, "a 1-byte operator budget refused external_test, which has no memory plan (status %s)", rocketnet_status_name( (enum rocketnet_status_t) status ) );
+    EXPECT( !extension_budget_refusal_logged, "a 1-byte operator budget logged \"" BUDGET_EXHAUSTED_PREFIX "\" for external_test, which has no memory plan" );
+    CHECK( strcmp( rocketnet_server_transport_io_name( server ), "external_test" ) == 0 );
+    rn_native_server_transport_stop_and_destroy( server );
+    EXPECT( extension_live_blocks == live_before, "an external_test server (it takes replay marks) leaked %d blocks at destroy", extension_live_blocks - live_before );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+}
 
 int main()
 {
@@ -106,6 +165,7 @@ int main()
     CHECK( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
     rn_native_server_transport_stop_and_destroy( server );
     CHECK( external_test_creates == 2 && external_test_destroys == 2 );
+    budget_ignores_a_planless_transport( &server_config );
     rocketnet_term();
     puts( "test_external_transport_transport_exchange" );
 }
