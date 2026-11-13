@@ -130,8 +130,9 @@ static uint64_t receive_named( const struct rocketnet_uring_receive_queue_t * qu
     uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS];
     memset( totals, 0, sizeof( totals ) );
     rocketnet_uring_receive_queue_drops( queue, totals );
-    uint64_t named = counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE] + counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOURCE] +
-                     counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_NO_BUFFER] + counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_OVERFLOW];
+    // the source and no-buffer drops reach the totals as RECEIVE_FAILED, so
+    // they are counted there and not again here
+    uint64_t named = counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE] + counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_OVERFLOW];
     for ( int d = ROCKETNET_RECEIVE_ACCEPT + 1; d < ROCKETNET_RECEIVE_NUM_DROPS; d++ )
     {
         if ( d != ROCKETNET_RECEIVE_DROP_BANK_FULL )

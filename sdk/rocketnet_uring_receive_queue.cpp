@@ -795,9 +795,14 @@ void rocketnet_uring_receive_queue_drops( const struct rocketnet_uring_receive_q
     rocketnet_receive_drop_tally_sum( &queue->tally, 1, totals );
 
     // a completion the kernel refused (a negative result other than ENOBUFS
-    // or ECANCELED) is a receive the transport could not complete: the
-    // server's RECEIVE_FAILED, so a refused receive never reads as silence
-    totals[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] += queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_ERRORS].load( std::memory_order_relaxed );
+    // or ECANCELED), one that names no buffer of the ring, and a datagram
+    // whose source cannot be read are each a receive the transport could
+    // not complete: the server's RECEIVE_FAILED (standard/TRANSPORT.md, the
+    // alias table: URING_RECEIVE_DROPPED_SOURCE and _NO_BUFFER), so none
+    // reads as silence
+    totals[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] += queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_ERRORS].load( std::memory_order_relaxed ) +
+                                                     queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_NO_BUFFER].load( std::memory_order_relaxed ) +
+                                                     queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOURCE].load( std::memory_order_relaxed );
 }
 
 #if ROCKETNET_DEV
