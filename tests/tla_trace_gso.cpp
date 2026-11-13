@@ -100,6 +100,7 @@ struct gso_claim_t
     int q;
     int b;
     int slot;
+    int id_queue;                   // the queue the code says the id names
     int64_t ptr;
     uint64_t pid;
 };
@@ -336,13 +337,20 @@ static void gso_take_claim( gso_walk_t & walk, int t, const uint8_t * frame, uin
         c.b = -1;
         c.slot = -1;
         c.ptr = -1;
+        c.id_queue = -1;
         walk.oob = true;
         return;
     }
 
+    // the slot and the queue the id names are the code's own answers
+    // (rocketnet_server_gso_send_slot, the id's low part), not a test copy of
+    // the rule; a refusal there leaves the pointer's own geometry for the claim
+    int id_queue = 0;
+    const int code_slot = rocketnet_server_gso_test_send_slot( walk.gso, pid, frame, &id_queue );
     c.q = q;
     c.b = b;
-    c.slot = (int) ( offset / ROCKETNET_FRAME_STRIDE );
+    c.slot = code_slot >= 0 ? code_slot : (int) ( offset / ROCKETNET_FRAME_STRIDE );
+    c.id_queue = id_queue;
     c.ptr = gso_addr( q, b ) + offset;
     if ( c.slot >= GSO_SLOTS )
     {
@@ -474,7 +482,7 @@ static int gso_finish( gso_walk_t & walk, int t, int k, bool abort )
         }
     }
 
-    if ( (int) ( c.pid % GSO_QUEUES ) != c.q )
+    if ( c.id_queue != c.q )
     {
         walk.route_bad = true;
     }
