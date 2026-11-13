@@ -440,6 +440,7 @@ struct harden_options_t
     int churn_clients = 0;
     double churn_rate = 0.0;
     int messages = 1;
+    int input_bytes = HARDEN_INPUT_BYTES; // --input-bytes N: each player's unreliable input message a tick (honest input: about 300 B a tick, 100-200 kbps)
     int base = 1;
     int burst = 15;
     int burst_clients = 0;
@@ -656,6 +657,10 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
                 return false;
             }
         }
+        else if ( strcmp( a, "--input-bytes" ) == 0 )
+        {
+            o->input_bytes = atoi( v );
+        }
         else if ( strcmp( a, "--payload" ) == 0 )
         {
             if ( strcmp( v, "copy" ) == 0 )
@@ -764,7 +769,7 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
     }
     if ( o->max_clients < 1 || o->clients < 0 || o->threads < 1 || o->threads > HARDEN_MAX_THREADS || o->seconds <= 0.0 || o->hz <= 0.0 ||
          o->join_rate <= 0.0 || o->churn_clients < 0 || o->churn_clients > o->clients || o->churn_rate < 0.0 || o->messages < 0 ||
-         o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->fill_jobs < 0 || o->fill_jobs > HARDEN_MAX_FILL_JOBS || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES ||
+         o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->fill_jobs < 0 || o->fill_jobs > HARDEN_MAX_FILL_JOBS || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES || o->input_bytes < HARDEN_HEADER_BYTES || o->input_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 64 ||
          o->big_every < 0 || o->big_bytes < HARDEN_HEADER_BYTES || ( o->payload_copy && o->big_bytes > HARDEN_COPY_BODY_BYTES ) || o->sample_seconds < 1 || o->quiet_seconds < 0.1 || o->token_timeout < 1 ||
          o->pps < 0.0 || o->sockets < 1 || o->sockets > 4096 || o->warm_seconds < 0 || o->game_threads < 0 || o->game_threads > HARDEN_MAX_THREADS ||
          ( o->space_shape && ( o->game_threads < 2 || o->fill_jobs > 0 ) ) || o->world_ms < 0.0 || o->game_load < 0.0 || o->game_load > 1.0 )
@@ -3235,14 +3240,14 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
                     {
                         for ( int m = 0; m < o->messages; m++ )
                         {
-                            uint8_t * p = rocketnet_client_start_message( c.client, HARDEN_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, HARDEN_INPUT_BYTES );
+                            uint8_t * p = rocketnet_client_start_message( c.client, HARDEN_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, o->input_bytes );
                             if ( !p )
                             {
                                 inputs_refused++;
                                 break;
                             }
-                            harden_write_message( p, HARDEN_INPUT_BYTES, HARDEN_KIND_INPUT, c.client_id, c.connection_serial, c.next_input++ );
-                            rocketnet_client_finish_message( c.client, HARDEN_INPUT_BYTES );
+                            harden_write_message( p, o->input_bytes, HARDEN_KIND_INPUT, c.client_id, c.connection_serial, c.next_input++ );
+                            rocketnet_client_finish_message( c.client, o->input_bytes );
                             inputs_sent++;
                         }
                         if ( o->reliable_every > 0 && c.tick % (uint64_t) ( 30 * o->reliable_every ) == 0 )
@@ -3436,8 +3441,8 @@ static int harden_clients_main( const harden_options_t & o )
     }
     char utc[32];
     harden_utc( utc, sizeof( utc ) );
-    printf( "harden_clients: address=%s clients=%d threads=%d first_id=%d hz=%.0f join_rate=%.0f churn_clients=%d churn_rate=%.2f messages=%d token_timeout=%d seconds=%.0f utc=%s\n",
-            o.address.c_str(), o.clients, o.threads, o.first_id, o.hz, o.join_rate, o.churn_clients, o.churn_rate, o.messages, o.token_timeout, o.seconds, utc );
+    printf( "harden_clients: address=%s clients=%d threads=%d first_id=%d hz=%.0f join_rate=%.0f churn_clients=%d churn_rate=%.2f messages=%d input_bytes=%d token_timeout=%d seconds=%.0f utc=%s\n",
+            o.address.c_str(), o.clients, o.threads, o.first_id, o.hz, o.join_rate, o.churn_clients, o.churn_rate, o.messages, o.input_bytes, o.token_timeout, o.seconds, utc );
     fflush( stdout );
 
     static harden_client_totals_t totals;
