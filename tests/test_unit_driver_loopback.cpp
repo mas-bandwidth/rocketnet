@@ -154,6 +154,90 @@ static void test_loopback_transport_io_refuses_a_bind_when_every_ephemeral_port_
     rocketnet_loopback_test_first_port( 0 );
 }
 
+// mutation gap: me rocketnet_driver_loopback.cpp:609 i <= num_endpoints
+//
+// The port-zero scan reads exactly the 1 + max_clients endpoint records. One
+// record past them lies inside the hub's own block (the send failure counters,
+// then the server's queue: rocketnet_loopback_hub_create), so no sanitizer sees
+// a read there; this case makes that record look like a live endpoint holding
+// the next ephemeral port, so a scan that reads it skips a free port. With
+// seven clients the hub has eight records of 72 bytes on a 64-bit build: the
+// ninth record's port falls on the fourth endpoint's send failure counter and
+// its live flag on the first byte of the server queue, the address of the
+// first datagram the server received. The third client (record 3) fails one
+// send per port up to the next ephemeral port, and a datagram from 127.0.0.1
+// reaches the server. Any layout: a correct scan gives the free port.
+
+static void test_loopback_transport_io_port_zero_scan_reads_only_the_endpoints()
+{
+    const uint16_t first_port = 100;
+    rocketnet_loopback_test_first_port( first_port );
+    rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 7, NULL );
+    rocketnet_unit_check( hub != NULL );
+
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = hub;
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = hub;
+
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+
+    rocketnet_address_t server_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( server_address.port == first_port );
+
+    rocketnet_address_t client_address[4];
+    rocketnet_client_transport_io_t client[4] = {};
+    for ( int i = 0; i < 3; ++i )
+    {
+        rocketnet_unit_check( rocketnet_address_parse( &client_address[i], "127.0.0.1:0" ) );
+        rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[i], &client[i] ) );
+        rocketnet_unit_check( client_address[i].port == first_port + 1 + i );
+    }
+
+    const uint16_t next_port = (uint16_t) ( first_port + 4 );
+
+    // the third client, record 3, fails next_port sends: nothing is bound below the range
+
+    const uint8_t data[] = { 1, 2, 3, 4 };
+    rocketnet_address_t unbound;
+    rocketnet_unit_check( rocketnet_address_parse( &unbound, "127.0.0.1:9" ) );
+    for ( int i = 0; i < next_port; ++i )
+    {
+        client[2].operations->send( client[2].instance, &unbound, data, sizeof( data ) );
+    }
+    rocketnet_unit_check( client[2].operations->send_failures( client[2].instance ) == next_port );
+
+    // the first datagram into the server's queue, from 127.0.0.1
+
+    rocketnet_address_t to = server_address;
+    client[0].operations->send( client[0].instance, &to, data, sizeof( data ) );
+
+    rocketnet_unit_check( rocketnet_address_parse( &client_address[3], "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[3], &client[3] ) );
+    if ( client_address[3].port != next_port )
+    {
+        printf( "fault: the port-zero bind skipped free port %d and took %d: the ephemeral scan read a record past the hub's %d endpoints\n",
+                (int) next_port, (int) client_address[3].port, 8 );
+    }
+    rocketnet_unit_check( client_address[3].port == next_port );
+
+    rn_test_server_io_stop_and_close( &server );
+    for ( int i = 0; i < 4; ++i )
+    {
+        rocketnet_client_transport_io_close( &client[i] );
+    }
+    rocketnet_unit_check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+    rocketnet_loopback_test_first_port( 0 );
+}
+
 static void test_loopback_transport_io_exchanges_both_ways()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
@@ -1985,6 +2069,7 @@ REGISTER_UNIT_TEST( test_loopback_queue_restarts_at_slot_zero_when_empty );
 
 REGISTER_UNIT_TEST( test_loopback_transport_io_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( test_loopback_transport_io_refuses_a_bind_when_every_ephemeral_port_is_held );
+REGISTER_UNIT_TEST( test_loopback_transport_io_port_zero_scan_reads_only_the_endpoints );
 REGISTER_UNIT_TEST( test_loopback_transport_io_exchanges_both_ways );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6 );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_port_is_exclusive );

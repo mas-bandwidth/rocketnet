@@ -56,6 +56,7 @@ struct rocketnet_token_table_t
 #if ROCKETNET_DEV
     mutable uint64_t probe_steps;
     mutable uint64_t slot_steps;
+    uint64_t erase_steps;               // cells the backward-shift erase scanned (mutation gaps oob-wide)
 #endif // #if ROCKETNET_DEV
 };
 
@@ -286,6 +287,7 @@ static void rn_token_index_remove( struct rocketnet_token_table_t * table, int s
     for ( int step = 0; step < table->index_capacity; ++step )
     {
         scan = scan + 1 == table->index_capacity ? 0 : scan + 1;
+        RN_TOKEN_COUNT( table, erase_steps, 1 );
         const int entry = table->index[scan];
         if ( entry == RN_TOKEN_INDEX_EMPTY )
         {
@@ -725,3 +727,14 @@ extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_use
     return rn_token_index_start( history->claims, token_identifier );
 }
 #endif // #if ROCKETNET_DEV
+
+// mutation gaps oob-wide begin
+#if ROCKETNET_DEV
+// the cells the claim table's backward-shift erase has scanned since create:
+// a release scans its cluster's tail and the empty cell that ends it, no more
+extern "C" uint64_t rocketnet_dev_token_claim_erase_steps( const struct rocketnet_used_token_history_t * history )
+{
+    return history->claims->erase_steps;
+}
+#endif // #if ROCKETNET_DEV
+// mutation gaps oob-wide end
