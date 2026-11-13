@@ -130,9 +130,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // operations at 1000 clients, each lane its own pool) then move the server
 // by 23782776, and each lane's send gather scratch
 // (sdk/rocketnet_send_gather.h, 114728 bytes over 4096 slots) by 917824,
-// measured on aws-win-iocp-1 before the ack block memo (48 bytes a connection, +48000 server, +64 client, computed) (MSVC, x64, DEV=ON, Release). The client did
-// not move.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1493205047 )
+// measured on aws-win-iocp-1 (MSVC, x64, DEV=ON, Release). The client did
+// not move. Folding the lanes' TX threads into the completion workers then
+// moved the server by 2104 (the per-worker wakeup flags, one cache line each
+// for the 32 worker slots, less the lanes' thread and wake pointers):
+// actual=1494207727 before the ack block memo (+48000 server, +64 client, computed), measured on aws-win-iocp-1 (MSVC 19.52, x64, DEV=ON, Release).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1493207151 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210300 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
