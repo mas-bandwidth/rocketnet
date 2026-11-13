@@ -189,7 +189,7 @@ static void test_gaps_r2_ch_commit_of_packet_id_zero_records_nothing()
     rn_window_ack_commit_packet( &node.ordered.ack, 0, &number, 1, 1000.0 );
     rocketnet_assert_function( saved );
 
-    if ( ack->pkt_tail != tail|| ack->resend_count != count || node.region->send_numbers[slot].last_send != last_send )
+    if ( ack->pkt_tail != tail || ack->resend_count != count || node.region->send_numbers[slot].last_send != last_send )
     {
         printf( "a packet committed with id 0 was recorded: sent ring %llu -> %llu, resend count %u -> %u\n", (unsigned long long) tail,
                 (unsigned long long) ack->pkt_tail, count, ack->resend_count );
