@@ -1900,9 +1900,11 @@ held rather than from the number in flight.
 secret drawn for each connection.** The sender chooses every key, a channel and an
 ordering index, so with a fixed hash it could choose W keys that share one run of cells
 and make every hold and every lookup walk the run, a cost per record that grows with W.
-With the connection's own key, keys the sender chooses land as unrelated keys do, and the
-2W cells for at most W entries keep the worst probe short (34 cells at W = 1024 over 3000
-connections, against 984 with the fixed hash).
+The key is a secret drawn for each connection at every carve, so a sender that does not
+know it cannot choose keys that share a home. The tests show the old attack keys, and keys
+chosen against one known key, staying short over the sampled drawn keys (the worst probe
+34 cells at W = 1024 over 3000 connections, against 984 with the fixed hash); no bound on
+the worst probe is proven.
 
 <a id="m8"></a>
 ## m8. Blocks

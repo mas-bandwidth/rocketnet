@@ -138,13 +138,14 @@ static inline uint64_t rn_held_key( uint32_t channel, uint32_t ordering )
 // A key's home cell, keyed per connection. The sender chooses the keys, so a
 // fixed, public home let it choose W keys sharing one run of cells: every hold
 // and every lookup then walked the run, O(W) a record. The home is keyed with
-// a and b, the region's random key drawn at every carve (rn_region_carve):
-// a x + b over the 41-bit key, which a sender cannot predict without a and b,
-// then a fixed 64-bit mix whose low bits pick the cell. The plain
-// multiply-add-shift (top bits of a x + b) is universal, but on a sender's
-// structured keys (consecutive orderings) linear probing still let runs grow:
-// at W = 1024 one connection in sixty walked over 64 cells. The mix breaks
-// that linear structure, so the worst scan stays near a random table's.
+// a and b, the region's secret drawn at every carve (rn_region_carve):
+// a x + b over the 41-bit key, then a fixed 64-bit mix whose low bits pick
+// the cell. A sender that does not know a and b cannot choose keys that share
+// a home. The plain multiply-add-shift (top bits of a x + b) left runs on a
+// sender's structured keys (consecutive orderings): at W = 1024 one
+// connection in sixty walked over 64 cells. With the mix, the old attack keys
+// and keys chosen against one known key stayed at most 64 cells over the
+// sampled drawn keys (test_unit_channel_ordered.cpp); no bound is proven.
 
 static inline uint32_t rn_held_home( const rn_region_t * region, uint64_t key )
 {
