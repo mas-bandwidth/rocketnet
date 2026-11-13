@@ -704,15 +704,15 @@ What each path does with the errors it can see:
   (or sooner when main's next update wakes it). Once the server has begun
   to stop, that wait is bounded: after `ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT`
   (100) further refused attempts the worker drops the bank's unsent tail
-  and counts it in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, so a socket
+  and counts it in `ROCKETNET_COUNTER_GSO_SEND_DROPPED`, so a socket
   that stays full cannot hold the stop.
   Any other errno drops the one refused message and
   continues with the next, as the portable batch does; dropped packets
-  count in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, never resent
+  count in `ROCKETNET_COUNTER_GSO_SEND_DROPPED`, never resent
   (`sdk/rocketnet_server_gso_linux.cpp`,
   `sdk/rocketnet_server_gso.h`, `proofs/tla/RNGsoHandoff.tla` SentOrHeld).
 - **io_uring**: a send completion with a negative result counts in
-  `ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED`
+  `ROCKETNET_COUNTER_URING_SEND_DROPPED`
   (`sdk/rocketnet_server_uring_linux.cpp`,
   `sdk/rocketnet_server_uring.h`); a multishot receive that ends is armed
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is

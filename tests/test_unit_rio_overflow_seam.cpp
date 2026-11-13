@@ -27,7 +27,7 @@ bool rocketnet_server_rio_test_create_failure_unposted( bool * stopped_out, int 
 
 static void test_rio_transport_overflow_seam()
 {
-    uint64_t counters[2 * ROCKETNET_RIO_NUM_COUNTERS] = {};
+    uint64_t counters[2 * ROCKETNET_NUM_COUNTERS] = {};
     int packet_counts[2] = { 0, 0 };
     int repost_calls = 0;
     int pending_receives = 0;
@@ -36,26 +36,25 @@ static void test_rio_transport_overflow_seam()
     check( guard_hit == 0 );
 
     check( packet_counts[0] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
-    check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED] == 0 );
+    check( counters[ROCKETNET_COUNTER_RIO_PACKETS_RECEIVED] == (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    check( counters[ROCKETNET_COUNTER_RIO_RECEIVE_REPOST_FAILED] == 0 );
     check( pending_receives == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
     // The queued tail is delivered by the next update. The seam contains two
     // full banks, so both calls stay within the per-call receive bound.
 
     check( packet_counts[1] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    check( counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] ==
+    check( counters[ROCKETNET_NUM_COUNTERS + ROCKETNET_COUNTER_RIO_PACKETS_RECEIVED] ==
            2 * (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( repost_calls == 2 * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
-    for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; ++i )
     {
-        if ( i == ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED )
+        if ( i == ROCKETNET_COUNTER_RIO_PACKETS_RECEIVED )
         {
             continue;
         }
-        check( counters[i] == counters[ROCKETNET_RIO_NUM_COUNTERS + i] );
+        check( counters[i] == counters[ROCKETNET_NUM_COUNTERS + i] );
     }
 }
 

@@ -31,6 +31,7 @@
 #include "rocketnet_address.h"
 #include "../time_scale.h"
 #include "../suite_runner.h"
+#include "../counters_expect.h"
 #include "../portable_crt.h"
 
 #include <stdio.h>
@@ -461,7 +462,7 @@ static uint64_t server_receive_low_tick_refusals( const struct rocketnet_counter
 
     for ( int i = 0; i < rocketnet_num_counters(); ++i )
     {
-        if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL )
+        if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL && !rocketnet_counter_aliases_shared_row( i ) )
         {
             total += rocketnet_counter_value( counters, i );
         }
