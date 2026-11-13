@@ -2050,9 +2050,13 @@ static bool rocketnet_iocp_exclusive_probe( const rocketnet_address_t * bind_add
                  bind( probe, (sockaddr *) &address, address_bytes ) != SOCKET_ERROR;
     if ( !bound )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        // as rio's probe: a refusal for want of memory reads OUT_OF_MEMORY,
+        // any other refusal TRANSPORT_BIND_REFUSED
+        const int error = WSAGetLastError();
+        rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        rocketnet_platform_windows_create_status( status, (unsigned long) error );
         rocketnet_warn( "iocp transport refused: the exclusive probe could not bind port %d (Winsock %d): another socket holds it",
-                        bind_address->port, WSAGetLastError() );
+                        bind_address->port, error );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe, generation ) )
@@ -2700,9 +2704,13 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
             DWORD returned = 0;
             if ( WSAIoctl( socket, SIO_CPU_AFFINITY, &processor, sizeof( processor ), NULL, 0, &returned, NULL, NULL ) == SOCKET_ERROR )
             {
-                rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+                // as rio's: a refusal for want of memory reads OUT_OF_MEMORY,
+                // never a bind refusal
+                const int error = WSAGetLastError();
+                rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+                rocketnet_platform_windows_create_status( status, (unsigned long) error );
                 rocketnet_error( "iocp transport refused: SIO_CPU_AFFINITY to processor %d was refused (Winsock %d); workers share the port only through it",
-                                 iocp->processors[e], WSAGetLastError() );
+                                 iocp->processors[e], error );
                 goto failed;
             }
         }
