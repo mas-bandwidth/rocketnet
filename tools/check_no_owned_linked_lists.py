@@ -241,6 +241,7 @@ def blocks_of(tokens):
     depth = 0
     i = 0
     current = None
+    member = None           # a member function body inside a struct block
     stmt = []
     stmt_line = 0
     paren = 0
@@ -250,26 +251,37 @@ def blocks_of(tokens):
             paren += 1
         elif tok == ")":
             paren -= 1
+        target = member if member is not None else current
         if tok == "{":
             if depth == 0:
                 name = block_name([t for t, _ in tokens[max(0, i - 40):i]])
                 current = Block(name, [])
                 blocks.append(current)
-            elif stmt and current is not None:
-                current.statements.append((stmt, stmt_line))
+            elif (depth == 1 and member is None and current is not None and current.name.startswith("struct ")
+                  and block_name(stmt) and not block_name(stmt).startswith("struct ")):
+                # an in-class member function: its body is a block of its own,
+                # analysed like a free function's (the struct's fields stay
+                # with the struct block)
+                member = Block(current.name[len("struct "):] + "::" + block_name(stmt), [])
+                blocks.append(member)
+            elif stmt and target is not None:
+                target.statements.append((stmt, stmt_line))
             stmt = []
             depth += 1
         elif tok == "}":
-            if stmt and current is not None:
-                current.statements.append((stmt, stmt_line))
+            if stmt and target is not None:
+                target.statements.append((stmt, stmt_line))
             stmt = []
             depth -= 1
+            if member is not None and depth == 1:
+                member = None
             if depth <= 0:
                 depth = 0
                 current = None
+                member = None
         elif tok == ";":
-            if stmt and current is not None:
-                current.statements.append((stmt, stmt_line))
+            if stmt and target is not None:
+                target.statements.append((stmt, stmt_line))
             stmt = []
         else:
             if not stmt:
@@ -472,9 +484,7 @@ def analyse_block(block, path):
             b, e2 = parse_lvalue(toks, 2)
             if a and b and e1 == 1 and e2 == len(toks):
                 aliases[lhs] = (a, b)
-        if prim is not None and "[" not in prim and "." not in prim and "->" not in prim:
-            copies.setdefault(lhs, set()).add(prim)
-        elif prim is not None and "[" not in prim:
+        if prim is not None and "[" not in prim:
             copies.setdefault(lhs, set()).add(prim)
 
         def same(a, b):
@@ -575,9 +585,8 @@ def audit(sources, manifest_text):
                     continue
                 leaf = field.split(".")[-1]
                 if leaf in fields or container:
-                    if leaf in fields or (container and leaf):
-                        owned.append((path, line, kind, field, block.name))
-                        continue
+                    owned.append((path, line, kind, field, block.name))
+                    continue
                 external.append((path, line, kind, field, block.name, cursor, block))
     # an index link the manifest approves by file, function and field (a
     # decision recorded beside it) is not an owned list; a row that matches no
@@ -668,7 +677,18 @@ RED = {
     "fifo append": "struct desc_t { unsigned succ; };\nstruct q_t { struct desc_t * d; unsigned tail; };\nvoid add( struct q_t * q, unsigned i ) { q->d[q->tail].succ = i; q->tail = i; }",
     "pointer walk": "struct item_t { int v; struct item_t * forward; };\nint sum( struct item_t * p ) { int s = 0; for ( ; p; p = p->forward ) s += p->v; return s; }",
     "mutable parent table": "struct row_t { int parent; };\nstatic struct row_t rows[3];\nint depth( int c ) { int d = 0; for ( ; c >= 0; c = rows[c].parent ) d++; return d; }",
-    "unlisted os walk": "void scan( struct ifaddrs * a ) { for ( ; a; a = a->ifa_next ) {} freeifaddrs( a ); }",
+    # the listed find matches the manifest row, so only the unlisted-site rule
+    # can make this red (not a row left matching nothing)
+    "unlisted os walk": "int find( struct ifaddrs * a ) { int n = 0; for ( struct ifaddrs * i = a; i; i = i->ifa_next ) n++; freeifaddrs( a ); return n; }\n"
+                        "void scan( struct ifaddrs * a ) { for ( ; a; a = a->ifa_next ) {} freeifaddrs( a ); }",
+    # index links (no self-pointer field), walked and stored inside in-class
+    # member functions: only the member-body analysis sees them
+    "member function walk": "struct cell_t { unsigned link; };\n"
+                            "struct walker_t { cell_t * cells;\n"
+                            "    unsigned walk( unsigned d ) { for ( ; d != 0; d = cells[d].link ) {} return d; } };",
+    "member function link store": "struct desc_t { unsigned chain; };\n"
+                                  "struct region_t { desc_t * d; unsigned top;\n"
+                                  "    void put( unsigned i ) { d[i].chain = top; top = i; } };",
     "retained os cursor": "struct keep_t { struct ifaddrs * held; };\nvoid find( struct keep_t * k, struct ifaddrs * a ) { for ( ; a; a = a->ifa_next ) { k->held = a; } freeifaddrs( a ); }",
 }
 
