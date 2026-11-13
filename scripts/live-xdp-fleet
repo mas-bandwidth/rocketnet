@@ -363,7 +363,11 @@ fail()
 }
 
 heartbeat_pid=""
-teardown_allowed=1
+# teardown stops the server and detaches the NIC's program, so it is allowed
+# only from the arm step on: a failure before that (a build, the skew, the
+# root check, a preflight that found someone else's program attached) has
+# loaded nothing of this run and must leave the hosts as it found them.
+teardown_allowed=0
 started_clients=0
 
 stop_heartbeat()
@@ -430,6 +434,7 @@ done < "$tmp/sorted.tsv"
 # 4. server pre-flight, dead-man timer, watchdog, load, ssh check, listen.
 ssh_run "$server_ssh" sudo -n true || fail "sudo -n true failed on $server_ssh; stop with not-done (RULINGS (c))"
 ssh_run "$server_ssh" "$remote_path" preflight "$commit" "$server_nic" "$server_queues" "$server_address" || fail "server pre-flight refused"
+teardown_allowed=1
 ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" arm "$server_nic" || fail "cannot arm the dead-man timer"
 ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" start server "$commit" "$server_label" "$server_address" "$seed" "$min_each" 1000 1000 60 "$server_queues" "$server_results" "$server_status" || fail "cannot start the server"
 
