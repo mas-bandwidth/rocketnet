@@ -46,7 +46,7 @@ Two modules:
 | `ld` | a filler's last load: the budget in the guard and after the max, the claims in the retest |
 | `rpos`, `racc` | a sum read one line at a time: `started_sum`, or `tails_held` |
 | `seenS`, `seenO` | `queue_budget_now`'s first reads of the started sum and the own frames used |
-| `seenR` | its room read, and with it a ghost snapshot: own frames taken, other fillers in flight, their holds, the lines' tails, and the frames claimed since (`a`) |
+| `seenR` | its room read, and with it a ghost record: own frames taken, other fillers in flight, their holds, the lines' tails, and the frames claimed since (`a`) |
 | `roomy` | ghost: the decision that refused a single claim read room for it past every filler in flight |
 | `refused` (calls module) | the counter `SEND_RESERVE_REFUSED` |
 | `starved`, `unnamed` | ghosts: a refusal `NeverStarved` or `TailsNamed` forbids |

@@ -53,14 +53,17 @@
 (* after every frame in flight has staged still covers the reserve (less   *)
 (* the own frames taken).  NeverStarved: no single claim is refused while  *)
 (* the room its recompute read had a frame for it past the reserve, past   *)
-(* every other filler in flight (at least one frame each, its chunk claim  *)
-(* and the frames it is giving back when more) and past every line's       *)
-(* tail; nor refused for good while the claims its retest loaded leave a   *)
-(* frame under the budget.  TailsNamed: a refusal the code counts as       *)
-(* SEND_RESERVE_REFUSED (its read of the lines found no tail and no chunk  *)
-(* claim) had no room, at the decision that refused it, for its frame past *)
-(* the reserve and every filler in flight: the plain counter is a true     *)
-(* full, the tails' refusals counted apart.                                *)
+(* what the other fillers held at that read (a claim added, a frame        *)
+(* granted and not yet staged or counted, the claims being given back, an  *)
+(* own frame not yet staged), past every line's tail, and past what they   *)
+(* claimed since; nor refused for good while the claims its retest loaded  *)
+(* leave a frame under the budget.  TailsNamed: a refusal the code counts  *)
+(* as SEND_RESERVE_REFUSED (its read of the lines found no tail and no     *)
+(* chunk claim) had no room, at the decision that refused it, for its      *)
+(* frame past the reserve and every filler in flight: the plain counter is *)
+(* a true full, the tails' refusals counted apart.  The code breaks it     *)
+(* (MCRNSendReserveCodeTailsNamed.cfg): it reads the lines after the       *)
+(* decision, when held frames may be on no line word or already staged.    *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -157,16 +160,20 @@ ChunkHold(g) == IF pc[g] \in Checking /\ size[g] > 1 THEN size[g] ELSE 0
 \* what the code's tails_held reads on line l: its tail and its chunk claims
 TailsOn(l) == tail[l] + SumOver([g \in Fillers |-> IF LineOf(g) = l THEN ChunkHold(g) ELSE 0], Fillers)
 
-\* another filler's hold on the room: its chunk claim, the frames it is
-\* giving back, the frame it staged and has not counted; one frame at least
-\* while it is in flight
-Held(g) == IF pc[g] = "idle" THEN 0
-           ELSE Max(1, ChunkHold(g) + ret[g] + (IF pc[g] = "counting" THEN 1 ELSE 0))
+\* another filler's hold on the room: the claim it has added and not taken
+\* back, its granted frame not yet staged, the frame it staged and has not
+\* counted (the budget's reads miss it), the claims it is giving back, its
+\* own frame taken and not yet staged.  A filler with no claim added holds
+\* nothing: what it claims after a read is counted then (Acquired)
+Held(g) == CASE pc[g] \in {"claimed", "read1", "read2", "read3", "raise", "test", "refused"} -> size[g]
+             [] pc[g] \in {"granted", "counting", "ownio"} -> 1
+             [] pc[g] = "returning" -> ret[g]
+             [] OTHER -> 0
 
 \* the room read (Read2) and, at that same step, the own frames taken, the
 \* other fillers in flight and their holds, and the lines' tails: frames
 \* held then are inside that room.  a counts the frames the other fillers
-\* claimed since (a claim's add, an own frame taken), up to MaxFree + 1,
+\* claimed since (a claim's add), up to MaxFree + 1,
 \* past which no room read can have them
 Snap(f) == [r |-> free, o |-> ownTaken, b |-> Busy(f), t |-> Tails, a |-> 0,
             h |-> SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE Held(g)], Fillers)]
@@ -283,9 +290,8 @@ OwnClaim(f) ==
     /\ ownUsed' = IF OwnCountFirst THEN ownUsed + 1 ELSE ownUsed
     /\ pc' = [pc EXCEPT ![f] = "ownio"]
     /\ claimsDone' = [claimsDone EXCEPT ![f] = @ + 1]
-    /\ seenR' = Acquired(f, 1)
     /\ UNCHANGED <<free, claims, budget, tail, size, claim, ret, ld, rpos, racc, seenS,
-                   seenO, roomy, starved, unnamed, retired, phases>>
+                   seenO, seenR, roomy, starved, unnamed, retired, phases>>
 
 \* staged; or the transport refuses it (no room, or its own reason): the
 \* client's keep-alive stays due and its frame stays in the reserve

@@ -347,11 +347,12 @@ Spec == Init /\ [][Next]_vars
 (* Properties                                                              *)
 (***************************************************************************)
 
-\* once a game frame is granted on a queue, the room left there covers its
-\* reserve, less the own frames used: the next update's protocol frames are
+\* once a game frame is granted on a queue, the room left there after the
+\* tail its thread holds has staged covers its reserve, less the own frames
+\* used: the next update's protocol frames are
 \* never refused for the game packets' sake (RNSendReserve ReserveKept
 \* between calls)
-ReserveKept == \A q \in Queues : started[q] > 0 => free[q] + ownUsed[q] >= reserve[q]
+ReserveKept == \A q \in Queues : started[q] + tail[q] > 0 => free[q] + ownUsed[q] >= reserve[q] + tail[q]
 
 \* no start is refused for the reserve while its queue's room holds a frame
 \* above it (RNSendReserve NeverStarved between calls)
