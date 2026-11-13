@@ -3,8 +3,9 @@
 # One seed fixes a whole dst run: the wire's loss, duplication, delay, jitter and
 # reordering, the keys, and the mocked clock. The same seeds and options must
 # print the same trace on every OS, or a failing seed found on one OS cannot be
-# replayed on another. Each leg builds Release dst and test, runs the
-# test_dst_ unit cases by --run, runs `dst --seeds 1-50` and fails unless its
+# replayed on another. Each leg builds Release dst and test, runs every
+# test_dst_ unit case `test --list` names, each by --run, runs
+# `dst --seeds 1-50` and fails unless its
 # PASS line carries DST_REFERENCE_TRACE below, then requires every check to
 # pass over the fixed range 1-2050, then runs one named short step per fault
 # schedule (seeds 1-50; a schedule that fires zero times fails its step), then
@@ -111,25 +112,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for c in test_dst_same_seed_same_trace test_dst_seeds_differ test_dst_substreams_independent \
-            test_dst_seed_range_uint64_max_terminates test_dst_fail_names_seed test_dst_server_kick_reaches_slot_holder \
-            test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
-            test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
-            test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
-            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
-            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
-            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
-            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
-            test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
-            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289 \
-            test_dst_reliable_timeout_ends_connections_cleanly test_dst_outage_holds_dark_sessions \
-            test_dst_outage_past_times_out_both_ends test_dst_witness_outage_bright_fails \
-            test_dst_check_reliable_owed_by_step_fails test_dst_check_reliable_in_flight_slack_passes \
-            test_dst_check_unscheduled_end_fails test_dst_check_refusals_agree_and_floor \
-            test_dst_check_probe_paced_bound test_dst_check_bright_and_outage_end; do
+          # every registered test_dst_ case, as the binary itself lists them (--list), never a
+          # hand-kept copy of the names that goes stale as cases are added
+          list="$("$DST_BIN/test$DST_EXE" --list | tr -d '\r')"
+          cases="$(printf '%s\n' "$list" | grep '^test_dst_' || true)"
+          [ -n "$cases" ] || { echo "check failed: test --list names no test_dst_ case"; exit 1; }
+          n=0
+          for c in $cases; do
             "$DST_BIN/test$DST_EXE" --run "$c"
+            n=$((n + 1))
           done
+          echo "test_dst_ unit cases: $n run"
 
       - name: Run the unit suite (Release, ROCKETNET_DEV=ON)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -349,25 +342,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for c in test_dst_same_seed_same_trace test_dst_seeds_differ test_dst_substreams_independent \
-            test_dst_seed_range_uint64_max_terminates test_dst_fail_names_seed test_dst_server_kick_reaches_slot_holder \
-            test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
-            test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
-            test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
-            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
-            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
-            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
-            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
-            test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
-            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289 \
-            test_dst_reliable_timeout_ends_connections_cleanly test_dst_outage_holds_dark_sessions \
-            test_dst_outage_past_times_out_both_ends test_dst_witness_outage_bright_fails \
-            test_dst_check_reliable_owed_by_step_fails test_dst_check_reliable_in_flight_slack_passes \
-            test_dst_check_unscheduled_end_fails test_dst_check_refusals_agree_and_floor \
-            test_dst_check_probe_paced_bound test_dst_check_bright_and_outage_end; do
+          # every registered test_dst_ case, as the binary itself lists them (--list), never a
+          # hand-kept copy of the names that goes stale as cases are added
+          list="$("$DST_BIN/test$DST_EXE" --list | tr -d '\r')"
+          cases="$(printf '%s\n' "$list" | grep '^test_dst_' || true)"
+          [ -n "$cases" ] || { echo "check failed: test --list names no test_dst_ case"; exit 1; }
+          n=0
+          for c in $cases; do
             "$DST_BIN/test$DST_EXE" --run "$c"
+            n=$((n + 1))
           done
+          echo "test_dst_ unit cases: $n run"
 
       - name: Run the unit suite (Release, ROCKETNET_DEV=ON)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -619,25 +604,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for c in test_dst_same_seed_same_trace test_dst_seeds_differ test_dst_substreams_independent \
-            test_dst_seed_range_uint64_max_terminates test_dst_fail_names_seed test_dst_server_kick_reaches_slot_holder \
-            test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
-            test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
-            test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
-            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
-            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
-            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
-            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
-            test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
-            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289 \
-            test_dst_reliable_timeout_ends_connections_cleanly test_dst_outage_holds_dark_sessions \
-            test_dst_outage_past_times_out_both_ends test_dst_witness_outage_bright_fails \
-            test_dst_check_reliable_owed_by_step_fails test_dst_check_reliable_in_flight_slack_passes \
-            test_dst_check_unscheduled_end_fails test_dst_check_refusals_agree_and_floor \
-            test_dst_check_probe_paced_bound test_dst_check_bright_and_outage_end; do
+          # every registered test_dst_ case, as the binary itself lists them (--list), never a
+          # hand-kept copy of the names that goes stale as cases are added
+          list="$("$DST_BIN/test$DST_EXE" --list | tr -d '\r')"
+          cases="$(printf '%s\n' "$list" | grep '^test_dst_' || true)"
+          [ -n "$cases" ] || { echo "check failed: test --list names no test_dst_ case"; exit 1; }
+          n=0
+          for c in $cases; do
             "$DST_BIN/test$DST_EXE" --run "$c"
+            n=$((n + 1))
           done
+          echo "test_dst_ unit cases: $n run"
 
       - name: Seeds 1-50 print the reference trace
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
