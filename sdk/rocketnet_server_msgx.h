@@ -49,9 +49,13 @@ struct rocketnet_server_msgx_t;
 
 #define ROCKETNET_MSGX_MAX_WORKERS                                      16
 
-// per worker per flush, as the XDP transport's per-queue staging: 10 Gb/s of
-// 1200 B at 60 Hz is about 17,400 starts a frame across the workers
-#define ROCKETNET_MSGX_SEND_QUEUE_SIZE                                4096
+// per worker per flush: 10 Gb/s of 1200 B at 60 Hz is about 17,400 starts a
+// frame across the workers, and the owner's layout is 2 workers, so one
+// worker's bank holds the frame's whole peak share with room for the hash
+// (space game's peak, 15 starts a client at 1000 clients, is 15,000). At 4096
+// two workers refused 7,000 starts a frame (the XDP transport's per-queue
+// staging needed the same 16384 for 2 queues)
+#define ROCKETNET_MSGX_SEND_QUEUE_SIZE                               16384
 #define ROCKETNET_MSGX_TX_BANKS                                          3
 
 // one sendmsg_x carries at most this many datagrams of one client's run
