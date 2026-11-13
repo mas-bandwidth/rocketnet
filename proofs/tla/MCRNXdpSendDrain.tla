@@ -8,7 +8,7 @@
 (* MCRNXdpSendDrainBrokenNoRelease.cfg must fail StopFinishes;             *)
 (* MCRNXdpSendDrainBrokenNoReset.cfg, MCRNXdpSendDrainBrokenNoRing.cfg,    *)
 (* MCRNXdpSendDrainBrokenNoClaim.cfg and                                   *)
-(* MCRNXdpSendDrainBrokenShortBound.cfg (a bound of SlowGap) must fail     *)
+(* MCRNXdpSendDrainBrokenShortBound.cfg (a bound of SlowGap - 1) must fail *)
 (* NeverAbandonDraining.                                                   *)
 (***************************************************************************)
 EXTENDS RNXdpSendDrain

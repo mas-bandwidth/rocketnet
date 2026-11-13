@@ -46,15 +46,16 @@
 (* up on (NeverAbandonDraining).  "noring" is the stop drain that looked   *)
 (* at the handoff but not at the TX ring, and cuts off what the ring still *)
 (* holds (NeverAbandonDraining).  "noclaim" leaves a claimed buffer out of *)
-(* both the worker's pending and the drain's idle test, and the frames     *)
-(* still to copy from it are cut off (NeverAbandonDraining); the code      *)
+(* both the worker's pending and the drain's idle test: the drain reads    *)
+(* send_pending false from the last pass while the worker copies a buffer  *)
+(* it has just claimed, and cuts it off (NeverAbandonDraining); the code   *)
 (* counts it in both (send_worker_index >= 0, and free_count in            *)
 (* handoff_idle).  A configuration witness: a Bound no longer than the     *)
 (* ticks a healthy NIC's longest pause lets elapse once the watch is       *)
-(* timing (SlowGap: the timing starts at the pass that gave the NIC its    *)
-(* work, and SlowGap more passes may go by) gives up on a healthy ring     *)
-(* (NeverAbandonDraining), which is why the bound must sit far above the   *)
-(* longest pause a live NIC takes.                                         *)
+(* timing (SlowGap - 1: the pass that starts the timing is the first of    *)
+(* the SlowGap passes) gives up on a healthy ring (NeverAbandonDraining),  *)
+(* which is why the bound must sit far above the longest pause a live NIC  *)
+(* takes.                                                                  *)
 (* The indices are free running (RingSize < Modulus), as libxdp's are, so  *)
 (* the consumer cannot move a whole Modulus between two passes; the        *)
 (* configurations load more frames than Modulus, so both indices wrap.     *)
@@ -67,7 +68,7 @@ CONSTANTS
     BatchMax,       \* frames the worker holds before the ring takes them (ROCKETNET_XDP_SEND_BATCH_SIZE)
     MaxFrames,      \* exploration bound: frames loaded over the run
     Bound,          \* ROCKETNET_XDP_SEND_STALL_SECONDS, in ticks
-    SlowGap,        \* the most passes a healthy NIC lets go by in which the worker can submit nothing with frames pending
+    SlowGap,        \* the most passes a healthy NIC lets go by with descriptors on its ring before it takes one
     Defect
 
 ASSUME Defect \in {"none", "norelease", "noreset", "noring", "noclaim"}
@@ -90,7 +91,7 @@ VARIABLES
     pendingFlag,    \* send_pending as the last pass (or the last recycle) published it
     hardError,      \* send_hard_error: the last TX wakeup failed with a hard errno
     dead,           \* environment: the NIC takes no more descriptors
-    gap,            \* environment: such passes since the NIC last made progress
+    gap,            \* environment: passes since the NIC last took a descriptor that left descriptors on its ring
     cutLive         \* ghost: the queue was released while a live NIC still had frames to take
 
 vars == <<phase, prod, cons, batch, claimed, loaded, watchCons, still, stalled, pendingFlag,
@@ -162,13 +163,16 @@ BeginShutdown ==
 \* One worker pass: the batch goes on the ring when it all fits, then the
 \* stall watch (rocketnet_xdp_send_stall_pass) runs on the consumer it reads
 \* and the pending it computes, and send_pending is published. A pass may
-\* also find a buffer claimed and nothing copied (the UMEM frame pool
-\* empty, INVALID_FRAME, until the completion ring hands frames back). A
-\* pass that submits needs nothing of the NIC; a healthy NIC makes progress
-\* (Consume, which stands for the completions too) before SlowGap passes go
-\* by in which the worker could submit nothing with frames pending.
+\* find a buffer claimed and nothing copied while the NIC holds descriptors
+\* (the UMEM frame pool empty, INVALID_FRAME, until the completion ring
+\* hands frames back); with the TX ring empty the pass copies first, as the
+\* code's pass copies when its batch is empty (the frames then sit in a
+\* completion ring the kernel is still filling, within the NIC's pause:
+\* left out). A healthy NIC takes a descriptor before SlowGap passes go by
+\* with descriptors on its ring.
 Pass ==
-    /\ dead \/ ~Pending \/ gap < SlowGap \/ (batch > 0 /\ OnRing + batch <= RingSize)
+    /\ ~(claimed /\ batch = 0 /\ OnRing = 0)
+    /\ dead \/ OnRing = 0 \/ gap < SlowGap
     /\ LET fits == batch > 0 /\ OnRing + batch <= RingSize
            p == IF fits THEN (prod + batch) % Modulus ELSE prod
            b == IF fits THEN 0 ELSE batch
@@ -183,7 +187,7 @@ Pass ==
           /\ still' = s
           /\ stalled' = IF ~pending \/ moved THEN FALSE
                         ELSE stalled \/ (s = Bound + 1 /\ phase = "DRAINING")
-          /\ gap' = IF pending /\ ~fits /\ ~dead THEN gap + 1 ELSE 0
+          /\ gap' = IF (p + Modulus - cons) % Modulus > 0 /\ ~dead THEN gap + 1 ELSE 0
     /\ UNCHANGED <<phase, cons, claimed, loaded, hardError, dead, cutLive>>
 
 \* The main thread's stop drain (rocketnet_server_socket_send_idle through
