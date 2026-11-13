@@ -63,10 +63,15 @@ ASSUME /\ Clients # {}
 (*     once every client is started, as the script did before MM205, so   *)
 (*     the arm's one touch goes stale during the load, the listen wait    *)
 (*     and the client starts.                                              *)
+(*   TeardownChecksStatus: a failed "stop server" or "restore" fails the   *)
+(*     run (design TRUE, scripts/live-xdp-fleet); FALSE discards both      *)
+(*     statuses and reports the run complete, as the script did before     *)
+(*     MM206.                                                              *)
 (***************************************************************************)
 WatchdogPresent         == TRUE
 TeardownDetachesOnCrash == TRUE
 HeartbeatFromArm        == TRUE
+TeardownChecksStatus    == TRUE
 
 Hosts      == {TestServer} \cup Clients
 NoHost     == "none"
@@ -474,6 +479,22 @@ ServerCrash ==
                     deadmanAge, listened, phase, cycle, wait, lastWait, denied,
                     collected, wdKill >>
 
+\* "stop server" or "restore" exits non-zero over a working ssh (a server
+\* that will not stop, a program that will not detach): the step changes
+\* nothing.  The script then fails the run and exits, its heartbeat already
+\* stopped, so the watchdog and the dead-man timer are left to act; with the
+\* witness switch it reports the run complete instead.
+TeardownStepFails ==
+    /\ faults < MaxFaults
+    /\ orch = "teardown" /\ ssh = "up"
+    /\ faults' = faults + 1
+    /\ IF TeardownChecksStatus
+       THEN /\ orch' = "dead" /\ UNCHANGED collected
+       ELSE /\ orch' = "done" /\ collected' = TRUE
+    /\ UNCHANGED << server, host, xdp, ssh, hbAge, orphan, watchdog, deadman,
+                    deadmanAge, listened, crashed, phase, cycle, wait, lastWait,
+                    live, old, oldAge, denied, wdKill >>
+
 \* a client process dies; the server times its slot out
 ClientCrash(c) ==
     /\ faults < MaxFaults
@@ -528,6 +549,7 @@ ClientSide ==
 
 Outside ==
     \/ Interrupted \/ OrchestratorDies \/ SshDrop \/ SshBack \/ ServerCrash
+    \/ TeardownStepFails
     \/ \E c \in Clients : ClientCrash(c)
 
 Next == Orchestrate \/ ServerSide \/ ClientSide \/ Outside \/ Tick

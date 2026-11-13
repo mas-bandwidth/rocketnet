@@ -309,6 +309,7 @@ MCRNLiveFleetRun.cfg	MCRNLiveFleetRun.tla	pass	-	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenXdpLeftAttached.cfg	MCRNLiveFleetRun.tla	invariant	TeardownDetaches	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenServerOrphaned.cfg	MCRNLiveFleetRun.tla	invariant	XdpNeverOrphaned	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenHeartbeatLate.cfg	MCRNLiveFleetRun.tla	invariant	WatchdogKillsOnlyOnFault	check	rnlivefleetrun	required	-
+MCRNLiveFleetRunBrokenTeardownUnchecked.cfg	MCRNLiveFleetRun.tla	invariant	TeardownDetaches	check	rnlivefleetrun	required	-
 MCServerConnectionHoldUntilExpire.cfg	MCServerConnection.tla	invariant	ChurnNeverDenied	ignore-terminal	serverconnection	required	-
 MCServerConnectionClientIdNoCheck.cfg	MCServerConnection.tla	invariant	OneTokenOneLiveConnection	ignore-terminal	serverconnection	required	-
 MCServerConnectionExpiredToken.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
