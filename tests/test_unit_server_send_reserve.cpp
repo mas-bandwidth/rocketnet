@@ -77,7 +77,17 @@ static uint8_t * sr_start( void *, const rocketnet_address_t *, uint64_t * id )
 static void sr_finish( void *, uint64_t, uint8_t *, int ) {}
 static void sr_abort( void *, uint64_t, uint8_t * ) {}
 static void sr_flush( void * ) {}
-static int sr_send_room( void * ) { return sr.room[0]; }
+// send_room with several queues is the fewest free frames of any queue, as
+// the xdp transport reports it (rocketnet_server_transport_io_send_room)
+static int sr_send_room( void * )
+{
+    int room = sr.room[0];
+    for ( int queue = 1; queue < sr.queues; queue++ )
+    {
+        room = sr.room[queue] < room ? sr.room[queue] : room;
+    }
+    return room;
+}
 static bool sr_send_idle( void * ) { return true; }
 static int sr_send_queues( void * ) { return sr.queues; }
 static int sr_send_queue_of( void *, const rocketnet_address_t * ) { return sr.queue_for_all; }
@@ -469,6 +479,81 @@ static void test_server_send_reserve_full_queue_is_full_staging()
     sr_teardown( &rig );
 }
 
+static void test_server_send_reserve_other_queue_full_drains()
+{
+    // a burst waits for a queue with room while another queue is full: the
+    // fewest-room send_room is 0, but the drain's allowance is every queue's
+    // room, so the burst leaves (rocketnet_server_transport_io_send_room_total)
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 1;
+    sr_swap_in_fake( &rig, SR_MAX_QUEUES );
+    rocketnet_server_transport_send_packets( rig.server );
+
+    // queue 1 too short for the immediate burst, so it is deferred; then
+    // queue 0 is full and queue 1 has room
+    sr.room[0] = 500;
+    sr.room[1] = 3;
+    sr.room[2] = 500;
+    rocketnet_server_transport_disconnect_client( rig.server, 0 );
+    check( sr.starts == 0 );
+    sr.room[0] = 0;
+    sr.room[1] = 100;
+    const uint64_t full_before = rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    for ( int i = 0; i < 8 && sr.starts < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS; i++ )
+    {
+        sr_clock += 0.01;
+        rocketnet_server_transport_update( rig.server, sr_clock );
+        rocketnet_server_transport_send_packets( rig.server );
+    }
+    check( sr.starts == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == full_before );
+
+    sr.room[0] = 500;
+    sr_teardown( &rig );
+}
+
+static void test_server_send_reserve_stop_drains_while_a_queue_has_room()
+{
+    // stop with a burst waiting for a queue with room while another queue is
+    // full: the stop step seals it rather than abandoning it for no room
+    // (ServerStopSpread AbandonNoRoom reads every queue's room)
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 1;
+    sr_swap_in_fake( &rig, SR_MAX_QUEUES );
+    rocketnet_server_transport_send_packets( rig.server );
+
+    // queue 1 too short for the burst, so disconnect defers it; then at stop
+    // queues 0 and 2 are full and queue 1 has room
+    sr.room[0] = 500;
+    sr.room[1] = 3;
+    sr.room[2] = 500;
+    rocketnet_server_transport_disconnect_client( rig.server, 0 );
+    check( sr.starts == 0 );
+    sr.room[0] = 0;
+    sr.room[1] = 100;
+    sr.room[2] = 0;
+    const uint64_t full_before = rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    rocketnet_server_transport_stop( rig.server );
+    for ( int i = 0; i < 8 && sr.starts < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS; i++ )
+    {
+        (void) rocketnet_server_transport_stopped( rig.server );
+    }
+    check( sr.starts == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == full_before );
+
+    sr.room[0] = 500;
+    sr.room[2] = 500;
+    sr_teardown( &rig );
+}
+
 REGISTER_UNIT_TEST( test_server_send_reserve_one_queue );
 REGISTER_UNIT_TEST( test_server_send_reserve_refill );
 REGISTER_UNIT_TEST( test_server_send_reserve_refused_own_frame_stays_reserved );
@@ -476,5 +561,7 @@ REGISTER_UNIT_TEST( test_server_send_reserve_refused_start_returns_claim );
 REGISTER_UNIT_TEST( test_server_send_reserve_own_frame );
 REGISTER_UNIT_TEST( test_server_send_reserve_per_queue );
 REGISTER_UNIT_TEST( test_server_send_reserve_full_queue_is_full_staging );
+REGISTER_UNIT_TEST( test_server_send_reserve_other_queue_full_drains );
+REGISTER_UNIT_TEST( test_server_send_reserve_stop_drains_while_a_queue_has_room );
 
 #endif // #if ROCKETNET_DEV
