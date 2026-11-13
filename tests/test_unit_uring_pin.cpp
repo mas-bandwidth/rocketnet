@@ -14,6 +14,9 @@
 
 #define check rocketnet_unit_check
 
+// the transport's queue limit (ROCKETNET_URING_MAX_QUEUES, sdk/rocketnet_server_uring.h)
+#define ROCKETNET_URING_PIN_TEST_MAX_QUEUES 32
+
 static void test_uring_pin_cpu_placement()
 {
     // the owner's layout: cpu 0 the OS, two queues
@@ -22,6 +25,25 @@ static void test_uring_pin_cpu_placement()
     // two cpus left to the OS
     check( rocketnet_uring_pin_cpu( 0, 2 ) == 2 );
     check( rocketnet_uring_pin_cpu( 3, 2 ) == 5 );
+}
+
+// "the OS on core 0 is law on linux" (owner, 2026-11-13): the placement never
+// chooses cpu 0 for any worker, whatever the queue and the number of cpus left
+// to the OS. The server's default num_os_cpus is 1 (the builtin driver passes
+// 1 when the config says 0), and the transport driven directly with 0 pins
+// nothing at all; the placement is only asked with a positive count.
+
+static void test_uring_pin_never_chooses_core_zero()
+{
+    for ( int num_os_cpus = 1; num_os_cpus <= 8; num_os_cpus++ )
+    {
+        for ( int queue = 0; queue < ROCKETNET_URING_PIN_TEST_MAX_QUEUES; queue++ )
+        {
+            const int cpu = rocketnet_uring_pin_cpu( queue, num_os_cpus );
+            check( cpu >= 1 );
+            check( cpu == num_os_cpus + queue );
+        }
+    }
 }
 
 static void test_uring_pin_check_refusals()
@@ -39,4 +61,5 @@ static void test_uring_pin_check_refusals()
 }
 
 REGISTER_UNIT_TEST( test_uring_pin_cpu_placement );
+REGISTER_UNIT_TEST( test_uring_pin_never_chooses_core_zero );
 REGISTER_UNIT_TEST( test_uring_pin_check_refusals );

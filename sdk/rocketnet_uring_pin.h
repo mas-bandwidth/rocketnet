@@ -50,4 +50,4 @@ static inline int rocketnet_uring_pin_check( int cpu, int set_size, int online )
     return ROCKETNET_URING_PIN_OK;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_URING_PIN_H
+#endif // ROCKETNET_SDK_ROCKETNET_URING_PIN_H
