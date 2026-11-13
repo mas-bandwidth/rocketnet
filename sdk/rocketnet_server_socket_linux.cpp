@@ -732,6 +732,7 @@ static void free_send_frame( rocketnet_server_xdp_socket_t * socket, uint64_t fr
 }
 
 static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thread_t *, void * data );
+static int rocketnet_server_socket_queue_room( rocketnet_server_xdp_socket_t * socket );
 
 // the public address as the 16 network-order bytes the XDP config carries
 // (the rocketnet address stores IPv6 as host-order 16-bit groups)
@@ -2973,14 +2974,7 @@ int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server
     int room = ROCKETNET_XDP_SEND_QUEUE_SIZE;
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
     {
-        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
-        const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
-        if ( flow_index < 0 )
-        {
-            return 0;
-        }
-        const uint64_t used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
-        const int slots = used >= (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : (int) ( (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE - used );
+        const int slots = rocketnet_server_socket_queue_room( &server_socket->socket[queue] );
         if ( slots < room )
         {
             room = slots;
@@ -2988,6 +2982,58 @@ int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server
     }
 
     return room;
+}
+
+// the per-queue room the server's send reserve reads (rocketnet_driver.h
+// send_queues, send_queue_of, send_room_queue). A queue's room is its free
+// slots in the current producer buffer. From a fill thread during the fill
+// phase these read only atomics: send_flow_index (acquire) and that
+// buffer's num_packets (relaxed), each one whole value; fills only lower the
+// room and a publish (main, outside the fill phase) only raises it. No lock
+// is taken and nothing is written. A server with more queues than
+// ROCKETNET_SERVER_MAX_SEND_QUEUES reads as one queue whose room is
+// send_room, the fewest free slots of any queue.
+
+static int rocketnet_server_socket_queue_room( rocketnet_server_xdp_socket_t * socket )
+{
+    const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
+    if ( flow_index < 0 )
+    {
+        return 0;
+    }
+    const uint64_t used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
+    return used >= (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : (int) ( (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE - used );
+}
+
+int rocketnet_server_socket_send_queues( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    return server_socket->num_queues <= ROCKETNET_SERVER_MAX_SEND_QUEUES ? server_socket->num_queues : 1;
+}
+
+int rocketnet_server_socket_send_queue_of( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to )
+{
+    rocketnet_assert( server_socket );
+    if ( server_socket->num_queues > ROCKETNET_SERVER_MAX_SEND_QUEUES )
+    {
+        return 0;
+    }
+    return rocketnet_server_socket_send_queue( to, server_socket->num_queues );
+}
+
+int rocketnet_server_socket_send_room_queue( struct rocketnet_server_socket_t * server_socket, int queue )
+{
+    rocketnet_assert( server_socket );
+    if ( server_socket->num_queues > ROCKETNET_SERVER_MAX_SEND_QUEUES )
+    {
+        return rocketnet_server_socket_send_room( server_socket );
+    }
+    rocketnet_assert( queue >= 0 && queue < server_socket->num_queues );
+    if ( queue < 0 || queue >= server_socket->num_queues )
+    {
+        return 0;
+    }
+    return rocketnet_server_socket_queue_room( &server_socket->socket[queue] );
 }
 
 // proofs/tla/ServerStopSpread.tla RequestIoStop: every queue's buffers back
@@ -3549,6 +3595,120 @@ bool rocketnet_server_socket_test_buffer_exchange()
         rocketnet_platform_mutex_destroy( &socket->receive_mutex );
     }
     socket->~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( server );
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
+
+// The per-queue room the server's send reserve reads (send_queues,
+// send_queue_of, send_room_queue) over two queues: the queue send_queue_of
+// names is the one a start really takes a slot in, its room is one under the
+// full size and the other queue's is full, send_room is the fewest of them,
+// and an index outside the queues reads as no room. A server with more
+// queues than ROCKETNET_SERVER_MAX_SEND_QUEUES reads as one queue (its
+// per-queue room is not read here: that needs a socket for every queue).
+bool rocketnet_server_socket_test_queue_room()
+{
+    const int queues = 2;
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) * (size_t) queues );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = rocketnet_server_socket_test_construct( server_storage );
+    auto * sockets = (rocketnet_server_xdp_socket_t *) socket_storage;
+    for ( int q = 0; q < queues; q++ )
+    {
+        // default-initialised, not value-initialised: the members take their own
+        // initialisers and the megabytes of buffers stay untouched, so the case
+        // costs no resident memory beyond one queue's
+        new ( &sockets[q] ) rocketnet_server_xdp_socket_t;
+        sockets[q].send_flow_index.store( sockets[q].send_handoff.producer );
+    }
+    server->num_queues = queues;
+    server->socket = sockets;
+
+    static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
+
+    const int full = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+    bool valid = rocketnet_server_socket_send_queues( server ) == queues;
+    valid &= rocketnet_server_socket_send_room_queue( server, 0 ) == full && rocketnet_server_socket_send_room_queue( server, 1 ) == full;
+    valid &= rocketnet_server_socket_send_room( server ) == full;
+
+    // one IPv4 and one IPv6 start, the IPv6 one on the other queue
+
+    rocketnet_address_t v4 = {};
+    v4.type = ROCKETNET_ADDRESS_IPV4;
+    v4.data.ipv4[0] = 192;
+    v4.data.ipv4[1] = 168;
+    v4.data.ipv4[2] = 1;
+    v4.data.ipv4[3] = 78;
+    v4.port = 36800;
+
+    rocketnet_address_t v6 = {};
+    v6.type = ROCKETNET_ADDRESS_IPV6;
+    v6.data.ipv6[0] = 0x2001;
+    v6.data.ipv6[1] = 0x0db8;
+    v6.data.ipv6[7] = 1;
+    const int q4 = rocketnet_server_socket_send_queue_of( server, &v4 );
+    valid &= q4 >= 0 && q4 < queues;
+    for ( int port = 40000; port < 40100; port++ )
+    {
+        v6.port = (uint16_t) port;
+        if ( rocketnet_server_socket_send_queue_of( server, &v6 ) != q4 )
+        {
+            break;
+        }
+    }
+    const int q6 = rocketnet_server_socket_send_queue_of( server, &v6 );
+    valid &= q6 >= 0 && q6 < queues && q6 != q4;
+
+    uint64_t id4 = 0;
+    valid &= rocketnet_server_socket_start_packet( server, &v4, &id4 ) != NULL;
+    valid &= rocketnet_send_queue_of_packet( id4, queues ) == q4;
+    valid &= rocketnet_server_socket_send_room_queue( server, q4 ) == full - 1;
+    valid &= rocketnet_server_socket_send_room_queue( server, 1 - q4 ) == full;
+    valid &= rocketnet_server_socket_send_room( server ) == full - 1;
+
+    uint64_t id6 = 0;
+    valid &= rocketnet_server_socket_start_packet( server, &v6, &id6 ) != NULL;
+    valid &= rocketnet_send_queue_of_packet( id6, queues ) == q6;
+    valid &= rocketnet_server_socket_send_room_queue( server, q6 ) == full - 1;
+    valid &= rocketnet_server_socket_send_room_queue( server, q4 ) == full - 1;
+
+    // an index outside the queues has no room (the assert is counted, not taken)
+
+#if ROCKETNET_ASSERTS
+    rocketnet_server_socket_test_asserts = 0;
+    rocketnet_assert_function( rocketnet_server_socket_test_count_assert );
+#endif // #if ROCKETNET_ASSERTS
+    valid &= rocketnet_server_socket_send_room_queue( server, -1 ) == 0;
+    valid &= rocketnet_server_socket_send_room_queue( server, queues ) == 0;
+#if ROCKETNET_ASSERTS
+    valid &= rocketnet_server_socket_test_asserts == 2;
+    rocketnet_assert_function( NULL );
+#endif // #if ROCKETNET_ASSERTS
+
+    // more queues than the reserve keeps room for read as one queue, whose
+    // queue is 0
+
+    server->num_queues = ROCKETNET_SERVER_MAX_SEND_QUEUES + 1;
+    valid &= rocketnet_server_socket_send_queues( server ) == 1;
+    valid &= rocketnet_server_socket_send_queue_of( server, &v4 ) == 0;
+    valid &= rocketnet_server_socket_send_queue_of( server, &v6 ) == 0;
+    server->num_queues = queues;
+
+    for ( int q = 0; q < queues; q++ )
+    {
+        sockets[q].~rocketnet_server_xdp_socket_t();
+    }
     rocketnet_server_socket_test_destruct( server );
     rocketnet_free( NULL, socket_storage );
     rocketnet_free( NULL, server_storage );

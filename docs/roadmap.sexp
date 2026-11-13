@@ -281,4 +281,9 @@
    :title "Do not sleep after a partial sendmsg_x"
    :text "A partial sendmsg_x result ends the call kept (sdk/rocketnet_msgx_send_runs.h), so the transmit worker marks the socket full and waits 1 ms (sdk/rocketnet_server_msgx_apple.cpp) although the socket took data. Loop again at once when the kept call made progress, and wait only when a call took nothing. Measured nowhere yet: the four space rows pass as it is."
    :date "2026-11-13" :origin "Piece P cold read")
+
+  (item "send-reserve-multi-queue-capacity" :group "proof-debt" :area "proofs"
+   :title "RNSendReserveCalls: a Capacity per send queue"
+   :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."
+   :date "2026-11-13" :origin "Piece M follow-on, cold reader")
  ))
