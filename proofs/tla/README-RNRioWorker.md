@@ -245,37 +245,36 @@ packet that became postable, so those losses are outside `sent`.
 
 | Config | Expected | Distinct states | Seconds | What it shows |
 |---|---|---|---|---|
-| `MCRNRioWorker.cfg` | pass | 2616318 | 37 | Safety, both directions: three datagrams and two staged sends over three phases, every invariant. |
-| `MCRNRioWorkerThreeSends.cfg` | pass | 69750 | 2 | The exact three-send constants of SwitchBeforeIdle with its guard restored and every safety invariant; the rotation can return to an occupied phase. |
-| `MCRNRioWorkerReceiveLive.cfg` | pass | 20685 | 25 | No sends, three datagrams: invariants, `EveryDatagramConsumed`, `StopCompletes`. |
-| `MCRNRioWorkerSendLive.cfg` | pass | 9597 | 8 | No datagrams, two sends: invariants, `EveryStagedSent`, `StopCompletes`. |
-| `MCRNRioWorkerTwoBanks.cfg` | pass | 20539 | 19 | Two banks, three datagrams: the fill bank fills while main holds the other bank (backpressure); invariants and receive liveness. |
-| `MCRNRioWorkerBrokenSwitchBeforeIdle.cfg` | `FillPhaseOwnedByMain` | 609 | 0 | `SwitchOnIdle = FALSE` |
-| `MCRNRioWorkerBrokenUnboundedDequeue.cfg` | `ExactDelivery` | 7226 | 1 | `BoundedDequeue = FALSE` |
-| `MCRNRioWorkerBrokenExitBeforeDrain.cfg` | `FreedOnlyWhenDrained` | 189 | 0 | `DrainBeforeExit = FALSE` |
-| `MCRNRioWorkerBrokenDropHanded.cfg` | `StopSendsHanded` | 413 | 1 | `DropHanded = TRUE` keeps the old stop discard. |
-| `MCRNRioWorkerBrokenNoWake.cfg` | `EveryDatagramConsumed` | 16661 | 4 | `WakeOnReturn = FALSE` |
-| `MCRNRioWorkerBrokenCloseCancelsSends.cfg` | `StopSendsFinished` | 212 | 0 | `DrainSendsBeforeClose = FALSE` keeps the stop pass that closes with sends in flight. |
-| `MCRNRioWorkerInlineStop.cfg` | pass | 468 | 1 | Create's failure path: five posted slices, one datagram, `DrainBatch = 2`, `StopDrainWaits = 1`, every `closesocket` refusable, cancellations late; invariants, `LeakOnlyAfterStalls`, `StopCompletes`. |
-| `MCRNRioWorkerBrokenUnboundedRetry.cfg` | `StopCompletes` | 204 | 1 | `BoundedStopDrain = FALSE`: the old create loop retries forever. |
-| `MCRNRioWorkerBrokenOneBatchPerPass.cfg` | `LeakOnlyAfterStalls` | 119 | 0 | `DrainLoop = FALSE` and `CountStalledOnly = FALSE`: one batch per queue per pass, and every failed pass counted. Passes that make progress use up the bound. |
-| `MCRNRioWorkerInlineStopBatchPerPass.cfg` | pass | 420 | 1 | That witness with `CountStalledOnly = TRUE`: the passes that dequeue a batch are not counted, the drain finishes, and it leaks only after stalled passes; invariants, `LeakOnlyAfterStalls`, `StopCompletes`. |
-| `MCRNRioWorkerReachLateCancelLeak.cfg` | `NotReachedLateCancelLeak` | 175 | 1 | Reachability: the constants of `InlineStop`; the drain leaks after a `closesocket` that succeeded, its cancellations not yet arrived. |
-| `MCRNRioWorkerReachRefusedPost.cfg` | `NotReachedRefusedPostAtExit` | 213 | 1 | Reachability: one send; the stop burst's post is refused, counted, and the worker exits. |
-| `MCRNRioWorkerBrokenUncountedPost.cfg` | `StopSendsFinished` | 240 | 0 | `CountRefusedPost <- FALSE`: a refused post is lost uncounted. |
-| `MCRNRioWorkerGarbage.cfg` | pass | 18830 | 29 | Two banks, four datagrams, two of them garbage (`Garbage = {2, 3}`): the prefilter refuses them in the worker before banking; invariants with `NoGarbageBanked`, receive liveness over the datagrams that pass. |
-| `MCRNRioWorkerBrokenBankGarbage.cfg` | `NoGarbageBanked` | 151 | 0 | `PrefilterInWorker <- FALSE`: the old shape, filtering on main after the bank; a garbage datagram is banked and takes room. Checked against `rocketnet_rio_complete_receive`, which calls `rocketnet_receive_prefilter` before it copies into the bank. |
-| `MCRNRioWorkerBrokenTakeBeforeRetire.cfg` | `DrainedReturnedAtPost` | 3568 | 1 | `RetireFirst <- FALSE`: the pass takes the ready phase before it retires completions, so it posts while a phase whose sends all completed is still held as posted; main cannot reuse it and refuses starts. Checked against `rocketnet_rio_worker_pass`, which commits, dequeues the send completions and returns the drained phases to idle before it takes. |
+| `MCRNRioWorker.cfg` | pass | 3977961 | 49 | Safety, both directions: three datagrams and two staged sends over three phases, every invariant. |
+| `MCRNRioWorkerThreeSends.cfg` | pass | 71684 | 2 | The exact three-send constants of SwitchBeforeIdle with its guard restored and every safety invariant; the rotation can return to an occupied phase. |
+| `MCRNRioWorkerReceiveLive.cfg` | pass | 30628 | 30 | No sends, three datagrams: invariants, `EveryDatagramConsumed`, `StopCompletes`. |
+| `MCRNRioWorkerSendLive.cfg` | pass | 9903 | 6 | No datagrams, two sends: invariants, `EveryStagedSent`, `StopCompletes`. |
+| `MCRNRioWorkerBackpressure.cfg` | pass | 19845 | 17 | `Cap = 1`, `View = 2`, three datagrams: the worker's bank fills while main holds the bank it reads and the tail (backpressure); invariants and receive liveness. |
+| `MCRNRioWorkerBrokenSwitchBeforeIdle.cfg` | `FillPhaseOwnedByMain` | 488 | 1 | `SwitchOnIdle = FALSE` |
+| `MCRNRioWorkerBrokenUnboundedDequeue.cfg` | `ExactDelivery` | 7854 | 1 | `BoundedDequeue = FALSE` |
+| `MCRNRioWorkerBrokenExitBeforeDrain.cfg` | `FreedOnlyWhenDrained` | 95 | 1 | `DrainBeforeExit = FALSE` |
+| `MCRNRioWorkerBrokenDropHanded.cfg` | `StopSendsHanded` | 260 | 1 | `DropHanded = TRUE` keeps the old stop discard. |
+| `MCRNRioWorkerBrokenNoWake.cfg` | `EveryDatagramConsumed` | 17736 | 13 | `WakeOnReturn = FALSE` |
+| `MCRNRioWorkerBrokenReadOnlyLeft.cfg` | `DeliveredByNextCall` | 1367 | 1 | `ReadOnlyLeft <- ReadOnlyLeftBroken`: main reads only a bank the worker has left, the old ready FIFO's rule, so a datagram committed before a call waits for a later call (16.7 ms at 60 Hz). Checked against `rocketnet_rio_lane_receive_packets`, which reads the committed bank through `rocketnet_receive_handoff_begin`. |
+| `MCRNRioWorkerBrokenCloseCancelsSends.cfg` | `StopSendsFinished` | 240 | 1 | `DrainSendsBeforeClose = FALSE` keeps the stop pass that closes with sends in flight. |
+| `MCRNRioWorkerInlineStop.cfg` | pass | 480 | 1 | Create's failure path: five posted slices, one datagram, `DrainBatch = 2`, `StopDrainWaits = 1`, every `closesocket` refusable, cancellations late; invariants, `LeakOnlyAfterStalls`, `StopCompletes`. |
+| `MCRNRioWorkerBrokenUnboundedRetry.cfg` | `StopCompletes` | 210 | 1 | `BoundedStopDrain = FALSE`: the old create loop retries forever. |
+| `MCRNRioWorkerBrokenOneBatchPerPass.cfg` | `LeakOnlyAfterStalls` | 79 | 1 | `DrainLoop = FALSE` and `CountStalledOnly = FALSE`: one batch per queue per pass, and every failed pass counted. Passes that make progress use up the bound. |
+| `MCRNRioWorkerInlineStopBatchPerPass.cfg` | pass | 432 | 1 | That witness with `CountStalledOnly = TRUE`: the passes that dequeue a batch are not counted, the drain finishes, and it leaks only after stalled passes; invariants, `LeakOnlyAfterStalls`, `StopCompletes`. |
+| `MCRNRioWorkerReachLateCancelLeak.cfg` | `NotReachedLateCancelLeak` | 65 | 1 | Reachability: the constants of `InlineStop`; the drain leaks after a `closesocket` that succeeded, its cancellations not yet arrived. |
+| `MCRNRioWorkerReachRefusedPost.cfg` | `NotReachedRefusedPostAtExit` | 173 | 1 | Reachability: one send; the stop burst's post is refused, counted, and the worker exits. |
+| `MCRNRioWorkerBrokenUncountedPost.cfg` | `StopSendsFinished` | 173 | 1 | `CountRefusedPost <- FALSE`: a refused post is lost uncounted. |
+| `MCRNRioWorkerGarbage.cfg` | pass | 20960 | 17 | Four datagrams, two of them garbage (`Garbage = {2, 3}`): the prefilter refuses them in the worker before banking; invariants with `NoGarbageBanked`, receive liveness over the datagrams that pass. |
+| `MCRNRioWorkerBrokenBankGarbage.cfg` | `NoGarbageBanked` | 87 | 1 | `PrefilterInWorker <- FALSE`: the old shape, filtering on main after the bank; a garbage datagram is banked and takes room. Checked against `rocketnet_rio_complete_receive`, which calls `rocketnet_receive_prefilter` before it copies into the bank. |
+| `MCRNRioWorkerBrokenTakeBeforeRetire.cfg` | `DrainedReturnedAtPost` | 3361 | 1 | `RetireFirst <- FALSE`: the pass takes the ready phase before it retires completions, so it posts while a phase whose sends all completed is still held as posted; main cannot reuse it and refuses starts. Checked against `rocketnet_rio_worker_pass`, which commits, dequeues the send completions and returns the drained phases to idle before it takes. |
 
 The liveness controls are split by direction so each run fits the 110 s
 budget at two TLC workers. The distinct states and seconds are the
-2026-11-11 run on amd-2 (one shard per case, two workers, four cases at a
-time), after `CancelArrives` and the refused send post; the longest case
-was `MCRNRioWorker.cfg` at 35.9 s, up from 8.3 s with the refusal subsets.
-
-The stalled-pass rule (`CountStalledOnly`) was added after that run, and all
-fifteen cases were run again on a Linux bench with the same pinned runner
-and jar; `RUNS.tsv` holds those records.
+2026-11-13 run on amd-3 (one shard per case, two workers, four cases at a
+time) after the receive half moved to the shared receive handoff; all
+twenty-two cases passed or produced exactly the property listed, the
+longest was `MCRNRioWorker.cfg` at 49.0 s, and `RUNS.tsv` holds those
+records.
 
 On 2026-11-10 the bounded stop-drain model ran all fourteen required cases
 on amd-2 (native Linux) with the pinned `tlacheck` built from the commit
