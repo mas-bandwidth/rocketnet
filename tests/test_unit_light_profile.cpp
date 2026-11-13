@@ -79,6 +79,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // endpoint's link simulator carries the receive_any delivery bound and hint
 // and two receive_any scan counters (sdk/rocketnet_network_simulator.h,
 // 40 bytes).
+// The counter union (53 more rows in every counter block) moved every pin:
+// on Linux x86_64 the client by 832 bytes and the server by 896 (bench, gcc,
+// Debug: actual=15186002 and 3111677747); on macOS the client by 768 and the
+// server by 960 (the studio, Debug); on Windows the client by 832 and the
+// server by 960 (the unit job: actual=15389868 and 1469501759).
 #define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
@@ -122,8 +127,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452287 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14340524 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453183 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341292 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -166,15 +171,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-// The counter union, the send reserve and the sends from game threads
-// (measured on the studio, AppleClang, Debug, DEV=ON): the union's and the
-// reserve's rows and words read 1469505823 and 15037450; the per-client open
-// message, the thread rule check's per-thread and per-client lines, the
-// message object's per-thread open lines, each region's room_refusals, the
-// per-thread send lines and the per-client wire totals on a line each add
-// 237312 to the server and 4096 to the client: 1469743135 and 15041546.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468694623 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993034 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453599 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988746 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
