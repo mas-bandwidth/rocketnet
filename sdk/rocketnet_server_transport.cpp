@@ -2261,7 +2261,8 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
     // binds no datagram socket from the bind address (it serves the interface
     // that holds the public address), so its refusal says nothing about the
     // address: BIND_REFUSED is the status when at least one transport was
-    // refused its bind and every other refusal is the xdp transport's.
+    // refused its bind and every other refusal is the xdp transport's (a
+    // candidate skipped for the memory budget is not an open and not counted).
 
     int open_refusals = 0;
     int families_unsupported_refusals = 0;
@@ -2374,7 +2375,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
                 {
                     not_built_refusals++;
                 }
-                if ( candidate == ROCKETNET_TRANSPORT_XDP )
+                if ( candidate == ROCKETNET_TRANSPORT_XDP && transport_status != ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED )
                 {
                     xdp_refusals++;
                 }

@@ -15110,6 +15110,10 @@ extern void rocketnet_test_server_bind_refused_gso();
 extern void rocketnet_test_server_bind_refused_io_uring();
 extern void rocketnet_test_server_bind_refused_default_transports();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_server_bind_refused_iocp();
+extern void rocketnet_test_server_bind_refused_rio();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_session_reconnect_isolation_gso();
 extern void rocketnet_test_session_reconnect_isolation_io_uring();
@@ -15683,11 +15687,15 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, NULL },
+    { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, NULL },
     { "test_server_bind_refused_gso", rocketnet_test_server_bind_refused_gso, NULL },
     { "test_server_bind_refused_io_uring", rocketnet_test_server_bind_refused_io_uring, rocketnet_server_uring_available },
-    { "test_server_bind_refused_default_transports", rocketnet_test_server_bind_refused_default_transports, NULL },
+    { "test_server_bind_refused_default_transports", rocketnet_test_server_bind_refused_default_transports, rocketnet_server_uring_available },
     { "test_session_reconnect_isolation_gso", rocketnet_test_session_reconnect_isolation_gso, NULL },
     { "test_session_reconnect_isolation_io_uring", rocketnet_test_session_reconnect_isolation_io_uring, rocketnet_server_uring_available },
 #if ROCKETNET_XDP

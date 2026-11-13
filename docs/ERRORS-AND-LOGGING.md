@@ -602,13 +602,19 @@ or layout id differ from this library's, one made by another build.
 `rocketnet_loopback_hub_destroy` refuses while a server or client endpoint is
 registered with the hub, keeps the hub, logs one `ERROR` line and counts API
 misuse. `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED` is -35, the last code: server
-start refuses when every transport it tried was refused its bind (another
-socket holds the address and port, or the address is not one this host can
-bind). Every transport that binds a datagram socket reports it when the platform
-refuses that bind with EADDRINUSE, EADDRNOTAVAIL or EACCES (WSAEADDRINUSE,
-WSAEADDRNOTAVAIL or WSAEACCES on Windows): the portable socket, gso, io_uring,
-iocp and rio transports. The xdp transport binds no datagram socket and never
-reports it.
+start returns it when the platform refused the bind of at least one transport
+(another socket holds the address and port, or the address is not one this host
+can bind) and no other transport tried, except the xdp transport, failed for a
+reason of its own. A transport reports it when the platform refuses its bind
+with EADDRINUSE, EADDRNOTAVAIL or EACCES (WSAEADDRINUSE, WSAEADDRNOTAVAIL or
+WSAEACCES on Windows): the portable socket, gso, io_uring, iocp and rio
+transports. The xdp transport binds no datagram socket and never reports it, and
+its own refusal does not stop the others' bind refusal from naming the start. A
+transport skipped for the memory budget is not counted. A server whose port
+another socket holds, with neither bind field set, now reads this status where it
+read `TRANSPORT_LADDER_EXHAUSTED`. When no transport was refused its bind and
+every transport that was tried refused the address as invalid (the xdp transport
+does, for an address it cannot serve), start returns `INVALID_ADDRESS`.
 
 <a id="22-reporting"></a>
 

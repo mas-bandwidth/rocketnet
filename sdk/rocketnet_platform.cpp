@@ -1466,7 +1466,7 @@ int rocketnet_platform_socket_open_for_testing( int domain )
 // bound in the IPv6 namespace
 #define ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS 16
 
-static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * address, uint16_t * bind_port )
+static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * address, uint16_t * bind_port, int * status )
 {
     if ( address->type != ROCKETNET_ADDRESS_IPV6 )
     {
@@ -1494,7 +1494,12 @@ static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * add
     reservation_address.sin_port = rocketnet_platform_htons( *bind_port );
     if ( bind( reservation, (sockaddr *) &reservation_address, sizeof( reservation_address ) ) < 0 )
     {
-        rocketnet_error( "failed to reserve ipv4 port for dual stack socket: %s", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
+        const int reserve_error = rocketnet_platform_socket_error();
+        if ( rocketnet_platform_bind_refused( reserve_error ) )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
+        rocketnet_error( "failed to reserve ipv4 port for dual stack socket: %s", rocketnet_platform_socket_error_text( reserve_error ).text );
         close( reservation );
         return -2;
     }
@@ -1663,7 +1668,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     while ( true )
     {
         bind_address.port = address->port;
-        ipv4_port_reservation = rocketnet_platform_reserve_ipv4_port( address, &bind_address.port );
+        ipv4_port_reservation = rocketnet_platform_reserve_ipv4_port( address, &bind_address.port, status );
         if ( ipv4_port_reservation == -2 )
         {
             break;

@@ -1815,8 +1815,15 @@ struct rocketnet_server_config_t
     /// family. The environment form is ambient, set once for a host or a test
     /// run, so it applies only to a server that serves IPv4 alone: an
     /// IPv6-only server and a server of both families ignore it, with one
-    /// log line, where they refuse the field. The xdp transport binds no socket and does not read it: it
-    /// serves the interface that holds the served address.
+    /// log line, where they refuse the field. The xdp transport binds no
+    /// socket and does not read it: it serves the interface that holds the
+    /// served address, but a value that would be refused above still refuses
+    /// its start. rocketnet_server_create copies the string, so the caller's
+    /// pointer is not kept; a string of 256 characters or more is refused at
+    /// create with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. If the platform
+    /// refuses the bind itself (another socket holds the address and port, or
+    /// the address is not one of this machine's), start returns
+    /// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED.
 
     const char * bind_ipv4_address;
 
@@ -2905,9 +2912,14 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_NOT_BUILT,
-/// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED when every transport tried was
-/// refused its bind, ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no
-/// transport can bind for other reasons,
+/// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED when the platform refused the
+/// bind of at least one transport and no other transport tried, except the
+/// xdp transport, failed for another reason (a server whose port another
+/// socket holds reads this where it read
+/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED, whether or not it sets
+/// bind_ipv4_address or bind_ipv6_address),
+/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no transport can start for
+/// other reasons,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY or ROCKETNET_STATUS_MUTEX_CREATE_FAILED.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );
