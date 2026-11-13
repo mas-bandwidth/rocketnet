@@ -1493,7 +1493,7 @@ jobs:
           DEBUG_UNIT_JOBS: debug-unit-jobs.json
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$DEBUG_UNIT_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$DEBUG_UNIT_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
@@ -1543,7 +1543,7 @@ jobs:
           SHARD_JOBS: debug-functional-shard-jobs.json
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
@@ -1589,7 +1589,7 @@ jobs:
           SHARD_JOBS: release-functional-shard-jobs.json
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
@@ -1640,7 +1640,7 @@ jobs:
           SHARD_JOBS: debug-transport-matrix-shard-jobs.json
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
@@ -1686,7 +1686,7 @@ jobs:
           SHARD_JOBS: release-transport-matrix-shard-jobs.json
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
@@ -1734,7 +1734,7 @@ jobs:
           SHARD_JOBS: macos-debug-unit-shard-jobs.json
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
@@ -1865,7 +1865,7 @@ jobs:
           SHARD_JOBS: trace-shard-jobs.json
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
@@ -4351,6 +4351,7 @@ jobs:
           cat > "$list" <<'SUITES'
           python3 tools/check_client_frame_time.py --self-test
           python3 tools/check_debug_unit_shards.py --self-test
+          python3 tools/fetch_run_jobs.py --self-test
           python3 tools/test_check_dll_consumer.py -v
           python3 tools/test_check_driver_extension.py -v
           python3 tools/test_check_examples.py -v
@@ -4936,7 +4937,7 @@ jobs:
           SHARD_JOBS: lint-shard-jobs.json
         run: |
           set -euo pipefail
-          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+          if ! python3 tools/fetch_run_jobs.py "$SHARD_JOBS"; then
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
