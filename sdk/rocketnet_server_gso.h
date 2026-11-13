@@ -465,13 +465,13 @@ bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, i
 // worker runs it, on queue queue_index of a test_open fixture, with fake
 // affinity and priority calls: only the refusals are injected, the
 // transport's own code counts them and records the queue. The fake mask is
-// cpus 0 .. cpus - 1; the pin is refused when refuse_pin, every affinity set
-// when refuse_all; online is the online count the pin reads. The priority
-// switch is on for the call and restored. No thread's affinity or priority
-// changes. Writes whether the queue is left on cpu 0 and the SCHED_RR
-// requests made; false for a bad queue index.
-bool rocketnet_server_gso_test_place_worker( struct rocketnet_server_gso_t * gso, int queue_index, int num_os_cpus, int online, int cpus, bool refuse_pin,
-                                             bool refuse_all, bool * left_on_core_zero, int * round_robin_requests );
+// cpus 0 .. cpus - 1, less cpu 0 when without_cpu_zero; the pin is refused
+// when refuse_pin, every affinity set when refuse_all; online is the online
+// count the pin reads. The priority switch is on for the call and restored.
+// No thread's affinity or priority changes. Writes whether the queue is left
+// on cpu 0 and the SCHED_RR requests made; false for a bad queue index.
+bool rocketnet_server_gso_test_place_worker( struct rocketnet_server_gso_t * gso, int queue_index, int num_os_cpus, int online, int cpus, bool without_cpu_zero,
+                                             bool refuse_pin, bool refuse_all, bool * left_on_core_zero, int * round_robin_requests );
 // Where queue queue_index's running worker may run, read from the thread
 // itself (pthread_getaffinity_np): 1 when its mask allows cpu 0, 0 when it
 // does not, -1 when there is no such worker or the read failed.

@@ -446,7 +446,7 @@ const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_re
 
 void rocketnet_platform_cpu_list_text( const unsigned char * cpus, int count, char * text, int text_bytes )
 {
-    rocketnet_assert( cpus && text && text_bytes >= 4 );
+    rocketnet_assert( cpus && text && text_bytes >= 5 );
     int used = 0;
     text[0] = '\0';
     for ( int cpu = 0; cpu < count; cpu++ )

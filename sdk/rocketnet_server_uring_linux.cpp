@@ -420,26 +420,36 @@ static int rocketnet_uring_set_round_robin_real( int priority )
 static const struct rocketnet_uring_affinity_calls_t rocketnet_uring_affinity_real = { rocketnet_uring_affinity_get_real, rocketnet_uring_affinity_set_real,
                                                                                        rocketnet_uring_set_round_robin_real };
 
-// one warning for a worker left on a mask that holds cpu 0, naming the queue
-// and the mask (NULL: the mask could not be read)
-static void rocketnet_server_uring_warn_left_on_core_zero( int queue_index, const cpu_set_t * mask, const char * why )
+// one warning for a worker whose confinement failed, naming the queue and the
+// mask it stays on (NULL: the mask could not be read). true when that mask
+// holds cpu 0 or cannot be read: the worker is left on cpu 0
+static bool rocketnet_server_uring_warn_not_confined( int queue_index, const cpu_set_t * mask, const char * why )
 {
-    char cpus[128] = "unknown";
-    if ( mask )
+    if ( !mask )
     {
-        unsigned char in_mask[CPU_SETSIZE] = { 0 };
-        for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
-        {
-            in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;
-        }
-        rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
+        rocketnet_warn( "io_uring worker %d left on cpus unknown, cpu 0 may be among them: %s; it asks for no real-time scheduling", queue_index, why );
+        return true;
+    }
+    char cpus[128] = { 0 };
+    unsigned char in_mask[CPU_SETSIZE] = { 0 };
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+    {
+        in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;
+    }
+    rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
+    if ( !in_mask[0] )
+    {
+        rocketnet_warn( "io_uring worker %d not confined: %s; it stays on cpus %s, which do not hold cpu 0", queue_index, why, cpus );
+        return false;
     }
     rocketnet_warn( "io_uring worker %d left on cpus %s, cpu 0 among them: %s; it asks for no real-time scheduling", queue_index, cpus, why );
+    return true;
 }
 
-// true when the worker is kept off cpu 0; false, with one warning naming the
-// queue and the mask it is left on, when it is not (the refused pin is
-// already counted: the row counts pins, so this is not counted again)
+// true when the worker is kept off cpu 0; a failed confinement is named in one
+// warning with the mask the worker stays on, and is false when that mask holds
+// cpu 0 or cannot be read (the refused pin is already counted: the row counts
+// pins, so this is not counted again)
 
 static bool rocketnet_server_uring_confine_worker( const struct rocketnet_server_uring_t * uring, int queue_index, int online,
                                                    const struct rocketnet_uring_affinity_calls_t * calls )
@@ -471,8 +481,7 @@ static bool rocketnet_server_uring_confine_worker( const struct rocketnet_server
     uint64_t confined[ROCKETNET_URING_PIN_WORDS] = {};
     if ( !rocketnet_uring_pin_confine_words( current, ROCKETNET_URING_PIN_WORDS, uring->num_os_cpus, confined ) )
     {
-        rocketnet_server_uring_warn_left_on_core_zero( queue_index, mask_read ? &cpuset : NULL, "no cpu but cpu 0 to confine it to" );
-        return false;
+        return !rocketnet_server_uring_warn_not_confined( queue_index, mask_read ? &cpuset : NULL, "no cpu past the OS's to confine it to" );
     }
 
     const cpu_set_t kept = cpuset;
@@ -492,8 +501,7 @@ static bool rocketnet_server_uring_confine_worker( const struct rocketnet_server
     {
         char why[192];
         (void) snprintf( why, sizeof( why ), "confining it past the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
-        rocketnet_server_uring_warn_left_on_core_zero( queue_index, mask_read ? &kept : NULL, why );
-        return false;
+        return !rocketnet_server_uring_warn_not_confined( queue_index, mask_read ? &kept : NULL, why );
     }
     return true;
 }
@@ -534,11 +542,11 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
         uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         if ( check == ROCKETNET_URING_PIN_OUTSIDE_SET )
         {
-            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is outside 0 .. %d; it runs on the cpus past the OS's", queue->index, cpu, CPU_SETSIZE - 1 );
+            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is outside 0 .. %d; it falls back to the cpus past the OS's", queue->index, cpu, CPU_SETSIZE - 1 );
         }
         else
         {
-            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is not online (0 .. %d); it runs on the cpus past the OS's", queue->index, cpu, online - 1 );
+            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is not online (0 .. %d); it falls back to the cpus past the OS's", queue->index, cpu, online - 1 );
         }
         off_core_zero = rocketnet_server_uring_confine_worker( uring, queue->index, online, calls );
         queue->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
@@ -554,7 +562,7 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
         if ( result != 0 )
         {
             uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-            rocketnet_warn( "io_uring worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on the cpus past the OS's", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
+            rocketnet_warn( "io_uring worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it falls back to the cpus past the OS's", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
             off_core_zero = rocketnet_server_uring_confine_worker( uring, queue->index, online, calls );
             queue->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
             rocketnet_server_uring_note_mask( queue, calls );
@@ -1469,6 +1477,7 @@ bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ur
 
 // the fakes of rocketnet_server_uring_test_place_worker
 static int uring_fake_cpus = 4;
+static bool uring_fake_without_cpu_zero = false;
 static bool uring_fake_refuse_pin = false;
 static bool uring_fake_refuse_all = false;
 static int uring_fake_round_robin = 0;
@@ -1476,7 +1485,7 @@ static int uring_fake_round_robin = 0;
 static int uring_fake_get( cpu_set_t * mask )
 {
     CPU_ZERO( mask );
-    for ( int cpu = 0; cpu < uring_fake_cpus && cpu < CPU_SETSIZE; cpu++ )
+    for ( int cpu = uring_fake_without_cpu_zero ? 1 : 0; cpu < uring_fake_cpus && cpu < CPU_SETSIZE; cpu++ )
     {
         CPU_SET( (size_t) cpu, mask );
     }
@@ -1500,8 +1509,8 @@ static int uring_fake_set_round_robin( int priority )
 }
 
 bool rocketnet_server_uring_test_place_worker( rocketnet_server_uring_test_transport_counters_t * dispatch, const struct rocketnet_server_transport_io_operations_t * operations,
-                                               int num_os_cpus, int online, int cpus, bool refuse_pin, bool refuse_all, uint64_t * row, bool * left_on_core_zero,
-                                               int * round_robin_requests )
+                                               int num_os_cpus, int online, int cpus, bool without_cpu_zero, bool refuse_pin, bool refuse_all, uint64_t * row,
+                                               bool * left_on_core_zero, int * round_robin_requests )
 {
     void * uring_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_uring_t ) );
     void * queue_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_uring_queue_t ) );
@@ -1520,6 +1529,7 @@ bool rocketnet_server_uring_test_place_worker( rocketnet_server_uring_test_trans
     queue->index = 0;
 
     uring_fake_cpus = cpus;
+    uring_fake_without_cpu_zero = without_cpu_zero;
     uring_fake_refuse_pin = refuse_pin;
     uring_fake_refuse_all = refuse_all;
     uring_fake_round_robin = 0;
@@ -1764,7 +1774,7 @@ void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ) { return true; }
 bool rocketnet_server_uring_test_place_worker( rocketnet_server_uring_test_transport_counters_t *, const struct rocketnet_server_transport_io_operations_t *, int, int, int,
-                                               bool, bool, uint64_t *, bool *, int * )
+                                               bool, bool, bool, uint64_t *, bool *, int * )
 {
     return false;
 }

@@ -4242,16 +4242,18 @@ static const rocketnet_xdp_affinity_calls_t xdp_affinity_real = { xdp_affinity_g
 // queue and the mask (NULL: the mask could not be read)
 static void xdp_thread_warn_left_on_core_zero( int queue, const cpu_set_t * mask, const char * why )
 {
-    char cpus[128] = "unknown";
-    if ( mask )
+    if ( !mask )
     {
-        unsigned char in_mask[CPU_SETSIZE] = { 0 };
-        for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
-        {
-            in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;
-        }
-        rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
+        rocketnet_warn( "xdp thread %d left on cpus unknown, cpu 0 may be among them: %s; it asks for no real-time scheduling", queue, why );
+        return;
     }
+    char cpus[128] = { 0 };
+    unsigned char in_mask[CPU_SETSIZE] = { 0 };
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+    {
+        in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;
+    }
+    rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
     rocketnet_warn( "xdp thread %d left on cpus %s, cpu 0 among them: %s; it asks for no real-time scheduling", queue, cpus, why );
 }
 
@@ -4270,6 +4272,12 @@ static bool xdp_thread_leave_core_zero( int queue, const rocketnet_xdp_affinity_
     {
         xdp_thread_warn_left_on_core_zero( queue, NULL, "its affinity cannot be read" );
         return false;
+    }
+
+    // a mask without core 0 already keeps the thread off it
+    if ( !CPU_ISSET( 0, &allowed ) )
+    {
+        return true;
     }
 
     cpu_set_t fallback;
@@ -4670,11 +4678,14 @@ bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_tra
     valid = valid && pin_fake_sets == 0 && pin_fake_round_robin == 0 && queues[1].left_on_core_zero.load();
     valid = valid && queues[1].pin_refusals.load() == 3 && pin_row( dispatch, xdp, server ) == 5 && rocketnet_server_socket_pin_refusals( server ) == 5;
 
-    // a later granted pin clears the flag and asks for SCHED_RR again
+    // a later granted pin (one set, of one cpu, not counted) clears the flag
+    // and asks for SCHED_RR again
     pin_fake_cpus = 4;
+    pin_fake_sets = 0;
     pin_fake_round_robin = 0;
     xdp_thread_place( &queues[1], online, &fake );
-    valid = valid && !queues[1].left_on_core_zero.load() && pin_fake_round_robin == 1;
+    valid = valid && pin_fake_sets == 1 && CPU_COUNT( &pin_fake_mask ) == 1 && !CPU_ISSET( 0, &pin_fake_mask );
+    valid = valid && !queues[1].left_on_core_zero.load() && pin_fake_round_robin == 1 && pin_row( dispatch, xdp, server ) == 5;
 
     pin_fake_cpus = 4;
     pin_fake_refuse = false;

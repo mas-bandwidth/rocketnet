@@ -289,8 +289,9 @@ bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ur
 // worker runs it, on queue 0 of a synthetic transport, with fake affinity and
 // priority calls: only the refusals are injected, the transport's own code
 // counts them and records the queue. No thread, ring or affinity of any
-// thread changes. The fake mask is cpus 0 .. cpus - 1; the pin is refused when
-// refuse_pin, every affinity set when refuse_all; online is the online count
+// thread changes. The fake mask is cpus 0 .. cpus - 1, less cpu 0 when
+// without_cpu_zero; the pin is refused when refuse_pin, every affinity set
+// when refuse_all; online is the online count
 // the pin reads. The priority switch is on for the call and restored. The
 // public row URING_PIN_REFUSALS is then asked of dispatch, given the io_uring
 // io table (uring) and the synthetic transport (its queues hidden from the
@@ -302,8 +303,8 @@ struct rocketnet_server_transport_io_operations_t;
 typedef bool rocketnet_server_uring_test_transport_counters_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                                uint64_t * values );
 bool rocketnet_server_uring_test_place_worker( rocketnet_server_uring_test_transport_counters_t * dispatch, const struct rocketnet_server_transport_io_operations_t * uring,
-                                               int num_os_cpus, int online, int cpus, bool refuse_pin, bool refuse_all, uint64_t * row, bool * left_on_core_zero,
-                                               int * round_robin_requests );
+                                               int num_os_cpus, int online, int cpus, bool without_cpu_zero, bool refuse_pin, bool refuse_all, uint64_t * row,
+                                               bool * left_on_core_zero, int * round_robin_requests );
 #endif // #if ROCKETNET_DEV
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );

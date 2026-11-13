@@ -1321,39 +1321,49 @@ static int rocketnet_gso_set_round_robin_real( int priority )
 static const struct rocketnet_gso_affinity_calls_t rocketnet_gso_affinity_real = { rocketnet_gso_affinity_get_real, rocketnet_gso_affinity_set_real,
                                                                                    rocketnet_gso_set_round_robin_real };
 
-// one warning for a worker left on a mask that holds cpu 0, naming the queue
-// and the mask it is left on (read back; "unknown" when it cannot be read)
-static void rocketnet_server_gso_warn_left_on_core_zero( int queue_index, const struct rocketnet_gso_affinity_calls_t * calls, const char * why )
+// one warning for a worker whose confinement failed, naming the queue and the
+// mask it stays on (read back). true when that mask holds cpu 0 or cannot be
+// read: the worker is left on cpu 0
+static bool rocketnet_server_gso_warn_not_confined( int queue_index, const struct rocketnet_gso_affinity_calls_t * calls, const char * why )
 {
-    char cpus[128] = "unknown";
     cpu_set_t mask;
     CPU_ZERO( &mask );
-    if ( calls->get( &mask ) == 0 )
+    if ( calls->get( &mask ) != 0 )
     {
-        unsigned char in_mask[CPU_SETSIZE] = { 0 };
-        for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
-        {
-            in_mask[cpu] = CPU_ISSET( (size_t) cpu, &mask ) ? 1 : 0;
-        }
-        rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
+        rocketnet_warn( "gso worker %d left on cpus unknown, cpu 0 may be among them: %s; it asks for no real-time scheduling", queue_index, why );
+        return true;
+    }
+    char cpus[128] = { 0 };
+    unsigned char in_mask[CPU_SETSIZE] = { 0 };
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+    {
+        in_mask[cpu] = CPU_ISSET( (size_t) cpu, &mask ) ? 1 : 0;
+    }
+    rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
+    if ( !in_mask[0] )
+    {
+        rocketnet_warn( "gso worker %d not confined: %s; it stays on cpus %s, which do not hold cpu 0", queue_index, why, cpus );
+        return false;
     }
     rocketnet_warn( "gso worker %d left on cpus %s, cpu 0 among them: %s; it asks for no real-time scheduling", queue_index, cpus, why );
+    return true;
 }
 
 // A refused pin leaves the worker on the mask it inherited, which may include
 // cpu 0, so it is confined to the online cpus from num_os_cpus up
-// (rocketnet_gso_pin_fallback). true when it is; false when it is not (no
-// cpu but 0 is online, or the confinement refused): counted in pin_refusals
-// (GSO_PIN_REFUSALS counts the failed confinements after a refused pin too)
-// with one warning naming the queue and the mask it is left on
+// (rocketnet_gso_pin_fallback). A failed confinement (no cpu from
+// num_os_cpus up is online, or the confinement refused) is counted in
+// pin_refusals (GSO_PIN_REFUSALS counts the failed confinements after a
+// refused pin too) with one warning naming the queue and the mask it stays
+// on. true when the worker is kept off cpu 0: confined, or its mask does not
+// hold cpu 0
 static bool rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t * gso, int queue_index, int online, const struct rocketnet_gso_affinity_calls_t * calls )
 {
     unsigned char allowed[CPU_SETSIZE];
     if ( rocketnet_gso_pin_fallback( allowed, CPU_SETSIZE, online, gso->num_os_cpus ) == 0 )
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_server_gso_warn_left_on_core_zero( queue_index, calls, "no cpu but cpu 0 is online" );
-        return false;
+        return !rocketnet_server_gso_warn_not_confined( queue_index, calls, "no cpu from num_os_cpus up is online" );
     }
     cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
@@ -1370,8 +1380,7 @@ static bool rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t 
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         char why[192];
         (void) snprintf( why, sizeof( why ), "confining it away from the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
-        rocketnet_server_gso_warn_left_on_core_zero( queue_index, calls, why );
-        return false;
+        return !rocketnet_server_gso_warn_not_confined( queue_index, calls, why );
     }
     return true;
 }
@@ -1395,11 +1404,11 @@ static bool rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         if ( check == ROCKETNET_GSO_PIN_OUTSIDE_SET )
         {
-            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; it runs on the cpus from num_os_cpus up", queue->index, cpu, CPU_SETSIZE - 1 );
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; it falls back to the cpus from num_os_cpus up",queue->index, cpu, CPU_SETSIZE - 1 );
         }
         else
         {
-            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); it runs on the cpus from num_os_cpus up", queue->index, cpu, online - 1 );
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); it falls back to the cpus from num_os_cpus up",queue->index, cpu, online - 1 );
         }
         const bool off_core_zero = rocketnet_server_gso_confine_refused( gso, queue->index, online, calls );
         queue->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
@@ -1414,7 +1423,7 @@ static bool rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
     if ( result != 0 )
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on the cpus from num_os_cpus up", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
+        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it falls back to the cpus from num_os_cpus up",queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
         const bool off_core_zero = rocketnet_server_gso_confine_refused( gso, queue->index, online, calls );
         queue->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
         queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
@@ -2973,6 +2982,7 @@ int rocketnet_server_gso_test_send_slot( struct rocketnet_server_gso_t * gso, ui
 // the fakes of rocketnet_server_gso_test_place_worker: only the refusals are
 // injected; the transport's own placement code counts and records
 static int gso_fake_cpus = 4;
+static bool gso_fake_without_cpu_zero = false;
 static bool gso_fake_refuse_pin = false;
 static bool gso_fake_refuse_all = false;
 static int gso_fake_round_robin = 0;
@@ -2980,7 +2990,7 @@ static int gso_fake_round_robin = 0;
 static int gso_fake_get( cpu_set_t * mask )
 {
     CPU_ZERO( mask );
-    for ( int cpu = 0; cpu < gso_fake_cpus && cpu < CPU_SETSIZE; cpu++ )
+    for ( int cpu = gso_fake_without_cpu_zero ? 1 : 0; cpu < gso_fake_cpus && cpu < CPU_SETSIZE; cpu++ )
     {
         CPU_SET( (size_t) cpu, mask );
     }
@@ -3003,8 +3013,8 @@ static int gso_fake_set_round_robin( int priority )
     return 0;
 }
 
-bool rocketnet_server_gso_test_place_worker( struct rocketnet_server_gso_t * gso, int queue_index, int num_os_cpus, int online, int cpus, bool refuse_pin,
-                                             bool refuse_all, bool * left_on_core_zero, int * round_robin_requests )
+bool rocketnet_server_gso_test_place_worker( struct rocketnet_server_gso_t * gso, int queue_index, int num_os_cpus, int online, int cpus, bool without_cpu_zero,
+                                             bool refuse_pin, bool refuse_all, bool * left_on_core_zero, int * round_robin_requests )
 {
     rocketnet_assert( gso );
     if ( queue_index < 0 || queue_index >= gso->num_queues )
@@ -3013,6 +3023,7 @@ bool rocketnet_server_gso_test_place_worker( struct rocketnet_server_gso_t * gso
     }
     gso->num_os_cpus = num_os_cpus > 1 ? num_os_cpus : 1;
     gso_fake_cpus = cpus;
+    gso_fake_without_cpu_zero = without_cpu_zero;
     gso_fake_refuse_pin = refuse_pin;
     gso_fake_refuse_all = refuse_all;
     gso_fake_round_robin = 0;

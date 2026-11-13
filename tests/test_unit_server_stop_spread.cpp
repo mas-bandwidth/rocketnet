@@ -1420,7 +1420,7 @@ static void test_server_transport_counts_xdp_pin_refusals()
     g_frames_dropped_server = server;
     g_pin_refusals_reads = 0;
     rocketnet_unit_check( rocketnet_server_socket_test_pin_refusals( stop_spread_pin_refusals_read, xdp->backend->server ) );
-    rocketnet_unit_check( g_pin_refusals_reads == 6 );
+    rocketnet_unit_check( g_pin_refusals_reads == 7 );
     g_frames_dropped_server = NULL;
 
     // the last count stays until the next xdp read: a read through the fake
@@ -1465,7 +1465,8 @@ static uint64_t stop_spread_pin_row( const struct rocketnet_server_transport_io_
 // (rocketnet_server_gso_test_place_worker): the transport's own code counts,
 // and GSO_PIN_REFUSALS is read by value through the server's fold. Its row
 // counts refused pins and the failed confinements after them. A worker left
-// on cpu 0 is flagged and asks for no SCHED_RR; one kept off it asks once.
+// on cpu 0 is flagged and asks for no SCHED_RR; one kept off it, or whose
+// mask never held cpu 0, asks once.
 
 static void test_server_transport_counts_gso_pin_refusals()
 {
@@ -1489,32 +1490,40 @@ static void test_server_transport_counts_gso_pin_refusals()
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 0 );
 
     // granted: cpu 1 of 4, not counted, SCHED_RR asked for
-    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, false, false, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, false, false, false, &left, &round_robin ) );
     rocketnet_unit_check( !left && round_robin == 1 && rocketnet_server_gso_worker_cpu( gso, 0 ) == 1 );
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 0 );
 
     // the pin refused, the confinement (cpus 1 .. 3) taken: counted once
-    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, true, false, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, false, true, false, &left, &round_robin ) );
     rocketnet_unit_check( !left && round_robin == 1 && rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 1 );
 
     // the pin and the confinement refused: both counted, left on cpu 0, no SCHED_RR
-    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, true, true, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, false, true, true, &left, &round_robin ) );
     rocketnet_unit_check( left && round_robin == 0 && rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 3 );
 
-    // one cpu online: cpu 1 not online (counted), no cpu but 0 to confine to
-    // (counted), left on cpu 0, no SCHED_RR; the call returns: the host runs
-    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 1, 1, false, false, &left, &round_robin ) );
+    // one cpu online: cpu 1 not online (counted), no cpu from num_os_cpus up
+    // to confine to (counted), left on cpu 0, no SCHED_RR; the call returns:
+    // the host runs
+    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 1, 1, false, false, false, &left, &round_robin ) );
     rocketnet_unit_check( left && round_robin == 0 );
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 5 );
 
     // a later granted pin clears the flag
-    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, false, false, &left, &round_robin ) );
-    rocketnet_unit_check( !left && round_robin == 1 );
+    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, false, false, false, &left, &round_robin ) );
+    rocketnet_unit_check( !left && round_robin == 1 && rocketnet_server_gso_worker_cpu( gso, 0 ) == 1 );
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 5 );
 
-    rocketnet_unit_check( !rocketnet_server_gso_test_place_worker( gso, 1, 1, 4, 4, false, false, &left, &round_robin ) );
+    // the pin and the confinement refused on a mask without cpu 0 (cpus 1 ..
+    // 3): both counted, but the worker is not on cpu 0, so it is not flagged
+    // and asks for SCHED_RR
+    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, true, true, true, &left, &round_robin ) );
+    rocketnet_unit_check( !left && round_robin == 1 && rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
+    rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 7 );
+
+    rocketnet_unit_check( !rocketnet_server_gso_test_place_worker( gso, 1, 1, 4, 4, false, false, false, &left, &round_robin ) );
 
     g_pin_fold_server = NULL;
     rocketnet_server_gso_test_close( gso );
@@ -1560,21 +1569,26 @@ static void test_server_transport_counts_uring_pin_refusals()
     int round_robin = -1;
 
     // granted: not counted, SCHED_RR asked for
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, false, false, &row, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, false, false, false, &row, &left, &round_robin ) );
     rocketnet_unit_check( row == 0 && !left && round_robin == 1 );
 
     // the pin refused, the confine (cpus 1 .. 3) taken: counted once, SCHED_RR asked for
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, true, false, &row, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, false, true, false, &row, &left, &round_robin ) );
     rocketnet_unit_check( row == 1 && !left && round_robin == 1 );
 
     // the pin and the confine refused: counted once, left on cpu 0, no SCHED_RR
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, true, true, &row, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, false, true, true, &row, &left, &round_robin ) );
     rocketnet_unit_check( row == 1 && left && round_robin == 0 );
 
     // one cpu online: the pin refused (counted once), nothing but cpu 0 to
     // confine to, left on cpu 0, no SCHED_RR; the call returns: the host runs
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 1, 1, false, false, &row, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 1, 1, false, false, false, &row, &left, &round_robin ) );
     rocketnet_unit_check( row == 1 && left && round_robin == 0 );
+
+    // the pin and the confine refused on a mask without cpu 0 (cpus 1 .. 3):
+    // counted once, not on cpu 0, so not flagged, and SCHED_RR asked for
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, true, true, true, &row, &left, &round_robin ) );
+    rocketnet_unit_check( row == 1 && !left && round_robin == 1 );
 
     g_pin_fold_server = NULL;
     rocketnet_log_level( saved_level );
