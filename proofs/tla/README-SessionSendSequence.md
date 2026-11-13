@@ -67,10 +67,16 @@ unit cases check the baseline between the control seal and the fill seal and
 failed on this with the sequence fix alone.
 
 `BrokenBurstOne` takes one sequence for the whole burst (an add of 1 where
-the code adds `ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS`). The trace TLC
-prints is recorded with the run; its shape is: `BurstTake` takes 1 and moves
-the counter to 2, a fill or the control send takes 2 and seals it, and
-`BurstSeal` twice seals 1 and then 2 again. Against the code: the drain
+the code adds `ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS`). TLC's trace
+(441 distinct states, exit 12):
+
+1. `BurstTake`: the burst's first sequence is 1; the counter moves to 2.
+2. `FillStart(f1)`: the fill takes 2; the counter is 3.
+3. `FillSeal(f1)`: sequence 2 sealed.
+4. `BurstSeal`: the burst's first packet, sequence 1.
+5. `BurstSeal`: the burst's second packet, sequence 2 again.
+
+Against the code: the drain
 seals at `first_sequence + sealed` for `sealed` up to nine, so an add of
 less than ten would hand the next sender a sequence inside the burst's
 range; the add at the defer is the full count, so the code has no such
