@@ -45,8 +45,8 @@ and bumps the major version.
    past them. A smaller size must be one an older struct can have: where one
    of the struct's fields ends, or an earlier revision's `sizeof` (its last
    field's end rounded up to its alignment, trailing padding included, which
-   can fall between two fields); any other size, such as one that ends inside
-   a field, is refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
+   can fall between two fields). Any other size, such as one that
+   ends inside a field, is refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
 5. **The library never reads or writes past `config_bytes`.** Every byte the
    library reads from or writes to the caller's struct is below the caller's
    `config_bytes`. A `NULL` config, where a call accepts one, means the
@@ -116,8 +116,8 @@ revision `sizeof` that is not one (`ROCKETNET_CLIENT_CONFIG_BYTES_n` and
 `ROCKETNET_SERVER_CONFIG_BYTES_n` in `sdk/rocketnet_layers.h`, which lie in a
 revision's trailing padding). Rule 3 reads a larger size only as far as the
 library knows, and rule 4 accepts a smaller size only when it is on that list.
-Any other size below the struct is refused with
-`ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
+Any other size below the struct, such as one that ends inside a field, is
+refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
 
 ## 4. The Other Public Structs
 
