@@ -770,16 +770,21 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # floor. This build of it fuses a*b+c unless the floor holds, and runs as
     # soon as it links, so a build whose floor does not hold fails to build.
     # It runs where the build machine runs the target (not when cross
-    # compiling) and needs a CPU with FMA (every fleet host has it).
+    # compiling) and only on a CPU that runs FMA code: where the canary takes
+    # an FMA flag, a one-line FMA program built with the same flag is run at
+    # configure time, and a CPU that cannot run it builds the canary without
+    # running it (a configure message says so) instead of failing the build.
     add_executable(test_fp_contract_fma tests/fp_contract_fma.cpp)
+    set(rocketnet_fma_options "")
     if(MSVC)
         if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
-            target_compile_options(test_fp_contract_fma PRIVATE /arch:AVX2)
+            set(rocketnet_fma_options /arch:AVX2)
         endif()
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
            AND (NOT APPLE OR NOT CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
-        target_compile_options(test_fp_contract_fma PRIVATE -mfma)
+        set(rocketnet_fma_options -mfma)
     endif()
+    target_compile_options(test_fp_contract_fma PRIVATE ${rocketnet_fma_options})
     # GCC contracts only when optimizing (Clang and clang-cl contract at -O0
     # as well), so without -O2 a GCC Debug build would pass with no floor.
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -788,9 +793,26 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" rocketnet_host_processor)
     string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" rocketnet_target_processor)
     if(NOT CMAKE_CROSSCOMPILING AND rocketnet_host_processor STREQUAL rocketnet_target_processor)
-        add_custom_command(TARGET test_fp_contract_fma POST_BUILD
-            COMMAND test_fp_contract_fma
-            VERBATIM)
+        set(rocketnet_fma_runs ON)
+        if(rocketnet_fma_options)
+            set(rocketnet_fma_probe "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_fma_probe.c")
+            file(WRITE "${rocketnet_fma_probe}"
+"#include <immintrin.h>
+int main( void ) { volatile double a = 2.0; __m128d r = _mm_fmadd_sd( _mm_set_sd( a ), _mm_set_sd( 3.0 ), _mm_set_sd( 1.0 ) ); return _mm_cvtsd_f64( r ) == 7.0 ? 0 : 1; }
+")
+            try_run(ROCKETNET_FMA_PROBE_RUN ROCKETNET_FMA_PROBE_COMPILE
+                "${CMAKE_CURRENT_BINARY_DIR}/rocketnet_fma_probe" "${rocketnet_fma_probe}"
+                COMPILE_DEFINITIONS ${rocketnet_fma_options})
+            if(NOT ROCKETNET_FMA_PROBE_COMPILE OR NOT ROCKETNET_FMA_PROBE_RUN EQUAL 0)
+                set(rocketnet_fma_runs OFF)
+                message(STATUS "test_fp_contract_fma is built but not run: this CPU does not run code built with ${rocketnet_fma_options}")
+            endif()
+        endif()
+        if(rocketnet_fma_runs)
+            add_custom_command(TARGET test_fp_contract_fma POST_BUILD
+                COMMAND test_fp_contract_fma
+                VERBATIM)
+        endif()
     endif()
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/echo_payload.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
     if(TARGET RocketNet::Uring)
