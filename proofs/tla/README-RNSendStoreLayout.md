@@ -228,7 +228,7 @@ code (probes `[][Refuse => UNCHANGED vars]_vars` passed on
 |---|---|---|
 | `RefuseLeavesLayout` | a refused start takes a descriptor first and releases it; takes a chunk first and frees it; leaves a full descriptor table uncounted; or exhausts the region | `...BrokenDescFirst`, `...BrokenChunkFirst`, `...BrokenUncountedQueueFull`, `...BrokenRefuseExhausts` |
 | `StoreNeverExhausts` | a refused start sets `exhausted` | `MCRNSendStoreLayoutBrokenRefuseSticky.cfg` |
-| `RefuseLeavesRing` | a refused span start links and unlinks its span, or changes the ring | `MCRNSendSpansBrokenLinkFirst.cfg`, `MCRNSendSpansBrokenRefuseChanges.cfg` |
+| `RefuseLeavesRing` | a refused span start links and unlinks its span (spending `span_tail_undo`), or changes the ring | `MCRNSendSpansBrokenLinkFirst.cfg`, `MCRNSendSpansBrokenRefuseChanges.cfg` |
 | `SpansNeverExhaust` | a refused span start sets `exhausted` | `MCRNSendSpansBrokenRefuseExhausts.cfg` |
 
 | Case | Expected | Exit | Distinct | Seconds (2 workers, vision) |
@@ -261,9 +261,46 @@ Witness traces, checked by hand against the code:
 - UncountedQueueFull: a start refused for a full descriptor table leaves
   `refused` where it was. In the code `rn_region_send_refuse` counts
   `RN_SEND_FIT_QUEUE_FULL` (871 to 886).
-- LinkFirst (3 states): `Alloc(32)` leaves the tail at 32; `Refuse(96)` links
-  at 0 and unlinks, and the tail is left at 0, so a non-empty ring has
-  `tail = head` and reads as full. `rn_span_unlink` restores the floor only
-  when the ring empties (1062 to 1066); unlinking the newest span leaves the
-  tail where the link put it. In the code the span is linked only at 1155,
-  after the fit at 1139 and the descriptor at 1148.
+- LinkFirst (3 states; rewritten in the models fix round of 2026-11-13, the
+  unlink now the code's with its tail undo, `UndoTail = TRUE` as in the code,
+  so `LinkFirst` is the one rule changed): `Alloc(32)` leaves the tail at 32
+  and `span_tail_undo` at 0; `Refuse(96)` links at 0 (the link keeps 32 in
+  `span_tail_undo` and moves the tail), finds no room and unlinks the newest
+  span, which gives the tail back from `span_tail_undo` and spends it. The
+  tail is 32 again, but `span_tail_undo` is spent where it was 0, so an
+  abort of the first span could no longer give its bytes back. In the code
+  `rn_span_link` writes `span_tail_undo = span_tail` (1033) and
+  `rn_span_unlink` of the newest span restores the tail and stores the
+  sentinel (1083 to 1090); the span is linked only after the fit and the
+  descriptor take in `rn_region_send_alloc_span`, so no refused start
+  touches either.
+
+## RNSendSpans: the carve keeps dead descriptor bytes (models fix round, 2026-11-13)
+
+- **`Reset`** is `rn_region_carve`'s span part (`sdk/rocketnet_allocator.cpp`
+  594 to 703, the span roots at 666 to 669): the roots and `exhausted`
+  only. A descriptor keeps its `span_start`, length and links as dead
+  bytes; the carve's `descriptors_fresh = 0` (650) forgets every descriptor,
+  and a later take (`rn_region_descriptor_take`) and link write every span
+  field before anything reads it. The old `Reset` zeroed every descriptor,
+  which the code never does, and `ListInAllocationOrder` checked that a dead
+  descriptor's links were NONE; that conjunct is gone, since nothing reads
+  them.
+- **`LinkClearsNext`** (`TRUE` in the code): `rn_span_link` writes
+  `span_next = RN_DESCRIPTOR_NONE` (1019). With the dead links kept, that
+  write is what keeps the list right after a carve.
+  `MCRNSendSpansBrokenLinkKeepsNext.cfg` turns it off and fails
+  `ListInAllocationOrder` (5 states): spans 1 and 2 are linked
+  (`span_next` of 1 is 2), the carve leaves that link, and span 1 linked
+  again is the newest span with a next.
+- **`View`**: `MCRNSendSpans.cfg` fingerprints states without the dead
+  fields (no action and no property reads them while `LinkClearsNext`
+  holds); the witnesses and the other passing configurations run without it.
+
+| Case | Expected | Exit | Distinct | Seconds (2 workers, aws-mut-3) |
+|---|---|---:|---:|---:|
+| `MCRNSendSpans.cfg` (`VIEW View`) | pass | 0 | 25771 | 2.1 |
+| `MCRNSendSpansRefuse.cfg` | pass | 0 | 81901 | 4.8 |
+| `MCRNSendSpansAbort.cfg` | pass | 0 | 9101 | 1.2 |
+| `MCRNSendSpansBrokenLinkFirst.cfg` | `RefuseLeavesRing` | 13 | 10 | 0.7 |
+| `MCRNSendSpansBrokenLinkKeepsNext.cfg` | `ListInAllocationOrder` | 12 | 84 | 0.7 |
