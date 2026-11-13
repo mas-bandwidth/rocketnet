@@ -35,21 +35,28 @@
 (* unreliable deliveries (code 0 and code 1, uDelivered) are below the     *)
 (* allowance Du, and is otherwise refused and counted                      *)
 (* (rn_sequenced_room).  The reservation counts the hold exactly when its  *)
-(* release can take a slot (ExactSeq); NeverDeferWithRoom holds that a     *)
-(* packet is deferred only when the deliveries its record can make do not  *)
-(* fit.                                                                    *)
+(* release can take a slot (ExactSeq); NoOverReservation holds that a      *)
+(* packet is deferred only when Bound, the most deliveries its record can  *)
+(* make, does not fit.  Bound counts the hold as released whenever it can  *)
+(* take a slot, as the code's reservation does, without asking whether the *)
+(* drain reaches the hold's epoch (the model has no epoch for the hold:   *)
+(* Receive's drain may or may not release it).  So the reservation is      *)
+(* conservative by up to the one hold, and "never deferred with room" is   *)
+(* not claimed: a record whose drain stops short of the hold's epoch can   *)
+(* be deferred although its other deliveries fit.  Safety (NoExhaust) does *)
+(* not depend on it.                                                       *)
 (*                                                                         *)
 (* Reversed witnesses: Masked = FALSE compares the masked record ordering *)
 (* with the unmasked counter in the reservation: past the wire wrap an     *)
 (* in-turn record reads as not in turn and reserves too few deliveries     *)
 (* (NoExhaust).  ExactSeq = FALSE counts a code-1 hold whatever Du has     *)
 (* left: with Du spent, an in-turn record whose run fills the table is     *)
-(* deferred although its deliveries fit (NeverDeferWithRoom).              *)
+(* deferred although its deliveries fit (NoOverReservation).               *)
 (* DupOne = FALSE reserves the held run for an in-turn duplicate: deferred *)
-(* although its one delivery fits (NeverDeferWithRoom), and in the code    *)
+(* although its one delivery fits (NoOverReservation), and in the code     *)
 (* the run's lookups for every duplicate.  PartialOne = FALSE reserves the *)
 (* run for an in-turn fragment that cannot complete its block: deferred    *)
-(* with room (NeverDeferWithRoom), and in the code the run's lookups per   *)
+(* with room (NoOverReservation), and in the code the run's lookups per    *)
 (* fragment.                                                               *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
@@ -115,9 +122,10 @@ SeqTerm == IF ExactSeq THEN (IF SeqCanTake THEN 1 ELSE 0)
            ELSE (IF seqHold # "none" THEN 1 ELSE 0)
 Needed(o) == IF InTurnCompare(o) THEN 1 + Run(o, W) + SeqTerm ELSE 1
 
-\* the deliveries the dispatch can actually make: the record, its held run
-\* and a hold whose release takes a slot (the mod-wire in-turn test)
-Actual(o) == IF U24(o) = U24(read) THEN 1 + Run(o, W) + (IF SeqCanTake THEN 1 ELSE 0) ELSE 1
+\* the most deliveries the dispatch can make: the record, its held run
+\* and a hold whose release takes a slot, counted whether or not the drain
+\* reaches its epoch (the mod-wire in-turn test)
+Bound(o) == IF U24(o) = U24(read) THEN 1 + Run(o, W) + (IF SeqCanTake THEN 1 ELSE 0) ELSE 1
 
 \* rn_channels_drain: from read r with d deliveries taken,
 \* deliver each held successor found at key U24(r) while the table has room.
@@ -143,7 +151,7 @@ Receive(o) ==
     /\ ~exhausted
     /\ disagree' = (disagree \/ (InTurnCompare(o) # (U24(o) = U24(read))))
     /\ IF Needed(o) > Cap - deliveries
-         THEN /\ wasted' = (wasted \/ Actual(o) <= Cap - deliveries)
+         THEN /\ wasted' = (wasted \/ Bound(o) <= Cap - deliveries)
               /\ UNCHANGED <<read, held, deliveries, exhausted, uDelivered, seqHold>>   \* DEFERRED, rn_ordered_receive
          ELSE /\ UNCHANGED wasted
               /\ LET delta == U24(o - read) IN                       \* rn_channels_dispatch_ordered
@@ -171,7 +179,7 @@ Receive(o) ==
 \* a resend whose number layer 3 has already taken, at ordering o
 \* (rn_ordered_receive): it delivers nothing.  The reservation asks
 \* rn_window_receive_duplicate first and counts it one, as a record ahead of
-\* its turn (Actual 1); a table without that one defers the packet, and
+\* its turn (Bound 1); a table without that one defers the packet, and
 \* rn_window_receive_accept drops and counts it otherwise.  Counting the held
 \* run (DupOne = FALSE) defers it when the run does not fit although one does.
 ReceiveDuplicate(o) ==
@@ -185,7 +193,7 @@ ReceiveDuplicate(o) ==
 \* a fresh code-3 block fragment at the read index that does not complete
 \* its block: rn_channels_dispatch_chunk collects it and delivers nothing.
 \* rn_receive_delivery_reservation counts it one, as a record ahead of its
-\* turn (Actual 1); counting the held run (PartialOne = FALSE) defers it
+\* turn (Bound 1); counting the held run (PartialOne = FALSE) defers it
 \* when the run does not fit although one does.
 ReceivePartial ==
     /\ ~exhausted
@@ -247,7 +255,8 @@ CompareAgrees == ~disagree
 \* every held ordering is ahead of the read index by 1 .. W-1
 HeldAhead == \A h \in held : U24(h - read) \in 1..W-1
 
-\* a packet is deferred only when the deliveries its record can make do not fit,
+\* a packet is deferred only when Bound, the most deliveries its record can
+\* make (the channel's sequenced hold counted as released), does not fit,
 \* a record that releases nothing (held, a duplicate, a partial fragment) counted one
-NeverDeferWithRoom == ~wasted
+NoOverReservation == ~wasted
 =============================================================================

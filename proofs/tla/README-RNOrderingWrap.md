@@ -64,16 +64,16 @@ and both compares of `rn_channels_drain_sequenced`.
 | `NoExhaust` | a full delivery table defers the packet; the drain never exhausts the region |
 | `CompareAgrees` | the reservation's in-turn test agrees with the comparison modulo the wire |
 | `HeldAhead` | every held ordering is 1 .. `W - 1` ahead of the read index modulo the wire |
-| `NeverDeferWithRoom` | a packet is deferred only when the deliveries its record can make do not fit, a record that releases nothing (held, a duplicate, a fragment that completes nothing) counted one |
+| `NoOverReservation` | a packet is deferred only when `Bound`, the most deliveries its record can make, does not fit, a record that releases nothing (held, a duplicate, a fragment that completes nothing) counted one. `Bound` counts the channel's sequenced hold as released whenever its release can take a slot, as the code's reservation does, without asking whether the drain reaches the hold's epoch (the model gives the hold no epoch). The reservation is therefore conservative by up to that one hold, and "never deferred with room" is not claimed: a record whose drain stops short of the hold's epoch can be deferred although its other deliveries fit. Formerly named `NeverDeferWithRoom`, which claimed that. |
 
 ## Reversed witness
 
 | Case | Rule off | Declared invariant |
 |---|---|---|
 | `MCRNOrderingWrapBrokenUnmasked.cfg` | `Masked = FALSE`: `rn_u24(record->ordering) != rx->ordered_read`, an in-turn compare of the 24-bit ordering against the unmasked 32-bit read index | `NoExhaust` |
-| `MCRNOrderingWrapBrokenSeqHold.cfg` | `ExactSeq = FALSE`: `if ( rx->held_sequenced != RN_DESCRIPTOR_NONE ) needed++;`, a code-1 hold counted whatever `Du` has left | `NeverDeferWithRoom` |
-| `MCRNOrderingWrapBrokenDupRun.cfg` | `DupOne = FALSE`: an in-turn duplicate reserves its held run, as v1.1.51's reservation did, which ran before `rn_window_receive_accept` found the duplicate | `NeverDeferWithRoom` |
-| `MCRNOrderingWrapBrokenPartialRun.cfg` | `PartialOne = FALSE`: an in-turn block fragment reserves its held run whether or not it completes its block, as v1.1.51 had it | `NeverDeferWithRoom` |
+| `MCRNOrderingWrapBrokenSeqHold.cfg` | `ExactSeq = FALSE`: `if ( rx->held_sequenced != RN_DESCRIPTOR_NONE ) needed++;`, a code-1 hold counted whatever `Du` has left | `NoOverReservation` |
+| `MCRNOrderingWrapBrokenDupRun.cfg` | `DupOne = FALSE`: an in-turn duplicate reserves its held run, as v1.1.51's reservation did, which ran before `rn_window_receive_accept` found the duplicate | `NoOverReservation` |
+| `MCRNOrderingWrapBrokenPartialRun.cfg` | `PartialOne = FALSE`: an in-turn block fragment reserves its held run whether or not it completes its block, as v1.1.51 had it | `NoOverReservation` |
 
 ### Hand check against the code
 

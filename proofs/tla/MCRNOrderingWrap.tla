@@ -6,7 +6,7 @@
 (* passing control; MCRNOrderingWrapBrokenUnmasked.cfg compares the masked *)
 (* ordering with the unmasked counter in the reservation and must violate  *)
 (* NoExhaust; ...BrokenSeqHold.cfg, ...BrokenDupRun.cfg and               *)
-(* ...BrokenPartialRun.cfg must violate NeverDeferWithRoom                 *)
+(* ...BrokenPartialRun.cfg must violate NoOverReservation                 *)
 (* (README-RNOrderingWrap.md).                                             *)
 (***************************************************************************)
 EXTENDS RNOrderingWrap

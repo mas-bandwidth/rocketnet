@@ -16,7 +16,7 @@ measured records in `proofs/tla/RUNS.tsv`.
 
 **The turns across packets** (`rn_ordered_write`). A channel joins the back
 of the ready list when its FIFO goes from empty to non-empty
-(`rn_channels_send`: `was_empty` -> `rn_ready_push`). Each numbering turn takes
+(`rn_channels_finish`: `was_empty` -> `rn_ready_push`). Each numbering turn takes
 the ready list's head channel, numbers its FIFO head
 (`rn_window_send_first_write`), pops it (`rn_channel_queue_pop`), and the
 channel leaves the turns and rejoins the back if it has more
@@ -59,11 +59,15 @@ phase (`rn_endpoint_ordered_due` is false: the ready head is stalled and no
 resend is due) and `rn_endpoint_end_reliable` starts the unreliable phase,
 unless the budget refused a reliable packet (`reliable_waiting`): the
 unreliable phase runs while budget remains (`sdk/rocketnet_endpoint.cpp`,
-`rn_endpoint_next_packet_bytes`).
+`rn_endpoint_next_packet_bytes`). Abstraction: the code's stall
+(`rn_window_send_admit`, `sdk/rocketnet_window_send.cpp`) also refuses when
+the send ring has no span for a holdable message (`RNRing.tla`); the model
+closes the window on the count of outstanding numbers only. Both refusals
+return the same stall and break the numbering loop the same way.
 
 ## Priorities in v1.1.x: the levels are reserved
 
-Every reliable message is MEDIUM: `rn_channels_send` and the endpoint's two
+Every reliable message is MEDIUM: `rn_channels_finish` and the endpoint's two
 routes set `descriptor->priority = ROCKETNET_PRIORITY_MEDIUM`, and the public
 API (`sdk/rocketnet.h`) takes no priority. Only CONFIG
 (`rn_ordered_announce_config`) is IMMEDIATE, and it is pushed to the head of
@@ -232,7 +236,7 @@ drains whatever the turns do.
 | Action / operator | Function |
 |---|---|
 | `Init`, `Seeds` | `rn_packet_builder_init` -> `rn_builder_reset_clocks`; `round_robin = num_channels - 1`, so the first turn is channel 0's |
-| `Queue`, `Requeue` (`Enqueue`) | `rn_channels_send`: `rn_channel_queue_append`, and `rn_ready_push` when the FIFO was empty; CONFIG: `rn_ordered_announce_config` |
+| `Queue`, `Requeue` (`Enqueue`) | `rn_channels_finish`: `rn_channel_queue_append`, and `rn_ready_push` when the FIFO was empty; CONFIG: `rn_ordered_announce_config` |
 | `Number` | `rn_ordered_write`'s numbering loop (`sdk/rocketnet_channel.cpp`): the ready head, `rn_window_send_first_write`, `rn_ready_remove_named`, `rn_channel_queue_pop`, `rn_ready_push` when the channel has more |
 | `IsHead`, `Boost`, `RtxHead`, `RtxBoost` (caller order: `resendQ` is `rn_ordered_walk`'s FIFO walk) | `rn_builder_plan`: once per call, stable radix passes group the full 16-bit channel and class into contiguous ranges while preserving caller order; a reverse pass stores every position's suffix priority minimum, so each range cursor is its class's head and its suffix minimum is its class's boost; `rn_builder_take_head` advances only that cursor |
 | `PickLevel`, `PickIn` | `rn_builder_next_in_class`, one selection operation per current channel/class range head (with `rn_builder_effective_clock`, the pull-forward); `test_packet_builder_matches_reference_order` holds it to the quadratic scan it replaced, take for take |

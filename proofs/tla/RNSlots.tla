@@ -1,8 +1,14 @@
 ---------------------------- MODULE RNSlots ----------------------------
 \* Connection-tagged transport batches, region lifetime and object updates.
 \* CHANNELS.md 10.2 and 15.1 supply Observe/Admit; the exhaustion and explicit
-\* release rules extend that draft. Views require explicit Release before
-\* the next object update; an early update is rejected.
+\* release rules extend that draft. Views are released before the next object
+\* update; an update with a view still held takes the view back, returns
+\* ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED and continues
+\* (RejectUnreleasedUpdate, rn_message_object_update_begin). Release returns
+\* the view only; the region's charge for every delivery of the last update
+\* returns when the next update begins (rn_endpoint_begin_update), released
+\* or not. A queued-path start is pending per connection (open.pending in
+\* rn_message_object_start): starts on different slots coexist.
 \*
 \* The disconnect reason (rocketnet_server_disconnect_reason): the transport
 \* records why each slot's connection ended (ended, the protocol's
@@ -66,7 +72,8 @@ Init ==
              changed |-> [s \in Slots |-> FALSE],
              freed |-> [s \in Slots |-> FALSE],
              badKick |-> FALSE, badLifetime |-> FALSE, error |-> "NONE",
-             pending |-> 0, pendingConn |-> 0]
+             pending |-> [s \in Slots |-> FALSE],
+             pendingConn |-> [s \in Slots |-> 0]]
 
 \* Transport connection ids never repeat in the bounded lifetime. Several
 \* connect/disconnect steps may precede a single Observe, but a slot freed
@@ -144,8 +151,8 @@ SeenChange(s) == IF "clientid" \in Broken
 \* rn_message_connection_cancel_at_reset before each connection reset): a
 \* start pending on a slot the update resets is cancelled with that reset.
 \* "pendingacrossreset" removes the cancel, the defect it fixes.
-CancelsPending(owner) ==
-    /\ st.pending # 0 /\ owner[st.pending] # st.bound[st.pending]
+CancelsPending(s) ==
+    /\ st.pending[s] /\ st.owner[s] # st.bound[s]
     /\ "pendingacrossreset" \notin Broken
 
 \* The reason Observe leaves in a slot: the transport's for a slot it held
@@ -167,7 +174,6 @@ Carves(s) == Unbinds(s) /\ st.owner[s] # 0
 Observe ==
     /\ st.phase = "transport"
     /\ \A s \in Slots : st.state[s] # "Disconnected"
-    /\ ((\A s \in Slots : st.held[s] = {}) \/ "updatewithheld" \in Broken)
     /\ \E ready \in (IF Stable THEN {st.deferred} ELSE SUBSET st.deferred) :
        st' = [st EXCEPT !.bound = st.owner,
           !.state = [s \in Slots |-> IF st.owner[s] = 0 THEN "Free" ELSE "Connected"],
@@ -179,8 +185,8 @@ Observe ==
           !.packetMap = {p \in st.packetMap : p.conn = st.owner[p.slot]},
           !.changed = [s \in Slots |-> "clientid" \in Broken /\ SeenChange(s)],
           !.freed = [s \in Slots |-> FALSE],
-          !.pending = IF CancelsPending(st.owner) THEN 0 ELSE @,
-          !.pendingConn = IF CancelsPending(st.owner) THEN 0 ELSE @,
+          !.pending = [s \in Slots |-> IF CancelsPending(s) THEN FALSE ELSE st.pending[s]],
+          !.pendingConn = [s \in Slots |-> IF CancelsPending(s) THEN 0 ELSE st.pendingConn[s]],
           !.todo = st.batch \cup ready, !.batch = {},
           !.deferred = @ \ ready, !.phase = "apply"]
     /\ UNCHANGED <<wire, sent, pulse>>
@@ -221,8 +227,7 @@ Kick(s) ==
     /\ st' = [st EXCEPT !.state[s] = "Disconnected", !.owner[s] = 0,
           !.bound[s] = 0, !.reason[s] = "MESSAGE_MEMORY_EXHAUSTED",
           !.ended[s] = "SERVER_DISCONNECTED", !.freed[s] = TRUE,
-          !.pending = IF @ = s THEN 0 ELSE @,
-          !.pendingConn = IF st.pending = s THEN 0 ELSE @]
+          !.pending[s] = FALSE, !.pendingConn[s] = 0]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 \* The application ends a slot between updates (rocketnet_server_disconnect_client
@@ -243,8 +248,7 @@ PublicDisconnect(s) ==
           THEN st' = [st EXCEPT !.state[s] = "Disconnected", !.owner[s] = 0,
                       !.bound[s] = 0, !.reason[s] = "SERVER_DISCONNECTED",
                       !.ended[s] = "SERVER_DISCONNECTED", !.freed[s] = TRUE,
-                      !.pending = IF @ = s THEN 0 ELSE @,
-                      !.pendingConn = IF st.pending = s THEN 0 ELSE @]
+                      !.pending[s] = FALSE, !.pendingConn[s] = 0]
           ELSE st' = [st EXCEPT !.owner[s] = 0, !.ended[s] = "SERVER_DISCONNECTED",
                       !.freed[s] = (st.owner[s] # 0) \/ @]
     /\ UNCHANGED <<wire, sent, pulse>>
@@ -262,34 +266,39 @@ CarryOn(s) ==
 \* emptied by the Observe that binds the slot to its next connection.
 ResetFree(s) ==
     /\ st.state[s] = "Disconnected"
-    /\ LET cancel == st.pending = s /\ "pendingacrossreset" \notin Broken
+    /\ LET cancel == st.pending[s] /\ "pendingacrossreset" \notin Broken
        IN st' = [st EXCEPT !.state[s] = "Free", !.held[s] = {},
-                 !.pending = IF cancel THEN 0 ELSE @,
-                 !.pendingConn = IF cancel THEN 0 ELSE @]
+                 !.pending[s] = IF cancel THEN FALSE ELSE @,
+                 !.pendingConn[s] = IF cancel THEN 0 ELSE @]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 \* The application's queued-path send (rn_message_object_start, finish and
-\* abort): one start pending per object, on a connected slot; a start while
-\* one is pending is refused (no step). The pending start outlives an update
-\* unless that update resets its slot (ResetCancel, Kick).
+\* abort): one start pending per connection (open.pending), on a connected
+\* slot; a second start on the same slot while one is pending there is
+\* refused (no step). Starts on other slots are independent. The pending
+\* start outlives an update unless that update resets its slot (ResetCancel,
+\* Kick).
 StartPending(s) ==
-    /\ st.phase = "application" /\ st.state[s] = "Connected" /\ st.pending = 0
-    /\ st' = [st EXCEPT !.pending = s, !.pendingConn = st.bound[s]]
+    /\ st.phase = "application" /\ st.state[s] = "Connected" /\ ~st.pending[s]
+    /\ st' = [st EXCEPT !.pending[s] = TRUE, !.pendingConn[s] = st.bound[s]]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 \* A finish ends the pending start whether it is accepted or refused: a
 \* refused bytes_written aborts the start (rn_message_object_finish), so the
 \* refused and accepted finishes take the same step here.
 FinishPending(s) ==
-    /\ st.phase = "application" /\ st.pending = s
-    /\ st' = [st EXCEPT !.pending = 0, !.pendingConn = 0]
+    /\ st.phase = "application" /\ st.pending[s]
+    /\ st' = [st EXCEPT !.pending[s] = FALSE, !.pendingConn[s] = 0]
     /\ UNCHANGED <<wire, sent, pulse>>
 
+\* rn_message_view_release (sdk/rocketnet_message_server.cpp): the held view
+\* is marked released and the held count drops; the region is not touched.
+\* Broken "releaseignored" records the release but leaves the view held.
 Release(s, r) ==
     /\ st.phase = "application"
     /\ r \in st.held[s]
-    /\ st' = [st EXCEPT !.held[s] = @ \ {r}, !.released = @ \cup {r},
-                  !.region[s] = IF "releaseignored" \in Broken THEN @ ELSE @ \ {r}]
+    /\ st' = [st EXCEPT !.held[s] = IF "releaseignored" \in Broken THEN @ ELSE @ \ {r},
+                  !.released = @ \cup {r}]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 \* The application sees this update's views only after the update returns.
@@ -298,27 +307,40 @@ EndUpdate ==
     /\ st' = [st EXCEPT !.phase = "application"]
     /\ UNCHANGED <<wire, sent, pulse>>
 
-\* The release precondition is checked before the transport runs, not after
-\* it might mutate the batch underlying the previous update's views.
+\* rn_message_object_update_begin, before the transport runs: every
+\* connection's deliveries of the last update expire and their receive
+\* descriptors return to the region (rn_endpoint_begin_update), whether or
+\* not the application released them. Broken "noexpire" keeps the charge.
+Expired(s) == IF "noexpire" \in Broken THEN st.region[s] ELSE {}
+
+\* The update with every view released: result ROCKETNET_OK.
 BeginUpdate ==
     /\ st.phase = "application"
-    /\ ((\A s \in Slots : st.held[s] = {}) \/ "updatewithheld" \in Broken)
-    /\ st' = [st EXCEPT !.phase = "transport",
-               !.badLifetime = @ \/ (\E s \in Slots : st.held[s] # {})]
+    /\ \A s \in Slots : st.held[s] = {}
+    /\ st' = [st EXCEPT !.phase = "transport", !.error = "NONE",
+               !.region = [s \in Slots |-> Expired(s)]]
     /\ UNCHANGED <<wire, sent, pulse>>
 
-\* Stable's application obeys the release-before-update precondition. The
-\* general safety model also explores callers that violate it.
+\* The update with a view still held (the application's misuse): it counts
+\* MESSAGE_NOT_RELEASED, asserts in a debug build, takes every view back
+\* (held = 0 in rn_message_object_update_begin), runs the update and returns
+\* ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. No view is carried into the
+\* transport phase. Stable's application never takes it. Broken
+\* "updatewithheld" carries the views into the transport phase.
 RejectUnreleasedUpdate ==
-    /\ ~Stable /\ "updatewithheld" \notin Broken
+    /\ ~Stable
     /\ st.phase = "application" /\ (\E s \in Slots : st.held[s] # {})
-    /\ st' = [st EXCEPT !.error = "ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED"]
+    /\ LET keep == "updatewithheld" \in Broken
+       IN st' = [st EXCEPT !.phase = "transport",
+                 !.error = "ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED",
+                 !.held = IF keep THEN @ ELSE [s \in Slots |-> {}],
+                 !.badLifetime = @ \/ keep,
+                 !.region = [s \in Slots |-> Expired(s)]]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 Environment == Data!Environment /\ UNCHANGED st
 Exhausted == {s \in Slots : st.state[s] = "Exhausted"}
-Next == IF st.error # "NONE" THEN FALSE
-        ELSE IF Exhausted # {}
+Next == IF Exhausted # {}
         THEN \E s \in Exhausted : Kick(s) \/ CarryOn(s)
         ELSE \/ \E s \in Slots : Connect(s) \/ (\E why \in TransportEnds : Disconnect(s, why)) \/ ResetFree(s)
                     \/ PublicDisconnect(s) \/ StartPending(s) \/ FinishPending(s)
@@ -363,7 +385,7 @@ TypeOK ==
     /\ st.freed \in [Slots -> BOOLEAN]
     /\ st.badKick \in BOOLEAN /\ st.badLifetime \in BOOLEAN
     /\ st.error \in {"NONE", "ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED"}
-    /\ st.pending \in 0..SlotCount /\ st.pendingConn \in 0..MaxConn
+    /\ st.pending \in [Slots -> BOOLEAN] /\ st.pendingConn \in [Slots -> 0..MaxConn]
 
 NoCrossConnectionApply == \A a \in st.applied : a.from = a.to
 NoOwnEntryDropped == \A d \in st.dropped : d.from # d.to
@@ -373,10 +395,17 @@ NoOwnEntryDropped == \A d \in st.dropped : d.from # d.to
 ReusedSlotStartsClean == \A s \in Slots :
     /\ (st.state[s] = "Free" => st.bound[s] = 0 /\ st.held[s] = {})
     /\ (st.state[s] = "Connected" => \A r \in st.region[s] \cup st.received[s] : r.conn = st.bound[s])
+\* A held view is charged to the region; the charge of every delivery of the
+\* last update, released or taken back, is returned before the transport
+\* runs (MCRNSlotsBrokenNoExpire expects TLC to violate it).
 ReleasedRecordsReusable == \A s \in Slots :
     /\ st.held[s] \subseteq st.region[s]
-    /\ st.region[s] \cap st.released = {}
+    /\ (st.phase = "transport" => st.region[s] = {})
     /\ Cardinality(st.region[s]) <= RegionCapacity
+\* A released view is no longer held (rn_message_view_release marks it
+\* released and drops the held count). MCRNSlotsBrokenReleaseIgnored expects
+\* TLC to violate it.
+ReleaseReturnsView == \A s \in Slots : st.held[s] \cap st.released = {}
 ExhaustionOnlyLeadsToDisconnect ==
     [][\A s \in Slots : st.state[s] = "Exhausted" =>
          st'.state[s] = "Disconnected" /\ st'.reason[s] = "MESSAGE_MEMORY_EXHAUSTED"]_vars
@@ -389,12 +418,19 @@ ReportedConnected(s) == st.state[s] = "Connected"
 AcceptsSend(s) == st.state[s] = "Connected"
 TransportEndedSlotEndedAtOnce == st.phase = "application" =>
     \A s \in Slots : st.owner[s] = 0 => ~ReportedConnected(s) /\ ~AcceptsSend(s)
+\* No view is carried into an update's transport phase: an update with a view
+\* still held takes it back (RejectUnreleasedUpdate). The name is kept from
+\* when the model ended at that misuse.
 UpdateRequiresReleasedViews == ~st.badLifetime
 \* No start stays pending across a reset of its slot: a pending start belongs
-\* to the connection its slot is bound to, so no start on any slot is refused
-\* by one whose connection is gone.
-NoPendingAcrossReset ==
-    st.pending # 0 => st.pendingConn # 0 /\ st.bound[st.pending] = st.pendingConn
+\* to the connection its slot is bound to, so no later start on that slot is
+\* refused by one whose connection is gone.
+NoPendingAcrossReset == \A s \in Slots :
+    st.pending[s] => st.pendingConn[s] # 0 /\ st.bound[s] = st.pendingConn[s]
+\* A reachability probe, not a safety claim: MCRNSlotsTwoPending expects TLC
+\* to violate it, showing starts pending on two slots at once (the code's one
+\* start per connection, not one per object).
+NotBothPending == ~(\A s \in Slots : st.pending[s])
 EveryReliableDelivered == \A r \in Records : (r \in st.requested) ~> (r \in st.delivered)
 \* A connection the message layer holds has not ended: its reason is NONE.
 ConnectedReadsNone == \A s \in Slots : st.state[s] = "Connected" => st.reason[s] = "NONE"

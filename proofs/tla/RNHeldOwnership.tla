@@ -13,7 +13,10 @@
 (* ends the connection.                                                   *)
 (* This model starts held code-3 entries at complete descriptors; the     *)
 (* collecting code-2/3 block anchor and its settle-time repoint to the    *)
-(* first fragment are outside this model.                                 *)
+(* first fragment are outside this model.  Only reliable (code-4) holds   *)
+(* are here: a code-1 hold is a slot of the unreliable hold pool, not a    *)
+(* receive descriptor, and its release returns that slot                   *)
+(* (rn_sequenced_hold_return; RNSequencedHoldPool.tla).                    *)
 (*                                                                         *)
 (* The held index is N = 2W open-addressed cells, linear probing from a    *)
 (* key's home, deletion by backward shift that clears the final hole last  *)
@@ -93,7 +96,7 @@ Init ==
     /\ next = 0
     /\ cell = [ c \in Cells |-> EMPTY ]
     /\ ent = [ c \in Cells |-> 0 ]
-    /\ block = [active |-> FALSE, first |-> 0, count |-> 0]
+    /\ block = [active |-> FALSE, first |-> 0, count |-> 0, anchor |-> 0]
     /\ pc = "idle" /\ hole = 0 /\ scan = 0 /\ scanned = 0
     /\ err = FALSE /\ foreignFreed = FALSE /\ staleDelivered = FALSE
 
@@ -134,7 +137,7 @@ Fragment(i, count) ==
     /\ ~block.active
     /\ i < count /\ next - i >= 0
     /\ Take(OB)
-    /\ block' = [active |-> TRUE, first |-> next - i, count |-> count]
+    /\ block' = [active |-> TRUE, first |-> next - i, count |-> count, anchor |-> next % W]
     /\ UNCHANGED <<home, cell, ent, pc, hole, scan, scanned, err, foreignFreed, staleDelivered>>
 
 \* a later fragment of the same block joins it
@@ -161,7 +164,12 @@ EndUpdate ==
 \* a newer state cancels the incomplete block and releases its span
 \* (rn_sequenced_release_slot).  The fix frees only the block's own
 \* descriptors and ends the connection on a foreign one; NumberOnlyRelease
-\* frees every slot whose number is in the span.
+\* frees every slot whose number is in the span.  The hold names its anchor
+\* slot (the first fragment's); an anchor that is not a live block fragment
+\* (the code: not live, or not code 4) frees nothing and ends the connection
+\* (MESSAGE_BAD_BLOCK).  Only the block's own release frees its fragments,
+\* so that branch is unreachable here; it is the code's guard, kept for
+\* fidelity.
 Supersede ==
     /\ ~err /\ pc = "idle"
     /\ block.active
@@ -169,11 +177,12 @@ Supersede ==
            hit == { s \in Slots : desc[s].live /\ desc[s].num \in span }
            owned == { s \in hit : desc[s].owner = OB }
            foreign == hit \ owned
-           freed == IF NumberOnlyRelease THEN hit ELSE owned
+           anchorOk == desc[block.anchor].live /\ desc[block.anchor].owner = OB
+           freed == IF ~anchorOk THEN {} ELSE IF NumberOnlyRelease THEN hit ELSE owned
        IN /\ desc' = [ s \in Slots |-> IF s \in freed THEN Free ELSE desc[s] ]
           /\ foreignFreed' = (foreignFreed \/ (freed \cap foreign) # {})
-          /\ err' = (~NumberOnlyRelease /\ foreign # {})
-    /\ block' = [active |-> FALSE, first |-> 0, count |-> 0]
+          /\ err' = (~anchorOk \/ (~NumberOnlyRelease /\ foreign # {}))
+    /\ block' = [active |-> FALSE, first |-> 0, count |-> 0, anchor |-> 0]
     /\ UNCHANGED <<home, next, cell, ent, pc, hole, scan, scanned, staleDelivered>>
 
 \* the ordered drain reaches key k (rn_channels_drain): the entry's

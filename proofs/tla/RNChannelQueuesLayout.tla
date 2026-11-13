@@ -37,7 +37,9 @@
 (*   PushFrontSetsTail = FALSE  push_front on an empty FIFO leaves the     *)
 (*                              tail NONE;                                 *)
 (*   RemoveUpdatesEnds = FALSE  removing the ready head or tail leaves     *)
-(*                              ready_head or ready_tail naming it.        *)
+(*                              ready_head or ready_tail naming it;        *)
+(*   RejoinChecksMore = FALSE   Number rejoins the channel without the     *)
+(*                              test that its FIFO has more.               *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -48,7 +50,8 @@ CONSTANTS
     GenMax,             \* a descriptor generation wraps after GenMax to 1 (UINT32_MAX in the code)
     PopResetsTail,      \* BOOLEAN
     PushFrontSetsTail,  \* BOOLEAN
-    RemoveUpdatesEnds   \* BOOLEAN
+    RemoveUpdatesEnds,  \* BOOLEAN
+    RejoinChecksMore    \* BOOLEAN
 
 NONE == -1
 Descs == 0..D-1
@@ -241,7 +244,7 @@ Number ==
                  ELSE IF L.rticket[c] # 0 THEN RemoveNamed(L, c, L.rticket[c], L.rgen[c]) ELSE L
            s2 == [s1 EXCEPT !.queued[c] = IF @ > 0 THEN @ - 1 ELSE 0]
            s3 == Pop(s2, c)
-           more == s3.qhead[c] # NONE
+           more == s3.qhead[c] # NONE \/ ~RejoinChecksMore
        IN  /\ L' = IF more THEN Link(s3, c, FALSE) ELSE s3
            /\ dstate' = [dstate EXCEPT ![d] = "out"]
            /\ q' = [q EXCEPT ![c] = Tail(@)]

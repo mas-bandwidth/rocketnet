@@ -9,7 +9,7 @@
 (*                                                                         *)
 (* The turns across packets (rn_ordered_write, action Number): a channel   *)
 (* joins the back of the ready list when its FIFO goes from empty to       *)
-(* non-empty (rn_channels_send's rn_ready_push).  Each numbering turn      *)
+(* non-empty (rn_channels_finish's rn_ready_push).  Each numbering turn    *)
 (* takes the ready list's head channel, numbers its FIFO head, pops it     *)
 (* and the channel rejoins the back if it has more.  Numbering stops while *)
 (* the window is closed (W numbers outstanding: numbered, not yet acked)   *)
@@ -32,7 +32,7 @@
 (*   3. Round robin across channels inside a level, one item per turn.     *)
 (*                                                                         *)
 (* Priorities in v1.1.x: every reliable message is MEDIUM                  *)
-(* (rn_channels_send and the endpoint's routes set                         *)
+(* (rn_channels_finish and the endpoint's routes set                       *)
 (* ROCKETNET_PRIORITY_MEDIUM; the public API takes no priority) and only   *)
 (* CONFIG, at the head of channel 0, is IMMEDIATE.  The other levels are   *)
 (* reserved: the builder supports them, no caller sets them.  The code's   *)
@@ -59,7 +59,12 @@
 (* due ends the reliable phase (rn_endpoint_ordered_due false), and        *)
 (* rn_endpoint_end_reliable starts the unreliable phase unless the budget  *)
 (* refused a reliable packet: the unreliable phase runs while budget       *)
-(* remains (UnreliableNotBlockedByWindow).                                 *)
+(* remains (UnreliableNotBlockedByWindow).  Abstraction: the code's        *)
+(* stall (rn_window_send_admit in sdk/rocketnet_window_send.cpp) also      *)
+(* refuses when the send ring has no span for a holdable message           *)
+(* (RNRing.tla); here only the count of outstanding numbers closes the     *)
+(* window.  Both refusals return the same stall and break the numbering    *)
+(* loop the same way, so the order checked here is the same.               *)
 (*                                                                         *)
 (* The budget: Cap items per update.  An update ends when nothing more can *)
 (* be numbered or written; the unreliable items it did not write are       *)
@@ -307,7 +312,7 @@ Init ==
     /\ resendQ = << >>
 
 \* item i joins its channel's FIFO tail; the channel joins the ready list's
-\* back when its FIFO was empty (rn_channels_send: was_empty -> rn_ready_push)
+\* back when its FIFO was empty (rn_channels_finish: was_empty -> rn_ready_push)
 Enqueue(i) ==
     LET c == Msgs[i].ch
     IN /\ st' = [st EXCEPT ![i] = "queued"]

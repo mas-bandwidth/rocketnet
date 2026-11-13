@@ -28,7 +28,13 @@
 (* index, the sent index): the scan ends only on a cell empty before the   *)
 (* erase, which needs MaxLive < N; the code sizes those indexes at twice   *)
 (* their capacity.  scanned counts the scan; EraseEnds says it never     *)
-(* passes N.                                                               *)
+(* passes N.  Each clear-last site in the code also bounds its scan, for   *)
+(* an index corrupted full: client slots at num_buckets cells, the held    *)
+(* index at N - 1 cells and then an invariant failure that ends the        *)
+(* connection (RNHeldOwnership.tla EraseBound models it), the sent index   *)
+(* at cap cells and then a protocol violation.  Those exits are not here:  *)
+(* with MaxLive < N the scan meets an empty cell first, so they are never  *)
+(* taken in the configurations that model the code.                       *)
 (*                                                                         *)
 (* Findable says every live key is reached by probing from its home        *)
 (* before an empty cell; Unique says no key sits in two cells.             *)
@@ -37,7 +43,17 @@
 (* without the wrapped case, so a cluster crossing the array end moves an  *)
 (* entry in front of its home, where no probe finds it (Findable).         *)
 (* ClearLast TRUE with MaxLive = N is a clear-last index allowed to fill:  *)
-(* its scan circles with no empty cell to stop it (EraseEnds).             *)
+(* its scan circles with no empty cell to stop it (EraseEnds).  That       *)
+(* witness is historical: it is the clear-last algorithm without a bound,  *)
+(* the erasers before their bounds were added.  No current site can        *)
+(* circle (each is bounded, above); what it still shows is why a           *)
+(* clear-last index is sized so that it never fills.                       *)
+(*                                                                         *)
+(* Insert of a live key: the sent index's insert stops at the first cell   *)
+(* that is empty or already holds the key, and writes there               *)
+(* (rn_sent_index_insert), so a live key is overwritten in place, cells    *)
+(* unchanged, as long as Findable holds.  Insert carries that branch for   *)
+(* every index (the other indexes never insert a live key).                *)
 (*                                                                         *)
 (* The separate counter.  The held index (sdk/rocketnet_channel.cpp) keeps *)
 (* its own count of used cells, region->held_count, beside the cells, and  *)
@@ -103,6 +119,11 @@ FirstEmpty(at, steps) == IF cell[at] = EMPTY \/ steps = N THEN at ELSE FirstEmpt
 RECURSIVE CellOf(_, _, _)
 CellOf(k, at, steps) == IF steps = N \/ cell[at] = k THEN at ELSE CellOf(k, Next1(at), steps + 1)
 
+\* rn_sent_index_insert's probe: the first cell empty or holding k
+RECURSIVE EmptyOrKey(_, _, _)
+EmptyOrKey(k, at, steps) ==
+    IF cell[at] = EMPTY \/ cell[at] = k \/ steps = N THEN at ELSE EmptyOrKey(k, Next1(at), steps + 1)
+
 Init ==
     /\ home \in [Keys -> 0..(N - 1)]
     /\ cell = [ c \in 0..(N - 1) |-> EMPTY ]
@@ -114,14 +135,21 @@ Init ==
     /\ count = 0
 
 \* refused at count >= MaxLive: the code's bound reads the counter
-\* (rn_held_insert: held_count >= W), never the cells
+\* (rn_held_insert: held_count >= W), never the cells.  A live key is
+\* written at the first cell empty or holding it (rn_sent_index_insert's
+\* overwrite in place): its own cell while Findable holds, so the cells do
+\* not change; an empty cell met first would hold it twice (Unique).
 Insert(k) ==
     /\ pc = "idle"
-    /\ k \notin live
-    /\ count < MaxLive
-    /\ cell' = [ cell EXCEPT ![FirstEmpty(home[k], 0)] = k ]
-    /\ live' = live \cup {k}
-    /\ count' = CountUp
+    /\ IF k \notin live
+       THEN /\ count < MaxLive
+            /\ cell' = [ cell EXCEPT ![FirstEmpty(home[k], 0)] = k ]
+            /\ live' = live \cup {k}
+            /\ count' = CountUp
+       ELSE LET at == EmptyOrKey(k, home[k], 0)
+            IN /\ cell' = [ cell EXCEPT ![at] = k ]
+               /\ count' = IF cell[at] = EMPTY THEN CountUp ELSE count
+               /\ UNCHANGED live
     /\ UNCHANGED <<home, pc, hole, scan, scanned>>
 
 \* the erase finds the key's cell, clearing it first unless ClearLast; the
