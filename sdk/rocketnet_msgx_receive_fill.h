@@ -168,9 +168,11 @@ inline void rocketnet_msgx_receive_drain_start( struct rocketnet_msgx_receive_dr
 
 // One step of the drain of one socket (one action of
 // proofs/tla/RNMsgxReceiveFill.tla). Every datagram a read returns and every
-// failed read spends one of the socket's budget for the round, so a flooded
-// socket cannot hold the others back. *count is what a Read took. Returns
-// the step (ROCKETNET_MSGX_DRAIN_STEP_*); drain->pc says what is next.
+// failed read spends one of the socket's budget for the round, and a read
+// asks for no more than the budget leaves, so a socket's reads in a round
+// never pass the budget and a flooded socket cannot hold the others back.
+// *count is what a Read took. Returns the step (ROCKETNET_MSGX_DRAIN_STEP_*);
+// drain->pc says what is next.
 inline int rocketnet_msgx_receive_drain_step( struct rocketnet_msgx_receive_drain_t * drain, const struct rocketnet_msgx_receive_io_t * io,
                                               int capacity, int batch, int budget, int * count )
 {
@@ -191,7 +193,10 @@ inline int rocketnet_msgx_receive_drain_step( struct rocketnet_msgx_receive_drai
         return ROCKETNET_MSGX_DRAIN_STEP_BUDGET;
     }
 
-    const int want = rocketnet_msgx_receive_want( banked, capacity, batch );
+    // no more than the room, and no more than the budget leaves: a socket's
+    // reads in a round never pass the budget (RNMsgxReceiveFill Want)
+    const int room_want = rocketnet_msgx_receive_want( banked, capacity, batch );
+    const int want = room_want < budget - drain->reads ? room_want : budget - drain->reads;
     const int result = io->read( io->user, drain->fd, want );
     if ( result < 0 )
     {

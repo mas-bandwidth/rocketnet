@@ -17,7 +17,8 @@ datagrams in one update dropped 1408.
 
 ## The rule
 
-A datagram is read only into room (`Want`). A full bank is handed to main at
+A datagram is read only into room, and a read asks for no more than the
+socket's budget for the round leaves (`Want`). A full bank is handed to main at
 once when main has taken the last one (`PublishFull`); otherwise the drain
 holds (`HoldFull`), the round ends, every socket keeps what it holds, and the
 worker sleeps (`Sleep`) before it polls again. The kernel's receive buffer is
@@ -73,6 +74,10 @@ once it is set, so a ready bank stays the worker's and is counted
 
 - `HandOK`: the banks are the worker's, main's, and one ready or free.
 - `NoFullDrop`: nothing read is dropped for want of room.
+- `BudgetKept`: a socket's reads in a round never pass its budget: a read asks
+  for no more than the budget leaves (Stella's review of 4119919c7, note 2;
+  before, a read asked for the whole batch and could pass the budget by up
+  to `Batch - 1`).
 - `Conserved`: every datagram is in a socket, a bank, main's hands, or a
   kernel drop.
 - `HeldOnlyWhenFull`: a held worker's bank is full. Main may take the ready
@@ -96,6 +101,7 @@ once it is set, so a ready bank stays the worker's and is counted
 | `MCRNMsgxReceiveFillBrokenPublishOverReady.cfg` | `PublishOverReady`: a full bank handed over a ready one | `Conserved` fails |
 | `MCRNMsgxReceiveFillBrokenHoldWithoutPublish.cfg` | `HoldWithoutPublish`: held when it could hand over | `HoldOnlyWhenNowhere` fails |
 | `MCRNMsgxReceiveFillBrokenClaimAfterStop.cfg` | `ClaimAfterStop`: main claims a ready bank after its stop, the code before R69 | `StopCounted` fails |
+| `MCRNMsgxReceiveFillBrokenReadPastBudget.cfg` | `ReadPastBudget`: a read asks for the batch whatever the budget leaves, the drain before note 2 | `BudgetKept` fails |
 
 ## Trace check
 
@@ -111,7 +117,8 @@ a claim after the stop would be rejected. The plant
 (`ROCKETNET_MSGX_RECEIVE_FILL_PLANT`, `rocketnet_msgx_receive_want` in
 `sdk/rocketnet_msgx_receive_fill.cpp` asking for a whole batch) must be
 rejected at the first read that takes past the room. The reach predicates
-`ShortRoom` and `Held` must each be reached by a clean trace.
+`ShortRoom`, `Held` and `BudgetCaps` (a read capped by the budget) must each be
+reached by a clean trace.
 `MCTraceRNMsgxReceiveFillSelf.cfg` and
 `MCTraceRNMsgxReceiveFillSelfBrokenReadPastRoom.cfg` are the checker's own
 controls. The unit tests (`tests/test_unit_msgx_receive_fill.cpp`) run the

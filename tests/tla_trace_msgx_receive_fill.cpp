@@ -430,7 +430,7 @@ static int trace_msgx_receive_fill( uint64_t seed, int steps, const char * out )
     snprintf( constants, sizeof( constants ),
               "    Sockets = %d\n    Capacity = %d\n    Batch = %d\n    Budget = %d\n    Buffer = %d\n"
               "    MaxArrivals = %lld\n    MaxErrors = %lld\n    ReadPastRoom = FALSE\n    PublishOverReady = FALSE\n"
-              "    HoldWithoutPublish = FALSE\n    ClaimAfterStop = FALSE\n",
+              "    HoldWithoutPublish = FALSE\n    ClaimAfterStop = FALSE\n    ReadPastBudget = FALSE\n",
               RF_SOCKETS, RF_CAPACITY, RF_BATCH, RF_BUDGET, RF_BUFFER, (long long) walk->arrived + 1, (long long) walk->errors + 1 );
     const bool written = tla_write_trace( out, "MCTraceMsgxReceiveFill", seed, "TraceRNMsgxReceiveFill", "", constants, records );
     delete walk;

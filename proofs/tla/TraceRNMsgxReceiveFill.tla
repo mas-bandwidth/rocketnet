@@ -119,4 +119,13 @@ ShortRoom == /\ pc = "read"
              /\ kq[cur] > Capacity - cnt[worker]
 Held == pc = "held"
 
+\* and some clean trace meets a budget that leaves less than both the batch
+\* and the room with more queued (where the read is capped by the budget)
+BudgetCaps == /\ pc = "read"
+              /\ cur \in SocketIds
+              /\ reads < Budget
+              /\ Budget - reads < Batch
+              /\ Budget - reads < Capacity - cnt[worker]
+              /\ kq[cur] > Budget - reads
+
 =============================================================================

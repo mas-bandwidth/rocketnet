@@ -41,6 +41,10 @@
 (* PublishOverReady = TRUE hands a full bank over a ready one main has    *)
 (* not taken, discarding it (Conserved).  HoldWithoutPublish = TRUE holds *)
 (* a full bank even when main has taken the last (HoldOnlyWhenNowhere).   *)
+(* A read also asks for no more than the socket's budget leaves, so its   *)
+(* reads in a round never pass the budget (BudgetKept); ReadPastBudget =  *)
+(* TRUE asks for the batch whatever the budget leaves, the drain before   *)
+(* Stella's review of 4119919c7, and passes it by up to Batch - 1.        *)
 (*                                                                         *)
 (* The stop (R69): main stops (MainStop: its bank's tail counted stopped, *)
 (* and it claims nothing more), the worker leaves its loop at the next    *)
@@ -64,12 +68,13 @@ CONSTANTS
     ReadPastRoom,       \* defect: a read asks for a whole batch whatever the room
     PublishOverReady,   \* defect: a full bank is handed over a ready one
     HoldWithoutPublish, \* defect: a full bank is held when it could be handed over
-    ClaimAfterStop      \* defect: main claims a ready bank after it stopped (R69)
+    ClaimAfterStop,     \* defect: main claims a ready bank after it stopped (R69)
+    ReadPastBudget      \* defect: a read asks for a whole batch whatever the budget leaves
 
 ASSUME /\ Sockets >= 1 /\ Capacity >= 1 /\ Batch >= 1 /\ Budget >= 1 /\ Buffer >= 1
        /\ MaxArrivals \in Nat /\ MaxErrors \in Nat
        /\ ReadPastRoom \in BOOLEAN /\ PublishOverReady \in BOOLEAN /\ HoldWithoutPublish \in BOOLEAN
-       /\ ClaimAfterStop \in BOOLEAN
+       /\ ClaimAfterStop \in BOOLEAN /\ ReadPastBudget \in BOOLEAN
 
 NoBank == -1
 Banks == 0 .. 2
@@ -152,8 +157,10 @@ CanPublish == ready = NoBank /\ free # NoBank
 
 Full == cnt[worker] >= Capacity
 
-\* the drain's read size, rocketnet_msgx_receive_want
-Want == IF ReadPastRoom THEN Batch ELSE Min( Batch, Capacity - cnt[worker] )
+\* the drain's read size: rocketnet_msgx_receive_want (the batch, or the
+\* room when less), then no more than the budget leaves (the step's cap)
+RoomWant == IF ReadPastRoom THEN Batch ELSE Min( Batch, Capacity - cnt[worker] )
+Want == IF ReadPastBudget THEN RoomWant ELSE Min( RoomWant, Budget - reads )
 
 \* a socket's drain is done: the next socket, or the round's end
 NextSocket ==
@@ -390,6 +397,10 @@ HandOK ==
 
 \* a read never asks past the bank's room, so nothing read is lost
 NoFullDrop == fullDrops = 0
+
+\* a socket's reads in a round never pass the budget: a read asks for no
+\* more than the budget leaves, and a failed read spends one only below it
+BudgetKept == reads <= Budget
 
 RECURSIVE SumOver(_, _)
 SumOver(f, S) == IF S = {} THEN 0 ELSE LET x == CHOOSE y \in S : TRUE IN f[x] + SumOver(f, S \ { x })
