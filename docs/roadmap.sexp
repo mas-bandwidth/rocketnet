@@ -605,4 +605,14 @@
    :title "Message destroy misuse: an owner for a transport whose worker outlives the wait"
    :text "The failed-create unwind now waits for the worker with no deadline (rn_message_link_abort_create, proofs/tla/RNCreateUnwind.tla). What remains: rocketnet_message_server_destroy or rocketnet_message_client_destroy called before the transport stopped is a counted misuse that stops the transport itself and waits one second (RN_MESSAGE_LINK_STOP_WAIT_SECONDS, rn_message_object_destroy in sdk/rocketnet_message_server.cpp). If the worker has not exited by then the transport is logged as kept, not freed, and the object is freed, so nothing owns the transport. The public server and client destroys stop first and keep their own handle while the worker runs, so only a layered caller that skips stop reaches it. The fix: a wait with no deadline there too, or keep the object while the worker runs as rocketnet_server_destroy does."
    :date "2026-11-13" :origin "2026-11-10 review, fix round 1, cold read of review fix 1; reduced when the create unwind was fixed")
+
+  (item "server-ipv4-address-unit" :group "after-v1-1-landing" :area "tests"
+   :title "A unit case for rocketnet_server_ipv4_address beside its IPv6 twin"
+   :text "rocketnet_server_ipv6_address has a unit case for a stopped server, a running one, the needed-1 buffer size and the wrong family (test_public_server_ipv6_address_reads_the_running_address in tests/test_unit_public_api_core.cpp); rocketnet_server_ipv4_address has only the NULL-server misuse check in sdk/rocketnet_tests.cpp and the functional tests that read it. Add the matching case for the IPv4 call on the loopback transport: stopped answers false, running answers the bound address and port, a buffer one byte short is refused, and an IPv6-only server answers false."
+   :date "2026-11-13" :origin "2026-11-10 review, tests merge row TM032 (optional: new coverage)")
+
+  (item "client-bind-family-exact-foreign-count" :group "after-v1-1-landing" :area "tests"
+   :title "Client bind family: count the late IPv6 cookie exactly"
+   :text "test_unit_client_bind_family.cpp checks ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE >= 1 after the one late IPv6 cookie the case sends (about line 416), so a double count passes. If the case's schedule fixes the count (one late cookie, no other foreign datagram), check it moved by exactly 1 from a reading taken before the cookie is sent; if it does not, say why beside the check."
+   :date "2026-11-13" :origin "2026-11-10 review, tests addendum row TA008, P7's site (optional)")
  ))

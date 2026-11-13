@@ -12,9 +12,17 @@
 // logs nothing and counts nothing.
 //
 // Everything runs over the in-memory loopback transport with step-driven
-// clients: no socket, no thread, no wall clock; time is an argument starting
-// at 1000.0. This file covers the loopback/step-driven path, where the early
-// destroy completes because the loopback stop is always complete. The
+// clients: no socket and no thread; the endpoints' time is an argument
+// starting at 1000.0. An early destroy is the one reader of a clock here: it
+// reads rocketnet_platform_time once for its bounded wait's deadline
+// (sdk/rocketnet_api.cpp) and returns on its first poll, because the loopback
+// stop is always complete; a poll that did not complete would wait on that
+// clock and then log the "kept" error the cases count. On Linux development
+// builds the suite links that clock to a synthetic tick
+// (tests/test_unit_endpoint.cpp, -Wl,--wrap); elsewhere it is the platform's
+// monotonic clock. Each early destroy also fires its one assert
+// (ROCKETNET_ASSERTS builds), counted by the recorder below; a destroy after
+// completion fires none. This file covers the loopback/step-driven path. The
 // threaded path, where an early destroy normally keeps the object and a
 // second destroy after completion frees it, is covered by
 // tests/functional/destroy_early_keep.cpp.
@@ -69,6 +77,14 @@ static void db_allocator_free( void * context, void * memory )
 }
 
 // --- the assert recorder: an early destroy runs the release path ----------
+
+// a build with asserts compiled out (ROCKETNET_ASSERTS 0) takes the same
+// release path with no assert; a build with them fires one per early destroy
+#if ROCKETNET_ASSERTS
+#define DB_ASSERTS_PER_EARLY_DESTROY 1
+#else // #if ROCKETNET_ASSERTS
+#define DB_ASSERTS_PER_EARLY_DESTROY 0
+#endif // #if ROCKETNET_ASSERTS
 
 static int db_assert_count = 0;
 
@@ -232,8 +248,11 @@ static void test_destroy_before_completion_frees_everything()
 
     // the release path: no completion poll before either destroy
 
+    check( db_assert_count == 0 );
     rocketnet_client_destroy( world.client );
+    check( db_assert_count == DB_ASSERTS_PER_EARLY_DESTROY );
     rocketnet_server_destroy( world.server );
+    check( db_assert_count == 2 * DB_ASSERTS_PER_EARLY_DESTROY );
 
     check( state.live == before );
 
@@ -264,17 +283,20 @@ static void test_destroy_before_completion_is_logged()
     db_error_lines = 0;
 
     uint64_t misuse = rocketnet_api_misuse_count();
+    check( db_assert_count == 0 );
     rocketnet_client_destroy( early.client );
     check( db_error_lines == 1 );
     check( strstr( db_last_error, "rocketnet_client_destroy" ) != NULL );
     check( strstr( db_last_error, DB_DISCONNECTED ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( db_assert_count == DB_ASSERTS_PER_EARLY_DESTROY );
 
     rocketnet_server_destroy( early.server );
     check( db_error_lines == 2 );
     check( strstr( db_last_error, "rocketnet_server_destroy" ) != NULL );
     check( strstr( db_last_error, DB_STOPPED ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 2 );
+    check( db_assert_count == 2 * DB_ASSERTS_PER_EARLY_DESTROY );
 
     db_world_t complete;
     db_world_create( &complete, NULL );
@@ -288,6 +310,7 @@ static void test_destroy_before_completion_is_logged()
     rocketnet_server_destroy( complete.server );
     check( db_error_lines == 0 );
     check( rocketnet_api_misuse_count() == misuse );
+    check( db_assert_count == 2 * DB_ASSERTS_PER_EARLY_DESTROY );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_assert_function( NULL );
@@ -353,6 +376,7 @@ static void test_destroy_before_completion_retries_a_refused_stop()
 
     check( db_refusals == 1 );
     check( db_held_fill == NULL );
+    check( db_assert_count == 2 * DB_ASSERTS_PER_EARLY_DESTROY );   // the early destroy's, and the refused stop's (sdk/rocketnet_fill_phase.cpp)
     check( strstr( db_last_error, "is kept" ) == NULL );
     check( state.live == before );
 

@@ -4,8 +4,9 @@
 */
 
 // The public light-client profile, pinned. A 1000-slot server and a client
-// report lifecycle peaks within the figures USAGE.md records, and both
-// endpoints create and destroy on the profile without opening a socket.
+// report lifecycle peaks within the bounds pinned below, this test's own
+// readings for each platform, and both endpoints create and destroy on the
+// profile without opening a socket.
 
 #include "test_unit_registry.h"
 #include "msan_scale_allocator.h"
@@ -49,8 +50,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
     memcpy( config->packet_filter, light_packet_filter, sizeof( config->packet_filter ) );
 }
 
-// USAGE.md "Server memory footprint" and docs/LOAD.md record these figures.
-// required_memory is the lifecycle peak the caller's allocator sees (create,
+// The bounds below are the source for these figures. docs/MEMORY.md "Server
+// memory footprint" (where USAGE.md points) quotes one v1.1.0 query of a Linux
+// development build, not these pins, and docs/LOAD.md says how sizing figures
+// are regenerated. required_memory is the lifecycle peak the caller's allocator sees (create,
 // connect or start, stop or disconnect, again, destroy) for the largest
 // transport the default transport order can grant, so it differs by platform and by
 // ROCKETNET_DEV (a development endpoint also owns its link simulator). Each
@@ -353,8 +356,6 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // room_refusals, the per-thread send lines, the per-client wire totals on a
 // line each) reads actual=5610697459 and 15190226 (vision, gcc, Debug and
 // Release, DEV ON).
-// The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
-// (8 bytes a counter block across a 64-byte rounding).
 // The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 128 to the
 // server (8 bytes in each of its counter blocks, across two 64-byte
 // roundings) and 64 to the client (hulk, gcc, Debug and Release, DEV ON).
@@ -473,11 +474,6 @@ static void test_light_profile_server_1000_required_memory()
     check( config.max_clients == ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 ) );
     light_message_fields_server( &config );
 
-    if ( ROCKETNET_MAX_CLIENTS < 1000 )
-    {
-        return;
-    }
-
     config.max_clients = 1000;
     light_server_keys( &config );
 
@@ -490,8 +486,10 @@ REGISTER_UNIT_TEST( test_light_profile_server_1000_required_memory );
 
 // the pins are read at the default history (ROCKETNET_HISTORY_PACKETS 4096): a
 // longer history sizes every connection's records above them, and no figure
-// is read there to check against, so that build skips and reports the case
-UNIT_TEST_SKIPPED_UNLESS( test_light_profile_server_1000_required_memory, ROCKETNET_HISTORY_PACKETS == 4096 );
+// is read there to check against, so that build skips and reports the case.
+// The pin is for 1000 slots, so a build whose ROCKETNET_MAX_CLIENTS is below
+// 1000 skips and reports it the same way, never passing it unchecked.
+UNIT_TEST_SKIPPED_UNLESS( test_light_profile_server_1000_required_memory, ROCKETNET_HISTORY_PACKETS == 4096 && ROCKETNET_MAX_CLIENTS >= 1000 );
 
 static void test_light_profile_client_required_memory()
 {

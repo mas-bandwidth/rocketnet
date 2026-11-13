@@ -3,8 +3,18 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Client memory plan accounts for transport socket, wake, I/O client block and
-// worker thread allocations across non-step-driven and step-driven modes.
+// The client memory plan against what create allocates, in the threaded and
+// step-driven modes. The token names one family, so create allocates exactly
+// the plan less its family race (rocketnet_client_transport_required_memory_one_family),
+// and the full plan is that and the race block and second socket on top.
+//
+// What this binds and what it does not: under the memory plan seam
+// (development builds only) create allocates stand-ins for the socket, the
+// wake, the I/O client record and the thread record, each sized by the same
+// byte helper the plan adds (sdk/rocketnet_client_transport.cpp). So for those
+// parts the case checks the plan against its helpers, not against the real
+// socket, wake, I/O or thread creates; the transport block, the link
+// simulator and the per-allocation overhead are the real allocations.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -23,6 +33,10 @@
 
 #define check rocketnet_unit_check
 
+// the plan cases need the development-only memory plan seam; the msgx case
+// at the end is pure and runs in every build
+
+#if ROCKETNET_DEV
 struct plan_counting_allocator_t
 {
     uint64_t total_bytes;
@@ -86,6 +100,20 @@ static void plan_make_token( uint8_t * token )
 
 extern void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable );
 
+// a one-family create allocates exactly the plan less the race, and the full
+// plan is strictly more: a plan that over-counts any part fails the first
+static void client_memory_plan_check( const struct rocketnet_client_transport_config_t * config, uint64_t plan_bytes, uint64_t allocated )
+{
+    const uint64_t one_family = rocketnet_client_transport_required_memory_one_family( config, "portable" );
+    if ( allocated != one_family )
+    {
+        printf( "client memory plan: allocated %llu, one-family plan %llu, plan %llu\n", (unsigned long long) allocated,
+                (unsigned long long) one_family, (unsigned long long) plan_bytes );
+    }
+    check( allocated == one_family );
+    check( plan_bytes > one_family );
+}
+
 static void test_client_memory_plan_non_step_driven()
 {
     rocketnet_client_transport_set_memory_plan_seam_for_test( true );
@@ -126,10 +154,9 @@ static void test_client_memory_plan_non_step_driven()
 
     rocketnet_client_transport_set_memory_plan_seam_for_test( false );
 
-    check( plan_bytes >= allocated );
+    client_memory_plan_check( &config, plan_bytes, allocated );
 }
 
-#if ROCKETNET_DEV
 static void test_client_memory_plan_step_driven()
 {
     rocketnet_client_transport_set_memory_plan_seam_for_test( true );
@@ -170,7 +197,7 @@ static void test_client_memory_plan_step_driven()
 
     rocketnet_client_transport_set_memory_plan_seam_for_test( false );
 
-    check( plan_bytes >= allocated );
+    client_memory_plan_check( &config, plan_bytes, allocated );
 }
 
 // RNClientReceiveQuit StopWake: stop on the legacy path (here the path an
@@ -226,8 +253,8 @@ static void test_client_memory_plan_msgx_only_on_macos()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 }
 
-REGISTER_UNIT_TEST( test_client_memory_plan_non_step_driven );
 #if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_client_memory_plan_non_step_driven );
 REGISTER_UNIT_TEST( test_client_memory_plan_step_driven );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_client_memory_plan_msgx_only_on_macos );

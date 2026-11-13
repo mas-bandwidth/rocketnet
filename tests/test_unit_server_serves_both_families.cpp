@@ -484,14 +484,21 @@ static void test_one_family_server_is_unchanged()
 
     check( rocketnet_client_state( ipv4 ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
+    // nothing answers the IPv6 client: through every update it is still
+    // asking for its first cookie (a cookie, a denial or a slow handshake
+    // would each move it on), while the IPv4 client stays connected. The
+    // stage's timeout is the token's 300 s, past this case's 0.8 s.
+
     struct rocketnet_client_t * ipv6 = both_families_connect_client( &identity, 0xB072, ipv6_address );
     for ( int i = 0; i < 80; i++ )
     {
         both_families_pump( server, ipv4, ipv6, &time );
+        check( rocketnet_client_state( ipv6 ) == ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE );
     }
 
-    check( rocketnet_client_state( ipv6 ) != ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_server_client_connected( server, 1 ) == 0 );
+    check( rocketnet_server_num_connected_clients( server ) == 1 );
+    check( rocketnet_client_state( ipv4 ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
     rn_test_client_stop_and_destroy( ipv6 );
     rn_test_client_stop_and_destroy( ipv4 );
@@ -638,9 +645,11 @@ REGISTER_UNIT_TEST( test_arrival_family_accepts_the_matching_ipv4_address );
 
 // rocketnet_server_address_is_advertised: the IPv4 loopback is accepted only
 // by a server that advertises it. A server that names a public IPv4 and a
-// public IPv6 address refuses a token naming 127.0.0.1.
+// public IPv6 address refuses a token naming 127.0.0.1. The case drives the
+// server protocol object directly: "loopback" is the address 127.0.0.1, not
+// the loopback transport.
 
-static void test_loopback_transport_named_two_family_server_refuses_a_token()
+static void test_two_family_public_server_refuses_an_ipv4_loopback_token()
 {
     struct both_families_protocol_t test;
     both_families_protocol_setup( &test );
@@ -667,4 +676,4 @@ static void test_loopback_transport_named_two_family_server_refuses_a_token()
     both_families_protocol_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( test_loopback_transport_named_two_family_server_refuses_a_token );
+REGISTER_UNIT_TEST( test_two_family_public_server_refuses_an_ipv4_loopback_token );
