@@ -376,6 +376,16 @@ uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_in
 // the chunk slot's current generation tag, or 0 for a handle the store did
 // not issue
 uint32_t rn_send_store_chunk_generation( const rn_send_store_t * store, uint32_t handle );
+
+// Present only in the unit-test library; counts the entries the store
+// examines to choose a chunk (rn_send_store_find, so every allocation and
+// every room query), never production state.
+struct rn_store_cost_t
+{
+    uint64_t choice_visits;
+};
+void rn_store_cost_reset();
+rn_store_cost_t rn_store_cost_read();
 #endif // #if ROCKETNET_DEV
 
 // ----------------------------------------------------------------

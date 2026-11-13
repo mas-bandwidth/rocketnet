@@ -51,6 +51,15 @@ rn_span_cost_t rn_span_cost_read() { return rn_span_cost; }
 #define RN_SPAN_COST_VISIT() ( (void) 0 )
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+static thread_local rn_store_cost_t rn_store_cost;
+void rn_store_cost_reset() { memset( &rn_store_cost, 0, sizeof( rn_store_cost ) ); }
+rn_store_cost_t rn_store_cost_read() { return rn_store_cost; }
+#define RN_STORE_COST_VISIT() ( rn_store_cost.choice_visits++ )
+#else
+#define RN_STORE_COST_VISIT() ( (void) 0 )
+#endif // #if ROCKETNET_DEV
+
 static uint64_t rn_align64( uint64_t value )
 {
     return ( value + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uint64_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 );
@@ -362,6 +371,7 @@ bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * ou
 
     for ( uint32_t i = cls->free_head; i < cls->num_chunks; i++ )
     {
+        RN_STORE_COST_VISIT();
         if ( rn_store_chunk_is_free( cls, i ) )
         {
             *out_index = i;
