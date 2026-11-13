@@ -797,7 +797,12 @@ as `XDP_REPLAY_GREETING_HELD`.
 Each queue's thread pins itself once, at start, to cpu `num_os_cpus + queue`
 (never core 0). A pin the system refuses (the cpu outside the set or not
 online, or the affinity call refused) is counted as `XDP_PIN_REFUSALS`, and the
-thread runs on its allowed cpus less core 0.
+thread runs on its allowed cpus less core 0. When that fallback fails too (core
+0 is the only cpu it may run on, or the call is refused) the thread carries on
+on its mask, core 0 included, with one warning naming the queue and the mask,
+and asks for no `SCHED_RR`; the pin was already counted, so nothing more is.
+The gso and io_uring workers do the same, except that `GSO_PIN_REFUSALS` also
+counts the failed confinement.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which

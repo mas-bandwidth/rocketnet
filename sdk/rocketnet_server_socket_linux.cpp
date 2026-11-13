@@ -238,6 +238,11 @@ struct rocketnet_server_xdp_socket_t
     // by the main thread (rocketnet_server_socket_pin_refusals)
     std::atomic<uint64_t> pin_refusals{ 0 };
 
+    // its pin refused and the fallback off core 0 failed too, so the thread
+    // runs on a mask that holds core 0 and asks for no real-time scheduling
+    // (xdp_thread_place): written once, by that thread, when it starts
+    std::atomic<bool> left_on_core_zero{ false };
+
     uint8_t padding_4[4096];
 
     // frames the receive loop dropped, by reason (rocketnet_xdp_frame_receive);
@@ -4211,6 +4216,7 @@ struct rocketnet_xdp_affinity_calls_t
 {
     int ( *get )( cpu_set_t * mask );
     int ( *set )( const cpu_set_t * mask );
+    int ( *set_round_robin )( int priority );   // SCHED_RR on the calling thread
 };
 
 static int xdp_affinity_get_real( cpu_set_t * mask )
@@ -4223,20 +4229,51 @@ static int xdp_affinity_set_real( const cpu_set_t * mask )
     return pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), mask );
 }
 
-static const rocketnet_xdp_affinity_calls_t xdp_affinity_real = { xdp_affinity_get_real, xdp_affinity_set_real };
+static int xdp_set_round_robin_real( int priority )
+{
+    struct sched_param param;
+    param.sched_priority = priority;
+    return pthread_setschedparam( pthread_self(), SCHED_RR, &param );
+}
+
+static const rocketnet_xdp_affinity_calls_t xdp_affinity_real = { xdp_affinity_get_real, xdp_affinity_set_real, xdp_set_round_robin_real };
+
+// one warning for a thread left on a mask that holds core 0, naming the
+// queue and the mask (NULL: the mask could not be read)
+static void xdp_thread_warn_left_on_core_zero( int queue, const cpu_set_t * mask, const char * why )
+{
+    char cpus[128];
+    if ( mask )
+    {
+        unsigned char in_mask[CPU_SETSIZE];
+        for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+        {
+            in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;
+        }
+        rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
+    }
+    else
+    {
+        snprintf( cpus, sizeof( cpus ), "%s", "unknown" );
+    }
+    rocketnet_warn( "xdp thread %d left on cpus %s, cpu 0 among them: %s; it asks for no real-time scheduling", queue, cpus, why );
+}
 
 // a refused pin leaves the thread on the mask it inherited, which may hold
 // core 0: take that mask less core 0 (rocketnet_xdp_mask_without_core_zero),
-// so a busy-polling XDP thread never runs on the operating system's core
+// so a busy-polling XDP thread never runs on the operating system's core.
+// true when the thread is kept off core 0; false, with one warning naming
+// the queue and the mask it is left on, when it is not (the refused pin is
+// already counted: the row counts pins, so this is not counted again)
 
-static void xdp_thread_leave_core_zero( const rocketnet_xdp_affinity_calls_t * calls )
+static bool xdp_thread_leave_core_zero( int queue, const rocketnet_xdp_affinity_calls_t * calls )
 {
     cpu_set_t allowed;
     CPU_ZERO( &allowed );
     if ( calls->get( &allowed ) != 0 )
     {
-        rocketnet_error( "xdp thread: its affinity cannot be read, so it cannot be kept off core 0" );
-        return;
+        xdp_thread_warn_left_on_core_zero( queue, NULL, "its affinity cannot be read" );
+        return false;
     }
 
     cpu_set_t fallback;
@@ -4244,16 +4281,20 @@ static void xdp_thread_leave_core_zero( const rocketnet_xdp_affinity_calls_t * c
     const int left = rocketnet_xdp_mask_without_core_zero( (const uint8_t *) &allowed, (uint8_t *) &fallback, (int) sizeof( cpu_set_t ) );
     if ( left == 0 )
     {
-        rocketnet_error( "xdp thread: core 0 is the only cpu it may run on" );
-        return;
+        xdp_thread_warn_left_on_core_zero( queue, &allowed, "core 0 is the only cpu it may run on" );
+        return false;
     }
 
     const int result = calls->set( &fallback );
     if ( result != 0 )
     {
         char error_text[128];
-        rocketnet_error( "xdp thread: could not leave core 0: %s", strerror_r( result, error_text, sizeof( error_text ) ) );
+        char why[192];
+        snprintf( why, sizeof( why ), "leaving core 0 was refused (%s)", strerror_r( result, error_text, sizeof( error_text ) ) );
+        xdp_thread_warn_left_on_core_zero( queue, &allowed, why );
+        return false;
     }
+    return true;
 }
 
 // The queue's xdp thread pins itself to rocketnet_xdp_thread_cpu (never core
@@ -4261,8 +4302,9 @@ static void xdp_thread_leave_core_zero( const rocketnet_xdp_affinity_calls_t * c
 // the set, not online, or the affinity call refused -- is counted once in the
 // queue's pin_refusals (ROCKETNET_COUNTER_XDP_PIN_REFUSALS) and the thread
 // leaves core 0 (xdp_thread_leave_core_zero). The thread pins once, at start.
+// true when the thread is kept off core 0 (pinned, or the fallback taken)
 
-static void xdp_thread_pin( rocketnet_server_xdp_socket_t * socket, int online, const rocketnet_xdp_affinity_calls_t * calls )
+static bool xdp_thread_pin( rocketnet_server_xdp_socket_t * socket, int online, const rocketnet_xdp_affinity_calls_t * calls )
 {
     const int cpu = rocketnet_xdp_thread_cpu( socket->num_os_cpus, socket->queue );
 
@@ -4273,8 +4315,7 @@ static void xdp_thread_pin( rocketnet_server_xdp_socket_t * socket, int online, 
     {
         socket->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         rocketnet_error( "xdp thread not pinned: cpu %d is outside 0 .. %d", cpu, CPU_SETSIZE - 1 );
-        xdp_thread_leave_core_zero( calls );
-        return;
+        return xdp_thread_leave_core_zero( socket->queue, calls );
     }
 
     // an offline cpu refuses like an out-of-set one: the queue stays
@@ -4284,8 +4325,7 @@ static void xdp_thread_pin( rocketnet_server_xdp_socket_t * socket, int online, 
     {
         socket->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         rocketnet_error( "xdp thread not pinned: cpu %d is not online (0 .. %d)", cpu, online - 1 );
-        xdp_thread_leave_core_zero( calls );
-        return;
+        return xdp_thread_leave_core_zero( socket->queue, calls );
     }
 
     cpu_set_t cpuset;
@@ -4301,7 +4341,32 @@ static void xdp_thread_pin( rocketnet_server_xdp_socket_t * socket, int online, 
         char error_text[128];
         rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY, "thread affinity", call,
                                                     strerror_r( result, error_text, sizeof( error_text ) ), "the thread runs on its allowed cpus less core 0" );
-        xdp_thread_leave_core_zero( calls );
+        return xdp_thread_leave_core_zero( socket->queue, calls );
+    }
+    return true;
+}
+
+// The thread's placement at start: the pin, then SCHED_RR at the minimum on
+// itself when the priority switch is on, and only when the thread is kept off
+// core 0: a real-time busy-polling thread on the operating system's core would
+// starve it. A thread left on core 0 is flagged (left_on_core_zero) and
+// carries on: a one cpu host still runs.
+
+static void xdp_thread_place( rocketnet_server_xdp_socket_t * socket, int online, const rocketnet_xdp_affinity_calls_t * calls )
+{
+    const bool off_core_zero = xdp_thread_pin( socket, online, calls );
+    socket->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
+
+    if ( off_core_zero && rocketnet_platform_thread_priority_enabled() )
+    {
+        const int priority = sched_get_priority_min( SCHED_RR );
+        const int result = calls->set_round_robin( priority );
+        if ( result != 0 )
+        {
+            char call[64];
+            snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
+            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+        }
     }
 }
 
@@ -4457,26 +4522,38 @@ bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_
 }
 
 // the fake affinity calls of rocketnet_server_socket_test_pin_refusals: the
-// thread may run on cpus 0 .. 3; a pin to one cpu is refused while
-// pin_fake_refuse is set, and any other mask is taken and kept in pin_fake_mask
+// thread may run on cpus 0 .. pin_fake_cpus - 1 (4, or 1: core 0 alone); a pin
+// to one cpu is refused while pin_fake_refuse is set, every set while
+// pin_fake_refuse_all is set, and any other mask is taken and kept in
+// pin_fake_mask; a SCHED_RR request is counted in pin_fake_round_robin
 
 static bool pin_fake_refuse = false;
+static bool pin_fake_refuse_all = false;
+static int pin_fake_cpus = 4;
 static int pin_fake_sets = 0;
+static int pin_fake_round_robin = 0;
 static cpu_set_t pin_fake_mask;
 
 static int pin_fake_get( cpu_set_t * mask )
 {
     CPU_ZERO( mask );
-    for ( int cpu = 0; cpu < 4; cpu++ )
+    for ( int cpu = 0; cpu < pin_fake_cpus; cpu++ )
     {
         CPU_SET( (size_t) cpu, mask );
     }
     return 0;
 }
 
+static int pin_fake_set_round_robin( int priority )
+{
+    (void) priority;
+    pin_fake_round_robin++;
+    return 0;
+}
+
 static int pin_fake_set( const cpu_set_t * mask )
 {
-    if ( pin_fake_refuse && CPU_COUNT( mask ) == 1 )
+    if ( pin_fake_refuse_all || ( pin_fake_refuse && CPU_COUNT( mask ) == 1 ) )
     {
         return EPERM;
     }
@@ -4532,22 +4609,33 @@ bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_tra
     server->num_queues = 2;
     server->socket = queues;
 
-    const rocketnet_xdp_affinity_calls_t fake = { pin_fake_get, pin_fake_set };
+    const rocketnet_xdp_affinity_calls_t fake = { pin_fake_get, pin_fake_set, pin_fake_set_round_robin };
     const int online = 4;
 
-    // granted: queue 0 on cpu 1, queue 1 on cpu 2
+    // the priority switch on for the SCHED_RR request to show, restored below
+    const bool priority_enabled = rocketnet_platform_thread_priority_enabled();
+    rocketnet_platform_set_thread_priority_enabled( true );
+    pin_fake_cpus = 4;
+    pin_fake_refuse_all = false;
+
+    // granted: queue 0 on cpu 1, queue 1 on cpu 2, each asking for SCHED_RR
     pin_fake_refuse = false;
     pin_fake_sets = 0;
-    xdp_thread_pin( &queues[0], online, &fake );
-    xdp_thread_pin( &queues[1], online, &fake );
-    bool valid = pin_fake_sets == 2 && CPU_COUNT( &pin_fake_mask ) == 1 && CPU_ISSET( 2, &pin_fake_mask );
+    pin_fake_round_robin = 0;
+    xdp_thread_place( &queues[0], online, &fake );
+    xdp_thread_place( &queues[1], online, &fake );
+    bool valid = pin_fake_sets == 2 && CPU_COUNT( &pin_fake_mask ) == 1 && CPU_ISSET( 2, &pin_fake_mask ) && pin_fake_round_robin == 2;
+    valid = valid && !queues[0].left_on_core_zero.load() && !queues[1].left_on_core_zero.load();
     valid = valid && pin_row( dispatch, xdp, server ) == 0 && rocketnet_server_socket_pin_refusals( server ) == 0;
 
     // the affinity call refused: counted, and the thread leaves core 0 (1 .. 3)
+    // and still asks for SCHED_RR
     pin_fake_refuse = true;
     pin_fake_sets = 0;
-    xdp_thread_pin( &queues[0], online, &fake );
+    pin_fake_round_robin = 0;
+    xdp_thread_place( &queues[0], online, &fake );
     valid = valid && pin_fake_sets == 1 && CPU_COUNT( &pin_fake_mask ) == 3 && !CPU_ISSET( 0, &pin_fake_mask );
+    valid = valid && pin_fake_round_robin == 1 && !queues[0].left_on_core_zero.load();
     valid = valid && queues[0].pin_refusals.load() == 1 && pin_row( dispatch, xdp, server ) == 1 && rocketnet_server_socket_pin_refusals( server ) == 1;
 
     // the cpu not online (queue 1 asks for cpu 2 of 2 online): counted, no pin tried
@@ -4563,6 +4651,39 @@ bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_tra
     xdp_thread_pin( &queues[1], online, &fake );
     valid = valid && pin_fake_sets == 1 && !CPU_ISSET( 0, &pin_fake_mask );
     valid = valid && queues[1].pin_refusals.load() == 2 && pin_row( dispatch, xdp, server ) == 3 && rocketnet_server_socket_pin_refusals( server ) == 3;
+
+    // the pin refused and the fallback refused too: the refused pin counted
+    // once (the row counts pins), the thread flagged left on core 0, and no
+    // SCHED_RR asked for. It carries on: the call returns
+    pin_fake_refuse_all = true;
+    pin_fake_sets = 0;
+    pin_fake_round_robin = 0;
+    xdp_thread_place( &queues[0], online, &fake );
+    valid = valid && pin_fake_sets == 0 && pin_fake_round_robin == 0 && queues[0].left_on_core_zero.load();
+    valid = valid && queues[0].pin_refusals.load() == 2 && pin_row( dispatch, xdp, server ) == 4 && rocketnet_server_socket_pin_refusals( server ) == 4;
+
+    // core 0 the only cpu it may run on (a one cpu host, or a cpuset of core
+    // 0 alone): the pin refused (cpu 2 not online), counted once, no fallback
+    // set tried, flagged, no SCHED_RR asked for
+    pin_fake_refuse_all = false;
+    pin_fake_cpus = 1;
+    queues[1].num_os_cpus = 1;
+    pin_fake_sets = 0;
+    pin_fake_round_robin = 0;
+    xdp_thread_place( &queues[1], 1, &fake );
+    valid = valid && pin_fake_sets == 0 && pin_fake_round_robin == 0 && queues[1].left_on_core_zero.load();
+    valid = valid && queues[1].pin_refusals.load() == 3 && pin_row( dispatch, xdp, server ) == 5 && rocketnet_server_socket_pin_refusals( server ) == 5;
+
+    // a later granted pin clears the flag and asks for SCHED_RR again
+    pin_fake_cpus = 4;
+    pin_fake_round_robin = 0;
+    xdp_thread_place( &queues[1], online, &fake );
+    valid = valid && !queues[1].left_on_core_zero.load() && pin_fake_round_robin == 1;
+
+    pin_fake_cpus = 4;
+    pin_fake_refuse = false;
+    pin_fake_refuse_all = false;
+    rocketnet_platform_set_thread_priority_enabled( priority_enabled );
 
     queues[1].~rocketnet_server_xdp_socket_t();
     queues[0].~rocketnet_server_xdp_socket_t();
@@ -4828,24 +4949,11 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     rocketnet_assert( socket );
 
-    xdp_thread_pin( socket, (int) sysconf( _SC_NPROCESSORS_ONLN ), &xdp_affinity_real );
+    // pin, then SCHED_RR at the minimum on itself unless it was left on core
+    // 0. the priority call follows the off switch; the pin is the queue's cpu
+    // and always runs
 
-    // pin, then SCHED_RR at the minimum on itself. the priority call follows
-    // the off switch; the pin is the queue's cpu and always runs
-
-    if ( rocketnet_platform_thread_priority_enabled() )
-    {
-        struct sched_param param;
-        param.sched_priority = sched_get_priority_min( SCHED_RR );
-
-        const int result = pthread_setschedparam( pthread_self(), SCHED_RR, &param );
-        if ( result != 0 )
-        {
-            char call[64];
-            snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", param.sched_priority );
-            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
-        }
-    }
+    xdp_thread_place( socket, (int) sysconf( _SC_NPROCESSORS_ONLN ), &xdp_affinity_real );
 
     rocketnet_info( "pinning xdp thread %d to CPU %d", socket->queue, rocketnet_xdp_thread_cpu( socket->num_os_cpus, socket->queue ) );
 

@@ -285,6 +285,25 @@ void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
 // main thread: no staged slot waiting and no bank published and not retired
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring );
+// Test seam: one worker's placement (pin, confine off cpu 0, SCHED_RR) as the
+// worker runs it, on queue 0 of a synthetic transport, with fake affinity and
+// priority calls: only the refusals are injected, the transport's own code
+// counts them and records the queue. No thread, ring or affinity of any
+// thread changes. The fake mask is cpus 0 .. cpus - 1; the pin is refused when
+// refuse_pin, every affinity set when refuse_all; online is the online count
+// the pin reads. The priority switch is on for the call and restored. The
+// public row URING_PIN_REFUSALS is then asked of dispatch, given the io_uring
+// io table (uring) and the synthetic transport (its queues hidden from the
+// read, so only the transport's own rows answer). Writes that row, whether the
+// queue is left on cpu 0 and the SCHED_RR requests made; false when the
+// synthetic transport cannot be made or dispatch does not answer, and in a
+// build without the transport.
+struct rocketnet_server_transport_io_operations_t;
+typedef bool rocketnet_server_uring_test_transport_counters_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                               uint64_t * values );
+bool rocketnet_server_uring_test_place_worker( rocketnet_server_uring_test_transport_counters_t * dispatch, const struct rocketnet_server_transport_io_operations_t * uring,
+                                               int num_os_cpus, int online, int cpus, bool refuse_pin, bool refuse_all, uint64_t * row, bool * left_on_core_zero,
+                                               int * round_robin_requests );
 #endif // #if ROCKETNET_DEV
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );

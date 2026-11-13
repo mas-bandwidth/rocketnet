@@ -618,6 +618,19 @@ bool rocketnet_platform_thread_priority_enabled( void );
  * @return The priority.
  */
 int rocketnet_platform_network_thread_rr_priority( void );
+
+/**
+ * @brief Writes a cpu mask as ranges, "0-3,8", for a log line.
+ *
+ * Pure: no system call. A list longer than text_bytes - 1 ends in "...".
+ * "none" for an empty mask.
+ * @param cpus cpus[i] nonzero when cpu i is in the mask.
+ * @param count The entries of cpus.
+ * @param text Receives the text, always terminated.
+ * @param text_bytes The size of text, at least 4.
+ * @return None.
+ */
+void rocketnet_platform_cpu_list_text( const unsigned char * cpus, int count, char * text, int text_bytes );
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 /**
