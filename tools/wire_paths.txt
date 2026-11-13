@@ -119,6 +119,8 @@ sdk/rocketnet_xdp_limits.h	XDP map sizes
 sdk/rocketnet_xdp_replay_marks.h	userspace buffer for the kernel replay map
 sdk/rocketnet_xdp_socket_config.h	AF_XDP socket bind config
 sdk/xdp/server_xdp.c	the kernel filter: :360-424 read header bytes at the offsets rocketnet_wire.h defines, write none
+sdk/rocketnet_fill_phase.h	the fill-phase checks (RNFillPhase): which thread may call which server operation; writes no byte
+sdk/rocketnet_receive_prefilter.h	the worker prefilter reads header bytes at the offsets rocketnet_wire.h defines to drop a datagram before banking, writes none; and the drop tallies
 # Files a review named as defining wire bytes that the owner has not yet
 # ruled on. The check accepts them and names every one on every run; they
 # are not in the gate above until the owner moves each to a list.

@@ -966,8 +966,8 @@ static uint64_t rocketnet_server_transport_load_u64( const uint64_t * value )
 // only after their frame has left the room, so they are read before the
 // room: a frame staged between the reads is then counted nowhere, never
 // twice. Read again after the room and started over if either moved, so no
-// frame staged in between is lost to the fill either (RNSendReserve Read1,
-// Read2, Read3; witnesses RoomFirst and NoReread). Each start over follows a
+// frame staged in between is lost to the fill either (proofs/tla/RNSendReserve.tla
+// Read1, Read2, Read3; witnesses RoomFirst and NoReread). Each start over follows a
 // frame some other filler staged, so the loop ends.
 static uint64_t rocketnet_server_transport_queue_budget_now( const struct rocketnet_server_transport_t * server_transport, int queue )
 {
@@ -1054,9 +1054,12 @@ static uint64_t rocketnet_server_transport_refresh_fill_budget( struct rocketnet
     return rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] );
 }
 
-// proofs/tla/RNSendReserve.tla OwnClaim, Claim, Check, Read1-3: a client's
-// first frame this phase takes its own reserved frame when it has one;
-// otherwise one atomic add on the queue's claims, granted below the budget.
+// proofs/tla/RNSendReserve.tla OwnClaim, Size, Claim, Check, Read1, Read2,
+// Read3: a client's first frame this phase takes its own reserved frame when
+// it has one; otherwise one atomic add on the queue's claims, granted below
+// the budget. The code's chunk is one frame, so Size always sizes one, and
+// the claim is that one add: ClaimStore, the separate store after the load,
+// is the SplitClaim witness's step and never the code's.
 // At or past it the budget is raised to what the queue's state allows now,
 // and the claims outstanding, this one among them, are tested against it:
 // not this claim's index, which a refused claim ahead of it has raised
@@ -1093,16 +1096,19 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
     return -1;
 }
 
-// RNSendReserve Count and OwnCount: a granted frame the transport staged has
-// left its queue's room, and only now is it counted. An own frame counted
-// before it left the room would lower the reserve the budget keeps back
-// while the room still held it (witness OwnCountFirst).
+// proofs/tla/RNSendReserve.tla Stage, OwnIo, Count, OwnCount, Continue and
+// End: a granted frame the transport staged (Stage; OwnIo for an own frame)
+// has left its queue's room, and only now is it counted. An own frame
+// counted before it left the room would lower the reserve the budget keeps
+// back while the room still held it (witness OwnCountFirst). With a chunk of
+// one frame the run's tail is empty once its frame is counted: Continue never
+// takes another and End gives nothing back.
 static void rocketnet_server_transport_fill_started( struct rocketnet_server_transport_t * server_transport, int queue, bool own )
 {
     rocketnet_platform_atomic_add_u64( own ? &server_transport->fill_own_used[queue] : &server_transport->fill_started[queue], 1 );
 }
 
-// RNSendReserve Stage, a queue with no room: the transport refused the
+// proofs/tla/RNSendReserve.tla Stage, a queue with no room: the transport refused the
 // granted frame, so the claim is taken back and the grant goes to the next
 // frame. An own frame refused stays taken: its client's keep-alive is still
 // due and its frame stays in the reserve.
@@ -3914,7 +3920,7 @@ static void rocketnet_server_transport_update_body( struct rocketnet_server_tran
             // transport cannot carry) is this address's alone: its keep-alive
             // stays due, and the sweep serves the rest, as the drain does.
 
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport ) )
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, client_address ) )
             {
                 break;
             }
