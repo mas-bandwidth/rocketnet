@@ -306,4 +306,9 @@
    :title "Find why TLC sometimes prints no behaviour for a plant's violation"
    :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (hetzner1, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation."
    :date "2026-11-13" :origin "Piece P, #1093 trace shard 0/6")
+
+  (item "reconcile-sndbuf-resends" :group "after-v1-0-1" :area "tests/load"
+   :title "Reconcile: tell a refused-then-resent send from a real drop"
+   :text "The harden_load reconcile counts the kernel's SndbufErrors as named drops in the server-to-client chain. When the 1 MB socket send buffer is full the kernel refuses a gso send and the gso worker sends it again, so nothing is lost: on main 3218cf5f6 (X710 pair) library_sent equals library_received and players deliver 100%, yet every gso row reports chains=FAIL on 124k to 571k of them (REMEASURE-MAIN.md, gso). Count the refusals the transport resent in their own term, apart from sends the kernel refused and nothing sent again, so the chain still fails a real drop."
+   :date "2026-11-13" :origin "gso re-measure on main 3218cf5f6")
  ))
