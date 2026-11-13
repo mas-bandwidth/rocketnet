@@ -211,3 +211,36 @@ static void test_suite_case_exit_guard_is_armed_only_while_the_case_runs()
 }
 
 REGISTER_UNIT_TEST( test_suite_case_exit_guard_is_armed_only_while_the_case_runs );
+
+// --run accepts every name --list prints: an exec row's name is found among
+// the rows, and the collected run is kept to that one row, its result with
+// it; a registered case's name or an unknown one is not an exec row
+static void test_suite_run_keeps_only_the_named_exec_row()
+{
+    const suite_exec execs[] = {
+        { "test_exec_a", "a", "", false, 0 },
+        { "test_exec_b", "b", "--flag", true, 30 },
+    };
+    check( suite_exec_named( execs, 2, "test_exec_a" ) );
+    check( suite_exec_named( execs, 2, "test_exec_b" ) );
+    check( !suite_exec_named( execs, 2, "test_registered" ) );
+    check( !suite_exec_named( execs, 2, "test_exec" ) );
+    check( !suite_exec_named( execs, 0, "test_exec_a" ) );
+
+    std::vector<suite_case> pending( 3 );
+    std::vector<suite_result> results( 3 );
+    const char * names[] = { "test_registered", "test_exec_a", "test_exec_b" };
+    for ( size_t i = 0; i < 3; i++ )
+    {
+        pending[i].name = names[i];
+        results[i].name = names[i];
+    }
+    pending[2].exec_path = "dir/b";
+
+    suite_keep_named( pending, results, "test_exec_b" );
+    check( pending.size() == 1 && results.size() == 1 );
+    check( pending[0].name == "test_exec_b" && pending[0].exec_path == "dir/b" );
+    check( results[0].name == "test_exec_b" );
+}
+
+REGISTER_UNIT_TEST( test_suite_run_keeps_only_the_named_exec_row );

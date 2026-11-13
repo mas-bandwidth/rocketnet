@@ -1437,6 +1437,44 @@ inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<sui
     }
 }
 
+// --run <exec row's name>: --list prints the exec rows with the registered
+// cases, so --run accepts every name --list prints. An exec row is not a
+// registered case this binary can run in itself: the run collects the suite
+// as a whole run does and keeps that one row, so the exec is started, timed,
+// captured and checked exactly as the suite does it.
+
+inline bool suite_exec_named( const suite_exec * execs, int nexecs, const char * name )
+{
+    for ( int i = 0; i < nexecs; i++ )
+    {
+        if ( std::strcmp( execs[i].name, name ) == 0 )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+inline void suite_keep_named( std::vector<suite_case> & pending, std::vector<suite_result> & results, const char * name )
+{
+    size_t kept = 0;
+    for ( size_t i = 0; i < pending.size(); i++ )
+    {
+        if ( pending[i].name != name )
+        {
+            continue;
+        }
+        if ( kept != i )
+        {
+            std::swap( pending[kept], pending[i] );
+            std::swap( results[kept], results[i] );
+        }
+        kept++;
+    }
+    pending.resize( kept );
+    results.resize( kept );
+}
+
 // --list [--shard i/n]: the names a run with the same environment and shard
 // would start, chosen by the run's own code (suite_collect, then
 // suite_keep_shard), never by a second reading of the registry: the nightly
@@ -1937,6 +1975,16 @@ inline int suite_main( int argc, char ** argv,
         return suite_list_cases( count, name_at, execs, nexecs, group_of, "", shard_index, shards );
     }
 
+    // --run <exec row's name> is the whole-suite run kept to that row
+    // (suite_keep_named)
+
+    const char * only_exec = NULL;
+    if ( argc == 3 && std::strcmp( argv[1], "--run" ) == 0 && suite_exec_named( execs, nexecs, argv[2] ) )
+    {
+        only_exec = argv[2];
+        argc = 1;
+    }
+
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         // exactly one case: a second name was ignored before, so a caller
@@ -1994,6 +2042,10 @@ inline int suite_main( int argc, char ** argv,
         return 1;
     }
     suite_keep_shard( pending, results, shard_index, shards );
+    if ( only_exec )
+    {
+        suite_keep_named( pending, results, only_exec );
+    }
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     if ( suite_env_is_set( "ROCKETNET_TEST_REPORT" ) )
@@ -2406,6 +2458,16 @@ inline int suite_main( int argc, char ** argv,
         return suite_list_cases( count, name_at, execs, nexecs, group_of, ".exe", shard_index, shards );
     }
 
+    // --run <exec row's name> is the whole-suite run kept to that row
+    // (suite_keep_named)
+
+    const char * only_exec = NULL;
+    if ( argc == 3 && std::strcmp( argv[1], "--run" ) == 0 && suite_exec_named( execs, nexecs, argv[2] ) )
+    {
+        only_exec = argv[2];
+        argc = 1;
+    }
+
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         // exactly one case: a second name was ignored before, so a caller
@@ -2456,6 +2518,10 @@ inline int suite_main( int argc, char ** argv,
         return 1;
     }
     suite_keep_shard( pending, results, shard_index, shards );
+    if ( only_exec )
+    {
+        suite_keep_named( pending, results, only_exec );
+    }
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     if ( suite_env_is_set( "ROCKETNET_TEST_REPORT" ) )
