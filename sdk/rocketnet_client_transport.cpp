@@ -1167,6 +1167,14 @@ static void rocketnet_client_transport_publish_keys( void * context, const struc
                                       &client->server_address );
 }
 
+// proofs/tla/RNClientIoDecrypt.tla OpenPayloads: the protocol's hook on entering connected.
+
+static void rocketnet_client_transport_open_payloads( void * context )
+{
+    rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) context;
+    rocketnet_client_io_open_payloads( &client_transport->client_io );
+}
+
 // proofs/tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state.
 // When no background I/O thread owns the open block, take the retired epoch
 // immediately so sodium_memzero erases session_server_to_client and salt at the
@@ -2710,12 +2718,14 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
         client_transport->client_io.prefilter_too_large =
             &client_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
 
-        // proofs/tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys: the protocol
-        // publishes the open copy at the challenge and retires it at every
-        // terminal state; destroy retires it too
+        // proofs/tla/RNClientIoDecrypt.tla PublishKeys, OpenPayloads and RetireKeys:
+        // the protocol publishes the open copy at the challenge, lets payloads
+        // open on entering connected, and retires it at every terminal state;
+        // destroy retires it too
 
         client_transport->protocol.publish_keys = rocketnet_client_transport_publish_keys;
         client_transport->protocol.retire_keys = rocketnet_client_transport_retire_keys;
+        client_transport->protocol.open_payloads = rocketnet_client_transport_open_payloads;
         client_transport->protocol.keys_context = client_transport;
 
 #if ROCKETNET_DEV

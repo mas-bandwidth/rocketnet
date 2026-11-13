@@ -72,6 +72,16 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
     {
         rocketnet_client_connection_reset( client );
     }
+
+    // proofs/tla/RNClientIoDecrypt.tla OpenPayloads: payloads are accepted only
+    // once connected (TRANSPORT.md t11.3: one received in sending connection
+    // response is counted WRONG_STATE before it is opened), so only now may an
+    // I/O thread open them
+
+    if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && client->open_payloads )
+    {
+        client->open_payloads( client->keys_context );
+    }
 }
 
 // The AEAD integrity limit, per TRANSPORT.md t14 Replay protection: one

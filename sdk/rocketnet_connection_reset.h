@@ -44,7 +44,7 @@ struct rn_message_object_t;
     X( RESET, state_first_send_time ) X( RESET, rtt_estimate ) X( RESET, rtt_session_sampled ) \
     X( RESET, received_session_sequence ) X( RESET, ack ) X( RESET, num_acked ) \
     X( RESET, acked_packet_ids ) \
-    X( KEEP, publish_keys ) X( KEEP, retire_keys ) X( KEEP, keys_context ) \
+    X( KEEP, publish_keys ) X( KEEP, retire_keys ) X( KEEP, open_payloads ) X( KEEP, keys_context ) \
     X( RESET, record_verdict ) X( RESET, record_sequence )
 
 #define ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( X ) \

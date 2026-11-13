@@ -96,12 +96,26 @@ static void client_io_decrypt_teardown( client_io_decrypt_fixture_t * f )
     rocketnet_client_io_rig_destroy( f->rig );
 }
 
-// update's PublishKeys at the challenge, from the protocol's own fields
+// the transport's OpenPayloads hook, which the protocol runs on entering connected
+
+static void client_io_decrypt_open_payloads_hook( void * context )
+{
+    rocketnet_client_io_open_payloads( (rocketnet_client_io_t *) context );
+}
+
+// update's PublishKeys at the challenge, from the protocol's own fields. A
+// fixture left in connected has passed OpenPayloads too.
 
 static void client_io_decrypt_publish( client_io_decrypt_fixture_t * f )
 {
+    f->client.open_payloads = client_io_decrypt_open_payloads_hook;
+    f->client.keys_context = &f->io;
     rocketnet_client_io_publish_keys( &f->io, f->client.keys.session_server_to_client, f->client.signed_fields.protocol_id,
                                       f->client.connection_salt, f->client.packet_filter, &f->client.server_address );
+    if ( f->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        rocketnet_client_io_open_payloads( &f->io );
+    }
 }
 
 // the plaintext of a payload: the minimum ack block and one payload byte

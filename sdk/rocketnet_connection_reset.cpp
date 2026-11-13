@@ -35,6 +35,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     struct rocketnet_counters_t * counters = client->counters;
     const rocketnet_client_publish_keys_t publish_keys = client->publish_keys;
     const rocketnet_client_retire_keys_t retire_keys = client->retire_keys;
+    const rocketnet_client_open_payloads_t open_payloads = client->open_payloads;
     void * keys_context = client->keys_context;
 
     if ( retire_keys )
@@ -57,6 +58,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     client->state_first_send_time = -1.0;
     client->publish_keys = publish_keys;
     client->retire_keys = retire_keys;
+    client->open_payloads = open_payloads;
     client->keys_context = keys_context;
 
     rocketnet_ack_endpoint_reset( &client->ack );

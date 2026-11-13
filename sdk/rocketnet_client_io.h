@@ -233,6 +233,7 @@ struct rocketnet_client_io_open_t
     uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
     rocketnet_address_t server_address;     // only the dialed server's datagrams are opened
     std::atomic<uint32_t> epoch;
+    std::atomic<uint32_t> payloads;         // 1 once the client is connected (OpenPayloads); main writes, the I/O thread reads
     struct rocketnet_replay_protection_t replay;
     uint32_t loaded_epoch;          // the epoch the I/O thread last took; I/O thread only
 };
@@ -338,6 +339,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     memset( io->open.packet_filter, 0, sizeof( io->open.packet_filter ) );
 
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_NONE, std::memory_order_relaxed );
+    io->open.payloads.store( 0, std::memory_order_relaxed );
 
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
@@ -391,6 +393,18 @@ inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const 
     memcpy( io->open.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     io->open.server_address = *server_address;
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_LIVE, std::memory_order_release );
+}
+
+// proofs/tla/RNClientIoDecrypt.tla OpenPayloads; main thread, on entering connected.
+// Until then the I/O thread leaves a payload unopened and its sequence
+// unmarked (the raw verdict), so update counts it WRONG_STATE before any open
+// (TRANSPORT.md t11.3) and a later copy of it is still fresh to both windows.
+// One attempt per transport: the word is never cleared. A payload the I/O
+// thread reads before it sees the store is raw and update opens it.
+
+inline void rocketnet_client_io_open_payloads( rocketnet_client_io_t * io )
+{
+    io->open.payloads.store( 1, std::memory_order_relaxed );
 }
 
 // proofs/tla/RNClientIoDecrypt.tla RetireKeys; main thread, at the integrity limit,
@@ -473,7 +487,8 @@ inline int rocketnet_client_io_session_floor( int type )
 // proofs/tla/RNClientIoDecrypt.tla IoCheck then IoOpen; I/O thread, per datagram,
 // before its count is committed. A datagram that is not a session packet, one from any
 // source but the dialed server (update drops it as junk before the protocol,
-// so it must not mark the I/O thread's window), or any datagram while the copy
+// so it must not mark the I/O thread's window), a payload before the client is
+// connected (TRANSPORT.md t11.3), or any datagram while the copy
 // is not live, passes with the raw verdict. Otherwise IoCheck
 // runs the cheap rungs that need no protocol state (the prefilter, the type's
 // wire floor, the zero sequence) and the I/O thread's own window's
@@ -502,6 +517,14 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
     const int type = rocketnet_prefilter_check( packet_data, packet_bytes, io->open.packet_filter );
     const int floor = rocketnet_client_io_session_floor( type );
     if ( floor == 0 )
+    {
+        return;
+    }
+
+    // proofs/tla/RNClientIoDecrypt.tla IoCheck: a payload before the client is
+    // connected passes raw, unopened and unmarked (rocketnet_client_io_open_payloads)
+
+    if ( type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && io->open.payloads.load( std::memory_order_relaxed ) == 0 )
     {
         return;
     }
