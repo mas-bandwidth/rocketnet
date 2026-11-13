@@ -524,7 +524,8 @@ static int trace_send_reserve( uint64_t seed, int steps, const char * out )
               "    AbortReturns = FALSE\n"
               "    TailLeak = FALSE\n"
               "    MinRoom = FALSE\n"
-              "    StickyReserve = FALSE\n",
+              "    StickyReserve = FALSE\n"
+              "    OwnUnbounded = FALSE\n",
               client_set.c_str(), queues, reserve, max_free, SR_SEEN_FIRST, SR_CHUNK, SR_GUARD );
     const bool written = tla_write_trace( out, "MCTraceSendReserve", seed, "TraceRNSendReserveCalls", "", constants, records );
 

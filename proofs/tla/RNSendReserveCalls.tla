@@ -14,18 +14,19 @@
 (*                                                                         *)
 (* The refinement, stated: each action here is a run of RNSendReserve      *)
 (* steps by one thread f with no other thread's step between them, from a  *)
-(* state where every thread is idle to another such state.                 *)
+(* state where every thread is idle to another such state (one thread, so  *)
+(* one fill line; a line's tail there is tail here).                       *)
 (*   Open(used, acked)   OpenFill, its choices used and Cardinality(acked) *)
 (*   StartStaged(c)      own[c]:  OwnClaim, OwnIo (room), OwnCount         *)
 (*                       tail:    Continue, Stage (room), Count            *)
-(*                       else:    Size, Claim, Check [Read1, Read2, Read3],*)
-(*                                Stage (room), Count                      *)
+(*                       else:    Size, Claim, Check [Read1, Read2, Read3, *)
+(*                                Decide], Stage (room), Count             *)
 (*   StartIoRefused(c)   own[c]:  OwnClaim, OwnIo (refused)                *)
 (*                       tail:    Continue, Stage (refused), End           *)
-(*                       else:    Size, Claim, Check [Read1-3],            *)
+(*                       else:    Size, Claim, Check [Read1-3, Decide],    *)
 (*                                Stage (refused), End                     *)
-(*   StartRefused(c)     Claim, Check, Read1, Read2, Read3 (Refuse),       *)
-(*                       TakeBack, Retest (FinalRefuse)                    *)
+(*   StartRefused(c)     Size, Claim, Check, Read1-3, Decide (refused),    *)
+(*                       TakeBack, Retest (refused, then the counter)      *)
 (*   Retire(q, n)        Retire, n times                                   *)
 (*   Finish, Abort, Capacity(n), CapacityTo(c, n), CapacityAll(n): no      *)
 (*                       step; they leave every word alone                 *)
@@ -37,13 +38,15 @@
 (* budget again.  With one thread the single claim is never refused while  *)
 (* a tail is held, so SEND_RESERVE_REFUSED_TAILS_HELD does not move here.  *)
 (* The variables map by name (free, started, ownUsed, ownLeft, claims,     *)
-(* budget, tail); ownTaken there is ownUsed here (an own frame the transport     *)
-(* refused is given back before the call ends); own is which clients hold  *)
-(* the ownLeft frames, and refused is the code's counter                   *)
-(* SEND_RESERVE_REFUSED.  Two things differ, both on the side of the code: *)
-(* RNSendReserve's Stage refuses a frame only when the room is 0, where a  *)
-(* transport here may refuse any start (StartIoRefused has no room guard); *)
-(* and Retire there is one frame.  The refinement is argued, not checked   *)
+(* budget, tail; started is the one line's count); ownTaken there is       *)
+(* ownUsed here (an own frame the transport refused is given back before   *)
+(* the call ends); own is which clients hold the ownLeft frames, and       *)
+(* refused is the code's counter SEND_RESERVE_REFUSED.  RNSendReserve is   *)
+(* one queue: each queue here is one copy of it, the own frames shared,    *)
+(* and its assumption MaxOwn <= Reserve is the invariant OwnWithinReserve  *)
+(* here (an open hands out no more own frames than the smallest queue's    *)
+(* reserve; witness OwnUnbounded).  One thing differs, on the side of the  *)
+(* code: Retire there is one frame.  The refinement is argued, not checked *)
 (* by TLC; this module's own invariants are checked (MCRNSendReserveCalls) *)
 (* and are RNSendReserve's two properties at the points between calls.     *)
 (*                                                                         *)
@@ -81,7 +84,8 @@ CONSTANTS
     AbortReturns,   \* an aborted packet gives a claim back          (ReserveKept)
     TailLeak,       \* a refused frame gives back its own claim only (NeverStarved)
     MinRoom,        \* CapacityTo reads the fewest room of any queue (NoHiddenRoom)
-    StickyReserve   \* a reserve once cut is never computed again    (ReserveRestored)
+    StickyReserve,  \* a reserve once cut is never computed again    (ReserveRestored)
+    OwnUnbounded    \* an open hands every acknowledged client its own frame (OwnWithinReserve)
 
 ASSUME Chunk \in Nat /\ Chunk >= 1 /\ Guard \in Nat /\ Guard >= Chunk
 ASSUME NQ \in Nat /\ NQ >= 1 /\ SeenInit \in Nat
@@ -199,7 +203,7 @@ Open(used, acked) ==
            seen1 == [q \in Queues |-> Max(seen[q], room[q])]
            res1 == [q \in Queues |-> IF StickyReserve THEN Min(reserve[q], ReserveFor(seen1[q]))
                                       ELSE ReserveFor(seen1[q])]
-           own1 == OwnCap(acked, MinOf(res1, Queues))
+           own1 == IF OwnUnbounded THEN acked ELSE OwnCap(acked, MinOf(res1, Queues))
        IN /\ free' = room
           /\ seen' = seen1
           /\ reserve' = res1
@@ -363,6 +367,12 @@ OwnLeftCounts == ownLeft = Cardinality(own)
 \* a client's capacity is 0 only when a start to it would stage nothing:
 \* a full queue hides no other queue's room
 NoHiddenRoom == ~hidden
+
+\* the own frames an open handed out, less those the transport refused, are
+\* never more than the smallest queue's reserve: each comes out of the
+\* reserve of the queue its client stages on (RNSendReserve's MaxOwn <=
+\* Reserve, for every queue)
+OwnWithinReserve == ownLeft + SumOf(ownUsed, Queues) <= MinOf(reserve, Queues)
 
 \* each queue's reserve is the formula cut to half the largest room it has
 \* shown at an open: a reserve cut while a queue was stalled comes back once
