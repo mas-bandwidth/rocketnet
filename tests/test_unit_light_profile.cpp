@@ -79,6 +79,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // endpoint's link simulator carries the receive_any delivery bound and hint
 // and two receive_any scan counters (sdk/rocketnet_network_simulator.h,
 // 40 bytes).
+// The counter union (53 more rows in every counter block) moved every pin:
+// on Linux x86_64 the client by 832 bytes and the server by 896 (bench, gcc,
+// Debug: actual=15186002 and 3111677747); on macOS the client by 768 and the
+// server by 960 (the studio, Debug); on Windows the client by 832 and the
+// server by 960 (the unit job: actual=15389868 and 1469501759).
 #define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
@@ -122,8 +127,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452223 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14340460 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453183 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341292 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -166,8 +171,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452639 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453599 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988746 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -248,16 +253,6 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // the client (measured on bench-nyc-4, gcc, Release, ROCKETNET_DEV=ON, before
 // and after: actual=3111676851 to 5610448051). A Linux build without XDP plans
 // a smaller peak and the check is at most there.
-// The counter union (53 rows, 424 bytes in every counter block) reads
-// actual=5610448947 and 15186002 (bench-nyc-4, gcc, Debug, DEV ON). The
-// protocol send reserve keeps, per send queue, a budget, its claims, the
-// grants staged, the own frames used and the reserve (five uint64_t by
-// ROCKETNET_SERVER_MAX_SEND_QUEUES, 2560 bytes), one own-frame flag a client
-// slot with their count (1008 bytes) and its queue count and test seam, and
-// appends the counter SEND_RESERVE_REFUSED (8 bytes in every counter block):
-// actual=5610452595, 3648 above the union with the object's alignment, and
-// actual=15186066, 64 above it (the counter crosses the client object's
-// 64-byte rounding). Measured on the same bench and build.
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
