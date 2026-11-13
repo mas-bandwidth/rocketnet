@@ -21,8 +21,11 @@ The queues share nothing but main's loop, so one queue is the machine. Related m
 
 `TraceRNUringQueueSend.tla` binds the code to this model (README-TraceCheck.md).
 
-Status: the model and its trace module are written and checked; the code (L1) is not
-yet built.
+Status: the model, its trace module and the code (`sdk/rocketnet_uring_queue_send.cpp`)
+are written and checked. `tests/tla_trace_queue_send.cpp` walks the code against a fake
+kernel and TLC accepts each walk as a behaviour of `TraceRNUringQueueSend`, with every
+kernel completion its own step. Under `ROCKETNET_TLA_PLANT` the walk switches on the
+retire-at-reap plant, and TLC rejects the walk.
 
 ## The small instance (MCRNUringQueueSend.tla)
 
