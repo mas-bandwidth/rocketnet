@@ -230,7 +230,8 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 // once at its start, structurally, so every present and future test is
 // safe by default; the pre-flight stays reachable (non-mutating by
 // contract) and create refuses before its first act. allow_commit is the
-// deliberate opt-out; nothing in the suite calls it.
+// deliberate opt-out, a ROCKETNET_DEV seam: only the functional cases that
+// must commit a real data plane call it, each for its own process.
 
 void rocketnet_server_socket_forbid_commit();
 
