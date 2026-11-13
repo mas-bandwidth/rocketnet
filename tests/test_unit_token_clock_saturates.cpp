@@ -9,7 +9,8 @@
 // UINT64_MAX, and every token has expired. The server's check reads it at
 // each update, and public connect's at connect. Time is an argument, step
 // driven over the in-memory loopback transport, with no socket, sleep or
-// thread.
+// thread; the client stamps its receives from the case's clock
+// (time_callback), never the platform's, on every OS.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -38,6 +39,20 @@ struct token_clock_t
     rocketnet_client_t * client;
 };
 
+// the client's receive-stamp clock: the case's own, never the platform's
+// (time_callback; NULL would read rocketnet_platform_time on every receive).
+// Each read is counted, so a client that stamped from the platform clock
+// instead reads zero here.
+
+static double token_clock_receive_time = 1000.0;
+static int token_clock_receive_reads = 0;
+
+static double token_clock_receive_clock( void * )
+{
+    token_clock_receive_reads++;
+    return token_clock_receive_time;
+}
+
 // a started loopback server and a step-driven client, each on its own token
 // epoch, not yet updated
 
@@ -65,7 +80,9 @@ static void token_clock_create( token_clock_t * t, uint64_t server_epoch, uint64
     client_config.transport = "loopback";
     client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = true;
+    client_config.time_callback = token_clock_receive_clock;
     client_config.token_epoch_unix_seconds = client_epoch;
+    token_clock_receive_reads = 0;
     t->client = rocketnet_client_create( NULL, &client_config, NULL );
     check( t->client != NULL );
 }
@@ -112,6 +129,7 @@ static void token_clock_server_refuses( uint64_t server_epoch, double server_tim
 
     for ( int step = 0; step < 12; ++step )
     {
+        token_clock_receive_time = client_time + 0.1 * step;
         rocketnet_client_update( t.client, client_time + 0.1 * step );
         rocketnet_client_send_packets( t.client );
         rocketnet_server_update( t.server, server_time + 0.1 * step );
@@ -123,6 +141,9 @@ static void token_clock_server_refuses( uint64_t server_epoch, double server_tim
     check( rn_server_stats_of( t.server ).connections_accepted == 0 );
     check( rocketnet_client_state( t.client ) != ROCKETNET_CLIENT_STATE_CONNECTED );
 
+    // the client's receives were stamped from the case's clock
+    check( token_clock_receive_reads > 0 );
+
     token_clock_destroy( &t );
 }
 
@@ -133,6 +154,7 @@ static void token_clock_client_refuses( uint64_t client_epoch, double client_tim
     token_clock_t t;
     token_clock_create( &t, 0, client_epoch );
 
+    token_clock_receive_time = client_time;
     rocketnet_client_update( t.client, client_time );
 
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
