@@ -5,7 +5,7 @@
 (* sequence tests/tla_trace_ack_apply.cpp writes: one per step, with the   *)
 (* operation the walk called (op), the walk's arguments to it (args), the  *)
 (* model action the code's own result says it took (act), and every model  *)
-(* variable after it (state) but the ghost arrived.  Record 1 is "init".   *)
+(* variable after it (state).  Record 1 is "init".                         *)
 (*                                                                         *)
 (* TraceStep allows only the recorded action with the recorded arguments,  *)
 (* and only when the operation can be that action (OpActs): a step that    *)
@@ -46,7 +46,7 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable the code or the walk holds, by the field name the harness writes
-VarsRec == [phase |-> phase, queue |-> queue, numRanges |-> numRanges, head |-> head, tail |-> tail, claim |-> claim, segment |-> segment, batch |-> batch, took |-> took]
+VarsRec == [phase |-> phase, queue |-> queue, numRanges |-> numRanges, head |-> head, tail |-> tail, claim |-> claim, segment |-> segment, batch |-> batch, took |-> took, arrived |-> arrived]
 
 \* the actions each operation of the code can be
 OpActs == [begin_receive |-> {"BeginReceive"}, receive_block |-> {"Receive"}, settle |-> {"Settle"}, open |-> {"Open"}, take |-> {"Take", "TakeRefused", "TakeOutside"}, close |-> {"Close"}]
@@ -99,14 +99,28 @@ TraceConsistent == ~rejected
 \* the row's reach predicates: some clean trace must see a client taken by a
 \* game thread; stand after a finish with a client nobody took whose blocks
 \* are in the batch (the main thread applied them); see a chain of two or
-\* more entries linked through the queue; and see a client settled in the
+\* more entries linked through the queue; see a client settled in the
 \* receive with blocks queued again behind the ids it already holds, so their
-\* apply starts past offset 0. The refused take and the take outside the open
-\* phase are actions (TakeRefused, TakeOutside): the checker requires each
-\* in an accepted clean trace
+\* apply starts past offset 0; and stand in a receive after each early
+\* gather. The batch is empty in a receive until one runs. A batch that is
+\* not empty with the queue holding one entry of no ranges is a gather a
+\* full queue forced: that entry forced it, and a block of no ranges always
+\* fits the range store. A batch that is not empty and shorter than
+\* PendingCap is a gather the range store forced: no full queue has been
+\* gathered. The refused take and the take outside the open phase are actions
+\* (TakeRefused, TakeOutside): the checker requires each in an accepted
+\* clean trace.
+\*
+\* LeftForFinish also holds for a client whose blocks the main thread only
+\* settled in the receive. No state tells the two apart: a client left for
+\* the finish is one with its claim set when Close runs, Close clears the
+\* claim, the chain and the segment, and the state before Close does not say
+\* that Close is the next step. A predicate over states cannot name the step
 TakenByGameThread == \E c \in Clients : took[c] # {} /\ Main \notin took[c]
 LeftForFinish == phase = "closed" /\ \E c \in Clients : took[c] = {} /\ \E i \in DOMAIN batch : batch[i][1] = c
 Chained == \E c \in Clients : head[c] >= 0 /\ tail[c] # head[c]
 QueuedBehindSettled == phase = "receiving" /\ \E c \in Clients : segment[c] # <<>> /\ head[c] >= 0
+GatheredQueueFull == phase = "receiving" /\ batch # <<>> /\ Len(queue) = 1 /\ queue[1].ranges = 0
+GatheredRangesFull == phase = "receiving" /\ batch # <<>> /\ Len(batch) < PendingCap
 
 =============================================================================

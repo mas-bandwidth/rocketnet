@@ -2768,6 +2768,23 @@ void rocketnet_server_acks_client_for_test( const struct rocketnet_server_acks_t
     *claim = (int) client->claim.load( std::memory_order_relaxed );
     *ids = client->ids;
 }
+
+// The trace check's seam: lowers the deferred apply's queue to pending
+// entries and its range store to ranges ranges, so a walk fills them. It
+// never raises either, keeps one whole block's ranges, and runs only while
+// nothing is queued. False, with nothing changed, otherwise.
+bool rocketnet_server_acks_lower_capacity_for_test( struct rocketnet_server_acks_t * acks, int pending, int ranges )
+{
+    rocketnet_assert( acks );
+    if ( !acks->deferred || acks->phase != ROCKETNET_SERVER_ACKS_CLOSED || acks->num_pending != 0 || acks->num_ranges != 0 ||
+         pending < 1 || pending > acks->pending_capacity || ranges < ROCKETNET_ACK_BLOCK_MAX_RANGES || ranges > acks->ranges_capacity )
+    {
+        return false;
+    }
+    acks->pending_capacity = pending;
+    acks->ranges_capacity = ranges;
+    return true;
+}
 #endif // #if ROCKETNET_DEV
 
 void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks )

@@ -39,7 +39,7 @@ applied blocks gave since the last gather); `batch`, the published ids with
 their client indexes. Indexes are the code's: from 0, -1 for none. Two
 variables are history the code does not keep: `took`, the threads that
 applied each client since the last `Open` (the code keeps only the claim),
-and the ghost `arrived`, the arrival order since the receive began (the
+and `arrived`, the arrival order since the receive began (the
 queue forgets it at the gather).
 
 A block is one id: applying an entry appends its block to its client's
@@ -98,7 +98,8 @@ Each counterexample was checked against the C by hand:
   its receive loop.
 - no-gather-when-full: three blocks of one range each; the third writes its
   range at `ranges + 2 * 2`, past a store of two.
-- tail-not-advanced: two blocks for client 0; the second is linked at
+- tail-not-advanced (fails at the second block, on the tail conjunct of
+  `ChainWhole`): two blocks for client 0; the second is linked at
   `pending[0].next` and the tail stays 0, so a third would overwrite that
   link and the second would fall off the chain.
 
@@ -117,7 +118,13 @@ order whole calls.
 `tests/tla_trace_ack_apply.cpp` walks the code with three clients, the main
 thread and two real game threads, one call a step, and TLC checks each trace
 against `TraceRNAckApplyPhase.tla`. Every field is read from the code but
-`took`, which the walk keeps from the takes' return values. The walk's
-queue is the code's 8192 entries and 65536 ranges, which 400 steps do not
-fill: the early gather is checked by the instance above and its witness, not
-by the trace.
+`took`, which the walk keeps from the takes' return values, and `arrived`,
+which it keeps from the blocks it hands in. The code's queue is 8192 entries
+and 65536 ranges, which 400 steps do not fill, so the walk lowers it first
+through the seam `rocketnet_server_acks_lower_capacity_for_test` to 6
+entries and one block's 255 ranges, and some of its blocks carry 100 ranges:
+the early gather then runs in the code, forced by the full queue in some
+receives and by the range store in others. The row's reach predicates
+`GatheredQueueFull` and `GatheredRangesFull` require each in an accepted
+clean trace, beside `TakenByGameThread`, `LeftForFinish`, `Chained` and
+`QueuedBehindSettled`.

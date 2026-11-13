@@ -46,8 +46,10 @@ EXTENDS Integers, Sequences, FiniteSets
 CONSTANTS Clients,              \* client indexes
           Threads,              \* the threads that may call the take
           Main,                 \* the main thread, one of Threads
-          MaxBlock,             \* blocks are 1..MaxBlock; one of a client arrives once an update
-          MaxRanges,            \* a block carries 0..MaxRanges ranges
+          MinBlock,             \* blocks are MinBlock..MaxBlock; one of a client arrives once an update
+          MaxBlock,
+          MaxRanges,            \* the most ranges a block carries
+          RangeCounts,          \* the range counts the blocks of this instance carry
           PendingCap,           \* entries the queue holds
           RangesCap,            \* ranges the range store holds
           ExchangeTake,         \* the take clears the claim in the step that reads it
@@ -59,6 +61,7 @@ CONSTANTS Clients,              \* client indexes
 
 ASSUME /\ Main \in Threads
        /\ MaxRanges <= RangesCap
+       /\ RangeCounts \subseteq 0..MaxRanges
        /\ PendingCap >= 1
 
 VARIABLES phase,        \* "closed", "receiving" or "open" (acks->phase)
@@ -70,13 +73,13 @@ VARIABLES phase,        \* "closed", "receiving" or "open" (acks->phase)
           segment,      \* client -> the ids its applied blocks gave since the last gather, in order
           batch,        \* the published batch: <<client, id>> in order (acks->acked_*[0 .. num_acked))
           took,         \* client -> the threads that applied it since the last Open
-          arrived       \* ghost: <<client, block>> in arrival order since the receive began
+          arrived       \* history: <<client, block>> in arrival order since the receive began
 
 vars == << phase, queue, numRanges, head, tail, claim, segment, batch, took, arrived >>
 
-Blocks == 1..MaxBlock
+Blocks == MinBlock..MaxBlock
 
-Entry == [client : Clients, block : Blocks, ranges : 0..MaxRanges, roff : Nat, next : Int, ioff : Nat, icnt : 0..1]
+Entry == [client : Clients, block : Blocks, ranges : RangeCounts, roff : Nat, next : Int, ioff : Nat, icnt : 0..1]
 
 TypeOK ==
     /\ phase \in {"closed", "receiving", "open"}
@@ -180,7 +183,7 @@ Receive(c, b, r) ==
           /\ batch' = IF full THEN GatherBatch ELSE batch
           /\ segment' = IF full THEN GatherSegment ELSE segment
           /\ claim' = IF full THEN GatherClaim ELSE claim
-    /\ arrived' = Append(batch \o QPairs(queue), <<c, b>>)
+    /\ arrived' = Append(arrived, <<c, b>>)
     /\ UNCHANGED << phase, took >>
 
 \* rocketnet_server_acks_settle: the main thread applies client c's chain
@@ -253,7 +256,7 @@ Next ==
     \/ \E c \in Clients : Settle(c)
     \/ \E t \in Threads, c \in Clients : TakeRefused(t, c) \/ TakeOutside(t, c)
     \/ \E t \in Threads, c \in Clients, n \in 0..Len(queue) : Take(t, c, n)
-    \/ \E c \in Clients, b \in Blocks, r \in 0..MaxRanges : Receive(c, b, r)
+    \/ \E c \in Clients, b \in Blocks, r \in RangeCounts : Receive(c, b, r)
 
 Spec == Init /\ [][Next]_vars
 
