@@ -241,7 +241,7 @@ static void windows_connreset_child_start( windows_connreset_child_t * child, co
     windows_connreset_require( length > 0 && length < MAX_PATH );
 
     wchar_t command[MAX_PATH + 64];
-    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_client", path );
+    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --windows-connreset-child-client", path );
 
     // the child is created inside the job (PROC_THREAD_ATTRIBUTE_JOB_LIST), so
     // there is no moment it exists outside it: created suspended and assigned
@@ -294,15 +294,9 @@ static void windows_connreset_child_close( windows_connreset_child_t * child )
 }
 
 // the child process: connects, then exchanges a payload every tick until the
-// parent ends it. Without the parent's environment it returns at once.
-void windows_connreset_child_client()
+// parent ends it
+static void windows_connreset_child_client( const char * server_address )
 {
-    char server_address[256];
-    if ( !rocketnet_test_getenv( WINDOWS_CONNRESET_CHILD_ENV, server_address, sizeof( server_address ) ) || server_address[0] == '\0' )
-    {
-        return;
-    }
-
     struct rocketnet_client_transport_t * client = windows_connreset_client( server_address );
     const double start = rocketnet_platform_time();
     uint32_t sequence = 0;
@@ -317,8 +311,7 @@ void windows_connreset_child_client()
 
 // the parent in the child-dies-with-its-parent case: starts a child client,
 // prints its process id and ends itself the moment the child exists, as the
-// suite runner ends a case it stops. Without the case's environment it
-// returns at once.
+// suite runner ends a case it stops
 static void windows_connreset_parent_ends( DWORD child_id )
 {
     printf( "windows_connreset_child_id %lu\n", (unsigned long) child_id );
@@ -326,16 +319,50 @@ static void windows_connreset_parent_ends( DWORD child_id )
     TerminateProcess( GetCurrentProcess(), 0 );
 }
 
-void windows_connreset_child_parent()
+static void windows_connreset_child_parent( const char * server_address )
 {
-    char server_address[256];
-    if ( !rocketnet_test_getenv( WINDOWS_CONNRESET_PARENT_ENV, server_address, sizeof( server_address ) ) || server_address[0] == '\0' )
-    {
-        return;
-    }
-
     windows_connreset_child_t child;
     windows_connreset_child_start( &child, server_address, windows_connreset_parent_ends );
+}
+
+// The two child processes these cases start are dispatched by main before the
+// suite table (tests/functional/main.cpp), as --posix-hard-killed-child is, so
+// neither is a registered case (run by name, one passed with no check):
+//   --windows-connreset-child-client  the child client, server address in ROCKETNET_CONNRESET_CHILD_SERVER
+//   --windows-connreset-child-parent  the parent that ends itself, server address in ROCKETNET_CONNRESET_PARENT_SERVER
+// Returns the process exit code: 0 when the child ran, 1 when rocketnet did not
+// initialize, 2 when the flag is neither or its environment names no server.
+int rocketnet_windows_connreset_child_main( int argc, char ** argv )
+{
+    const bool client = argc >= 2 && strcmp( argv[1], "--windows-connreset-child-client" ) == 0;
+    const bool parent = argc >= 2 && strcmp( argv[1], "--windows-connreset-child-parent" ) == 0;
+    char server_address[256];
+    if ( ( !client && !parent ) ||
+         !rocketnet_test_getenv( client ? WINDOWS_CONNRESET_CHILD_ENV : WINDOWS_CONNRESET_PARENT_ENV, server_address, sizeof( server_address ) ) ||
+         server_address[0] == '\0' )
+    {
+        printf( "windows_connreset child: %s needs its server address in the environment\n", argc >= 2 ? argv[1] : "(no flag)" );
+        fflush( stdout );
+        return 2;
+    }
+
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
+        return 1;
+    }
+
+    if ( client )
+    {
+        windows_connreset_child_client( server_address );
+    }
+    else
+    {
+        windows_connreset_child_parent( server_address ); // ends this process once the child exists
+    }
+
+    rocketnet_term();
+    return 0;
 }
 
 // opens process id only while it is still this executable: an id is reused
@@ -368,7 +395,7 @@ void windows_connreset_child_dies_with_its_parent()
     windows_connreset_require( length > 0 && length < MAX_PATH );
 
     wchar_t command[MAX_PATH + 64];
-    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_parent", path );
+    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --windows-connreset-child-parent", path );
 
     SECURITY_ATTRIBUTES inherit;
     memset( &inherit, 0, sizeof( inherit ) );
