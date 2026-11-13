@@ -221,18 +221,19 @@ slot-only sort that must fail `TraceConsistent` at the sort record
 ## Results
 
 Pinned `tlacheck` and `tla2tools.jar`, each case its own shard (2 workers),
-linux-amd64 bench (amd-1); the records are in `RUNS.tsv`.
+linux-amd64 bench (bench-nyc-1, 2026-11-13, after the v2 trace-check
+split; every count equals the one before it); the records are in `RUNS.tsv`.
 
 | Config | Result | Distinct | Generated | Seconds |
 |---|---|---|---|---|
-| `MCRNMsgxSendRuns.cfg` | pass | 3,314,496 | 5,699,384 | 40.9 |
-| `MCRNMsgxSendRunsBatch3.cfg` | pass | 3,337,696 | 5,722,504 | 40.7 |
-| `MCRNMsgxSendRunsRestamp.cfg` | pass | 2,161,760 | 3,665,288 | 21.0 |
-| `MCRNMsgxSendRunsRestampOrder.cfg` | pass | 2,161,760 | 3,665,288 | 15.7 |
-| `MCRNMsgxSendRunsBrokenSlotOnlySort.cfg` | `ClientOrder` | 64,244 | 78,013 | 5.2 |
-| `MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg` | `ResumeExact` | 36,807 | 45,517 | 9.3 |
-| `MCRNMsgxSendRunsBrokenUnstableSort.cfg` | `ClientOrder` | 27,832 | 32,726 | 9.3 |
-| `MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg` | `NoCrossClient` | 36,750 | 45,460 | 10.2 |
-| `MCRNMsgxSendRunsBrokenDeadNoResend.cfg` | `CursorSafe` | 36,712 | 45,416 | 9.3 |
-| `MCTraceRNMsgxSendRunsSelf.cfg` | pass | 6 | 7 | 1.6 |
-| `MCTraceRNMsgxSendRunsSelfBrokenSlotOnly.cfg` | `TraceConsistent` | 2 | 2 | 1.1 |
+| `MCRNMsgxSendRuns.cfg` | pass | 3,314,496 | 5,699,384 | 27.9 |
+| `MCRNMsgxSendRunsBatch3.cfg` | pass | 3,337,696 | 5,722,504 | 28.2 |
+| `MCRNMsgxSendRunsRestamp.cfg` | pass | 2,161,760 | 3,665,288 | 15.3 |
+| `MCRNMsgxSendRunsRestampOrder.cfg` | pass | 2,161,760 | 3,665,288 | 13.0 |
+| `MCRNMsgxSendRunsBrokenSlotOnlySort.cfg` | `ClientOrder` | 64,244 | 78,013 | 3.3 |
+| `MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg` | `ResumeExact` | 36,807 | 45,517 | 5.9 |
+| `MCRNMsgxSendRunsBrokenUnstableSort.cfg` | `ClientOrder` | 27,832 | 32,726 | 5.6 |
+| `MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg` | `NoCrossClient` | 36,750 | 45,460 | 5.8 |
+| `MCRNMsgxSendRunsBrokenDeadNoResend.cfg` | `CursorSafe` | 36,712 | 45,416 | 5.8 |
+| `MCTraceRNMsgxSendRunsSelf.cfg` | pass | 6 | 7 | 0.7 |
+| `MCTraceRNMsgxSendRunsSelfBrokenSlotOnly.cfg` | `TraceConsistent` | 2 | 2 | 0.7 |
