@@ -19,7 +19,7 @@
 # Seeded 2026-11-12 from nightly run 43219892575 (head 76edea48e, slice 69/90): 168 survivors, each
 # applied and judged (final-fable/FIX-VERIFY-D.md); 19 closed by tests on that day, the rest listed.
 # The gap count only goes down: a new gap is added only with the gap-ratchet raised in the same change.
-gap-ratchet	48
+gap-ratchet	47
 
 # gap
 gap	sdk/rocketnet_client_protocol.cpp	1	if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )	if ( payload_bytes < 1 && payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )	killed by test_seal_payload_frame_refuses_sizes_outside_one_to_max on tests/v1.1.8/mutation-gaps-9 (not on main yet): remove this entry when it lands
@@ -56,7 +56,6 @@ gap	sdk/rocketnet_server_socket_linux.cpp	1	if ( socket->send_mutex.ok )	if ( !(
 gap	sdk/rocketnet_xdp_replay_sink.h	1	if ( !queued && high_water == 0 )	if ( !queued && high_water != 0 )	killed by functional test_xdp (rocketnet_server_socket_test_replay_marks); no bin/test case drives the sink with a zero mark (the sink takes its kernel calls as function pointers, so a unit case could; owed)
 gap	sdk/rocketnet_xdp_replay_sink.h	1	*zero_mark_refused = true;	{}	killed by functional test_xdp (rocketnet_server_socket_test_replay_marks), as 119
 gap	sdk/rocketnet_xdp_replay_sink.h	1	for ( uint32_t i = 0; i < marks->mark_count; i++ )	for ( uint32_t i = 0; i < marks->mark_count; i-- )	killed by functional test_xdp (rocketnet_server_socket_test_replay_marks): only mark 0 is inverted, so b's refused mark is dropped
-gap	sdk/rocketnet_server_socket_linux.cpp	1	socket->receive_read_index = i + 1;	socket->receive_read_index = i;	owed functional (XDP guest): the receive read index; a re-read duplicates the last packet
 gap	sdk/rocketnet_server_socket_linux.cpp	1	const int origin = filled_queue >= 0 ? filled_queue : server_socket->receive_start_queue;	const int origin = filled_queue <= 0 ? filled_queue : server_socket->receive_start_queue;	owed functional (XDP guest): receive start queue rotation
 gap	sdk/rocketnet_server_socket_linux.cpp	1	uint32_t num_consumed = 0;	uint32_t num_consumed = 1;	owed functional (XDP guest): worker receive pass
 gap	sdk/rocketnet_server_socket_linux.cpp	1	for ( int i = start_index; i < num_staged_packets; i++ )	for ( int i = start_index; i > num_staged_packets; i++ )	owed functional (XDP guest): worker send pass

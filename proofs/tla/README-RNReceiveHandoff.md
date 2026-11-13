@@ -3,7 +3,9 @@
 `RNReceiveHandoff.tla` models the receive handoff a server transport's
 worker and main thread share over three buffers,
 `sdk/rocketnet_receive_handoff.h`, as the GSO server uses it in
-`sdk/rocketnet_server_gso_linux.cpp`. The worker banks datagrams into its
+`sdk/rocketnet_server_gso_linux.cpp` and the XDP server in
+`sdk/rocketnet_server_socket_linux.cpp` (`rocketnet_server_socket_end_receive_pass`
+and `rocketnet_server_socket_receive_packets`). The worker banks datagrams into its
 buffer outside the mutex (`Bank`) and at the end of each pass with results
 commits its count under the mutex (`Commit`,
 `rocketnet_receive_handoff_commit`), moving to the free buffer once main has
@@ -30,7 +32,9 @@ buffer is its first datagram and its count.
   only once it had finished the buffer it held, so datagrams committed into
   a newer buffer behind it waited for a later call. With two worker passes
   a frame, as in the measured traffic, nearly every datagram waited one more
-  server update (2960 of 3000).
+  server update (2960 of 3000). The XDP worker published each pass's buffer
+  into a FIFO and main claimed one ready buffer per call, only once it had
+  finished the one it held: the same delay.
 - `FreeIffShared`, `NoSharedSlot`, `FreeIsEmpty`: the roles are distinct, a
   free buffer exists exactly while main and the worker share one, main reads
   below the committed count and the worker writes at or past it, a buffer
@@ -60,7 +64,9 @@ in `RUNS.tsv`); `Cap = 2`, `MaxRx = 5`, `Budgets = {1, 6}`.
   committed count of the buffer main starts on; the trace-check plant
   (`ROCKETNET_RECEIVE_HANDOFF_PLANT`) sets it to 0 for the worker's buffer,
   and the walk of `tests/tla_trace_receive_handoff.cpp` fails
-  `TraceConsistent` on it.
+  `TraceConsistent` on it. `rocketnet_server_socket_receive_packets` does the
+  same for XDP, with its plant `ROCKETNET_XDP_RECEIVE_HANDOFF_PLANT` and the
+  walk of `tests/tla_trace_receive_handoff_xdp.cpp`.
 
 ## Trace check
 
@@ -75,3 +81,10 @@ staged, what the calls returned and the newest commit; `late` is a ghost
 the model computes. The walk is sequential on one thread: race freedom
 rests on the mutex and the slot ownership the header describes, not on
 this check.
+
+The walk of `tests/tla_trace_receive_handoff_xdp.cpp` (layer
+`receive-handoff-xdp`, seeds 1-4) checks the XDP server's code against the
+same module with `ROCKETNET_XDP_RECV_QUEUE_SIZE`, read off the one-queue
+fixture (`rocketnet_server_socket_test_receive_state`). The XDP worker
+commits only a pass that staged past its committed count, or a full
+buffer: the walk ends a pass only then, and every such end is a `Commit`.
