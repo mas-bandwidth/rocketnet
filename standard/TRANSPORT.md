@@ -4007,10 +4007,12 @@ frames. These rows alias, one event moving each named row once:
 | `SEND_FAILED` | `GSO_SEND_DROPPED`; `URING_SEND_DROPPED`; `IOCP_SEND_FAILED`; `RIO_SEND_FAILED` |
 | `SEND_RING_FULL` | `RIO_SEND_FULL` |
 
-`IOCP_RECEIVE_DROPPED` counts every datagram the iocp transport drops before
-the protocol, whatever the reason, and each of those drops also moves the
-shared row of its reason: the size and prefilter rows, `RECEIVE_DROPPED_FULL`,
-`RECEIVE_FAILED` or `RECEIVE_DROPPED_STOPPED`. A shared row can count events
+`IOCP_RECEIVE_DROPPED` counts every datagram the iocp transport drops as its
+receive completes, whatever the reason, and each of those drops also moves
+the shared row of its reason: the size and prefilter rows,
+`RECEIVE_DROPPED_FULL`, `RECEIVE_FAILED` or `RECEIVE_DROPPED_STOPPED`. It does
+not count the datagrams a stop leaves banked and unread, which were counted as
+received when banked and which move only `RECEIVE_DROPPED_STOPPED`. A shared row can count events
 its transport rows do not: on gso, `SEND_FAILED` also counts a frame whose
 send was refused before it was staged, and on uring, `RECEIVE_FAILED` counts
 the receives the kernel refused, which no uring row counts.

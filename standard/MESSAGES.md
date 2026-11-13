@@ -193,12 +193,18 @@ memory exhausted, and only by a broken invariant of the receiver
 
 The send memory is sized from two configuration fields, declared here in the
 shape of [RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3), whose rules
-bind them: `send_queue_messages`, the limit on queued messages, and
-`send_message_buffer_bytes`, the bytes for queued messages of up to the row
+bind them: `send_queue_messages`, the base number of queued messages the send
+memory is sized for, and `send_message_buffer_bytes`, the base bytes for
+queued messages of up to the row
 `block stride` of [m2.2 Constants](#m2.2). A larger message is held in send
 memory sized from `receive_message_buffer_bytes`
 ([m5.4 Constants and configuration](#m5.4)), so `send_message_buffer_bytes`
-has no size relation to the maximum message size.
+has no size relation to the maximum message size. Neither field is a hard
+cap: a start is refused only when the send memory as sized has no room, and
+an implementation may size it above these bases, as the reference
+implementation does with the reserve for its send budget that
+[RN-1 tc.7 Create-time maximum-resend delay message reserve](TRANSPORT.md#tc.7)
+describes.
 
 | Name | Value | Type | Environment variable | Valid range |
 |---|---|---|---|---|
