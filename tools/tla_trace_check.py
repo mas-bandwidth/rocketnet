@@ -454,7 +454,9 @@ def strip_comments_layout(text):
 TOKEN = re.compile(r'"(?:\\.|[^"\\\n])*"|\\/|/\\|<<|>>|\\[A-Za-z]+|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|\S')
 OPENS = {"(": ")", "[": "]", "{": "}", "<<": ">>"}
 CLOSES = set(OPENS.values())
-BINDS_TO_END = {"\\E", "\\A", "\\EE", "\\AA", "CHOOSE", "LET", "IF", "CASE"}
+BINDS_TO_END = {"\\E", "\\A", "\\EE", "\\AA", "\\exists", "\\forall", "CHOOSE", "LET", "IF", "CASE"}
+# operators looser than /\ and \/: in "g => h /\ A" the => takes the conjunction
+LOOSER = {"=>", "<=>", "\\equiv", "~>", "-+->"}
 # the Act parameters the checker writes; no module of a layer may name them
 BIND_ACT, BIND_ARGS = "traceAct", "traceArgs"
 
@@ -532,6 +534,12 @@ def parse_next(code, toks, actions):
     if len(kinds) > 1:
         raise NextShape("\\/ and /\\ mixed in one expression")
     if len(parts) > 1:
+        # a part that is not the last must end where the split says: no binder inside it (it would take
+        # the parts after it) and no operator looser than the junction
+        for p in parts[:-1]:
+            loose = depth_zero_ops(p)
+            if loose:
+                raise NextShape(f"{loose} reaches past a junction: {tok_text(code, p)}")
         return node_of("or" if kinds == {"\\/"} else "and", [parse_next(code, p, actions) for p in parts], code, toks)
     part = parts[0]
     if part[0][0] == "\\E":
@@ -555,7 +563,11 @@ def parse_next(code, toks, actions):
             current.append(t)
         if current:
             args.append(current)
-        for a in args:
+        for i, a in enumerate(args):
+            # Claim((k)) passes k: tie it as Claim(k) is tied
+            while len(a) > 2 and a[0][0] == "(" and matching(a, 0) == len(a) - 1:
+                a = a[1:-1]
+            args[i] = a
             check_flat(code, a)
         return ("act", part[0][0], [tok_text(code, a) for a in args])
     if names & actions:
@@ -564,10 +576,36 @@ def parse_next(code, toks, actions):
     return ("guard", tok_text(code, part))
 
 
+def depth_zero_ops(toks):
+    """the first binder or operator looser than /\\ and \\/ outside brackets in toks, or None"""
+    depth = 0
+    for k, t in enumerate(toks):
+        if t[0] in OPENS:
+            depth += 1
+        elif t[0] in CLOSES:
+            depth -= 1
+        elif depth == 0:
+            if t[0] in BINDS_TO_END:
+                return t[0]
+            # the tokenizer splits symbols into characters: join the adjacent ones
+            run, end = t[0], t[1] + len(t[0])
+            for u in toks[k + 1:k + 4]:
+                if u[1] != end or not re.fullmatch(r"[=<>~+\-]", u[0]):
+                    break
+                run, end = run + u[0], end + 1
+                if run in LOOSER:
+                    return run
+            if t[0] in LOOSER:
+                return t[0]
+    return None
+
+
 def check_flat(code, toks):
-    """a guard or an argument is copied onto one line: a list of both junctions over lines would change meaning"""
-    if {"\\/", "/\\"} <= {t[0] for t in toks} and toks[0][2] != toks[-1][2]:
-        raise NextShape(f"a guard with \\/ and /\\ over several lines: {tok_text(code, toks)}")
+    """a guard or an argument is copied onto one line: a junction bullet that starts a line inside it would
+    change meaning there (its list is read by column)"""
+    for k in range(1, len(toks)):
+        if toks[k][0] in ("\\/", "/\\") and toks[k - 1][2] != toks[k][2]:
+            raise NextShape(f"a junction list inside a guard or argument: {tok_text(code, toks)}")
 
 
 def has_action(node):
@@ -582,20 +620,25 @@ def has_action(node):
 
 def node_of(kind, children, code, toks):
     if not any(has_action(n) for n in children):
-        check_flat(code, toks)
-        return ("guard", tok_text(code, toks))
+        # a list of guards: each parsed on its own, joined in brackets, so no item's text runs into the next
+        junction = " \\/ " if kind == "or" else " /\\ "
+        return ("guard", junction.join(f"({n[1]})" for n in children))
     if kind == "and" and sum(1 for n in children if has_action(n)) > 1:
         raise NextShape("a conjunction of two actions")
     return (kind, children)
 
 
 def binder_names(text):
-    """the variables an \\E binds: `w, s \\in BOOLEAN, k \\in Kinds` binds w, s and k"""
-    names, depth, fresh = [], 0, True
+    """the variables an \\E binds: `w, s \\in BOOLEAN, k \\in Kinds` binds w, s and k; `<<a, b>> \\in S` a and b"""
+    names, depth, fresh, tuple_depth = [], 0, True, None
     for m in TOKEN.finditer(text):
         t = m.group(0)
-        if fresh and depth == 0 and re.fullmatch(NAME, t):
+        if (fresh and depth == 0 or tuple_depth == depth) and re.fullmatch(NAME, t):
             names.append(t)
+        if t == "<<" and fresh and depth == 0:
+            tuple_depth = 1
+        elif t == ">>" and tuple_depth == depth:
+            tuple_depth = None
         fresh = depth == 0 and t == ","
         depth += 1 if t in OPENS else -1 if t in CLOSES else 0
     return set(names)
@@ -1263,6 +1306,52 @@ def domain_control(args, name, records, reject, bind):
     return []
 
 
+# The binding's shapes, checked as text with no TLC run, beside the domain controls:
+# Next bodies the example does not have (a guard beside the action, several and
+# nested binders, a tuple binder, an \E inside an item, a list of guards), each with
+# the arms the checker must write, and shapes it must refuse (an operator looser than
+# /\, a binder or IF inside a part that is not the last, a bullet list inside a
+# guard), each with a word of its refusal.
+TA = BIND_ARGS
+BINDING_CONTROLS = [
+    ("\\/ \\E w, s \\in BOOLEAN : /\\ g(w)\n"
+     "                         /\\ \\E k \\in K : Step(w, k, s + 1)\n"
+     "\\/ Idle\n", {"Step", "Idle"},
+     {"Step": [f"\\E w, s \\in BOOLEAN : ((g(w)) /\\ (\\E k \\in K : ({TA}[1] = w /\\ {TA}[2] = k /\\ "
+               f"Step({TA}[1], {TA}[2], {TA}[3]))))"], "Idle": ["Idle"]}),
+    ("\\E <<a, b>> \\in S : Pair((a), b)", {"Pair"},
+     {"Pair": [f"\\E <<a, b>> \\in S : ({TA}[1] = a /\\ {TA}[2] = b /\\ Pair({TA}[1], {TA}[2]))"]}),
+    ("ready /\\ \\E k \\in K : Claim(k) /\\ done", {"Claim"},
+     {"Claim": [f"(ready) /\\ (\\E k \\in K : (({TA}[1] = k /\\ Claim({TA}[1])) /\\ (done)))"]}),
+    ("/\\ /\\ p\n"
+     "   /\\ q\n"
+     "/\\ Go\n", {"Go"}, {"Go": ["((p) /\\ (q)) /\\ (Go)"]}),
+    ("\\E k \\in S : g(k) => h /\\ Claim(k)", {"Claim"}, "=>"),
+    ("\\E k \\in S : \\forall j \\in T : p(j) /\\ Claim(k)", {"Claim"}, "other than as a whole call"),
+    ("\\E k \\in S : y = IF a THEN 1 ELSE 2 /\\ Claim(k)", {"Claim"}, "IF reaches past"),
+    ("/\\ CASE a -> /\\ x\n"
+     "             /\\ y\n"
+     "     [] OTHER -> z\n"
+     "/\\ Go\n", {"Go"}, "junction list inside a guard"),
+]
+
+
+def binding_controls():
+    """[failures] of BINDING_CONTROLS"""
+    failures = []
+    for code, actions, want in BINDING_CONTROLS:
+        said = " ".join(code.split())
+        try:
+            got = occurrences(parse_next(code, tokens_of(code, 0, len(code)), actions), lambda inner: inner, {})
+        except NextShape as error:
+            if isinstance(want, dict) or want not in str(error):
+                failures.append(f"binding control `{said}`: refused ({error}), expected {want!r}")
+            continue
+        if got != want:
+            failures.append(f"binding control `{said}`: wrote {got}, expected {want!r}")
+    return failures
+
+
 def domain_controls(args):
     """[failures] of every control in both bindings (the positive one bound only)"""
     runs = [(n, records, reject, bind) for n, records, reject in DOMAIN_CONTROLS for bind in (True, False)
@@ -1524,10 +1613,11 @@ def main():
             failed.append(f"layer {n}: reach predicate {predicate} never reached in a clean trace of {span}")
     # the argument binding's own controls, where the example's coverage runs
     if "example" in homes:
-        controls = domain_controls(args)
+        controls = binding_controls() + domain_controls(args)
         failed += [f"layer example: {f}" for f in controls]
         if not controls:
-            print(f"DOMAIN-CONTROLS OK {len(DOMAIN_CONTROLS)} traces, {len(DOMAIN_CONTROLS) - 1} rejected bound and accepted with bare arms")
+            print(f"DOMAIN-CONTROLS OK {len(BINDING_CONTROLS)} Next shapes, {len(DOMAIN_CONTROLS)} traces, "
+                  f"{len(DOMAIN_CONTROLS) - 1} rejected bound and accepted with bare arms")
 
     for line in failed:
         print(f"TRACE-CHECK FAIL {line}")

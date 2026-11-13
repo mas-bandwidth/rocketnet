@@ -193,13 +193,19 @@ predicates for the edges (below), so a walk that never gets there is red.
    - `Next` must be read the way TLC reads it: junction lists by their bullets'
      columns, `\E` binding to the end of its item, guards and action calls. The
      checker refuses a `Next` it cannot read that way: an action under `IF`, `LET`,
-     `CASE`, `\A` or `CHOOSE`, two actions in one conjunction, or an action named other
-     than as a whole call. No module of a layer may name `traceAct` or `traceArgs`.
+     `CASE`, `\A` or `CHOOSE`, two actions in one conjunction, an action named other
+     than as a whole call, an operator looser than `/\` (`=>`, `<=>`, `\equiv`, `~>`)
+     or a binder or `IF` inside a part that has more parts after it, and a bullet list
+     inside a guard or an argument. No module of a layer may name `traceAct` or
+     `traceArgs`.
    - Hand-written traces of the example, the domain controls, run in the example's
      home shard: `Claim(0)` at count 0 (another action's change) and `Refuse(3)` at
      count = `Limit` (another argument's change) must be rejected at that record with
      the arms bound, and accepted with the bare arms; a trace of in-range steps must
-     pass bound.
+     pass bound. Beside them, as text with no TLC run, `BINDING_CONTROLS` gives `Next`
+     bodies the example lacks (a guard beside the action, several and nested binders,
+     a tuple binder, an `\E` inside an item, a list of guards) with the arms the
+     checker must write, and shapes it must refuse.
 
    Everything else is the template's text, and the checker compares it:
    `Trace == TraceLog`, the `ASSUME`, `VARIABLES ti, rejected`, `TraceInit`,
@@ -266,7 +272,8 @@ predicates for the edges (below), so a walk that never gets there is red.
   shard; see "Shards" below).
 - **The domain controls**, where the example's coverage runs: a negative control that
   TLC does not reject at its record with the arms bound, or does not accept with the
-  bare arms, or a positive control that does not pass.
+  bare arms, or a positive control that does not pass; a binding control whose arms
+  differ from the ones written for it, or whose shape is not refused.
 
 `tools/planted_violations.tsv` plants these on the example layer, each red with its
 reason. The sdk-include rules are planted on the example with its `self_contained`
