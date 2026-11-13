@@ -3222,6 +3222,62 @@ uint64_t rocketnet_server_rio_test_transports_made()
 }
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+// development library only: reads a test layout "R0,R1,../W0,W1,..", processor
+// numbers in group 0, into rss and workers (each up to max). False when a
+// character is not a digit, comma or the one slash, or a number is past the
+// group's processors.
+static bool rocketnet_windows_test_layout_read( const char * text, int * rss, int * num_rss, int * workers, int * num_workers, int max )
+{
+    const int group_processors = (int) GetActiveProcessorCount( 0 );
+    *num_rss = 0;
+    *num_workers = 0;
+    bool after_slash = false;
+    const char * p = text;
+    while ( *p )
+    {
+        if ( *p == '/' && !after_slash )
+        {
+            after_slash = true;
+            ++p;
+            continue;
+        }
+        if ( *p == ',' )
+        {
+            ++p;
+            continue;
+        }
+        if ( *p < '0' || *p > '9' )
+        {
+            return false;
+        }
+        int value = 0;
+        while ( *p >= '0' && *p <= '9' )
+        {
+            if ( value > 1000 )
+            {
+                return false;
+            }
+            value = value * 10 + ( *p - '0' );
+            ++p;
+        }
+        if ( value >= group_processors || value >= (int) ( sizeof( KAFFINITY ) * 8 ) )
+        {
+            return false;
+        }
+        if ( !after_slash && *num_rss < max )
+        {
+            rss[( *num_rss )++] = value;
+        }
+        else if ( after_slash && *num_workers < max )
+        {
+            workers[( *num_workers )++] = value;
+        }
+    }
+    return true;
+}
+#endif // #if ROCKETNET_DEV
+
 static void rocketnet_rio_free( rocketnet_server_rio_t * rio )
 {
     void * context = rio->context;
@@ -3334,6 +3390,44 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         rocketnet_rio_free( rio );
         return NULL;
     }
+#if ROCKETNET_DEV
+    // development library only: ROCKETNET_TEST_RIO_LAYOUT="R0,R1,../W0,W1,.."
+    // places lane i's socket on processor Ri (SIO_CPU_AFFINITY: the processor
+    // RSS hands its flows) and its worker on processor Wi alone, processor
+    // group 0, for a measurement in the layout a game runs: the NIC's receive
+    // processing on cores the operator chose (Set-NetAdapterRss), the network
+    // threads on cores of their own. A list shorter than the lanes, or a
+    // processor past group 0's, leaves the default placement and says so.
+    {
+        char layout[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+        if ( lanes > 1 && rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_LAYOUT", layout, sizeof( layout ) ) > 0 )
+        {
+            int rss[ROCKETNET_RIO_MAX_LANES];
+            int workers[ROCKETNET_RIO_MAX_LANES];
+            int num_rss = 0;
+            int num_workers = 0;
+            if ( !rocketnet_windows_test_layout_read( layout, rss, &num_rss, workers, &num_workers, ROCKETNET_RIO_MAX_LANES ) || num_rss < lanes ||
+                 num_workers < lanes )
+            {
+                rocketnet_warn( "rio transport: ROCKETNET_TEST_RIO_LAYOUT \"%s\" does not place %d lanes in group 0; default placement", layout, lanes );
+            }
+            else
+            {
+                for ( int i = 0; i < lanes; ++i )
+                {
+                    processors[i].index = rss[i];
+                    memset( &processors[i].affinity, 0, sizeof( processors[i].affinity ) );
+                    processors[i].affinity.Group = 0;
+                    processors[i].affinity.Mask = (KAFFINITY) 1 << rss[i];
+                    // the lane's pin is core less affinity: the worker's processor alone
+                    memset( &processors[i].core, 0, sizeof( processors[i].core ) );
+                    processors[i].core.Group = 0;
+                    processors[i].core.Mask = processors[i].affinity.Mask | ( (KAFFINITY) 1 << workers[i] );
+                }
+            }
+        }
+    }
+#endif // #if ROCKETNET_DEV
 
     for ( int i = 0; i < lanes; ++i )
     {
