@@ -2444,30 +2444,30 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         // network threads on cores of their own. A list shorter than the
         // workers, or a processor past group 0's, leaves the placement above
         // and says so.
-        char layout[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_LAYOUT", layout, sizeof( layout ) ) > 0 )
+        char test_layout[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_LAYOUT", test_layout, sizeof( test_layout ) ) > 0 )
         {
-            int rss[ROCKETNET_IOCP_MAX_WORKERS];
-            int workers[ROCKETNET_IOCP_MAX_WORKERS];
-            int num_rss = 0;
-            int num_workers = 0;
-            if ( !rocketnet_iocp_test_layout_read( layout, rss, &num_rss, workers, &num_workers, ROCKETNET_IOCP_MAX_WORKERS ) ||
-                 num_rss < iocp->num_endpoints || num_workers < iocp->num_endpoints )
+            int rss_cpus[ROCKETNET_IOCP_MAX_WORKERS];
+            int worker_cpus[ROCKETNET_IOCP_MAX_WORKERS];
+            int num_rss_cpus = 0;
+            int num_worker_cpus = 0;
+            if ( !rocketnet_iocp_test_layout_read( test_layout, rss_cpus, &num_rss_cpus, worker_cpus, &num_worker_cpus, ROCKETNET_IOCP_MAX_WORKERS ) ||
+                 num_rss_cpus < iocp->num_endpoints || num_worker_cpus < iocp->num_endpoints )
             {
-                rocketnet_warn( "iocp transport: ROCKETNET_TEST_IOCP_LAYOUT \"%s\" does not place %d workers in group 0; placement unchanged", layout,
+                rocketnet_warn( "iocp transport: ROCKETNET_TEST_IOCP_LAYOUT \"%s\" does not place %d workers in group 0; placement unchanged", test_layout,
                                 iocp->num_endpoints );
             }
             else
             {
                 for ( int e = 0; e < iocp->num_endpoints; ++e )
                 {
-                    iocp->processors[e] = rss[e];
+                    iocp->processors[e] = rss_cpus[e];
                     memset( &iocp->pins[e], 0, sizeof( iocp->pins[e] ) );
                     iocp->pins[e].Group = 0;
-                    iocp->pins[e].Mask = (KAFFINITY) 1 << workers[e];
+                    iocp->pins[e].Mask = (KAFFINITY) 1 << worker_cpus[e];
                     memset( &iocp->cores[e], 0, sizeof( iocp->cores[e] ) );
                     iocp->cores[e].Group = 0;
-                    iocp->cores[e].Mask = ( (KAFFINITY) 1 << rss[e] ) | ( (KAFFINITY) 1 << workers[e] );
+                    iocp->cores[e].Mask = ( (KAFFINITY) 1 << rss_cpus[e] ) | ( (KAFFINITY) 1 << worker_cpus[e] );
                 }
             }
         }
