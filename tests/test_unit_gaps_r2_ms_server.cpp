@@ -914,6 +914,47 @@ static void test_gaps_r2ms_in_place_start_gives_back_frames_it_cannot_use()
 REGISTER_UNIT_TEST( test_gaps_r2ms_in_place_start_gives_back_frames_it_cannot_use );
 
 // =====================================================================================
+// a link with no start_packet takes no in-place path: an unreliable start goes
+// to the region, counted as no fallback, and finishes
+// mutation gap: hunt 1/1402 (the whole-frame start's unreliable && start_packet, && to ||)
+
+static void test_gaps_r2ms_link_without_start_packet_starts_in_the_region()
+{
+    rocketnet_quiet( 1 );
+    rocketnet_message_config_t config;
+    r2ms_config( &config );
+    r2ms_transport_t * t = new r2ms_transport_t();
+    t->next_id = 1;
+    t->state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+    t->max_payload = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    t->connection_id[0] = 1;
+
+    rn_message_link_t link;
+    r2ms_link( &link, t, 0, false, true );
+    link.start_packet = NULL;                   // a bare link: the object only starts and finishes
+    rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0, 0, R2MS_T0 );
+    check( object != NULL );
+
+    const int types[3] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT };
+    for ( int k = 0; k < 3; k++ )
+    {
+        const uint64_t fallback = object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK];
+        uint8_t * p = rn_message_object_start( object, 0, 0, types[k], 100 );
+        r2ms_expect( p != NULL && object->in_place == 0, "mutation gap hunt 1/1402: an unreliable start (type %d) on a link with no start_packet gave %p, in_place %d",
+                     types[k], (void *) p, object->in_place );
+        const uint64_t counted = object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK] - fallback;
+        r2ms_expect( counted == 0, "mutation gap hunt 1/1402: an unreliable start on a link with no start_packet counted %llu in-place fallbacks: it took the in-place path",
+                     (unsigned long long) counted );
+        memset( p, 0x31, 100 );
+        check( rn_message_object_finish( object, 0, 100 ) != 0 );
+    }
+    rn_message_object_destroy( object );
+    delete t;
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2ms_link_without_start_packet_starts_in_the_region );
+
+// =====================================================================================
 // the write pass gives back a frame smaller than its plan, and the message
 // goes in a later flush
 // mutation gap: hunt 1/1627 (rn_message_connection_write, the short frame not aborted)
