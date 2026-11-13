@@ -113,6 +113,14 @@ def selftest():
 
     import fuzz_finding_to_pcapng as converter
 
+    # the converter's refusals (unknown harness, selector 1, bad name, an
+    # existing target) are run here, the one selftest CI runs
+    try:
+        converted = converter.selftest()
+    except (AssertionError, converter.Refusal, OSError) as failure:
+        raise SelfTestFailed("the converter's own selftest failed: %s" % failure)
+    require(converted == 0, "the converter's own selftest returned %r" % converted)
+
     with tempfile.TemporaryDirectory() as directory:
         root = directory
         for part in ("tests/fuzz/corpus", "tests/fuzz/corpus_message", "tests/pcapng/regress"):
