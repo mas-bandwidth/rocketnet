@@ -586,9 +586,11 @@ refusal, no lock). A queue turns segmentation off for its destinations, with
 one warning (`GSO_FALLBACKS`), only when
 `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` of its destinations refused
 and no segmented send was ever accepted on any queue: a kernel that cannot
-segment at all.
+segment at all. The flag is read when the refusal is reaped, so an acceptance
+another queue has not yet reaped does not count: a queue can still turn off
+in that window, and stays off.
 `rocketnet_server_uring_features` reports `ROCKETNET_SERVER_URING_FEATURE_SEGMENT`
-while it is in use.
+until any queue has turned segmentation off.
 
 Receive coalescing is the GSO transport's tier too, probed at create: every
 socket of the group must accept `UDP_GRO` (set to 1), all or nothing, the
@@ -640,7 +642,7 @@ re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
 (`SEND_DEFERRED`), receive completions that named no provided buffer
 (`RECEIVE_DROPPED_NO_BUFFER`), segmented sends (`GSO_SENDS`) and live
-segmentation turned off for the transport (`GSO_FALLBACKS`), datagrams the kernel dropped at a queue socket (`RECEIVE_DROPPED_SOCKET`, read through `SO_RXQ_OVFL`) and receive completions the kernel refused (the server's `RECEIVE_FAILED`). Stop requests cancellation, and stopped remains
+segmentation turned off for a queue (`GSO_FALLBACKS`), datagrams the kernel dropped at a queue socket (`RECEIVE_DROPPED_SOCKET`, read through `SO_RXQ_OVFL`) and receive completions the kernel refused, named no provided buffer or carried a source it cannot read (the server's `RECEIVE_FAILED`). Stop requests cancellation, and stopped remains
 false until outstanding completions have relinquished their storage. Destroy
 requires stopped and no longer uses a timed wait followed by leaked storage as
 normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;
