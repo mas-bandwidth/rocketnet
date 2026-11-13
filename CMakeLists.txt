@@ -1384,7 +1384,7 @@ if(ROCKETNET_BUILD_TOOLS)
     # The server's update with the bar's ack shape (benchmarks/server_update_ack_cost.cpp):
     # public API, loopback, simulated time; counts update's instructions and cycles.
     add_executable(server_update_ack_cost benchmarks/server_update_ack_cost.cpp)
-    target_link_libraries(server_update_ack_cost PRIVATE rocketnet_dev)
+    target_link_libraries(server_update_ack_cost PRIVATE rocketnet)
     target_compile_features(server_update_ack_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_update_ack_cost)
     target_link_libraries(keygen PRIVATE rocketnet)

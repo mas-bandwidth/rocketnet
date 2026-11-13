@@ -15,7 +15,7 @@
 // server_update_ack_cost [clients] [server_packets] [client_packets] [frames] [warmup] [server_bytes] [client_bytes]
 // defaults: 1000 17 1 300 60 1200 64
 
-#include "rocketnet_internal.h"
+#include "rocketnet.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_base64.h"
 
