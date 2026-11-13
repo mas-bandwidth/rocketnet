@@ -8,6 +8,8 @@ endpoints interoperate with every v1.x endpoint.
   queue instead of the default four, so a cycle maps a quarter of the buffers
   and still starts and stops a worker and the send thread. Tests only;
   behaviour is unchanged.
+- CI: the per-commit TLA+ trace check runs in six shards instead of four, so
+  each shard stays under the two-minute cap on a loaded runner.
 
 - Tag: `v1.1.43`, on the merged `main` commit.
 - Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.1.43).
