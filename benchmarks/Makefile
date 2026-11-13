@@ -21,8 +21,10 @@
 #
 # bench_portable builds on both and is the shared negative control.
 
+# warnings are errors here as in every CMake target: CI builds the harnesses
+# with these defaults, so a harness warning goes red there
 CC      ?= cc
-CFLAGS  ?= -O2 -Wall -Wextra -ffp-contract=off
+CFLAGS  ?= -O2 -Wall -Wextra -Werror -ffp-contract=off
 
 LIBURING ?=
 
