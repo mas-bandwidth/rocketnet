@@ -164,15 +164,15 @@ static std::string fp_pc_text( fp_pc_t pc )
 {
     switch ( pc )
     {
-        case FP_BEGUN: return "\"begun\"";
-        case FP_LOCKED: return "\"locked\"";
-        case FP_DECIDED: return "\"decided\"";
-        case FP_COUNTED: return "\"counted\"";
-        case FP_IN: return "\"in\"";
+        case FP_BEGUN:     return "\"begun\"";
+        case FP_LOCKED:    return "\"locked\"";
+        case FP_DECIDED:   return "\"decided\"";
+        case FP_COUNTED:   return "\"counted\"";
+        case FP_IN:        return "\"in\"";
         case FP_UNCLAIMED: return "\"unclaimed\"";
         case FP_ANNOUNCED: return "\"announced\"";
-        case FP_EPOCHED: return "\"epoched\"";
-        case FP_IDLE: break;
+        case FP_EPOCHED:   return "\"epoched\"";
+        case FP_IDLE:      break;
     }
     return "\"idle\"";
 }
@@ -454,7 +454,8 @@ static void fp_hook( void * context, const char * action, int client_index, uint
     walk->state[me] = FP_STEP;
     walk->running = -1;
     walk->changed.notify_all();
-    walk->changed.wait( lock, [&] { return walk->running == me; } );
+    walk->changed.wait( lock, [&]
+                        { return walk->running == me; } );
     walk->state[me] = FP_RUNNING;
 }
 
@@ -464,7 +465,8 @@ static void fp_park_ready( fp_walk_t * walk, int me )
     walk->state[me] = FP_READY;
     walk->running = -1;
     walk->changed.notify_all();
-    walk->changed.wait( lock, [&] { return walk->running == me; } );
+    walk->changed.wait( lock, [&]
+                        { return walk->running == me; } );
     walk->state[me] = FP_RUNNING;
 }
 
@@ -616,7 +618,8 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 
     {
         std::unique_lock<std::mutex> lock( walk->mutex );
-        walk->changed.wait( lock, [&] {
+        walk->changed.wait( lock, [&]
+                            {
             for ( int a = 0; a < FP_ACTORS; a++ )
             {
                 if ( walk->state[a] != FP_READY )
@@ -624,8 +627,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                     return false;
                 }
             }
-            return true;
-        } );
+            return true; } );
         records.push_back( tla_step( "init", "init", "<<>>", fp_state( walk ) ) );
 
         while ( (int) records.size() < steps + 1 )
@@ -668,7 +670,8 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 
             walk->running = a;
             walk->changed.notify_all();
-            walk->changed.wait( lock, [&] { return walk->running == -1; } );
+            walk->changed.wait( lock, [&]
+                                { return walk->running == -1; } );
 
             if ( walk->state[a] != FP_STEP )
             {
@@ -747,7 +750,8 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
             {
                 walk->running = a;
                 walk->changed.notify_all();
-                walk->changed.wait( lock, [&] { return walk->running == -1; } );
+                walk->changed.wait( lock, [&]
+                                    { return walk->running == -1; } );
             }
         }
     }

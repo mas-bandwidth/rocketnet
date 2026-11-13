@@ -1311,7 +1311,7 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
 
     rocketnet_spam( "server start packet refused. send room is down to the protocol reserve" );
     const int counter = rocketnet_server_transport_tails_held( server_transport, queue ) > 0 ? ROCKETNET_COUNTER_SEND_RESERVE_REFUSED_TAILS_HELD
-                                                                                            : ROCKETNET_COUNTER_SEND_RESERVE_REFUSED;
+                                                                                             : ROCKETNET_COUNTER_SEND_RESERVE_REFUSED;
     rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[counter], 1 );
     return -1;
 }

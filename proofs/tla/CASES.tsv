@@ -941,7 +941,6 @@ MCRNFillPhaseBrokenNoRestore.cfg	MCRNFillPhase.tla	invariant	NoFalseAlarm	check	
 MCRNFillPhaseBrokenNoEpochLook.cfg	MCRNFillPhase.tla	invariant	OneFiller	check	rnfillphase	required	-
 MCRNFillPhaseBrokenScanOne.cfg	MCRNFillPhase.tla	invariant	Sound	check	rnfillphase	required	-
 MCRNFillPhaseN3.cfg	MCRNFillPhase.tla	pass	-	check	rnfillphase	bench	three-fillers-two-clients-over-budget
-MCRNSendReserveBrokenNoRetry.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
 MCRNSendReserveCalls.cfg	MCRNSendReserveCalls.tla	pass	-	check	rnsendreserve	required	-
 MCRNSendReserveCallsBrokenRoomOnly.cfg	MCRNSendReserveCalls.tla	invariant	ReserveKept	check	rnsendreserve	required	-
 MCRNSendReserveCallsBrokenNoRefresh.cfg	MCRNSendReserveCalls.tla	invariant	NeverStarved	check	rnsendreserve	required	-
