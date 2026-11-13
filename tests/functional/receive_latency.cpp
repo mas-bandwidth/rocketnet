@@ -10,7 +10,9 @@
     back returns it one update late (sdk/rocketnet_receive_delivery_check.h is
     the same rule as a unit test, with no time).
 
-    Each row is one server transport, and is one case. The server updates at
+    Each row is one transport, and is one case. A server row measures the
+    server's receive; a client row (client_receives) swaps the two threads'
+    roles: the server sends and the clients' update is measured. The server updates at
     RECEIVE_LATENCY_RATE on the case's thread and the two clients run on a
     second thread. Each frame, every client sends the server a message at 15%
     and again at 55% of the frame, timed from the server's update, so the
@@ -62,12 +64,19 @@ struct receive_latency_row_t
     const char * name;
     const char * server_transport;
     const char * client_transport;
+    // false: the clients send and the server's receive is measured; true:
+    // the server sends and the clients' receive is measured, the roles of
+    // the two threads swapped
+    bool client_receives;
 };
 
 // the rows: one case each (rocketnet_functional_tests.cpp registers them)
 static const struct receive_latency_row_t receive_latency_rows[] = {
-    { "server_gso", "gso", "portable" },
-    { "server_io_uring", "io_uring", "portable" },
+    { "server_gso", "gso", "portable", false },
+    { "server_io_uring", "io_uring", "portable", false },
+    { "server_rio", "rio", "portable", false },
+    { "server_iocp", "iocp", "portable", false },
+    { "client_iocp", "iocp", "iocp", true },
 };
 
 // the phase of each send in the frame
@@ -155,6 +164,50 @@ static bool receive_latency_send( struct rocketnet_client_t * client, uint32_t s
     return true;
 }
 
+static bool receive_latency_server_send( struct rocketnet_server_t * server, int client_index, uint32_t sequence )
+{
+    struct receive_latency_payload_t payload;
+    memset( &payload, 0, sizeof( payload ) );
+    payload.sequence = sequence;
+    uint8_t * data = rocketnet_server_start_message( server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, (int) sizeof( payload ) );
+    if ( !data )
+    {
+        return false;
+    }
+    payload.send_time = rocketnet_time();
+    memcpy( data, &payload, sizeof( payload ) );
+    return rocketnet_server_finish_message( server, (int) sizeof( payload ) ) != 0;
+}
+
+// a received message batch: each payload's first receiving update k
+static void receive_latency_record( const struct rocketnet_message_batch_t * batch, int k, int total, std::vector<int> & received_at,
+                                    std::vector<double> & send_time )
+{
+    for ( int i = 0; i < batch->num_messages; i++ )
+    {
+        struct receive_latency_payload_t payload;
+        if ( batch->bytes[i] != (int) sizeof( payload ) )
+        {
+            continue;
+        }
+        memcpy( &payload, batch->data[i], sizeof( payload ) );
+        if ( payload.sequence < (uint32_t) total && received_at[payload.sequence] < 0 )
+        {
+            received_at[payload.sequence] = k;
+            send_time[payload.sequence] = payload.send_time;
+        }
+    }
+}
+
+static void receive_latency_server_pump( struct rocketnet_server_t * server )
+{
+    rocketnet_server_update( server, rocketnet_time() );
+    while ( rocketnet_server_receive_messages( server ) != NULL )
+    {
+    }
+    rocketnet_server_send_packets( server );
+}
+
 static void receive_latency_pump( struct rocketnet_client_t * client )
 {
     rocketnet_client_update( client, rocketnet_time() );
@@ -230,6 +283,19 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
         receive_latency_check( rocketnet_client_connect( clients[c], token ) == ROCKETNET_STATUS_OK, name, "client connect" );
     }
 
+    if ( row->client_receives && strcmp( rocketnet_client_transport_name( clients[0] ), row->client_transport ) != 0 )
+    {
+        printf( "receive latency %s: client granted %s, not %s: nothing to measure\n", name, rocketnet_client_transport_name( clients[0] ),
+                row->client_transport );
+        fflush( stdout );
+        for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+        {
+            rn_cli_client_stop_and_destroy( clients[c], rocketnet_time() );
+        }
+        rn_cli_server_stop_and_destroy( server );
+        return;
+    }
+
     // connect, both sides on this thread
 
     const double connect_deadline = rocketnet_time() + 10.0;
@@ -257,22 +323,86 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     const int total = frames * RECEIVE_LATENCY_PHASES * RECEIVE_LATENCY_CLIENTS;
     std::vector<double> send_time( (size_t) total, 0.0 );
     std::vector<int> received_at( (size_t) total, -1 );
-    // the server updates frames + 2 times, the last two after the last send
+    // the measured side updates frames + 2 times, the last two after the last send
     std::vector<double> server_update( (size_t) frames + 2, 0.0 );
 
-    // the server's update starts, published to the client thread
+    // the measured side's update starts, published to the sending thread
     std::atomic<int> server_updates( 0 );
     std::atomic<double> last_update( 0.0 );
     std::atomic<bool> stop( false );
 
     const double start = rocketnet_time() + 0.1;
 
-    // each frame: every client sends at each phase, timed from the server's
-    // update. A frame the thread missed (the host stalled it past an update)
-    // is sent at once, so every message is still sent; its lateness is
-    // measured from its own send time
-    std::thread client_thread( [&]()
-                               {
+    if ( row->client_receives )
+    {
+        int slot[RECEIVE_LATENCY_CLIENTS];
+        for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+        {
+            slot[c] = rocketnet_client_index( clients[c] );
+            receive_latency_check( slot[c] >= 0, name, "client slot" );
+        }
+
+        // the server sends each client a message at each phase, timed from
+        // the clients' update, on its own thread, which owns the server
+        std::thread server_thread( [&]()
+                                   {
+            int sent_frame = -1;
+            while ( !stop.load() )
+            {
+                receive_latency_server_pump( server );
+                const int k = server_updates.load() - 1;
+                const int last = k < frames ? k : frames - 1;
+                for ( int f = sent_frame + 1; f <= last; f++ )
+                {
+                    const double begun = last_update.load();
+                    for ( int phase = 0; phase < RECEIVE_LATENCY_PHASES; phase++ )
+                    {
+                        if ( f == k )
+                        {
+                            receive_latency_wait_until( begun + receive_latency_phase[phase] / rate );
+                        }
+                        for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+                        {
+                            receive_latency_check( receive_latency_server_send( server, slot[c], receive_latency_sequence( f, phase, c ) ), name,
+                                                   "server send refused" );
+                        }
+                        rocketnet_server_send_packets( server );
+                    }
+                    sent_frame = f;
+                }
+                rocketnet_sleep( 0.0005 );
+            } } );
+
+        // the clients, on an absolute schedule
+        for ( int k = 0; k < frames + 2; k++ )
+        {
+            const double now = receive_latency_wait_until( start + (double) k / rate );
+            server_update[(size_t) k] = now;
+            for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+            {
+                rocketnet_client_update( clients[c], now );
+                const struct rocketnet_message_batch_t * batch;
+                while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL )
+                {
+                    receive_latency_record( batch, k, total, received_at, send_time );
+                }
+                rocketnet_client_send_packets( clients[c] );
+            }
+            last_update.store( now );
+            server_updates.store( k + 1 );
+        }
+
+        stop.store( true );
+        server_thread.join();
+    }
+    else
+    {
+        // each frame: every client sends at each phase, timed from the server's
+        // update. A frame the thread missed (the host stalled it past an update)
+        // is sent at once, so every message is still sent; its lateness is
+        // measured from its own send time
+        std::thread client_thread( [&]()
+                                   {
         int sent_frame = -1;
         while ( !stop.load() )
         {
@@ -301,38 +431,26 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
             rocketnet_sleep( 0.0005 );
         } } );
 
-    // the server, on an absolute schedule
+        // the server, on an absolute schedule
 
-    for ( int k = 0; k < frames + 2; k++ )
-    {
-        const double now = receive_latency_wait_until( start + (double) k / rate );
-        server_update[(size_t) k] = now;
-        rocketnet_server_update( server, now );
-        const struct rocketnet_message_batch_t * batch;
-        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        for ( int k = 0; k < frames + 2; k++ )
         {
-            for ( int i = 0; i < batch->num_messages; i++ )
+            const double now = receive_latency_wait_until( start + (double) k / rate );
+            server_update[(size_t) k] = now;
+            rocketnet_server_update( server, now );
+            const struct rocketnet_message_batch_t * batch;
+            while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             {
-                struct receive_latency_payload_t payload;
-                if ( batch->bytes[i] != (int) sizeof( payload ) )
-                {
-                    continue;
-                }
-                memcpy( &payload, batch->data[i], sizeof( payload ) );
-                if ( payload.sequence < (uint32_t) total && received_at[payload.sequence] < 0 )
-                {
-                    received_at[payload.sequence] = k;
-                    send_time[payload.sequence] = payload.send_time;
-                }
+                receive_latency_record( batch, k, total, received_at, send_time );
             }
+            rocketnet_server_send_packets( server );
+            last_update.store( now );
+            server_updates.store( k + 1 );
         }
-        rocketnet_server_send_packets( server );
-        last_update.store( now );
-        server_updates.store( k + 1 );
-    }
 
-    stop.store( true );
-    client_thread.join();
+        stop.store( true );
+        client_thread.join();
+    }
 
     // count: a message is late when the update that returned it is not the
     // first to begin after its send
@@ -356,8 +474,10 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
         worst = wait > worst ? wait : worst;
     }
 
-    printf( "receive latency %s: %d messages, %d late, %d lost, wait in updates mean %.3f max %.3f\n", name, total, late, lost,
-            total > lost ? sum / ( total - lost ) : 0.0, worst );
+    // wait is in updates; reported in milliseconds at the rate run, updates after
+    const double mean = total > lost ? sum / ( total - lost ) : 0.0;
+    printf( "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n", name,
+            total, late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
     fflush( stdout );
 
     for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
@@ -367,7 +487,9 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     rn_cli_server_stop_and_destroy( server );
 
     receive_latency_check( lost == 0, name, "a message never arrived" );
-    receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, "more messages than the bound waited an extra update" );
+    char too_late[128];
+    snprintf( too_late, sizeof( too_late ), "more messages than the bound waited an extra %.1f ms at %.0f Hz (one update)", 1000.0 / rate, rate );
+    receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, too_late );
 }
 
 static void receive_latency_run_named( const char * row_name )
@@ -394,4 +516,23 @@ void rocketnet_test_receive_latency_server_gso()
 void rocketnet_test_receive_latency_server_io_uring()
 {
     receive_latency_run_named( "server_io_uring" );
+}
+
+void rocketnet_test_receive_latency_server_rio();
+void rocketnet_test_receive_latency_server_iocp();
+void rocketnet_test_receive_latency_client_iocp();
+
+void rocketnet_test_receive_latency_server_rio()
+{
+    receive_latency_run_named( "server_rio" );
+}
+
+void rocketnet_test_receive_latency_server_iocp()
+{
+    receive_latency_run_named( "server_iocp" );
+}
+
+void rocketnet_test_receive_latency_client_iocp()
+{
+    receive_latency_run_named( "client_iocp" );
 }
