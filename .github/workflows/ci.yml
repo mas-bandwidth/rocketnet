@@ -987,9 +987,9 @@ jobs:
         run: python3 tools/check_transport_matrix.py
 
       # tools/check_platform_policy.py exits 1 when a docs/PLATFORMS.md row
-      # does not match its named workflow (check_row, :139) or when tests/functional/
-      # holds a wildcard address literal outside WILDCARD_ALLOWED (:30,
-      # check_wildcard_binds :185). It reads files only, so one leg per Linux
+      # does not match its named workflow (check_row) or when tests/functional/
+      # holds a wildcard address literal outside WILDCARD_ALLOWED
+      # (check_wildcard_binds). It reads files only, so one leg per Linux
       # row runs it.
       - name: Check the platform policy and tests/functional/ wildcard binds
         if: runner.os == 'Linux' && matrix.leg == 'checks'
@@ -1085,13 +1085,20 @@ jobs:
         run: python3 tools/check_examples.py
 
       - name: Check larger history budget and reject undersized history
-        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
+        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
           cmake --build build-history --target test_lifecycle --parallel 8
           ./build-history/bin/test_lifecycle
-          if cmake -S . -B build-history-invalid -DROCKETNET_HISTORY_PACKETS=256; then
+          # the refusal is CMakeLists.txt's own message, not any configure failure
+          if cmake -S . -B build-history-invalid -DROCKETNET_HISTORY_PACKETS=256 > history-invalid.log 2>&1; then
+            cat history-invalid.log
             echo "undersized history was accepted"
+            exit 1
+          fi
+          cat history-invalid.log
+          if ! grep -q "ROCKETNET_HISTORY_PACKETS must be a multiple of 64 between 4096 and 32768" history-invalid.log; then
+            echo "undersized history failed configure without the history refusal"
             exit 1
           fi
 
@@ -1101,7 +1108,7 @@ jobs:
       # libxdp link, and a transport list naming xdp refuses it with
       # TRANSPORT_NOT_BUILT; the default build keeps all of it.
       - name: Build without XDP; XDP is compiled out, a pin of it refuses, and functional links
-        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
+        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           python3 tools/test_check_xdp_compiled_out.py
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
@@ -1584,7 +1591,9 @@ jobs:
       # is still waiting on the box after 10 s (a runner with a desktop, where
       # #201 took two hours) or, on this service runner with no desktop, it
       # exits nonzero with no report on stderr. Either way the report the fix keeps
-      # would have been lost.
+      # would have been lost. A name the binary does not register exits 1 with
+      # "check failed: no case" on stdout; that is red for every case and the
+      # control, so a renamed case cannot pass on its nonzero exit.
       - name: Windows failures exit without dialogs, with an explicit dialog control
         if: matrix.leg == 'c'
         shell: bash
@@ -1614,7 +1623,10 @@ jobs:
             for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation test_no_dialogs_heap_overrun; do
               read -r state code seconds <<< "$(run_case "$config" "$case" 30)"
               stderr=$(head -n 3 "$RUNNER_TEMP/no-dialogs-$config-$case.err" 2>/dev/null | tr -d '\r' | tr '\n' '|')
-              if [ "$config/$case" = Debug/test_no_dialogs_heap_overrun ] && ! grep -q "the debug CRT reported an error" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
+              if grep -q "check failed: no case" "$RUNNER_TEMP/no-dialogs-$config-$case.out"; then
+                echo "FAIL $config $case: windows_no_dialogs has no such case (its exit 1 is not a failure that skipped a dialog)"
+                failed=1
+              elif [ "$config/$case" = Debug/test_no_dialogs_heap_overrun ] && ! grep -q "the debug CRT reported an error" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
                 echo "FAIL $config $case: the debug heap report did not end the case red"
                 failed=1
               elif [ "$config/$case" = Debug/test_no_dialogs_assert ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
@@ -1629,7 +1641,10 @@ jobs:
             done
           done
           read -r state code seconds <<< "$(run_case Debug test_no_dialogs_dialog_routing_restored 10)"
-          if [ "$state" = waiting ]; then
+          if grep -q "check failed: no case" "$RUNNER_TEMP/no-dialogs-Debug-test_no_dialogs_dialog_routing_restored.out"; then
+            echo "FAIL negative control: windows_no_dialogs has no case test_no_dialogs_dialog_routing_restored"
+            failed=1
+          elif [ "$state" = waiting ]; then
             echo "PASS negative control: with dialog routing restored, the Debug assertion was still waiting on its dialog after $code s (killed)"
           elif [ "$state" = exited ] && [ "$code" != 0 ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-Debug-test_no_dialogs_dialog_routing_restored.err"; then
             echo "PASS negative control: with dialog routing restored, the Debug assertion went to a dialog this service runner cannot show (exited $code in $seconds s, no report on stderr)"
