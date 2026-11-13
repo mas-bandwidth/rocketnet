@@ -94,6 +94,89 @@ static void test_network_threads_defaults_by_value()
 
 REGISTER_UNIT_TEST( test_network_threads_defaults_by_value );
 
+// a negative count is refused by both helpers (0 back), never read as the
+// default, as xdp and rio refuse one; and a plan of a negative count does not
+// compute, so the list's size is 0, never the default's size
+static void test_network_threads_negative_refused()
+{
+    for ( int i = 0; i < network_threads_num_rows; ++i )
+    {
+        check( rocketnet_network_threads_count( -1, network_threads_rows[i].default_count ) == 0 );
+    }
+    check( rocketnet_network_threads_per_socket( -1, 6, 1 ) == 0 );
+    check( rocketnet_network_threads_per_socket( -1, 6, 0 ) == 0 );
+
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    rocketnet_server_memory_plan_t plan;
+    (void) plan;
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    config.num_gso_workers = -1;
+    check( !rocketnet_builtin_server_memory_plan( &config, "gso", plan ) );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "gso" );
+    bool unplannable = false;
+    check( rocketnet_server_transport_order_allocator_bytes( &config, &unplannable ) == 0 );
+    check( unplannable );
+
+    // another candidate that plans gives the list its size
+    snprintf( config.transport, sizeof( config.transport ), "%s", "gso,portable" );
+    check( rocketnet_server_transport_order_allocator_bytes( &config, &unplannable ) > 0 );
+    check( !unplannable );
+    config.num_gso_workers = 0;
+
+    config.num_io_uring_workers = -1;
+    check( !rocketnet_builtin_server_memory_plan( &config, "io_uring", plan ) );
+    config.num_io_uring_workers = 0;
+#if ROCKETNET_XDP
+    config.num_xdp_threads = -1;
+    check( !rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
+    config.num_xdp_threads = 0;
+#endif // #if ROCKETNET_XDP
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+#if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    config.num_msgx_transmit_workers = -1;
+    check( !rocketnet_builtin_server_memory_plan( &config, "msgx", plan ) );
+    config.num_msgx_transmit_workers = 0;
+#endif // #if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    config.num_iocp_completion_workers = -1;
+    check( !rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
+    config.num_iocp_completion_workers = 0;
+    config.num_rio_lanes = -1;
+    check( !rocketnet_builtin_server_memory_plan( &config, "rio", plan ) );
+    config.num_rio_lanes = 0;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+}
+
+REGISTER_UNIT_TEST( test_network_threads_negative_refused );
+
+// the one answer for the RIO lanes, which the plan and create both take
+// (pure, every platform): asked wins; the wildcard is one; a shareable bind
+// address takes the development test count when it is 2 .. the limit, else
+// the default; a count outside the range is refused
+static void test_network_threads_rio_lanes_one_answer()
+{
+    check( rocketnet_rio_lanes_for( 0, 0, 0 ) == 1 );
+    check( rocketnet_rio_lanes_for( 0, 0, 8 ) == 1 );
+    check( rocketnet_rio_lanes_for( 0, 1, 0 ) == ROCKETNET_RIO_DEFAULT_LANES );
+    check( rocketnet_rio_lanes_for( 0, 1, 8 ) == 8 );
+    check( rocketnet_rio_lanes_for( 0, 1, 16 ) == 16 );
+    check( rocketnet_rio_lanes_for( 0, 1, ROCKETNET_RIO_MAX_LANES ) == ROCKETNET_RIO_MAX_LANES );
+    check( rocketnet_rio_lanes_for( 0, 1, 1 ) == ROCKETNET_RIO_DEFAULT_LANES );
+    check( rocketnet_rio_lanes_for( 0, 1, ROCKETNET_RIO_MAX_LANES + 1 ) == ROCKETNET_RIO_DEFAULT_LANES );
+    check( rocketnet_rio_lanes_for( 1, 1, 8 ) == 1 );
+    check( rocketnet_rio_lanes_for( 3, 0, 8 ) == 3 );
+    check( rocketnet_rio_lanes_for( 3, 1, 8 ) == 3 );
+    check( rocketnet_rio_lanes_for( ROCKETNET_RIO_MAX_LANES, 1, 0 ) == ROCKETNET_RIO_MAX_LANES );
+    check( rocketnet_rio_lanes_for( -1, 1, 8 ) == 0 );
+    check( rocketnet_rio_lanes_for( ROCKETNET_RIO_MAX_LANES + 1, 1, 8 ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_network_threads_rio_lanes_one_answer );
+
 // one table row per transport: its own field, its own variable, zero is the
 // default, the range is 1 .. the transport's limit
 static void test_network_threads_table_rows()
@@ -350,8 +433,41 @@ static void test_network_threads_plan_per_transport()
     config.num_rio_lanes = 3;
     network_threads_plan( "rio", &config, 3 );
 #if ROCKETNET_DEV
+    // the development lane count: the plan sizes the lanes create makes for
+    // nothing asked on a shareable address (8 or 16), and the wildcard keeps
+    // its one lane, as create does
+    config.num_rio_lanes = 0;
+    check( rocketnet_test_env_setenv( "ROCKETNET_TEST_RIO_LANES", "8", 1 ) == 0 );
+    network_threads_plan( "rio", &config, 1 );
+    snprintf( config.bind_ipv4_address, sizeof( config.bind_ipv4_address ), "10.0.0.5" );
+    network_threads_plan( "rio", &config, 8 );
+    check( rocketnet_test_env_setenv( "ROCKETNET_TEST_RIO_LANES", "16", 1 ) == 0 );
+    network_threads_plan( "rio", &config, 16 );
+    config.bind_ipv4_address[0] = '\0';
     rocketnet_test_env_restore();
 #endif // #if ROCKETNET_DEV
+
+    // send threads past the send lanes (max_clients 64 has one): the iocp plan
+    // does not compute, and a list of iocp alone has no size
+    config.max_clients = 64;
+    config.num_iocp_send_threads = 2;
+    rocketnet_server_memory_plan_t iocp_plan;
+    check( !rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "iocp" );
+    check( rocketnet_server_transport_order_allocator_bytes( &config ) == 0 );
+    config.num_iocp_send_threads = 0;
+
+    // and the public size of that config is 0 (start refuses it), never the
+    // size without its transport
+    struct rocketnet_server_config_t server_config;
+    check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.transport = "iocp";
+    server_config.max_clients = 64;
+    static const uint8_t filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x49, 0x4F, 0x43, 0x50 };
+    memcpy( server_config.packet_filter, filter, sizeof( server_config.packet_filter ) );   // a production build refuses the test filter
+    check( rocketnet_server_required_memory( &server_config ) > 0 );
+    server_config.num_iocp_send_threads = 2;
+    check( rocketnet_server_required_memory( &server_config ) == 0 );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 }
 

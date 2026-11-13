@@ -505,4 +505,14 @@
    :title "A strict option: refuse to start when a Linux transport worker cannot be kept off CPU 0"
    :text "When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run)."
    :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
+
+  (item "server-create-refuses-what-start-refuses" :group "review-v1-2" :area "sdk"
+   :title "Refuse at create the bind addresses and per-transport counts that start refuses"
+   :text "rocketnet_server_create accepts a bind_ipv4_address or bind_ipv6_address that does not parse, and a transport count its transport cannot run (num_iocp_send_threads above the send lanes max_clients gives, for one); rocketnet.h says start refuses them, and it does. rocketnet_server_required_memory answers 0 for a config whose transports none can plan (the v1.2.0 fix), but create still returns OK. Moving these refusals to create (rn_server_config_valid in sdk/rocketnet_api.cpp) changes the header's stated contract, and a Windows-only count would then refuse a shared config on every platform: the owner decides whether and how (refuse only the candidates the list names, or only on the platform that builds them)."
+   :date "2026-11-13" :origin "Review before v1.2.0, Carbon finding C-18 (R79) and #1115-2(a)")
+
+  (item "server-open-message-outlives-disconnect" :group "review-v1-2" :area "sdk"
+   :title "Keep an open server message's memory the caller's until the next update, across a disconnect"
+   :text "rocketnet_server_disconnect_client, rocketnet_server_disconnect_all_clients and rocketnet_server_stop abort the client's open message at once (rn_message_object_kick, sdk/rocketnet_message_server.cpp): an in-place frame goes back to the transport and the reservation is released, so a caller still writing into the pointer writes into memory that is no longer its own. rocketnet.h now says so (v1.2.0). Holding the frame or the reservation until the next update or send_packets would keep the old promise; it needs lifetime state the kick does not have today (a deferred abort list per object, and the stop's lease reset waiting for it)."
+   :date "2026-11-13" :origin "Review before v1.2.0, Fable reader, finding FT4 (R11)")
  ))

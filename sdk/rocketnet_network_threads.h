@@ -84,9 +84,15 @@
 
 // The count a transport with a count of its own runs: asked when nonzero
 // (the config field, or its environment variable, which wins), else the
-// default. Any thread.
+// default. A negative count is refused: 0 back, which no transport runs (the
+// config table refuses one at create; this is the answer for a layer caller
+// that sizes a config the table never saw). Any thread.
 static inline int rocketnet_network_threads_count( int asked, int default_count )
 {
+    if ( asked < 0 )
+    {
+        return 0;
+    }
     return asked > 0 ? asked : default_count;
 }
 
@@ -95,14 +101,47 @@ static inline int rocketnet_network_threads_count( int asked, int default_count 
 // is that transport's refusal at start, never changed here. Zero is the
 // default on a specific bind address, and one on the wildcard (0.0.0.0 or
 // ::), where sockets cannot share the port; the transport then warns once,
-// naming the default and how to reach it. Any thread.
+// naming the default and how to reach it. A negative count is refused: 0
+// back, as rocketnet_network_threads_count. Any thread.
 static inline int rocketnet_network_threads_per_socket( int asked, int default_count, int wildcard )
 {
+    if ( asked < 0 )
+    {
+        return 0;
+    }
     if ( asked > 0 )
     {
         return asked;
     }
     return wildcard ? 1 : default_count;
+}
+
+// The RIO lanes a server runs, the one answer its memory plan and its create
+// both use: num_rio_lanes when asked (0 back, a refusal, below 0 or past
+// ROCKETNET_RIO_MAX_LANES); else one on the wildcard (several 0); else, on a
+// bind address the lanes can share, test_lanes when it is 2 ..
+// ROCKETNET_RIO_MAX_LANES (the development library's ROCKETNET_TEST_RIO_LANES,
+// 0 when unset or in a production build), and the default otherwise. Any
+// thread.
+static inline int rocketnet_rio_lanes_for( int asked, int several, int test_lanes )
+{
+    if ( asked < 0 || asked > ROCKETNET_RIO_MAX_LANES )
+    {
+        return 0;
+    }
+    if ( asked > 0 )
+    {
+        return asked;
+    }
+    if ( !several )
+    {
+        return 1;
+    }
+    if ( test_lanes >= 2 && test_lanes <= ROCKETNET_RIO_MAX_LANES )
+    {
+        return test_lanes;
+    }
+    return ROCKETNET_RIO_DEFAULT_LANES;
 }
 
 #endif // ROCKETNET_SDK_ROCKETNET_NETWORK_THREADS_H

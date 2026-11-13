@@ -2124,7 +2124,9 @@ struct rocketnet_connect_token_config_t
 
     /// The server's IPv6 address as "[v6]:port", or NULL. Pass the address
     /// rocketnet_server_ipv6_address returns. At least one address is
-    /// required. Default is NULL.
+    /// required. An IPv4-mapped address ([::ffff:a.b.c.d]:port) is refused
+    /// with ROCKETNET_STATUS_INVALID_ADDRESS: it goes in server_address_ipv4.
+    /// Default is NULL.
 
     const char * server_address_ipv6;
 
@@ -3014,6 +3016,8 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// @param context Passed to the allocator callbacks. May be NULL.
 /// @param ipv4_address The IPv4 address to serve, as "a.b.c.d:port", or NULL.
 /// @param ipv6_address The IPv6 address to serve, as "[v6]:port", or NULL.
+/// An IPv4-mapped address ([::ffff:a.b.c.d]:port) is refused with
+/// ROCKETNET_STATUS_INVALID_ADDRESS: pass it as ipv4_address instead.
 /// @param config The config, filled by rocketnet_server_default_config or
 /// rocketnet_server_light_config, or NULL for the defaults.
 /// @param status Receives the result, or NULL.
@@ -3455,7 +3459,10 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// rocketnet_server_abort_client_message). The returned memory is the
 /// caller's until finish or abort, and no later than the next
 /// rocketnet_server_update or rocketnet_server_send_packets, which aborts a
-/// message still open.
+/// message still open. A call that ends the client's connection
+/// (rocketnet_server_disconnect_client, rocketnet_server_disconnect_all_clients
+/// or rocketnet_server_stop) aborts its open message at once: the memory is
+/// no longer the caller's, and the finish that would have followed is refused.
 /// To broadcast, send to each connected client index.
 ///
 /// An index at or above max_clients is refused.
