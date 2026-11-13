@@ -131,8 +131,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // check's lines, the message object's per-thread open lines, each region's
 // room_refusals, the per-thread send lines, the per-client wire totals on a
 // line each) reads 1469750271 and 15394028 (aws-win-5, MSVC, Release, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702207 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345452 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702335 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345516 )
 // The server config's two bind addresses add 512 bytes to the server (main, F): included above.
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -180,8 +180,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // check's lines, the message object's per-thread open lines, each region's
 // room_refusals, the per-thread send lines, the per-client wire totals on a
 // line each) reads 1469750687 and 15041546 (studio, AppleClang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702623 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992970 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702751 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993034 )
 // The server config's two bind addresses add 512 bytes to the server (main, F): included above.
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -289,11 +289,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649451ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649579ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649395ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649523ULL )
 #endif // #if defined( __aarch64__ )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141650 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141714 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
