@@ -166,7 +166,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452639 )
+// The server config's two bind addresses (bind_ipv4_address,
+// bind_ipv6_address) add 512 bytes to the server (the object holding the
+// config crosses its rounding) and nothing to the client (measured); the
+// probe's actual= line is 1469501727.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453151 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -248,6 +252,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // the client (measured on bench-nyc-4, gcc, Release, ROCKETNET_DEV=ON, before
 // and after: actual=3111676851 to 5610448051). A Linux build without XDP plans
 // a smaller peak and the check is at most there.
+// The server config's two bind addresses (bind_ipv4_address,
+// bind_ipv6_address) add 512 bytes to the server and nothing to the client
+// (measured on bench-nyc-4, gcc, Debug, DEV ON, as 3111676851 to 3111677363
+// before the send queue change above; the pin below holds both).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -255,9 +263,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609399531ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400043ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609399475ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609399987ULL )
 #endif // #if defined( __aarch64__ )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14136594 )
 #endif // #if defined( _WIN32 )
