@@ -3763,7 +3763,9 @@ The registry of counters, in index order, is:
 | `RECEIVE_FAILED` | `refusal` | `none` |
 | `FILL_PHASE_OVERLAP` | `refusal` | `none` |
 | `FILL_TWO_FILLERS` | `refusal` | `none` |
-| `RECEIVE_DROPPED_STOPPED` | `refusal` | `none` |
+| `RECEIVE_DROPPED_STOPPED` | `expected` | `none` |
+| `SEND_RESERVE_REFUSED_TAILS_HELD` | `refusal` | `none` |
+| `RECEIVE_DROPPED_UNKNOWN_SHARE` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3878,7 +3880,8 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
 a1 00 00 00 51 8b 57 c4 00 00 00 83 0e ee 6b 00
 00 00 b2 57 b6 3d 00 00 00 b8 28 ec 42 00 00 00
-d5 28 0b 6d 00 00 00 ad 33 2a 98 00 00 00
+d5 28 0b 6d 00 00 00 ad 33 2a 98 01 00 00 9f ba
+38 0a 00 00 00 da d9 59 af 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

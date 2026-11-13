@@ -937,3 +937,7 @@ MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg	MCRNMsgxSendRuns.tla	invariant	Re
 MCRNMsgxSendRunsBrokenUnstableSort.cfg	MCRNMsgxSendRuns.tla	invariant	ClientOrder	check	rnmsgxsendruns	required	-
 MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg	MCRNMsgxSendRuns.tla	invariant	NoCrossClient	check	rnmsgxsendruns	required	-
 MCRNMsgxSendRunsBrokenDeadNoResend.cfg	MCRNMsgxSendRuns.tla	invariant	CursorSafe	check	rnmsgxsendruns	required	-
+MCRNSendReserveChunk.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required	-
+MCRNSendReserveChunkNoGuard.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required	-
+MCRNSendReserveBrokenNoFallback.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
+MCRNSendReserveBrokenNoTailReturn.cfg	MCRNSendReserve.tla	invariant	TailsNamed	check	rnsendreserve	required	-

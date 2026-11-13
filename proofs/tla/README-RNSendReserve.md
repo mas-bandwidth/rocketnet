@@ -20,9 +20,11 @@ completion port, a ring the kernel drains) come back to the fill.
 | `ownUsed` | `fill_own_used[queue]`: own frames staged and counted this phase |
 | `ownTaken`, `ownLeft` | `fill_own_frame[client]` cleared and set; `fill_own_frames_left` |
 | `claims` | `fill_claims[queue]` |
+| `size`, `tail` | a claim's frames (one, or a chunk of `Chunk`); the granted frames a run has not yet staged |
 | `budget` | `fill_budget[queue]`: the grant cap, raised by an atomic max, never lowered in a phase |
 | `seenS`, `seenO`, `seenR` | the three reads of `queue_budget_now` |
 | `starved` | ghost: a claim was refused while the room it read had a frame for it |
+| `unnamed` | ghost: such a refusal came while no other filler held a chunk |
 
 ## Actions and the code they mirror
 
@@ -37,18 +39,27 @@ completion port, a ring the kernel drains) come back to the fill.
   `fill_started` counts it in `fill_own_used`, which lowers the reserve the
   budget keeps back. A transport that refuses it (`fill_refused`) leaves it in
   the reserve: its client's keep-alive is still due.
-- **`Claim`, `Check`**: any other frame adds one to the claims; an index
-  below the budget is granted.
+- **`Size`, `Claim`, `Check`**: any other frame belongs to a claim. The
+  guard (two loads) sizes it: a chunk of `Chunk` frames while the budget less
+  the claims leaves `Chunk x GuardWidth`, else one frame. One add puts the
+  whole claim on the claims; a claim whose last frame is within the budget is
+  granted.
 - **`Read1`, `Read2`, `Read3`**: at or past the budget,
   `rocketnet_server_transport_refresh_fill_budget` recomputes it from
   `queue_budget_now`: the two counts, then the room, then the two counts
   again, starting over if either moved. The budget is raised to `started +
   (room - (reserve - own_used))`, and the claims outstanding (this one among
-  them) are tested against it. Refused, the claim is taken back and counted as
-  `SEND_RESERVE_REFUSED`.
-- **`Stage`, `Count`**: `io_start_packet` stages a granted frame, then
-  `fill_started` counts it. A transport that refuses it takes the claim back
-  (`fill_refused`).
+  them) are tested against it. Refused, the claim is taken back whole. A
+  refused chunk is claimed again as one frame. A refused single claim is
+  counted as `SEND_RESERVE_REFUSED_TAILS_HELD` while another filler holds a
+  chunk (its claim added and not yet taken back, or its tail not yet staged),
+  else as `SEND_RESERVE_REFUSED`.
+- **`Stage`, `Count`, `Continue`, `End`**: `io_start_packet` stages a
+  granted frame from the run's tail, then `fill_started` counts it, one
+  atomic add per frame on the queue's count. The run stages its next frame
+  from the tail or ends at any frame; at its end what is left of the tail goes
+  back with one add. A transport that refuses a frame ends the run, and the
+  tail goes back the same way.
 - **`Retire`**: the transport retires a staged frame at any time.
 
 ## Properties
@@ -57,20 +68,33 @@ completion port, a ring the kernel drains) come back to the fill.
   frame in flight has staged still covers the reserve, less the own frames
   taken: `free + ownTaken >= Reserve + OwnUnstaged + Pending`. The next
   update's protocol frames are never refused for the fill's sake.
-- **`NeverStarved`**: no claim is refused while the room its recompute read
-  had a frame for it past the reserve and for every other filler in flight
-  when it is refused. Room that comes back after the read, or that a filler
+- **`NeverStarved`**: no single claim is refused while the room its
+  recompute read had a frame for it past the reserve and past every other
+  filler in flight when it is refused, a filler counting as the frames it
+  holds: its chunk (from the add until it is granted or taken back), the
+  tail of it not yet staged, and a frame staged and not yet counted; at
+  least one frame. Room that comes back after the read, or that a filler
   claiming after the read takes, is not starvation: the fill as a whole still
-  gets the frame.
+  gets the frame. With one-frame claims this is the property as it stood
+  before chunks: one frame per filler in flight.
+- **`TailsNamed`**: a single claim refused while the room it read had a frame
+  for it past every filler in flight (one frame each) comes only while
+  another filler holds a chunk, so the code counts it under its own name,
+  `SEND_RESERVE_REFUSED_TAILS_HELD`, apart from a true full. The slack chunks
+  hold is at most fillers x (`Chunk` - 1) frames past the one frame each
+  filler in flight is allowed anyway.
 
 ## Configs
 
-All run two fillers, a reserve of 2 in a queue of 4, one own frame, two frames
-per filler, two retires and two phases.
+All run two fillers, one own frame, two claims per filler, two retires and
+two phases; a reserve of 2 in a queue of 4 except `Chunk`, a reserve of 1 in
+a queue of 6 so that the guard lets chunks through.
 
 | Config | Expected | What it shows |
 |---|---|---|
-| `MCRNSendReserve.cfg` | pass | the code: `TypeOK`, `ReserveKept`, `NeverStarved` |
+| `MCRNSendReserve.cfg` | pass | the code with one-frame claims: `TypeOK`, `ReserveKept`, `NeverStarved`, `TailsNamed` |
+| `MCRNSendReserveChunk.cfg` | pass | the code with chunks of 2 and the guard at 2 fillers |
+| `MCRNSendReserveChunkNoGuard.cfg` | pass | chunks of 2 with no guard: the guard bounds the slack held, and no property rests on it |
 | `MCRNSendReserveBrokenRoomOnly.cfg` | `ReserveKept` | the budget is the whole room, with no reserve |
 | `MCRNSendReserveBrokenSplitClaim.cfg` | `ReserveKept` | the claim is a load then a store, so two fillers take one index |
 | `MCRNSendReserveBrokenRoomFirst.cfg` | `ReserveKept` | the room is read before the counts, so a frame staged between is counted twice |
@@ -78,6 +102,8 @@ per filler, two retires and two phases.
 | `MCRNSendReserveBrokenNoRefresh.cfg` | `NeverStarved` | the budget stays as main opened it, so frames retired during the phase never reach the fill (the first form of the reserve; the IOCP measurement of 2 frames an update at 1000 clients) |
 | `MCRNSendReserveBrokenNoReread.cfg` | `NeverStarved` | the counts are read once, so a frame counted between them and the room read is lost to the fill |
 | `MCRNSendReserveBrokenIndexTest.cfg` | `NeverStarved` | the recompute tests the claim's index, which a refused claim ahead of it has raised |
+| `MCRNSendReserveBrokenNoFallback.cfg` | `NeverStarved` | a refused chunk is not claimed again as one frame, so a frame the room had for one claim is refused |
+| `MCRNSendReserveBrokenNoTailReturn.cfg` | `TailsNamed` | a run's unused tail is never given back, so a later claim is refused with room while no chunk is held |
 
 Each counterexample was read against the code by hand. `NoReread`: an own
 frame is staged, its count lands between the count read and the room read,
@@ -85,7 +111,17 @@ and the budget comes out one frame low. `IndexTest`: a claim refused at a full
 queue raised the next claim's index; a retire then gives room, and the index
 test refuses a frame the claims outstanding would grant. `OwnCountFirst`: the
 own count lands before its frame leaves the room, and a filler reads the
-lowered reserve against the room that still holds it.
+lowered reserve against the room that still holds it. `NoFallback`: one
+filler claims a chunk of 2 with one frame above the reserve; the recompute
+refuses the chunk and the filler stops. `NoTailReturn`: a run takes a chunk
+of 2, stages one frame and ends; the other frame stays on the claims, and the
+next single claim is refused at a budget that had room for it.
+
+The two counts stay one atomic each per queue, added per frame (the shape
+the F8 change kept). A form that counts per cache line and reads the lines
+one at a time was tried and is not modelled: its re-read decides on the
+counts as they stood at the room read, which the property, measured at the
+decision, cannot yet state.
 
 ## What it does not cover
 
