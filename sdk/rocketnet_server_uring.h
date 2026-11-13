@@ -67,6 +67,36 @@ struct rocketnet_server_uring_t;
 
 #define ROCKETNET_URING_SEND_QUEUE_SIZE                ROCKETNET_URING_SEND_BANK_SLOTS
 
+// a queue's send slots are sized by rate at create: twice the queue's share
+// of one frame's packets at the bar (1000 players, 10 Gb/s, 60 Hz: 1.04M
+// packets/s is 17.3 a player a frame, so 18), at least
+// ROCKETNET_URING_SEND_QUEUE_SIZE and at most the module's
+// ROCKETNET_URING_SEND_MAX_BANK_SLOTS. Twice covers the destination hash's
+// uneven split over the queues; it is not measured past the bar row. The
+// floor alone held only at 8 queues: at 2 queues 4096 slots a queue a frame
+// is 491,520 packets/s at 60 Hz, half the line rate.
+
+#define ROCKETNET_URING_SEND_PACKETS_PER_CLIENT_FRAME                        18
+
+static inline int rocketnet_server_uring_send_slots( int max_clients, int num_queues )
+{
+    if ( max_clients < 1 || num_queues < 1 )
+    {
+        return ROCKETNET_URING_SEND_QUEUE_SIZE;
+    }
+    const int64_t frame = (int64_t) ROCKETNET_URING_SEND_PACKETS_PER_CLIENT_FRAME * max_clients;
+    const int64_t slots = ( 2 * frame + num_queues - 1 ) / num_queues;
+    if ( slots < ROCKETNET_URING_SEND_QUEUE_SIZE )
+    {
+        return ROCKETNET_URING_SEND_QUEUE_SIZE;
+    }
+    if ( slots > ROCKETNET_URING_SEND_MAX_BANK_SLOTS )
+    {
+        return ROCKETNET_URING_SEND_MAX_BANK_SLOTS;
+    }
+    return (int) slots;
+}
+
 // runs a worker keeps in the kernel at once: the ring less room for the
 // receive arm, the wake read, the poll and their cancels
 
@@ -185,6 +215,11 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 // transport's max_clients (rocketnet_server_uring_bank_packets)
 
 int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * uring );
+
+// the send slots each queue stages a frame into (rocketnet_server_uring_send_slots
+// of the transport's max_clients and queue count)
+
+int rocketnet_server_uring_send_queue_size( const struct rocketnet_server_uring_t * uring );
 
 // the FEATURE bits in use now. a destination that refuses a segmented send
 // has its runs resent plain and leaves the bit set; it clears when a queue

@@ -40,7 +40,7 @@ static bool rocketnet_uring_send_queues_layout( int num_queues, int slots, rocke
 
 uint64_t rocketnet_uring_send_queues_allocation_bytes( int num_queues, int slots )
 {
-    if ( num_queues < 1 || num_queues > ROCKETNET_URING_SEND_MAX_QUEUES || slots < 1 || slots > ROCKETNET_URING_SEND_BANK_SLOTS )
+    if ( num_queues < 1 || num_queues > ROCKETNET_URING_SEND_MAX_QUEUES || slots < 1 || slots > ROCKETNET_URING_SEND_MAX_BANK_SLOTS )
     {
         return 0;
     }
@@ -56,9 +56,9 @@ struct rocketnet_uring_send_queues_t * rocketnet_uring_send_queues_create( void 
         return NULL;
     }
 
-    if ( slots < 1 || slots > ROCKETNET_URING_SEND_BANK_SLOTS )
+    if ( slots < 1 || slots > ROCKETNET_URING_SEND_MAX_BANK_SLOTS )
     {
-        rocketnet_error( "io_uring send queues: %d slots is outside 1..%d", slots, ROCKETNET_URING_SEND_BANK_SLOTS );
+        rocketnet_error( "io_uring send queues: %d slots is outside 1..%d", slots, ROCKETNET_URING_SEND_MAX_BANK_SLOTS );
         return NULL;
     }
 

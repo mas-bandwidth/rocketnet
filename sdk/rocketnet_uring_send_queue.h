@@ -22,7 +22,8 @@
 //
 // Portable and pure: no ring, no socket, no thread. The slot count is a
 // runtime argument so the trace harness runs it at the model's size; the
-// transport uses ROCKETNET_URING_SEND_BANK_SLOTS.
+// transport sizes it by rate at create (rocketnet_server_uring_send_slots),
+// from ROCKETNET_URING_SEND_BANK_SLOTS up to ROCKETNET_URING_SEND_MAX_BANK_SLOTS.
 // proofs/tla/RNUringQueueBankLayout.tla models it at this layout; each
 // function cites the action it implements.
 
@@ -34,7 +35,8 @@
 #include <stdint.h>
 
 #define ROCKETNET_URING_SEND_BANKS                                           3
-#define ROCKETNET_URING_SEND_BANK_SLOTS                                   4096
+#define ROCKETNET_URING_SEND_BANK_SLOTS                                   4096    // the fewest slots a transport queue has
+#define ROCKETNET_URING_SEND_MAX_BANK_SLOTS                              32768    // the most slots one queue may have
 #define ROCKETNET_URING_SEND_MAX_QUEUES                                     32
 
 struct rocketnet_uring_send_slot_t
@@ -69,7 +71,7 @@ struct rocketnet_uring_send_queues_t
 };
 
 // NULL when num_queues is outside 1..ROCKETNET_URING_SEND_MAX_QUEUES or
-// slots is outside 1..ROCKETNET_URING_SEND_BANK_SLOTS
+// slots is outside 1..ROCKETNET_URING_SEND_MAX_BANK_SLOTS
 
 struct rocketnet_uring_send_queues_t * rocketnet_uring_send_queues_create( void * context, int num_queues, int slots );
 

@@ -8602,6 +8602,8 @@ void rocketnet_test_server_uring_send_overflow()
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( uring );
+    const int send_slots = rocketnet_server_uring_send_queue_size( uring );
+    rocketnet_check( send_slots == rocketnet_server_uring_send_slots( ROCKETNET_DEFAULT_MAX_CLIENTS, 1 ) );
 
     rocketnet_address_t client_address;
     rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
@@ -8609,7 +8611,7 @@ void rocketnet_test_server_uring_send_overflow()
                                                                                            ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
     rocketnet_check( client_socket );
 
-    for ( int i = 0; i < ROCKETNET_URING_SEND_QUEUE_SIZE; i++ )
+    for ( int i = 0; i < send_slots; i++ )
     {
         uint64_t packet_id = 0;
         uint8_t * frame = rocketnet_server_uring_start_packet( uring, &client_address, &packet_id );
@@ -8628,8 +8630,8 @@ void rocketnet_test_server_uring_send_overflow()
     // uncounted, once the worker has taken every completion
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
-    rocketnet_test_server_uring_wait_sent( uring, ROCKETNET_URING_SEND_QUEUE_SIZE, counters );
-    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] + counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == ROCKETNET_URING_SEND_QUEUE_SIZE );
+    rocketnet_test_server_uring_wait_sent( uring, (uint64_t) send_slots, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] + counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == (uint64_t) send_slots );
 
     // the next phase is whole: a fresh tagged packet flushes and arrives
 

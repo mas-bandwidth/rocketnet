@@ -128,7 +128,7 @@ static void test_uring_send_queues_create_refuses_out_of_range()
     check( rocketnet_uring_send_queues_create( NULL, -1, 3 ) == NULL );
     check( rocketnet_uring_send_queues_create( NULL, ROCKETNET_URING_SEND_MAX_QUEUES + 1, 3 ) == NULL );
     check( rocketnet_uring_send_queues_create( NULL, 2, 0 ) == NULL );
-    check( rocketnet_uring_send_queues_create( NULL, 2, ROCKETNET_URING_SEND_BANK_SLOTS + 1 ) == NULL );
+    check( rocketnet_uring_send_queues_create( NULL, 2, ROCKETNET_URING_SEND_MAX_BANK_SLOTS + 1 ) == NULL );
 
     struct rocketnet_uring_send_queues_t * queues = rocketnet_uring_send_queues_create( NULL, 2, 3 );
     check( queues != NULL );

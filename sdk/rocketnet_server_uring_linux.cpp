@@ -132,6 +132,7 @@ struct rocketnet_server_uring_t
     int features = 0;                           // ROCKETNET_SERVER_URING_FEATURE_*: what the create probe found
     int max_clients = 0;
     int bank_size = 0;                          // each queue's receive bank and the process view
+    int send_slots = 0;                         // each queue's send bank (rocketnet_server_uring_send_slots)
     bool stopping = false;
     bool stop_counted = false;
     uint64_t receive_dropped_stopped = 0;       // main's: banked datagrams main never took, counted once at stopped
@@ -575,8 +576,8 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues, int max_clients )
     struct rocketnet_uring_receive_queue_config_t config;
     rocketnet_server_uring_receive_config( &config, 0, -1, max_clients, true, true, true, NULL );
     const uint64_t receive = rocketnet_uring_receive_queue_allocation_bytes( &config );
-    const uint64_t banks = rocketnet_uring_send_queues_allocation_bytes( queues, ROCKETNET_URING_SEND_QUEUE_SIZE );
-    const uint64_t send = rocketnet_uring_queue_send_allocation_bytes( queues, ROCKETNET_URING_SEND_QUEUE_SIZE );
+    const uint64_t banks = rocketnet_uring_send_queues_allocation_bytes( queues, rocketnet_server_uring_send_slots( max_clients, queues ) );
+    const uint64_t send = rocketnet_uring_queue_send_allocation_bytes( queues, rocketnet_server_uring_send_slots( max_clients, queues ) );
     const uint64_t view = rocketnet_server_process_packets_allocation_bytes( rocketnet_server_uring_bank_packets( max_clients ) );
     if ( !receive || !banks || !send || !view )
     {
@@ -596,6 +597,11 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues, int max_clients )
 int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * uring )
 {
     return uring ? uring->bank_size : 0;
+}
+
+int rocketnet_server_uring_send_queue_size( const struct rocketnet_server_uring_t * uring )
+{
+    return uring ? uring->send_slots : 0;
 }
 
 // each queue's provided buffer ring, mapped outside the allocator, whole
@@ -781,9 +787,10 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     uring->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     uring->max_clients = max_clients;
     uring->bank_size = rocketnet_server_uring_bank_packets( max_clients );
+    uring->send_slots = rocketnet_server_uring_send_slots( max_clients, num_queues );
 
     uring->queues = (struct rocketnet_server_uring_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
-    uring->banks = rocketnet_uring_send_queues_create( context, num_queues, ROCKETNET_URING_SEND_QUEUE_SIZE );
+    uring->banks = rocketnet_uring_send_queues_create( context, num_queues, uring->send_slots );
     uring->send = uring->banks ? rocketnet_uring_queue_send_create( context, uring->banks, ROCKETNET_URING_MAX_SEGMENTS, ROCKETNET_URING_MAX_SUPER_BYTES ) : NULL;
     if ( !uring->queues || !uring->banks || !uring->send || !rocketnet_server_process_packets_create( context, &uring->process_packets, uring->bank_size ) )
     {
@@ -972,7 +979,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     rocketnet_info( "io_uring transport: %d queue reuseport group on port %d, a worker and a %d entry ring per queue, %d receive buffers of %d bytes per queue, "
                     "%d receive slots and %d send slots per queue, UDP_SEGMENT %s, UDP_GRO %s, socket drop counts on %d of %d sockets, prefilter %s",
                     num_queues, bound_port, ROCKETNET_URING_ENTRIES, ROCKETNET_URING_RECV_BUFFERS, ROCKETNET_URING_RECV_BUFFER_BYTES, uring->bank_size,
-                    ROCKETNET_URING_SEND_QUEUE_SIZE, segment ? "yes" : "no (one SENDMSG per packet)", gro ? "yes" : "no (one datagram per receive buffer)",
+                    uring->send_slots, segment ? "yes" : "no (one SENDMSG per packet)", gro ? "yes" : "no (one datagram per receive buffer)",
                     socket_drop_queues, num_queues, packet_filter ? "in the workers" : "off (raw datagrams)" );
 
     return uring;
@@ -1253,7 +1260,7 @@ int rocketnet_server_uring_send_room_queue( struct rocketnet_server_uring_t * ur
         return 0;
     }
     const int staged = rocketnet_uring_send_queues_staged( uring->banks, queue );
-    return staged >= ROCKETNET_URING_SEND_QUEUE_SIZE ? 0 : ROCKETNET_URING_SEND_QUEUE_SIZE - staged;
+    return staged >= uring->send_slots ? 0 : uring->send_slots - staged;
 }
 
 // proofs/tla/ServerStopSpread.tla Room: the fullest queue's producer room
@@ -1262,7 +1269,7 @@ int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
 
-    int room = ROCKETNET_URING_SEND_QUEUE_SIZE;
+    int room = uring->send_slots;
     for ( int i = 0; i < uring->num_queues; i++ )
     {
         const int free = rocketnet_server_uring_send_room_queue( uring, i );
@@ -1402,6 +1409,11 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues, int max_clients )
 }
 
 int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * )
+{
+    return 0;
+}
+
+int rocketnet_server_uring_send_queue_size( const struct rocketnet_server_uring_t * )
 {
     return 0;
 }
