@@ -13898,6 +13898,13 @@ extern void rocketnet_test_receive_latency_server_io_uring();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// receive latency (tests/functional/receive_latency.cpp) on the Windows
+// server transports
+extern void rocketnet_test_receive_latency_server_rio();
+extern void rocketnet_test_receive_latency_server_iocp();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (tests/functional/windows_socket_errors.cpp)
 extern void windows_server_drops_oversize_datagram_portable_ipv4();
 extern void windows_server_drops_oversize_datagram_portable_ipv6();
@@ -16660,6 +16667,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_loopback_transport_live_message_matrix_late_probes", live_message_matrix_late_probes, rocketnet_test_server_pin_is_not_xdp },
 #endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_receive_latency_server_rio", rocketnet_test_receive_latency_server_rio, rocketnet_test_server_pin_allows_rio },
+    { "test_receive_latency_server_iocp", rocketnet_test_receive_latency_server_iocp, rocketnet_test_server_pin_allows_iocp },
 #if ROCKETNET_DEV
     // These files use development-only socket seams and the resource ledger.
     // Production omits their cases; it must not replace them with empty bodies.
