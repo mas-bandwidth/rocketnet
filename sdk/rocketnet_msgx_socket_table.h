@@ -298,9 +298,10 @@ inline void rocketnet_msgx_socket_table_index_remove( struct rocketnet_msgx_sock
 // proofs/tla/RNMsgxSocketTable.tla Stamp: a fill thread's stamp for a
 // packet to address: the slot and its current
 // generation, or slot -1 for the shared socket. Fill phase only.
-inline int rocketnet_msgx_socket_table_stamp( const struct rocketnet_msgx_socket_table_t * table, const struct rocketnet_address_t * address, uint32_t * generation )
+// The stamp of a slot a lookup already found (-1: none): the transport's
+// start, whose worker choice did the lookup (queue_of below).
+inline int rocketnet_msgx_socket_table_stamp_slot( const struct rocketnet_msgx_socket_table_t * table, int slot, uint32_t * generation )
 {
-    const int slot = rocketnet_msgx_socket_table_lookup( table, address );
     if ( slot < 0 )
     {
         *generation = 0;
@@ -308,6 +309,55 @@ inline int rocketnet_msgx_socket_table_stamp( const struct rocketnet_msgx_socket
     }
     *generation = rocketnet_msgx_word_generation( table->slots[slot].word.load( std::memory_order_relaxed ) );
     return slot;
+}
+
+inline int rocketnet_msgx_socket_table_stamp( const struct rocketnet_msgx_socket_table_t * table, const struct rocketnet_address_t * address, uint32_t * generation )
+{
+    return rocketnet_msgx_socket_table_stamp_slot( table, rocketnet_msgx_socket_table_lookup( table, address ), generation );
+}
+
+// The FNV-1a of an address's bytes and port, modulo the queues: the
+// destination hash the per-queue transports use (the XDP transport's).
+inline int rocketnet_msgx_address_queue( const struct rocketnet_address_t * address, int num_queues )
+{
+    uint64_t hash = 0xCBF29CE484222325ULL;
+    const uint8_t * bytes = (const uint8_t *) &address->data;
+    const int address_bytes = address->type == ROCKETNET_ADDRESS_IPV6 ? 16 : 4;
+    for ( int i = 0; i < address_bytes; i++ )
+    {
+        hash ^= bytes[i];
+        hash *= 0x100000001B3ULL;
+    }
+    hash ^= (uint8_t) ( address->port & 0xFF );
+    hash *= 0x100000001B3ULL;
+    hash ^= (uint8_t) ( address->port >> 8 );
+    hash *= 0x100000001B3ULL;
+    return (int) ( hash % (uint64_t) num_queues );
+}
+
+// proofs/tla/RNMsgxSendSpread.tla QueueOf: the transmit worker a packet to
+// address leaves through. A client with a socket goes by its slot modulo the
+// workers: Mark hands slots out lowest first and the sweep (Forget, Sweep)
+// puts a freed one back on top, so the clients a full table holds are
+// spread across the workers within one of each other (EvenWhenFull), where
+// a hash of their addresses left one worker with several percent more of
+// them than the mean, and the busiest worker sets the transport's rate
+// (docs/MACOS.md). An address with no socket (a handshake, a client past the
+// open budget, a full table or a cooldown) goes by its address hash. *slot
+// is the open slot or -1. Main, or a fill thread inside the fill phase: main
+// changes the table only in the update's walk, before the fill budget's Open
+// reserves each client's frame in the worker named here, and every Start up
+// to send_packets' Close reads the same worker (StartsInReservedQueue).
+inline int rocketnet_msgx_socket_table_queue_of( const struct rocketnet_msgx_socket_table_t * table, const struct rocketnet_address_t * address,
+                                                 int num_queues, int * slot )
+{
+    rocketnet_assert( num_queues >= 1 );
+    *slot = rocketnet_msgx_socket_table_lookup( table, address );
+    if ( *slot >= 0 )
+    {
+        return *slot % num_queues;
+    }
+    return rocketnet_msgx_address_queue( address, num_queues );
 }
 
 // proofs/tla/RNMsgxSocketTable.tla HolderBegin and HolderEnd: a pass is odd. seq_cst, so a

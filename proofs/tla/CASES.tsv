@@ -1079,3 +1079,6 @@ MCRNIocpSendLanesBrokenOwnerInvert.cfg	MCRNIocpSendLanes.tla	invariant	OnlyOwner
 MCRNIocpEndpoints.cfg	MCRNIocpEndpoints.tla	pass	-	check	rniocpendpoints	required	-
 MCRNIocpEndpointsBrokenRepostOnPoster.cfg	MCRNIocpEndpoints.tla	invariant	OnOwnerSocket	check	rniocpendpoints	required	-
 MCRNIocpEndpointsBrokenCancelSocketZero.cfg	MCRNIocpEndpoints.tla	temporal	EveryWorkerExits	check	rniocpendpoints	required	-
+MCRNMsgxSendSpread.cfg	MCRNMsgxSendSpread.tla	pass	-	check	rnmsgxsendspread	required	-
+MCRNMsgxSendSpreadBrokenAddressHash.cfg	MCRNMsgxSendSpread.tla	invariant	EvenWhenFull	check	rnmsgxsendspread	required	-
+MCRNMsgxSendSpreadBrokenWalkInFill.cfg	MCRNMsgxSendSpread.tla	invariant	StartsInReservedQueue	check	rnmsgxsendspread	required	-

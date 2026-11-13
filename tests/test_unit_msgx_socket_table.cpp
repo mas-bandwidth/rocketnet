@@ -674,7 +674,104 @@ static void test_rocketnet_msgx_socket_table_close_all()
     msgx_test_destroy( &test );
 }
 
+// the clients a full table holds, by worker: the most minus the fewest
+static int msgx_test_spread( const struct msgx_test_t & test, const struct rocketnet_address_t * addresses, int num_addresses, int num_queues )
+{
+    int count[ROCKETNET_MSGX_TABLE_MAX_HOLDERS] = {};
+    for ( int i = 0; i < num_addresses; i++ )
+    {
+        int slot = -1;
+        const int queue = rocketnet_msgx_socket_table_queue_of( test.table, &addresses[i], num_queues, &slot );
+        rocketnet_unit_check( queue >= 0 && queue < num_queues );
+        count[queue]++;
+    }
+    int most = 0;
+    int fewest = num_addresses;
+    for ( int q = 0; q < num_queues; q++ )
+    {
+        most = count[q] > most ? count[q] : most;
+        fewest = count[q] < fewest ? count[q] : fewest;
+    }
+    return most - fewest;
+}
+
+// the transmit worker of a client with a socket is its slot modulo the
+// workers, so 1000 clients of one host (one address, ports spread as an
+// ephemeral range hands them out) are spread across 1 to 16 workers within one
+// of each other, and stay so when a client leaves and another takes its
+// slot; an address with no socket goes by its address hash. The address
+// hash alone left the workers uneven on this set (docs/MACOS.md).
+static void test_rocketnet_msgx_socket_table_queue_spread()
+{
+    const int clients = ROCKETNET_MSGX_TABLE_MAX_SLOTS;
+    struct msgx_test_t test = msgx_test_create( clients, 4, clients, MSGX_TEST_FDS );
+    struct rocketnet_address_t * addresses = new rocketnet_address_t[clients + 1];
+    uint32_t seed = 12345;
+    for ( int i = 0; i <= clients; i++ )
+    {
+        memset( &addresses[i], 0, sizeof( addresses[i] ) );
+        addresses[i].type = ROCKETNET_ADDRESS_IPV4;
+        addresses[i].data.ipv4[0] = 192;
+        addresses[i].data.ipv4[1] = 168;
+        addresses[i].data.ipv4[2] = 1;
+        addresses[i].data.ipv4[3] = 45;
+        bool unique = false;
+        while ( !unique )
+        {
+            seed = seed * 1103515245u + 12345u;
+            addresses[i].port = (uint16_t) ( 32768 + ( ( seed >> 16 ) % 28232 ) );
+            unique = true;
+            for ( int j = 0; j < i; j++ )
+            {
+                unique = unique && addresses[j].port != addresses[i].port;
+            }
+        }
+    }
+
+    // no socket yet: the address hash
+    for ( int i = 0; i < 8; i++ )
+    {
+        int slot = 7;
+        rocketnet_unit_check( rocketnet_msgx_socket_table_queue_of( test.table, &addresses[i], 3, &slot ) == rocketnet_msgx_address_queue( &addresses[i], 3 ) );
+        rocketnet_unit_check( slot == -1 );
+    }
+
+    for ( int i = 0; i < clients; i++ )
+    {
+        rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &addresses[i] ) );
+    }
+    rocketnet_unit_check( test.table->num_open == clients );
+    for ( int queues = 1; queues <= 16; queues++ )
+    {
+        rocketnet_unit_check( msgx_test_spread( test, addresses, clients, queues ) <= 1 );
+    }
+
+    // the queue and the stamp name the same slot
+    for ( int i = 0; i < clients; i++ )
+    {
+        int slot = -1;
+        const int queue = rocketnet_msgx_socket_table_queue_of( test.table, &addresses[i], 3, &slot );
+        uint32_t generation = 99;
+        rocketnet_unit_check( slot >= 0 && queue == slot % 3 );
+        rocketnet_unit_check( rocketnet_msgx_socket_table_stamp( test.table, &addresses[i], &generation ) == slot );
+        rocketnet_unit_check( rocketnet_msgx_socket_table_stamp_slot( test.table, slot, &generation ) == slot && generation == 0 );
+    }
+
+    // a client leaves and a new one takes its freed slot: still within one
+    int retired_fd = -1;
+    rocketnet_unit_check( rocketnet_msgx_socket_table_forget( test.table, &addresses[17], &retired_fd ) );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_sweep( test.table, NULL, NULL ) == 1 );
+    rocketnet_msgx_socket_table_begin_update( test.table, 1 );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &addresses[clients] ) );
+    addresses[17] = addresses[clients];
+    rocketnet_unit_check( msgx_test_spread( test, addresses, clients, 3 ) <= 1 );
+
+    delete[] addresses;
+    msgx_test_destroy( &test );
+}
+
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_lifecycle );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_queue_spread );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_quarantine );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_stale_stamp );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_dead_report );

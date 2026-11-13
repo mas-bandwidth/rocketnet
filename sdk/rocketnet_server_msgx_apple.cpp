@@ -463,24 +463,14 @@ int rocketnet_server_msgx_send_queues( struct rocketnet_server_msgx_t * msgx )
     return msgx->num_workers;
 }
 
-// the destination hash every per-queue transport uses (the XDP transport's
-// FNV-1a of address bytes and port), so a client leaves through one worker
+// a client's socket slot modulo the workers, else its address hash
+// (sdk/rocketnet_msgx_socket_table.h queue_of), so the clients the table
+// holds spread evenly across the workers
 int rocketnet_server_msgx_send_queue_of( struct rocketnet_server_msgx_t * msgx, const struct rocketnet_address_t * to )
 {
     rocketnet_assert( msgx );
-    uint64_t hash = 0xCBF29CE484222325ULL;
-    const uint8_t * address = (const uint8_t *) &to->data;
-    const int address_bytes = to->type == ROCKETNET_ADDRESS_IPV6 ? 16 : 4;
-    for ( int i = 0; i < address_bytes; i++ )
-    {
-        hash ^= address[i];
-        hash *= 0x100000001B3ULL;
-    }
-    hash ^= (uint8_t) ( to->port & 0xFF );
-    hash *= 0x100000001B3ULL;
-    hash ^= (uint8_t) ( to->port >> 8 );
-    hash *= 0x100000001B3ULL;
-    return (int) ( hash % (uint64_t) msgx->num_workers );
+    int slot = -1;
+    return rocketnet_msgx_socket_table_queue_of( msgx->table, to, msgx->num_workers, &slot );
 }
 
 int rocketnet_server_msgx_send_room_queue( struct rocketnet_server_msgx_t * msgx, int queue )
@@ -521,7 +511,9 @@ uint8_t * rocketnet_server_msgx_start_packet( struct rocketnet_server_msgx_t * m
         return NULL;
     }
 
-    const int w = rocketnet_server_msgx_send_queue_of( msgx, to );
+    // one lookup names the worker and the slot the stamp takes
+    int table_slot = -1;
+    const int w = rocketnet_msgx_socket_table_queue_of( msgx->table, to, msgx->num_workers, &table_slot );
     struct rocketnet_server_msgx_worker_t * worker = msgx->workers[w];
     if ( worker->producer < 0 )
     {
@@ -542,7 +534,7 @@ uint8_t * rocketnet_server_msgx_start_packet( struct rocketnet_server_msgx_t * m
     rocketnet_server_msgx_send_info_t * info = &bank->info[slot];
     info->to = *to;
     info->packet_bytes = 0;
-    info->table_slot = rocketnet_msgx_socket_table_stamp( msgx->table, to, &info->generation );
+    info->table_slot = rocketnet_msgx_socket_table_stamp_slot( msgx->table, table_slot, &info->generation );
 
     *packet_id = worker->serial.fetch_add( 1, std::memory_order_relaxed ) * (uint64_t) msgx->num_workers + (uint64_t) w;
     return bank->data[slot];
