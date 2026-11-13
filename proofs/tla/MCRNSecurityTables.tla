@@ -35,4 +35,10 @@ MCNoChargePastVerify == FALSE
 \* refusal past the verify that charges nothing holds no token for the
 \* repeat rung.
 MCNoRepeatRung == FALSE
+\* MCRNSecurityTablesBrokenOrderInPlace.cfg overrides RewriteMovesToTail
+\* with this: a token's expired claim is rewritten where it sits.
+MCRewriteInPlace == FALSE
+\* MCRNSecurityTablesBrokenTakeLiveHead.cfg overrides HeadMustExpire with
+\* this: the order head is reused while its claim is live.
+MCHeadLive == FALSE
 =============================================================================

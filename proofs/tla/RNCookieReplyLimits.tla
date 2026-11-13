@@ -30,9 +30,15 @@
 (*                                                                         *)
 (*   CookieRequest(s)  a request from s owed a cookie (no cookie, a forged *)
 (*                     one or an expired one): the source bit, then the    *)
-(*                     reply.  A request its bit refuses is ignored; it is *)
-(*                     counted only by its cookie's reason, as every such  *)
-(*                     request is, and the refusal has no counter.         *)
+(*                     reply.  A request its bit refuses is ignored,       *)
+(*                     counted by its cookie's reason and as               *)
+(*                     CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD.  A source *)
+(*                     whose address bytes cannot be written has no index  *)
+(*                     (index < 0, Unwritable) and is withheld the same    *)
+(*                     way, with no bit read or set.  With no bitmap       *)
+(*                     (Limited FALSE: cookie_reply_sources NULL, a        *)
+(*                     protocol object made without its transport) there  *)
+(*                     is no limit: every such request is answered.        *)
 (*   ValidRequest      a request with a valid cookie reaching the handshake *)
 (*                     work budget (handshakes_processed_this_update).     *)
 (*   Update            rocketnet_server_protocol_update's reset.           *)
@@ -88,11 +94,19 @@ VARIABLES
     processed,      \* ghost: connection requests this update processed
     sent,           \* ghost: cookie replies to each source this update
     bitRefused,     \* ghost: sources refused by their bit this update
+    indexRefused,   \* ghost: sources refused with no index this update
     verifies,       \* handshakes_processed_this_update
     verified,       \* ghost: requests actually verified this update
     validRefusedEarly   \* ghost: a valid request refused below VerifyBudget verifies
 
-vars == << hash, words, dirty, processed, sent, bitRefused, verifies, verified, validRefusedEarly >>
+vars == << hash, words, dirty, processed, sent, bitRefused, indexRefused, verifies, verified, validRefusedEarly >>
+
+\* Definitions, replaced with <- in MCRNCookieReplyLimitsUnwritable.cfg and
+\* MCRNCookieReplyLimitsUnlimited.cfg: the sources whose address bytes
+\* cannot be written (rocketnet_server_protocol_cookie_reply_source_index
+\* returns -1), and whether the bitmap exists at all
+Unwritable == {}
+Limited == TRUE
 
 Index(s) == IF Broken = "nomask" THEN hash[s] ELSE hash[s] % AllocBits
 Word(i) == i \div WordBits
@@ -107,6 +121,7 @@ Init ==
     /\ processed = 0
     /\ sent = [s \in Sources |-> 0]
     /\ bitRefused = {}
+    /\ indexRefused = {}
     /\ verifies = 0
     /\ verified = 0
     /\ validRefusedEarly = FALSE
@@ -114,22 +129,25 @@ Init ==
 CookieRequest(s) ==
     /\ processed < Bound
     /\ processed' = processed + 1
-    /\ dirty' = (Broken /= "noflag" \/ dirty)
+    /\ dirty' = (Limited /\ (Broken /= "noflag" \/ dirty))
     /\ UNCHANGED << hash, verified, validRefusedEarly >>
-    /\ IF Broken /= "nobit" /\ IsSet(Index(s))
+    /\ IF Limited /\ s \in Unwritable
+       THEN /\ indexRefused' = indexRefused \cup {s}
+            /\ UNCHANGED << words, sent, verifies, bitRefused >>
+       ELSE IF Limited /\ Broken /= "nobit" /\ IsSet(Index(s))
        THEN /\ bitRefused' = bitRefused \cup {s}
-            /\ UNCHANGED << words, sent, verifies >>
-       ELSE /\ words' = IF Word(Index(s)) \in 0..Words-1
+            /\ UNCHANGED << words, sent, verifies, indexRefused >>
+       ELSE /\ words' = IF Limited /\ Word(Index(s)) \in 0..Words-1
                         THEN [words EXCEPT ![Word(Index(s))] = @ \cup {Bit(Index(s))}]
                         ELSE words
             /\ sent' = [sent EXCEPT ![s] = @ + 1]
             /\ verifies' = IF Broken = "shared" THEN verifies + 1 ELSE verifies
-            /\ UNCHANGED bitRefused
+            /\ UNCHANGED << bitRefused, indexRefused >>
 
 ValidRequest ==
     /\ processed < Bound
     /\ processed' = processed + 1
-    /\ UNCHANGED << hash, words, dirty, sent, bitRefused >>
+    /\ UNCHANGED << hash, words, dirty, sent, bitRefused, indexRefused >>
     /\ IF verifies >= VerifyBudget
        THEN /\ validRefusedEarly' = (validRefusedEarly \/ verified < VerifyBudget)
             /\ UNCHANGED << verifies, verified >>
@@ -145,6 +163,7 @@ Update ==
     /\ processed' = 0
     /\ sent' = [s \in Sources |-> 0]
     /\ bitRefused' = {}
+    /\ indexRefused' = {}
     /\ verifies' = 0
     /\ verified' = 0
     /\ UNCHANGED << hash, validRefusedEarly >>
@@ -159,10 +178,19 @@ TypeOK ==
     /\ words \in [0..Words-1 -> SUBSET (0..WordBits-1)]
     /\ dirty \in BOOLEAN
     /\ processed \in 0..Bound /\ verifies \in Nat /\ verified \in Nat
-    /\ bitRefused \subseteq Sources
+    /\ bitRefused \subseteq Sources /\ indexRefused \subseteq Sources
 
 \* The bit a source stands for lies inside the allocated bitmap, whatever the key.
-IndexInRange == \A s \in Sources : Index(s) \in 0..AllocBits-1
+IndexInRange == \A s \in Sources \ Unwritable : Index(s) \in 0..AllocBits-1
+
+\* A request is withheld with no index only for a source whose address
+\* cannot be written, and the bitmap never holds a bit for one.
+NoIndexOnlyUnwritable ==
+    /\ indexRefused \subseteq Unwritable
+    /\ Limited => \A s \in Unwritable : sent[s] = 0
+
+\* With no bitmap there is no limit: no request is withheld.
+UnlimitedNeverWithholds == ~Limited => (bitRefused = {} /\ indexRefused = {})
 
 \* No source gets a second cookie reply in one update: exact, whatever the
 \* collisions, since a source's own reply sets its own bit.

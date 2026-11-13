@@ -19,7 +19,14 @@ generations 1 and 2.
 | `TakeSlots(g)` | `rocketnet_client_slots_assign` (`sdk/rocketnet_client_slots.cpp`): peeks the top, refuses a slot whose generation is already `g`, then pops |
 | `PeekClaim` | `rocketnet_used_token_history_claim_record` (`sdk/rocketnet_token_tables.cpp`): `rn_token_claim_select_slot` selects the top while `free_count > 0`, else the oldest claim whose deadline has passed (a live slot; any live slot here, since the model keeps no deadlines or order) |
 | `PopClaim` | the rest of the same call: `--free_count` only when `free_count > 0` and the slot is the top; else `rn_token_slot_retire` and the insert, so the slot stays live and the stack is untouched |
-| `Release(i)` | `rocketnet_encryption_map_remove_generation`, `rocketnet_client_slots_release`, `rn_token_free_push`: only a live slot is pushed |
+| `Release(i)` | `rocketnet_encryption_map_remove_generation`, `rn_token_free_push`: only a live slot is pushed, where the next take pops it |
+
+The client slots share `TakeSlots` only. `rocketnet_client_slots_release`
+holds a released slot above the top until `rocketnet_client_slots_publish`
+at the end of the server update, so it is not poppable at once, which
+`Release` here would claim; `RNClientSlotsLayout.tla` models the client
+slots' stack with that hold and `Publish`, and `TakeSlots` here is the
+assign with nothing held.
 
 ## Invariants
 

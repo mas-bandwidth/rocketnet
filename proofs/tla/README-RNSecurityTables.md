@@ -1,4 +1,3 @@
-| `BrokenNoCharge.cfg` | `ChargePastVerify <- MCNoChargePastVerify` (`FALSE`), ChargeSpec | `HonestConnectsUnderFlood` |
 # RNSecurityTables
 
 > STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
@@ -123,9 +122,15 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   `EvictLiveHistory.cfg` records the eviction.
 - **`ExpiredAtRequestNeverAdmitted`** (TRANSPORT.md t12 rules 5 and 13):
   a slot is assigned only under a token that was unexpired when its
-  request made the mapping, and before that mapping's handshake deadline
-  (the ghost `lateAdmit` never fires). Expiry is checked at the request
-  only, so a response that arrives after the token's expiry is admitted.
+  request made the mapping (the ghost `lateAdmit` never fires). Expiry is
+  checked at the request only, so a response that arrives after the
+  token's expiry is admitted. Nor does the response check the handshake
+  deadline: the code's sweep runs after the receive in the same update,
+  so a response that arrives in the update that reaches the deadline, or
+  after a stalled update, is admitted before the sweep removes its
+  mapping. `Tick` here sweeps at the clock advance and omits that window
+  (What the model leaves out); `MCReceiveOrderDeadlineWindow.cfg` and
+  `MCReceiveOrderDeadlineWindowBound.cfg` model it.
 - **`RotationWindow`** (action property): a mapping is created only
   under a cookie generation that is live at that step.
 - **`PreviousBoundedToOnePeriod`** (action property): a mapping is
@@ -145,9 +150,18 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
 - **`OrderIsDeadlineOrder`**: the order list's deadlines never decrease
   from head to tail, so the head holds the earliest deadline. It rests on
   the clock never going backwards (the transport clamps a step backwards
-  to the last good time) and one fixed handshake deadline.
+  to the last good time), one fixed handshake deadline, and a rewritten
+  claim moving to the tail (`RewriteMovesToTail`; reversed witness
+  `BrokenOrderInPlace.cfg`).
 - **`LiveClaimNeverReplaced`**: a claim record never lands on a slot
-  holding another token's live claim (ghost `claimReplaced`).
+  holding another token's live claim (ghost `claimReplaced`); the order
+  head is reused only once its deadline has passed (`HeadMustExpire`;
+  reversed witness `BrokenTakeLiveHead.cfg`).
+- **`CookieRaceResolves`** (liveness, `Race.cfg`): a mapping whose
+  handshake deadline falls inside the clock's range is admitted or swept,
+  under `Spec`'s weak fairness on `Tick`. The clock stops at `MaxClock`,
+  so a mapping made later is never swept in the model and is outside the
+  property.
 - **`CanRecordMatchesScan`**: for every token, the O(1) capacity answer
   equals the answer of the scan over every slot that the code ran before.
 
@@ -205,8 +219,15 @@ budget the config takes, one request per update against two forgers.
 with weak fairness for the honest request: a forger takes the one
 request of every update, the honest request is enabled after each update
 and disabled again before it runs, and it never connects. Liveness under
-the budget rests on that fairness, which the client's resends at its
-send rate and the arrival order of one update provide in the code.
+the budget rests on that fairness, and the fairness is an assumption
+about the environment, not something the code provides: the code charges
+the first eligible requests of an update in arrival order and drops the
+rest with no reservation for a request it dropped before, so the client's
+resends keep the honest request enabled, but a flood that always arrives
+first holds it back. The code comment at the work budget in
+`rocketnet_server_protocol_process_connection_request` says a dropped
+client's next request is processed in a later update; that holds only
+under this assumption.
 `test_handshake_burst_spreads_across_updates` and
 `test_mass_join_spreads_handshakes_across_updates` pin the code: a burst
 over the budget is spread across updates and every client is admitted.
@@ -294,13 +315,21 @@ Each reversed witness has a committed configuration registered in
 | `BrokenUnfairBudget.cfg` | `FloodSpecWeakHonest` (weak fairness for `HonestRequest`), `VerifyBudget = 1` | `HonestConnectsUnderFlood` |
 | `BrokenReleaseKeepsSlot.cfg` | `ReleaseToFree <- MCReleaseToFree` (`FALSE`) | `CanRecordMatchesScan` |
 | `BrokenReleaseTwice.cfg` | `ReleaseChecksLive <- MCReleaseChecksLive` (`FALSE`) | `FreeAndOrderPartitionSlots` |
+| `BrokenNoCharge.cfg` | `ChargePastVerify <- MCNoChargePastVerify` (`FALSE`), ChargeSpec | `HonestConnectsUnderFlood` |
 | `BrokenRepeat.cfg` | `RepeatRung <- MCNoRepeatRung` (`FALSE`), RepeatSpec | `HonestConnectsUnderFlood` |
+| `BrokenOrderInPlace.cfg` | `RewriteMovesToTail <- MCRewriteInPlace` (`FALSE`), ClaimsSpec, handshake deadline 2 | `OrderIsDeadlineOrder` |
+| `BrokenTakeLiveHead.cfg` | `HeadMustExpire <- MCHeadLive` (`FALSE`), ClaimsSpec, handshake deadline 2 | `LiveClaimNeverReplaced` |
 
 `Flood.cfg` is FloodSpec's passing control: `FloodInvariants` (with
 `FloodWindowBounded`) and `HonestConnectsUnderFlood` hold.
 `FloodBudgetOne.cfg` is the same control at `VerifyBudget = 1`.
 `Charge.cfg` is ChargeSpec's passing control, and `Repeat.cfg` is
-RepeatSpec's.
+RepeatSpec's. `Claims.cfg` is ClaimsSpec's passing control at handshake
+deadline 2, so claims made at clocks 0, 1 and 2 expire inside the clock's
+range (at deadline 4 with `MaxClock` 4 only clock-0 claims did).
+`Race.cfg` checks `CookieRaceResolves` with `SafetyInvariants` on a
+smaller instance (tokens `th` and `tf`, `MaxClock` 3, handshake deadline
+2).
 
 Refresh every case of the group through the pinned `tlacheck` runner and merge with
 `--keep proofs/tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
@@ -353,6 +382,10 @@ is explored and admitted.
   order list, which `RequestRefused` already does, and its mapping states
   put the instance past the checking budget. `test_claim_released_with_half_open_idle_mapping`
   and `test_claim_released_with_integrity_limit_mapping` pin it in the code.
+- A request from an address with a live mapping is not an action
+  (`RequestRungs` requires `~Live(a)`): the same-token challenge resend
+  and the replacement of a half-open mapping are `ReceiveOrder`'s (the
+  restart and used rungs, `MCReceiveOrder` `NewRequest`).
 - Packets, the link, the replay window and the session keys stay in
   the held draft; a response here is a packet that has already opened
   under its mapping.

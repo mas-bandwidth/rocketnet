@@ -11,4 +11,10 @@ EXTENDS RNCookieReplyLimits
 
 MCSpec == Spec
 
+\* MCRNCookieReplyLimitsUnwritable.cfg: source 3's address bytes cannot be
+\* written, so it has no index (Unwritable)
+MCUnwritable == {3}
+\* MCRNCookieReplyLimitsUnlimited.cfg: no bitmap (Limited)
+MCUnlimited == FALSE
+
 =============================================================================

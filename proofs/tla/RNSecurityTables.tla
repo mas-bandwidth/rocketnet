@@ -67,9 +67,13 @@
 (* is enabled again after every update while the flood takes the budget.  *)
 (* FloodSpec assumes the budget is fair to it in that sense (strong        *)
 (* fairness): a flood of any size within the budget delays it but never    *)
-(* holds it back forever.  FloodSpecWeakHonest drops that assumption to    *)
-(* weak fairness, which a flood that takes the whole budget first in every *)
-(* update defeats, so the fairness is what liveness rests on.              *)
+(* holds it back forever.  That is an assumption about the environment,   *)
+(* not something the code provides: the code charges the first eligible   *)
+(* requests of an update in arrival order and drops the rest with no       *)
+(* reservation, so a flood that always arrives first holds the honest      *)
+(* client back.  FloodSpecWeakHonest drops the assumption to weak         *)
+(* fairness, which such a flood defeats, so the assumption is what        *)
+(* liveness rests on.                                                      *)
 (* Spec leaves the flood variables at their initial values.                *)
 (*                                                                         *)
 (* The request-claim table (rocketnet_used_token_history_claim_can_record, *)
@@ -177,6 +181,15 @@ ClaimSlots == 1..2
 ClaimTokens == {"th"}
 ReleaseToFree == TRUE
 ReleaseChecksLive == TRUE
+\* RewriteMovesToTail: a rewrite of the token's own expired entry moves it
+\* to the order list's tail (the code); the reversed witness rewrites it in
+\* place, so a later deadline sits ahead of an earlier one
+\* (OrderIsDeadlineOrder).  HeadMustExpire: the order head is reused only
+\* once its deadline has passed (the code); the reversed witness reuses it
+\* live, so a record lands on another token's live claim
+\* (LiveClaimNeverReplaced).
+RewriteMovesToTail == TRUE
+HeadMustExpire == TRUE
 
 PrevGen == IF gen = 1 THEN 3 ELSE gen - 1
 NextRotate == gen * RotatePeriod
@@ -228,9 +241,10 @@ ClaimCheckOk(tk, a) == \A s \in Found(ClaimState, tk) : LiveAt(ClaimState, s) =>
 \* rocketnet_used_token_history_claim_can_record, the O(1) rule: the token
 \* is in the table, or the free list is not empty, or the order head's
 \* deadline has passed
+HeadReusable(C) == C.order # <<>> /\ (~LiveAt(C, Head(C.order)) \/ ~HeadMustExpire)
 CanRecord(tk) == \/ Found(ClaimState, tk) # {}
                  \/ freeList # <<>>
-                 \/ (orderList # <<>> /\ ~LiveAt(ClaimState, Head(orderList)))
+                 \/ HeadReusable(ClaimState)
 \* the code before the free list: the same, with a scan over every slot
 CanRecordScan(tk) == \/ Found(ClaimState, tk) # {}
                      \/ freeList # <<>>
@@ -244,7 +258,7 @@ ClaimDeadline == IF clock + HandshakeDeadline > MaxClock THEN MaxClock + 1 ELSE 
 Write(C, s, tk, a, fl, ol) ==
     [slot |-> [C.slot EXCEPT ![s] = [tok |-> tk, addr |-> a, dl |-> ClaimDeadline]],
      free |-> fl,
-     order |-> Append(Remove(ol, s), s),
+     order |-> IF RewriteMovesToTail \/ s \notin SeqSet(ol) THEN Append(Remove(ol, s), s) ELSE ol,
      replaced |-> C.replaced \/ (C.slot[s].tok # tk /\ C.slot[s].tok # None
                                 /\ LiveAt(C, s) /\ s \in SeqSet(C.order))]
 
@@ -258,7 +272,7 @@ ClaimRecord(C, tk, a) ==
            IN IF LiveAt(C, s) THEN C ELSE Write(C, s, tk, a, C.free, C.order)
     ELSE IF C.free # <<>>
       THEN Write(C, Head(C.free), tk, a, Tail(C.free), C.order)
-    ELSE IF C.order # <<>> /\ ~LiveAt(C, Head(C.order))
+    ELSE IF HeadReusable(C)
       THEN Write(C, Head(C.order), tk, a, C.free, Tail(C.order))
     ELSE C
 
@@ -340,6 +354,11 @@ Bind(tk, a, op) ==
 \* claim table's capacity (claim_can_record, read-only), then the
 \* per-update work budget, charged only by a request that reaches the
 \* verify.  Past the verify the claim is recorded (claim_record).
+\* Only an address with no live mapping requests here: the same-token
+\* challenge resend and the replacement of a half-open mapping
+\* (rocketnet_server_protocol_process_connection_request, the stored
+\* challenge and the replace branch) are ReceiveOrder's (the restart and
+\* used rungs, MCReceiveOrder NewRequest), not this module's.
 RequestRungs(a, tok, g) ==
     /\ ~Live(a)
     \* a connected address provokes nothing from the request path
@@ -423,10 +442,13 @@ Response(a) ==
                \* stays finite
                /\ admits' = [admits EXCEPT ![tok] = 1]
                \* the ghost: admitted under a token already expired when
-               \* its request made the mapping, or past that mapping's
-               \* handshake deadline
-               /\ lateAdmit' = (lateAdmit \/ ExpTime(tok) <= mapBorn[a]
-                                \/ clock >= mapBorn[a] + HandshakeDeadline)
+               \* its request made the mapping. The handshake deadline is
+               \* not a rung of the response: the code's sweep runs after
+               \* the receive, so a response in the update that reaches the
+               \* deadline (or after a stalled update) is admitted; Tick
+               \* sweeps at the clock advance and omits that window
+               \* (MCReceiveOrder's DeadlineWindow cases model it)
+               /\ lateAdmit' = (lateAdmit \/ ExpTime(tok) <= mapBorn[a])
                /\ UNCHANGED <<clock, mapGen, mapBorn, others, gen, hasPrev,
                               prevUntil, verifies, deniedPulse, churnDenied>>
 
@@ -587,7 +609,10 @@ FloodClockBack ==
 FloodNext == (\E f \in Forgers : Forge(f)) \/ HonestRequest \/ HonestResponse \/ FloodUpdate
              \/ FloodClockForward \/ FloodClockBack
 \* the honest request is enabled again after every update while the flood
-\* takes the budget, hence strong fairness for it
+\* takes the budget, hence strong fairness for it: an environment
+\* assumption (the arrival order of each update does not always put the
+\* flood first), not a property of the code's budget, which keeps no
+\* reservation for a request it dropped
 FloodSpec == Init /\ [][FloodNext]_vars
              /\ SF_vars(HonestRequest) /\ WF_vars(HonestResponse) /\ WF_vars(FloodUpdate)
 \* the reversed witness of that fairness: weak fairness only.  The flood
@@ -703,8 +728,10 @@ NoBindToNonHolder == \A t \in Tokens : history[t] # None => history[t].addr \in 
 NoLiveHistoryEviction == ~evictedLive
 \* TRANSPORT.md t12 rules 5 and 13: expiry is checked at the request only.
 \* A slot is assigned only under a token that was unexpired when its
-\* request made the mapping, and before that mapping's handshake deadline;
-\* a response that arrives after the token's expiry is admitted.
+\* request made the mapping; a response that arrives after the token's
+\* expiry is admitted. Nothing here bounds admission by the handshake
+\* deadline: the code admits a response that arrives before the sweep,
+\* and this model's Tick sweeps at the clock advance (see lateAdmit).
 ExpiredAtRequestNeverAdmitted == ~lateAdmit
 DeniedTokenStaysUsable == [][deniedPulse' # deniedPulse => admitted' = admitted]_vars
 RotationWindow == [][\A a \in Addrs : (~Live(a) /\ Live(a)') => mapGen'[a] \in LiveGens']_vars
@@ -736,8 +763,13 @@ ClaimSafetyInvariants == FreeAndOrderPartitionSlots /\ OrderIsDeadlineOrder
                          /\ LiveClaimNeverReplaced /\ CanRecordMatchesScan
 TablesBounded == HistCount <= HistoryCap /\ AdmCount <= AdmittedCap
                  /\ Cardinality(slots) + others <= MaxClients
+\* a mapping is admitted or swept: every mapping whose handshake deadline
+\* falls inside the clock's range (the clock stops at MaxClock, so a
+\* mapping made later is never swept here) ends. Checked by
+\* MCRNSecurityTablesRace.cfg under Spec's weak fairness on Tick.
 CookieRaceResolves == \A a \in Addrs, t \in Tokens :
-    (Live(a) /\ map[a] = t) ~> (admits[t] >= 1 \/ ~Live(a))
+    (Live(a) /\ map[a] = t /\ mapBorn[a] + HandshakeDeadline <= MaxClock)
+        ~> (admits[t] >= 1 \/ ~Live(a))
 
 SafetyInvariants == TypeOK /\ OneTokenOneLiveConnection /\ ChurnNeverDenied /\ BoundOnlyToOpener /\ NoBindToNonHolder
                     /\ ExpiredAtRequestNeverAdmitted /\ VerifyBudgetRespected /\ TablesBounded

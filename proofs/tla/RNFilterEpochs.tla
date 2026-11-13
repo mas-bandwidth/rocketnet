@@ -30,10 +30,11 @@
 (* Install or Retire clears it, so every invariant over last reads the     *)
 (* table the check saw.                                                    *)
 (*                                                                         *)
-(* The code card names its functions after the actions: Install, Retire    *)
-(* and Check. Rocketnet 1.0 is unkeyed: rocketnet_prefilter_check          *)
-(* (sdk/rocketnet_protocol.cpp) refuses every epoch but 0, so this module  *)
-(* is written before the code it covers.                                   *)
+(* Historical design only (COVERAGE.tsv rn-filter-epochs): no code        *)
+(* implements this table.  The keyed filter-epoch check was removed, and   *)
+(* rocketnet_prefilter_check (sdk/rocketnet_protocol.cpp) is unkeyed: it   *)
+(* refuses every epoch but the unkeyed one.  Nothing in the code is named  *)
+(* after Install, Retire or Check, and nothing cites this module.          *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 

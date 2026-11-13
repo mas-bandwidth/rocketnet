@@ -115,6 +115,7 @@ states (19,907 generated, depth 18) and every invariant holds.
 | `MCRNFilterEpochsBrokenWrapToZero.cfg` | the wrap to 1: `WrapTo <- WrapToZero`, the generation after `N` is 0 | `WrapSkipsZero`, exit 12: installs 1, 2, 3, a retire, 4, a retire, then the fifth install hands generation 0 into the table beside 3 and 4. `STANDARD.md` wraps 255 to 1 and never makes zero a generation. |
 
 Both traces were checked by hand against `STANDARD.md`. Neither has code to
-replay against yet: `rocketnet_prefilter_check` holds no generation table
-and refuses every nonzero epoch, so the keyed rule and its unit test
-replaying these witnesses are the code card's.
+replay against: `rocketnet_prefilter_check` holds no generation table and
+refuses every nonzero epoch, and no card implements the keyed rule; a
+keyed filter, if it returns, would bring the rule and a unit test
+replaying these witnesses.

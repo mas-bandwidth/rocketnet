@@ -60,12 +60,12 @@ host vanishes with nothing sent.
 
 | Action | Who | Code |
 |---|---|---|
-| `ServerRecvRequest` | a request arrives | `rocketnet_server_protocol_process_connection_request`: a connected address is silent; a half-open mapping resends its stored challenge whatever the request's salt; no cookie, or one issued to another address, gets a cookie; a token bound elsewhere in the history, a connected client id or an admitted token is silent; the history records the binding; no free slot is a denied under fresh keys with no mapping; a full map is silent; else a mapping at a fresh nonce and its challenge |
-| `ServerRecvResponse` | a response opens under the mapping's handshake keys | the idle clock is refreshed before the check sequence; `rocketnet_server_process_connection_response`: already connected or the client id connected is silent; no slot or the admitted set full of other tokens is a denied, mapping kept; else the token is admitted, a free slot assigned (`rocketnet_client_slots_assign` in `sdk/rocketnet_client_slots.cpp`, the top of its LIFO free stack; the model takes the lowest free slot) and the first keep-alive sent |
+| `ServerRecvRequest` | a request arrives | `rocketnet_server_protocol_process_connection_request`: a connected address is silent; a half-open mapping resends its stored challenge whatever the request's salt; no cookie, or one issued to another address, gets a cookie; a token bound elsewhere in the history (or, on a request that would replace this address's half-open mapping, bound to any address, its own included: the second `rocketnet_used_token_history_check`, against the zero address), a connected client id or an admitted token is silent; the history records the binding; no free slot is a denied under fresh keys with no mapping; a full map is silent; else a mapping at a fresh nonce and its challenge |
+| `ServerRecvResponse` | a response opens under the mapping's handshake keys | the idle clock is refreshed before the check sequence; `rocketnet_server_process_connection_response`: already connected or the client id connected is silent; no slot or the admitted set full of other tokens is a denied, mapping kept; when every free slot was released in this update and is held until it is published, the response is ignored, mapping kept (`rocketnet_client_slots_assign` returns -1); else the token is admitted, a free slot that is not held assigned (`rocketnet_client_slots_assign` in `sdk/rocketnet_client_slots.cpp`, the top of the published part of its LIFO free stack; the model takes the lowest assignable slot) and the first keep-alive sent |
 | `ServerRecvSession` | a keep-alive or disconnect opens under the session keys | a mapping without a slot ignores it; a keep-alive refreshes the idle clock, confirms the slot and its block sets the keep-alive-acknowledged latch; a disconnect releases the slot and removes the mapping at once |
 | `ServerKeepAlive(i)` | the server's timer | `rocketnet_server_protocol_write_keep_alive_if_due`: paced off the keep-alive's own clock |
-| `ServerAppDisconnect(i)`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client`: the burst, then the slot released and the mapping removed |
-| `Tick` | time | `rocketnet_server_protocol_update`: a half-open mapping is removed at whichever of its idle and handshake deadlines comes first; an established one idle past its timeout releases its slot and is removed with it; the clients' send clocks; both links `Age` |
+| `ServerAppDisconnect(i)`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client`: the burst, then the slot released and the mapping removed; a released slot is held (`rocketnet_client_slots_release`) until the update publishes it |
+| `Tick` | time | `rocketnet_server_protocol_update`: a half-open mapping is removed at whichever of its idle and handshake deadlines comes first; an established one idle past its timeout releases its slot and is removed with it; then `rocketnet_client_slots_publish` makes every held slot assignable; the clients' send clocks; both links `Age` |
 | `ClientConnect`, `ClientSend`, `ClientDiscCopy`, `ClientAppDisconnect` | a client | ClientConnection's `AppConnect`, `ClientSend`, `ClientDiscCopy`, `AppDisconnect`, with the token chosen at connect |
 | `ClientVanish` | the outside | the host is gone; nothing is sent again |
 | `ClientMove` | the outside | the client's address changes to one no client holds (NAT rebinding, a handover); the old address keeps its mapping; the cookie no longer verifies |
@@ -95,6 +95,7 @@ and are not committed:
 | `OneSlotPerClientId` | a client id holds at most one slot (S:2647, S:2817) |
 | `SlotMappingBijection` | no slot without a live, established mapping behind it naming that slot, and no established mapping without the used slot it names bound to its address (S:3141-3144, slot reset destroys the mapping; S:2852-2853; the leak the audits suspect at the 2x mapping table) |
 | `NoSlotBeforeResponse` | a live mapping holds a slot only once established: no amount of requests consumes one (S:2712-2715) |
+| `HeldSlotNotReused` | a slot released since the last update is not given to a new connection before the update publishes it, so the end of its old connection is reported first |
 | `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp`) |
 | `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
 | `NonceFresh` | no two live mappings share keys (S:32-33, no key or nonce outlives one connection; S:2656-2658) |
@@ -195,7 +196,8 @@ holds each one's measured result. Every case is on a FIFO link without duplicati
 | Case | Instance | Checks | Expected |
 |---|---|---|---|
 | `MCServerConnection.cfg` | two clients, two addresses, any token, one slot, disconnects | `SafetyInvariants`, `ChurnNeverDenied`, `ExpiredTokenNeverMapped`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
-| `MCServerConnectionTwoSlots.cfg` | the same with two slots, two mappings and two session nonces | the same | pass |
+| `MCServerConnectionTwoSlots.cfg` | the same with two slots, two mappings and two session nonces, the release hold off (`HoldReleased <- MCHoldOff`) | the same | pass |
+| `MCServerConnectionBrokenHeldSlotTaken.cfg` | the committed run with one slot, `TokenChoice = "own"`, a response allowed to take a held slot (`ResponseTakesHeldSlot <- MCResponseTakesHeld`) | `HeldSlotNotReused` | fails (invariant) |
 | `MCServerConnectionLive.cfg` | one client, one slot, `KindLoss = "firstkind"`, every deadline off | `SafetyInvariants`, `Connects`, `ServerNotStranded` | pass |
 | `MCServerConnectionBrokenOnceKeepAlive.cfg` | `Live` with `RepeatKeepAlive = FALSE` | `ServerNotStranded` | fails (temporal) |
 | `MCServerConnectionTimers.cfg` | one client that may disconnect or vanish, `Timeout = 2`, `HandshakeDeadline = 2` | `SafetyInvariants` (the timer invariants live), `TimedOutSlotFreed`, `AbandonedMappingDies`, `ServerNotStranded` | pass |
@@ -331,8 +333,26 @@ committed case. One model error was found and fixed on the way.
 `MaxSlots = 2`, `MapCap = 2` and `MaxNonces = 2`, two clients and two tokens,
 every deadline and both application disconnects unchanged. It keeps
 `SafetyInvariants`, `ChurnNeverDenied` and `ExpiredTokenNeverMapped` and the
-two action properties. It passes: 3,797,191 generated / 766,022 distinct
-states, 64.4 s on the bench, exit 0, and is a required case.
+two action properties. It runs with the release hold off (`HoldReleased <-
+MCHoldOff`, a released slot is assignable at once): with the hold it reaches
+1,187,430 distinct states in 129 s, past the 110 s case limit, so the hold is
+checked by the one-slot runs and `BrokenHeldSlotTaken` instead. It passes:
+3,797,191 generated / 766,022 distinct states, 84.9 s on the bench, exit 0,
+and is a required case.
+
+`MCServerConnectionBrokenHeldSlotTaken.cfg` lets a response take a held slot
+(`ResponseTakesHeldSlot <- MCResponseTakesHeld`). TLC fails
+`HeldSlotNotReused` in 23 states: both clients hold half-open mappings,
+client 1's response takes the one slot, the server application disconnects
+client 1 (the slot is held), and client 2's response, in the same update,
+takes the held slot. Checked against the code by hand:
+`rocketnet_server_protocol_disconnect_client` releases the slot through
+`rocketnet_client_slots_release`, which keeps it at
+`free_stack[count + held]`, above the top `rocketnet_client_slots_assign`
+pops from; with nothing else free the assign returns -1 and
+`rocketnet_server_process_connection_response` ignores the response, so
+client 2 takes the slot only after `rocketnet_client_slots_publish` at the end
+of `rocketnet_server_protocol_update`.
 
 Until v1.1.2 it ran with `MaxNonces = 1`. A nonce held by a live mapping or
 by a client's keys is not fresh (`FreshNonce`), so one connected client held
