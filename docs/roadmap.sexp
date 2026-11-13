@@ -134,12 +134,12 @@
   (item "xdp-worker-lock-contention" :group "after-v1-0-1" :area "rocketnet"
    :title "Measure xdp worker lock contention"
    :text "Try-lock failures between the main thread and the xdp workers were never measured. Measure them on a two-queue guest on a quiet bench before any change."
-   :date "2026-11-11" :origin "v1.0.1 xdp review, item M6")
+   :date "2026-11-11" :origin "v1.0.1 xdp review")
 
   (item "xdp-receive-time-seam" :group "after-v1-0-1" :area "rocketnet"
    :title "xdp receive path reads the platform clock"
    :text "The xdp receive path still reads rocketnet_platform_time() instead of the update's time. Passing the time in needs the driver seam widened."
-   :date "2026-11-11" :origin "v1.0.1 xdp gateway review, item L13")
+   :date "2026-11-11" :origin "v1.0.1 xdp gateway review")
 
   (item "xdp-tx-queue-hash" :group "after-v1-0-1" :area "rocketnet"
    :title "xdp TX queue choice is an unkeyed hash; gso send bank at 32768 clients"
@@ -154,12 +154,12 @@
   (item "uring-rotation-reordering" :group "quiet-host" :area "rocketnet"
    :title "Measure reordering from io_uring per-send socket rotation"
    :text "Since v1.0.1, io_uring picks the send socket per send run instead of per batch, so consecutive packets to one client can leave on different reuseport sockets within one update. Measure any extra reordering against v1.0.0."
-   :date "2026-11-11" :origin "v1.0.1 cold read")
+   :date "2026-11-11" :origin "v1.0.1 review")
 
   (item "uring-receive-view-640" :group "after-v1-0-1" :area "rocketnet"
    :title "io_uring receive view larger than the payload batch"
    :text "Below 640 clients the io_uring receive view is larger than the server payload batch. Check what the server does with the difference and pin it."
-   :date "2026-11-11" :origin "v1.0.1 server transport review, item F5")
+   :date "2026-11-11" :origin "v1.0.1 server transport review")
 
   (item "large-messages-under-loss" :group "after-v1-0-1" :area "tests"
    :title "Functional case: large messages under loss"
@@ -313,7 +313,7 @@
 
   (item "portable-server-shared-handoff" :group "audit-remaining" :area "sdk"
    :title "Portable server transport on the shared buffer handoff"
-   :text "PR #1043 (refactor/v1.1.x/server-shared-handoff, extraction E5) moved the portable and gso server transports off their hand-written bank queues onto rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h). Its gso half is overtaken by the rebuilt gso transport (#1103), which rewrites sdk/rocketnet_server_gso_linux.cpp and also changes sdk/rocketnet_driver_builtin.cpp. After the rebuilt gso lands, redo the portable half alone on main (the portable TX and RX commits and the rocketnet_buffer_handoff_started helper), with its gates: rnportabletx, rnportablerx and rnbufferhandoff TLC, the unit mutation cases and the light memory pins. With it, give the portable receive worker what the rebuilt transports have: it runs no prefilter (sdk/rocketnet_driver_builtin.cpp about 613-645, drop hooks NULL about 1962-1966), so junk reaches the main thread (bounded per update), and datagrams held in its banks at stop are counted nowhere (about 932-944), so RECEIVE_DROPPED_STOPPED reads 0 on portable. Not worse than v1.0.0."
+   :text "PR #1043 (refactor/v1.1.x/server-shared-handoff) moved the portable and gso server transports off their hand-written bank queues onto rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h). Its gso half is overtaken by the rebuilt gso transport (#1103), which rewrites sdk/rocketnet_server_gso_linux.cpp and also changes sdk/rocketnet_driver_builtin.cpp. After the rebuilt gso lands, redo the portable half alone on main (the portable TX and RX commits and the rocketnet_buffer_handoff_started helper), with its gates: rnportabletx, rnportablerx and rnbufferhandoff TLC, the unit mutation cases and the light memory pins. With it, give the portable receive worker what the rebuilt transports have: it runs no prefilter (sdk/rocketnet_driver_builtin.cpp about 613-645, drop hooks NULL about 1962-1966), so junk reaches the main thread (bounded per update), and datagrams held in its banks at stop are counted nowhere (about 932-944), so RECEIVE_DROPPED_STOPPED reads 0 on portable. Not worse than v1.0.0."
    :date "2026-11-13" :origin "#1043, not landed; review before v1.2.0")
 
   (item "rio-registered-region-red-zones" :group "audit-remaining" :area "tests"

@@ -26,9 +26,9 @@ IPv6 next_header byte, a ring head that advances arithmetically, or a local
 loop counter, is not a link.
 
 A link field declared by a RocketNet struct is owned and fails, with one
-exception: a traverse or link store of an index link that the manifest's
-"Approved index links" table names by file, function and field (a decision
-recorded beside the row) passes. A self-pointer always fails. Every approved
+exception: a traverse or link store that the manifest's "Approved index
+links" table names by file, function and field (a decision recorded beside
+the row) passes. A self-pointer always fails. Every approved
 row must still match a site. A link field that no scanned source declares
 comes from an operating-system header (struct ifaddrs, IP_ADAPTER_ADDRESSES).
 Such a traversal passes only when the manifest's "External ABI traversal

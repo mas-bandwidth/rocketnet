@@ -118,10 +118,12 @@ and not compared: its range rolls each night and differs per OS.
 
 `.github/workflows/nightly-dst.yml` runs every night (and by
 `workflow_dispatch`) on the fleet's Linux, macOS and Windows runners, for each
-ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
+ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. A fourth leg,
+Linux with Clang, builds Release with `ROCKETNET_DEV=ON` and runs only the
+whole unit suite. Each DST leg (Linux with GCC, macOS, Windows) builds
 Release `dst` and `test`, runs the `test_dst_` unit cases by `--run` (the
-Linux GCC, Linux Clang and macOS legs also run the whole unit suite, with no
-`--run` filter; Windows does not), runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
+Linux and macOS legs then run the whole unit suite, with no `--run` filter;
+Windows does not), runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
 requires every check to pass over the fixed range `--seeds 1-2050`, then runs
 one named short step per fault schedule (`clock-back`, `seq-gap`,
 `seq-wrap-31`, `seq-wrap-32`, `burst`, `dup-storm`, `outage`, `outage-past` and

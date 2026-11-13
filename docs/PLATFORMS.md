@@ -95,7 +95,7 @@ A supported row promises three things, and only these three:
    `tools/release_gates.txt` marks `full` (the functional suites, the
    transport matrix, the happy path, the sanitizer legs) is printed and
    does not block a landing by `tools/land.py`; `tools/land.py --full` and a
-   minor or major release hold it, and the nightly tier runs it again
+   minor, major or pre-release hold it, and the nightly tier runs it again
    ([RELEASING.md](RELEASING.md), "Landing on main").
 3. The workflow file and runner operating-system and architecture tokens in
    the row correspond to labels present in that file.
