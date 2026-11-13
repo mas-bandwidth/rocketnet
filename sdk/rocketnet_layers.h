@@ -779,17 +779,17 @@ bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_ser
                                                       int serves_both, struct rocketnet_address_t * bind_address, int * status );
 
 /**
- * @brief Drops a bind address the environment set for a family the server does not serve.
+ * @brief Drops a bind address the environment set for a family the server cannot bind specifically.
  *
  * @param[in,out] config The config after the environment pass.
  * @param[in] ipv4_before bind_ipv4_address before the environment pass.
  * @param[in] ipv6_before bind_ipv6_address before the environment pass.
- * @param[in] serves_ipv4 Nonzero when the server serves IPv4.
- * @param[in] serves_ipv6 Nonzero when the server serves IPv6.
- * @details The environment is ambient, set once for a whole host or test run, so ROCKETNET_SERVER_BIND_IPV4_ADDRESS and ROCKETNET_SERVER_BIND_IPV6_ADDRESS apply only to a family the server serves: for another family the field goes back to its value before the environment pass, with one log line. A config field set for a family not served is still refused by rocketnet_server_transport_resolve_bind_address.
+ * @param[in] binds_ipv4 Nonzero when the server serves IPv4 alone, so an IPv4 bind address applies.
+ * @param[in] binds_ipv6 Nonzero when the server serves IPv6 alone, so an IPv6 bind address applies.
+ * @details The environment is ambient, set once for a whole host or test run, so ROCKETNET_SERVER_BIND_IPV4_ADDRESS and ROCKETNET_SERVER_BIND_IPV6_ADDRESS apply only to a server of that one family: for another family, and for either on a server of both families, the field goes back to its value before the environment pass, with one log line. The environment never makes a server fail to start that way. A config field set there is still refused by rocketnet_server_transport_resolve_bind_address.
  */
-void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int serves_ipv4,
-                                                     int serves_ipv6 );
+void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int binds_ipv4,
+                                                     int binds_ipv6 );
 
 // a NULL config is a counted no-op
 /** @brief Fill a server transport config with its defaults.

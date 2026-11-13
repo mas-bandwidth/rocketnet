@@ -1365,6 +1365,46 @@ static void test_ack_received_stats_random_receives_match_scan()
 }
 REGISTER_UNIT_TEST( test_ack_received_stats_random_receives_match_scan );
 
+// A reset forgets the cached older-half pieces whole. The cache base is a
+// 64-bit pair of stats words; with sequences above 2^32 its high word is
+// nonzero, so a reset that cleared only the low word would leave a cache
+// that still looks valid for the next connection's window in the same
+// generation, and its stale middle piece would count a record the new
+// connection never received. After the reset every publication matches a
+// fresh scan of the records written since it.
+
+static void test_ack_received_stats_reset_forgets_high_cache_base()
+{
+    const uint64_t N = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+    const uint64_t high = 1ull << 33;
+
+    auto * endpoint = stats_endpoint();
+
+    // the first connection: a record in the middle generations, then a
+    // high-water mark that puts the older half's base at high + 40
+
+    stats_received_step( endpoint, high + 100, 100, 1000.0 );
+    stats_received_step( endpoint, high + N + 39, 100, 1001.0 );
+    rocketnet_unit_check( endpoint->stats_received_count == 1 );
+
+    // the slot's next connection reuses the endpoint: a high-water mark whose
+    // older half starts at high + 3, the cached base's generation
+
+    rocketnet_ack_endpoint_reset( endpoint );
+    stats_received_step( endpoint, high + N + 2, 100, 1002.0 );
+    rocketnet_unit_check( endpoint->stats_received_count == 0 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 0 );
+
+    // and it counts what it receives itself
+
+    stats_received_step( endpoint, high + 100, 60, 1003.0 );
+    rocketnet_unit_check( endpoint->stats_received_count == 1 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 60 );
+
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_received_stats_reset_forgets_high_cache_base );
+
 // A drifted sent count whose low record has left the window. Counted
 // survivors lie only in [base, old_top]. The scan must stop there and record
 // the internal error. A present record one ring above the scan base lets an

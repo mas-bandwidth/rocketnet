@@ -12,7 +12,7 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. At this revision, the full label is
-`"v1.1.7"` and the integers are `1.1.7`. The development branch uses
+`"v1.1.8"` and the integers are `1.1.8`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The header label does not identify the current checkout as a release. Check
@@ -22,7 +22,7 @@ Advancing a label alone neither tags nor publishes a release.
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.1.7` and
+version. It exports `RocketNet_VERSION_STRING` as `v1.1.8` and
 `RocketNet_VERSION_PRERELEASE` as an empty string. There is no separate public
 prerelease macro.
 
@@ -143,8 +143,8 @@ TLC re-run, MemorySanitizer, soak, leaks, macOS sanitizers or channel stress
 run exists on that commit (it was tagged 2.5 hours after soak per transport
 went red).
 
-One policy change for the owner to confirm: MSan, called advisory until
-v1.1.7, is a release gate from v1.1.8; it stays out of the per-PR set.
+MSan, called advisory until v1.1.7, is a release gate from v1.1.8; it stays
+out of the per-PR set.
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
 also applies to release qualification: the gate covers its selected translation

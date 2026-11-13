@@ -403,16 +403,16 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     return true;
 }
 
-// served is the families create serves (RN_SERVES_IPV4 | RN_SERVES_IPV6);
-// a resolve that has no addresses passes both, and keeps every
-// environment bind address for start to judge
+// served is the families create serves (RN_SERVES_IPV4 | RN_SERVES_IPV6).
+// A resolve that has no addresses passes 0 and keeps every environment bind
+// address for start to judge; create's resolve passes what it serves
 
 #define RN_SERVES_IPV4 1
 #define RN_SERVES_IPV6 2
 
 static bool rn_server_split( const struct rocketnet_server_config_t * config, bool read_env,
                              struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL,
-                             uint64_t * memory_budget = NULL, int served = RN_SERVES_IPV4 | RN_SERVES_IPV6 )
+                             uint64_t * memory_budget = NULL, int served = 0 )
 {
     struct rocketnet_server_config_t defaults;
 
@@ -503,7 +503,11 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
             return false;
         }
 
-        rocketnet_server_transport_ignore_ambient_bind( transport, bind_before[0], bind_before[1], ( served & RN_SERVES_IPV4 ) != 0, ( served & RN_SERVES_IPV6 ) != 0 );
+        // a specific bind applies only to a server of one family
+        if ( served != 0 )
+        {
+            rocketnet_server_transport_ignore_ambient_bind( transport, bind_before[0], bind_before[1], served == RN_SERVES_IPV4, served == RN_SERVES_IPV6 );
+        }
     }
 
     int send_kbps = config->per_client_send_kbps;

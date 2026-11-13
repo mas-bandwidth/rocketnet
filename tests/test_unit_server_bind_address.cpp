@@ -9,9 +9,10 @@
 // refusal. Unset binds the served family's wildcard on the served port; set,
 // that address on the served port; every refusal is INVALID_ADDRESS.
 //
-// The environment forms are ambient: they apply to a served family and are
-// ignored, with a log line, for a family the server does not serve, while
-// the config fields keep refusing that mismatch. Both paths that read the
+// The environment forms are ambient: they apply only to a server of that one
+// family and are ignored, with a log line, for a family the server does not
+// serve and on a server of both families, while the config fields keep
+// refusing there. Both paths that read the
 // environment are covered: the public create, and a bare transport create.
 //
 // No sockets, no real time: the resolve is pure, and the servers run on the
@@ -166,7 +167,7 @@ static void test_server_bind_address_refusals()
 // the public config carries the fields to the transport: a bind address the
 // resolve refuses refuses the start with INVALID_ADDRESS, and one it accepts
 // starts the server
-static enum rocketnet_status_t bind_public_start( const char * bind_ipv4 )
+static enum rocketnet_status_t bind_public_start_served( const char * bind_ipv4, const char * ipv4_address, const char * ipv6_address )
 {
     struct rocketnet_server_config_t config;
     check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
@@ -182,11 +183,16 @@ static enum rocketnet_status_t bind_public_start( const char * bind_ipv4 )
     config.bind_ipv4_address = bind_ipv4;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, ipv4_address, ipv6_address, &config, &status );
     check( server != NULL && status == ROCKETNET_STATUS_OK );
     status = rocketnet_server_start( server );
     rn_test_server_stop_and_destroy( server );
     return status;
+}
+
+static enum rocketnet_status_t bind_public_start( const char * bind_ipv4 )
+{
+    return bind_public_start_served( bind_ipv4, "127.0.0.1:0", NULL );
 }
 
 static void test_server_bind_address_public_start()
@@ -263,12 +269,20 @@ static void test_server_bind_address_environment_public()
     bind_env( "127.0.0.1", "fd00::5" );
     check( bind_public_start( NULL ) == ROCKETNET_STATUS_OK );
 
+    // a server of both families binds the dual-stack wildcard: the
+    // environment's bind addresses, either family, are ignored, and it starts
+    bind_env( "127.0.0.1", "::1" );
+    check( bind_public_start_served( NULL, "127.0.0.1:40613", "[::1]:40613" ) == ROCKETNET_STATUS_OK );
+
     bind_env( NULL, NULL );
     check( bind_public_start( "fd00::5" ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+
+    // the config field still refuses on a server of both families
+    check( bind_public_start_served( "127.0.0.1", "127.0.0.1:40614", "[::1]:40614" ) == ROCKETNET_STATUS_INVALID_ADDRESS );
 }
 
 // a bare transport create reads the environment itself: the same rule
-static enum rocketnet_status_t bind_transport_create( const char * bind_ipv6 )
+static enum rocketnet_status_t bind_transport_create_served( const char * bind_ipv6, const char * second )
 {
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -276,6 +290,7 @@ static enum rocketnet_status_t bind_transport_create( const char * bind_ipv6 )
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     config.loopback_hub = rocketnet_test_loopback_hub();
     snprintf( config.bind_ipv6_address, sizeof( config.bind_ipv6_address ), "%s", bind_ipv6 );
+    snprintf( config.second_public_address, sizeof( config.second_public_address ), "%s", second );
 
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:40611", &config, 1000.0, &status );
@@ -284,6 +299,11 @@ static enum rocketnet_status_t bind_transport_create( const char * bind_ipv6 )
         rn_test_server_transport_stop_and_destroy( server );
     }
     return server ? ROCKETNET_STATUS_OK : (enum rocketnet_status_t) status;
+}
+
+static enum rocketnet_status_t bind_transport_create( const char * bind_ipv6 )
+{
+    return bind_transport_create_served( bind_ipv6, "" );
 }
 
 static void test_server_bind_address_environment_transport()
@@ -296,8 +316,13 @@ static void test_server_bind_address_environment_transport()
     bind_env( "224.0.0.1", NULL );
     check( bind_transport_create( "" ) == ROCKETNET_STATUS_INVALID_ADDRESS );
 
+    // both families: either environment bind address is ignored
+    bind_env( "127.0.0.1", "::1" );
+    check( bind_transport_create_served( "", "[::1]:40611" ) == ROCKETNET_STATUS_OK );
+
     bind_env( NULL, NULL );
     check( bind_transport_create( "fd00::5" ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( bind_transport_create_served( "::1", "[::1]:40611" ) == ROCKETNET_STATUS_INVALID_ADDRESS );
     check( bind_transport_create( "" ) == ROCKETNET_STATUS_OK );
 }
 

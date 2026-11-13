@@ -295,8 +295,8 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 /** @brief Protocol identifier used by development tokens. */
 #define ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788ULL
 
-// A development token lives 30 seconds from its create timestamp, as a
-// netcode.io token does by default: a connect token is meant to be used
+// A development token lives 30 seconds from its create timestamp, a short
+// default lifetime: a connect token is meant to be used
 // once, soon after it is minted, and the short expiry is what bounds reuse
 // of a token whose connection has closed (TRANSPORT.md t12 rule 5 and t17
 // rule 5). A production backend sets its own expiry in the signed fields; 30

@@ -233,8 +233,16 @@ jobs:
             done
           fi
           xdp_status=$(cat "$guest/xdp.exit" 2>/dev/null) || xdp_status="missing"
-          [ "$xdp_status" = 0 ] || { echo "LOAD cell=xdp $line"; echo "LOAD cell=xdp FAIL load in the guest exited $xdp_status"; exit 1; }
-          check_cell xdp xdp "$line"
+          # the guest's stderr (load's named diagnostics: counters_agree's
+          # disagreeing counters, a refused criterion) stays in $guest, which
+          # the workspace clean removes; the other cells' stderr reaches this
+          # log directly. A failing xdp cell prints it here.
+          xdp_err() {
+            echo "LOAD cell=xdp guest stderr ($guest/xdp.err), last 200 lines:"
+            tail -n 200 "$guest/xdp.err" 2>/dev/null || echo "LOAD cell=xdp no xdp.err"
+          }
+          [ "$xdp_status" = 0 ] || { echo "LOAD cell=xdp $line"; xdp_err; echo "LOAD cell=xdp FAIL load in the guest exited $xdp_status"; exit 1; }
+          check_cell xdp xdp "$line" || { xdp_err; exit 1; }
 
       - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (18 cases, 0 skipped)
         if: runner.os == 'Linux'
@@ -250,6 +258,28 @@ jobs:
       - name: Outages at T - 1 survive and at T + 2 time out (two namespaces, netem, virtme-ng guest)
         if: runner.os == 'Linux'
         run: bash scripts/outage-pair-real --vm --log-dir "$PWD/build/outage-pair-real"
+
+      # The split load harness's proof mode end to end on one host
+      # (scripts/split-smoke): one load_split server and two client shards on
+      # loopback, a same_host_smoke manifest, and the merger with
+      # --same-host-smoke --load proof. Every stream joined across roles,
+      # every delivery once, every receipt; never a qualification
+      # (docs/LOAD_SPLIT.md, "Same-host smoke").
+      - name: Split load proof, same-host smoke (server and two shards on loopback)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/split-smoke --bin ./bin/load_split --dir "$PWD/build/split-smoke" | tee split-smoke.log
+          grep -q '^split_smoke_cell: verdict=PASS' split-smoke.log
+
+      - name: Upload the split smoke logs
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: split-smoke-${{ github.run_id }}-${{ strategy.job-index }}
+          path: build/split-smoke
+          if-no-files-found: ignore
 
       - name: Artifact name for the ref
         id: refslug
@@ -338,13 +368,17 @@ jobs:
   # with loss, latency, jitter and duplication at both ends of the link
   # simulator (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, written into
   # the transport configs soak creates from, and a cell fails when they leave
-  # no drops or refused duplicates), and prints one PASS or FAIL line per cell. Five
+  # no drops or refused duplicates), and prints one PASS, FAIL or UNMEASURED line per cell (UNMEASURED: the
+  # cell failed as a stall can make it, on a run its own log shows stalled). Five
   # cells of 30 minutes are about 152 minutes, past the two-minute rule as
   # every nightly is. A runner with no VM tier fails the xdp cell by name.
   soak-per-transport:
     name: soak per transport (${{ matrix.ref }} / 1800 s per cell)
     runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a night whose only non-passing cells stalled annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'needs a host that does not stall the soak process; a cell whose main loop stalled past the send-bank bound and failed only as a stall can make it is UNMEASURED (scripts/soak-per-transport)'
     strategy:
       fail-fast: false
       matrix:

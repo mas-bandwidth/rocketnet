@@ -104,6 +104,15 @@ class ShapeTests(unittest.TestCase):
         self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE, ""], "suite"),
                          ["test_a", "test_b"])
 
+    def test_windows_commit_report_lines_pass(self):
+        lines = ["commit available 319373 MiB of a 325500 MiB limit, physical available 123275 MiB", "test_a",
+                 "commit lock: test_a waited 1.8 s for another run's full-capacity case", "", checker.PASSED_LINE, ""]
+        self.assertEqual(checker.check_shape(lines, "suite"), ["test_a"])
+
+    def test_commit_report_lookalike_fails(self):
+        with self.assertRaises(SystemExit):
+            checker.check_shape(["commit available lots", "test_a", "", checker.PASSED_LINE, ""], "suite")
+
     def test_skip_line_fails(self):
         with self.assertRaises(SystemExit):
             checker.check_shape(["test_a", "test_xdp_matcher [SKIPPED linux only]", "", checker.PASSED_LINE, ""], "suite")
@@ -128,6 +137,30 @@ class ShapeTests(unittest.TestCase):
     def test_repeated_name_passes_without_once(self):
         self.assertEqual(checker.check_shape(["test_a", "test_a", "", checker.PASSED_LINE, ""], "suite"),
                          ["test_a", "test_a"])
+
+
+class FunctionalLogTests(unittest.TestCase):
+    ROWS = {"test_a": (True, None), "test_b": (True, None)}
+
+    def check(self, *middle):
+        lines = ["test_a", "test_b", "skipped: 0", *middle, "", checker.PASSED_LINE, ""]
+        return checker.check_functional_log(lines, self.ROWS, None)
+
+    def test_whole_run_passes(self):
+        self.assertEqual(self.check(), [])
+
+    def test_keep_going_summary_of_a_passing_run_passes(self):
+        self.assertEqual(self.check("keep going: 0 failed; 2 of 2 collected cases ran"), [])
+
+    def test_keep_going_summary_with_a_failure_is_refused(self):
+        self.assertTrue(self.check("keep going: 1 failed; 2 of 2 collected cases ran"))
+
+    def test_keep_going_summary_with_a_case_unrun_is_refused(self):
+        self.assertTrue(self.check("keep going: 0 failed; 1 of 2 collected cases ran"))
+
+    def test_two_keep_going_summaries_are_refused(self):
+        line = "keep going: 0 failed; 2 of 2 collected cases ran"
+        self.assertTrue(self.check(line, line))
 
 
 
