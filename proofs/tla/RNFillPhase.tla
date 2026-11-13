@@ -16,8 +16,10 @@
 (*                                                                         *)
 (* The code's words:                                                       *)
 (*   mainCalls  fill_phase->main_calls                                     *)
-(*   fillsIn[l] fill_phase->lines[l].fills_in; a filler counts on line   *)
-(*              LineOf[f] (its thread id's hash); fillers may share a line  *)
+(*   fillsIn[l] fill_phase->lines[l].fills_in; a call counts on the line  *)
+(*              its thread id hashes to, a line of LineChoice(f) (any line; *)
+(*              an MC gives each filler its own), and fillers may share one *)
+(*   fline[f]   the line f's call counted on, NoLine when it counts on none *)
 (*   mscan      the lines main_begin has still to look at                  *)
 (*   epoch      fill_phase->epoch (1 at init), advanced by main_end        *)
 (*   word[c]    clients[c].claim:       [ep |-> epoch, held |-> depth > 0,  *)
@@ -29,8 +31,13 @@
 (* Nesting (main_owner, main_depth, a word's depth above 1) and a client   *)
 (* index outside the server's range are not modelled: a nested call or     *)
 (* operation is the outer one's own work and checks nothing.               *)
+(*                                                                         *)
+(* What a step of the code gives back is an argument of its action: the   *)
+(* line a count took (FillCount's l), and whether a look, lock or decide   *)
+(* let the call or operation go on (ok), which the action requires to be  *)
+(* what the state says.                                                    *)
 (***************************************************************************)
-EXTENDS Naturals, FiniteSets
+EXTENDS Integers, FiniteSets
 
 CONSTANTS
     Fillers,        \* the fill threads
@@ -43,16 +50,22 @@ CONSTANTS
     NoEpochLook,    \* TRUE: the look reads main_calls only, not the epoch again (reversed witness)
     NoRestore,      \* TRUE: a refused look leaves its claim, out, in place of the word and owner it replaced (reversed witness)
     ScanOne,        \* TRUE: main_begin looks at one fills_in line only, as if there were one counter (reversed witness)
-    Lines,          \* the fills_in lines
-    LineOf,         \* each filler's line: [Fillers -> Lines], not one-to-one
+    Lines,          \* the fills_in lines, their indexes
     NoOwner         \* the owner of a client nobody claimed (0 in the code), not a filler
 
 ASSUME NoOwner \notin Fillers
-ASSUME LineOf \in [Fillers -> Lines]
+ASSUME Lines \subseteq Nat
 
 Epochs == 0..(MaxMain + 1)
 Words == [ep : Epochs, held : BOOLEAN, in : BOOLEAN]
 Owners == Fillers \cup {NoOwner}
+
+\* the lines filler f's calls may count on: any (the code hashes the thread
+\* id); an MC overrides it to give each filler one line, as a thread has
+LineChoice(f) == Lines
+
+\* a call that counts on no line
+NoLine == -1
 
 VARIABLES
     mpc,            \* main: "idle", "announced" (scanning), "scan" (LookFirst: scanning before it announces), "in", "epoched"
@@ -64,6 +77,7 @@ VARIABLES
     saved,
     mainCalls,
     fillsIn,
+    fline,
     epoch,
     word,
     owner,
@@ -74,7 +88,7 @@ VARIABLES
     mainsDone,
     fillsDone
 
-vars == <<mpc, mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, epoch, word, owner,
+vars == <<mpc, mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner,
           fbroke, phaseIn, falseAlarm, mainsDone, fillsDone>>
 
 NoWord == [ep |-> 0, held |-> FALSE, in |-> FALSE]
@@ -89,6 +103,7 @@ TypeOK ==
     /\ saved \in [Fillers -> Owners]
     /\ mainCalls \in 0..1
     /\ fillsIn \in [Lines -> 0..Cardinality(Fillers)]
+    /\ fline \in [Fillers -> Lines \cup {NoLine}]
     /\ epoch \in Epochs
     /\ word \in [Clients -> Words]
     /\ owner \in [Clients -> Owners]
@@ -108,6 +123,7 @@ Init ==
     /\ saved = [f \in Fillers |-> NoOwner]
     /\ mainCalls = 0
     /\ fillsIn = [l \in Lines |-> 0]
+    /\ fline = [f \in Fillers |-> NoLine]
     /\ epoch = 1
     /\ word = [c \in Clients |-> NoWord]
     /\ owner = [c \in Clients |-> NoOwner]
@@ -139,7 +155,7 @@ MainAnnounce ==
        \/ LookFirst /\ mpc = "scan" /\ mscan = {} /\ mpc' = "in" /\ UNCHANGED mscan
     /\ mainCalls' = mainCalls + 1
     /\ MainMeets
-    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, fillsIn, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
 
 MainScan ==
     /\ LookFirst
@@ -148,13 +164,16 @@ MainScan ==
     /\ mpc' = "scan"
     /\ mscan' = ScanLines
     /\ MainMeets
-    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
 
-MainLook(l) ==
+\* ok: main_begin's look at line l let the operation go on (the line's
+\* count was 0); a look at a counted line refuses it
+MainLook(l, ok) ==
     /\ mpc \in {"announced", "scan"}
     /\ l \in mscan
+    /\ ok = (fillsIn[l] = 0)
     /\ MainMeets
-    /\ IF fillsIn[l] > 0
+    /\ IF ~ok
           THEN /\ mpc' = "idle"
                /\ mscan' = {}
                /\ mainsDone' = mainsDone + 1
@@ -162,7 +181,7 @@ MainLook(l) ==
                /\ mainCalls' = IF LookFirst THEN mainCalls ELSE mainCalls - 1
           ELSE /\ mscan' = mscan \ {l}
                /\ UNCHANGED <<mpc, mainCalls, mainsDone, falseAlarm>>
-    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, fillsIn, epoch, word, owner, phaseIn, fillsDone>>
+    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, fillsIn, fline, epoch, word, owner, phaseIn, fillsDone>>
 
 MainIn ==
     /\ ~LookFirst
@@ -170,7 +189,7 @@ MainIn ==
     /\ mscan = {}
     /\ mpc' = "in"
     /\ MainMeets
-    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
 
 \* the operation's work done: the epoch moves, and a new fill phase begins
 MainEpoch ==
@@ -179,7 +198,7 @@ MainEpoch ==
     /\ epoch' = IF ResetOnLeave THEN epoch + 1 ELSE epoch
     /\ phaseIn' = [c \in Clients |-> {}]
     /\ MainMeets
-    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, word, owner, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, word, owner, falseAlarm, mainsDone, fillsDone>>
 
 MainDrop ==
     /\ mpc = "epoched"
@@ -187,19 +206,19 @@ MainDrop ==
     /\ mainCalls' = mainCalls - 1
     /\ mainsDone' = mainsDone + 1
     /\ MainMeets
-    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, fillsIn, epoch, word, owner, phaseIn, falseAlarm, fillsDone>>
+    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, fillsDone>>
 
 (***************************************************************************)
 (* A filler: fill_begin is FillBegin (load the epoch), FillLock (one CAS   *)
 (* that sets the in bit, refused when it is set) or FillLoad then          *)
 (* FillStore, FillDecide (refused when another filler claimed the client   *)
 (* in this epoch, restoring the word; else the owner and the claim are     *)
-(* stored), FillCount (fills_in fetch_add), FillLook (load main_calls and  *)
-(* the epoch again; refused, restoring the owner and the word, when a main *)
-(* operation is running or ran since FillBegin).  fill_end is FillUnclaim  *)
-(* (clear in) then FillLeave (fills_in fetch_sub).  FillCount and the     *)
-(* fetch_subs are on the filler's own line.  LookFirst looks before it    *)
-(* counts.                                                                 *)
+(* stored), FillCount (fills_in fetch_add on the line l the thread hashes  *)
+(* to), FillLook (load main_calls and the epoch again; refused, restoring  *)
+(* the owner and the word, when a main operation is running or ran since   *)
+(* FillBegin).  fill_end is FillUnclaim (clear in) then FillLeave          *)
+(* (fills_in fetch_sub).  The fetch_subs are on the line the call counted  *)
+(* on (fline).  LookFirst looks before it counts.                          *)
 (***************************************************************************)
 
 \* a fill step: the call meets the main operation in progress, if any
@@ -226,21 +245,23 @@ FillBegin(f, c) ==
     /\ fclient' = [fclient EXCEPT ![f] = c]
     /\ fepoch' = [fepoch EXCEPT ![f] = epoch]
     /\ fbroke' = [fbroke EXCEPT ![f] = MainBusy]
-    /\ UNCHANGED <<mpc, mscan, seen, saved, mainCalls, fillsIn, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<mpc, mscan, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
 
-FillLock(f) ==
+\* ok: the lock was taken (the in bit was clear); else the call is refused
+FillLock(f, ok) ==
     LET c == fclient[f] IN
     /\ ~LoadStore
     /\ fpc[f] = "begun"
+    /\ ok = ~word[c].in
     /\ FillMeets(f)
-    /\ IF word[c].in
+    /\ IF ~ok
           THEN /\ FillRefused(f)
                /\ UNCHANGED <<seen, word>>
           ELSE /\ seen' = [seen EXCEPT ![f] = word[c]]
                /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.in = TRUE]]
                /\ fpc' = [fpc EXCEPT ![f] = "locked"]
                /\ UNCHANGED <<falseAlarm, fillsDone>>
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, saved, mainCalls, fillsIn, epoch, owner, phaseIn, mainsDone>>
+    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, saved, mainCalls, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
 
 FillLoad(f) ==
     /\ LoadStore
@@ -248,7 +269,7 @@ FillLoad(f) ==
     /\ fpc' = [fpc EXCEPT ![f] = "loaded"]
     /\ seen' = [seen EXCEPT ![f] = word[fclient[f]]]
     /\ FillMeets(f)
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, saved, mainCalls, fillsIn, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, saved, mainCalls, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
 
 FillStore(f) ==
     LET c == fclient[f] IN
@@ -260,14 +281,17 @@ FillStore(f) ==
           ELSE /\ word' = [word EXCEPT ![c] = [seen[f] EXCEPT !.in = TRUE]]
                /\ fpc' = [fpc EXCEPT ![f] = "locked"]
                /\ UNCHANGED <<falseAlarm, fillsDone>>
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, fillsIn, epoch, owner, phaseIn, mainsDone>>
+    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
 
-\* the lock is held: only f writes the word and the owner until it clears in
-FillDecide(f) ==
+\* the lock is held: only f writes the word and the owner until it clears in.
+\* ok: f claimed the client; else another filler holds it in this epoch and
+\* the call is refused
+FillDecide(f, ok) ==
     LET c == fclient[f] IN
     /\ fpc[f] = "locked"
+    /\ ok = ~(owner[c] \notin {NoOwner, f} /\ seen[f].ep = fepoch[f])
     /\ FillMeets(f)
-    /\ IF owner[c] \notin {NoOwner, f} /\ seen[f].ep = fepoch[f]
+    /\ IF ~ok
           THEN /\ FillRefused(f)
                /\ word' = [word EXCEPT ![c] = seen[f]]
                /\ UNCHANGED <<saved, owner>>
@@ -276,32 +300,37 @@ FillDecide(f) ==
                /\ word' = [word EXCEPT ![c] = [ep |-> fepoch[f], held |-> TRUE, in |-> TRUE]]
                /\ fpc' = [fpc EXCEPT ![f] = "decided"]
                /\ UNCHANGED <<falseAlarm, fillsDone>>
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, mainCalls, fillsIn, epoch, phaseIn, mainsDone>>
+    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, mainCalls, fillsIn, fline, epoch, phaseIn, mainsDone>>
 
-FillCount(f) ==
+\* l: the line the call counted on
+FillCount(f, l) ==
     LET c == fclient[f] IN
     /\ \/ ~LookFirst /\ fpc[f] = "decided" /\ fpc' = [fpc EXCEPT ![f] = "counted"] /\ UNCHANGED phaseIn
        \/ LookFirst /\ fpc[f] = "looked" /\ fpc' = [fpc EXCEPT ![f] = "in"]
           /\ phaseIn' = [phaseIn EXCEPT ![c] = @ \cup {f}]
-    /\ fillsIn' = [fillsIn EXCEPT ![LineOf[f]] = @ + 1]
+    /\ fillsIn' = [fillsIn EXCEPT ![l] = @ + 1]
+    /\ fline' = [fline EXCEPT ![f] = l]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, epoch, word, owner, falseAlarm, mainsDone, fillsDone>>
 
-\* a main operation running, or one that ran since this call loaded the epoch: refused
-FillLook(f) ==
+\* a main operation running, or one that ran since this call loaded the
+\* epoch: refused (ok FALSE)
+FillLook(f, ok) ==
     LET c == fclient[f] IN
     /\ \/ ~LookFirst /\ fpc[f] = "counted"
        \/ LookFirst /\ fpc[f] = "decided"
+    /\ ok = ~(mainCalls > 0 \/ (~NoEpochLook /\ epoch # fepoch[f]))
     /\ FillMeets(f)
-    /\ IF mainCalls > 0 \/ (~NoEpochLook /\ epoch # fepoch[f])
+    /\ IF ~ok
           THEN /\ FillRefused(f)
                /\ word' = [word EXCEPT ![c] = IF NoRestore THEN [ep |-> fepoch[f], held |-> FALSE, in |-> FALSE] ELSE seen[f]]
                /\ owner' = IF NoRestore THEN owner ELSE [owner EXCEPT ![c] = saved[f]]
-               /\ fillsIn' = IF LookFirst THEN fillsIn ELSE [fillsIn EXCEPT ![LineOf[f]] = @ - 1]
+               /\ fillsIn' = IF LookFirst THEN fillsIn ELSE [fillsIn EXCEPT ![fline[f]] = @ - 1]
+               /\ fline' = IF LookFirst THEN fline ELSE [fline EXCEPT ![f] = NoLine]
                /\ UNCHANGED phaseIn
           ELSE /\ fpc' = [fpc EXCEPT ![f] = IF LookFirst THEN "looked" ELSE "in"]
                /\ phaseIn' = IF LookFirst THEN phaseIn ELSE [phaseIn EXCEPT ![c] = @ \cup {f}]
-               /\ UNCHANGED <<falseAlarm, fillsDone, word, owner, fillsIn>>
+               /\ UNCHANGED <<falseAlarm, fillsDone, word, owner, fillsIn, fline>>
     /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, epoch, mainsDone>>
 
 FillUnclaim(f) ==
@@ -310,12 +339,13 @@ FillUnclaim(f) ==
     /\ fpc' = [fpc EXCEPT ![f] = "unclaimed"]
     /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.held = FALSE, !.in = FALSE]]
     /\ FillMeets(f)
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, fillsIn, epoch, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
 
 FillLeave(f) ==
     /\ fpc[f] = "unclaimed"
     /\ fpc' = [fpc EXCEPT ![f] = "idle"]
-    /\ fillsIn' = [fillsIn EXCEPT ![LineOf[f]] = @ - 1]
+    /\ fillsIn' = [fillsIn EXCEPT ![fline[f]] = @ - 1]
+    /\ fline' = [fline EXCEPT ![f] = NoLine]
     /\ fillsDone' = [fillsDone EXCEPT ![f] = @ + 1]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, epoch, word, owner, phaseIn, falseAlarm, mainsDone>>
@@ -327,10 +357,11 @@ Done ==
 
 Next ==
     \/ MainAnnounce \/ MainScan \/ MainIn \/ MainEpoch \/ MainDrop
-    \/ \E l \in Lines : MainLook(l)
+    \/ \E l \in Lines, ok \in BOOLEAN : MainLook(l, ok)
     \/ \E f \in Fillers, c \in Clients : FillBegin(f, c)
-    \/ \E f \in Fillers : \/ FillLock(f) \/ FillLoad(f) \/ FillStore(f) \/ FillDecide(f)
-                          \/ FillCount(f) \/ FillLook(f) \/ FillUnclaim(f) \/ FillLeave(f)
+    \/ \E f \in Fillers, ok \in BOOLEAN : FillLock(f, ok) \/ FillDecide(f, ok) \/ FillLook(f, ok)
+    \/ \E f \in Fillers : \E l \in LineChoice(f) : FillCount(f, l)
+    \/ \E f \in Fillers : FillLoad(f) \/ FillStore(f) \/ FillUnclaim(f) \/ FillLeave(f)
     \/ Done
 
 Spec == Init /\ [][Next]_vars
