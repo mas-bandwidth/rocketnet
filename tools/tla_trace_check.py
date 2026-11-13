@@ -271,12 +271,15 @@ LAYERS = {
 # in at most one such entry, and only a layer with reach predicates has one.
 # msgx's reach (five predicates, RegisterRefused found late) doubled its home's
 # check step (aws-gso-x86, 37fe98dd9: 78.7 s against main's 41.5 s).
+# Beside msgx:4 with gather and msgxsendruns, it made shard 3 the slowest (PR
+# #1125, CI 43497672905: job 98 s, check 83 s), so those two moved to shard 2
+# (job 65 s, check 51 s there).
 SHARD_SEEDS = range(1, 5)
 SHARDS = [
     ["msgx:1"],
     ["msgx:2", "xdp-replay"],
-    ["msgx:3", "gso"],
-    ["msgx:4", "msgxsendruns", "gather", "msgx:reach"],
+    ["msgx:3", "gso", "msgxsendruns", "gather"],
+    ["msgx:4", "msgx:reach"],
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
