@@ -400,8 +400,11 @@ void test_client_destroy_early_threaded_keeps_then_frees()
     check( strstr( destroy_last_error_read(), "kept, not freed" ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
     // The handle stays valid: its memory is not freed and its queries answer.
+    // The destroy disconnected it, so it answers DISCONNECTED, and a query on
+    // a kept handle is no misuse.
     check( state.live > before );
-    (void) rocketnet_client_state( pair.client );
+    check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
 
     const double start = rocketnet_time();
     while ( !rocketnet_client_disconnected( pair.client ) && rocketnet_time() - start < 5.0 )
@@ -454,8 +457,13 @@ void test_server_destroy_early_threaded_keeps_then_frees()
     check( strstr( destroy_last_error_read(), "rocketnet_server_destroy" ) != NULL );
     check( strstr( destroy_last_error_read(), "kept, not freed" ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
+    // the kept handle answers: the destroy's stop took (a refused stop is
+    // the other kept message, and keeps it running), so it is no longer
+    // running, and a query on a kept handle is no misuse
+    check( strstr( destroy_last_error_read(), "the worker has not exited" ) != NULL );
     check( state.live > before );
-    (void) rocketnet_server_running( pair.server );
+    check( !rocketnet_server_running( pair.server ) );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
 
     const double start = rocketnet_time();
     while ( !rocketnet_server_stopped( pair.server ) && rocketnet_time() - start < 5.0 )
