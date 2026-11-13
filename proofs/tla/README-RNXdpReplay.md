@@ -347,7 +347,7 @@ distinct states (596,195 generated, depth 36), and `TypeOK`,
 
 `MCRNXdpReplayReconnect.cfg`: the same, with `Sessions = 3`, so a reconnect
 at one address can meet a release, a full pending buffer or a refused
-delete at the other: 4,527,982 distinct states (11,919,449 generated, depth
+delete at the other: 4,490,030 distinct states (11,823,585 generated, depth
 49), every property of the control holding.
 
 `MCRNXdpReplayRefusedMark.cfg`: two addresses, `MaxSeq = 3`, `W = 2`,
