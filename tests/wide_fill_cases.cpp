@@ -876,7 +876,7 @@ static void test_wide_fill_refused_finish_and_start()
 // found no capacity (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY) instead of
 // queueing it for send_packets. The serial finish is unchanged. One trace is
 // run through the serial finish on one thread, the writer's finish on one
-// thread, and the writer's finish on four threads with ownership rotating
+// thread, and the writer's finish on four and on eight threads, ownership rotating
 // every frame; per client, what was sent, acked and received must be equal.
 
 #define WRITER_FINISH_CLIENTS 8
@@ -1150,12 +1150,14 @@ static void test_writer_finish_equals_serial()
     writer_finish_trace_t serial;
     writer_finish_trace_t one;
     writer_finish_trace_t four;
+    writer_finish_trace_t eight;
     writer_finish_run( WRITER_FINISH_SERIAL, 1, 0, frames, per_client, &serial );
     writer_finish_run( WRITER_FINISH_CLIENT, 1, 0, frames, per_client, &one );
     writer_finish_run( WRITER_FINISH_CLIENT, 4, 0, frames, per_client, &four );
+    writer_finish_run( WRITER_FINISH_CLIENT, 8, 0, frames, per_client, &eight );
 
     const uint64_t messages = (uint64_t) frames * WRITER_FINISH_CLIENTS * ( per_client + 1 );
-    for ( const writer_finish_trace_t * t : { &serial, &one, &four } )
+    for ( const writer_finish_trace_t * t : { &serial, &one, &four, &eight } )
     {
         check( t->finished == messages );
         check( t->refused == 0 );
@@ -1167,6 +1169,7 @@ static void test_writer_finish_equals_serial()
 
     check( writer_finish_same_accounting( &serial, &one, true ) );
     check( writer_finish_same_accounting( &serial, &four, false ) );
+    check( writer_finish_same_accounting( &serial, &eight, false ) );
 
     uint64_t sent = 0;
     uint64_t acked = 0;
@@ -1182,6 +1185,7 @@ static void test_writer_finish_equals_serial()
     // send_packets; the writer's finish leaves it nothing of the unreliable
     check( serial.walk_packets == one.walk_packets + (uint64_t) frames * WRITER_FINISH_CLIENTS );
     check( one.walk_packets == four.walk_packets );
+    check( one.walk_packets == eight.walk_packets );
 }
 
 // packets_per_update 2 and four packet-sized payloads per client: the third
@@ -1200,6 +1204,7 @@ static void test_writer_finish_no_capacity_refused()
     writer_finish_run( WRITER_FINISH_CLIENT, 1, 2, frames, per_client, &writer );
     writer_finish_run( WRITER_FINISH_CLIENT, 4, 2, frames, per_client, &wide );
 
+    for ( const writer_finish_trace_t * t : { &serial, &writer, &wide } ) { printf( "DBG finished %llu refused %llu nocap %llu fallback %llu walk %llu sent0 %llu acked0 %llu recv0 %u\n", (unsigned long long) t->finished, (unsigned long long) t->refused, (unsigned long long) t->no_capacity, (unsigned long long) t->fallback, (unsigned long long) t->walk_packets, (unsigned long long) t->packets_sent[0], (unsigned long long) t->acked[0], t->received[0][0] ); }
     check( serial.refused == 0 );
     check( serial.no_capacity == 0 );
     check( serial.fallback >= (uint64_t) frames * WRITER_FINISH_CLIENTS * 2 );
