@@ -31,14 +31,21 @@
 // round and when its bank is full; main, at each receive call, tries the
 // mutex once and reads the worker's bank in place up to the committed count,
 // after the unread tail of the bank the worker left. A datagram the worker
-// committed before main's call took the mutex is returned by that call
-// (DeliveredByNextCall).
+// committed before main's call took the mutex is returned by that call when
+// the call began with no datagrams left from a cut call and its capacity did
+// not cut it (DeliveredByNextCall); a busy mutex, a cut call or a backlog
+// leaves it to the calls after, under the usual backlog and capacity rules.
 //
 // proofs/tla/RNMsgxReceiveFill.tla actions: rocketnet_msgx_receive_drain_step
 // is MoveFull, HoldFull, BudgetSpent, Read, ReadEmpty, ReadWeather and
 // ReadFailed by its result; the worker loop around it is Poll, RoundCommit,
 // RoundKeep and Sleep; main is Call (rocketnet_msgx_receive_call) and, after
-// the stop, StopCount (rocketnet_msgx_receive_stop_count).
+// the stop, StopCount (rocketnet_msgx_receive_stop_count). The stop is
+// MainStop, main's (rocketnet_server_msgx_stop sets the receiver's quit and
+// rocketnet_server_msgx_receive_packets then hands the server nothing), and
+// Exit, the worker's (rocketnet_server_msgx_receive_worker leaves its loop at
+// the top once quit is set and stores stopped), both in
+// sdk/rocketnet_server_msgx_apple.cpp.
 
 #include "rocketnet_receive_handoff.h"
 
