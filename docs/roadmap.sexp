@@ -308,8 +308,8 @@
 
   (item "portable-server-shared-handoff" :group "audit-remaining" :area "sdk"
    :title "Portable server transport on the shared buffer handoff"
-   :text "PR #1043 (refactor/v1.1.x/server-shared-handoff, extraction E5) moved the portable and gso server transports off their hand-written bank queues onto rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h). Its gso half is overtaken by the rebuilt gso transport (#1103), which rewrites sdk/rocketnet_server_gso_linux.cpp and also changes sdk/rocketnet_driver_builtin.cpp. After the rebuilt gso lands, redo the portable half alone on main (the portable TX and RX commits and the rocketnet_buffer_handoff_started helper), with its gates: rnportabletx, rnportablerx and rnbufferhandoff TLC, the unit mutation cases and the light memory pins."
-   :date "2026-11-13" :origin "Open-PR triage 2026-11-13: #1043 not landed")
+   :text "PR #1043 (refactor/v1.1.x/server-shared-handoff, extraction E5) moved the portable and gso server transports off their hand-written bank queues onto rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h). Its gso half is overtaken by the rebuilt gso transport (#1103), which rewrites sdk/rocketnet_server_gso_linux.cpp and also changes sdk/rocketnet_driver_builtin.cpp. After the rebuilt gso lands, redo the portable half alone on main (the portable TX and RX commits and the rocketnet_buffer_handoff_started helper), with its gates: rnportabletx, rnportablerx and rnbufferhandoff TLC, the unit mutation cases and the light memory pins. With it, give the portable receive worker what the rebuilt transports have: it runs no prefilter (sdk/rocketnet_driver_builtin.cpp about 613-645, drop hooks NULL about 1962-1966), so junk reaches the main thread (bounded per update), and datagrams held in its banks at stop are counted nowhere (about 932-944), so RECEIVE_DROPPED_STOPPED reads 0 on portable. Not worse than v1.0.0."
+   :date "2026-11-13" :origin "Open-PR triage 2026-11-13: #1043 not landed; review before v1.2.0, finding PO1")
 
   (item "rio-registered-region-red-zones" :group "audit-remaining" :area "tests"
    :title "ASan red zones between the rio registered region's arrays"
@@ -490,4 +490,14 @@
    :title "finish_message and abort_message from the starting thread are not checked against game threads"
    :text "In sdk/rocketnet_api.cpp (about 3642-3689) and sdk/rocketnet_fill_phase.cpp (about 203-210) the hand-over runs its main thread check only when another thread owns the client. When the owner is the caller or nobody, rn_server_pending_slot scans every connection's plain open.pending while other threads write theirs. rocketnet.h says one thread at a time, and nothing refuses a call that breaks it. Refuse and count it, as the other thread rules are."
    :date "2026-11-13" :origin "Review before v1.2.0, threading reader, finding R3")
+
+  (item "counter-observed-loose-paths" :group "review-v1-2" :area "tools"
+   :title "check_counter_observed.py accepts tests that assert nothing about a counter's value"
+   :text "This gate enforces that a counter row lands only with a test that reads it by value, and it accepts empty assertions. tools/check_counter_observed.py (about 426-434) excludes only a clause ending == 0, so check( v[X] >= 0 ), check( v[X] == 0u ), check( !v[X] ) and check( v[X] == v[X] ) count as observed; it accepts T name = v[X]; when any check anywhere in the file reads an identifier of that name (about 465-475); and the return path matches a function of the same name in any file (about 510-513). Run on a scratch tree, it reported 5 of 5 counters observed with five empty assertions; its 26 self-test cases have none of these forms. On the real tree 238 of 301 rows are observed by a value check and 53 more only through the loose paths. Close the three paths, add the forms as self-test cases, and give the 53 rows real value checks."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding C4 (run)")
+
+  (item "msgx-refused-batch-prefix" :group "review-v1-2" :area "sdk"
+   :title "msgx may resend a batch whose first packets the kernel already sent"
+   :text "sdk/rocketnet_msgx_send_runs.h (about 32-41, 330-374) takes a sendmsg_x that returns -1 as none taken: the run is kept and sent again whole from the same cursor (the worker retries every 1 ms, sdk/rocketnet_server_msgx_apple.cpp about 794-799, 879-903). The repo's own measured note says xnu can deliver part of a batch and still return -1 with no count (sdk/rocketnet_platform.cpp about 505-512, 2692-2701), and the client and portable pump handle that; msgx does not. If an ENOBUFS at peak does this, the delivered prefix goes out two or more times into a full queue: duplicates the client's replay window drops, sent counters under the wire, SEND_FAILED over on the error path. The model (RNMsgxSendRuns.tla) has the same assumption in its fake kernel. Open until measured: one peak row on the 10 GbE pair (received against packets_sent with send_dropped 0) decides; a loopback probe of 2000 batches of 64 never saw a refusal."
+   :date "2026-11-13" :origin "Review before v1.2.0, macOS reader, finding P3")
  ))
