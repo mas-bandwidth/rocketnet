@@ -336,6 +336,11 @@
    :text "The worker counts a cancel it submitted when its completion arrives (rocketnet_uring_queue_worker_reap_one, ROCKETNET_URING_TAG_CANCEL). A cancel the kernel answers -EALREADY (the target already completed) reads the same as one that took effect; the model (RNUringQueueWorker.tla CancelRecv, CancelWake, CancelPoll) has one outcome. Check the worker against the answers and add the case to the model."
    :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
 
+  (item "flaky-reply-opens-a-later-update" :group "audit-remaining" :area "tests"
+   :title "test_transport_reply_opens_a_later_update failed once on a loaded macOS runner"
+   :text "On PR #1124's first CI run (43476345841, attempt 1) macos / Release / functional on studio-4 failed at tests/functional/rocketnet_functional_tests.cpp:10204: one of the 200 replies was never seen within the case's 12000 updates (9.8 s). The case sends unreliable datagrams over real loopback and answers each once, so one lost request or reply fails it. The rerun passed on mini-m5, and the case passed 40 of 40 on amd-2 (Linux) both at #1124's head and at its base a756b3398. The cause is not shown. PR #1118 (transport reply waits resend through the loss gate) is the candidate fix, held until it shows the cause."
+   :date "2026-11-13" :origin "PR #1124 CI, studio-4")
+
   (item "uring-offline-cpu-holes" :group "audit-remaining" :area "sdk"
    :title "Offline cpu holes in the io_uring pin"
    :text "rocketnet_uring_pin_check refuses a cpu at or past the online count, but a machine with cpus offline has holes below that count (cpu 5 offline, cpu 6 online). A pin to a hole is refused by the kernel, counted, and the worker is confined to its own mask past the OS's cpus (rocketnet_uring_pin_confine_words, which never names a hole), so it is placed but not where the config said. Read the online mask (sched_getaffinity or /sys/devices/system/cpu/online) and place the workers on online cpus past the OS's."
