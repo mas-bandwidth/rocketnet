@@ -67,6 +67,11 @@ LAYERS = {
         "kind": "steps",
         "untraced": {},
     },
+    "xdp-reply-macs": {
+        "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
+        "kind": "steps",
+        "untraced": {},
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
