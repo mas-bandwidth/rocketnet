@@ -47,7 +47,7 @@ the SDK into a game's own build.
 | --- | --- | --- | --- |
 | `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
 | `iocp` | server and client | server 40; client 10 | server: one completion worker and one transmit worker; client: one I/O worker on its own completion port |
-| `rio` | server | 45 | Winsock Registered I/O: one registered memory region and one I/O worker polling its completion queues |
+| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_xdp_queues`, one by default) one socket, one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
 A production server's `auto` is **iocp, then rio, then portable**; a
@@ -70,11 +70,11 @@ logs a warning and falls back to one send per datagram. `iocp` always runs one
 completion worker; it ignores `num_xdp_queues`.
 
 `rio` loads the Registered I/O function table from Winsock, allocates and
-registers one memory region for every send and receive buffer, and starts one
-I/O worker. Its create line names the region's size:
+registers one memory region for every send and receive buffer of each lane (one lane by default; `num_xdp_queues` sets the count), and starts one
+I/O worker for each lane. Its create line names the region's size:
 
 ```text
-rio transport: port 40000, one I/O worker, 4096 receive slices, 2048 send frames per phase, <n> registered bytes
+rio transport: port 40000, 1 lane (one socket and I/O worker each), 4096 receive slices and 16384 send frames per phase per lane, <n> registered bytes per lane
 ```
 
 Because `rio` ranks after `iocp`, `auto` reaches it only when `iocp` refuses;

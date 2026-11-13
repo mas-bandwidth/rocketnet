@@ -5226,6 +5226,37 @@ static uint8_t * rocketnet_test_server_rio_start( rocketnet_server_rio_t * rio, 
     }
 }
 
+// The lanes a RIO server made through rocketnet_server_rio_create with
+// default options should have: ROCKETNET_TEST_RIO_LANES (2 .. 32) when the bind
+// is not the wildcard, else one. Every direct-create case checks the count the
+// server really made against it, so a run meant for lanes cannot quietly run
+// one.
+static int rocketnet_test_rio_expected_lanes( const rocketnet_address_t * bind_address )
+{
+    char text[64];
+    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_RIO_LANES", text, sizeof( text ) ) )
+    {
+        return 1;
+    }
+    const int n = atoi( text );
+    bool wildcard = true;
+    for ( int i = 0; i < 8; i++ )
+    {
+        if ( ( bind_address->type == ROCKETNET_ADDRESS_IPV4 && i < 4 && bind_address->data.ipv4[i] != 0 ) ||
+             ( bind_address->type == ROCKETNET_ADDRESS_IPV6 && bind_address->data.ipv6[i] != 0 ) )
+        {
+            wildcard = false;
+        }
+    }
+    return ( n >= 2 && n <= ROCKETNET_RIO_MAX_LANES && !wildcard ) ? n : 1;
+}
+
+// every lane keeps its own receives posted
+static int rocketnet_test_rio_receives( rocketnet_server_rio_t * rio )
+{
+    return rocketnet_server_rio_lanes( rio ) * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS );
+}
+
 void rocketnet_test_server_rio_probe()
 {
     rocketnet_check( rocketnet_server_rio_available() );
@@ -5235,6 +5266,7 @@ void rocketnet_test_server_rio_probe()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
     rocketnet_check( bind_address.port != 0 );
 
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
@@ -5247,11 +5279,11 @@ void rocketnet_test_server_rio_probe()
     // nothing but the receive slices is outstanding, and a flush with
     // nothing staged posts nothing and commits nothing
 
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
     rocketnet_server_rio_send_packets( rio );
     rocketnet_server_rio_receive_packets( rio );
     rocketnet_check( rocketnet_server_rio_process_packets( rio )->num_packets == 0 );
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
     rocketnet_server_rio_counters( rio, counters );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_COMMITS] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_PACKETS_SENT] == 0 );
@@ -5268,7 +5300,7 @@ void rocketnet_test_server_rio_probe()
     rocketnet_server_rio_send_packets( rio );
     rocketnet_server_rio_counters( rio, counters );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_COMMITS] == 0 );
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
 
     // destroy with nothing but receives outstanding: closesocket completes
     // them, the drain accounts for every one, then the region is freed
@@ -5291,6 +5323,7 @@ void rocketnet_test_server_rio_probe()
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
     rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 }
 
@@ -5309,6 +5342,7 @@ void rocketnet_test_server_rio_wire_ipv4()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
 
     rocketnet_address_t client_address;
     rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
@@ -5399,7 +5433,11 @@ void rocketnet_test_server_rio_wire_ipv4()
             uint64_t packet_id = 0;
             uint8_t * frame = rocketnet_test_server_rio_start( rio, &client_address, &packet_id, &refused );
             rocketnet_check( frame );
-            used_phase[packet_id / (uint64_t) rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS )] = true;
+            int lane = 0;
+            int index = 0;
+            rocketnet_check( rocketnet_rio_lane_packet_decode( packet_id, rocketnet_server_rio_lanes( rio ),
+                                                               3 * rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ), &lane, &index ) );
+            used_phase[index / rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS )] = true;
 
             const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + i;
             uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
@@ -5482,12 +5520,12 @@ void rocketnet_test_server_rio_wire_ipv4()
     // the worker counts a completion before it re-posts or retires the request
 
     start = rocketnet_platform_time();
-    while ( rocketnet_server_rio_pending( rio ) != rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) && rocketnet_platform_time() - start < 5.0 )
+    while ( rocketnet_server_rio_pending( rio ) != rocketnet_test_rio_receives( rio ) && rocketnet_platform_time() - start < 5.0 )
     {
         rocketnet_platform_sleep( 0.0005 );
     }
 
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
 
     rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
@@ -5595,6 +5633,7 @@ void rocketnet_test_server_rio_wire_ipv6()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
 
     rocketnet_address_t client_address;
     struct rocketnet_platform_socket_t * client_socket = rocketnet_test_server_rio_client_socket( "[::1]:0", &client_address );
@@ -5618,6 +5657,7 @@ void rocketnet_test_server_rio_wire_dual_stack()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
 
     rocketnet_address_t client_address;
     struct rocketnet_platform_socket_t * client_socket = rocketnet_test_server_rio_client_socket( "127.0.0.1:0", &client_address );
@@ -5643,6 +5683,7 @@ void rocketnet_test_server_rio_send_full()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
 
     rocketnet_address_t destination;
     rocketnet_check( rocketnet_address_parse( &destination, "127.0.0.1:9" ) );
@@ -5669,7 +5710,7 @@ void rocketnet_test_server_rio_send_full()
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_PACKETS_SENT] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_SEND_FAILED] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_COMMITS] == 0 );
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
 
     frame = rocketnet_server_rio_start_packet( rio, &destination, &packet_id );
     rocketnet_check( frame );
@@ -5680,7 +5721,7 @@ void rocketnet_test_server_rio_send_full()
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_PACKETS_SENT] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_SEND_FAILED] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RIO_COMMITS] == 0 );
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
 
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 }
@@ -5737,6 +5778,128 @@ void rocketnet_test_server_rio_unroutable_takes_no_slot()
 
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 }
+
+#if ROCKETNET_DEV
+// The public server on RIO lanes, through the driver: with num_xdp_queues 4
+// and no bind address the server binds the wildcard, so start refuses with
+// INVALID_ADDRESS and no lane is made; with bind_ipv4_address set on a port
+// another socket holds, start refuses with TRANSPORT_BIND_REFUSED and no lane
+// is made; on a free port, start makes exactly four lanes
+// (counted as the transport made them, not as asked) and eight clients all
+// connect and are served. Which lane each client's sends take is not checked
+// here; test_rio_transport_lanes_send_and_receive checks the spread.
+void rocketnet_test_server_rio_lanes_through_the_server()
+{
+    rocketnet_check( rocketnet_server_rio_available() );
+
+    const int num_clients = 8;
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    server_config.max_clients = num_clients;
+    server_config.transport = "rio";
+    server_config.num_xdp_queues = 4;
+
+    {
+        const uint64_t before = rocketnet_server_rio_test_lanes_made();
+        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+        rocketnet_check( refused );
+        rocketnet_check( rocketnet_server_start( refused ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+        rocketnet_check( rocketnet_server_rio_test_lanes_made() == before );
+        rn_cli_server_stop_and_destroy( refused );
+    }
+
+    // the bind address from the environment, as an operator sets it, makes
+    // the same four lanes as the config field
+    {
+        struct rocketnet_test_env_guard_t bind_guard;
+        rocketnet_test_env_save( &bind_guard, "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" );
+        rocketnet_check( setenv( "ROCKETNET_SERVER_BIND_IPV4_ADDRESS", "127.0.0.1", 1 ) == 0 );
+        const uint64_t before = rocketnet_server_rio_test_lanes_made();
+        struct rocketnet_server_t * from_env = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+        rocketnet_check( from_env );
+        const enum rocketnet_status_t start_status = rocketnet_server_start( from_env );
+        const uint64_t made = rocketnet_server_rio_test_lanes_made() - before;
+        printf( "    rio lanes from the bind environment: start %s, lanes=%llu\n", rocketnet_status_name( start_status ), (unsigned long long) made );
+        rn_cli_server_stop_and_destroy( from_env );
+        rocketnet_test_env_restore( &bind_guard );
+        rocketnet_check( start_status == ROCKETNET_STATUS_OK );
+        rocketnet_check( made == 4 );
+    }
+
+    server_config.bind_ipv4_address = "127.0.0.1";
+    {
+        rocketnet_address_t held_address;
+        rocketnet_address_parse( &held_address, "127.0.0.1:0" );
+        rocketnet_platform_socket_t * holder = rocketnet_platform_socket_create( NULL, &held_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64 * 1024, 64 * 1024 );
+        rocketnet_check( holder );
+        rocketnet_check( held_address.port != 0 );
+        char held[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+        snprintf( held, sizeof( held ), "127.0.0.1:%d", (int) held_address.port );
+        const uint64_t before = rocketnet_server_rio_test_lanes_made();
+        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, held, NULL, &server_config, NULL );
+        rocketnet_check( refused );
+        rocketnet_check( rocketnet_server_start( refused ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        rocketnet_check( rocketnet_server_rio_test_lanes_made() == before );
+        rn_cli_server_stop_and_destroy( refused );
+        rocketnet_platform_socket_destroy( holder );
+    }
+
+    const uint64_t before = rocketnet_server_rio_test_lanes_made();
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    rocketnet_check( server );
+    rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_rio_test_lanes_made() - before == 4 );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    rocketnet_check( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
+
+    struct rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    client_config.transport = "portable";
+
+    struct rocketnet_client_t * clients[num_clients] = {};
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        rocketnet_check( rocketnet_create_dev_connect_token( server_address, NULL, server_key, ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
+                                                             (uint64_t) ( 300 + i ), ROCKETNET_DEV_PROTOCOL_ID, rocketnet_functional_token_timestamp( 0, rocketnet_platform_time() ), NULL, token ) == ROCKETNET_STATUS_OK );
+        clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
+        rocketnet_check( clients[i] );
+        rocketnet_check( rocketnet_client_connect( clients[i], token ) == ROCKETNET_STATUS_OK );
+    }
+
+    const double wall_start = rocketnet_time();
+    int connected = 0;
+    while ( rocketnet_time() - wall_start < 10.0 && ( connected < num_clients || rocketnet_server_num_connected_clients( server ) < num_clients ) )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - wall_start );
+        rocketnet_server_update( server, now );
+        connected = 0;
+        for ( int i = 0; i < num_clients; i++ )
+        {
+            rocketnet_client_update( clients[i], now );
+            rocketnet_client_send_packets( clients[i] );
+            connected += rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED;
+        }
+        rocketnet_server_send_packets( server );
+        rocketnet_sleep( 0.005 );
+    }
+    printf( "    rio lanes through the server: lanes=%llu connected=%d\n", (unsigned long long) ( rocketnet_server_rio_test_lanes_made() - before ), connected );
+    rocketnet_check( connected == num_clients );
+    rocketnet_check( rocketnet_server_num_connected_clients( server ) == num_clients );
+
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        rn_cli_client_stop_and_destroy( clients[i], 1000.0 + ( rocketnet_time() - wall_start ) );
+    }
+    rn_cli_server_stop_and_destroy( server );
+}
+#endif // #if ROCKETNET_DEV
+
 
 // the iocp transport's USO/URO tier against a plain UDP client on loopback: the
 // client sends tagged packets in, the transport must surface each byte-exact from
@@ -15605,6 +15768,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_rio_transport_server_wire_dual_stack", rocketnet_test_server_rio_wire_dual_stack, NULL },
     { "test_rio_transport_server_send_full", rocketnet_test_server_rio_send_full, NULL },
     { "test_rio_transport_server_unroutable_takes_no_slot", rocketnet_test_server_rio_unroutable_takes_no_slot, NULL },
+#if ROCKETNET_DEV
+    { "test_rio_transport_lanes_through_the_server", rocketnet_test_server_rio_lanes_through_the_server, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_iocp_transport_server_uso_uro_probe", rocketnet_test_server_iocp_uso_uro_probe, NULL },
     { "test_iocp_transport_server_uso_wire", rocketnet_test_server_iocp_uso_wire, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

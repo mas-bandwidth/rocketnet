@@ -95,6 +95,26 @@ ASSUME {InlineStop, SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn,
 \* post is counted SEND_FAILED.  FALSE in MCRNRioWorkerBrokenUncountedPost.cfg.
 CountRefusedPost == TRUE
 
+\* Rule switch (an operator, overridden in a cfg with <-): each pass retires
+\* the send completions and returns the drained phases idle before it takes
+\* a phase (WRetireFirst, WTake), so no phase main could reuse is still held
+\* posted when a new phase is posted.  FALSE in
+\* MCRNRioWorkerBrokenTakeBeforeRetire.cfg: the old order, which posts a phase
+\* while an earlier drained one is still held; must fail DrainedReturnedAtPost.
+RetireFirst == TRUE
+
+\* The datagrams that fail the stateless prefilter (an operator, overridden
+\* in a cfg with <-; none by default).  PrefilterInWorker is the rule: the
+\* worker runs the prefilter on each completion before it takes a bank slot,
+\* counts a refusal in its drop tally and re-posts the slice, so a refused
+\* datagram never takes room a player's datagram needs.  FALSE in
+\* MCRNRioWorkerBrokenBankGarbage.cfg: garbage is banked and main refuses
+\* it later.
+Garbage == {}
+PrefilterInWorker == TRUE
+Refused == IF PrefilterInWorker THEN Garbage ELSE {}
+Pass(s) == SelectSeq(s, LAMBDA x : x \notin Refused)
+
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
 SendIds == 1..MaxSends
@@ -139,11 +159,12 @@ VARIABLES
     wpc, progress,
     stopwaits,    \* failed stop passes of create's inline drain (its loop index)
     countedbusy,  \* ghost: a counted failed pass had dequeued a receive completion
-    stoprefused   \* the last stop-pass commit or closesocket was refused
+    stoprefused,  \* the last stop-pass commit or closesocket was refused
+    waited        \* ghost: the posted phases every send of which the kernel had finished when this pass began
 
 rvars == <<arrived, accepted, posted, retry, retired, rcq, data, fill, free, ready, exposed, view, consumed>>
 svars == <<sent, staged, state, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
-cvars == <<wake, evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused>>
+cvars == <<wake, evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 vars == <<rvars, svars, cvars>>
 
 Range(s) == {s[i] : i \in 1..Len(s)}
@@ -172,7 +193,7 @@ Init ==
     /\ wake = InlineStop /\ evt = FALSE /\ armed = FALSE
     /\ stopping = InlineStop /\ closed = FALSE /\ exited = FALSE /\ freed = FALSE
     /\ wpc = (IF InlineStop THEN "stop" ELSE "top") /\ progress = FALSE
-    /\ stopwaits = 0 /\ countedbusy = FALSE /\ stoprefused = FALSE
+    /\ stopwaits = 0 /\ countedbusy = FALSE /\ stoprefused = FALSE /\ waited = {}
 
 \* ------------------------------------------------------------------------
 \* The kernel and the network.
@@ -190,7 +211,7 @@ Arrive ==
     /\ armed' = FALSE
     /\ UNCHANGED <<retry, retired, data, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* no slice is posted: the kernel drops the datagram (an OS count, not ours)
 ArriveDropped ==
@@ -255,7 +276,7 @@ SendPackets ==
     /\ wake' = TRUE
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
-    /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 RECURSIVE Fit(_, _)
 \* the longest prefix of ready banks whose datagrams fit the view
@@ -276,7 +297,7 @@ ReceivePackets ==
           /\ wake' = (wake \/ (WakeOnReturn /\ free = <<>> /\ exposed # <<>>))
     /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, data, fill>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* a failed try: everything main owns is retained.  This over-approximates
 \* contention: the try may fail at any time.
@@ -290,7 +311,7 @@ Stop ==
     /\ stopping' = TRUE
     /\ wake' = TRUE
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<evt, armed, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<evt, armed, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* rocketnet_server_rio_destroy after stopped: frees the registered region
 Destroy ==
@@ -298,7 +319,7 @@ Destroy ==
     /\ ~freed
     /\ freed' = TRUE
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, wpc, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* main polls stopped(), or idles after destroy
 Poll ==
@@ -310,24 +331,31 @@ Poll ==
 
 WTop ==
     /\ wpc = "top"
-    /\ wpc' = IF stopping THEN "stop" ELSE "take"
+    /\ wpc' = IF stopping THEN "stop" ELSE IF RetireFirst THEN "first" ELSE "take"
+    /\ waited' = IF stopping THEN {} ELSE {p \in Phases : state[p] = "posted" /\ pend[p] = <<>> /\ infl[p] = <<>> /\ inhand # p}
     /\ progress' = FALSE
     /\ UNCHANGED rvars /\ UNCHANGED svars
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused>>
 
-\* under the mutex: take the oldest handed phase; main now sees it posted
+\* every posted phase with nothing outstanding, returned to main as idle
+DrainedIdle == [p \in Phases |-> IF state[p] = "posted" /\ ~Outstanding(p) THEN "idle" ELSE state[p]]
+
+\* under the mutex: return the drained phases (RetireFirst), then take the
+\* oldest handed phase; main now sees it posted
 WTake ==
     /\ wpc = "take"
-    /\ IF sready # <<>>
-       THEN /\ inhand' = Head(sready)
-            /\ sready' = Tail(sready)
-            /\ state' = [state EXCEPT ![Head(sready)] = "posted"]
-            /\ wpc' = "post"
-       ELSE /\ UNCHANGED <<inhand, sready, state>>
-            /\ wpc' = "retire"
+    /\ LET base == IF RetireFirst THEN DrainedIdle ELSE state
+       IN IF sready # <<>>
+          THEN /\ inhand' = Head(sready)
+               /\ sready' = Tail(sready)
+               /\ state' = [base EXCEPT ![Head(sready)] = "posted"]
+               /\ wpc' = "post"
+          ELSE /\ UNCHANGED <<inhand, sready>>
+               /\ state' = base
+               /\ wpc' = "retire"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, phase, pend, infl, scq, done, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* RIOSendEx with RIO_MSG_DEFER for each finished slot: the kernel owns
 \* the ones it accepted.  The kernel may refuse any of them (refused): a
@@ -344,7 +372,7 @@ WPost ==
     /\ progress' = TRUE
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, infl, scq, done, dropped, cancelled>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
 
 \* RIO_MSG_COMMIT_ONLY: success moves every deferred send to the kernel's
 \* queue; a refusal keeps them deferred for the next pass
@@ -360,7 +388,7 @@ WCommit ==
     /\ wpc' = IF stopping THEN "stop" ELSE "retire"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, scq, done, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* dequeue every send completion; a refused commit is retried here
 WRetire ==
@@ -373,24 +401,53 @@ WRetire ==
     /\ wpc' = "dequeue"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
+
+\* Before it takes a phase the worker retires every send completion (and
+\* retries a refused commit), so the take below returns the phases that
+\* drained to main as idle: a flush then finds its next phase idle unless
+\* the kernel really is behind.
+WRetireFirst ==
+    /\ wpc = "first"
+    /\ \/ CommitSuccess
+       \/ UNCHANGED <<pend, infl>>
+    /\ done' = done \o [i \in 1..Len(scq) |-> scq[i][2]]
+    /\ scq' = <<>>
+    /\ progress' = (progress \/ scq # <<>>)
+    /\ wpc' = "take"
+    /\ UNCHANGED rvars
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
 
 \* Retry uses one stopping read before its whole loop. Each completion
 \* checks stopping separately after copying; a Stop during this aggregate
 \* pass can therefore leave a re-posted prefix and a retired suffix.
 \* stopDuring summarizes that one Stop interleaving, including its wake.
 \* It does not introduce a second worker or a new fairness assumption.
+\* proofs/tla/RNRioWorker.tla WDequeue, Refused: the prefilter's refusals take
+\* no room, so the worker dequeues while the fill bank has room and it has
+\* taken at most one bank of completions (Slices): it stops with the queue
+\* empty, the room used up or that budget spent.
+Banked(k) == Len(Pass(NonZero(SubSeq(rcq, 1, k))))
+DequeueCounts ==
+    IF ~BoundedDequeue THEN {Len(rcq)}
+    ELSE LET room == Cap - Len(data[fill])
+         IN {k \in 0..Len(rcq) :
+                /\ k <= Slices
+                /\ (room = 0 => k = 0)
+                /\ Banked(k) <= room
+                /\ (k = Len(rcq) \/ Banked(k) = room \/ k = Slices)}
+
 WDequeue ==
     /\ wpc = "dequeue"
-    /\ LET room == IF BoundedDequeue THEN Cap - Len(data[fill]) ELSE Len(rcq)
-           k == IF Len(rcq) < room THEN Len(rcq) ELSE room
-       IN \E stopDuring \in BOOLEAN, attemptRetry \in BOOLEAN, repost \in 0..k :
+    /\ \E k \in DequeueCounts :
+          \E stopDuring \in BOOLEAN, attemptRetry \in BOOLEAN, repost \in 0..k :
              /\ stopDuring => ~stopping
              /\ stopping => (~attemptRetry /\ repost = 0)
              /\ (~stopping /\ ~stopDuring) => (attemptRetry /\ repost = k)
              /\ ~attemptRetry => repost = 0
              /\ LET attempted == IF attemptRetry THEN retry ELSE 0
-                    got == NonZero(SubSeq(rcq, 1, k))
+                    got == Pass(NonZero(SubSeq(rcq, 1, k)))
                     keep == IF Len(data[fill]) + Len(got) <= Cap THEN got
                             ELSE SubSeq(got, 1, Cap - Len(data[fill]))
                 IN \E refused \in 0..(attempted + repost) :
@@ -405,7 +462,7 @@ WDequeue ==
     /\ wpc' = "publish"
     /\ UNCHANGED <<arrived, accepted, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<evt, armed, closed, exited, freed, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<evt, armed, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
 
 \* under the mutex: publish a non-empty fill bank for a free one, and return
 \* every drained posted phase to main as idle
@@ -421,7 +478,7 @@ WPublish ==
     /\ wpc' = IF progress THEN "top" ELSE "arm"
     /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, exposed, view, consumed>>
     /\ UNCHANGED <<sent, staged, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* nothing progressed: arm RIONotify on the receive queue when the fill bank
 \* has room (a full bank waits on the wake alone).  A non-empty queue sets
@@ -434,7 +491,7 @@ WArm ==
        ELSE UNCHANGED <<evt, armed>>
     /\ wpc' = "wait"
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* WaitForMultipleObjects on the event and the wake.  Sends in flight, a
 \* refused commit or a refused re-post use a short timed wait instead.
@@ -450,7 +507,7 @@ WWait ==
           /\ UNCHANGED <<evt, wake>>
     /\ wpc' = "top"
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* ------------------------------------------------------------------------
 \* The stop pass, rocketnet_rio_stop_pass.  The worker runs it at the top of
@@ -507,7 +564,7 @@ WStop ==
                  /\ UNCHANGED state
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, phase, pend, infl, scq, done, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* rocketnet_rio_close_socket.  A deferred send is committed first; a
 \* refused commit fails the pass with the socket open.  Under
@@ -550,7 +607,7 @@ WClose ==
     /\ exited' = (wpc' = "exited")
     /\ UNCHANGED <<arrived, accepted, retry, retired, data, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, freed, progress>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, freed, progress, waited>>
 
 \* One RIODequeueCompletion call into RIORESULT results[DEQUEUE_BATCH]:
 \* it returns at most DrainBatch completions.  The pass calls again only
@@ -568,7 +625,7 @@ WDrainSend ==
           /\ wpc' = IF DrainLoop /\ n = DrainBatch THEN "drains" ELSE "drainr"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, infl, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 \* then the receive completion queue.  After its last call the pass returns
 \* true only when no send is outstanding (deferred, in flight or queued)
@@ -593,7 +650,7 @@ WDrainReceive ==
                        /\ UNCHANGED exited
     /\ UNCHANGED <<arrived, accepted, posted, retry, data, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, freed, progress, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, freed, progress, stoprefused, waited>>
 
 \* create's failure path after StopDrainWaits + 1 counted passes: it leaks
 \* the transport instead of freeing memory the kernel may still write.
@@ -603,18 +660,18 @@ WLeak ==
     /\ stopwaits = StopDrainWaits + 1
     /\ wpc' = "leaked"
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 Next ==
     \/ Arrive \/ ArriveDropped \/ \E p \in Phases : SendComplete(p) \/ CancelArrives
     \/ Stage \/ SendPackets \/ ReceivePackets \/ TryFail
     \/ Stop \/ Destroy \/ Poll
-    \/ WTop \/ WTake \/ WPost \/ WCommit \/ WRetire \/ WDequeue \/ WPublish
+    \/ WTop \/ WRetireFirst \/ WTake \/ WPost \/ WCommit \/ WRetire \/ WDequeue \/ WPublish
     \/ WArm \/ WWait \/ WStop \/ WClose \/ WDrainSend \/ WDrainReceive \/ WLeak
 
 Spec == Init /\ [][Next]_vars
 
-WorkerStep == WTop \/ WTake \/ WPost \/ WCommit \/ WRetire \/ WDequeue \/ WPublish
+WorkerStep == WTop \/ WRetireFirst \/ WTake \/ WPost \/ WCommit \/ WRetire \/ WDequeue \/ WPublish
               \/ WArm \/ WWait \/ WStop \/ WClose \/ WDrainSend \/ WDrainReceive \/ WLeak
 
 \* The kernel completes committed sends and delivers every cancellation of
@@ -629,6 +686,7 @@ SpecFair ==
     /\ WF_vars(CancelArrives)
     /\ WF_vars(WorkerStep)
     /\ SF_vars(~stopping /\ WCommit /\ ~Uncommitted') /\ SF_vars(~stopping /\ WRetire /\ ~Uncommitted')
+    /\ SF_vars(~stopping /\ WRetireFirst /\ ~Uncommitted')
     /\ SF_vars(WDequeue /\ retry' = 0)
     /\ SF_vars(SendPackets) /\ SF_vars(ReceivePackets)
     /\ WF_vars(Destroy)
@@ -649,6 +707,7 @@ TypeOK ==
     /\ stopwaits \in 0..(StopDrainWaits + 1)
     /\ countedbusy \in BOOLEAN
     /\ stoprefused \in BOOLEAN
+    /\ waited \subseteq Phases
 
 \* Every slice stays accounted through stop, close and drain. A retry
 \* entry is unposted and remains accounted even when stop skips its retry.
@@ -668,7 +727,16 @@ ExposedStable == Concat(exposed) = view
 
 \* Exact delivery of every accepted datagram, until stop.
 ExactDelivery ==
-    ~stopping => consumed \o Concat(ready) \o data[fill] \o NonZero(rcq) = accepted
+    ~stopping => consumed \o Concat(ready) \o data[fill] \o Pass(NonZero(rcq)) = Pass(accepted)
+
+\* A pass posts a new phase only after it returned to main every posted
+\* phase whose sends the kernel had all finished when the pass began.
+DrainedReturnedAtPost == wpc = "post" => \A p \in waited : state[p] # "posted"
+
+\* No datagram that fails the prefilter is ever banked or reaches main.
+NoGarbageBanked ==
+    /\ \A b \in Banks : Range(data[b]) \cap Garbage = {}
+    /\ Range(consumed) \cap Garbage = {}
 
 \* The fill threads never write a frame the kernel owns or a phase the
 \* worker holds: the open fill phase has no send outstanding.
@@ -701,7 +769,7 @@ NotReachedRefusedPostAtExit == ~(exited /\ failed # {})
 
 \* Liveness: every accepted datagram reaches main unless stop begins.
 EveryDatagramConsumed ==
-    \A i \in Ids : (\E j \in 1..Len(accepted) : accepted[j] = i)
+    \A i \in Ids \ Refused : (\E j \in 1..Len(accepted) : accepted[j] = i)
                    ~> (stopping \/ \E j \in 1..Len(consumed) : consumed[j] = i)
 
 \* Liveness: a staged packet is sent, or its post refused and counted,
