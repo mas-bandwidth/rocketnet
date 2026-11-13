@@ -275,9 +275,9 @@ static tla_record_t msgx_state( const msgx_walk_t & walk )
 
     std::vector<std::string> counter_keys, counters;
     // the model's counters, indexed in this order (RNMsgxSocketTable.tla)
-    const uint64_t counts[] = { table->counts.opened,        table->counts.closed,         table->counts.open_failed,
-                                table->counts.open_deferred, table->counts.table_full,     table->counts.retired_forget,
-                                table->counts.retired_dead,  table->counts.cooldown };
+    const uint64_t counts[] = { table->counts.opened, table->counts.closed, table->counts.open_failed,
+                                table->counts.open_deferred, table->counts.table_full, table->counts.retired_forget,
+                                table->counts.retired_dead, table->counts.cooldown };
     for ( int c = 0; c < (int) ( sizeof( counts ) / sizeof( counts[0] ) ); c++ )
     {
         counter_keys.push_back( tla_int( c ) );
