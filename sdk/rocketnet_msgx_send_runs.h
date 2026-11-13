@@ -45,10 +45,10 @@
 #include <stdint.h>
 
 // the connected send's answer when nothing was taken (a count taken is >= 0)
-#define ROCKETNET_MSGX_SEND_FULL                            -1  // EAGAIN, EWOULDBLOCK, ENOBUFS: try again later
-#define ROCKETNET_MSGX_SEND_REFUSED                         -2  // ECONNREFUSED
-#define ROCKETNET_MSGX_SEND_DEAD                            -3  // ENOTCONN, EPIPE, EDESTADDRREQ
-#define ROCKETNET_MSGX_SEND_ERROR                           -4  // anything else
+#define ROCKETNET_MSGX_SEND_FULL                            ( -1 )  // EAGAIN, EWOULDBLOCK, ENOBUFS: try again later
+#define ROCKETNET_MSGX_SEND_REFUSED                         ( -2 )  // ECONNREFUSED
+#define ROCKETNET_MSGX_SEND_DEAD                            ( -3 )  // ENOTCONN, EPIPE, EDESTADDRREQ
+#define ROCKETNET_MSGX_SEND_ERROR                           ( -4 )  // anything else
 
 // the shared send's answer for one packet
 #define ROCKETNET_MSGX_SHARED_SENT                           0
