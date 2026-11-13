@@ -950,3 +950,10 @@ MCRNSendReserveCallsChunk.cfg	MCRNSendReserveCalls.tla	pass	-	check	rnsendreserv
 MCRNSendReserveCallsBrokenTailLeak.cfg	MCRNSendReserveCalls.tla	invariant	NeverStarved	check	rnsendreserve	required	-
 MCRNWriterFinish.cfg	MCRNWriterFinish.tla	pass	-	check	rnwriterfinish	required	-
 MCRNWriterFinishBrokenNoOwner.cfg	MCRNWriterFinish.tla	invariant	OneWriter	check	rnwriterfinish	required	-
+MCRNAckApplyPhase.cfg	MCRNAckApplyPhase.tla	pass	-	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenCloseKeepsClaim.cfg	MCRNAckApplyPhase.tla	invariant	ClaimOnlyOpen	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenCloseSkipsUntaken.cfg	MCRNAckApplyPhase.tla	invariant	Whole	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenLoadTake.cfg	MCRNAckApplyPhase.tla	invariant	OneTaker	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenNoGatherWhenFull.cfg	MCRNAckApplyPhase.tla	invariant	InBounds	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenSettleWhileOpen.cfg	MCRNAckApplyPhase.tla	invariant	OneTaker	check	rnackapplyphase	required	-
+MCRNAckApplyPhaseBrokenTailNotAdvanced.cfg	MCRNAckApplyPhase.tla	invariant	ChainWhole	check	rnackapplyphase	required	-
