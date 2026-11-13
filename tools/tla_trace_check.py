@@ -159,6 +159,14 @@ LAYERS = {
                           "keeps no such word"},
         "reach": ["MainOnWorkerBuffer", "WorkerAhead", "TailPending", "WorkerFull"],
     },
+    "client-receive-handoff": {
+        "modules": ["RNReceiveHandoff.tla", "TraceRNReceiveHandoff.tla"],
+        "untraced": {},
+        "ghost": {"late": "history for DeliveredByNextCall: a call that returned less than was committed before it; the code "
+                          "keeps no such word"},
+        "reach": ["MainOnWorkerBuffer", "WorkerAhead", "TailPending", "WorkerFull"],
+        "header_only": True,
+    },
     "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
         "untraced": {
@@ -316,7 +324,7 @@ SHARDS = [
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
-    ["ackapply", "bank", "receive", "receive-handoff-xdp", "msgxreceivefill"],
+    ["ackapply", "bank", "receive", "receive-handoff-xdp", "msgxreceivefill", "client-receive-handoff"],
     ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
 ]
 

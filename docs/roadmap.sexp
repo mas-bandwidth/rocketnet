@@ -635,4 +635,9 @@
    :title "The any-queue capacity can be above 0 while no queue has both room and budget"
    :text "rocketnet_server_transport_send_capacity_to( -1 ) answers the room summed over the queues, within the whole budget left. With room on one queue and budget only on another, it is above 0 while no start can be granted, so the send pass holds every connection to the end instead of cutting: bounded (one walk, two capacity reads a connection), never a hang. Answer it per queue (the sum of each queue's room within its own budget, and the own frames), with RNSendReserveCalls CapacityAll and RNServerSendFair's cut changed alongside."
    :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix, cold read")
+
+  (item "client-io-decrypt-receive-half" :group "after-v1-1-landing" :area "proofs"
+   :title "Restate RNClientIoDecrypt's receive half over the three-buffer receive handoff"
+   :text "The client I/O thread's receive moved to sdk/rocketnet_receive_handoff.h (RNReceiveHandoff, trace-checked by tests/tla_trace_client_receive_handoff.cpp). proofs/tla/RNClientIoDecrypt.tla still restates the two-buffer Fill/Ready/Exposed/Free handshake of RNClientIo: its IoPublish stands for the commit and its Expose for the start of update's call, while IoOwe and Return have no step in the code now. Its decrypt properties (CheapRefusalsFirst, NoOpenWithoutKeys, IoWindowWithinMain, PayloadOpenedOnlyConnected, AcceptedOnce, SingleWriter) do not depend on that handshake. Restate the receive half as Bank, Commit and Call over three buffers with a committed count (update reads records below the count while the I/O thread appends past it), map ExposedStable to records below the committed count never changing and NoReceiveStall to DeliveredByNextCall, and re-measure the reduced and full configs and the six reversed witnesses."
+   :date "2026-11-13" :origin "Client receive handoff latency fix, the decrypt model's stale receive half")
  ))
