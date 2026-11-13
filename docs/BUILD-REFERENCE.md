@@ -378,8 +378,10 @@ the build links clang's own dynamic runtime and copies its DLL beside the execut
 
 `py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
 executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
-Memory, TLS, Threadpool and Leak) with every stop logged and no debugger
-attached (a stop ends the run once it is logged), exports the verifier log of
+SRWLock, Memory, Exceptions, TLS, Threadpool and Leak) with every stop logged and no debugger
+attached (a non-continuable stop ends the process with `0xC0000421`,
+STATUS_VERIFIER_STOP, once it is logged; a continuable one, such as a Handles
+stop, lets the process run on and shows only in the log), exports the verifier log of
 every process it starts with that image name (the suite runners start one child
 per case), and exits non-zero naming each stop's layer, stop code and top frames; it disables
 verification for the executable again on every exit path. Verifier settings and logs are keyed by
