@@ -3,7 +3,8 @@
 # first-matching row in docs/mrdocs/areas.tsv (pinning
 # rocketnet_message_client_required_memory -> configuration,
 # rocketnet_frame_sync_stats_t::dropped_frames -> counters, file rows, and
-# unassigned) and supports --area filtering.
+# unassigned), supports --area filtering, and refuses (exit 1, naming the
+# count) a log with an undocumented ROCKETNET_EXPORT function.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -11,7 +12,23 @@ SCRIPT="$ROOT/tools/docs/undocumented.sh"
 FIXTURE="$ROOT/tools/docs/testdata/mrdocs.log"
 AREAS="$ROOT/docs/mrdocs/areas.tsv"
 
-output="$(sh "$SCRIPT" "$FIXTURE" "$AREAS")"
+TMP="$(mktemp -d)"
+trap 'rm -rf -- "$TMP"' EXIT
+
+# The fixture's five functions carry ROCKETNET_EXPORT, the header's macro, so
+# the whole log is refused: it prints every row, then names the count.
+rc=0
+output="$(sh "$SCRIPT" "$FIXTURE" "$AREAS" 2>"$TMP/stderr")" || rc=$?
+if [ "$rc" != 1 ]; then
+    echo "FAIL: undocumented.sh exited $rc on five undocumented ROCKETNET_EXPORT functions, expected 1" >&2
+    cat "$TMP/stderr" >&2
+    exit 1
+fi
+if ! grep -qF "error: 5 undocumented public function(s)" "$TMP/stderr"; then
+    echo "FAIL: undocumented.sh did not name the five undocumented public functions" >&2
+    cat "$TMP/stderr" >&2
+    exit 1
+fi
 
 expected="$(cat << 'EXPECTED'
 sdk/rocketnet.h	340	rocketnet_init	function	lifecycle
@@ -38,9 +55,17 @@ if [ "$output" != "$expected" ]; then
     exit 1
 fi
 
-cfg_only="$(sh "$SCRIPT" --area configuration "$FIXTURE" "$AREAS")"
-if [ "$cfg_only" != "sdk/rocketnet.h	1770	rocketnet_message_client_required_memory	function	configuration" ]; then
-    echo "FAIL: --area configuration did not isolate rocketnet_message_client_required_memory" >&2
+rc=0
+cfg_only="$(sh "$SCRIPT" --area configuration "$FIXTURE" "$AREAS" 2>/dev/null)" || rc=$?
+if [ "$rc" != 1 ] || [ "$cfg_only" != "sdk/rocketnet.h	1770	rocketnet_message_client_required_memory	function	configuration" ]; then
+    echo "FAIL: --area configuration did not isolate and refuse rocketnet_message_client_required_memory (exit $rc)" >&2
+    exit 1
+fi
+
+# an area with no undocumented exported function passes
+counters_only="$(sh "$SCRIPT" --area counters "$FIXTURE" "$AREAS")"
+if [ "$(printf '%s\n' "$counters_only" | wc -l | tr -d ' ')" != 3 ]; then
+    echo "FAIL: --area counters did not list its three rows" >&2
     exit 1
 fi
 

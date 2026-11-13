@@ -3,7 +3,7 @@ Extracting declarations
 Finalizing corpus
 /workspace/rocketnet/sdk/rocketnet.h:1770:23:
     1) rocketnet_message_client_required_memory: function is undocumented
-  1770 | ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_client_required_memory( const struct rocketnet_client_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
+  1770 | ROCKETNET_EXPORT uint64_t rocketnet_message_client_required_memory( const struct rocketnet_client_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
        |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet.h:1366:5:
@@ -23,17 +23,17 @@ Finalizing corpus
 
 /workspace/rocketnet/sdk/rocketnet.h:1814:23:
     1) rocketnet_message_client_send: function is undocumented
-  1814 | ROCKETNET_EXPORT_FUNC int rocketnet_message_client_send( struct rocketnet_message_client_t * client, int channel, int reliability, const uint8_t * data, int bytes );
+  1814 | ROCKETNET_EXPORT int rocketnet_message_client_send( struct rocketnet_message_client_t * client, int channel, int reliability, const uint8_t * data, int bytes );
        |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet.h:340:23:
     1) rocketnet_init: function is undocumented
-  340 | ROCKETNET_EXPORT_FUNC bool rocketnet_init( const struct rocketnet_init_config_t * config );
+  340 | ROCKETNET_EXPORT bool rocketnet_init( const struct rocketnet_init_config_t * config );
       |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet_platform.h:20:23:
     1) rocketnet_platform_init: function is undocumented
-  20 | ROCKETNET_EXPORT_FUNC bool rocketnet_platform_init();
+  20 | ROCKETNET_EXPORT bool rocketnet_platform_init();
      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet_counters.h:575:5:
@@ -43,7 +43,7 @@ Finalizing corpus
 
 /workspace/rocketnet/sdk/rocketnet_connect_token.h:150:23:
     1) rocketnet_generate_connect_token: function is undocumented
-  150 | ROCKETNET_EXPORT_FUNC bool rocketnet_generate_connect_token( int num_server_addresses, const char ** server_addresses, const char * public_address, int expire_seconds, int timeout_seconds, uint64_t client_id, uint64_t protocol_id, const uint8_t * user_data, const uint8_t * server_public_key, const uint8_t * backend_secret_key, uint8_t * token_output );
+  150 | ROCKETNET_EXPORT bool rocketnet_generate_connect_token( int num_server_addresses, const char ** server_addresses, const char * public_address, int expire_seconds, int timeout_seconds, uint64_t client_id, uint64_t protocol_id, const uint8_t * user_data, const uint8_t * server_public_key, const uint8_t * backend_secret_key, uint8_t * token_output );
       |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet_address.h:25:1:
