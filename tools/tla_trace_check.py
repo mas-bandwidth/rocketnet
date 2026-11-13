@@ -694,13 +694,16 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
     # is printed, so the flake stays visible, and a plant that never prints
     # one stays red
     attempts = 1
+    missing = 0
     while plant_exit == 12 and not TI.search(plant_log) and attempts < PLANT_ATTEMPTS:
+        missing += 1
         attempts += 1
         plant_exit, plant_log = tlc(args, name, base / f"plant-attempt-{attempts}", reports["plant"]["module"],
                                     expected["plant"], layer, log, source=base / "plant" / "walk")
+    if plant_exit == 12 and not TI.search(plant_log):
+        missing += 1
     if attempts > 1:
-        log.append(f"PLANT-ATTEMPTS {attempts}: TLC printed no behaviour for the plant's violation on "
-                   f"{attempts - 1 if TI.search(plant_log) else attempts} of them\n")
+        log.append(f"PLANT-ATTEMPTS {attempts}: TLC printed no behaviour for the plant's violation on {missing} of them\n")
     if plant_exit != 12:
         failures.append(tlc_failure("plant", plant_exit))
     else:
