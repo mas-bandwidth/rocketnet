@@ -773,7 +773,10 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     //    (proofs/tla/RNSentMap.tla NoLiveEviction). Receipt-only packets take
     //    entries that W does not bound: with them, reliable and receipt-only
     //    packets past P in one round trip evict a reliable entry whose ack is
-    //    on its way (MCRNSentMapReceiptEviction.cfg), an open risk.
+    //    on its way (MCRNSentMapReceiptEviction.cfg). That is the documented
+    //    contract (sdk/rocketnet.h packets_in_flight, m9.1): P is sized for W
+    //    plus the receipt-only packets of one round trip; the repair is
+    //    docs/roadmap.sexp sent-map-receipts-give-way.
 
     rn_window_ack_reclaim_head( ack );
 

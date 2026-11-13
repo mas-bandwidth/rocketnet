@@ -112,6 +112,21 @@ An unreliable receipt's deadline is its packet send time plus
 refused by the send budget or transport reports LOSS immediately; evicting an
 entry from the sent-packet map can also resolve it as LOSS before that deadline.
 
+The sent-packet map (`packets_in_flight` entries, at least
+`reliable_messages_in_flight`) is shared by every packet that carries reliable
+messages and every packet that carries only unreliable receipt sends. With the
+resend delay above the round trip, no entry leaves before its acknowledgement
+lands while the packets of both kinds sent within one round trip fit in it.
+Past that, the oldest entry can be evicted while its acknowledgement is on its
+way: the late acknowledgement is ignored, a reliable message in it is resent
+and can hold back the reliable window until a later send is acknowledged, and
+an unreliable receipt in it reports LOSS early. A steady excess
+can stop reliable progress until `reliable_message_timeout_ms`, when set, ends
+the connection. Size `packets_in_flight` at least
+`reliable_messages_in_flight` plus the receipt-only packets the connection
+sends per round trip at its longest expected round trip (for example 60 Hz
+with up to 2 receipt-only packets an update and a 1 s round trip adds 120).
+
 Receipt reads return the number available and copy only what fits. Iterate
 up to `min(returned_count, capacity)`; rereading returns the same list rather
 than consuming it. Read or copy outcomes before the next update. A full ring

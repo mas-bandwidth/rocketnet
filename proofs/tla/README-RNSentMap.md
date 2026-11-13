@@ -65,7 +65,7 @@ Not modelled: blocks (`U'` only narrows the window, so it cannot add packets)
 and the 16P reference ring (each packet holds at most 16 references, so it
 never binds before the packet ring).
 
-## Receipt-only packets: the rule does not hold with them (open risk)
+## Receipt-only packets: the rule does not hold with them (documented contract)
 
 A packet of unreliable records with receipts and no reliable number takes a
 ring entry too (`rn_window_ack_commit_receipt_packet`), and `W` does not bound
@@ -93,7 +93,18 @@ that refuses to evict a reliable entry still leaves its entry in the ring for
 the next reliable write to pass `P` on; reserving `W` entries for numbered
 packets makes every receipt LOSS at the default `P = W = 1024`; and a budget
 or ring of their own changes the map's layout and memory. The repair is a
-design change for a minor release.
+design change for a minor release: docs/roadmap.sexp
+`sent-map-receipts-give-way`.
+
+The contract now says so (2026-11-13): `packets_in_flight` in sdk/rocketnet.h,
+standard/MESSAGES.md m9.1 and docs/CHANNELS.md state that reliable and
+receipt-only packets share the map, that no entry is evicted before its ack
+lands while the map holds `W` plus the receipt-only packets of one round trip,
+and what happens past that. This model's rule is unchanged: the committed run
+is that sizing with no receipt-only packets, and
+`MCRNSentMapReceiptEviction.cfg` is the overflow the contract describes.
+tests/test_unit_sent_map_receipt_eviction.cpp pins the overflow behaviour by
+value at `P = W = 64`, and shows that a map sized by the rule evicts nothing.
 
 ## Cases
 

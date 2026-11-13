@@ -2847,14 +2847,26 @@ names exactly one send. A sender MUST ignore an acknowledgement whose sequence
 the map does not hold.
 
 The map MUST hold at least `W` entries, where `W` is the connection's
-`reliable_messages_in_flight`. Every entry names a send carrying at least one
-reliable number, and a window of `W` numbers may be in flight one to a send,
-all written inside one round trip; a smaller map would drop an entry whose
-acknowledgement is still on its way, and the numbers it carried would be
+`reliable_messages_in_flight`. A window of `W` numbers may be in flight one to
+a send, all written inside one round trip; a smaller map would drop an entry
+whose acknowledgement is still on its way, and the numbers it carried would be
 resent. A sender whose map is full MUST drop its oldest entry to record a new
 send; the numbers the dropped entry carried stay unacknowledged and in their
-resend queues. With at least `W` entries and a resend delay above the round
-trip, the dropped entry is one whose acknowledgement can no longer arrive.
+resend queues.
+
+Every tracked send shares the map's entries: a send carrying reliable numbers,
+and a receipt-only send, one carrying unreliable receipt serials and no
+reliable number. `W` bounds only the first kind. With a resend delay above the
+round trip, the dropped entry is one whose acknowledgement can no longer arrive
+when the map holds at least `W` entries plus the receipt-only sends written
+inside the longest round trip. Past that, the dropped entry can be one whose
+acknowledgement is on its way: that acknowledgement is ignored; a reliable
+number the entry carried is resent and can hold back the lowest
+unacknowledged number until a later send of it is acknowledged; and a
+receipt serial it carried that has not reached its deadline reports LOSS
+early. A steady excess can drop every send of a reliable number before its
+acknowledgement lands, and the reliable timeout, when configured, then ends
+the connection.
 
 On an acknowledgement, for each number the packet carried that is still
 unacknowledged, the sender MUST mark the number acknowledged, remove it from

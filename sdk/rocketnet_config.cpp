@@ -282,14 +282,17 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
 
     // the sent-packet map holds one entry per packet that carries reliable
     // numbers or unreliable receipt serials; a packet with neither takes no
-    // entry. Its occupancy is the reliable packets plus the receipt-bearing
-    // unreliable packets sent within one resend delay. W numbers can be in
-    // flight one to a packet inside that delay, so a map smaller than W
-    // evicts entries whose acks are still on the way and the numbers they
-    // carried are resent; P >= W is the floor, and receipt-bearing unreliable
-    // traffic needs P above it, or an eviction reports their receipts as loss
-    // (6.4, standard/MESSAGES.md m9.1; proofs/tla/RNSentMap.tla NoLiveEviction,
-    // proofs/tla/RNReceipts.tla EvictMap).
+    // entry. The entries whose acks can still arrive are the packets sent
+    // within one round trip. With the resend delay above the round trip, W
+    // numbers can be in flight one to a packet inside it, so a map smaller
+    // than W evicts entries whose acks are still on the way and the numbers
+    // they carried are resent; P >= W is the floor. Receipt-bearing
+    // unreliable traffic needs P above it by the receipt-only packets sent in
+    // the longest round trip: past that the oldest entry can go with its ack
+    // on the way, a reliable entry's numbers are resent and a receipt entry
+    // reports LOSS early (6.4, standard/MESSAGES.md m9.1; proofs/tla/RNSentMap.tla
+    // NoLiveEviction, MCRNSentMapReceiptEviction.cfg; proofs/tla/RNReceipts.tla
+    // EvictMap; docs/roadmap.sexp sent-map-receipts-give-way).
 
     if ( config->packets_in_flight < W )
     {
