@@ -1323,9 +1323,15 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 /// datagram queue. Each client endpoint's queue is 2048 slots of 1476 bytes,
 /// 2048 * 1476 bytes. At max_clients 1000 the block is about 3.05 GB. It sits
 /// outside rocketnet_client_required_memory and
-/// rocketnet_server_required_memory. Server start and client connect register
-/// an endpoint and allocate nothing; stop, disconnect and destroy unregister
-/// it. Traffic never allocates. A server or client past the hub's capacity is
+/// rocketnet_server_required_memory. The endpoint records and queues are
+/// preallocated there: server start registers an endpoint and allocates
+/// nothing. Client connect registers one too, and also creates the client's
+/// own wake (a small allocation through the configured allocator and, on
+/// platforms with one, an operating-system event), which its I/O thread
+/// sleeps on until a datagram is queued for it; the wake is counted in
+/// rocketnet_client_required_memory. Stop, disconnect and destroy unregister
+/// the endpoint, and a client's destroy frees its wake. Traffic never
+/// allocates. A server or client past the hub's capacity is
 /// refused at start or connect. Create it once rocketnet_init has run, and
 /// destroy it with the same library copy that created it, after every server
 /// and client that uses it is destroyed and before rocketnet_term.

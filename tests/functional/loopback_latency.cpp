@@ -208,7 +208,9 @@ void rocketnet_test_loopback_client_woken_by_send()
             delivered = loopback_latency_client_has( client, want );
         }
         rocketnet_check( delivered );
-        to_client[round] = now - sent;
+        // the delivery is established once the update and the receipt check
+        // above have returned: time it there, not at the update's start
+        to_client[round] = rocketnet_platform_time() - sent;
 
         rocketnet_platform_sleep( 0.0001 * (double) ( ( round * 7 ) % 13 ) );
 
@@ -226,7 +228,7 @@ void rocketnet_test_loopback_client_woken_by_send()
             delivered = loopback_latency_server_has( server, want );
         }
         rocketnet_check( delivered );
-        to_server[round] = now - client_sent;
+        to_server[round] = rocketnet_platform_time() - client_sent;
     }
 
     // paced delivery: both ends update every LOOPBACK_LATENCY_PACE_SECONDS;
