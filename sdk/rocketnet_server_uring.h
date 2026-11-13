@@ -12,23 +12,34 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
+#include "rocketnet_uring_send_queue.h"
 
-// The io_uring server transport: one io_uring per transport, used only on the main
-// thread, and no worker thread. An SO_REUSEPORT socket group (bound the way
-// the gso transport binds its group) shards receives across queues; each queue
-// has a provided buffer ring and one multishot RECVMSG, so the kernel fills
-// receive buffers with no syscall per datagram, and send_packets submits one
-// SENDMSG per send run in chunks no larger than the free submission queue
-// space: with UDP_SEGMENT (probed at create, the gso transport's tier) a run
-// of consecutive staged slots to one destination, equal sizes but for one
-// shorter tail, goes out as one segmented SENDMSG; without it a run is one
-// slot; with UDP_GRO (probed at create, all or nothing) one receive buffer
-// holds a coalesced receive that is split by its stride into the receive
-// bank. each send_packets and receive_packets call reaps at most a fixed
-// completion budget, so a call returns under sustained traffic.
-// proofs/tla/RNUringDriver.tla models the send staging, the two receive banks, the
-// per-call budget and destroy; the functions that implement a model action
-// cite it.
+// The io_uring server transport, the XDP shape: one worker thread per queue,
+// each owning its own io_uring and doing all of its queue's kernel-facing
+// send and receive. An SO_REUSEPORT socket group (bound the way the gso
+// transport binds its group) shards receives across queues.
+//
+// Send: start_packet hashes the destination to a queue (the XDP hash,
+// rocketnet_send_queue_of) and claims a slot of that queue's producer bank
+// of ROCKETNET_URING_SEND_QUEUE_SIZE (rocketnet_uring_send_queue.h);
+// send_packets, with the fill joined, publishes each queue's producer to its
+// worker and wakes it (rocketnet_uring_queue_send.h). The worker groups a
+// bank's packets by destination in staged order (rocketnet_send_gather.h)
+// and sends each run as one SENDMSG, segmented with UDP_SEGMENT when the
+// create probe found it; a bank goes back to the fill only after the last
+// completion of its sends (rocketnet_uring_queue_worker.h).
+//
+// Receive: each worker keeps its socket's multishot RECVMSG armed over a
+// provided buffer ring, splits UDP_GRO coalesced receives, runs the
+// server's stateless prefilter and banks what passes in its queue's receive
+// bank (rocketnet_uring_receive_queue.h); receive_packets only drains the
+// banks into the process view. Every datagram a completion carries is
+// banked or counted by name.
+//
+// Main never touches a ring. The models are the modules':
+// RNUringQueueBankLayout, RNUringQueueSend, RNSendGatherLayout,
+// RNUringQueueWorker, RNUringQueueReceive and RNUringQueueReceiveLayout,
+// each bound to its code by a trace check.
 //
 // The transport is built only when the library is configured with liburing
 // (ROCKETNET_IO_URING, Linux). Without it, create logs the refusal and
@@ -44,92 +55,82 @@ struct rocketnet_server_uring_t;
 
 #define ROCKETNET_URING_MAX_QUEUES                                          32
 
-// submission queue entries; the completion queue is twice this
+// each queue's ring: submission queue entries; the completion queue is
+// twice this
 
 #define ROCKETNET_URING_ENTRIES                                           4096
 
-// send staging: one phase's worth of frame-stride slots, the gso transport's
-// budget. the staging has two phases: start_packet fills one while the
-// kernel completes the sends of the other, so a send whose completion is
-// reaped one call late never holds the next update's staging. a phase is
-// committed to the kernel by send_packets and complete once every slot of it
-// is submitted and every send of it has its completion; only a complete
-// phase is reset, and send_packets moves the fill to the other phase when
-// that one is complete (proofs/tla/RNUringSendPhases.tla). RIO's send
-// handoff has a third phase for its worker thread; io_uring submits on the
-// main thread, so fill and committed are the two it needs.
+// send staging: per queue, a producer bank of this many frame-stride slots
+// (and two more banks the worker sends from while the fill uses the
+// producer). A destination always stages in its own queue, so the fullest
+// queue bounds what one update may stage to any destination.
 
-#define ROCKETNET_URING_SEND_QUEUE_SIZE                                   2048
-#define ROCKETNET_URING_SEND_PHASES                                          2
-#define ROCKETNET_URING_SEND_SLOTS    ( ROCKETNET_URING_SEND_PHASES * ROCKETNET_URING_SEND_QUEUE_SIZE )
+#define ROCKETNET_URING_SEND_QUEUE_SIZE                ROCKETNET_URING_SEND_BANK_SLOTS
 
-// a send holds at least one staged slot from its submit to its completion,
-// so the sends in flight, both phases', fit the submission queue and leave
-// the completion queue (twice the ring) room for receive completions
+// a queue's send slots are sized by rate at create: twice the queue's share
+// of one frame's packets at the bar (1000 players, 10 Gb/s, 60 Hz: 1.04M
+// packets/s is 17.3 a player a frame, so 18), at least
+// ROCKETNET_URING_SEND_QUEUE_SIZE and at most the module's
+// ROCKETNET_URING_SEND_MAX_BANK_SLOTS. Twice covers the destination hash's
+// uneven split over the queues; it is not measured past the bar row. The
+// floor alone held only at 8 queues: at 2 queues 4096 slots a queue a frame
+// is 491,520 packets/s at 60 Hz, half the line rate.
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_SLOTS,
-                         "the io_uring sends in flight, both phases', fit the ring" );
+#define ROCKETNET_URING_SEND_PACKETS_PER_CLIENT_FRAME                        18
 
-// the submission queue holds the whole send staging beside one re-arm and
-// one cancel per queue, so one send_packets prepares an SQE for every staged
-// slot: a submit that takes nothing leaves those SQEs in the queue, where
-// the next send_packets or stopped submits them, and no staged slot is ever
-// left without its SQE
+static inline int rocketnet_server_uring_send_slots( int max_clients, int num_queues )
+{
+    if ( max_clients < 1 || num_queues < 1 )
+    {
+        return ROCKETNET_URING_SEND_QUEUE_SIZE;
+    }
+    const int64_t frame = (int64_t) ROCKETNET_URING_SEND_PACKETS_PER_CLIENT_FRAME * max_clients;
+    const int64_t slots = ( 2 * frame + num_queues - 1 ) / num_queues;
+    if ( slots < ROCKETNET_URING_SEND_QUEUE_SIZE )
+    {
+        return ROCKETNET_URING_SEND_QUEUE_SIZE;
+    }
+    if ( slots > ROCKETNET_URING_SEND_MAX_BANK_SLOTS )
+    {
+        return ROCKETNET_URING_SEND_MAX_BANK_SLOTS;
+    }
+    return (int) slots;
+}
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_QUEUE_SIZE + 2 * ROCKETNET_URING_MAX_QUEUES,
-                         "the io_uring submission queue holds a whole send staging beside a re-arm and a cancel per queue" );
+// runs a worker keeps in the kernel at once: the ring less room for the
+// receive arm, the wake read, the poll and their cancels
+
+#define ROCKETNET_URING_MAX_RUNS_IN_KERNEL                ( ROCKETNET_URING_ENTRIES - 16 )
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES <= ROCKETNET_URING_SEND_MAX_QUEUES, "every io_uring queue has its send banks" );
 
 // receive: per queue a provided buffer ring of this many buffers of this many
 // bytes. one buffer holds the multishot recvmsg header, the reserved name
-// area, the UDP_GRO control area and the payload, which with UDP_GRO is one
+// area, the control area and the payload, which with UDP_GRO is one
 // coalesced receive of up to 64 KiB (the 16-bit UDP payload), so a buffer is
 // 66 KiB: 4096 * 66 KiB = 264 MiB per queue, all allocated at create
-// whether or not the UDP_GRO probe is granted. memory is spent so that one
-// completion carries a whole coalesced run of datagrams.
+// whether or not the UDP_GRO probe is granted (a page is resident only once
+// the kernel writes it).
 
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
 #define ROCKETNET_URING_RECV_BUFFER_BYTES                          ( 66 * 1024 )
 
-// the per-call completion budgets: receive_packets takes at most
-// one bank size of completions (rocketnet_server_uring_bank_size) and
-// send_packets at most ROCKETNET_URING_SEND_BUDGET (a whole staging of sends
-// and a completion queue of receives besides), each from its own budget, so
-// a call returns under sustained traffic and receive_packets spending its
-// budget never stops send_packets reaping. completions past a budget stay
-// in the completion queue for the next call, counted REAP_DEFERRED. a
-// receive completion the fill bank has no room for is held with its ring
-// buffer until a swap brings room, and leaves the completion queue, so no
-// send completion waits behind it.
+// the floor of a receive bank: each queue's bank, and the process view, hold
+// at least this many datagrams whatever the client count
 
-#define ROCKETNET_URING_SEND_BUDGET    ( ROCKETNET_URING_SEND_QUEUE_SIZE + ROCKETNET_URING_ENTRIES * 2 )
+#define ROCKETNET_URING_SEND_BUDGET    ( 2048 + ROCKETNET_URING_ENTRIES * 2 )
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
-                         "receive budget twice send: io_uring receive ring holds at least twice the send queue" );
-
-// the send staging is one server-wide array whatever the queue count, and
-// does not derive from the client count: it stages two packets for every
-// client of the default configuration. A server whose sends need more in one
-// update spreads them across updates, as the transport's send room reports
-// (rocketnet_server_uring_send_room; proofs/tla/ServerStopSpread.tla Room).
-
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS,
-                         "the io_uring send array stages two packets for every client of the default configuration" );
-
-// one receive bank holds a whole process batch, so the swap never drops
-// below the process arrays; a receive is copied into it only while the last
-// ROCKETNET_URING_MAX_SEGMENTS slots are free, the most datagrams one
-// coalesced receive is taken with (NIC GRO's limit, the gso transport's
-// bound; of a receive split into more, which a local sender's segmented send
-// can produce, the first ROCKETNET_URING_MAX_SEGMENTS are taken and each
-// datagram past them is counted in RECEIVE_DROPPED_OVERFLOW), and held
-// otherwise, in a ring per queue with a slot for every provided buffer (a
-// held receive owns its buffer), copied a queue at a time in turn.
-// A bank holds one update's receive budget for the configured clients, and
-// never less than one send reap (ROCKETNET_URING_SEND_BUDGET), so a reap
-// that is all send completions still fits a bank; the receive budget a call
-// reaps is the bank size, and the process view holds a whole bank.
+// the most datagrams one coalesced receive is taken with (NIC GRO's limit,
+// the gso transport's bound); each datagram past them is counted in
+// RECEIVE_DROPPED_OVERFLOW
 
 #define ROCKETNET_URING_MAX_SEGMENTS                                        64
+
+// a receive bank holds one update's receive budget for the configured
+// clients (rocketnet_server_receive_packets_per_update), never less than the
+// floor. Each queue's bank is this size, so one queue may take the whole
+// update's receives; the process view holds this many, and what one update
+// does not take waits in its queue's bank for the next.
 
 static inline int rocketnet_server_uring_bank_packets( int max_clients )
 {
@@ -137,32 +138,34 @@ static inline int rocketnet_server_uring_bank_packets( int max_clients )
     return budget > ROCKETNET_URING_SEND_BUDGET ? budget : ROCKETNET_URING_SEND_BUDGET;
 }
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
-                         "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGMENTS,
                          "the receive bank holds more than one coalesced receive" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS,
+                         "one io_uring queue stages two packets for every client of the default configuration" );
 
 // counters, readable any time from the main thread; indexes into the array
 // rocketnet_server_uring_counters fills
 
 #define ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT                          0
 #define ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED                      1
-#define ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS                       2      // io_uring_enter calls: submits and waits
-#define ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED                          3      // a send CQE with a negative result, or a destination the socket family cannot carry
+#define ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS                       2      // io_uring_enter calls of every queue worker: submits and waits
+#define ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED                          3      // packets of a send CQE with a negative result, a destination the socket family cannot carry, or abandoned by the stop past its bounded retries
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE                  4      // datagram outside [server min, receive ceiling], or truncated in its buffer
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW              5      // the fill bank was full during destroy's drain (a running transport holds the receive for the next swap instead)
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW              5      // datagrams of one coalesced receive past ROCKETNET_URING_MAX_SEGMENTS
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE                6      // source address the boundary could not convert
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS                    7      // the multishot ended because the buffer ring was empty (ENOBUFS)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
-#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that left completions in the queue for the next call (its budget spent) or receives held for the fill bank's room (deferred, not dropped)
-#define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, in either phase, retired by a later call
+#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // worker passes that left completions for the next pass (a full batch taken)
+#define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // send runs the kernel answered -EAGAIN (the socket full): submitted again, not dropped
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER            11      // a receive CQE with res >= 0 that names no provided buffer (no IORING_CQE_F_BUFFER, or an id outside the ring)
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (armed on a later worker pass)
 #define ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS                            13      // segmented SENDMSGs submitted: a run of more than one packet with a UDP_SEGMENT cmsg
-#define ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS                        14      // segmentation turned off for the transport: ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD destinations refused a segmented send (EINVAL, EIO or EOPNOTSUPP) and none was ever accepted
+#define ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS                        14      // segmentation turned off for a queue: ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD destinations refused a segmented send (EINVAL, EIO or EOPNOTSUPP) and none was ever accepted
 #define ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES                          15      // receive buffers that held more than one segment (a UDP_GRO coalesced receive split by its stride)
 #define ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS                      16      // a receive whose UDP_GRO control was truncated or malformed: taken as one datagram, the gso transport's fault
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 17
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOCKET               17      // datagrams the kernel dropped at a queue socket (SO_RXQ_OVFL: a full receive buffer and the socket's other drops)
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_ERRORS                       18      // receive completions the kernel refused (a negative result other than ENOBUFS or ECANCELED); completions, not datagrams
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 19
 
 // feature bits reported by rocketnet_server_uring_features: what the create
 // probe found and the transport is using now
@@ -195,123 +198,77 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues, int max_clients );
 // selects the default; a count past ROCKETNET_URING_MAX_QUEUES refuses.
 // max_clients is the server's configured client count: it sizes the receive
 // banks, the receive view and each socket's receive buffer request.
+// packet_filter is the server's ROCKETNET_FILTER_VALUE_BYTES filter value,
+// copied: each queue worker runs the server's stateless prefilter on every
+// datagram before banking it. NULL drives the transport directly (raw
+// datagrams): the workers then apply the size pass alone.
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int * status = NULL );
+struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int * status = NULL,
+                                                                 const uint8_t * packet_filter = NULL );
 
 // create with flags, the DISABLE set above; create is create_flags with 0
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status = NULL );
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status = NULL,
+                                                                       const uint8_t * packet_filter = NULL );
 
 // the packets one receive bank holds: one update's receive budget for the
-// transport's max_clients (rocketnet_server_receive_packets_per_update)
+// transport's max_clients (rocketnet_server_uring_bank_packets)
 
 int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * uring );
 
+// the send slots each queue stages a frame into (rocketnet_server_uring_send_slots
+// of the transport's max_clients and queue count)
+
+int rocketnet_server_uring_send_queue_size( const struct rocketnet_server_uring_t * uring );
+
 // the FEATURE bits in use now. a destination that refuses a segmented send
-// has its runs resent plain and leaves the bit set; it clears only when the
-// transport cannot segment at all (rocketnet_server_gso.h)
+// has its runs resent plain and leaves the bit set; it clears when a queue
+// cannot segment at all (rocketnet_server_gso.h's refusal threshold)
 
 int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring );
 
-// Stop requests cancellation; stopped services a bounded batch of currently
-// ready completions and returns false while the kernel still owns any buffer.
-// A pending object remains owned by the caller. Destroy never abandons it.
+// stop tells every queue worker to stop: each keeps sending what was
+// published, retries a full socket a bounded number of times, cancels its
+// receive and exits once nothing of its is in the kernel. stopped is true
+// once every worker has exited; it never waits. What the workers banked and
+// main never took is counted RECEIVE_DROP_STOPPED then.
 
 void rocketnet_server_uring_stop( struct rocketnet_server_uring_t * uring );
 bool rocketnet_server_uring_stopped( struct rocketnet_server_uring_t * uring );
 
-// Requires stopped completion. Frees synchronously.
+// Requires stopped completion. Joins the workers and frees synchronously.
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
 
-// Test seam: hold completion pending until test_resume_stop releases it.
-
 #if ROCKETNET_DEV
+// Test seam: stopped answers false until test_resume_stop releases it.
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
 void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * uring );
 
-// development library only. fail_receive cancels the queue's multishot
-// receive and hands its terminating CQE to the reap with error (negative
-// errno) in place of -ECANCELED, the path a kernel-side receive failure
-// takes. fail_sends prepares the next count send SQEs with no destination,
-// so the kernel completes each with a failed CQE.
+// development library only. fail_receive has the queue's worker cancel its
+// multishot receive and hand the receive module the terminating completion
+// with error (negative errno) in place of -ECANCELED, the path a kernel-side
+// receive failure takes. fail_sends makes the next count send SQEs any
+// worker submits name no socket, so the kernel completes each with a failed
+// CQE; 0 ends it.
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error );
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
-// main thread: no staged slot waiting and no send without its CQE.
+// main thread: no staged slot waiting and no bank published and not retired
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring );
-// selects the fill phase and sets its reservation count, as a caller that
-// took count reservations without a flush leaves it.
-void rocketnet_server_uring_test_set_reserved( struct rocketnet_server_uring_t * uring, int phase, uint64_t count );
-// installs the feature bits (the create probe's result) on a fake transport
-void rocketnet_server_uring_test_set_features( struct rocketnet_server_uring_t * uring, int features );
-
-// unit suite only (the test hook library): a transport over a fake completion
-// source, with no kernel ring and no socket. the source stands in for the
-// completion queue: peek copies at most max completions, oldest first, and
-// consumes none; advance consumes the count peek returned; ready is how many
-// it holds. submitted is called with the user_data of every queued
-// submission entry when the transport submits (each send, each multishot arm,
-// each cancel). a receive completion names its buffer in flags the way the
-// kernel does (IORING_CQE_F_BUFFER, the id above IORING_CQE_BUFFER_SHIFT);
-// every buffer of a fake transport holds one datagram of
-// ROCKETNET_URING_TEST_PAYLOAD_BYTES from 127.0.0.1, which a completion with
-// res ROCKETNET_URING_RECV_BUFFER_BYTES delivers. a wait returns at once.
-// rocketnet_server_uring_destroy destroys a fake transport. NULL when the
-// transport is not built.
-
-#define ROCKETNET_URING_TEST_PAYLOAD_BYTES                                 100
-
-struct rocketnet_server_uring_test_completion_t
-{
-    uint64_t user_data;
-    int32_t res;
-    uint32_t flags;
-};
-
-struct rocketnet_server_uring_test_source_t
-{
-    void * context;
-    int ( *peek )( void * context, struct rocketnet_server_uring_test_completion_t * completions, int max );
-    void ( *advance )( void * context, int count );
-    int ( *ready )( void * context );
-    void ( *submitted )( void * context, uint64_t user_data );
-};
-
-struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * context, int num_queues, const struct rocketnet_server_uring_test_source_t * source );
-
-// the no-kernel-ring seam of the re-arm cases: a fake transport with queues and
-// no ring, whose receive_packets runs only the re-arm loop and whose next
-// count arm calls find no submission entry. wait_calls records attempted
-// blocking waits for deterministic nonwaiting-shutdown regressions.
-
-struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues );
-void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring );
-void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring_t * uring, int count );
-void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t * uring, int queue_index, bool arm_finds_no_sqe );
-bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
-uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
-// the destination port and run length a submitted send's staging slot (its tag's index) carries
-void rocketnet_server_uring_test_send_slot( struct rocketnet_server_uring_t * uring, int slot, uint16_t * port, int * run_packets );
-int rocketnet_server_uring_test_wait_calls( struct rocketnet_server_uring_t * uring );
-// rewrites every buffer of a fake transport's queue as one coalesced receive
-// of segments datagrams (the UDP_GRO cmsg giving the stride
-// ROCKETNET_URING_TEST_PAYLOAD_BYTES), each byte of the payload the buffer id
-void rocketnet_server_uring_test_coalesce( struct rocketnet_server_uring_t * uring, int queue_index, int segments );
 #endif // #if ROCKETNET_DEV
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
 
+// any thread: the queues' counters summed
 void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, uint64_t * counters );
 
-// send packets. the phase contract is the transport's: start, finish and
-// abort may run on any number of game threads strictly between one
-// send_packets call and the next; send_packets runs on the main thread,
-// submits the staged slots, reaps at most ROCKETNET_URING_SEND_BUDGET
-// currently available completions without waiting, and returns. a send
-// without its completion keeps its slot, and its phase is not reset, until a
-// later call reaps it (SEND_DEFERRED counts each call that returns so);
-// start_packet then fills the other phase once that one is complete.
-// the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
-// bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other transports.
+// send packets. start, finish and abort may run on any number of game
+// threads strictly between one send_packets call and the next; send_packets
+// runs on the main thread with them joined, publishes each queue's producer
+// bank to its worker and wakes it, and returns at once. A queue whose banks
+// are all with its worker keeps its producer, and its room, until a later
+// send_packets publishes it. the frame handed back is a
+// ROCKETNET_FRAME_STRIDE slot: wire bytes begin at ROCKETNET_FRAME_WIRE_OFFSET,
+// exactly as the other transports.
 
 uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to, uint64_t * packet_id );
 
@@ -321,22 +278,35 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
 
 void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * uring );
 
-// the slots start_packet may still take in the phase it fills: one
-// server-wide phase, whatever the queue count, and a slot the kernel holds
-// until its completion is not room. Main thread.
+// the slots start_packet may still take in the fullest queue's producer
+// bank: a destination's queue is fixed by its address, so this is what any
+// start is sure to find. Main thread.
 int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring );
 
-// true once every staged slot is submitted and every send has its
-// completion reaped: both phases are reset. Main thread.
+// the driver's send queue operations: the queue count, the queue a
+// destination stages in, and one queue's producer room (main thread)
+int rocketnet_server_uring_send_queues( struct rocketnet_server_uring_t * uring );
+int rocketnet_server_uring_send_queue_of( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to );
+int rocketnet_server_uring_send_room_queue( struct rocketnet_server_uring_t * uring, int queue );
+
+// true once on every queue nothing is staged and no bank is published and
+// not yet retired (every send has its completion). Main thread.
 bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring );
 
-// receive packets: receive_packets reaps at most
-// one bank size of completions without blocking into the fill
-// bank, then swaps the banks; process_packets exposes
-// the swapped bank, valid until the next receive_packets call.
+// receive packets: receive_packets drains every queue's receive bank into
+// the process view, at most its capacity, from a rotating first queue;
+// process_packets exposes it, valid until the next receive_packets call.
 
 void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * uring );
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_process_packets( struct rocketnet_server_uring_t * uring );
+
+// the size drops of every queue (main thread): below the smallest server
+// packet, and above the receive ceiling or truncated
+void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large );
+
+// the driver's receive_drop_totals: every queue's prefilter and full-bank
+// tally summed by reason, and the datagrams left at stop, cumulative
+void rocketnet_server_uring_receive_drop_totals( struct rocketnet_server_uring_t * uring, uint64_t * values );
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_URING_H

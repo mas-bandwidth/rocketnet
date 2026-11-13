@@ -7956,6 +7956,25 @@ rocketnet_test_server_uring_create_stalled( rocketnet_address_t * address )
 }
 #endif // production excludes the stall helper that feeds SEND_ERROR hooks
 
+// the workers send asynchronously: wait, up to 5 seconds, until the send is
+// idle and its completions account for at least expected packets (sent or
+// dropped), then read the counters
+
+static void rocketnet_test_server_uring_wait_sent( struct rocketnet_server_uring_t * uring, uint64_t expected, uint64_t * counters )
+{
+    const double start = rocketnet_platform_time();
+    for ( ;; )
+    {
+        rocketnet_server_uring_counters( uring, counters );
+        const uint64_t done = counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] + counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED];
+        if ( ( done >= expected && rocketnet_server_uring_send_idle( uring ) ) || rocketnet_platform_time() - start > 5.0 )
+        {
+            return;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+}
+
 void rocketnet_test_server_uring_probe()
 {
     // create discovers an ephemeral port and reports it back; the queue
@@ -8221,13 +8240,12 @@ static void rocketnet_test_server_uring_wire_exchange_flags( const char * bind_s
 
     rocketnet_server_uring_send_packets( uring );
 
-    // send_packets reaps within its fixed completion budget
-    // (ROCKETNET_URING_SEND_BUDGET) and returns even if sends remain, deferred
-    // to a later call and counted SEND_DEFERRED; this batch is small enough
-    // that every send completes before the call returns
+    // send_packets hands the staged packets to the destination queue's
+    // worker and returns; the worker sends them and counts each completion,
+    // so the counters are read once the send is idle
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
-    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_test_server_uring_wait_sent( uring, ROCKETNET_URING_TEST_PACKETS, counters );
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == ROCKETNET_URING_TEST_PACKETS );
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
 
@@ -8528,10 +8546,10 @@ void rocketnet_test_server_uring_wire_dual_stack()
 }
 
 // GRO_CMSG_FAULTS (rocketnet_uring_recvmsg_gro_stride, counted from the receive
-// CQE): the multishot recvmsg's control area holds exactly the UDP_GRO cmsg.
-// Another party in the process turns SO_TIMESTAMPNS on for the transport's
-// socket, so the kernel's timestamp cmsg no longer fits and every datagram
-// arrives with MSG_CTRUNC: each is one fault, and is still delivered whole as
+// CQE): the multishot recvmsg's control area holds exactly a UDP_GRO and a
+// SO_RXQ_OVFL cmsg. Another party in the process turns SO_TIMESTAMPNS and
+// IP_PKTINFO on for the transport's socket, so the kernel's two cmsgs no
+// longer fit and every datagram arrives with MSG_CTRUNC: each is one fault, and is still delivered whole as
 // one datagram. The socket is found among the process's descriptors by its
 // bound port (rocketnet_test_udp_socket_bound_to).
 
@@ -8554,6 +8572,7 @@ void rocketnet_test_server_uring_gro_cmsg_faults_counted()
     rocketnet_check( fd >= 0 );
     int one = 1;
     rocketnet_check( setsockopt( fd, SOL_SOCKET, SO_TIMESTAMPNS, &one, sizeof( one ) ) == 0 );
+    rocketnet_check( setsockopt( fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof( one ) ) == 0 );
 
     rocketnet_address_t client_address;
     rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
@@ -8613,6 +8632,8 @@ void rocketnet_test_server_uring_send_overflow()
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( uring );
+    const int send_slots = rocketnet_server_uring_send_queue_size( uring );
+    rocketnet_check( send_slots == rocketnet_server_uring_send_slots( ROCKETNET_DEFAULT_MAX_CLIENTS, 1 ) );
 
     rocketnet_address_t client_address;
     rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
@@ -8620,7 +8641,7 @@ void rocketnet_test_server_uring_send_overflow()
                                                                                            ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
     rocketnet_check( client_socket );
 
-    for ( int i = 0; i < ROCKETNET_URING_SEND_QUEUE_SIZE; i++ )
+    for ( int i = 0; i < send_slots; i++ )
     {
         uint64_t packet_id = 0;
         uint8_t * frame = rocketnet_server_uring_start_packet( uring, &client_address, &packet_id );
@@ -8636,11 +8657,11 @@ void rocketnet_test_server_uring_send_overflow()
     rocketnet_server_uring_send_packets( uring );
 
     // every staged packet was either sent or dropped, and nothing vanished
-    // uncounted
+    // uncounted, once the worker has taken every completion
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
-    rocketnet_server_uring_counters( uring, counters );
-    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] + counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == ROCKETNET_URING_SEND_QUEUE_SIZE );
+    rocketnet_test_server_uring_wait_sent( uring, (uint64_t) send_slots, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] + counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == (uint64_t) send_slots );
 
     // the next phase is whole: a fresh tagged packet flushes and arrives
 
@@ -8679,11 +8700,48 @@ void rocketnet_test_server_uring_send_overflow()
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
+void rocketnet_test_server_uring_send_wrong_family()
+{
+    // an ipv4 server staged packets to an ipv6 destination its socket cannot
+    // name: the worker drops the run without a send, and each packet is one
+    // send drop -- counted once, not by both the send module and the worker
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( uring );
+
+    rocketnet_address_t to;
+    rocketnet_check( rocketnet_address_parse( &to, "[::1]:40000" ) );
+
+    const int staged = 3;
+    for ( int i = 0; i < staged; i++ )
+    {
+        uint64_t packet_id = 0;
+        uint8_t * frame = rocketnet_server_uring_start_packet( uring, &to, &packet_id );
+        rocketnet_check( frame );
+        memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, (uint8_t) i, 64 );
+        rocketnet_server_uring_finish_packet( uring, packet_id, frame, 64 );
+    }
+
+    rocketnet_server_uring_send_packets( uring );
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_test_server_uring_wait_sent( uring, (uint64_t) staged, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == (uint64_t) staged );
+
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+}
+
 void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
 {
     // with one queue, send more datagrams than its provided buffer ring
-    // holds and do not receive them: the ring runs dry, the multishot ends
-    // and must be re-armed by the next receive, and the wire works after
+    // holds at once. The queue's worker banks each and returns its buffer,
+    // so the ring runs dry only when the burst outruns the worker; when it
+    // does, the multishot ends ENOBUFS and the worker must re-arm it. Every
+    // datagram is banked or counted either way, and the wire works after
 
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
@@ -8722,31 +8780,26 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
     }
 
     int num_received = 0;
-    uint64_t rearms_after = rearms_before;
     double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 && rearms_after == rearms_before )
+    while ( rocketnet_platform_time() - start < 5.0 && num_received < ROCKETNET_URING_RECV_BUFFERS )
     {
         rocketnet_server_uring_receive_packets( uring );
         num_received += rocketnet_server_uring_process_packets( uring )->num_packets;
-        rocketnet_server_uring_counters( uring, counters );
-        rearms_after = counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS];
-        if ( rearms_after == rearms_before )
-        {
-            rocketnet_platform_sleep( 0.001 );
-        }
+        rocketnet_platform_sleep( 0.001 );
     }
 
-    rocketnet_check( rearms_after > rearms_before );
     rocketnet_check( num_received >= ROCKETNET_URING_RECV_BUFFERS );
 
-    // the ring ran dry before the transport reaped: the kernel ends the
-    // multishot with ENOBUFS, counted RECEIVE_NO_BUFFERS, not
-    // RECEIVE_DROPPED_OVERFLOW -- a full fill bank is a different ending,
-    // and one ring's worth of datagrams fits a bank many times over
+    // a ring that ran dry ended the multishot ENOBUFS (RECEIVE_NO_BUFFERS)
+    // and the worker armed it again (RECEIVE_REARMS); neither is required,
+    // since the worker may keep up with the burst
 
-    const bool no_buffers_moved = counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS] > no_buffers_before;
-    const bool overflow_moved = counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW] > overflow_before;
-    rocketnet_check( no_buffers_moved || overflow_moved );
+    rocketnet_server_uring_counters( uring, counters );
+    if ( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS] > no_buffers_before )
+    {
+        rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS] > rearms_before );
+    }
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW] >= overflow_before );
 
     // the re-armed multishot receives the next datagram byte-exact
 
@@ -15312,6 +15365,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_server_wire_gro_ipv6", rocketnet_test_server_uring_wire_gro_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_gro_cmsg_faults_counted", rocketnet_test_server_uring_gro_cmsg_faults_counted, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_send_wrong_family", rocketnet_test_server_uring_send_wrong_family, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
