@@ -300,7 +300,7 @@ jobs:
           # checks row (macOS, Linux Debug; nightly) runs both halves. The
           # checks row stays an original row in both tiers, so the Linux
           # include row above always has one to merge into.
-          - { os: linux, build_type: Release, leg: checks, split_checks: true }
+          - { os: linux, build_type: Release, leg: checks, split_checks: true, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: linux, build_type: Release, leg: source_checks, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           # The Linux functional legs run in three shards each (the suite's own --shard
           # I/N, tests/suite_runner.h: a case's shard is a function of its name):
