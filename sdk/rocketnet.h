@@ -213,6 +213,20 @@
 
 #define ROCKETNET_SEND_KBPS_UNLIMITED                      0x7fffffff
 
+/// The values of the server config's gso_reserve_cpu_0,
+/// io_uring_reserve_cpu_0 and portable_reserve_cpu_0. Zero, the default,
+/// reads as ROCKETNET_CPU_0_RESERVED.
+
+/// Cpu 0 is kept for the operating system: network thread q runs on cpu
+/// num_os_cpus + q.
+
+#define ROCKETNET_CPU_0_RESERVED                           1
+
+/// Cpu 0 is not reserved: network thread q runs on cpu q, cpu 0 included,
+/// and num_os_cpus is not applied to that transport.
+
+#define ROCKETNET_CPU_0_NOT_RESERVED                       2
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -1695,14 +1709,22 @@ struct rocketnet_server_config_t
     /// takes the next transport in the list (with xdp alone,
     /// ROCKETNET_STATUS_NO_TRANSPORT_FOUND). Set the NIC with
     /// scripts/rocketnet-provision, which reads this same variable. Thread q
-    /// runs on cpu num_os_cpus + q, never cpu 0. Each server transport has its
-    /// own count; this one is read by xdp only.
+    /// runs on cpu num_os_cpus + q, never cpu 0: its provisioning keeps cpu 0
+    /// for the OS and the interrupts (xdp has no reserve_cpu_0 setting). Each
+    /// server transport has its own count; this one is read by xdp only.
 
     int num_xdp_threads;
 
-    /// ROCKETNET_SERVER_NUM_OS_CPUS applies to xdp. It sets cores left for
-    /// the operating system. Zero, the default, selects the transport's own.
-    /// Range is 1 .. 256.
+    /// ROCKETNET_SERVER_NUM_OS_CPUS sets the cpus left for the operating
+    /// system on Linux, from cpu 0: the xdp, gso and io_uring transports'
+    /// network thread q runs on cpu num_os_cpus + q, and the portable
+    /// transport's send and receive workers on cpus num_os_cpus and
+    /// num_os_cpus + 1 (the msgx name runs the portable server on Linux). Zero,
+    /// the default, reads as 1. Range is 1 .. 256. Start the game's own
+    /// threads, the main thread first, past the network threads. A gso,
+    /// io_uring or portable transport whose reserve_cpu_0 setting below is
+    /// ROCKETNET_CPU_0_NOT_RESERVED does not apply it. Windows and macOS do
+    /// not read it.
 
     int num_os_cpus;
 
@@ -1944,7 +1966,8 @@ struct rocketnet_server_config_t
     /// is 1 (zero selects it): the count that held 1000 players at 60 Hz and
     /// 10 Gb/s out on an Intel X710 pair and on AWS c8gn.8xlarge (2026-11-13,
     /// main 3218cf5f6). Range is 1 .. 32. Worker q runs on cpu num_os_cpus +
-    /// q, never cpu 0. No machine setting has to match it.
+    /// q, so not on cpu 0 by default (gso_reserve_cpu_0). No machine setting
+    /// has to match it.
 
     int num_gso_workers;
 
@@ -1954,7 +1977,8 @@ struct rocketnet_server_config_t
     /// 60 Hz and 10 Gb/s out with a game load (2026-11-13, c154d7971; 1 ran
     /// at 51 frames a second) and an Intel X710 pair passed at 2 (main
     /// 3afea2aed). Range is 1 .. 32. Worker q runs on cpu num_os_cpus + q,
-    /// never cpu 0. No machine setting has to match it.
+    /// so not on cpu 0 by default (io_uring_reserve_cpu_0). No machine
+    /// setting has to match it.
 
     int num_io_uring_workers;
 
@@ -2010,6 +2034,48 @@ struct rocketnet_server_config_t
     /// receive thread.
 
     int num_msgx_transmit_workers;
+
+    /// ROCKETNET_SERVER_GSO_RESERVE_CPU_0 keeps cpu 0 for the operating
+    /// system on the gso transport (Linux), the recommended layout: the OS on
+    /// cpu 0, the network threads next, then the game's threads with the main
+    /// thread first. Zero, the default, and ROCKETNET_CPU_0_RESERVED reserve
+    /// it: worker q runs on cpu num_os_cpus + q. ROCKETNET_CPU_0_NOT_RESERVED
+    /// lets the workers use cpu 0: worker q runs on cpu q, num_os_cpus is not
+    /// applied to gso (an info line at start says so when it is set), and a
+    /// worker whose pin is refused stays on the cpus it was created on. Any
+    /// other value is refused at create with
+    /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. Where a reserved placement cannot
+    /// be kept (a cpuset or permissions refuse the pin), the server still
+    /// runs: the worker is warned about, counted in GSO_PIN_REFUSALS, and asks
+    /// for no real-time priority.
+    ///
+    /// Only the Linux transports whose threads the library places from cpu 0
+    /// up have this setting. xdp has none: its provisioning
+    /// (scripts/rocketnet-provision) keeps cpu 0 as the housekeeping and
+    /// interrupt cpu and isolates the cpus its threads run on. Windows (rio,
+    /// iocp) has none: lane or worker i runs on core i to match the NIC's
+    /// receive-side scaling, cpu 0 included. macOS (msgx) has none: the OS
+    /// places the threads.
+
+    int gso_reserve_cpu_0;
+
+    /// ROCKETNET_SERVER_IO_URING_RESERVE_CPU_0 is gso_reserve_cpu_0 for the
+    /// io_uring transport (Linux): zero, the default, and
+    /// ROCKETNET_CPU_0_RESERVED put worker q on cpu num_os_cpus + q;
+    /// ROCKETNET_CPU_0_NOT_RESERVED on cpu q. A refused pin is counted in
+    /// URING_PIN_REFUSALS.
+
+    int io_uring_reserve_cpu_0;
+
+    /// ROCKETNET_SERVER_PORTABLE_RESERVE_CPU_0 is gso_reserve_cpu_0 for the
+    /// portable transport on Linux, which is also the server behind the msgx
+    /// name there: zero, the default, and ROCKETNET_CPU_0_RESERVED put its
+    /// send worker on cpu num_os_cpus and its receive worker on cpu
+    /// num_os_cpus + 1; ROCKETNET_CPU_0_NOT_RESERVED on cpus 0 and 1. A
+    /// refused pin is counted in PORTABLE_PIN_REFUSALS. Other platforms do not
+    /// place the portable workers and do not read it.
+
+    int portable_reserve_cpu_0;
 };
 
 /// Messages

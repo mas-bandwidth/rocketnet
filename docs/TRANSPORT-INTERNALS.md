@@ -467,13 +467,13 @@ transport creates, from the creating thread right after the create
 
 | Transport | Network threads it creates | What the library sets |
 |---|---|---|
-| GSO (Linux) | one worker per queue (`num_gso_workers`), receiving and sending | on itself at thread start: pinned to cpu `num_os_cpus + queue`; `SCHED_RR`, minimum priority, after each create |
-| io_uring (Linux) | one worker per ring (`num_io_uring_workers`) | on itself at thread start: pinned to cpu `num_os_cpus + queue`, then `SCHED_RR` at the minimum priority |
-| XDP (Linux) | one thread per queue (`num_xdp_threads`, `sdk/rocketnet_server_socket_linux.cpp`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
+| GSO (Linux) | one worker per queue (`num_gso_workers`), receiving and sending | on itself at thread start: pinned to cpu `num_os_cpus + queue` (cpu `queue` with `gso_reserve_cpu_0` not reserved), then `SCHED_RR` at the minimum priority when the pin was granted |
+| io_uring (Linux) | one worker per ring (`num_io_uring_workers`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` (cpu `queue` with `io_uring_reserve_cpu_0` not reserved), then `SCHED_RR` at the minimum priority when the pin was granted |
+| XDP (Linux) | one thread per queue (`num_xdp_threads`, `sdk/rocketnet_server_socket_linux.cpp`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` when the pin was granted |
 | IOCP (Windows) | `num_iocp_completion_workers` completion workers plus `num_iocp_send_threads` send threads | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | RIO (Windows) | one I/O worker a lane (`num_rio_lanes`) | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
 | msgx (macOS) | one receive worker and `num_msgx_transmit_workers` transmit workers | nothing |
-| portable socket | one receive worker and one transmit worker | nothing |
+| portable socket | one receive worker and one transmit worker | Linux: on itself at thread start, pinned to cpu `num_os_cpus` (transmit) and `num_os_cpus + 1` (receive), or cpus 0 and 1 with `portable_reserve_cpu_0` not reserved; no priority. Elsewhere nothing |
 
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
@@ -812,14 +812,18 @@ keep-alive held because its session's first mark is not yet applied is counted
 as `XDP_REPLAY_GREETING_HELD`.
 
 Each queue's thread pins itself once, at start, to cpu `num_os_cpus + queue`
-(never core 0). A pin the system refuses (the cpu outside the set or not
-online, or the affinity call refused) is counted as `XDP_PIN_REFUSALS`, and the
-thread runs on its allowed cpus less core 0. When that fallback fails too (core
-0 is the only cpu it may run on, or the call is refused) the thread carries on
-on its mask, core 0 included, with one warning naming the queue and the mask,
-and asks for no `SCHED_RR`; the pin was already counted, so nothing more is.
-The gso and io_uring workers do the same, except that `GSO_PIN_REFUSALS` also
-counts the failed confinement.
+(never core 0). Only a thread whose pin was granted asks for `SCHED_RR`. A pin
+the system refuses (the cpu outside the set or not online, or the affinity
+call refused) is counted as `XDP_PIN_REFUSALS`, the thread asks for no
+`SCHED_RR`, and it runs on its allowed cpus less core 0. When that fallback
+fails too (core 0 is the only cpu it may run on, or the call is refused) the
+thread carries on on its mask, core 0 included, with one warning naming the
+queue and the mask; the pin was already counted, so nothing more is. The gso,
+io_uring and Linux portable workers do the same, except that
+`GSO_PIN_REFUSALS` and `PORTABLE_PIN_REFUSALS` also count the failed
+confinement, and that with their `*_reserve_cpu_0` set to
+`ROCKETNET_CPU_0_NOT_RESERVED` worker `q` pins to cpu `q` and a refused worker
+stays on the mask it inherited.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
