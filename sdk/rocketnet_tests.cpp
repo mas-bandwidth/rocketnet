@@ -7991,6 +7991,9 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_running",
     "rocketnet_server_destroy",
     "rocketnet_server_update",
+    "rocketnet_server_update_receive",
+    "rocketnet_server_update_client",
+    "rocketnet_server_update_finish",
     "rocketnet_server_send_packets",
     "rocketnet_server_port",
     "rocketnet_server_public_key",
@@ -8054,6 +8057,9 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_running",
     "rocketnet_server_destroy",
     "rocketnet_server_update",
+    "rocketnet_server_update_receive",
+    "rocketnet_server_update_client",
+    "rocketnet_server_update_finish",
     "rocketnet_server_send_packets",
     "rocketnet_server_port",
     "rocketnet_server_public_key",
@@ -8522,6 +8528,9 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_running( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_update( NULL, 1000.0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_update_receive( NULL, 1000.0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_update_client( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_update_finish( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_port( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_public_key( NULL, token ) );

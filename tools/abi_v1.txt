@@ -74,6 +74,9 @@ export rocketnet_server_stop
 export rocketnet_server_stopped
 export rocketnet_server_transport_name
 export rocketnet_server_update
+export rocketnet_server_update_client
+export rocketnet_server_update_finish
+export rocketnet_server_update_receive
 export rocketnet_sleep
 export rocketnet_status_name
 export rocketnet_term
@@ -160,6 +163,9 @@ prototype rocketnet_server_stop void rocketnet_server_stop(struct rocketnet_serv
 prototype rocketnet_server_stopped bool rocketnet_server_stopped(const struct rocketnet_server_t*)
 prototype rocketnet_server_transport_name const char*rocketnet_server_transport_name(const struct rocketnet_server_t*)
 prototype rocketnet_server_update void rocketnet_server_update(struct rocketnet_server_t*, double)
+prototype rocketnet_server_update_client int rocketnet_server_update_client(struct rocketnet_server_t*, int)
+prototype rocketnet_server_update_finish void rocketnet_server_update_finish(struct rocketnet_server_t*)
+prototype rocketnet_server_update_receive void rocketnet_server_update_receive(struct rocketnet_server_t*, double)
 prototype rocketnet_sleep void rocketnet_sleep(double)
 prototype rocketnet_status_name const char*rocketnet_status_name(enum rocketnet_status_t)
 prototype rocketnet_term enum rocketnet_status_t rocketnet_term(void)
