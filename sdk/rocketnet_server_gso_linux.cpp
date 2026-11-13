@@ -1184,6 +1184,27 @@ void rocketnet_server_gso_begin_shutdown( struct rocketnet_server_gso_t * gso )
     }
 }
 
+// Main thread: adds a receive buffer's drop and GRO tallies to the
+// transport's counters and clears them, so each is folded once. The
+// buffer's packets are not among them: main counts those as it claims them.
+static void rocketnet_server_gso_fold_tallies( rocketnet_server_gso_t * gso, rocketnet_server_gso_recv_buffer_t * buffer )
+{
+    gso->counter_receive_dropped_size += buffer->dropped_size;
+    gso->counter_receive_dropped_too_large += buffer->dropped_too_large;
+    gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
+    gso->counter_receive_dropped_source += buffer->dropped_source;
+    gso->counter_receive_errors += buffer->receive_errors;
+    gso->counter_gro_batches += buffer->gro_batches;
+    gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
+    buffer->receive_errors = 0;
+    buffer->dropped_size = 0;
+    buffer->dropped_too_large = 0;
+    buffer->dropped_overflow = 0;
+    buffer->dropped_source = 0;
+    buffer->gro_batches = 0;
+    buffer->gro_cmsg_faults = 0;
+}
+
 bool rocketnet_server_gso_stopped( rocketnet_server_gso_t * gso )
 {
     if ( !gso || !gso->stopping )
@@ -1289,20 +1310,38 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     rocketnet_assert( gso );
     rocketnet_assert( counters );
 
-    memset( counters, 0, ROCKETNET_SERVER_GSO_NUM_COUNTERS * sizeof( uint64_t ) );
+    // Once every receive worker has exited, the tallies it left in its own
+    // buffer, or in a ready buffer main has not claimed, are folded here:
+    // a datagram dropped after main's last claim is still counted. The
+    // stopped flags' acquire orders those writes before these reads.
 
-    counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] = gso->counter_packets_sent;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] = gso->counter_send_syscalls;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] = gso->counter_send_dropped;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS] = gso->counter_gso_sends;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] = gso->counter_packets_received;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS] = gso->counter_receive_syscalls;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE] = gso->counter_receive_dropped_size;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW] = gso->counter_receive_dropped_overflow;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS] = gso->counter_gro_cmsg_faults;
+    if ( rocketnet_server_gso_stopped( gso ) )
+    {
+        for ( int i = 0; gso->queues && i < gso->num_queues; ++i )
+        {
+            struct rocketnet_server_gso_queue_t * queue = &gso->queues[i];
+            rocketnet_server_gso_fold_tallies( gso, queue->worker_buffer );
+            if ( queue->ready_buffer )
+            {
+                rocketnet_server_gso_fold_tallies( gso, queue->ready_buffer );
+            }
+        }
+    }
+
+    // every row of the gso range is written below, and nothing outside it
+
+    counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] = gso->counter_packets_sent;
+    counters[ROCKETNET_COUNTER_GSO_SEND_SYSCALLS] = gso->counter_send_syscalls;
+    counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] = gso->counter_send_dropped;
+    counters[ROCKETNET_COUNTER_GSO_GSO_SENDS] = gso->counter_gso_sends;
+    counters[ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED] = gso->counter_packets_received;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_SYSCALLS] = gso->counter_receive_syscalls;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE] = gso->counter_receive_dropped_size;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_OVERFLOW] = gso->counter_receive_dropped_overflow;
+    counters[ROCKETNET_COUNTER_GSO_GRO_BATCHES] = gso->counter_gro_batches;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS] = gso->counter_receive_errors;
+    counters[ROCKETNET_COUNTER_GSO_GRO_CMSG_FAULTS] = gso->counter_gro_cmsg_faults;
 }
 
 // the builtin transport's receive_drops hook: the size pass's drops
@@ -1847,20 +1886,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         rocketnet_platform_mutex_release( &queue->receive_mutex );
 
         gso->counter_packets_received += buffer->num_packets;
-        gso->counter_receive_dropped_size += buffer->dropped_size;
-        gso->counter_receive_dropped_too_large += buffer->dropped_too_large;
-        gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
-        gso->counter_receive_dropped_source += buffer->dropped_source;
-        gso->counter_receive_errors += buffer->receive_errors;
-        gso->counter_gro_batches += buffer->gro_batches;
-        gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
-        buffer->receive_errors = 0;
-        buffer->dropped_size = 0;
-        buffer->dropped_too_large = 0;
-        buffer->dropped_overflow = 0;
-        buffer->dropped_source = 0;
-        buffer->gro_batches = 0;
-        buffer->gro_cmsg_faults = 0;
+        rocketnet_server_gso_fold_tallies( gso, buffer );
     }
 
     rocketnet_server_gso_recv_buffer_t * buffer = queue->main_buffer;
@@ -2479,11 +2505,11 @@ bool rocketnet_server_gso_test_gro_cmsg_faults()
 
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
-    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] == 3;
-    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] == 0;
-    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS] == 3;
+    valid = valid && counters[ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED] == 3;
+    valid = valid && counters[ROCKETNET_COUNTER_GSO_GRO_BATCHES] == 0;
+    valid = valid && counters[ROCKETNET_COUNTER_GSO_GRO_CMSG_FAULTS] == 3;
 
     // no worker ran, so stop is complete once both stopped flags are set
 

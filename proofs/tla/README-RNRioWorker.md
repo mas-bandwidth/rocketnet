@@ -363,7 +363,7 @@ Each reversed witness was read against the code by hand (2026-10-22):
   - In the code, `rocketnet_rio_post_phase` takes the `else` branch of the
     `RIOSendEx` call (also reached through
     `ROCKETNET_RIO_TEST_FAULT_SEND_POST`): it counts
-    `ROCKETNET_RIO_COUNTER_SEND_FAILED` and sets `slot_bytes[index] = 0`;
+    `ROCKETNET_COUNTER_RIO_SEND_FAILED` and sets `slot_bytes[index] = 0`;
     `outstanding[phase]` grows only by the accepted posts, so the pass
     does not wait for a completion that never comes.
 - **ReachRefusedPost** (checked 2026-11-11): the same steps with the rule

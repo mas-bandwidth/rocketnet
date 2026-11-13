@@ -42,7 +42,7 @@ static void test_io_uring_transport_rearm_retries_a_failed_arm()
 
     rocketnet_server_uring_test_multishot_ends( uring, 0, true );
     rocketnet_unit_check( !rocketnet_server_uring_test_queue_armed( uring, 0 ) );
-    rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED ) == 1 );
+    rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_REARM_FAILED ) == 1 );
 
     // receives that also find no entry retry every call and stay counted
 
@@ -50,14 +50,14 @@ static void test_io_uring_transport_rearm_retries_a_failed_arm()
     rocketnet_server_uring_receive_packets( uring );
     rocketnet_server_uring_receive_packets( uring );
     rocketnet_unit_check( !rocketnet_server_uring_test_queue_armed( uring, 0 ) );
-    rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED ) == 3 );
-    rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == 0 );
+    rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_REARM_FAILED ) == 3 );
+    rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_REARMS ) == 0 );
 
     // the next receive finds an entry and arms the queue again
 
     rocketnet_server_uring_receive_packets( uring );
     rocketnet_unit_check( rocketnet_server_uring_test_queue_armed( uring, 0 ) );
-    rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == 1 );
+    rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_REARMS ) == 1 );
 
     rocketnet_server_uring_test_destroy_fake( uring );
 }

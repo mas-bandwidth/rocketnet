@@ -20,6 +20,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include <limits.h>
 #include <new>
 #include "rocketnet_packet_lease.h"
+#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_stats_window.h"
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
@@ -273,6 +274,10 @@ struct rocketnet_server_transport_t
     // protocol's own prefilter (rocketnet_prefilter_check) also counts into
     uint64_t transport_receive_too_short = 0;
     uint64_t transport_receive_too_large = 0;
+
+    // the transport's receive_drop_totals as last read: each read adds only
+    // the growth since to the counters each reason names
+    uint64_t transport_receive_drop_totals[ROCKETNET_RECEIVE_NUM_DROPS] = {};
 
     struct rocketnet_server_protocol_t protocol;
 
@@ -4614,10 +4619,39 @@ void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_t
 }
 #endif // #if ROCKETNET_DEV
 
+static void rocketnet_server_transport_fold_receive_drops( struct rocketnet_server_transport_t * server_transport )
+{
+    uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS] = {};
+    server_transport->io.operations->receive_drop_totals( server_transport->io.instance, totals );
+
+    for ( int drop = ROCKETNET_RECEIVE_ACCEPT + 1; drop < ROCKETNET_RECEIVE_NUM_DROPS; ++drop )
+    {
+        // cumulative from one transport: a total never falls
+        rocketnet_assert( totals[drop] >= server_transport->transport_receive_drop_totals[drop] );
+        const uint64_t growth = totals[drop] - server_transport->transport_receive_drop_totals[drop];
+        server_transport->transport_receive_drop_totals[drop] = totals[drop];
+        if ( !growth )
+        {
+            continue;
+        }
+        int counters[ROCKETNET_RECEIVE_DROP_MAX_COUNTERS];
+        const int num_counters = rocketnet_receive_drop_counters( (enum rocketnet_receive_drop_t) drop, counters );
+        for ( int i = 0; i < num_counters; ++i )
+        {
+            server_transport->counters.values[counters[i]] += growth;
+        }
+    }
+}
+
 // the xdp replay writer's counts (sdk/rocketnet_driver_builtin.cpp), declared
 // here beside their one reader
 bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                   uint64_t * commit_failed, uint64_t * greetings_held );
+
+// the builtin transports' own counter rows (sdk/rocketnet_driver_builtin.cpp),
+// declared here beside their one reader
+bool rocketnet_server_transport_io_transport_counters( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                       uint64_t * values );
 
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
@@ -4655,6 +4689,15 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         server_transport->transport_receive_too_large = too_large;
     }
 
+    // the drops the transport's receive workers made before banking
+    // (sdk/rocketnet_receive_prefilter.h): each reason's growth lands on the
+    // counters main's ladder adds for the same datagram
+
+    if ( server_transport->io.operations && server_transport->io.operations->receive_drop_totals )
+    {
+        rocketnet_server_transport_fold_receive_drops( server_transport );
+    }
+
     // XDP_RECEIVE_FRAME_DROPPED is the transport's own cumulative count,
     // assigned on read
 
@@ -4674,6 +4717,20 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     {
         server_transport->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED] = replay_commit_failed;
         server_transport->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD] = replay_greetings_held;
+    }
+
+    // the gso, io_uring, iocp and rio transports' own counts are the public
+    // rows GSO_PACKETS_SENT .. RIO_COMMITS, cumulative, assigned on read; a
+    // transport writes its own rows and the rest of the range reads 0, so
+    // every platform has every row
+
+    uint64_t transport_rows[ROCKETNET_NUM_COUNTERS] = {};
+    if ( rocketnet_server_transport_io_transport_counters( server_transport->io.operations, server_transport->io.instance, transport_rows ) )
+    {
+        for ( int i = ROCKETNET_COUNTER_GSO_PACKETS_SENT; i <= ROCKETNET_COUNTER_RIO_COMMITS; ++i )
+        {
+            server_transport->counters.values[i] = transport_rows[i];
+        }
     }
 
     return &server_transport->counters;

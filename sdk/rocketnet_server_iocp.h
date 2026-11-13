@@ -8,6 +8,7 @@
 #define ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H
 
 #include "rocketnet_constants.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
 
@@ -108,22 +109,14 @@ bool rocketnet_server_iocp_send_idle( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_receive_packets( rocketnet_server_iocp_t * iocp );
 rocketnet_server_socket_process_packets_t * rocketnet_server_iocp_process_packets( rocketnet_server_iocp_t * iocp );
 
-enum rocketnet_server_iocp_counter_t
-{
-    ROCKETNET_IOCP_SEND_COMPLETED,
-    ROCKETNET_IOCP_SEND_FAILED,
-    ROCKETNET_IOCP_RECEIVE_COMPLETED,
-    ROCKETNET_IOCP_RECEIVE_DROPPED,
-    ROCKETNET_IOCP_RECEIVE_TOO_SHORT,       // shorter than ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES: dropped at the worker, never banked
-    ROCKETNET_IOCP_RECEIVE_TOO_LARGE,       // past ROCKETNET_RECEIVE_CEILING: dropped at the worker, never banked
-    ROCKETNET_IOCP_RECEIVE_REPOST_FAILED,
-    ROCKETNET_IOCP_COMPLETION_BATCHES,
-    ROCKETNET_IOCP_USO_SENDS,               // posts that carried more than one frame
-    ROCKETNET_IOCP_URO_BATCHES,             // receive completions split into more than one segment
-    ROCKETNET_IOCP_USO_FALLBACKS,           // live USO sends refused and resent frame by frame
-    ROCKETNET_IOCP_NUM_COUNTERS
-};
-
+// The iocp transport's counters are rows of the public table: the
+// ROCKETNET_COUNTER_IOCP_* rows of sdk/rocketnet_counters.h, contiguous from
+// ROCKETNET_COUNTER_IOCP_SEND_COMPLETED. Any thread: writes those rows of
+// counters, an array of ROCKETNET_NUM_COUNTERS values indexed by public
+// counter, cumulative for the transport's life; every other value is left as
+// it was.
+#define ROCKETNET_SERVER_IOCP_FIRST_COUNTER ROCKETNET_COUNTER_IOCP_SEND_COMPLETED
+#define ROCKETNET_SERVER_IOCP_COUNTER_ROWS  ( ROCKETNET_COUNTER_IOCP_USO_FALLBACKS - ROCKETNET_COUNTER_IOCP_SEND_COMPLETED + 1 )
 void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * counters );
 int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
 // The ROCKETNET_IOCP_FEATURE_* bits in use now. USO clears itself when a live
