@@ -738,6 +738,15 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
     // sent again the same way. A datagram that was only late and arrives
     // after its resend overshoots its class, and that fails by name: no
     // count may exceed what was sent.
+    //
+    // A resend needs the kernel to have counted the loss (tests/kernel_drops.h):
+    // every datagram sent again, storm or valid, is one the loss gate admits
+    // against the receive drops the kernel counted on this process since the
+    // chunk began. A deficit the kernel did not count is the library losing a
+    // datagram or a count, and the case fails there, naming the deficit.
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, at_server ? "posix_weather_cell server" : "posix_weather_cell client" );
 
     static uint8_t chunk_data[POSIX_WEATHER_CHUNK][65507];
     int chunk_bytes[POSIX_WEATHER_CHUNK];
@@ -872,7 +881,9 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
 
                 if ( posix_expect_equal( &now, &expect ) && ( !all_valid || valid_seen == valid_sent ) )
                 {
+                    // the chunk is counted: the next one asks the gate about its own losses
                     chunk_count = 0;
+                    rocketnet_loss_gate_begin( &gate, at_server ? "posix_weather_cell server" : "posix_weather_cell client" );
                     return;
                 }
 
@@ -897,15 +908,17 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
             deficit.wrong_epoch = expect.wrong_epoch - now.wrong_epoch;
             deficit.wrong_value = expect.wrong_value - now.wrong_value;
             deficit.transport_size = expect.transport_size - now.transport_size;
+            bool resend_kept[POSIX_WEATHER_CHUNK];
             int resent = 0;
             for ( int i = chunk_count - 1; i >= 0; i-- )
             {
                 const struct posix_expect_t * c = &chunk_class[i];
                 const bool counted = c->too_short || c->too_large || c->wrong_epoch || c->wrong_value || c->transport_size;
+                resend_kept[i] = false;
                 if ( counted && c->too_short <= deficit.too_short && c->too_large <= deficit.too_large && c->wrong_epoch <= deficit.wrong_epoch &&
                      c->wrong_value <= deficit.wrong_value && c->transport_size <= deficit.transport_size )
                 {
-                    send_kept( i );
+                    resend_kept[i] = true;
                     deficit.too_short -= c->too_short;
                     deficit.too_large -= c->too_large;
                     deficit.wrong_epoch -= c->wrong_epoch;
@@ -916,6 +929,19 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
             }
             const bool covered = deficit.too_short == 0 && deficit.too_large == 0 && deficit.wrong_epoch == 0 && deficit.wrong_value == 0 && deficit.transport_size == 0;
             posix_check( covered );
+
+            // every datagram sent again is one the kernel counted as dropped
+            const int valid_missing = all_valid ? valid_sent - valid_seen : 0;
+            const bool kernel_dropped = rocketnet_loss_gate_resend( &gate, resent + valid_missing );
+            posix_check( kernel_dropped );
+
+            for ( int i = chunk_count - 1; i >= 0; i-- )
+            {
+                if ( resend_kept[i] )
+                {
+                    send_kept( i );
+                }
+            }
 
             int valid_resent = 0;
             if ( all_valid )
@@ -2355,11 +2381,36 @@ void rocketnet_test_posix_msgx_retired_socket_counted()
 // and for an IPv6 client on its own port: its shared socket sets
 // SO_REUSEADDR and SO_REUSEPORT after its bind, the client sockets before
 // theirs. The open count is read, so a client socket that failed to open and
-// fell back to the shared socket is red. Skipped where the host has no IPv6.
-// Real sockets: the server's transport directly, no datagram sent.
+// fell back to the shared socket is red. Skipped where the host has no IPv6,
+// which a plain socket bound to ::1 decides before the transport is asked:
+// on a host with IPv6 every create failure of the transport fails the case.
+// Real sockets: the server transport directly, no datagram sent.
+
+static bool posix_host_has_ipv6()
+{
+    const int probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe < 0 )
+    {
+        return false;
+    }
+    struct sockaddr_in6 loopback;
+    memset( &loopback, 0, sizeof( loopback ) );
+    loopback.sin6_family = AF_INET6;
+    loopback.sin6_addr = in6addr_loopback;
+    const bool bound = bind( probe, (const struct sockaddr *) &loopback, sizeof( loopback ) ) == 0;
+    close( probe );
+    return bound;
+}
 
 void rocketnet_test_posix_msgx_dual_stack_client_sockets_open()
 {
+    if ( !posix_host_has_ipv6() )
+    {
+        printf( "  msgx dual stack: skipped, this host cannot bind an IPv6 socket to ::1\n" );
+        fflush( stdout );
+        return;
+    }
+
     rocketnet_address_t bind_address;
     posix_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );
     uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
@@ -2368,8 +2419,11 @@ void rocketnet_test_posix_msgx_dual_stack_client_sockets_open()
     struct rocketnet_server_msgx_t * msgx = rocketnet_server_msgx_create( NULL, &bind_address, 2, 8, packet_filter, &status );
     if ( !msgx )
     {
-        return;
+        printf( "  msgx dual stack: create refused with status %d on a host with IPv6\n", status );
+        fflush( stdout );
     }
+    posix_check( msgx != NULL );
+    posix_check( status == ROCKETNET_STATUS_OK );
 
     rocketnet_address_t clients[2];
     posix_check( rocketnet_address_parse( &clients[0], "127.0.0.1:40001" ) );
@@ -2576,6 +2630,14 @@ static void posix_burst_take( struct posix_burst_drain_t * drain, const uint8_t 
         }
         posix_check( sender < POSIX_BURST_SENDERS );
         posix_check( sequence < POSIX_BURST_PACKETS );
+
+        // every byte past the identity is the sender pattern: a datagram
+        // delivered with its tail changed is not the one that was sent
+        for ( int b = (int) ( sizeof( sender ) + sizeof( sequence ) ); b < POSIX_BURST_BYTES; b++ )
+        {
+            posix_check( packet[b] == (uint8_t) ( sender + sequence + (uint32_t) b ) );
+        }
+
         if ( drain->seen[sender][sequence] )
         {
             drain->duplicates++;
@@ -2749,6 +2811,10 @@ void rocketnet_test_posix_send_burst()
     fflush( stdout );
 
     posix_check( drain.received + drops == sent );
+
+    // each datagram once: loopback UDP never delivers one twice, so any
+    // second copy came from the receive path
+    posix_check( drain.duplicates == 0 );
 
     rocketnet_platform_socket_destroy( server );
 }
