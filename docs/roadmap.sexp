@@ -505,4 +505,19 @@
    :title "A strict option: refuse to start when a Linux transport worker cannot be kept off CPU 0"
    :text "When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run)."
    :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
+
+  (item "in-place-start-per-queue-capacity" :group "review-v1-2" :area "sdk"
+   :title "The message server's in-place start checks still read the fewest room of any queue"
+   :text "The send pass, the sweep and the stop now judge capacity by the destination's own send queue (rocketnet_server_transport_send_capacity_to). The in-place start checks in sdk/rocketnet_message_server.cpp (about 1543 and 1597) still read rocketnet_server_transport_send_capacity_available, the fewest room of any queue, so with one queue full a send in place to a client on another queue is refused or deferred to the pass. A start that falls back to the queue is accepted work and is not lost: the pass serves it. A writer's start that falls back with no capacity (not held behind the queue, not on a buffered transport) is still refused visibly: its finish returns 0 and the message is cancelled (about 1661 and 1816, MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY), even when only an unrelated queue has no room. That refusal is what this entry removes. Move them to the per-destination answer, outside the send-capacity fix's lines."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix")
+
+  (item "own-frames-smallest-queue-reserve" :group "review-v1-2" :area "sdk"
+   :title "Own frames are bounded by the smallest reserve of any send queue"
+   :text "The own frames handed out when the budgets open (fill_own_frames_left) are server-wide and capped by the smallest queue reserve (RNSendReserveCalls Open: OwnCap of the least reserve). With uneven queues, a queue whose reserve is cut by a small room seen caps the own frames of clients on every queue. Make own frames per queue, with the model's Open changed alongside."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix")
+
+  (item "send-capacity-any-queue-per-queue" :group "review-v1-2" :area "sdk"
+   :title "The any-queue capacity can be above 0 while no queue has both room and budget"
+   :text "rocketnet_server_transport_send_capacity_to( -1 ) answers the room summed over the queues, within the whole budget left. With room on one queue and budget only on another, it is above 0 while no start can be granted, so the send pass holds every connection to the end instead of cutting: bounded (one walk, two capacity reads a connection), never a hang. Answer it per queue (the sum of each queue's room within its own budget, and the own frames), with RNSendReserveCalls CapacityAll and RNServerSendFair's cut changed alongside."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix, cold read")
  ))
