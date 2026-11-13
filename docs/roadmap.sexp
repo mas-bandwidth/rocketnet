@@ -585,4 +585,24 @@
    :title "A tenth tla-trace shard, so shard 3 leaves room under the 2-minute cap"
    :text "Shard 3 of tools/tla_trace_check.py SHARDS (msgx:4, msgxsendruns, gather and msgx's reach predicates) is the slowest per-commit trace shard: 98 s on a CI runner in v1.1.53, and on v1.1.54 106 s alone on a bench and 123.5 s when three shards shared a loaded one, against the job's 120 s cap. Moving gso or gather out of it within nine shards barely helped on the bench (fix/v1.1.x/trace-shard3-lighter, not merged). Add a tenth shard (matrix.shard N/10 in .github/workflows/ci.yml and the summary's shard names) and split shard 3's entries across it, with each shard's replay time recorded."
    :date "2026-11-13" :origin "v1.1.54 replays: trace shard 3 at 106 s alone")
+
+  (item "zero-pad-refusal-reasons" :group "review-v1-2" :area "rocketnet"
+   :title "Give the two zero-pad refusals their own counters"
+   :text "A server counts a signed connect data zero pad that is not all zero as CONNECTION_REQUEST_WRONG_VERSION (sdk/rocketnet_server_protocol.cpp about 563-587), and a private block zero pad that is not all zero as CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK, which also records a failed-signature budget failure (about 848-853). TRANSPORT.md t6.4 now states where each check sits and states both as exceptions to t18 rule 2. Counters are ABI and the counter set is frozen for the point release, so the reasons get their own counters in a release that may add counters; then t6.4 drops the exception."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-80")
+
+  (item "response-no-slots-own-counter" :group "review-v1-2" :area "rocketnet"
+   :title "Count a response ignored for just-freed slots apart from a denial"
+   :text "A connection response that finds only slots freed in the same update is ignored, not denied, and counts CONNECTION_RESPONSE_NO_SLOTS, the counter of a real denial (sdk/rocketnet_server_protocol.cpp about 1176-1186); connections_denied_full sums both. TRANSPORT.md t12 rule 13 and t13.4 now state the ignore. Give it its own reason in a release that may add counters, and update t12, t18 and the stats doc with it."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-105")
+
+  (item "promotion-enabled-mask" :group "review-v1-2" :area "rocketnet"
+   :title "Decide what admits a promoted send, and count its refusal once"
+   :text "A sender promotes an UNRELIABLE or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to RELIABLE, and an UNRELIABLE_SEQUENCED one to RELIABLE_SEQUENCED, then checks that exact reliability against the enabled mask; RELIABLE_WITH_ACK_RECEIPT does not admit it, although it sends under the same wire code. The refusal counts both MESSAGE_SEND_TYPE_NOT_ENABLED and MESSAGE_SEND_REFUSED, where an unpromoted unreliable send outside the mask counts only the first. The public interface enables all eight reliabilities and has no mask setting, so only a restricted internal mask or another implementation reaches this. MESSAGES.md m2.1 states this behaviour. A later release decides whether the receipt twin admits a promoted UNRELIABLE_WITH_ACK_RECEIPT send, whether config validation warns when an enabled unreliable reliability lacks its promoted one, and whether the refusal counts one counter."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-114")
+
+  (item "go-backend-protocol-id-parse" :group "review-v1-2" :area "rocketnet"
+   :title "The Go and C# example backends parse the protocol id differently"
+   :text "examples/backend/go/main.go (about 344-350) parses the protocol id with base auto-detect, so 010 is octal 8 there, while the C# backend parses it as decimal 10; make both parse one way and say which in the examples' docs."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-119")
  ))
