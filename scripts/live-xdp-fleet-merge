@@ -60,12 +60,17 @@ def main(paths):
     counters = {}
     cons = {}
 
+    # every file given is one writer's result (the server's or one bench's)
+    # and must carry exactly one verdict line of its own
+    file_verdicts = {}
+
     for path in paths:
         try:
             handle = open(path, "r")
         except OSError as error:
             print("merge: %s" % error)
             return 1
+        file_verdicts[path] = []
         for raw in handle:
             line = raw.rstrip("\n")
             if not line:
@@ -127,6 +132,8 @@ def main(paths):
                 cons[label] = min(int(num(f[3])), int(num(f[4])))
             elif kind == "verdict" and len(f) >= 2:
                 verdicts.append(f[1])
+                file_verdicts[path].append(f[1])
+        handle.close()
 
     print("bench\tdir\tmode\tchannel\tbucket\tsent\treceived\tverified\tfailed\tlost\tsuperseded\tmissing\tout-of-order\tduplicate\tover\tpaced")
     for key in sorted(cells, key=lambda k: (k[0], k[1], k[2], k[3], k[4])):
@@ -181,6 +188,10 @@ def main(paths):
         reasons.append("failed connect")
     if any(v != "PASS" for v in verdicts):
         reasons.append("verdict FAIL")
+    for path in paths:
+        count = len(file_verdicts[path])
+        if count != 1:
+            reasons.append("%s has %d verdict lines; its writer ends it with exactly one" % (path, count))
     if failures:
         reasons.append("failures")
     if denials or fulls:
