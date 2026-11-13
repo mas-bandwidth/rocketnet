@@ -279,21 +279,26 @@ ClaimStore(f) ==
                    claimsDone, retired, phases>>
 
 \* the refusal decided: the claim is still added until its take back, a
-\* step of its own (the room the decision read is in seenR[f])
-Refuse(f) ==
-    pc' = [pc EXCEPT ![f] = "refused"]
+\* step of its own.  A single claim refused is starved if the room the
+\* decision read had a frame for f past the reserve and past every frame and
+\* tail the other fillers hold; unnamed if that room had a frame for f past
+\* every filler in flight while no other filler held a tail.  Room that came
+\* back after the read, or that a filler claiming after the read takes, is
+\* no starvation.
+Refuse(f, r) ==
+    /\ pc' = [pc EXCEPT ![f] = "refused"]
+    /\ IF size[f] > 1 /\ ~NoFallback
+          THEN UNCHANGED <<starved, unnamed>>
+          ELSE /\ starved' = (starved \/ RoomPastTails(f, r))
+               /\ unnamed' = (unnamed \/ (RoomFor(f, r) /\ OthersTail(f) = 0))
 
-\* a claim refused for good is starved if the room the decision read, less
-\* the frames that have left it since, has a frame for f past the reserve
-\* and past every frame and tail the other fillers hold now; unnamed if that
-\* room has a frame for f past every filler in flight while no other filler
-\* holds a tail.  Room that came back after the read, or that a filler
-\* claiming after the read takes, is no starvation.
-FinalRefuse(f) ==
-    LET r == IF free < seenR[f] THEN free ELSE seenR[f]
-    IN /\ pc' = [pc EXCEPT ![f] = "idle"]
-       /\ starved' = (starved \/ RoomPastTails(f, r))
-       /\ unnamed' = (unnamed \/ (RoomFor(f, r) /\ OthersTail(f) = 0))
+\* a claim refused for good, the claims c outstanding after its take back:
+\* starved too if a frame was left under the budget (the claims that
+\* refused it were taken back before it gave up)
+FinalRefuse(f, c) ==
+    /\ pc' = [pc EXCEPT ![f] = "idle"]
+    /\ starved' = (starved \/ c + size[f] <= budget)
+    /\ UNCHANGED unnamed
 
 \* the take back: the claim leaves the claims whole.  A chunk is claimed
 \* again as one frame; a single claim is retested (NoRetry: refused)
@@ -305,7 +310,7 @@ TakeBack(f) ==
                /\ size' = [size EXCEPT ![f] = 1]
                /\ UNCHANGED <<starved, unnamed>>
           ELSE IF NoRetry
-                  THEN /\ FinalRefuse(f)
+                  THEN /\ FinalRefuse(f, claims - size[f])
                        /\ UNCHANGED size
                   ELSE /\ pc' = [pc EXCEPT ![f] = "retest"]
                        /\ UNCHANGED <<starved, unnamed, size>>
@@ -320,7 +325,7 @@ Retest(f) ==
     /\ IF claims + size[f] <= budget
           THEN /\ pc' = [pc EXCEPT ![f] = "sized"]
                /\ UNCHANGED <<starved, unnamed>>
-          ELSE FinalRefuse(f)
+          ELSE FinalRefuse(f, claims)
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, size,
                    claim, tail, uncounted, seenS, seenO, seenR, claimsDone, retired,
                    phases>>
@@ -337,23 +342,22 @@ Decide(f, s, o, r) ==
        /\ IF ok
              THEN /\ Grant(f)
                   /\ UNCHANGED <<claims, starved, unnamed, size>>
-             ELSE /\ Refuse(f)
-                  /\ UNCHANGED <<claims, starved, unnamed, size, tail>>
+             ELSE /\ Refuse(f, r)
+                  /\ UNCHANGED <<claims, size, tail>>
 
 \* the whole claim under the budget: granted; else the recompute begins
 Check(f) ==
     /\ pc[f] = "claimed"
     /\ IF claim[f] + size[f] <= budget
           THEN /\ Grant(f)
-               /\ UNCHANGED <<claims, starved, unnamed, size, seenR>>
+               /\ UNCHANGED <<claims, starved, unnamed, size>>
           ELSE IF NoRefresh
-                  THEN /\ Refuse(f)
-                       /\ seenR' = [seenR EXCEPT ![f] = free]
-                       /\ UNCHANGED <<claims, starved, unnamed, size, tail>>
+                  THEN /\ Refuse(f, free)
+                       /\ UNCHANGED <<claims, size, tail>>
                   ELSE /\ pc' = [pc EXCEPT ![f] = "read1"]
-                       /\ UNCHANGED <<claims, starved, unnamed, size, tail, seenR>>
+                       /\ UNCHANGED <<claims, starved, unnamed, size, tail>>
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, claim,
-                   uncounted, seenS, seenO, claimsDone, retired, phases>>
+                   uncounted, seenS, seenO, seenR, claimsDone, retired, phases>>
 
 \* the first read: the two counts (RoomFirst: the room)
 Read1(f) ==
@@ -482,7 +486,8 @@ ReserveKept ==
 
 \* the fill is never refused while the room it read had a frame for it
 \* past the reserve and every filler in flight (each filler holding a
-\* tail counting as its tail)
+\* tail counting as its tail), nor refused for good while the claims left
+\* after its take back leave a frame for it under the budget
 NeverStarved == ~starved
 
 \* a refusal with room for the frame past every filler in flight comes only
