@@ -39,10 +39,10 @@ results is a measurement of your current build. See [Testing](TESTING.md).
 
 ## Server memory footprint
 
-The v1.1.9 Linux x86-64 Release development-build planner query described in
+The v1.1.0 Linux x86-64 Release development-build planner query described in
 [LOAD.md](LOAD.md#platform-build-and-allocator-assumptions) reports
-23,670,421,043 bytes (about 23.7 GB) for the default 1000-client server.
-The difference from one to two slots is 19,174,434 bytes (about 19.2 MB).
+21,028,276,715 bytes (about 21.0 GB) for the default 1000-client server.
+The difference from one to two slots is 19,174,370 bytes (about 19.2 MB).
 These are source-specific sizing examples, not portable constants:
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before
@@ -110,10 +110,10 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, the same Linux development build
-reports 5,753,813,043 bytes (about 5.8 GB) from
+reports 3,111,668,715 bytes (about 3.1 GB) from
 `rocketnet_server_required_memory`. The matching `rocketnet_client_light_config`
 makes `rocketnet_client_required_memory` report 15,186,082 bytes. Those two
-figures, and the default-profile figures above, are v1.1.9 queries of the
+figures, and the default-profile figures above, are v1.1.0 queries of the
 Linux x86-64 development build with io_uring and XDP.
 
 Both figures are the planned lifecycle peak (create, connect or start, stop or
@@ -284,7 +284,7 @@ a larger server does not make every transport buffer larger.
 | Limit | Rule | 1000 | 10000 |
 |---|---|---|---|
 | client slots, loopback endpoints | one per client (endpoints: plus the server) | 1000, 1001 | 10000, 10001 |
-| per-update receive budget, payload batch, io_uring receive bank | 64 packets per client | 64000 | 640000 |
+| per-update receive budget, payload batch, io_uring receive bank | 16 packets per client | 16000 | 160000 |
 | portable send batch | one per client | 1000 | 10000 |
 | server-wide send staging (IOCP send frames, RIO send phase) | two packets per client, rounded up to a power of two | 2048 | 32768 |
 | IOCP receive staging per worker, RIO posted receives | twice the send staging | 4096 | 65536 |
