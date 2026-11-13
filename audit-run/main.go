@@ -209,6 +209,48 @@ func planX8(p *plan) {
 	p.add(&job{name: "msan-run", after: []string{lb.name}, dir: "msan", cores: 8, env: []string{"RUN_MSAN_LIBCXX=" + lib}, argv: []string{"bash", "tools/run_msan.sh"}})
 }
 
+// 7: macOS, as nightly-macos-sanitizers.yml: the system clang, Debug, msgx then portable pins
+func planMac(p *plan) {
+	prev := ""
+	for _, leg := range []string{"asan", "tsan"} {
+		n := leg + "-mac"
+		wt := p.worktree(n)
+		flags := asanFlags
+		if leg == "tsan" {
+			flags = tsanFlags
+		}
+		cfg := p.add(&job{name: n + "-configure", after: []string{wt}, dir: n, cores: 1, reserve: true, argv: []string{
+			"cmake", "-S", ".", "-B", "build", "-DCMAKE_BUILD_TYPE=Debug", "-DCMAKE_C_COMPILER=/usr/bin/clang", "-DCMAKE_CXX_COMPILER=/usr/bin/clang++",
+			"-DCMAKE_C_FLAGS=" + flags, "-DCMAKE_CXX_FLAGS=" + flags}})
+		b := p.add(&job{name: n + "-build", after: []string{cfg.name}, dir: n, cores: 6, reserve: true, argv: []string{
+			"cmake", "--build", "build", "--target", "test", "functional", "test_transport_control", "test_msgx", "--parallel", "6"}})
+		env := []string{"ROCKETNET_NIGHTLY_NO_TIMEOUT=1", "ASAN_OPTIONS=detect_leaks=0", "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1",
+			"TSAN_OPTIONS=halt_on_error=0:second_deadlock_stack=1", "ROCKETNET_TEST_NIGHTLY=1", "ROCKETNET_TEST_KEEP_GOING=1", "ROCKETNET_TEST_JOBS=6"}
+		fenv := env
+		if leg == "tsan" {
+			fenv = with(env, "ROCKETNET_TEST_CASE_TIME_SCALE=30")
+		}
+		msgx := []string{"ROCKETNET_SERVER_TRANSPORT=msgx", "ROCKETNET_CLIENT_TRANSPORT=msgx"}
+		port := []string{"ROCKETNET_SERVER_TRANSPORT=portable", "ROCKETNET_CLIENT_TRANSPORT=portable"}
+		steps := []*job{
+			{name: n + "-unit-msgx", env: with(env, msgx...), argv: []string{"./bin/test"}},
+			{name: n + "-functional-msgx", env: with(fenv, msgx...), argv: []string{"bash", "tools/run_functional.sh", "dev-sanitized-msgx", "--log", "functional-msgx.log", "./bin/functional"}},
+			{name: n + "-functional-portable", env: with(fenv, port...), argv: []string{"bash", "tools/run_functional.sh", "dev-sanitized-portable", "--log", "functional-portable.log", "./bin/functional"}},
+		}
+		for _, s := range steps {
+			s.after = []string{b.name}
+			s.dir = n
+			s.cores = 6
+			s.reserve = true
+			if prev != "" {
+				s.afterAny = []string{prev}
+			}
+			p.add(s)
+			prev = s.name
+		}
+	}
+}
+
 func (p *plan) drop(prefix string) {
 	var kept []*job
 	for _, j := range p.jobs {
@@ -297,6 +339,8 @@ func runMain(args []string) {
 		planX9(p)
 	case "x8":
 		planX8(p)
+	case "mac":
+		planMac(p)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown plan")
 		os.Exit(2)
