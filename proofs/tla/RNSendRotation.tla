@@ -14,11 +14,22 @@
 (* its slot, a frame is started only for a packet that will be written:   *)
 (* the window's refusal is decided before the frame (the due test asks    *)
 (* rn_window_send_would_number, RNWindow WouldNumber), and a packet the    *)
-(* budget may refuse is written before its frame is started.              *)
+(* budget may refuse is written before its frame is started.  One abort   *)
+(* the due test cannot rule out stays: the ordered path answers due for a *)
+(* walk that then finds nothing to write (vain: rn_endpoint_fifo_due      *)
+(* answers 1 after 64 acked steps, "let the write walk it", or the        *)
+(* connection has ended: exhausted, a channel error, a reliable message   *)
+(* past its timeout), so rn_ordered_write returns 0 into a started frame, *)
+(* the frame is aborted and the reliable path ends                        *)
+(* (rn_endpoint_write_packet, rn_endpoint_end_reliable): at most one such *)
+(* abort per connection per flush (AbortsBounded), and none for a refusal *)
+(* the code decides before a frame (NoRefusalAbort).                      *)
 (*                                                                         *)
 (* RNOutgoingBuild models one connection's build and RNServerSendFair the *)
-(* rotation abstractly (K clients served per update); this module carries *)
-(* the loop's own arithmetic: the start index send_next_connection % N,   *)
+(* same rounds at the loop's index arithmetic against the transport's     *)
+(* capacity (send_writers, count, kept, previous, the stored cursors, the *)
+(* send queues); this module carries the rounds with each connection's    *)
+(* write pass: the start index send_next_connection % N,                  *)
 (* a first round over every connection, then rounds over the connections  *)
 (* that wrote in the round before (the writer list) while any wrote, one  *)
 (* frame per connection per round, the capacity test before each visit,   *)
@@ -51,6 +62,9 @@
 (*   CursorNext  send_next_connection is set to i, not (i + 1) % N         *)
 (*   CutCursor   at a capacity cut in a later round the cursor is left    *)
 (*               where the last writer visited set it                     *)
+(*   VainEnds    a vain ordered write leaves the reliable path open, so   *)
+(*               the next plan starts and aborts another frame            *)
+(* EnvVain lets the environment make a connection's ordered path vain.    *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -61,17 +75,18 @@ CONSTANTS
     EnvStall,   \* the environment may stall a window
     EnvShortAck,\* the environment may clear a stall without making room
     EnvRefuse,  \* the environment may refuse a connection's budget
-    KeepDone, StallGate, FitsGate, WriteFirst, CursorNext, CutCursor
+    EnvVain,    \* the environment may make a connection's ordered path vain
+    KeepDone, StallGate, FitsGate, WriteFirst, CursorNext, CutCursor, VainEnds
 
 ASSUME N \in Nat \ {0} /\ Cap \in Nat \ {0} /\ MaxFlush \in Nat
-ASSUME \A f \in {EnvStall, EnvShortAck, EnvRefuse, KeepDone, StallGate, FitsGate,
-                 WriteFirst, CursorNext, CutCursor} : f \in BOOLEAN
+ASSUME \A f \in {EnvStall, EnvShortAck, EnvRefuse, EnvVain, KeepDone, StallGate, FitsGate,
+                 WriteFirst, CursorNext, CutCursor, VainEnds} : f \in BOOLEAN
 
 Conns == 0..(N - 1)
 Phases == {"idle", "rel", "unr", "done"}
 
 VARIABLES
-    conn,       \* conn[c]: [phase, ready, resend, unr, stalled, fits, pays, waiting]
+    conn,       \* conn[c]: [phase, ready, resend, unr, stalled, fits, pays, waiting, vain]
     pc,         \* "between" flushes or in the send "loop"
     start,      \* the loop's start index
     off,        \* the loop's offset in this round
@@ -82,6 +97,7 @@ VARIABLES
     cursor,     \* send_next_connection
     flushes,    \* flushes begun
     aborts,     \* ghost: frames started and aborted for c this flush (to 2)
+    badAborts,  \* ghost: of those, the ones not for a vain ordered write (to 2)
     served,     \* ghost: c had a frame written this flush
     due,        \* ghost: c had writable work when the flush began
     starve,     \* ghost: consecutive flushes c was due and not served
@@ -90,15 +106,19 @@ VARIABLES
     fullCursor, \* ghost: the cursor a walk over every connection in every round sets
     skipOk      \* ghost: every slot the writer list skipped would have written nothing
 
-vars == << conn, pc, start, off, later, listed, wrote, used, cursor, flushes, aborts, served, due,
-           starve, stuck, visits, fullCursor, skipOk >>
+vars == << conn, pc, start, off, later, listed, wrote, used, cursor, flushes, aborts, badAborts,
+           served, due, starve, stuck, visits, fullCursor, skipOk >>
 
 -----------------------------------------------------------------------------
 (* The endpoint, one connection record e at a time.                       *)
 
 \* rn_endpoint_ordered_due: new messages are due while the window is not
-\* stalled and can number the ready one (rn_window_send_would_number)
-OrderedDue(e) == e.resend > 0 \/ (e.ready > 0 /\ (~StallGate \/ ~e.stalled) /\ (~FitsGate \/ e.fits))
+\* stalled and can number the ready one (rn_window_send_would_number);
+\* resends due; or a vain walk, which the test answers due without knowing
+\* the write will find nothing (rn_endpoint_fifo_due's 64 acked steps, or an
+\* ended connection)
+OrderedDueBase(e) == e.resend > 0 \/ (e.ready > 0 /\ (~StallGate \/ ~e.stalled) /\ (~FitsGate \/ e.fits))
+OrderedDue(e) == e.vain \/ OrderedDueBase(e)
 
 \* rn_endpoint_end_reliable
 EndReliable(e) ==
@@ -125,14 +145,16 @@ NPB(e) ==
 
 \* rn_endpoint_write_packet: << e', written >>.  An ordered packet the
 \* budget refuses sets reliable_waiting; one with nothing to number (a
-\* stalled window, or a ready message that does not fit, and no resend)
-\* writes nothing and stalls the window; either ends the reliable path.  An
+\* stalled window, or a ready message that does not fit, and no resend; or
+\* a vain walk) writes nothing and stalls the window; either ends the
+\* reliable path (VainEnds FALSE: a vain write leaves it open).  An
 \* unreliable packet the budget refuses drops every queued record and ends
 \* the pass.
 WriteOrd(e) ==
     IF ~e.pays THEN << EndReliable([ e EXCEPT !.waiting = TRUE ]), FALSE >>
     ELSE IF e.resend > 0 THEN << [ e EXCEPT !.resend = e.resend - 1 ], TRUE >>
     ELSE IF e.ready > 0 /\ ~e.stalled /\ e.fits THEN << [ e EXCEPT !.ready = e.ready - 1 ], TRUE >>
+    ELSE IF e.vain /\ ~VainEnds THEN << e, FALSE >>
     ELSE << EndReliable([ e EXCEPT !.stalled = e.stalled \/ e.ready > 0 ]), FALSE >>
 
 WriteUnr(e) ==
@@ -158,22 +180,24 @@ MayBeRefused(e) == ~e.pays
 \* written first and a frame is started only when it was written; else
 \* start a frame (NULL once the capacity is spent), write, finish or abort;
 \* the loop ends on the first written frame or when the pass answers 0.
-\* Returns << e', used', aborted frames, written >>.
-RECURSIVE ConnWrite(_, _, _, _)
-ConnWrite(e, u, ab, fuel) ==
+\* Returns << e', used', aborted frames, written, aborted frames not for a
+\* vain ordered write >>.
+RECURSIVE ConnWrite(_, _, _, _, _)
+ConnWrite(e, u, ab, bad, fuel) ==
     LET r == NPB(e)
         e1 == r[1]
         kind == r[2]
-    IN IF kind = "none" \/ fuel = 0 THEN << e1, u, ab, FALSE >>
+    IN IF kind = "none" \/ fuel = 0 THEN << e1, u, ab, FALSE, bad >>
        ELSE IF WriteFirst /\ MayBeRefused(e1)
        THEN \* written first: a refusal takes no frame
             LET w == Write(e1, kind)
-            IN IF w[2] THEN << w[1], u + 1, ab, TRUE >>
-               ELSE ConnWrite(w[1], u, ab, fuel - 1)
-       ELSE IF u >= Cap THEN ConnWrite(FailedNoFrame(e1, kind), u, ab, fuel - 1)
+            IN IF w[2] THEN << w[1], u + 1, ab, TRUE, bad >>
+               ELSE ConnWrite(w[1], u, ab, bad, fuel - 1)
+       ELSE IF u >= Cap THEN ConnWrite(FailedNoFrame(e1, kind), u, ab, bad, fuel - 1)
        ELSE LET w == Write(e1, kind)
-            IN IF w[2] THEN << w[1], u + 1, ab, TRUE >>
-               ELSE ConnWrite(w[1], u + 1, ab + 1, fuel - 1)
+                vain == kind = "ord" /\ e1.vain /\ e1.pays /\ ~OrderedDueBase(e1)
+            IN IF w[2] THEN << w[1], u + 1, ab, TRUE, bad >>
+               ELSE ConnWrite(w[1], u + 1, ab + 1, IF vain THEN bad ELSE bad + 1, fuel - 1)
 
 -----------------------------------------------------------------------------
 
@@ -194,12 +218,14 @@ Init ==
                              stalled : IF EnvStall THEN BOOLEAN ELSE {FALSE},
                              fits : IF EnvShortAck THEN BOOLEAN ELSE {TRUE},
                              pays : IF EnvRefuse THEN BOOLEAN ELSE {TRUE},
-                             waiting : {FALSE} ] ]
+                             waiting : {FALSE},
+                             vain : IF EnvVain THEN BOOLEAN ELSE {FALSE} ] ]
     /\ pc = "between"
     /\ start = 0 /\ off = 0 /\ later = FALSE /\ listed = {} /\ wrote = {} /\ used = 0
     /\ cursor = 0
     /\ flushes = 0
     /\ aborts = [ c \in Conns |-> 0 ]
+    /\ badAborts = [ c \in Conns |-> 0 ]
     /\ served = [ c \in Conns |-> FALSE ]
     /\ due = [ c \in Conns |-> FALSE ]
     /\ starve = [ c \in Conns |-> 0 ]
@@ -227,6 +253,7 @@ BeginFlush ==
     /\ used' = 0
     /\ flushes' = flushes + 1
     /\ aborts' = [ c \in Conns |-> 0 ]
+    /\ badAborts' = [ c \in Conns |-> 0 ]
     /\ served' = [ c \in Conns |-> FALSE ]
     /\ visits' = 0
     /\ fullCursor' = cursor
@@ -270,10 +297,10 @@ Visit ==
                THEN /\ EndRound(wrote, served, After(i))
                     /\ stuck' = (stuck \/ (wrote = {} /\ used < Cap /\ \E c \in Conns : Writable(conn[c])))
                     /\ IF wrote = {} THEN TRUE ELSE UNCHANGED cursor
-                    /\ UNCHANGED << conn, start, used, flushes, aborts, served, due, visits >>
+                    /\ UNCHANGED << conn, start, used, flushes, aborts, badAborts, served, due, visits >>
                ELSE /\ off' = off + 1
                     /\ fullCursor' = After(i)
-                    /\ UNCHANGED << conn, pc, start, later, listed, wrote, used, cursor, flushes, aborts,
+                    /\ UNCHANGED << conn, pc, start, later, listed, wrote, used, cursor, flushes, aborts, badAborts,
                                     served, due, starve, stuck, visits >>
        ELSE IF used >= Cap
        THEN \* send_capacity_available <= 0: goto flush.  The cursor is the
@@ -282,14 +309,15 @@ Visit ==
             /\ EndFlushVars(served)
             /\ cursor' = IF later /\ CutCursor THEN After(Prev1(i)) ELSE cursor
             /\ visits' = visits + 1
-            /\ UNCHANGED << conn, start, off, later, listed, wrote, used, flushes, aborts, served, due,
+            /\ UNCHANGED << conn, start, off, later, listed, wrote, used, flushes, aborts, badAborts, served, due,
                             stuck, fullCursor, skipOk >>
-       ELSE LET r == ConnWrite(conn[i], used, 0, 4)
+       ELSE LET r == ConnWrite(conn[i], used, 0, 0, 4)
                 w == IF r[4] THEN wrote \cup {i} ELSE wrote
                 sv == [ served EXCEPT ![i] = served[i] \/ r[4] ]
             IN /\ conn' = [ conn EXCEPT ![i] = r[1] ]
                /\ used' = r[2]
                /\ aborts' = [ aborts EXCEPT ![i] = IF aborts[i] + r[3] > 2 THEN 2 ELSE aborts[i] + r[3] ]
+               /\ badAborts' = [ badAborts EXCEPT ![i] = IF badAborts[i] + r[5] > 2 THEN 2 ELSE badAborts[i] + r[5] ]
                /\ served' = sv
                /\ visits' = visits + 1
                /\ IF last
@@ -308,21 +336,24 @@ Visit ==
 BeginUpdate ==
     /\ pc = "between"
     /\ conn' = [ c \in Conns |-> [ conn[c] EXCEPT !.phase = "idle" ] ]
-    /\ UNCHANGED << pc, start, off, later, listed, wrote, used, cursor, flushes, aborts, served, due,
+    /\ UNCHANGED << pc, start, off, later, listed, wrote, used, cursor, flushes, aborts, badAborts, served, due,
                     starve, stuck, visits, fullCursor, skipOk >>
 
 \* the environment between flushes: messages sent, resends coming due, an
 \* ack clearing the stall (with or without the room the ready message needs)
-\* or the window filling, the budget refilling or not
+\* or the window filling, the budget refilling or not, a long acked prefix
+\* in a resend FIFO or the connection ending (vain)
 Env(c) ==
     /\ pc = "between"
     /\ \E rd \in 0..1, rs \in 0..1, ur \in 0..1,
           st \in (IF EnvStall THEN BOOLEAN ELSE {FALSE}),
           ft \in (IF EnvShortAck THEN BOOLEAN ELSE {TRUE}),
-          py \in (IF EnvRefuse THEN BOOLEAN ELSE {TRUE}) :
+          py \in (IF EnvRefuse THEN BOOLEAN ELSE {TRUE}),
+          vn \in (IF EnvVain THEN BOOLEAN ELSE {FALSE}) :
           conn' = [ conn EXCEPT ![c] = [ @ EXCEPT !.ready = rd, !.resend = rs, !.unr = ur,
-                                                   !.stalled = st, !.fits = ft, !.pays = py ] ]
-    /\ UNCHANGED << pc, start, off, later, listed, wrote, used, cursor, flushes, aborts, served, due,
+                                                   !.stalled = st, !.fits = ft, !.pays = py,
+                                                   !.vain = vn ] ]
+    /\ UNCHANGED << pc, start, off, later, listed, wrote, used, cursor, flushes, aborts, badAborts, served, due,
                     starve, stuck, visits, fullCursor, skipOk >>
 
 Next ==
@@ -342,9 +373,14 @@ TypeOK ==
     /\ cursor \in Conns
     /\ listed \subseteq Conns /\ wrote \subseteq Conns
 
-\* no frame of the capacity is started and aborted in the send pass: a
-\* refusal by the budget or the window is decided before a frame
-NoAbort == \A c \in Conns : aborts[c] = 0
+\* no frame of the capacity is started and aborted in the send pass for a
+\* refusal the code decides before a frame (the budget's, the window's):
+\* the only abort is a vain ordered write's
+NoRefusalAbort == \A c \in Conns : badAborts[c] = 0
+
+\* a vain ordered write aborts at most one frame per connection per flush:
+\* it ends the reliable path, which does not reopen within the flush
+AbortsBounded == \A c \in Conns : aborts[c] <= 1
 
 \* the writer list's premise: a connection off the list in a later round
 \* has ended its pass until the next flush

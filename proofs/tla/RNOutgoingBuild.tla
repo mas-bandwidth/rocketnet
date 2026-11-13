@@ -533,6 +533,14 @@ PassDone ==
     \/ cut = "pass"
     \/ ~UnreliableQueued /\ (~ReliableQueued \/ cut = "rel")
 
+\* the transport cut this flush's write pass short: it gave no frame, or
+\* refused a packet at finish (WriteNoFrame, WriteFailed).  The deadline
+\* ReliableSentWithinOneUpdate is the allowance's promise, not the
+\* transport's: a cut pass leaves the reliable work queued and due for the
+\* next update, and the witness MCRNOutgoingBuildBrokenNoExcuse.cfg
+\* overrides Excused with FALSE to show such a cut is reachable.
+Excused == cut # "none"
+
 \* send_packets returns once the transport has every packet and the write
 \* pass has nothing more it may send this update
 EndFlush ==
@@ -541,7 +549,10 @@ EndFlush ==
     /\ staged = << >> /\ spent = {}
     /\ flushing' = FALSE
     /\ cut' = "none"
-    /\ promised' = IF promised # None /\ outcome[promised] = "queued" THEN promised ELSE None
+    \* a cut pass releases the promise for the rest of the update (the
+    \* failed packet may have spent the allowance); BeginUpdate makes the
+    \* reliable work still queued due again
+    /\ promised' = IF promised # None /\ outcome[promised] = "queued" /\ ~Excused THEN promised ELSE None
     /\ UNCHANGED << next, pending, handed, fellback, open, offset, resAt, wrote, frameRecs, bytes,
                     regionData, frameFree, queue, staged, wire, acksDue, acksMade, finished, faults,
                     outcome, packetsThisUpdate, spent >>
@@ -616,14 +627,6 @@ IsPrefix(a, b) == Len(a) <= Len(b) /\ a = SubSeq(b, 1, Len(a))
 
 \* in-place and queued packets together stay within the allowance
 PacketQuota == packetsThisUpdate <= MaxPackets
-
-\* the transport cut this flush's write pass short: it gave no frame, or
-\* refused a packet at finish (WriteNoFrame, WriteFailed).  The deadline
-\* below is the allowance's promise, not the transport's: a cut pass leaves
-\* the reliable work queued and due for the next flush, and the witness
-\* MCRNOutgoingBuildBrokenNoExcuse.cfg overrides Excused with FALSE to show
-\* such a cut is reachable.
-Excused == cut # "none"
 
 \* due reliable work is sent within one update unless the transport cut
 \* the pass: a reliable message queued while the update's allowance had
