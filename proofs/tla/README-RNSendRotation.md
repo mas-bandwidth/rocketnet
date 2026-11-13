@@ -34,17 +34,23 @@ writing the packet into a stack payload first while the bucket holds less
 than one maximum packet (`rn_endpoint_write_may_be_refused`), starting a frame
 only when bytes came out ([m9.4](../../standard/MESSAGES.md#m9.4)).
 
-One abort the due test cannot rule out stays. `rn_endpoint_ordered_due`
-answers yes for a resend FIFO whose first 64 entries are acknowledged
-(`rn_endpoint_fifo_due`: "a long acked prefix: let the write walk it"), and
-an ended connection (exhausted, a channel error, a reliable message past its
-timeout) also plans an ordered packet; in both the walk may find nothing, so
-`rn_ordered_write` returns 0 into a started frame, `rn_message_connection_write`
-aborts it, and `rn_endpoint_write_packet` ends the reliable path
-(`rn_endpoint_end_reliable`). The model calls such a path vain. The reliable
-path does not reopen within the flush, so a vain write costs at most one slot
-per connection per flush (`AbortsBounded`), and no refusal the code decides
-before a frame ever costs one (`NoRefusalAbort`).
+One abort the due test cannot rule out stays. A connection that has ended
+(exhausted, a channel error, a reliable message past its timeout) still has
+its ordered work answered due by `rn_endpoint_ordered_due`, which does not
+ask whether the connection ended, so it plans an ordered packet; but
+`rn_ordered_write` returns 0 for an ended connection before anything else,
+so `rn_message_connection_write` aborts the started frame and
+`rn_endpoint_write_packet` ends the reliable path
+(`rn_endpoint_end_reliable`). The model calls such a connection vain. The
+reliable path does not reopen within the flush, so a vain write costs at
+most one slot per connection per flush (`AbortsBounded`), and no refusal the
+code decides before a frame ever costs one (`NoRefusalAbort`). It costs one
+again at each later flush until the owner kicks the connection.
+`rn_endpoint_fifo_due` also answers yes after 64 acknowledged steps at a
+FIFO's head ("a long acked prefix"), which would be the same shape for a live
+connection; the resend FIFOs hold no acknowledged number (an ack unlinks its
+number before marking it, and the walk asserts it, `rocketnet_channel.cpp`),
+so that branch never takes a step, and the model leaves it out.
 
 The loop runs rounds of one frame per connection while any connection wrote.
 A connection that writes nothing in a round has ended its pass until the next
@@ -66,7 +72,7 @@ rotation is the one the full walk gave.
 | `conn[c].fits` | `rn_window_send_would_number` for the ready message |
 | `conn[c].pays` | the send budget pays this flush's packets |
 | `conn[c].waiting` | `budget.reliable_waiting` |
-| `conn[c].vain` | the ordered path is due by `rn_endpoint_fifo_due`'s 64 acked steps, or the connection has ended, and the walk would find nothing to write |
+| `conn[c].vain` | the connection has ended (`rn_region_exhausted`, `channels.error`, `rn_window_ack_check_timeout`) with ordered work the due test sees: its ordered write returns 0 |
 | `used` | `payload_ring.num_packets`, frames started this flush |
 | `start`, `off` | the loop's `start` and `offset` |
 | `later`, `listed`, `wrote` | a round after the first; the writer list (`send_writers`, `count`); this round's writers (`kept`) |

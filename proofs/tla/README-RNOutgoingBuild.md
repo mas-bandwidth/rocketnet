@@ -32,8 +32,13 @@ opens a frame, fills it and is sealed (see the abstractions below for when).
   region record `NumFrames + m`) and the buffer start handed out (`handed`),
   the frames the transport can hand out, the queued path, the staged and sent
   packets, the acks due and made, the finish order, the shared packet counter
-  since `BeginUpdate`, whether a send_packets flush runs (`flushing`), and the
-  oldest reliable message the update owes a packet (`promised`). A frame's
+  since `BeginUpdate`, whether a send_packets flush runs (`flushing`), the
+  oldest reliable message the update owes a packet (`promised`), the frames
+  aborted or dropped on the buffered transport and not yet back (`spent`),
+  and whether the transport cut this flush's write pass (`cut`: `"rel"` the
+  reliable phase ended, `"pass"` the pass ended). The constant `Buffered`
+  picks the transport: the server's own payload ring (TRUE) or a staged one
+  (FALSE). A frame's
   payload is `Cap` units; message `m` declares `Decl[m]` and the game writes
   `1..Decl[m]` of them.
 - Actions: `StartInPlace` (only while `InPlaceRoom`, with no unreliable
@@ -48,14 +53,30 @@ opens a frame, fills it and is sealed (see the abstractions below for when).
   seals the build first: the frame is full, the declared maximum does not
   fit, or the message falls back), `BeginFlush` (seals the open build, then
   the write pass), `SendReliable` (the write pass's reliable phase, first),
-  `SendUnreliable` (after it; a packet holding fewer than the whole queue is
-  the packet full), `TransportSend` (the flush hands every staged packet to
-  the wire), `EndFlush`, and `BeginUpdate` (seals the open build; the sole
-  packet-quota reset; the transport's update, where acks become due). Every
-  seal (`Seal`, `rn_message_flush_unreliable`) either stages the frame's
-  records as one packet carrying the acks due, or, when the send budget
-  cannot pay it, drops them (`MESSAGE_UNRELIABLE_OVER_BUDGET`, a fault) and
-  returns the frame; the packet counts against the allowance either way.
+  `SendUnreliable` (after it, or after the transport ended the reliable
+  phase; a packet holding fewer than every queued unreliable record is the
+  packet full), `WriteNoFrame` (the write pass finds no frame: none free, or
+  one refused, a fault; `rn_message_connection_write` then
+  `rn_endpoint_packet_failed` with nothing written: the reliable phase ends
+  with its records queued and nothing counted, an unreliable phase ends the
+  pass), `WriteFailed` (a fault: a packet of the pass refused at finish, or a
+  reliable packet written first that finds no frame; counted against the
+  allowance; its reliable records due again and the reliable phase ended,
+  its unreliable records dropped and counted
+  `MESSAGE_UNRELIABLE_SEND_FAILED`), `TransportSend` (the flush after the
+  write pass's rounds, link `send_packets`: every staged packet to the wire,
+  their frames and the spent ones back; never inside the pass), `EndFlush`,
+  and `BeginUpdate` (seals the open build; the sole packet-quota reset; the
+  transport's update, where acks become due). Every seal (`Seal`,
+  `rn_message_flush_unreliable`) either stages the frame's records as one
+  packet carrying the acks due, or, when the send budget cannot pay it or the
+  transport refuses it at finish, drops them (`MESSAGE_UNRELIABLE_OVER_BUDGET`
+  or `MESSAGE_UNRELIABLE_SEND_FAILED`, a fault) and gives the frame back; the
+  packet counts against the allowance either way. A frame given back by an
+  abort or a drop is free at once on a staged transport (`io_abort_packet`)
+  and spent until the flush on the buffered one
+  (`rocketnet_server_transport_abort_packet_unchecked` clears only the slot's
+  `wire_bytes`; the flush empties the ring).
 - Invariants: `TypeOK`, `PacketQuota` (queued and in-place packets share one
   per-update allowance), `BytesUnchangedInPlace` (every record the transport
   has carries the units the game wrote, read at its place when sealed),
@@ -67,7 +88,13 @@ opens a frame, fills it and is sealed (see the abstractions below for when).
 - Properties (action): `ReliableSentWithinOneUpdate`: when a send_packets
   flush ends, the reliable message the update owes a packet (queued while the
   allowance had room, the open build's packet counted as spent, or still
-  queued when the update began) is with the transport. It is the bounded form
+  queued when the update began) is with the transport, unless the transport
+  cut the pass (`Excused`: `WriteNoFrame` or `WriteFailed`). A cut pass
+  releases the promise for the rest of the update, since the failed packet
+  may have spent the allowance; the next update owes it again, and a promise
+  made after a cut names the oldest reliable message still queued. The
+  witness `MCRNOutgoingBuildBrokenNoExcuse.cfg` drops the excuse and shows a
+  cut is reachable. It is the bounded form
   of "due reliable work is sent": its deadline is the flush, so TLC checks it
   as a safety (action) property; an unbounded `~>` would hold in a finite run
   even without the reservation, because the game's in-place sends run out.
@@ -81,8 +108,14 @@ opens a frame, fills it and is sealed (see the abstractions below for when).
   only when it is full for the next start (`NextStartSeals`: its records fill
   it, the next declared maximum does not fit, or the next unreliable start
   falls back to the queued path, the flush that keeps the order) or at
-  send_packets or update; never at a finish, an abort, an append that fits or
-  a reliable start.
+  send_packets or update; in the model never at a finish, an abort, an append
+  that fits or a reliable start. That list is the model's closing causes, not
+  the code's: the code also seals at a finish (the trailing seal and the
+  whole-frame route below, and a writer's finish, `RNWriterFinish`
+  `SealedInCall`) and at a start (the 16-receipt cap, the byte budget, and a
+  sequenced message held behind its channel's queue or the chunk resends,
+  below). Each closes the frame earlier than the model would, never later,
+  and moves no committed record.
 - Abstractions from the code (`sdk/rocketnet_message_server.cpp`,
   `sdk/rocketnet_endpoint.cpp`; the queued writer is
   `sdk/rocketnet_packet_builder.cpp`):
@@ -129,21 +162,41 @@ opens a frame, fills it and is sealed (see the abstractions below for when).
     chunk resend is pending (`rn_endpoint_in_place_header`).
   - Sizes are units: `Cap` and `Decl[m]` (header included) stand for the
     payload room and `header + bytes`.
+  - An ended connection (exhausted, a channel error, a reliable message past
+    its timeout) and `rn_endpoint_fifo_due`'s long acked prefix can make the
+    ordered write return 0 into a started frame (`RNSendRotation`'s vain
+    write); the model's due work is always writable, so it has no such
+    abort.
 - Bounds: `MaxFaults` bounds the faults of a run together (a frame refused at
-  start, an abort, an over-budget drop), so the control stays inside the
+  start or in the write pass, an abort, an over-budget or refused seal, a
+  packet of the pass refused at finish), so the control stays inside the
   runner's budget.
 
 | Case | Expected | Instance | Distinct states | Seconds |
 |---|---|---|---|---|
-| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R) declaring 2, 2, 1, 2, 1, 1 units, two frames of 3 units, one packet per update, one ack, one fault | 1,152,441 | 13.5 |
-| `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before the in-place change | 13 | 0.8 |
+| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R) declaring 2, 2, 1, 2, 1, 1 units, two frames of 3 units, one packet per update, one ack, one fault, a staged transport | 1,366,347 | 27.0 |
+| `MCRNOutgoingBuildBuffered.cfg` | pass | the same on the buffered transport: an aborted or dropped frame spent until the flush | 1,444,143 | 27.6 |
+| `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before the in-place change | 13 | 0.7 |
 | `MCRNOutgoingBuildOwnQuota.cfg` | `PacketQuota` violated | the same with `SharedQuota` FALSE: in-place packets on an allowance of their own | 426 | 0.8 |
-| `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work | 5,420 | 1.1 |
-| `MCRNOutgoingBuildBrokenMovesPriorRecord.cfg` | `PriorRecordsUnmoved` violated | the same with `MovePrior` TRUE: a finish moves the committed records | 93 | 0.7 |
+| `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work | 5,324 | 1.4 |
+| `MCRNOutgoingBuildBrokenMovesPriorRecord.cfg` | `PriorRecordsUnmoved` violated | the same with `MovePrior` TRUE: a finish moves the committed records | 93 | 0.8 |
 | `MCRNOutgoingBuildBrokenReuseCommitted.cfg` | `BytesUnchangedInPlace` violated | the same with `ReuseCommitted` TRUE: a finish leaves the committed end in place | 98 | 0.7 |
+| `MCRNOutgoingBuildBrokenNoExcuse.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Excused` FALSE: the deadline with no excuse for a pass the transport cut | 3,493 | 1.1 |
 
 States and seconds are the pinned runner's measurements in `proofs/tla/RUNS.tsv`,
-recorded 2026-10-24 (two workers for the control, one for the witnesses, 110-second budget).
+recorded 2026-11-13 on the Linux bench (two workers for the controls, one for the witnesses, 110-second budget).
+
+The no-excuse witness's counterexample: messages 1 and 2 (UNRELIABLE,
+UNRELIABLE_SEQUENCED) pack into frame 1; message 3 (reliable) is queued with
+the allowance spent by the open build; the next update seals frame 1 and owes
+message 3 a packet; send_packets' write pass asks the transport for a frame
+and is refused (frame 2 is free: a fault, such as the client's send queue
+full), so the reliable phase ends with message 3 queued, nothing is left for
+the unreliable phase, the flush sends frame 1's packet, and send_packets
+returns with message 3 still queued. In the code: `rn_message_connection_write`
+gets no frame from `start_packet` and calls `rn_endpoint_packet_failed` with
+nothing written, which for an ordered plan is `rn_endpoint_end_reliable`; the
+message stays due for the next update.
 
 The reversed witness's counterexample: message 1 (UNRELIABLE, fitting) is
 started on the queued path with no fallback reason, written into its region

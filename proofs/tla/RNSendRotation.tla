@@ -15,15 +15,19 @@
 (* the window's refusal is decided before the frame (the due test asks    *)
 (* rn_window_send_would_number, RNWindow WouldNumber), and a packet the    *)
 (* budget may refuse is written before its frame is started.  One abort   *)
-(* the due test cannot rule out stays: the ordered path answers due for a *)
-(* walk that then finds nothing to write (vain: rn_endpoint_fifo_due      *)
-(* answers 1 after 64 acked steps, "let the write walk it", or the        *)
-(* connection has ended: exhausted, a channel error, a reliable message   *)
-(* past its timeout), so rn_ordered_write returns 0 into a started frame, *)
-(* the frame is aborted and the reliable path ends                        *)
-(* (rn_endpoint_write_packet, rn_endpoint_end_reliable): at most one such *)
-(* abort per connection per flush (AbortsBounded), and none for a refusal *)
-(* the code decides before a frame (NoRefusalAbort).                      *)
+(* the due test cannot rule out stays: a connection that has ended        *)
+(* (exhausted, a channel error, a reliable message past its timeout) with *)
+(* ordered work the due test sees (vain) plans an ordered packet, but      *)
+(* rn_ordered_write returns 0 into the started frame, so the frame is     *)
+(* aborted and the reliable path ends (rn_endpoint_write_packet,          *)
+(* rn_endpoint_end_reliable): at most one such abort per connection per   *)
+(* flush (AbortsBounded), and none for a refusal the code decides before  *)
+(* a frame (NoRefusalAbort).  An ended connection writes no ordered       *)
+(* packet, so its ordered work is not writable.  rn_endpoint_fifo_due's   *)
+(* answer after 64 acknowledged steps would be the same shape for a live  *)
+(* connection, but the resend FIFOs hold no acknowledged number (an ack    *)
+(* unlinks its number before marking it, rocketnet_channel.cpp), so that   *)
+(* branch never walks a step and is not modelled.                         *)
 (*                                                                         *)
 (* RNOutgoingBuild models one connection's build and RNServerSendFair the *)
 (* same rounds at the loop's index arithmetic against the transport's     *)
@@ -114,9 +118,8 @@ vars == << conn, pc, start, off, later, listed, wrote, used, cursor, flushes, ab
 
 \* rn_endpoint_ordered_due: new messages are due while the window is not
 \* stalled and can number the ready one (rn_window_send_would_number);
-\* resends due; or a vain walk, which the test answers due without knowing
-\* the write will find nothing (rn_endpoint_fifo_due's 64 acked steps, or an
-\* ended connection)
+\* resends due; or an ended connection's ordered work (vain), which the test
+\* answers due without asking whether the connection ended
 OrderedDueBase(e) == e.resend > 0 \/ (e.ready > 0 /\ (~StallGate \/ ~e.stalled) /\ (~FitsGate \/ e.fits))
 OrderedDue(e) == e.vain \/ OrderedDueBase(e)
 
@@ -145,16 +148,17 @@ NPB(e) ==
 
 \* rn_endpoint_write_packet: << e', written >>.  An ordered packet the
 \* budget refuses sets reliable_waiting; one with nothing to number (a
-\* stalled window, or a ready message that does not fit, and no resend; or
-\* a vain walk) writes nothing and stalls the window; either ends the
-\* reliable path (VainEnds FALSE: a vain write leaves it open).  An
-\* unreliable packet the budget refuses drops every queued record and ends
-\* the pass.
+\* stalled window, or a ready message that does not fit, and no resend)
+\* writes nothing and stalls the window; either ends the reliable path.  An
+\* ended connection's ordered write (vain) writes nothing, first of all
+\* (rn_ordered_write returns 0 before the budget or the walk), and ends the
+\* reliable path (VainEnds FALSE: leaves it open).  An unreliable packet the
+\* budget refuses drops every queued record and ends the pass.
 WriteOrd(e) ==
-    IF ~e.pays THEN << EndReliable([ e EXCEPT !.waiting = TRUE ]), FALSE >>
+    IF e.vain THEN << IF VainEnds THEN EndReliable(e) ELSE e, FALSE >>
+    ELSE IF ~e.pays THEN << EndReliable([ e EXCEPT !.waiting = TRUE ]), FALSE >>
     ELSE IF e.resend > 0 THEN << [ e EXCEPT !.resend = e.resend - 1 ], TRUE >>
     ELSE IF e.ready > 0 /\ ~e.stalled /\ e.fits THEN << [ e EXCEPT !.ready = e.ready - 1 ], TRUE >>
-    ELSE IF e.vain /\ ~VainEnds THEN << e, FALSE >>
     ELSE << EndReliable([ e EXCEPT !.stalled = e.stalled \/ e.ready > 0 ]), FALSE >>
 
 WriteUnr(e) ==
@@ -195,7 +199,7 @@ ConnWrite(e, u, ab, bad, fuel) ==
                ELSE ConnWrite(w[1], u, ab, bad, fuel - 1)
        ELSE IF u >= Cap THEN ConnWrite(FailedNoFrame(e1, kind), u, ab, bad, fuel - 1)
        ELSE LET w == Write(e1, kind)
-                vain == kind = "ord" /\ e1.vain /\ e1.pays /\ ~OrderedDueBase(e1)
+                vain == kind = "ord" /\ e1.vain
             IN IF w[2] THEN << w[1], u + 1, ab, TRUE, bad >>
                ELSE ConnWrite(w[1], u + 1, ab + 1, IF vain THEN bad ELSE bad + 1, fuel - 1)
 
@@ -205,7 +209,7 @@ ConnWrite(e, u, ab, bad, fuel) ==
 Writable(e) ==
     /\ e.pays
     /\ \/ e.unr > 0 /\ e.phase # "done"
-       \/ e.phase \in {"idle", "rel"} /\ (e.resend > 0 \/ (e.ready > 0 /\ ~e.stalled /\ e.fits))
+       \/ e.phase \in {"idle", "rel"} /\ ~e.vain /\ (e.resend > 0 \/ (e.ready > 0 /\ ~e.stalled /\ e.fits))
 
 Next1(c) == (c + 1) % N
 Prev1(c) == (c + N - 1) % N
