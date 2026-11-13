@@ -3297,6 +3297,31 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
     rocketnet_server_iocp_t * iocp = lane->owner;
     (void) thread; // the development test hold sleeps on it
 
+#if ROCKETNET_DEV
+    // MEASUREMENT AID: ROCKETNET_TEST_IOCP_SEND_CPUS="first,count" pins send
+    // thread (lane) l to processor first + l % count, group 0
+    {
+        char knob[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+        int first = 0, count = 0;
+        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_SEND_CPUS", knob, sizeof( knob ) ) > 0 && sscanf( knob, "%d,%d", &first, &count ) == 2 &&
+             first >= 0 && count >= 1 && first + count <= 64 )
+        {
+            int l = 0;
+            while ( l < iocp->num_lanes && iocp->lanes[l] != lane )
+            {
+                ++l;
+            }
+            GROUP_AFFINITY affinity = {};
+            affinity.Group = 0;
+            affinity.Mask = (KAFFINITY) 1 << ( first + l % count );
+            if ( !SetThreadGroupAffinity( GetCurrentThread(), &affinity, NULL ) )
+            {
+                rocketnet_warn( "iocp transport: send thread %d could not be pinned to processor %d: %lu", l, first + l % count, GetLastError() );
+            }
+        }
+    }
+#endif // #if ROCKETNET_DEV
+
     for ( ;; )
     {
 #if ROCKETNET_DEV
