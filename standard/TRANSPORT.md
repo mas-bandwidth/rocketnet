@@ -3830,6 +3830,7 @@ The registry of counters, in index order, is:
 | `RECEIVE_DROPPED_STOPPED` | `expected` | `none` |
 | `RIO_PIN_REFUSALS` | `refusal` | `none` |
 | `IOCP_PIN_REFUSALS` | `refusal` | `none` |
+| `GSO_PIN_REFUSALS` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3987,7 +3988,8 @@ d7 01 00 00 1c 31 f2 57 00 00 00 d4 1f 4d 66 00
 01 00 00 83 0e ee 6b 00 00 00 86 ee 14 9c 00 00
 00 da 28 2c b9 00 00 00 9f ba 38 0a 00 00 00 c1
 13 1f ae 00 00 00 ad 33 2a 98 01 00 00 67 05 9a
-de 00 00 00 d2 0c a4 a8 00 00 00
+de 00 00 00 d2 0c a4 a8 00 00 00 48 5b 6f 96 00
+00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
