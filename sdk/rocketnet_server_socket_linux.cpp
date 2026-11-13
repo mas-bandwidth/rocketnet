@@ -3957,6 +3957,86 @@ bool rocketnet_server_socket_test_receive_budget_spent()
     return valid;
 }
 
+// Two queues and a budget of two, queue 0 staging exactly two datagrams
+// before every call and queue 1 holding one: the budget ends on queue 0's
+// last datagram, so the next call starts at queue 1
+// (proofs/tla/RNGsoRecvWalk.tla NoQueueStarves, the reversed witness
+// MCRNGsoRecvWalkBrokenFillAtNextQueue.cfg). Recording queue 1, which the
+// call reached with no budget left, as where the budget ended started every
+// call at queue 0 again, and queue 1's datagram waited for as long as queue 0
+// kept arriving two at a time.
+bool rocketnet_server_socket_test_receive_budget_exact()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, 2 * sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    rocketnet_server_socket_t * server = rocketnet_server_socket_test_construct( server_storage );
+    auto * sockets = (rocketnet_server_xdp_socket_t *) socket_storage;
+    new ( &sockets[0] ) rocketnet_server_xdp_socket_t;
+    new ( &sockets[1] ) rocketnet_server_xdp_socket_t;
+    server->num_queues = 2;
+    server->socket = sockets;
+
+    bool valid = rocketnet_platform_mutex_create( &sockets[0].receive_mutex );
+    const bool second = rocketnet_platform_mutex_create( &sockets[1].receive_mutex );
+    valid &= second;
+
+    if ( valid )
+    {
+        struct rocketnet_server_socket_test_receive_t fixture = { NULL, NULL, server, &sockets[1] };
+        valid &= rocketnet_server_socket_test_receive_bank( &fixture, 101, 1 );
+        rocketnet_server_socket_end_receive_pass( &sockets[1] );
+        fixture.socket = &sockets[0];
+
+        server->receive_start_queue = 0;
+        const int capacity = server->process_packets.capacity;
+        server->process_packets.capacity = 2;
+
+        // queue 1's datagram is returned within one call per queue
+        int served = 0;
+        uint32_t next = 1;
+        for ( int call = 1; call <= 4 && valid; call++ )
+        {
+            valid &= rocketnet_server_socket_test_receive_bank( &fixture, next, 2 );
+            rocketnet_server_socket_end_receive_pass( &sockets[0] );
+            next += 2;
+            rocketnet_server_socket_receive_packets( server );
+            valid &= server->process_packets.num_packets == 2;
+            for ( int i = 0; i < server->process_packets.num_packets; i++ )
+            {
+                const uint8_t * stamp = server->process_packets.packet_data[i];
+                if ( rocketnet_read_uint32( &stamp ) == 101 && served == 0 )
+                {
+                    served = call;
+                }
+            }
+        }
+        valid &= served >= 1 && served <= 2;
+
+        server->process_packets.capacity = capacity;
+    }
+
+    for ( int q = 0; q < 2; q++ )
+    {
+        if ( sockets[q].receive_mutex.ok )
+        {
+            rocketnet_platform_mutex_destroy( &sockets[q].receive_mutex );
+        }
+    }
+    sockets[1].~rocketnet_server_xdp_socket_t();
+    sockets[0].~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( server );
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+    return valid;
+}
+
 // The per-queue room the server's send reserve reads (send_queues,
 // send_queue_of, send_room_queue) over two queues: the queue send_queue_of
 // names is the one a start really takes a slot in, its room is one under the

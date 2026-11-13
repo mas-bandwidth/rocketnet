@@ -437,6 +437,7 @@ bool rocketnet_server_socket_test_worker_stack();
 // steps the trace check's walk takes (tests/tla_trace_receive_handoff_xdp.cpp)
 bool rocketnet_server_socket_test_receive_delivery();
 bool rocketnet_server_socket_test_receive_budget_spent();
+bool rocketnet_server_socket_test_receive_budget_exact();
 struct rocketnet_server_socket_test_receive_t;
 struct rocketnet_server_socket_test_receive_state_t
 {

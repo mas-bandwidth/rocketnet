@@ -34,4 +34,14 @@ static void test_receive_budget_spent_xdp()
 
 REGISTER_UNIT_TEST( test_receive_budget_spent_xdp );
 
+// a queue whose last datagram ends the budget exactly is where the budget
+// ended: a later queue still holding datagrams is served first at the next
+// call, however often the earlier queue fills the budget exactly
+static void test_receive_budget_exact_xdp()
+{
+    rocketnet_unit_check( rocketnet_server_socket_test_receive_budget_exact() );
+}
+
+REGISTER_UNIT_TEST( test_receive_budget_exact_xdp );
+
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP && ROCKETNET_DEV
