@@ -64,6 +64,23 @@ jobs:
           cat nightly-watch.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
 
+      # tools/verification_matrix.tsv, against the runs: each declared cell's job ran on
+      # main in its latest completed run (not skipped, not cancelled), its step
+      # ran, and a suite step's log shows executed cases. Its own verdict step
+      # follows the summary, so one red never hides the other.
+      - name: Every declared cell ran on main (run matrix, remote)
+        id: run_matrix
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          status=0
+          python3 tools/check_run_matrix.py --remote --repo "$GITHUB_REPOSITORY" > run-matrix.log 2>&1 || status=$?
+          grep -v '^OWED ' run-matrix.log || [ $? -eq 1 ]
+          echo "owed cells: $(grep -c '^OWED ' run-matrix.log || [ $? -eq 1 ])"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
       - name: Tell (job summary, and fail the run when red)
         if: ${{ always() }}
         env:
@@ -121,3 +138,14 @@ jobs:
           while IFS= read -r line; do
             echo "::warning title=nightly watch UNMEASURED::$line"
           done < "$tmp/unmeasured.txt"
+
+      - name: Run matrix verdict (fail the run when a declared cell did not run)
+        if: ${{ always() }}
+        env:
+          RUN_MATRIX_STATUS: ${{ steps.run_matrix.outputs.status }}
+        run: |
+          set -euo pipefail
+          status="${RUN_MATRIX_STATUS:-none}"
+          if [ ! -f run-matrix.log ]; then echo "the run-matrix check did not run (step status $status)" >&2; exit 1; fi
+          { echo "## run matrix: $([ "$status" = 0 ] && echo green || echo "RED (exit $status)")"; echo; echo '```'; grep -v '^OWED ' run-matrix.log || [ $? -eq 1 ]; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = 0 ] || { echo "run matrix is red (exit $status); see the job summary" >&2; exit 1; }
