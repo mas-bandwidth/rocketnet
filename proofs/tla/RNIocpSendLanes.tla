@@ -168,7 +168,7 @@ StartRefused( d, l ) ==
 \* rocketnet_server_iocp_abort_packet on staged operation i (or a
 \* finish_packet that refuses its length): the slot keeps zero bytes
 Abort( i ) ==
-    /\ \E l \in LaneIds, k \in 1 .. Len( bank[l] ) :
+    /\ \E l \in LaneIds : \E k \in 1 .. Len( bank[l] ) :
           /\ bank[l][k][1] = i
           /\ ~Zero( bank[l][k] )
           /\ zeroed' = zeroed \cup { << bank[l][k][2], bank[l][k][3] >> }
