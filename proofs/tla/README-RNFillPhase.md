@@ -69,6 +69,8 @@ id are one filler to the check.
 | `MCRNFillPhaseBrokenNoReset.cfg` | `NoFalseAlarm` fails | `main_end` leaves the epoch, so the next phase's filler is refused |
 | `MCRNFillPhaseBrokenNoEpochLook.cfg` | `OneFiller` fails | the look reads `main_calls` only |
 | `MCRNFillPhaseBrokenNoRestore.cfg` | `NoFalseAlarm` fails | a refused look leaves its claim |
+| `MCRNFillPhaseLatch.cfg` | pass | none, with the check not armed at create and armed by the game's first call that names a client |
+| `MCRNFillPhaseBrokenArmedAtCreate.cfg` | `NoCheckBeforeOptIn` fails | the check is armed from create: the calls of a game that names no client enter it |
 
 ## What TLC found, checked against the code by hand
 
@@ -104,11 +106,18 @@ The design here:
    honest call in phase 2 would find another thread's claim of its own
    epoch and be refused. The code restores the owner and the word.
 
-The check can be disarmed (`rocketnet_fill_phase_arm`): the server disarms it
-until the game's first call that names a client, and until then the call
-sites' scopes do nothing (one load and a branch), so a game on today's calls
-pays nothing for the check and is never refused. The model and the trace check
-are of the armed check; the latch itself is not modelled here.
+The check has a latch (`armed`; `rocketnet_fill_phase_arm`): the server creates
+it not armed and arms it, for good, at the game's first call that names a
+client (`Arm`, `ArmedStays`). Not armed, a call site's scope does nothing (one
+load and a branch): the whole call is `FillSkip` or `MainSkip`, which touch no
+word of the check, so a game on today's calls pays nothing and is never
+refused. `NoCheckBeforeOptIn`: before the game opts in no call is inside the
+check. `MCRNFillPhaseLatch.cfg` is the check as the server makes it;
+`MCRNFillPhaseBrokenArmedAtCreate.cfg` arms from create and fails
+`NoCheckBeforeOptIn`. The cases above run with `OptedAtStart`, the armed check.
+Not in the model: a call that began before `Arm` and is still running after
+it. The trace walk makes its first calls not armed, through the call sites'
+scopes, then arms.
 
 The trace check that binds the code to this model is
 `TraceRNFillPhase.tla`, fed by the `rocketnet_fill_phase_set_trace` hook
