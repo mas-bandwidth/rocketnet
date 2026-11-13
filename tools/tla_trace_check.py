@@ -115,7 +115,9 @@ LAYERS = {
     "writerfinish": {
         "modules": ["RNWriterFinish.tla", "TraceRNWriterFinish.tla"],
         "untraced": {},
-        "reach": ["SealedAtFinish", "RefusedAtFinish", "NothingForWalk"],
+        # the walk's odd seeds are a staged transport (the first three predicates), its even seeds a buffered one
+        # (the last three): a seed set must hold both kinds
+        "reach": ["SealedAtFinish", "RefusedAtFinish", "NothingForWalk", "RingOpen", "RingQueued", "WalkCarried"],
     },
     "ackapply": {
         "modules": ["RNAckApplyPhase.tla", "TraceRNAckApplyPhase.tla"],

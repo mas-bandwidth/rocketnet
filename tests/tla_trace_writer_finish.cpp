@@ -12,8 +12,12 @@
 // rn_message_object_finish_client behind
 // rocketnet_server_finish_client_message, rn_message_object_send_packets): a
 // message server with WF_CLIENTS clients seated, its transport's I/O swapped
-// for a fake staged transport of one queue whose room the fake owns. Two
-// writers are two real threads, because a client's owner is named by a
+// for a fake. The seed picks the transport's kind, and the walk writes it as
+// the model's Buffered: an odd seed is a staged transport of one queue whose
+// room the fake owns (Buffered = FALSE); an even seed is a buffered one, the
+// frames held in the server's own ring and handed to the fake by its flush
+// (Buffered = TRUE), the ring created with a slot a client and WF_CAPACITY
+// more. Two writers are two real threads, because a client's owner is named by a
 // thread's id (sdk/rocketnet_fill_phase.h); the walk hands one call at a
 // time to one of them and waits for it, so a seed is one order of whole
 // calls. Each step is one call:
@@ -27,7 +31,11 @@
 //                 thread calls, as the game must: the client's owner is read
 //                 from the code, and a client nobody owns goes to the writer
 //                 the seed picks. The refusal of a second thread is the
-//                 fillphase layer's (tests/tla_trace_fill_phase.cpp)
+//                 fillphase layer's (tests/tla_trace_fill_phase.cpp). A
+//                 client that holds a message queued for send_packets is not
+//                 started on again before it: the model's walked counts
+//                 messages and the code's frames, the same only with one
+//                 queued message a client (a second would share its frame)
 //   finish        rocketnet_message_server_finish_client for a client with a
 //                 start open, on its owner's thread: Finish(w, c)
 //   send_packets  rocketnet_message_server_send_packets on the walk's
@@ -37,8 +45,13 @@
 // record carries, read from the code after the call:
 //
 //   open     per client, the connection's open start: none, in place (a
-//            transport frame taken) or no capacity
-//            (RN_MESSAGE_OPEN_PENDING_NO_CAPACITY)
+//            transport frame taken), no capacity
+//            (RN_MESSAGE_OPEN_PENDING_NO_CAPACITY), or ring: a start pending
+//            with no in-place form and not marked as having no capacity (the
+//            queued path), made on a transport the code says is buffered
+//            (rocketnet_server_transport_send_buffered) when cap, read from
+//            the code just before the call, was 0. Any other queued start
+//            is written "queued", which the model does not have
 //   build    per client, 1 while its unreliable build holds records unsealed
 //   queued   per client, the unreliable messages its endpoint holds queued
 //            for send_packets
@@ -49,10 +62,16 @@
 //            send capacity above the round the message layer keeps for
 //            send_packets (one frame a connected client), the expression
 //            rn_message_object_start tests
-//   starts   the starts made: the frames the fake handed out (a start in
+//   starts   the starts made: the frames the writers' starts took (a start in
 //            place takes one) and MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK (a
-//            start that took none)
-//   sent     the packets the fake transport was handed finished
+//            start that took none). The frames taken are the staged fake's
+//            count of frames handed out; on a buffered transport, the moves
+//            of the ring's count of slots taken across each start call
+//   sent     the packets the writers' finishes sealed: the staged fake's
+//            count of frames handed back finished; on a buffered transport,
+//            the moves of the ring's count of sealed slots
+//            (rocketnet_server_transport_payload_ring_sealed_for_test)
+//            across each finish call
 //   refused  MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY, read by value
 //   walked   the packets send_packets finished (rn_send_pass_cost_t
 //            frames_finished, counted on the walk's thread)
@@ -74,8 +93,11 @@
 // The plant (ROCKETNET_WRITER_FINISH_PLANT, the
 // tla_trace_plant_writer_finish build): the writer's finish of a start that
 // found no capacity queues it for send_packets, as the serial finish does,
-// in place of refusing it. PLANT-FIRED counts the records where a client
-// holds an unreliable message queued, which the clean walk never shows.
+// in place of refusing it; and on a buffered transport a start the ring had
+// no slot for is marked as having no capacity. PLANT-FIRED counts, on a
+// staged transport, the records where a client holds an unreliable message
+// queued, and on a buffered one the records where a start is open as having
+// no capacity: neither is ever shown by the clean walk on that transport.
 
 #if defined( ROCKETNET_TLA_PLANT )
 #define ROCKETNET_WRITER_FINISH_PLANT 1
@@ -198,6 +220,17 @@ static struct rocketnet_server_socket_process_packets_t * wf_receive( void * )
     return &wf_received;
 }
 
+// the fake buffered transport: the server's own ring holds the frames and
+// its flush hands them here; nothing arrives
+static void wf_send_batch( void *, const rocketnet_platform_send_t *, int )
+{
+}
+
+static int wf_receive_batch( void *, rocketnet_address_t *, uint8_t *, int, int *, int )
+{
+    return 0;
+}
+
 // the writers: each a thread that makes one call when the walk hands it one
 enum wf_job_t
 {
@@ -281,7 +314,16 @@ struct wf_walk_t
     wf_writers_t * writers;
     bool fill;                      // the phase: an update ran since the last send_packets
     bool touched[WF_CLIENTS][WF_WRITERS];   // the writers whose calls the code ran on each client since the last update
+    bool ring_short[WF_CLIENTS];    // the client's open start was made on a buffered transport whose ring had no slot above the kept round
+    uint64_t ring_taken;            // buffered: the ring slots the writers' starts took, each start's move of the ring's count
+    uint64_t ring_sealed;           // buffered: the ring slots the writers' finishes sealed, each finish's move of the sealed count
 };
+
+// the transport sends through the server's own ring: the code's own answer
+static bool wf_buffered( const wf_walk_t * walk )
+{
+    return rocketnet_server_transport_send_buffered( walk->transport );
+}
 
 static uint64_t wf_message_counter( const wf_walk_t * walk, int counter )
 {
@@ -319,7 +361,10 @@ static int wf_owner( const wf_walk_t * walk, int client )
 }
 
 // the client's open start: 0 none, 1 in place, 2 no capacity, 3 a queued
-// start of another cause (the model has none)
+// start of another cause (the model has none), 4 ring: a queued start (a
+// start pending with no in-place form and not marked as having no capacity)
+// that the walk made on a buffered transport when the capacity it read just
+// before the call left the writers no slot
 static int wf_open( const wf_walk_t * walk, int client )
 {
     const struct rn_message_open_t * open = &walk->object->connections[client].open;
@@ -331,7 +376,11 @@ static int wf_open( const wf_walk_t * walk, int client )
     {
         return 2;
     }
-    return open->in_place > 0 ? 1 : 3;
+    if ( open->in_place > 0 )
+    {
+        return 1;
+    }
+    return walk->ring_short[client] ? 4 : 3;
 }
 
 // the frames a start may still take in place: rn_message_object_start's own
@@ -352,7 +401,7 @@ static uint32_t wf_queued( const wf_walk_t * walk, int client )
 // transport, but for phase and touched, which the walk keeps from its calls
 static tla_record_t wf_state( const wf_walk_t * walk )
 {
-    static const char * const open_names[] = { "\"none\"", "\"inplace\"", "\"nocap\"", "\"queued\"" };
+    static const char * const open_names[] = { "\"none\"", "\"inplace\"", "\"nocap\"", "\"queued\"", "\"ring\"" };
     std::vector<std::string> clients, owner, touched, open, build, queued;
     for ( int c = 0; c < WF_CLIENTS; c++ )
     {
@@ -374,8 +423,12 @@ static tla_record_t wf_state( const wf_walk_t * walk )
         queued.push_back( tla_int( (int64_t) wf_queued( walk, c ) ) );
     }
 
-    uint64_t started = 0;
-    uint64_t finished = 0;
+    // the frames the writers' starts took and their finishes sealed: the
+    // staged fake's own counts, or on a buffered transport the moves of the
+    // server's ring across each writer's call
+    uint64_t started = walk->ring_taken;
+    uint64_t finished = walk->ring_sealed;
+    if ( !wf_buffered( walk ) )
     {
         std::lock_guard<std::mutex> lock( wf_fake_mutex );
         started = wf_fake.started;
@@ -426,6 +479,14 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
     rocketnet_message_default_config( &message_config );
     message_config.server_send_kbps = 0;
 
+    // the transport kind is the seed's: odd staged, even buffered. A buffered
+    // server's ring is created with a slot a client and WF_CAPACITY more
+    const bool buffered_seed = seed % 2 == 0;
+    if ( buffered_seed )
+    {
+        rocketnet_server_transport_set_create_send_capacity_for_test( WF_CLIENTS + WF_CAPACITY );
+    }
+
     wf_walk_t walk;
     memset( &walk, 0, sizeof( walk ) );
     walk.server = rocketnet_message_server_create( NULL, "127.0.0.1:0", &config, &message_config, NULL, 0, 0 );
@@ -439,25 +500,34 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
 
     struct rocketnet_server_transport_io_operations_t fake;
     memset( &fake, 0, sizeof( fake ) );
-    fake.flags = ROCKETNET_TRANSPORT_STAGED;
-    fake.start_packet = wf_start;
-    fake.finish_packet = wf_finish;
-    fake.abort_packet = wf_abort;
-    fake.flush = wf_flush;
-    fake.send_room = wf_send_room;
-    fake.send_idle = wf_send_idle;
-    fake.receive = wf_receive;
+    if ( buffered_seed )
+    {
+        fake.send_batch = wf_send_batch;
+        fake.receive_batch = wf_receive_batch;
+    }
+    else
+    {
+        fake.flags = ROCKETNET_TRANSPORT_STAGED;
+        fake.start_packet = wf_start;
+        fake.finish_packet = wf_finish;
+        fake.abort_packet = wf_abort;
+        fake.flush = wf_flush;
+        fake.send_room = wf_send_room;
+        fake.send_idle = wf_send_idle;
+        fake.receive = wf_receive;
+    }
     const struct rocketnet_server_transport_io_operations_t * operations = &fake;
     void * instance = NULL;
     rocketnet_server_transport_swap_io_for_test( walk.transport, &operations, &instance );
 
     // before the first record: the message layer observes its clients, each
     // keep-alive is marked acknowledged (no client holds a frame of its own
-    // in the reserve), and the fake's room is sized so that an update leaves
-    // the writers WF_CAPACITY frames above the round kept for send_packets.
-    // The reserve is the code's own number, read after an opening; the
-    // capacity written for the model is read back from the code after the
-    // last opening, not taken from WF_CAPACITY
+    // in the reserve), and the staged fake's room is sized so that an update
+    // leaves the writers WF_CAPACITY frames above the round kept for
+    // send_packets. The reserve is the code's own number, read after an
+    // opening; the capacity written for the model is read back from the
+    // code after the last opening, on either transport, not taken from
+    // WF_CAPACITY
 
     memset( &wf_fake, 0, sizeof( wf_fake ) );
     wf_fake.max_room = 4 * WF_FRAMES;
@@ -471,7 +541,7 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
         }
         rocketnet_message_server_update( walk.server, WF_TIME );
         rocketnet_message_server_send_packets( walk.server );
-        if ( round == 1 || round == 2 )
+        if ( !buffered_seed && ( round == 1 || round == 2 ) )
         {
             // first from the reserve, then by what the code says that left the writers
             const int reserve = (int) rocketnet_server_transport_send_reserve_for_test( walk.transport, 0 );
@@ -495,6 +565,12 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
     if ( capacity < 1 || capacity > WF_FRAMES - WF_CLIENTS )
     {
         fprintf( stderr, "tla_trace writerfinish: an update leaves the writers %d frames\n", capacity );
+        fault = true;
+    }
+    const bool buffered = wf_buffered( &walk );
+    if ( buffered != buffered_seed )
+    {
+        fprintf( stderr, "tla_trace writerfinish: the transport is %s, the seed's kind is the other\n", buffered ? "buffered" : "staged" );
         fault = true;
     }
     {
@@ -541,13 +617,27 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
         const uint64_t overlaps = wf_transport_counter( &walk, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
         const uint64_t two_threads = wf_transport_counter( &walk, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS );
 
+        // a client the walk may call on: one with a start open (a finish),
+        // or one that holds no message queued (a start). A client whose
+        // message waits queued for send_packets is not started on again
+        // before it: the model counts the messages the walk carries, the
+        // code the frames, and they are the same only with one a client
         int open_count = 0;
+        int callable[WF_CLIENTS];
+        int num_callable = 0;
         for ( int c = 0; c < WF_CLIENTS; c++ )
         {
             open_count += wf_open( &walk, c ) != 0 ? 1 : 0;
+            if ( wf_open( &walk, c ) != 0 || wf_queued( &walk, c ) == 0 )
+            {
+                callable[num_callable++] = c;
+            }
         }
 
         const int pick = random.below( 100 );
+        const int picked_client = random.below( WF_CLIENTS );
+        const int picked_other = random.below( 4 );
+        const int seeded = random.below( WF_WRITERS );
         if ( !walk.fill )
         {
             rocketnet_message_server_update( walk.server, WF_TIME );
@@ -556,7 +646,7 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
             op = "update";
             act = "BeginFill";
         }
-        else if ( open_count == 0 && pick < 30 )
+        else if ( open_count == 0 && ( pick < 30 || num_callable == 0 ) )
         {
             rocketnet_message_server_send_packets( walk.server );
             walk.fill = false;
@@ -567,21 +657,20 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
         {
             // a client; one with a start open is mostly finished, sometimes
             // left open while another client starts
-            int client = random.below( WF_CLIENTS );
-            if ( wf_open( &walk, client ) != 0 && random.below( 4 ) == 0 )
+            int client = callable[picked_client % num_callable];
+            if ( wf_open( &walk, client ) != 0 && picked_other == 0 )
             {
-                for ( int c = 0; c < WF_CLIENTS; c++ )
+                for ( int i = 0; i < num_callable; i++ )
                 {
-                    if ( wf_open( &walk, c ) == 0 )
+                    if ( wf_open( &walk, callable[i] ) == 0 )
                     {
-                        client = c;
+                        client = callable[i];
                     }
                 }
             }
 
             // the client's writer: its owner in this phase, or the seed's pick
             int w = wf_owner( &walk, client );
-            const int seeded = random.below( WF_WRITERS );
             if ( w == -1 )
             {
                 w = seeded;
@@ -601,7 +690,12 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
 
             if ( wf_open( &walk, client ) == 0 )
             {
+                // read before the call: the slots left the writers, and the ring's count
+                const int cap_before = wf_cap( &walk );
+                const uint64_t taken = rocketnet_server_transport_payload_ring_count_for_test( walk.transport );
                 wf_call( writers, w, WF_START, client );
+                walk.ring_short[client] = buffered && cap_before == 0;
+                walk.ring_taken += buffered ? rocketnet_server_transport_payload_ring_count_for_test( walk.transport ) - taken : 0;
                 op = "start";
                 act = "Start";
                 if ( !writers->pointer )
@@ -613,7 +707,9 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
             else
             {
                 const uint64_t refused = wf_message_counter( &walk, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY );
+                const uint64_t sealed = rocketnet_server_transport_payload_ring_sealed_for_test( walk.transport );
                 wf_call( writers, w, WF_FINISH, client );
+                walk.ring_sealed += buffered ? rocketnet_server_transport_payload_ring_sealed_for_test( walk.transport ) - sealed : 0;
                 op = "finish";
                 act = "Finish";
                 const uint64_t moved = wf_message_counter( &walk, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) - refused;
@@ -635,10 +731,12 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
         report.act( act );
         records.push_back( tla_step( op, act, args, wf_state( &walk ) ) );
 
-        // the planted effect, where it shows: a writer's message queued for send_packets
+        // the planted effect, where it shows: on a staged transport a
+        // writer's message queued for send_packets; on a buffered one a
+        // start open as having no capacity
         for ( int c = 0; c < WF_CLIENTS; c++ )
         {
-            if ( wf_queued( &walk, c ) > 0 )
+            if ( buffered ? wf_open( &walk, c ) == 2 : wf_queued( &walk, c ) > 0 )
             {
                 report.planted( (int) records.size() );
                 break;
@@ -658,9 +756,9 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
               "    SealAtFinish = TRUE\n"
               "    RefuseNoCapacity = TRUE\n"
               "    CheckOwner = TRUE\n"
-              "    Buffered = FALSE\n"
+              "    Buffered = %s\n"
               "    RingRefuses = FALSE\n",
-              capacity, steps );
+              capacity, steps, buffered ? "TRUE" : "FALSE" );
     const bool written = !fault && tla_write_trace( out, "MCTraceWriterFinish", seed, "TraceRNWriterFinish", "", constants, records );
 
     // the starts still open are aborted by their owners, then the writers end

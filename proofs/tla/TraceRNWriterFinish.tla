@@ -100,4 +100,11 @@ SealedAtFinish == sent > 0
 RefusedAtFinish == refused > 0
 NothingForWalk == phase = "main" /\ sent > 0 /\ refused > 0 /\ walked = 0
 
+\* and, on a buffered transport (the walk's even seeds): a start the ring had
+\* no slot for held open, its message queued by the writer's finish, and a
+\* send_packets that carried such messages with none refused
+RingOpen == \E c \in Clients : open[c] = "ring"
+RingQueued == \E c \in Clients : queued[c] > 0
+WalkCarried == phase = "main" /\ sent > 0 /\ walked > 0 /\ refused = 0
+
 =============================================================================
