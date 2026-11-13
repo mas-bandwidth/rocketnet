@@ -137,7 +137,9 @@ typedef int harden_socket_t;
 
 #if defined( __linux__ )
 #include <linux/if_ether.h>
+#include <dirent.h>
 #include <pthread.h>
+#include <sched.h>
 #include <linux/if_packet.h>
 #include <net/if.h>
 #include <netinet/ip.h>
@@ -449,6 +451,7 @@ struct harden_options_t
     bool space_shape = false; // --frame-shape space: space game's server frame (see harden_space_t)
     int game_threads = 0;     // --game-threads N: the ThreadPool, N threads in all, the main thread first
     int pin_first_cpu = -1;   // --pin-first-cpu C: the main thread on core C, game thread i on C + i
+    int pin_net_first_cpu = -1; // --pin-net-first-cpu C (Linux): the server transport's own threads (every thread the process has once the server has started, bar the main thread) on cores C, C + 1, ...: the network threads on their own cores
     double world_ms = 2.0;    // --world-ms: the main thread's own share of the stand-in world update
     double game_load = 0.5;   // --game-load F: stand-in game jobs, F of each game thread per frame
     // departures from space's frame, one at a time (SPACE-FRAME-SHAPE.md "Departures"); the defaults are space exact
@@ -651,6 +654,10 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--pin-first-cpu" ) == 0 )
         {
             o->pin_first_cpu = atoi( v );
+        }
+        else if ( strcmp( a, "--pin-net-first-cpu" ) == 0 )
+        {
+            o->pin_net_first_cpu = atoi( v );
         }
         else if ( strcmp( a, "--world-ms" ) == 0 )
         {
@@ -2139,6 +2146,42 @@ static int harden_server_main( const harden_options_t & o )
     }
 #endif // #if defined( _WIN32 ) && defined( ROCKETNET_SERVER_RIO_TEST_LANES_MADE )
     const char * granted = rocketnet_server_transport_name( server );
+#if defined( __linux__ )
+    if ( o.pin_net_first_cpu >= 0 )
+    {
+        // the transport's threads are the only threads the process has besides the main thread (the
+        // game threads and the fill threads are made later), taken in thread id order
+        std::vector<int> tids;
+        DIR * dir = opendir( "/proc/self/task" );
+        if ( dir )
+        {
+            const int main_tid = (int) getpid();
+            for ( struct dirent * entry = readdir( dir ); entry; entry = readdir( dir ) )
+            {
+                const int tid = atoi( entry->d_name );
+                if ( tid > 0 && tid != main_tid )
+                {
+                    tids.push_back( tid );
+                }
+            }
+            closedir( dir );
+        }
+        std::sort( tids.begin(), tids.end() );
+        int pinned_net = 0;
+        for ( size_t i = 0; i < tids.size(); i++ )
+        {
+            cpu_set_t set;
+            CPU_ZERO( &set );
+            CPU_SET( (size_t) ( o.pin_net_first_cpu + (int) i ), &set );
+            if ( sched_setaffinity( tids[i], sizeof( set ), &set ) == 0 )
+            {
+                pinned_net++;
+            }
+        }
+        printf( "harden_net_pin: threads=%d pinned=%d first_cpu=%d\n", (int) tids.size(), pinned_net, o.pin_net_first_cpu );
+        fflush( stdout );
+    }
+#endif // #if defined( __linux__ )
     if ( !o.transport.empty() && strcmp( granted, o.transport.c_str() ) != 0 )
     {
         printf( "harden_verdict: role=server verdict=FAIL reason=transport granted=%s pinned=%s\n", granted, o.transport.c_str() );
