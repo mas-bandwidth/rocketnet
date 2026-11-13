@@ -356,12 +356,14 @@ int rocketnet_client_gso_gro_segment_bytes( const struct msghdr * header, int me
 }
 
 // the receive errors that are weather, as the platform's receive reads them:
-// skip and keep draining while the call's read budget lasts
+// skip and keep draining while the call's read budget lasts. EMSGSIZE is an
+// ICMP fragmentation-needed or packet-too-big naming the connected socket's
+// 4-tuple, never a long datagram (the message's MSG_TRUNC flag reports it).
 
 static bool rocketnet_client_gso_receive_weather( int error )
 {
     return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
-           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR || error == EMSGSIZE;
 }
 
 // proofs/tla/RNClientGroCarry.tla Deliver: copies the held message's segments

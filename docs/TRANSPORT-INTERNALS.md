@@ -404,7 +404,7 @@ portable or msgx socket is connected to its one server
 (`rocketnet_platform_socket_connect`, so the kernel drops datagrams from any
 other source), and the kernel routes these errors to it; server sockets are
 never connected. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
-ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
+ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS, EINTR and EMSGSIZE as weather
 (`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
 portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm
 (`rocketnet_platform_socket_receive_packets`) skip the error and keep
