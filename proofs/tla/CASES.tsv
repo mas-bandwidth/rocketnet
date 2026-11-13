@@ -528,6 +528,7 @@ MCRNGsoHandoffBrokenPublishWhileHeld.cfg	MCRNGsoHandoff.tla	invariant	NoPublishW
 MCRNGsoHandoffReachErrorDropRunning.cfg	MCRNGsoHandoff.tla	invariant	NotReachedErrorDropRunning	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenUncountedErrorDrop.cfg	MCRNGsoHandoff.tla	invariant	SentOrHeld	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenMainBlocks.cfg	MCRNGsoHandoff.tla	invariant	MainNeverWaits	check	rngsohandoff	required	-
+MCRNGsoHandoffBrokenStopTail.cfg	MCRNGsoHandoff.tla	invariant	RxAccounted	check	rngsohandoff	required	-
 MCRNGsoRecvFill.cfg	MCRNGsoRecvFill.tla	pass	-	check	rngsorecvfill	required	-
 MCRNGsoRecvFillBrokenFullBatch.cfg	MCRNGsoRecvFill.tla	invariant	NoOverflow	check	rngsorecvfill	required	-
 MCRNGsoRecvWalk.cfg	MCRNGsoRecvWalk.tla	pass	-	check	rngsorecvwalk	required	-

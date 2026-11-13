@@ -319,6 +319,9 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
 bool rocketnet_server_gso_test_worker_handoff();
+// StopCount: what is still banked at stop is counted RECEIVE_DROP_STOPPED
+// once every worker has exited, and main takes nothing after stop.
+bool rocketnet_server_gso_test_stop_counts_unreceived();
 // A refused sendmmsg: an errno other than a full socket's drops the one
 // refused message and sends the rest.
 bool rocketnet_server_gso_test_send_refusals();

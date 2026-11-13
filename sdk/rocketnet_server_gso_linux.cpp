@@ -284,6 +284,11 @@ struct rocketnet_server_gso_t
     int num_queues;
     int receive_start_queue = 0; // the next receive_packets call starts at this queue
     bool stopping = false;
+    // main thread: what the queue workers received that main never took,
+    // counted once, when stopped first finds every worker exited
+    // (RECEIVE_DROP_STOPPED, rocketnet_server_gso_count_stopped)
+    bool stop_counted = false;
+    uint64_t receive_dropped_stopped = 0;
     std::atomic<int> features{ 0 };
     bool ipv6;
 
@@ -1638,6 +1643,61 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     return gso;
 }
 
+// a bank's drop and error tallies folded into the transport's counters and
+// cleared: when main claims the bank, or at stop for a bank main never took
+static void rocketnet_server_gso_fold_buffer( rocketnet_server_gso_t * gso, rocketnet_server_gso_recv_buffer_t * buffer )
+{
+    gso->counter_receive_dropped_size += buffer->dropped_size;
+    gso->counter_receive_dropped_too_large += buffer->dropped_too_large;
+    gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
+    gso->counter_receive_dropped_source += buffer->dropped_source;
+    gso->counter_receive_dropped_prefilter += buffer->dropped_prefilter;
+    gso->counter_receive_errors += buffer->receive_errors;
+    gso->counter_gro_batches += buffer->gro_batches;
+    buffer->receive_errors = 0;
+    buffer->dropped_size = 0;
+    buffer->dropped_too_large = 0;
+    buffer->dropped_overflow = 0;
+    buffer->dropped_source = 0;
+    buffer->dropped_prefilter = 0;
+    buffer->gro_batches = 0;
+    buffer->gro_cmsg_faults = 0;
+}
+
+// proofs/tla/RNGsoHandoff.tla StopCount: main, once, when stopped first
+// finds every queue worker exited (its acquire), so main owns every bank.
+// What the workers received that main never took (a bank a worker could not
+// publish, the ready bank, the unread tail of main's bank) is counted
+// RECEIVE_DROP_STOPPED, and each bank's drop tallies are folded: no datagram
+// a socket delivered goes uncounted. Main takes nothing after stop
+// (rocketnet_server_gso_receive_packets), so nothing is counted twice.
+static void rocketnet_server_gso_count_stopped( rocketnet_server_gso_t * gso )
+{
+    for ( int i = 0; gso->queues && i < gso->num_queues; ++i )
+    {
+        rocketnet_server_gso_queue_t * queue = &gso->queues[i];
+
+        rocketnet_server_gso_recv_buffer_t * held = queue->main_buffer;
+        if ( held && queue->main_cursor < held->num_packets )
+        {
+            gso->receive_dropped_stopped += held->num_packets - queue->main_cursor;
+            queue->main_cursor = held->num_packets;
+        }
+
+        rocketnet_server_gso_recv_buffer_t * banks[2] = { queue->worker_buffer, queue->ready_buffer };
+        for ( int b = 0; b < 2; ++b )
+        {
+            if ( !banks[b] )
+            {
+                continue;
+            }
+            gso->receive_dropped_stopped += banks[b]->num_packets;
+            banks[b]->num_packets = 0;
+            rocketnet_server_gso_fold_buffer( gso, banks[b] );
+        }
+    }
+}
+
 // proofs/tla/RNGsoHandoff.tla MainStop, per queue: quit is stored for each
 // queue's worker; its final producer passes to that worker with the store.
 void rocketnet_server_gso_stop( rocketnet_server_gso_t * gso )
@@ -1690,6 +1750,11 @@ bool rocketnet_server_gso_stopped( rocketnet_server_gso_t * gso )
         {
             return false;
         }
+    }
+    if ( !gso->stop_counted )
+    {
+        gso->stop_counted = true;
+        rocketnet_server_gso_count_stopped( gso );
     }
     return true;
 }
@@ -1806,6 +1871,7 @@ void rocketnet_server_gso_receive_drop_totals( struct rocketnet_server_gso_t * g
     {
         rocketnet_receive_drop_tally_sum( &gso->queues[i].receive_tally, 1, values );
     }
+    values[ROCKETNET_RECEIVE_DROP_STOPPED] += gso->receive_dropped_stopped;
     values[ROCKETNET_RECEIVE_ACCEPT] = 0;
 }
 
@@ -2426,21 +2492,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         rocketnet_platform_mutex_release( &queue->receive_mutex );
 
         gso->counter_packets_received += buffer->num_packets;
-        gso->counter_receive_dropped_size += buffer->dropped_size;
-        gso->counter_receive_dropped_too_large += buffer->dropped_too_large;
-        gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
-        gso->counter_receive_dropped_source += buffer->dropped_source;
-        gso->counter_receive_dropped_prefilter += buffer->dropped_prefilter;
-        gso->counter_receive_errors += buffer->receive_errors;
-        gso->counter_gro_batches += buffer->gro_batches;
-        buffer->receive_errors = 0;
-        buffer->dropped_size = 0;
-        buffer->dropped_too_large = 0;
-        buffer->dropped_overflow = 0;
-        buffer->dropped_source = 0;
-        buffer->dropped_prefilter = 0;
-        buffer->gro_batches = 0;
-        buffer->gro_cmsg_faults = 0;
+        rocketnet_server_gso_fold_buffer( gso, buffer );
     }
 
     rocketnet_server_gso_recv_buffer_t * buffer = queue->main_buffer;
@@ -2461,6 +2513,14 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
 
     rocketnet_server_gso_publish_all( gso ); // retry deferred TX even on idle updates
     gso->process_packets.num_packets = 0;
+
+    // proofs/tla/RNGsoHandoff.tla: once stop is asked main claims and
+    // consumes nothing (RxClaim and RxConsume); what is still banked is
+    // counted RECEIVE_DROP_STOPPED when the workers have exited (StopCount)
+    if ( gso->stopping )
+    {
+        return;
+    }
 
     // a rotating start: queue 0 is not served first on every call. The budget
     // ends on filled_queue and the next call starts after it, the same rule
@@ -2673,6 +2733,71 @@ bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * g
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
     rocketnet_server_gso_test_fill( queue->worker_buffer, marker, packets );
     return rocketnet_server_gso_publish_receive( queue );
+}
+
+// StopCount: a bank the worker could not publish, the ready bank and the
+// unread tail of main's bank, all still banked when stop is asked, are
+// counted RECEIVE_DROP_STOPPED, with the banks' drop tallies folded, once
+// every worker has exited; main takes nothing after stop, and the count is
+// made once.
+bool rocketnet_server_gso_test_stop_counts_unreceived()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+    {
+        return false;
+    }
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
+    uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS];
+
+    bool valid = true;
+
+    // main claims three packets and reads one: a tail of two stays in its bank
+
+    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'a', 3 );
+    valid = valid && rocketnet_server_gso_publish_receive( queue );
+    gso->process_packets.num_packets = 0;
+    rocketnet_server_gso_receive_from_queue( gso, queue, 1 );
+    valid = valid && gso->process_packets.num_packets == 1 && queue->main_cursor == 1 && gso->counter_packets_received == 3;
+
+    // two more wait in the ready bank; four, with a size drop, in the
+    // worker's bank, which cannot be published behind them
+
+    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'b', 2 );
+    valid = valid && rocketnet_server_gso_publish_receive( queue );
+    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'c', 4 );
+    queue->worker_buffer->dropped_size = 1;
+    valid = valid && !rocketnet_server_gso_publish_receive( queue );
+
+    // after stop main takes nothing, and nothing is counted while the
+    // worker still runs
+
+    rocketnet_server_gso_stop( gso );
+    rocketnet_server_gso_receive_packets( gso );
+    valid = valid && gso->process_packets.num_packets == 0 && queue->main_cursor == 1;
+    valid = valid && !rocketnet_server_gso_stopped( gso );
+    rocketnet_server_gso_receive_drop_totals( gso, totals );
+    valid = valid && totals[ROCKETNET_RECEIVE_DROP_STOPPED] == 0;
+
+    // the worker exits: the tail, the ready bank and the worker's bank are
+    // counted, 2 + 2 + 4, with the worker bank's size drop folded
+
+    queue->stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+    rocketnet_server_gso_receive_drop_totals( gso, totals );
+    valid = valid && totals[ROCKETNET_RECEIVE_DROP_STOPPED] == 8 && gso->counter_receive_dropped_size == 1 &&
+            gso->counter_packets_received == 3;
+
+    // a second stopped call counts nothing more
+
+    valid = valid && rocketnet_server_gso_stopped( gso );
+    rocketnet_server_gso_receive_drop_totals( gso, totals );
+    valid = valid && totals[ROCKETNET_RECEIVE_DROP_STOPPED] == 8;
+
+    rocketnet_server_gso_test_destroy( gso );
+
+    return valid;
 }
 
 bool rocketnet_server_gso_test_worker_handoff()

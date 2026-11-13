@@ -35,6 +35,15 @@ static void test_server_gso_worker_handoff()
 
 REGISTER_UNIT_TEST( test_server_gso_worker_handoff );
 
+// At stop, the datagrams the workers received that main never took are
+// counted RECEIVE_DROP_STOPPED (proofs/tla/RNGsoHandoff.tla StopCount).
+static void test_server_gso_stop_counts_unreceived()
+{
+    check( rocketnet_server_gso_test_stop_counts_unreceived() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_stop_counts_unreceived );
+
 // A refused sendmmsg through the send-failure seam: an errno other than a
 // full socket's drops one message and sends the rest.
 static void test_server_gso_send_refusals()
