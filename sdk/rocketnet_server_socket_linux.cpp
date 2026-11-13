@@ -3877,7 +3877,7 @@ static int rocketnet_server_socket_test_delivery_call( void * user, uint32_t * i
 bool rocketnet_server_socket_test_receive_delivery()
 {
     struct rocketnet_server_socket_test_receive_t * fixture = NULL;
-    struct rocketnet_receive_delivery_rig_t rig = { &fixture, rocketnet_server_socket_test_delivery_pass, rocketnet_server_socket_test_delivery_call };
+    struct rocketnet_receive_delivery_rig_t rig = { (void *) &fixture, rocketnet_server_socket_test_delivery_pass, rocketnet_server_socket_test_delivery_call };
     const bool valid = rocketnet_receive_delivery_check_all( &rig, "xdp server", rocketnet_server_socket_test_delivery_reset );
     rocketnet_server_socket_test_receive_close( fixture );
     return valid;
