@@ -280,7 +280,7 @@ FirstKeepAlive(c) ==
     /\ touched' = touched \cup {c}
     /\ hist' = [ hist EXCEPT ![c] = Append(@, "S") ]
     /\ shist' = [ shist EXCEPT ![c] = Append(@, "S") ]
-    /\ sentPending' = sentPending \/ pending[c] # << >>
+    /\ sentPending' = ( sentPending \/ pending[c] # << >> )
     /\ UNCHANGED << phase, updates, narr, nresets, resetNow, mode, entries, pending, owner, tc, tlist, tpos, epoch,
                     alog, ccount, batch, count, taken, delivered, sepoch, sbatch, scount, sdelivered >>
 
@@ -372,7 +372,7 @@ Sweep ==
     /\ \/ phase = "gathered"
        \/ phase = "acks" /\ SweepBeforeGather /\ Joined
     /\ phase' = IF phase = "gathered" THEN "done" ELSE "swept"
-    /\ sentPending' = sentPending \/ AnyPending(pending, Clients)
+    /\ sentPending' = ( sentPending \/ AnyPending(pending, Clients) )
     /\ hist' = SendAll(hist)
     /\ shist' = SendAll(shist)
     /\ UNCHANGED << updates, narr, nresets, touched, resetNow, mode, entries, pending, owner, tc, tlist, tpos,

@@ -39,10 +39,15 @@
     payload (rocketnet_server_transport_start_packet, then
     rocketnet_message_single_finish and finish_packet), and main joins them
     before it writes the reliable and big messages through the message
-    server and calls send_packets. Inbound messages from the clients are
+    server and calls send_packets. With fill jobs the same jobs also make
+    the ack calls (--ack-jobs on, the default with --fill-jobs; off for an
+    A/B): update_begin, each job's rocketnet_server_update_acks for its run
+    of slots, the join, update_end. Inbound messages from the clients are
     verified the same way. Each
     second it prints "harden_tick:" (connected, frames, overruns past one
-    frame, the work time per frame avg/p99/max split into update, receive,
+    frame, the work time per frame avg/p99/max split into update (the
+    whole update, the ack phase's wait included; acks=avg/max is that
+    wait), receive,
     write and send_packets, the fill jobs' summed busy time per frame as
     jobs_core_ms, messages and packets per second, start refusals),
     and each --sample-seconds a "harden_sample:" (fds, threads, resident
@@ -434,6 +439,7 @@ struct harden_options_t
     int burst = 15;
     int burst_clients = 0;
     int fill_jobs = 0;
+    int ack_jobs = -1;              // --ack-jobs on|off; -1: on when --fill-jobs > 0
     bool payload_copy = false;
     int sizes[HARDEN_MAX_SIZES] = { 1200, 1200, 1200, 1100, 900, 600, 300 };
     int num_sizes = 7;
@@ -582,6 +588,22 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         {
             o->fill_jobs = atoi( v );
         }
+        else if ( strcmp( a, "--ack-jobs" ) == 0 )
+        {
+            if ( strcmp( v, "on" ) == 0 )
+            {
+                o->ack_jobs = 1;
+            }
+            else if ( strcmp( v, "off" ) == 0 )
+            {
+                o->ack_jobs = 0;
+            }
+            else
+            {
+                fprintf( stderr, "harden_load: --ack-jobs is on or off\n" );
+                return false;
+            }
+        }
         else if ( strcmp( a, "--payload" ) == 0 )
         {
             if ( strcmp( v, "copy" ) == 0 )
@@ -695,6 +717,15 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
          o->pps < 0.0 || o->sockets < 1 || o->sockets > 4096 || o->warm_seconds < 0 )
     {
         fprintf( stderr, "harden_load: an option is out of range\n" );
+        return false;
+    }
+    if ( o->ack_jobs < 0 )
+    {
+        o->ack_jobs = o->fill_jobs > 0 ? 1 : 0;
+    }
+    else if ( o->ack_jobs > 0 && o->fill_jobs == 0 )
+    {
+        fprintf( stderr, "harden_load: --ack-jobs on needs --fill-jobs N, the jobs that make the calls\n" );
         return false;
     }
     return true;
@@ -1128,6 +1159,7 @@ struct harden_frame_window_t
     uint64_t frames = 0, overruns = 0;
     uint64_t messages = 0, start_refused = 0, received = 0;
     double jobs_busy_sum = 0; // core seconds the fill jobs spent, summed over the jobs
+    double acks_sum = 0, acks_max = 0; // the ack phase on main, from update_begin to the join (inside update)
 };
 
 static double harden_percentile( std::vector<double> & v, double p )
@@ -1175,6 +1207,16 @@ struct harden_fill_job_t
     uint64_t start_refused = 0;
     uint64_t finish_refused = 0;
     double busy = 0.0; // seconds inside the fill range: the core time the game gives up to the job
+    uint64_t ack_refused = 0;
+};
+
+// what a woken job does: write its clients' messages (the fill phase) or make
+// its clients' ack calls (the ack phase, between update_begin and update_end)
+
+enum harden_pool_work_t
+{
+    HARDEN_POOL_FILL,
+    HARDEN_POOL_ACKS,
 };
 
 struct harden_fill_pool_t
@@ -1185,6 +1227,8 @@ struct harden_fill_pool_t
     uint64_t generation = 0;
     int remaining = 0;
     bool quit = false;
+    harden_pool_work_t work = HARDEN_POOL_FILL;
+    rocketnet_server_t * server = NULL;
     struct rocketnet_server_transport_t * transport = NULL;
     const harden_options_t * o = NULL;
     const std::vector<harden_fill_item_t> * plan = NULL;
@@ -1193,8 +1237,37 @@ struct harden_fill_pool_t
     std::vector<std::thread> threads;
 };
 
+// the ack phase: job j makes the ack calls of slots
+// [max_clients*j/N, max_clients*(j+1)/N), every slot, connected or not (a
+// call for a slot with nothing deferred does nothing), so each client has one
+// caller; main joins them before update_end. The time is the job's, counted
+// in jobs_core_ms with the fill's
+
+static void harden_ack_range( harden_fill_pool_t * pool, int job )
+{
+    harden_fill_job_t & stats = pool->jobs[(size_t) job];
+    const int num_jobs = (int) pool->jobs.size();
+    const int max_clients = pool->o->max_clients;
+    const int begin = (int) ( (int64_t) max_clients * job / num_jobs );
+    const int end = (int) ( (int64_t) max_clients * ( job + 1 ) / num_jobs );
+    const double began = harden_now();
+    for ( int slot = begin; slot < end; slot++ )
+    {
+        if ( !rocketnet_server_update_acks( pool->server, slot ) )
+        {
+            stats.ack_refused++;
+        }
+    }
+    stats.busy += harden_now() - began;
+}
+
 static void harden_fill_range( harden_fill_pool_t * pool, int job )
 {
+    if ( pool->work == HARDEN_POOL_ACKS )
+    {
+        harden_ack_range( pool, job );
+        return;
+    }
     const std::vector<harden_fill_item_t> & plan = *pool->plan;
     const harden_options_t & o = *pool->o;
     harden_fill_job_t & stats = pool->jobs[(size_t) job];
@@ -1278,7 +1351,22 @@ static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
 static void harden_fill_run( harden_fill_pool_t * pool, const std::vector<harden_fill_item_t> & plan )
 {
     std::unique_lock<std::mutex> lock( pool->mutex );
+    pool->work = HARDEN_POOL_FILL;
     pool->plan = &plan;
+    pool->remaining = (int) pool->jobs.size();
+    pool->generation++;
+    pool->start_cv.notify_all();
+    pool->done_cv.wait( lock, [&]
+                        { return pool->remaining == 0; } );
+}
+
+// one ack phase: wake every job to make its slots' ack calls and wait for all
+// of them, the join update_end needs
+static void harden_ack_run( harden_fill_pool_t * pool )
+{
+    std::unique_lock<std::mutex> lock( pool->mutex );
+    pool->work = HARDEN_POOL_ACKS;
+    pool->plan = NULL;
     pool->remaining = (int) pool->jobs.size();
     pool->generation++;
     pool->start_cv.notify_all();
@@ -1726,8 +1814,8 @@ static int harden_server_main( const harden_options_t & o )
         printf( "harden_profile: unavailable here (Windows only; perf samples Linux)\n" );
     }
 #endif // #if defined( _WIN32 )
-    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
-            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.payload_copy ? "copy" : "pattern",
+    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d ack_jobs=%s payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
+            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.ack_jobs > 0 ? "on" : "off", o.payload_copy ? "copy" : "pattern",
             o.reliable_every, o.reliable_bytes, o.big_every, o.big_bytes );
     for ( int i = 0; i < o.num_sizes; i++ )
     {
@@ -1749,6 +1837,7 @@ static int harden_server_main( const harden_options_t & o )
             printf( "harden_verdict: role=server verdict=FAIL reason=fill_jobs_need_transport\n" );
             return 1;
         }
+        pool.server = server;
         pool.transport = transport;
         pool.o = &o;
         pool.slots = &slots;
@@ -1848,7 +1937,30 @@ static int harden_server_main( const harden_options_t & o )
         }
 
         harden_main_phase.store( HARDEN_MAIN_UPDATE, std::memory_order_relaxed );
-        rocketnet_server_update( server, frame_start );
+        if ( o.ack_jobs > 0 )
+        {
+            // the split update (rocketnet.h): the receive, the jobs' ack
+            // calls, joined, then the rest of update. The update figure is
+            // the whole of it, the wait for the jobs included
+            rocketnet_server_update_begin( server, frame_start );
+            const double t_begin = harden_now();
+            harden_ack_run( &pool );
+            const double t_acks = harden_now();
+            for ( harden_fill_job_t & job : pool.jobs )
+            {
+                verify.errors += job.ack_refused;   // a refused ack call breaks the contract the jobs keep
+                w.jobs_busy_sum += job.busy;
+                job.ack_refused = 0;
+                job.busy = 0.0;
+            }
+            rocketnet_server_update_end( server );
+            w.acks_sum += t_acks - t_begin;
+            w.acks_max = std::max( w.acks_max, t_acks - t_begin );
+        }
+        else
+        {
+            rocketnet_server_update( server, frame_start );
+        }
         const double t_update = harden_now();
         harden_main_phase.store( HARDEN_MAIN_RECEIVE, std::memory_order_relaxed );
 
@@ -1997,11 +2109,11 @@ static int harden_server_main( const harden_options_t & o )
             const double f = w.frames ? (double) w.frames : 1.0;
             const uint64_t ring_full = transport ? rocketnet_counter_value( rocketnet_server_transport_counters( transport ), ROCKETNET_COUNTER_SEND_RING_FULL ) : 0;
             std::vector<double> work_copy = w.work;
-            printf( "harden_tick: t=%.1f conn=%d frames=%" PRIu64 " overruns=%" PRIu64 " work_ms avg=%.3f p99=%.3f max=%.3f update=%.3f/%.3f receive=%.3f/%.3f write=%.3f/%.3f send=%.3f/%.3f"
+            printf( "harden_tick: t=%.1f conn=%d frames=%" PRIu64 " overruns=%" PRIu64 " work_ms avg=%.3f p99=%.3f max=%.3f update=%.3f/%.3f acks=%.3f/%.3f receive=%.3f/%.3f write=%.3f/%.3f send=%.3f/%.3f"
                     " jobs_core_ms=%.3f msgs_ps=%.0f pkts_ps=%.0f in_msgs_ps=%.0f start_refused=%" PRIu64 " send_ring_full_total=%" PRIu64 "\n",
                     t_now - started, rocketnet_server_num_connected_clients( server ), w.frames, w.overruns,
                     1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f, 1e3 * harden_percentile( work_copy, 0.99 ), 1e3 * harden_percentile( work_copy, 1.0 ),
-                    1e3 * w.update_sum / f, 1e3 * w.update_max, 1e3 * w.receive_sum / f, 1e3 * w.receive_max, 1e3 * w.write_sum / f, 1e3 * w.write_max,
+                    1e3 * w.update_sum / f, 1e3 * w.update_max, 1e3 * w.acks_sum / f, 1e3 * w.acks_max, 1e3 * w.receive_sum / f, 1e3 * w.receive_max, 1e3 * w.write_sum / f, 1e3 * w.write_max,
                     1e3 * w.send_sum / f, 1e3 * w.send_max, 1e3 * w.jobs_busy_sum / f, (double) w.messages / span, (double) ( stats.packets_sent - last_packets_sent ) / span,
                     (double) w.received / span, w.start_refused, ring_full );
             fflush( stdout );

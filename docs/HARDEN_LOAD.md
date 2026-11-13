@@ -41,6 +41,17 @@ in `rocketnet_layers.h`:
 
 N = 0 (the default) keeps every write on main. N is at most 64.
 
+## The ack phase: `--ack-jobs on|off`
+
+With fill jobs, the same jobs also apply the acks (SERVER-UPDATE-ACK.md P3). The server's update is split:
+`rocketnet_server_update_begin` (the receive), then each job's `rocketnet_server_update_acks` calls for its run of slots
+(job j owns slots `[max_clients*j/N, max_clients*(j+1)/N)`, so each client has one caller), then the join, then
+`rocketnet_server_update_end` (the rest of the update). A refused ack call counts as a verify error.
+
+`--ack-jobs` is on by default when `--fill-jobs` is above 0, and `--ack-jobs off` keeps the one-call update for an A/B.
+`--ack-jobs on` without fill jobs is refused. `harden_ready:` prints `ack_jobs=on|off`, and `harden-pair --ack-jobs`
+passes the option through.
+
 ## The verdict
 
 **The chains.** Each direction is judged on one equation over named counters:
@@ -68,7 +79,9 @@ Work is rocketnet's whole span on the game thread in one frame, one clock read a
 with update, receive, the write (the wait for the fill jobs included) and send between them and nothing left out. Its
 p99 is held to `--frame-p99-us`, 5000 by default, and printed with its max as `aim=MET` or `aim=MISSED`. The rest of a
 60 Hz game frame belongs to the game. Each `harden_tick:` also prints `jobs_core_ms`, the fill jobs' busy time per frame
-summed over the jobs, because the game needs those cores too.
+summed over the jobs (their ack calls included), because the game needs those cores too. With the ack phase on,
+`update` is still the whole update, from `update_begin` to the end of `update_end` with the wait for the jobs, and
+`acks=avg/max` is the part of it from the end of `update_begin` to the join (0 with the ack phase off).
 
 **The server.** The library must conserve its counters, and fds, threads and library bytes must stay flat from the
 post-warmup sample to the end.
