@@ -9375,10 +9375,121 @@ void rocketnet_test_server_uring_worker_pin()
 // cpu num_os_cpus + q, never cpu 0. Not reserved: thread q on cpu q, an
 // explicit num_os_cpus not applied. A refused pin is counted in the
 // transport's *_PIN_REFUSALS row and asks for no real-time scheduling.
+//
+// What a pin is granted depends on the host: a cgroup cpuset (a container, a
+// systemd slice) may leave out cpus that are online, and no thread can widen
+// its mask past it. So every case reads the cpus this process may be placed
+// on (rocketnet_test_placement_host) and expects, for each worker, what the
+// library must do there: pinned where its cpu is eligible, refused, counted
+// and (cpu 0 reserved) confined off cpu 0 where it is not. Each cell checks
+// one of the two outcomes. The forced-refusal cells need a num_os_cpus whose
+// cpus the host does not allow; only a host allowing a cpu in every pair from
+// 1 to 257 has none, and says so in a line.
 
 void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
 int rocketnet_portable_server_test_worker_cpu( void * transport, int worker );
 int rocketnet_portable_server_test_worker_affinity( void * transport, int worker, unsigned char * allowed, int count );
+
+struct rocketnet_test_placement_host_t
+{
+    int online;
+    unsigned char eligible[CPU_SETSIZE]; // 1: online and inside this process's cpuset
+    cpu_set_t saved;                      // the calling thread's mask before, put back by restore
+    bool restore;
+};
+
+// asks for every online cpu on the calling thread (a worker inherits its
+// creator's mask: start them all from the widest mask the host allows), then
+// reads back what was granted: the cpus a pin can be granted on
+static void rocketnet_test_placement_host( struct rocketnet_test_placement_host_t * host )
+{
+    host->online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    CPU_ZERO( &host->saved );
+    host->restore = pthread_getaffinity_np( pthread_self(), sizeof( host->saved ), &host->saved ) == 0;
+    cpu_set_t every;
+    CPU_ZERO( &every );
+    for ( int cpu = 0; cpu < host->online && cpu < CPU_SETSIZE; cpu++ )
+    {
+        CPU_SET( (size_t) cpu, &every );
+    }
+    (void) pthread_setaffinity_np( pthread_self(), sizeof( every ), &every ); // what it grants is read back below
+    cpu_set_t granted;
+    CPU_ZERO( &granted );
+    rocketnet_check( pthread_getaffinity_np( pthread_self(), sizeof( granted ), &granted ) == 0 );
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+    {
+        host->eligible[cpu] = cpu < host->online && CPU_ISSET( (size_t) cpu, &granted ) ? 1 : 0;
+    }
+}
+
+static void rocketnet_test_placement_host_restore( const struct rocketnet_test_placement_host_t * host )
+{
+    if ( host->restore )
+    {
+        (void) pthread_setaffinity_np( pthread_self(), sizeof( host->saved ), &host->saved );
+    }
+}
+
+// what the library must do for one worker whose cpu is target: pinned there
+// when it is eligible; otherwise refused (one refusal) and, with cpu 0
+// reserved, confined off cpu 0 where the host allows it. gso and portable
+// confine to the fallback cpus (rocketnet_gso_pin_fallback); a confinement
+// with no allowed cpu fails and is a second refusal on their rows. io_uring
+// confines within the mask it inherited (every eligible cpu here,
+// rocketnet_uring_pin_confine_words), past the OS's cpus or else off cpu 0,
+// and counts refused pins only
+struct rocketnet_test_placement_expect_t
+{
+    int cpu;           // the pinned cpu, or ROCKETNET_GSO_PIN_NONE
+    uint64_t refusals; // what this worker adds to its transport's row
+    bool off_cpu_0;    // refused and confined: its mask holds no cpu 0
+};
+
+static struct rocketnet_test_placement_expect_t rocketnet_test_placement_expect( const struct rocketnet_test_placement_host_t * host, int target, int num_os_cpus,
+                                                                                 bool reserved, bool uring )
+{
+    struct rocketnet_test_placement_expect_t expect = { ROCKETNET_GSO_PIN_NONE, 1, false };
+    if ( target >= 0 && target < CPU_SETSIZE && host->eligible[target] )
+    {
+        expect.cpu = target;
+        expect.refusals = 0;
+        return expect;
+    }
+    if ( reserved )
+    {
+        unsigned char allowed[CPU_SETSIZE];
+        (void) rocketnet_gso_pin_fallback( allowed, CPU_SETSIZE, host->online, num_os_cpus );
+        bool any = false;
+        for ( int cpu = 1; cpu < CPU_SETSIZE; cpu++ )
+        {
+            any = any || ( ( uring || allowed[cpu] ) && host->eligible[cpu] );
+        }
+        expect.off_cpu_0 = any;
+        expect.refusals += !any && !uring ? 1 : 0;
+    }
+    return expect;
+}
+
+// a num_os_cpus (1 .. 256, the config's range) whose cpus num_os_cpus ..
+// num_os_cpus + workers - 1 are all outside what this host may pin to, so
+// every worker's pin is refused; -1 when the host allows a cpu in every such
+// run (a machine past 256 cpus with no cpuset)
+static int rocketnet_test_placement_refused_base( const struct rocketnet_test_placement_host_t * host, int workers )
+{
+    for ( int base = 1; base <= 256; base++ )
+    {
+        bool refused = true;
+        for ( int w = 0; w < workers; w++ )
+        {
+            refused = refused && !( base + w < CPU_SETSIZE && host->eligible[base + w] );
+        }
+        if ( refused )
+        {
+            return base;
+        }
+    }
+    return -1;
+}
 
 static struct rocketnet_server_transport_t * rocketnet_test_placement_server( const char * transport, int num_os_cpus, int reserve_cpu_0 )
 {
@@ -9412,176 +9523,143 @@ static bool rocketnet_test_portable_wait_pins( void * portable )
     return false;
 }
 
-// the worker's mask read back from its thread is exactly the one cpu
-static bool rocketnet_test_portable_worker_on( void * portable, int worker, int cpu )
+// one portable server's two workers against what this host must give them,
+// each read back from the worker thread's own mask
+static void rocketnet_test_portable_placement_cell( const struct rocketnet_test_placement_host_t * host, int num_os_cpus, int reserve_cpu_0 )
 {
-    unsigned char allowed[CPU_SETSIZE];
-    return rocketnet_portable_server_test_worker_affinity( portable, worker, allowed, CPU_SETSIZE ) == 1 && allowed[cpu] == 1;
-}
-
-// whether this process may run on some cpu other than cpu 0 (the allowed set,
-// not the online count: a runner's cpuset may allow only cpu 0)
-static bool rocketnet_test_placement_other_cpu( int online )
-{
-    cpu_set_t allowed;
-    CPU_ZERO( &allowed );
-    bool other_cpu = false;
-    if ( sched_getaffinity( 0, sizeof( allowed ), &allowed ) == 0 )
+    const bool reserved = reserve_cpu_0 != ROCKETNET_CPU_0_NOT_RESERVED;
+    struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( "portable", num_os_cpus, reserve_cpu_0 );
+    void * portable = rocketnet_server_transport_io_name_for_testing( server );
+    rocketnet_check( rocketnet_test_portable_wait_pins( portable ) );
+    uint64_t refusals = 0;
+    for ( int worker = 0; worker < 2; worker++ )
     {
-        for ( int cpu = 1; cpu < CPU_SETSIZE && cpu < online; cpu++ )
+        const struct rocketnet_test_placement_expect_t expect =
+            rocketnet_test_placement_expect( host, rocketnet_network_thread_cpu( worker, num_os_cpus, reserved ), num_os_cpus, reserved, false );
+        refusals += expect.refusals;
+        rocketnet_check( rocketnet_portable_server_test_worker_cpu( portable, worker ) == expect.cpu );
+        unsigned char allowed[CPU_SETSIZE];
+        const int count = rocketnet_portable_server_test_worker_affinity( portable, worker, allowed, CPU_SETSIZE );
+        rocketnet_check( count >= 1 );
+        if ( expect.cpu != ROCKETNET_GSO_PIN_NONE )
         {
-            other_cpu = other_cpu || CPU_ISSET( (size_t) cpu, &allowed );
+            rocketnet_check( count == 1 && allowed[expect.cpu] == 1 ); // alone on its cpu
+        }
+        else if ( expect.off_cpu_0 )
+        {
+            rocketnet_check( allowed[0] == 0 );
         }
     }
-    return other_cpu;
+    rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] == refusals );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS );
 }
 
 // the portable server's two workers on Linux (also the msgx name there): the
 // send worker on cpu num_os_cpus, the receive worker on num_os_cpus + 1, each
 // alone on its cpu, whatever mask the creating thread had; not reserved, on
-// cpus 0 and 1; refused (num_os_cpus past the online cpus), both counted in
-// PORTABLE_PIN_REFUSALS and confined off cpu 0
+// cpus 0 and 1; where the host does not allow a worker's cpu, that worker is
+// refused, counted in PORTABLE_PIN_REFUSALS and confined off cpu 0
 void rocketnet_test_server_portable_worker_placement()
 {
-    const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    struct rocketnet_test_placement_host_t host;
+    rocketnet_test_placement_host( &host );
 
-    // the workers inherit this thread's mask: start from every online cpu (a
-    // runner may have narrowed it), put back after
-    cpu_set_t saved;
-    CPU_ZERO( &saved );
-    const bool restore = pthread_getaffinity_np( pthread_self(), sizeof( saved ), &saved ) == 0;
-    cpu_set_t every;
-    CPU_ZERO( &every );
-    for ( int cpu = 0; cpu < online && cpu < CPU_SETSIZE; cpu++ )
+    // reserved, the default: cpus 1 and 2 where the host allows them
+    rocketnet_test_portable_placement_cell( &host, 0, 0 );
+
+    // the creating thread pinned to one cpu (a game that pins its main thread
+    // first, here the highest it may use that is not a worker's cpu 1 or 2,
+    // where there is one): the workers still take their own cpus, not its cpu
+    int main_cpu = -1;
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
     {
-        CPU_SET( (size_t) cpu, &every );
+        main_cpu = host.eligible[cpu] && ( main_cpu < 0 || ( cpu != 1 && cpu != 2 ) ) ? cpu : main_cpu;
     }
-    (void) pthread_setaffinity_np( pthread_self(), sizeof( every ), &every );
+    rocketnet_check( main_cpu >= 0 );
+    cpu_set_t one;
+    CPU_ZERO( &one );
+    CPU_SET( (size_t) main_cpu, &one );
+    rocketnet_check( pthread_setaffinity_np( pthread_self(), sizeof( one ), &one ) == 0 );
+    rocketnet_test_portable_placement_cell( &host, 1, ROCKETNET_CPU_0_RESERVED );
+    rocketnet_test_placement_host_restore( &host );
+    rocketnet_test_placement_host( &host );
 
-    if ( online >= 3 )
+    // not reserved: cpus 0 and 1, the explicit num_os_cpus 2 not applied
+    rocketnet_test_portable_placement_cell( &host, 2, ROCKETNET_CPU_0_NOT_RESERVED );
+
+    // refused: a num_os_cpus whose two cpus this host does not allow. Both
+    // pins are refused and counted, read from the public row, and neither
+    // worker is left on cpu 0 where the host allows another
+    const int base = rocketnet_test_placement_refused_base( &host, 2 );
+    if ( base > 0 )
     {
-        // reserved, the default: cpus 1 and 2
-        {
-            struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( "portable", 0, 0 );
-            void * portable = rocketnet_server_transport_io_name_for_testing( server );
-            rocketnet_check( rocketnet_test_portable_wait_pins( portable ) );
-            rocketnet_check( rocketnet_portable_server_test_worker_cpu( portable, 0 ) == 1 );
-            rocketnet_check( rocketnet_portable_server_test_worker_cpu( portable, 1 ) == 2 );
-            rocketnet_check( rocketnet_test_portable_worker_on( portable, 0, 1 ) );
-            rocketnet_check( rocketnet_test_portable_worker_on( portable, 1, 2 ) );
-            rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] == 0 );
-            ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS );
-        }
-
-        // the creating thread pinned to one cpu (a game that pins its main
-        // thread first): the workers still go to cpus 1 and 2, not to its cpu
-        {
-            cpu_set_t one;
-            CPU_ZERO( &one );
-            CPU_SET( (size_t) ( online - 1 ), &one );
-            if ( pthread_setaffinity_np( pthread_self(), sizeof( one ), &one ) == 0 )
-            {
-                struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( "portable", 1, ROCKETNET_CPU_0_RESERVED );
-                void * portable = rocketnet_server_transport_io_name_for_testing( server );
-                rocketnet_check( rocketnet_test_portable_wait_pins( portable ) );
-                rocketnet_check( rocketnet_test_portable_worker_on( portable, 0, 1 ) );
-                rocketnet_check( rocketnet_test_portable_worker_on( portable, 1, 2 ) );
-                ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS );
-                (void) pthread_setaffinity_np( pthread_self(), sizeof( every ), &every );
-            }
-        }
-
-        // not reserved: cpus 0 and 1, the explicit num_os_cpus 2 not applied
-        {
-            struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( "portable", 2, ROCKETNET_CPU_0_NOT_RESERVED );
-            void * portable = rocketnet_server_transport_io_name_for_testing( server );
-            rocketnet_check( rocketnet_test_portable_wait_pins( portable ) );
-            rocketnet_check( rocketnet_portable_server_test_worker_cpu( portable, 0 ) == 0 );
-            rocketnet_check( rocketnet_portable_server_test_worker_cpu( portable, 1 ) == 1 );
-            rocketnet_check( rocketnet_test_portable_worker_on( portable, 0, 0 ) );
-            rocketnet_check( rocketnet_test_portable_worker_on( portable, 1, 1 ) );
-            rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] == 0 );
-            ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS );
-        }
+        rocketnet_test_portable_placement_cell( &host, base, 0 );
     }
     else
     {
-        printf( "test_portable_transport_worker_placement: %d cpus online, the placement needs 3; refusal path only\n", online );
+        printf( "test_portable_transport_worker_placement: no num_os_cpus in 1 .. 256 has both its cpus outside what this host allows; no refused cell\n" );
         fflush( stdout );
     }
 
-    // refused: num_os_cpus 256 (the config's largest) names cpus no machine
-    // here has. Both pins are refused and counted, read from the public row;
-    // where this process may run off cpu 0 the confinement holds, so exactly
-    // two, and neither worker's mask holds cpu 0
-    {
-        struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( "portable", 256, 0 );
-        void * portable = rocketnet_server_transport_io_name_for_testing( server );
-        rocketnet_check( rocketnet_test_portable_wait_pins( portable ) );
-        rocketnet_check( rocketnet_portable_server_test_worker_cpu( portable, 0 ) == ROCKETNET_GSO_PIN_NONE );
-        rocketnet_check( rocketnet_portable_server_test_worker_cpu( portable, 1 ) == ROCKETNET_GSO_PIN_NONE );
-        const uint64_t refused = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS];
-        rocketnet_check( refused >= 2 );
-        if ( rocketnet_test_placement_other_cpu( online ) )
-        {
-            rocketnet_check( refused == 2 );
-            for ( int worker = 0; worker < 2; worker++ )
-            {
-                unsigned char allowed[CPU_SETSIZE];
-                rocketnet_check( rocketnet_portable_server_test_worker_affinity( portable, worker, allowed, CPU_SETSIZE ) >= 1 );
-                rocketnet_check( allowed[0] == 0 );
-            }
-        }
-        ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS );
-    }
-
-    if ( restore )
-    {
-        (void) pthread_setaffinity_np( pthread_self(), sizeof( saved ), &saved );
-    }
+    rocketnet_test_placement_host_restore( &host );
 }
 
 // gso and io_uring through the whole server transport: reserved (the
 // default), worker q on cpu 1 + q; not reserved, on cpu q with the explicit
-// num_os_cpus 2 not applied
+// num_os_cpus 2 not applied; where the host does not allow a worker's cpu,
+// refused and counted (a failed confinement counted on gso only)
 static void rocketnet_test_placement_gso_or_uring( bool gso )
 {
-    const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
-    if ( online < 3 )
-    {
-        printf( "%s placement: %d cpus online, the placement needs 3\n", gso ? "gso" : "io_uring", online );
-        fflush( stdout );
-        return;
-    }
+    struct rocketnet_test_placement_host_t host;
+    rocketnet_test_placement_host( &host );
     const int row = gso ? ROCKETNET_COUNTER_GSO_PIN_REFUSALS : ROCKETNET_COUNTER_URING_PIN_REFUSALS;
     for ( int reserve : { 0, ROCKETNET_CPU_0_NOT_RESERVED } )
     {
-        struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( gso ? "gso" : "io_uring", reserve == 0 ? 0 : 2, reserve );
+        const bool reserved = reserve == 0;
+        const int num_os_cpus = reserved ? 0 : 2;
+        struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( gso ? "gso" : "io_uring", num_os_cpus, reserve );
         void * instance = rocketnet_server_transport_io_name_for_testing( server );
-        const int first = reserve == 0 ? 1 : 0;
         if ( gso )
         {
-            struct rocketnet_server_gso_t * transport = (struct rocketnet_server_gso_t *) instance;
-            rocketnet_check( rocketnet_test_gso_wait_pins( transport, 2 ) );
-            for ( int q = 0; q < 2; q++ )
-            {
-                rocketnet_check( rocketnet_server_gso_worker_cpu( transport, q ) == first + q );
-                rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( transport, q ) == ( first + q == 0 ? 1 : 0 ) );
-            }
+            rocketnet_check( rocketnet_test_gso_wait_pins( (struct rocketnet_server_gso_t *) instance, 2 ) );
         }
         else
         {
-            struct rocketnet_server_uring_t * transport = (struct rocketnet_server_uring_t *) instance;
-            rocketnet_check( rocketnet_test_uring_wait_pins( transport, 2 ) );
-            for ( int q = 0; q < 2; q++ )
+            rocketnet_check( rocketnet_test_uring_wait_pins( (struct rocketnet_server_uring_t *) instance, 2 ) );
+        }
+        uint64_t refusals = 0;
+        for ( int q = 0; q < 2; q++ )
+        {
+            const struct rocketnet_test_placement_expect_t expect =
+                rocketnet_test_placement_expect( &host, rocketnet_network_thread_cpu( q, num_os_cpus, reserved ), num_os_cpus, reserved, !gso );
+            refusals += expect.refusals;
+            if ( gso )
             {
-                rocketnet_check( rocketnet_server_uring_worker_cpu( transport, q ) == first + q );
-                rocketnet_check( rocketnet_server_uring_worker_lowest_cpu( transport, q ) == first + q );
+                struct rocketnet_server_gso_t * transport = (struct rocketnet_server_gso_t *) instance;
+                rocketnet_check( rocketnet_server_gso_worker_cpu( transport, q ) == expect.cpu );
+                if ( expect.cpu != ROCKETNET_GSO_PIN_NONE || expect.off_cpu_0 )
+                {
+                    rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( transport, q ) == ( expect.cpu == 0 ? 1 : 0 ) );
+                }
+            }
+            else
+            {
+                struct rocketnet_server_uring_t * transport = (struct rocketnet_server_uring_t *) instance;
+                rocketnet_check( rocketnet_server_uring_worker_cpu( transport, q ) == ( expect.cpu == ROCKETNET_GSO_PIN_NONE ? ROCKETNET_URING_PIN_NONE : expect.cpu ) );
+                if ( expect.cpu != ROCKETNET_GSO_PIN_NONE )
+                {
+                    rocketnet_check( rocketnet_server_uring_worker_lowest_cpu( transport, q ) == expect.cpu );
+                }
+                else if ( expect.off_cpu_0 )
+                {
+                    rocketnet_check( rocketnet_server_uring_worker_lowest_cpu( transport, q ) >= 1 );
+                }
             }
         }
-        rocketnet_check( rocketnet_server_transport_counters( server )->values[row] == 0 );
+        rocketnet_check( rocketnet_server_transport_counters( server )->values[row] == refusals );
         ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, row );
     }
+    rocketnet_test_placement_host_restore( &host );
 }
 
 void rocketnet_test_server_gso_cpu_0_reserved_and_not()
@@ -9595,17 +9673,32 @@ void rocketnet_test_server_uring_cpu_0_reserved_and_not()
 }
 
 // a gso or io_uring worker whose pin was refused asks for no real-time
-// scheduling: with the priority setting on and every pin refused
-// (num_os_cpus 256), the process's thread priority refusals do not move
-// (a request the system refuses is counted there; a granted one is not, so
-// on a machine that grants SCHED_RR this reads 0 either way)
+// scheduling: with the priority setting on and every pin refused (a
+// num_os_cpus whose cpus this host does not allow), the process's thread
+// priority refusals do not move. This is supplemental: a request the system
+// grants is not counted there, so on a host that grants SCHED_RR it reads 0
+// whether or not a request was made. The decisive coverage is the unit
+// seams' real-time request counts with faked affinity calls
+// (test_server_transport_counts_gso_pin_refusals,
+// test_server_transport_counts_uring_pin_refusals)
 static void rocketnet_test_refused_pin_no_priority( bool gso )
 {
+    struct rocketnet_test_placement_host_t host;
+    rocketnet_test_placement_host( &host );
+    const int base = rocketnet_test_placement_refused_base( &host, 2 );
+    if ( base < 0 )
+    {
+        printf( "%s refused pin: no num_os_cpus in 1 .. 256 has both its cpus outside what this host allows; nothing to refuse\n", gso ? "gso" : "io_uring" );
+        fflush( stdout );
+        rocketnet_test_placement_host_restore( &host );
+        return;
+    }
+
     const bool enabled = rocketnet_platform_thread_priority_enabled();
     rocketnet_platform_set_thread_priority_enabled( true );
     const uint64_t before = rocketnet_get_thread_priority_refusals();
 
-    struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( gso ? "gso" : "io_uring", 256, 0 );
+    struct rocketnet_server_transport_t * server = rocketnet_test_placement_server( gso ? "gso" : "io_uring", base, 0 );
     void * instance = rocketnet_server_transport_io_name_for_testing( server );
     if ( gso )
     {
@@ -9618,11 +9711,19 @@ static void rocketnet_test_refused_pin_no_priority( bool gso )
     // the request, were there one, follows the pin's report: give it time
     rocketnet_platform_sleep( 0.05 );
     const int row = gso ? ROCKETNET_COUNTER_GSO_PIN_REFUSALS : ROCKETNET_COUNTER_URING_PIN_REFUSALS;
-    rocketnet_check( rocketnet_server_transport_counters( server )->values[row] >= 2 );
+    uint64_t refusals = 0;
+    for ( int q = 0; q < 2; q++ )
+    {
+        const struct rocketnet_test_placement_expect_t expect = rocketnet_test_placement_expect( &host, base + q, base, true, !gso );
+        rocketnet_check( expect.cpu == ROCKETNET_GSO_PIN_NONE );
+        refusals += expect.refusals;
+    }
+    rocketnet_check( rocketnet_server_transport_counters( server )->values[row] == refusals );
     rocketnet_check( rocketnet_get_thread_priority_refusals() == before );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, row );
 
     rocketnet_platform_set_thread_priority_enabled( enabled );
+    rocketnet_test_placement_host_restore( &host );
 }
 
 void rocketnet_test_server_gso_refused_pin_no_priority()
