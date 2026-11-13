@@ -19,6 +19,17 @@
 \* BASE's rule stands still after a backwards step until the caller's clock
 \* passes the last good time again; the broken variant "stall" models that
 \* rule, and tla/MCRNUpdateClockBrokenStall.cfg reverses it.
+\*
+\* Time here is exact: the model's times are naturals bounded by MaxTime,
+\* and every sum is the mathematical sum. The code's times are doubles. It
+\* refuses a non-finite or negative sample, but the resumed time it returns,
+\* last_good + step, is a floating-point sum: it rounds (a step small beside
+\* a large last good time can add less than the step, or nothing), and for
+\* finite inputs near the top of the double range it can overflow to
+\* +infinity, after which every later sample is behind the clock and it
+\* stays infinite. ResumeAdvances ("exactly d") and ClampedNeverDecreases
+\* hold for the code only where that sum is exact and finite; a guard on
+\* the sum is the code's to add, not this model's.
 EXTENDS Naturals, Integers
 
 CONSTANTS MaxTime, MaxSteps, Broken

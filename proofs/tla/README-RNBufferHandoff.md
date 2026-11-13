@@ -80,8 +80,17 @@ unchanged; no new fairness assumption forces a successful return.
   mutex that is free infinitely often, and the code's exit check follows the
   exchange that found the queue empty. Main's try-lock is strongly fair: update
   runs every frame. Stop is never forced.
-- The wait's guard timeout (1 ms) is not modelled: a lost wake is a liveness
-  failure here, where the code would only lose a millisecond.
+- The wait's guard timeout is not modelled: 50 ms
+  (`ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS`, a guard, never a cadence), or
+  2 ms while a send is pending a retry
+  (`ROCKETNET_CLIENT_IO_SEND_RETRY_TIMEOUT_SECONDS`). A lost wake is a
+  liveness failure here, where the code would lose up to the guard.
+- `owed` is read and cleared only by main's exchanges
+  (`rocketnet_buffer_handoff_owed`); the worker's send-side exchange leaves it,
+  and main's next successful publish clears it.
+- `Rebind` runs only while the protocol names the losing server (`addr =
+  "A"`): a commit after a `Reset` is not explored here. The commit's rebind in
+  general is `RNClientRace` (`CallerCommit`).
 
 `ExitSentAll` contributes send-direction evidence only. Its antecedent includes
 `Direction = "send"`, so its entries in receive configurations are vacuous for

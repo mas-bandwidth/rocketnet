@@ -61,6 +61,15 @@ The rule it checks is the bounded N-buffer handoff
 `Timeout = FALSE`, so progress follows from the wake protocol alone and not
 from the timeout.
 
+`ReadableWake` says the idle wait also returns when the socket is readable
+(`ROCKETNET_PLATFORM_HAS_WAKE`). On BSD the wake is event-only: the idle
+wait (`PORTABLE_RX_WAIT_IDLE` in `sdk/rocketnet_driver_builtin.cpp`) returns
+on the wake or its 1 ms timeout alone. There `EveryDatagramDelivered` rests
+on the timeout, not on readability: `MCRNPortableRxBsd.cfg` checks it with
+`ReadableWake = FALSE` and `Timeout = TRUE`, and
+`MCRNPortableRxBsdBrokenNoTimeout.cfg`, the same wait without the timeout,
+fails it.
+
 ## Properties
 
 - `ExclusiveOwnership`: every bank appears exactly once among the producer,
@@ -98,6 +107,8 @@ The fairness assumptions are:
 | `MCRNPortableRxBrokenWakeFirst.cfg` | `StopCompletes` | `QuitBeforeWake = FALSE` |
 | `MCRNPortableRxBrokenNoWake.cfg` | `EveryDatagramDelivered` | `WakeOnReturn = FALSE` |
 | `MCRNPortableRxBrokenUnboundedRead.cfg` | `ReadBudget` | `BoundedRead = FALSE`, one datagram and three chaff |
+| `MCRNPortableRxBsd.cfg` | pass | BSD's idle wait: `ReadableWake = FALSE`, `Timeout = TRUE`. All invariants and both liveness properties. |
+| `MCRNPortableRxBsdBrokenNoTimeout.cfg` | `EveryDatagramDelivered` | BSD's idle wait without its timeout: a datagram that arrives while the worker waits idle, with no bank for main to return, is never read |
 
 Each reversed witness was read against the code by hand (2026-10-22):
 

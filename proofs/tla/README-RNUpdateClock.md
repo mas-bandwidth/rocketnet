@@ -32,6 +32,14 @@ or the slots.
   negative sample is one, not only the first, so raw times are never
   negative and BackwardStep's target is drawn from `0..raw-1`.
 - **Done.** The step budget is spent; the model stops.
+- **Exact time.** The model's times are bounded naturals and its sums are
+  exact. The code's are doubles: the resumed time `last_good + step` rounds
+  (a small step beside a large last good time can add less than the step,
+  or nothing), and for finite inputs near the top of the double range it can
+  overflow to +infinity and stay there, since every later sample is behind
+  it. `ResumeAdvances` and `ClampedNeverDecreases` describe the code only
+  where that sum is exact and finite. A guard on the sum belongs to the
+  code.
 
 ## Properties
 

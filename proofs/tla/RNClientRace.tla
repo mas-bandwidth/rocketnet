@@ -46,6 +46,34 @@
                       a step (the race had no close operation, so a family
                       it kept open stayed open from the exit to destroy):
                       ExitedIsClosed
+     "nolivecheck"    destroy frees each family whether or not its memory
+                      is still live (rocketnet_client_transport_io_close
+                      without its instance check and clear); with
+                      "readerfrees" a family is freed twice: FreedOnce
+
+   Destroy's single free per family rests on two things in the code: the
+   transport is destroyed once (the API's contract; CallerDestroy's
+   ~destroyed guard), and rocketnet_client_transport_io_close destroys a
+   family only while its instance is set and then clears it. frees counts
+   every free per <<thread, family>>, so a repeat free by the same owner is
+   visible to FreedOnce.
+
+   The send's destination. After the commit the models drop a send whose
+   destination is not servers[committed]; the code drops by address family:
+   rocketnet_client_race_send, rocketnet_client_race_send_progress and
+   rocketnet_client_race_send_batch each take a slot's family from its
+   destination with rocketnet_client_race_family_of (the family whose server
+   has the address family of to) and, after the commit, send only the slots
+   of the kept family. These are the same: the protocol only ever sends to
+   the two server addresses,
+   server_address[0] (IPv4) and server_address[1] (IPv6), so a destination's
+   address family names its server; and the commit sets
+   protocol.server_address to server_address[kept] and rebinds a Filling
+   ring bound to the losing server (rocketnet_client_io_rebind_held), so
+   after the commit every send and every ring is addressed to the kept
+   server. A slot addressed to the losing server after the commit is the
+   "commitkeepsring" defect, never the code. The model's family numbers
+   name the servers: the destination is a family.
 
    The Filling ring of the I/O ring path (rocketnet_client_io_hand_off): a
    hand-off attempt binds the ring's destination to the protocol's server, the
@@ -66,7 +94,7 @@
 EXTENDS Integers, FiniteSets
 CONSTANTS Defect
 ASSUME Defect \subseteq {"readerfrees", "callerusesloser", "freebeforejoin", "readerclosesearly",
-                         "commitkeepsring", "nokeepatcommit", "noexitclose"}
+                         "commitkeepsring", "nokeepatcommit", "noexitclose", "nolivecheck"}
 
 MaxFail == 2
 
@@ -77,7 +105,7 @@ VARIABLES committed,  \* -1 while both are in flight, else the kept family (call
           closed,     \* the reader closed the losing family (race->closed)
           handle,     \* [Families -> {"open", "closed"}]
           memory,     \* [Families -> {"live", "freed"}]
-          frees,      \* the set of <<thread, family>> frees made
+          frees,      \* [Threads \X Families -> Nat]: the frees each thread made of each family
           reader,     \* "running", "stopping", "exited"
           joined,     \* the caller joined the reading thread
           destroyed,  \* the caller destroyed the transport
@@ -106,7 +134,7 @@ Init ==
     /\ committed = -1 /\ seen = -1 /\ closed = FALSE
     /\ handle = [f \in Families |-> "open"]
     /\ memory = [f \in Families |-> "live"]
-    /\ frees = {}
+    /\ frees = [p \in Threads \X Families |-> 0]
     /\ reader = "running" /\ joined = FALSE /\ destroyed = FALSE
     /\ fault = "none"
     /\ ringTo = -1 /\ ringPost = FALSE /\ lost = FALSE
@@ -186,7 +214,7 @@ ReaderStep ==
             /\ handle' = [handle EXCEPT ![Loser] = "closed"]
             /\ IF "readerfrees" \in Defect
                THEN /\ memory' = [memory EXCEPT ![Loser] = "freed"]
-                    /\ frees' = frees \cup {<<"reader", Loser>>}
+                    /\ frees' = [frees EXCEPT ![<<"reader", Loser>>] = @ + 1]
                ELSE UNCHANGED <<memory, frees>>
             /\ Use("reader", {committed})
        ELSE /\ UNCHANGED <<closed, handle, memory, frees, kept>>
@@ -239,14 +267,19 @@ CallerJoin ==
     /\ UNCHANGED <<ringVars, failVars>>
 
 (* rocketnet_client_transport_destroy, then rocketnet_client_race_destroy:
-   the caller closes what is still open and frees both families. *)
+   the caller closes what is still open and frees both families, each
+   through rocketnet_client_transport_io_close, which destroys a family only
+   while its instance is set and then clears it (a family whose memory is
+   already gone is not freed again). The transport is destroyed once. *)
 CallerDestroy ==
     /\ ~destroyed
     /\ joined \/ ("freebeforejoin" \in Defect /\ reader # "running")
     /\ destroyed' = TRUE
     /\ handle' = [f \in Families |-> "closed"]
     /\ memory' = [f \in Families |-> "freed"]
-    /\ frees' = frees \cup {<<"caller", f>> : f \in {g \in Families : memory[g] = "live"}}
+    /\ frees' = [p \in Threads \X Families |->
+                    IF p[1] = "caller" /\ (memory[p[2]] = "live" \/ "nolivecheck" \in Defect)
+                    THEN frees[p] + 1 ELSE frees[p]]
     /\ UNCHANGED <<committed, seen, closed, reader, joined, fault>>
     /\ UNCHANGED <<ringVars, failVars>>
 
@@ -274,7 +307,7 @@ TypeOK ==
     /\ committed \in {-1, 0, 1} /\ seen \in {-1, 0, 1} /\ closed \in BOOLEAN
     /\ handle \in [Families -> {"open", "closed"}]
     /\ memory \in [Families -> {"live", "freed"}]
-    /\ frees \subseteq (Threads \X Families)
+    /\ frees \in [Threads \X Families -> 0..2]
     /\ reader \in {"running", "stopping", "exited"}
     /\ joined \in BOOLEAN /\ destroyed \in BOOLEAN
     /\ fault \in {"none"} \cup Threads
@@ -285,11 +318,12 @@ TypeOK ==
 (* No thread sends, receives or waits on a closed handle or freed memory. *)
 NoUseAfterClose == fault = "none"
 (* Only the caller's thread frees. *)
-FreedOnlyByCaller == \A r \in frees : r[1] = "caller"
+FreedOnlyByCaller == \A f \in Families : frees[<<"reader", f>>] = 0
 (* Memory is freed only after the reading thread is joined. *)
 FreedOnlyAfterJoin == \A f \in Families : memory[f] = "freed" => joined
-(* Each family is freed at most once, and a freed family is closed. *)
-FreedOnce == \A f \in Families : Cardinality({r \in frees : r[2] = f}) <= 1
+(* Each family is freed at most once, by any thread, counting repeats by the
+   same thread, and a freed family is closed. *)
+FreedOnce == \A f \in Families : frees[<<"caller", f>>] + frees[<<"reader", f>>] <= 1
 FreedIsClosed == \A f \in Families : memory[f] = "freed" => handle[f] = "closed"
 (* Before its exit the reader closes only the losing family, and only after
    the commit. *)

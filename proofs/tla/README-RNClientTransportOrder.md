@@ -20,8 +20,17 @@ handshake that follows or the family race that runs after an IPv6 grant
   with no interface) or `"oom"` (the open failed for want of memory). The
   environment chooses every outcome once, at Init, so the checker covers
   every combination.
-- **TryPrimary.** The socket for the server the token selected, on the
-  current candidate. Granted on `"ok"`; the create ends on `"oom"`. On a
+- **The budget.** `budget[r]` is candidate `r`'s memory plan against the
+  operator budget (`rocketnet_client_transport_resolve`): `"fits"`,
+  `"refused"` (the plan exceeds a non-zero budget) or `"unknown"` (the
+  transport has no plan; neither refused nor counted as fitting). The
+  environment chooses it once, at Init. When some candidate is refused and
+  none fits, the create is refused before the first allocation
+  (`NO_TRANSPORT_FOUND`, result `"nobudget"`).
+- **TryPrimary.** A candidate the budget refused is skipped, with no
+  socket, and the transport order falls to the next candidate (the
+  `budget_refused` check at the top of the transport order loop). Otherwise
+  the socket for the server the token selected, on the current candidate. Granted on `"ok"`; the create ends on `"oom"`. On a
   refusal of the IPv6 socket of a token naming both families, the same
   candidate is tried for the IPv4 server next; any other refusal falls to
   the next candidate.
@@ -37,10 +46,14 @@ handshake that follows or the family race that runs after an IPv6 grant
 
 - `TypeOK` holds the ranges.
 - `TriedInToken`: every socket dials a server the token names.
-- `TransportOrder`: the sockets are tried candidate by candidate, the selected
-  family first and the IPv4 fallback next, no candidate skipped.
+- `TransportOrder`: the sockets are tried candidate by candidate over the
+  candidates the budget did not refuse, the selected family first and the
+  IPv4 fallback next, no such candidate skipped.
+- `NoSocketForRefusedPlan`: no socket is opened for a candidate the budget
+  refused.
 - `NoExhaustWhileReachable`: the transport order exhausts only when no socket the
-  token names, on any candidate, would have been granted.
+  token names, on any candidate the budget did not refuse, would have been
+  granted.
 - `NoTryAfterOom`: a refusal for want of memory is the last socket tried, on
   either family.
 - `OomOnlyFromOom`: the create ends out of memory only on such a refusal.
@@ -53,10 +66,17 @@ handshake that follows or the family race that runs after an IPv6 grant
 ## Cases
 
 - `proofs/tla/MCRNClientTransportOrder.cfg` passes: three candidates, every token
-  shape and every outcome, all invariants and `Terminates` (5,385 distinct
-  states).
+  shape, every outcome and every budget plan, all invariants and
+  `Terminates`.
 - `proofs/tla/MCRNClientTransportOrderPin.cfg` passes: the same at one candidate, a
-  pinned transport (57 distinct states).
+  pinned transport.
+- `proofs/tla/MCRNClientTransportOrderBrokenBudgetOpens.cfg` violates
+  `NoSocketForRefusedPlan`. `Broken = {"budgetopens"}` opens a socket for a
+  candidate the budget refused: candidate 1 refused, candidate 2 fitting,
+  and the client tries candidate 1's socket first. In the code the
+  transport order loop's `budget_refused[candidate]` check `continue`s
+  before any socket is opened; without it the candidate's allocations
+  would run past the budget the plan loop refused.
 - `proofs/tla/MCRNClientTransportOrderBrokenNoFallback.cfg` violates
   `NoExhaustWhileReachable`. `Broken = {"nofallback"}` falls to the next
   candidate on an IPv6 refusal. TLC's trace: a token naming both families,

@@ -39,6 +39,14 @@
 (*   Timeout       the worker's waits time out (0.1 s production bound).   *)
 (*                 The liveness controls run with Timeout = FALSE, so      *)
 (*                 progress is proved from the wake protocol alone.        *)
+(*   ReadableWake  the idle wait also returns when the socket is readable  *)
+(*                 (ROCKETNET_PLATFORM_HAS_WAKE: rocketnet_platform_wake_  *)
+(*                 wait with readable set).  On BSD the wake is event-only *)
+(*                 and the idle wait returns on the wake or its 1 ms       *)
+(*                 timeout alone: ReadableWake = FALSE with Timeout = TRUE *)
+(*                 (MCRNPortableRxBsd.cfg), where delivery rests on the    *)
+(*                 timeout instead of readability.  Not a reversed switch: *)
+(*                 both values are the code, on different platforms.       *)
 (*   BoundedRead   one socket read spends a read budget of Cap on every    *)
 (*                 datagram it takes, kept or discarded; FALSE counts only *)
 (*                 kept datagrams, so chaff (zero-length datagrams,        *)
@@ -55,11 +63,12 @@ CONSTANTS NumBanks,        \* PORTABLE_RX_BANKS, at least 2
           MaxDatagrams,    \* datagrams the network delivers to the socket
           MaxChaff,        \* discarded datagrams the network delivers
           HoldOnFull, ReturnWhenRead, QuitBeforeWake, WakeOnReturn, Timeout,
-          BoundedRead
+          BoundedRead,
+          ReadableWake     \* the idle wait also wakes on socket readability
 
 ASSUME NumBanks >= 2 /\ Cap >= 1 /\ Budget >= 1 /\ MaxDatagrams >= 1 /\ MaxChaff >= 0
 ASSUME {HoldOnFull, ReturnWhenRead, QuitBeforeWake, WakeOnReturn, Timeout,
-        BoundedRead} \subseteq BOOLEAN
+        BoundedRead, ReadableWake} \subseteq BOOLEAN
 
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
@@ -237,12 +246,13 @@ WWaitFull ==
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
                    lock, quit, stopping, mpc, budget, freed, chaff, taken>>
 
-\* an empty read: wait on the wake or socket readability
+\* an empty read: wait on the wake or socket readability (on BSD the wake or
+\* the timeout alone)
 WWaitIdle ==
     /\ wpc = "waitidle"
     /\ \/ /\ wake
           /\ wake' = FALSE
-       \/ /\ sock # <<>>
+       \/ /\ ReadableWake /\ sock # <<>>
           /\ UNCHANGED wake
        \/ /\ Timeout
           /\ UNCHANGED wake

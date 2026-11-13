@@ -42,6 +42,27 @@ it frees. A backend with no close operation keeps the losing socket open
 until destroy; every built-in backend that races has one (loopback never
 races).
 
+Destroy frees each family once because of two things in the code, not
+because the model forbids a second free: the transport is destroyed once
+(the API's contract, `CallerDestroy`'s guard), and
+`rocketnet_client_transport_io_close` destroys a family only while its
+instance is set and then clears it. `frees` counts every free per thread and
+family, so `FreedOnce` sees a repeat free by the same owner;
+`MCRNClientRaceBrokenNoLiveCheck.cfg` takes the instance check away.
+
+**Destination and family.** After the commit the model drops a slot
+addressed to the losing family's server. The code drops by address family:
+`rocketnet_client_race_send`, `rocketnet_client_race_send_progress` and
+`rocketnet_client_race_send_batch` take each slot's family from its
+destination (`rocketnet_client_race_family_of`) and send only the kept
+family's slots. The two are equal: only the two server addresses are ever
+sent to (IPv4 `server_address[0]`, IPv6 `server_address[1]`), so a
+destination's address family names its server, and the commit sets
+`protocol.server_address` to `server_address[kept]` and rebinds a Filling
+ring bound to the losing server (`rocketnet_client_io_rebind_held`), so
+after the commit every send is addressed to the kept server. A slot for the
+losing server after the commit is the `commitkeepsring` defect.
+
 ## Properties
 
 | name | kind | meaning |
@@ -49,7 +70,7 @@ races).
 | `NoUseAfterClose` | invariant | no thread sends, receives or waits on a closed handle or freed memory |
 | `FreedOnlyByCaller` | invariant | every free is made by the caller's thread |
 | `FreedOnlyAfterJoin` | invariant | memory is freed only after the reading thread is joined |
-| `FreedOnce`, `FreedIsClosed` | invariant | each family is freed once, and only closed |
+| `FreedOnce`, `FreedIsClosed` | invariant | each family is freed once, by any thread and counting a repeat by the same thread, and only closed |
 | `ClosedOnlyLoser`, `SeenMeansClosed` | invariant | the reader closes only the losing family, in the step that first sees the commit |
 | `EverythingFreed` | liveness | with fair threads, destroy frees every family |
 | `PostCommitSlotsKept` | invariant | no slot committed after the commit leaves for the losing family, where the race's send drops it |
@@ -67,6 +88,7 @@ races).
 | `MCRNClientRaceBrokenReaderClosesEarly.cfg` | `NoUseAfterClose`: the reader closes a family before any commit |
 | `MCRNClientRaceBrokenCommitKeepsRing.cfg` | `PostCommitSlotsKept`: the commit leaves a ring bound to the losing server, as the code did before `rocketnet_client_io_rebind_held` |
 | `MCRNClientRaceBrokenNoKeepAtCommit.cfg` | `SendFailedMonotonic`: only the reader's close keeps the losing family's failures, as the code did before the commit kept them |
+| `MCRNClientRaceBrokenNoLiveCheck.cfg` | `FreedOnce`: the reader frees the losing family and destroy frees every family without `rocketnet_client_transport_io_close`'s instance check, so the losing family is freed twice |
 
 Each counterexample was checked by hand against the code: the reader-frees
 trace is commit, then one reading step whose `rocketnet_client_race_kept`
