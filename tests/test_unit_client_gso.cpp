@@ -72,6 +72,7 @@ struct fake_gso_socket_t
     int gro_calls;
     int gro_result;
     int recvmmsg_calls;
+    int weather_errors;                 // recvmmsg calls that fail with ECONNREFUSED before any receive is delivered
     int num_receives;
     int next_receive;
     fake_gso_receive_t receives[FAKE_GSO_MAX_RECEIVES];
@@ -162,6 +163,13 @@ static int fake_gso_recvmmsg( void * context, int socket, struct mmsghdr * messa
     rocketnet_unit_check( socket == 7 );
     rocketnet_unit_check( num_messages == 1 );
     fake->recvmmsg_calls++;
+
+    if ( fake->weather_errors > 0 )
+    {
+        fake->weather_errors--;
+        errno = ECONNREFUSED;
+        return -1;
+    }
 
     if ( fake->next_receive >= fake->num_receives )
     {
@@ -702,6 +710,57 @@ static void test_client_gso_receive_skips_unreadable_sources_within_the_batch()
 }
 
 REGISTER_UNIT_TEST( test_client_gso_receive_skips_unreadable_sources_within_the_batch );
+
+// one read budget per call, as the platform's receive has it
+// (docs/TRANSPORT-INTERNALS.md; proofs/tla/RNClientGroCarry.tla ReadBudget):
+// a weather errno, a skipped datagram and a kept one each spend one read of
+// max_packets, so a call never reads the socket more than max_packets times,
+// and the calls after it carry on to the data in order
+
+static void test_client_gso_receive_one_read_budget()
+{
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    memset( test_receive_bytes, 0, sizeof( test_receive_bytes ) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+
+    const int max_packets = 4;
+
+    // 8 weather errors, then max_packets zero-length datagrams, then
+    // max_packets datagrams of data
+
+    test_socket.weather_errors = 8;
+    for ( int i = 0; i < max_packets; i++ )
+    {
+        fake_gso_queue_receive( 0, 0, 0, FAKE_GSO_CONTROL_NONE );
+    }
+    for ( int i = 0; i < max_packets; i++ )
+    {
+        fake_gso_queue_receive( 200, 0, 40 + i, FAKE_GSO_CONTROL_NONE );
+    }
+
+    int delivered = 0;
+    int calls = 0;
+    while ( delivered < max_packets && calls < 16 )
+    {
+        const int reads_before = test_socket.recvmmsg_calls;
+        const int received = rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, max_packets );
+        rocketnet_unit_check( test_socket.recvmmsg_calls - reads_before <= max_packets );
+        rocketnet_unit_check( received >= 0 && received <= max_packets - delivered );
+        for ( int i = 0; i < received; i++ )
+        {
+            check_gso_receive_slot( i, 200, 40 + delivered + i );
+        }
+        delivered += received;
+        calls++;
+    }
+
+    rocketnet_unit_check( delivered == max_packets );
+    rocketnet_unit_check( test_socket.weather_errors == 0 );
+    rocketnet_unit_check( test_socket.next_receive == test_socket.num_receives );
+    rocketnet_unit_check( test_gso.packets_received == (uint64_t) max_packets );
+}
+
+REGISTER_UNIT_TEST( test_client_gso_receive_one_read_budget );
 
 static void test_client_gso_receive_gro_fault_is_counted()
 {

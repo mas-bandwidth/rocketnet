@@ -116,6 +116,16 @@ static void test_server_gso_drain_room()
 
 REGISTER_UNIT_TEST( test_server_gso_drain_room );
 
+// receives whose UDP_GRO control was truncated (MSG_CTRUNC) are counted in
+// GRO_CMSG_FAULTS once each after main's fold, as io_uring counts them; no
+// socket, no thread, no clock
+static void test_server_gso_gro_cmsg_faults_counted()
+{
+    check( rocketnet_server_gso_test_gro_cmsg_faults() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_gro_cmsg_faults_counted );
+
 static void test_server_gso_receive_backoff()
 {
     check( rocketnet_server_gso_test_receive_backoff() );
