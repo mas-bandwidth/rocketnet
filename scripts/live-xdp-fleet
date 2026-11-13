@@ -339,18 +339,21 @@ fi
 # the real run: step 12 of section 12, in order
 # ------------------------------------------------------------------------
 
+# Every ssh and scp reads /dev/null, never this script's stdin: most run
+# inside `while read ... done < sorted.tsv` loops, and an ssh that forwards
+# its stdin would eat the rest of the client list.
 ssh_run()
 {
     local host=$1
     shift
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$@"
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$host" "$@"
 }
 
 scp_run()
 {
     local host=$1
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" mkdir -p "rocketnet-live/results/$run_id" || return 1
-    scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:rocketnet-live/live-xdp-fleet-remote"
+    ssh_run "$host" mkdir -p "rocketnet-live/results/$run_id" || return 1
+    scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:rocketnet-live/live-xdp-fleet-remote" < /dev/null
 }
 
 fail()
@@ -431,7 +434,7 @@ ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNE
 ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" start server "$commit" "$server_label" "$server_address" "$seed" "$min_each" 1000 1000 60 "$server_queues" "$server_results" "$server_status" || fail "cannot start the server"
 
 # the fresh ssh connection within 10 s of the load
-if ! ssh -o BatchMode=yes -o ControlMaster=no -o ConnectTimeout=10 "$server_ssh" true; then
+if ! ssh -n -o BatchMode=yes -o ControlMaster=no -o ConnectTimeout=10 "$server_ssh" true; then
     teardown_allowed=0
     fail "ssh check failed after the load; the dead-man timer detaches the program"
 fi
@@ -451,7 +454,7 @@ done < "$tmp/sorted.tsv"
 
 # the heartbeat loop the watchdog reads (section 9, step 3)
 ( while [ ! -f "$tmp/stop-heartbeat" ]; do
-      ssh -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" touch "~/rocketnet-live/heartbeat" >/dev/null 2>&1
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" touch "~/rocketnet-live/heartbeat" >/dev/null 2>&1
       sleep 5
   done ) &
 heartbeat_pid=$!

@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# Selftest for scripts/live-xdp-fleet, scripts/live-xdp-fleet-remote and
+# scripts/live-xdp-fleet-merge.
+#
+# The orchestrator runs against fake ssh, scp and sleep on PATH: no host is
+# contacted, no time passes, and every remote call is recorded in a log. The
+# fake ssh reads its stdin unless given -n, as a real one forwards it. The
+# fake hosts answer each step of live-xdp-fleet-remote and hand back result
+# files the merge passes. Each case names what it proves; every case runs,
+# and the selftest exits non-zero if any failed. Uses $TMPDIR only.
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fleet="$here/live-xdp-fleet"
+remote="$here/live-xdp-fleet-remote"
+merge="$here/live-xdp-fleet-merge"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/live-xdp-fleet-selftest.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+
+failures=0
+fail_case()
+{
+    echo "SELFTEST FAIL: $*" >&2
+    failures=$(( failures + 1 ))
+}
+
+commit=0123456789abcdef0123456789abcdef01234567
+mkdir -p "$tmp/bin"
+
+# fake ssh: [options] host command words
+cat > "$tmp/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+nflag=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -n) nflag=1; shift ;;
+        -o) shift 2 ;;
+        -*) shift ;;
+        *) break ;;
+    esac
+done
+host=$1
+shift
+# a real ssh forwards its stdin to the remote command unless given -n
+[ "$nflag" -eq 1 ] || cat > /dev/null
+if [ "${1:-}" = "touch" ]; then
+    exit 0
+fi
+echo "$host $*" >> "$FAKE_LOG"
+if [ "${1:-}" = "sudo" ]; then
+    shift
+    [ "${1:-}" = "-n" ] && shift
+    case "${1:-}" in --preserve-env=*) shift ;; esac
+fi
+case "${1:-}" in
+    true|mkdir) exit 0 ;;
+    date)
+        date +%s.%N
+        exit 0 ;;
+    grep)
+        case "$3" in
+            '^listening') exit 0 ;;
+            *) exit 1 ;;
+        esac ;;
+    */live-xdp-fleet-remote) : ;;
+    *) echo "fake ssh: unexpected command: $*" >&2; exit 99 ;;
+esac
+sub=$2
+case "$sub" in
+    build) echo "$FAKE_COMMIT" ;;
+    skew)
+        offset=0
+        [ "$host" = "${FAKE_SKEW_HOST:-}" ] && offset=$FAKE_SKEW_SECONDS
+        awk -v t="$( date +%s )" -v o="$offset" 'BEGIN { printf "%.3f\n", t + o }' ;;
+    preflight)
+        if [ -n "${FAKE_PREFLIGHT_FAIL:-}" ]; then
+            echo "live-xdp-fleet-remote: preflight: an XDP program is already attached to eth0" >&2
+            exit 1
+        fi ;;
+    arm|start|stop|restore) : ;;
+    alive)
+        if [ "$3" = "server" ]; then
+            [ -z "${FAKE_SERVER_GONE:-}" ] || exit 1
+            exit 0
+        fi
+        exit 1 ;;
+    collect)
+        label=$( basename "$3" .tsv )
+        echo "# collect: $3"
+        if [ "$label" != "server" ]; then
+            for dir in 0 1; do
+                for mode in 0 1 2 3 4 5 6 7; do
+                    for bucket in tiny small edge fragment medium large max over; do
+                        over=0
+                        [ "$bucket" = "over" ] && over=1
+                        printf 'cell\t%s\t1\t%d\t%d\t0\t%s\t1\t1\t1\t0\t0\t0\t0\t0\t0\t%d\t0\n' \
+                            "$label" "$dir" "$mode" "$bucket" "$over"
+                    done
+                done
+            done
+            printf 'connect\t%s\t0\t1\t5.0\n' "$label"
+        fi
+        [ "$label" = "${FAKE_DROP_VERDICT:-}" ] || printf 'verdict\tPASS\n' ;;
+    *) echo "fake ssh: unexpected step: $*" >&2; exit 99 ;;
+esac
+exit 0
+EOF
+
+cat > "$tmp/bin/scp" <<'EOF'
+#!/usr/bin/env bash
+echo "scp $*" >> "$FAKE_LOG"
+exit 0
+EOF
+
+# no time passes in the selftest
+cat > "$tmp/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$tmp/bin/ssh" "$tmp/bin/scp" "$tmp/bin/sleep"
+
+cat > "$tmp/inventory" <<'EOF'
+# label ssh role shape site path cap-kbps nic address queues
+srv srv-host server linux datacenter lan 1000 eth0 10.0.0.1:40000 4
+alpha alpha-host client linux datacenter lan 1000 - - -
+bravo bravo-host client linux datacenter lan 1000 - - -
+charlie charlie-host client linux datacenter lan 1000 - - -
+EOF
+
+# run_fleet NAME [VAR=VALUE...]: one orchestrated run; its log, output and status in $tmp/NAME.*
+run_fleet()
+{
+    local name=$1
+    shift
+    : > "$tmp/$name.log"
+    env "$@" PATH="$tmp/bin:$PATH" FAKE_LOG="$tmp/$name.log" FAKE_COMMIT="$commit" TMPDIR="$tmp" \
+        bash "$fleet" --inventory "$tmp/inventory" --commit "$commit" --run-dir "$tmp/$name.run" \
+        > "$tmp/$name.out" 2>&1 < /dev/null
+    echo $? > "$tmp/$name.rc"
+}
+
+show()
+{
+    echo "--- $1 output:" >&2
+    cat "$tmp/$1.out" >&2
+    echo "--- $1 calls:" >&2
+    cat "$tmp/$1.log" >&2
+}
+
+# 1. a clean run with three clients: every client is built, started and
+# collected (an ssh in a `while read` loop must not eat the loop's input),
+# the merge is given the result files and PASSes, and its output and the
+# build logs land in the run directory.
+run_fleet clean
+if [ "$( cat "$tmp/clean.rc" )" != 0 ]; then
+    fail_case "a clean three-client run did not complete"
+    show clean
+fi
+for label in alpha bravo charlie; do
+    for step in build "start client" collect; do
+        if ! grep -q "^$label-host .*live-xdp-fleet-remote $step" "$tmp/clean.log"; then
+            fail_case "client $label: no '$step' step (an ssh in a read loop ate the client list)"
+        fi
+    done
+done
+if ! grep -q "^verdict: PASS" "$tmp/clean.run/merge.txt" 2>/dev/null; then
+    fail_case "the merge output is not in the run directory with verdict: PASS"
+    show clean
+fi
+if [ ! -s "$tmp/clean.run/build/server.build" ] || [ ! -s "$tmp/clean.run/build/bravo.build" ]; then
+    fail_case "the build logs are not in the run directory"
+fi
+
+# 2. a preflight refusal (someone else's program is attached) must not tear
+# anything down: nothing of this run is loaded yet.
+run_fleet preflight FAKE_PREFLIGHT_FAIL=1
+if [ "$( cat "$tmp/preflight.rc" )" = 0 ]; then
+    fail_case "a preflight refusal did not fail the run"
+fi
+if grep -q -e " restore " -e " stop server " -e " stop client " "$tmp/preflight.log"; then
+    fail_case "a preflight refusal ran teardown (stop/restore) on hosts this run never armed"
+    show preflight
+fi
+
+# 3. a result file with no verdict line fails the run's merge.
+run_fleet noverdict FAKE_DROP_VERDICT=bravo
+if [ "$( cat "$tmp/noverdict.rc" )" = 0 ] || ! grep -q "merge did not PASS" "$tmp/noverdict.out"; then
+    fail_case "a client result file with no verdict line passed the merge"
+    show noverdict
+fi
+run_fleet noserververdict FAKE_DROP_VERDICT=server
+if [ "$( cat "$tmp/noserververdict.rc" )" = 0 ]; then
+    fail_case "a server result file with no verdict line passed the merge"
+fi
+
+# 4. skew is judged against the test server's clock, read with the remote
+# skew step: a server 3 s off every client fails the run.
+run_fleet skew FAKE_SKEW_HOST=srv-host FAKE_SKEW_SECONDS=3
+if [ "$( cat "$tmp/skew.rc" )" = 0 ] || ! grep -q "more than 2 s off the test server" "$tmp/skew.out"; then
+    fail_case "a test server 3 s off every client passed the skew check"
+    show skew
+fi
+if ! grep -q "^srv-host .*live-xdp-fleet-remote skew" "$tmp/clean.log"; then
+    fail_case "the server's clock is not read with the remote skew step"
+fi
+
+# 5. the watch ends when the server is gone, not only when the clients are.
+run_fleet servergone FAKE_SERVER_GONE=1
+if [ "$( cat "$tmp/servergone.rc" )" = 0 ] || ! grep -q "the server is gone" "$tmp/servergone.out"; then
+    fail_case "a run whose server is gone did not fail"
+    show servergone
+fi
+
+# 6. the merge alone: a client file without its verdict line is not a PASS
+# (the merge requires one PASS verdict per file).
+grep -v "^verdict" "$tmp/clean.run/alpha.tsv" > "$tmp/alpha-noverdict.tsv" 2>/dev/null
+if python3 "$merge" "$tmp/alpha-noverdict.tsv" > "$tmp/merge-nov.out" 2>&1; then
+    fail_case "the merge passed a result file with no verdict line"
+fi
+if ! python3 "$merge" "$tmp/clean.run/alpha.tsv" "$tmp/clean.run/server.tsv" > "$tmp/merge-ok.out" 2>&1; then
+    fail_case "the merge refused a complete client and server pair"
+    cat "$tmp/merge-ok.out" >&2
+fi
+mkdir -p "$tmp/a-directory"
+if python3 "$merge" "$tmp/a-directory" > "$tmp/merge-dir.out" 2>&1; then
+    fail_case "the merge passed a directory"
+fi
+
+# 7. the remote steps find this run's tree from the script's own place, not
+# from $HOME: under sudo's env_reset HOME is root's. A pid file beside the
+# script is found while HOME names another directory.
+mkdir -p "$tmp/user/rocketnet-live" "$tmp/root-home"
+cp "$remote" "$tmp/user/rocketnet-live/live-xdp-fleet-remote"
+echo $$ > "$tmp/user/rocketnet-live/selftest.pid"
+if ! HOME="$tmp/root-home" PATH="$tmp/bin:$PATH" bash "$tmp/user/rocketnet-live/live-xdp-fleet-remote" alive client selftest \
+        > "$tmp/alive.out" 2>&1; then
+    fail_case "live-xdp-fleet-remote looked for its tree under \$HOME, not beside itself"
+fi
+
+if [ "$failures" -ne 0 ]; then
+    echo "SELFTEST FAIL: $failures case(s)" >&2
+    exit 1
+fi
+echo "SELFTEST PASS"
