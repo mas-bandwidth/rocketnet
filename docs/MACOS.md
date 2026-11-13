@@ -391,12 +391,13 @@ clients in one process on macOS, measured: **pending.**
 
 ## Who else can bind a server's port
 
-Both server transports bind so that the bind itself never lands on a port
-another socket already holds: a held port is refused with
-`ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED`, and a kernel-chosen port (port 0) is
-never one another socket holds. A dual-stack `[::]` server takes an IPv4
-reservation of its port first (`rocketnet_platform_bind_dual_stack`), because
-Darwin binds a dual-stack IPv6 wildcard without checking the IPv4 port space.
+Both server transports bind with no reuse option set, so a port another
+socket holds is refused with `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED`
+(`tests/functional/server_bind_address.cpp`). A server that serves both
+families binds the dual-stack `[::]` wildcard, and Darwin binds that without
+checking the IPv4 port space, so it first takes an IPv4 reservation of its
+port (`rocketnet_platform_bind_dual_stack`): a port held in IPv4 is refused,
+and a kernel-chosen port (port 0) is never one an IPv4 socket holds.
 
 After the bind, the port is not the server's alone. Measured on macOS with
 every process run by one user:
@@ -423,8 +424,10 @@ still letting a server's own sockets share it.
 
 On a machine where other programs you do not trust run (as you or, until
 measured, as another user), they can take a macOS server's traffic. For such
-a machine pin the `portable` server transport and set `bind_ipv4_address` (or
-`bind_ipv6_address`) to the host's address: a socket on a specific address
+a machine pin the `portable` server transport, serve one family, and set
+`bind_ipv4_address` (or `bind_ipv6_address`) to the host's address (a server
+that serves both families binds the wildcard and refuses a specific address):
+a socket on a specific address
 with no reuse option refuses a later socket on that address with either option,
 and a later wildcard socket that does bind receives none of its datagrams
 (measured, same user). A server on a machine only you run programs on is

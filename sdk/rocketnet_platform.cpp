@@ -1467,12 +1467,19 @@ int rocketnet_platform_socket_open_for_testing( int domain )
 // bound in the IPv6 namespace
 #define ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS 16
 
+// the error of a failed call, never 0: a failure always reads as one
+static int rocketnet_platform_bind_dual_stack_error()
+{
+    const int error = rocketnet_platform_socket_error();
+    return error != 0 ? error : EIO;
+}
+
 static int rocketnet_platform_reserve_ipv4_port( uint16_t * bind_port )
 {
     const int reservation = rocketnet_platform_socket_open( AF_INET );
     if ( reservation < 0 )
     {
-        const int open_error = rocketnet_platform_socket_error();
+        const int open_error = rocketnet_platform_bind_dual_stack_error();
         rocketnet_error( "failed to create ipv4 port reservation for dual stack socket: %s", rocketnet_platform_socket_error_text( open_error ).text );
         return -open_error;
     }
@@ -1484,7 +1491,7 @@ static int rocketnet_platform_reserve_ipv4_port( uint16_t * bind_port )
     reservation_address.sin_port = rocketnet_platform_htons( *bind_port );
     if ( bind( reservation, (sockaddr *) &reservation_address, sizeof( reservation_address ) ) < 0 )
     {
-        const int reserve_error = rocketnet_platform_socket_error();
+        const int reserve_error = rocketnet_platform_bind_dual_stack_error();
         rocketnet_error( "failed to reserve ipv4 port for dual stack socket: %s", rocketnet_platform_socket_error_text( reserve_error ).text );
         close( reservation );
         return -reserve_error;
@@ -1495,7 +1502,7 @@ static int rocketnet_platform_reserve_ipv4_port( uint16_t * bind_port )
         socklen_t reservation_length = sizeof( reservation_address );
         if ( getsockname( reservation, (sockaddr *) &reservation_address, &reservation_length ) < 0 )
         {
-            const int name_error = rocketnet_platform_socket_error();
+            const int name_error = rocketnet_platform_bind_dual_stack_error();
             rocketnet_error( "failed to get reserved ipv4 port for dual stack socket: %s", rocketnet_platform_socket_error_text( name_error ).text );
             close( reservation );
             return -name_error;
@@ -1532,7 +1539,7 @@ int rocketnet_platform_bind_dual_stack( int handle, const struct rocketnet_addre
         const socklen_t bind_bytes = (socklen_t) rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
         if ( bind( handle, (sockaddr *) &bind_storage, bind_bytes ) < 0 )
         {
-            return rocketnet_platform_socket_error();
+            return rocketnet_platform_bind_dual_stack_error();
         }
         *bound_port = address->port;
         return 0;
@@ -1553,7 +1560,7 @@ int rocketnet_platform_bind_dual_stack( int handle, const struct rocketnet_addre
         }
 
         const socklen_t bind_bytes = (socklen_t) rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
-        result = bind( handle, (sockaddr *) &bind_storage, bind_bytes ) < 0 ? rocketnet_platform_socket_error() : 0;
+        result = bind( handle, (sockaddr *) &bind_storage, bind_bytes ) < 0 ? rocketnet_platform_bind_dual_stack_error() : 0;
         if ( result == 0 || address->port != 0 || result != EADDRINUSE || num_held == ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS - 1 )
         {
             close( reservation );
