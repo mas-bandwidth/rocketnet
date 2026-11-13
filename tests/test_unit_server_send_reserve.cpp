@@ -589,6 +589,43 @@ static void test_server_fill_chunk_refused_falls_back()
     sr_teardown( &rig );
 }
 
+// RNSendReserve TakeBack and Retest, witness NoRetry: a single claim refused
+// because other fillers' claims filled the budget is retested after its take
+// back; when one of those claims was taken back in between, the frame now
+// under the budget is claimed again and granted, and nothing is counted
+// refused. With nothing taken back the retest refuses, counted once.
+static void test_server_fill_refused_claim_retested()
+{
+    struct sr_rig_t rig;
+    sr_setup_lines( &rig );
+    const rocketnet_counters_t * counters = rocketnet_server_transport_counters( rig.server );
+
+    for ( int taken_back = 0; taken_back < 2; ++taken_back )
+    {
+        sr_open_phase( &rig, 3 );
+        rocketnet_server_transport_add_fill_claims_for_test( rig.server, 0, 3 );   // the other fillers hold the budget
+        rocketnet_server_transport_retest_take_back_for_test( rig.server, (uint64_t) taken_back );
+        const uint64_t refused = counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED];
+        const uint64_t tails = counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED_TAILS_HELD];
+        if ( taken_back )
+        {
+            check( sr_start_abort( &rig ) );
+            check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == 3 );
+            check( counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused );
+        }
+        else
+        {
+            check( !sr_start_abort( &rig ) );
+            check( rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) == 3 );
+            check( counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused + 1 );
+        }
+        check( counters->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED_TAILS_HELD] == tails );
+        rocketnet_server_transport_add_fill_claims_for_test( rig.server, 0, 0 - rocketnet_server_transport_fill_claims_for_test( rig.server, 0 ) );
+    }
+
+    sr_teardown( &rig );
+}
+
 // RNSendReserve TailsNamed: a single claim refused while another line holds
 // a tail or a chunk claim is SEND_RESERVE_REFUSED_TAILS_HELD; with none held,
 // SEND_RESERVE_REFUSED.
@@ -683,6 +720,7 @@ REGISTER_UNIT_TEST( test_server_send_reserve_full_queue_is_full_staging );
 REGISTER_UNIT_TEST( test_server_fill_chunk_guard );
 REGISTER_UNIT_TEST( test_server_fill_chunk_tail_returned );
 REGISTER_UNIT_TEST( test_server_fill_chunk_refused_falls_back );
+REGISTER_UNIT_TEST( test_server_fill_refused_claim_retested );
 REGISTER_UNIT_TEST( test_server_fill_refusal_names_tails_held );
 REGISTER_UNIT_TEST( test_server_fill_ring_chunk );
 

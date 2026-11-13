@@ -19,9 +19,16 @@
 (* else the budget is recomputed from the queue as it reads now (the       *)
 (* grants staged and the own frames used, then the room, then those two    *)
 (* again, starting over if either moved), raised to that, never lowered,   *)
-(* and the claims outstanding tested against it.  A refused chunk is taken *)
-(* back whole and claimed again as one frame; a refused single claim is    *)
-(* taken back.  A granted claim is the filler's tail: each frame of it is  *)
+(* and the claims outstanding tested against it.  The test and the take    *)
+(* back of a refused claim are two steps: another filler's claim may be    *)
+(* the one that put the claims past the budget, and it may be taken back   *)
+(* in between.  A refused chunk is taken back whole and claimed again as   *)
+(* one frame; a refused single claim is taken back, and then the claims    *)
+(* and the budget are read again: a frame now under the budget is claimed  *)
+(* again (the retest), else the claim is refused.  Two fillers refused     *)
+(* together by each other's claims would otherwise both be refused with a  *)
+(* frame left under the budget (witness NoRetry).                          *)
+(* A granted claim is the filler's tail: each frame of it is               *)
 (* staged (it leaves the room) and then counted in the grants staged; the  *)
 (* run ends at any frame, and what is left of the tail goes back with one  *)
 (* add.  The transport may retire staged frames at any time (an            *)
@@ -61,7 +68,8 @@ CONSTANTS
     IndexTest,      \* the recompute tests the claim's index, not the claims outstanding (NeverStarved)
     NoFallback,     \* a refused chunk is not claimed again as one frame  (NeverStarved)
     BatchCount,     \* staged frames are counted at the run's end         (NeverStarved)
-    NoTailReturn    \* a run's unused tail is never given back            (TailsNamed)
+    NoTailReturn,   \* a run's unused tail is never given back            (TailsNamed)
+    NoRetry         \* a single claim taken back is refused, no retest    (NeverStarved)
 
 ASSUME MaxOwn <= Reserve
 ASSUME Chunk >= 1
@@ -93,7 +101,7 @@ vars == <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, pc, size,
           claimsDone, retired, phases>>
 
 Steps == {"idle", "sized", "loaded", "claimed", "read1", "read2", "read3",
-          "granted", "counting", "next", "ownio", "owncount"}
+          "refused", "retest", "granted", "counting", "next", "ownio", "owncount"}
 
 Max(a, b) == IF a > b THEN a ELSE b
 
@@ -114,7 +122,7 @@ Busy(f) == Cardinality({g \in Fillers \ {f} : pc[g] /= "idle"})
 \* taken back, then the tail of it not yet staged (the code's tail_held:
 \* raised by the chunk at its add, lowered at a take back, per frame
 \* staged, and by the rest at the tail's return)
-Checking == {"claimed", "read1", "read2", "read3"}
+Checking == {"claimed", "read1", "read2", "read3", "refused"}
 TailHeld(g) == tail[g] + (IF pc[g] \in Checking /\ size[g] > 1 THEN size[g] ELSE 0)
 OthersTail(f) == SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE TailHeld(g)], Fillers)
 \* another filler's hold on the room: its chunk hold, plus the frame it has
@@ -270,23 +278,57 @@ ClaimStore(f) ==
                    tail, uncounted, seenS, seenO, seenR, starved, unnamed,
                    claimsDone, retired, phases>>
 
-\* the refusal: the claim is taken back whole.  A chunk is claimed again as
-\* one frame.  A single claim refused is starved if the room the decision
-\* read had a frame for f past the reserve and past every frame and tail
-\* the other fillers hold; unnamed if that room had a frame for f past
-\* every filler in flight while no other filler held a tail.  Room that
-\* came back after the read, or that a filler claiming after the read
-\* takes, is no starvation.
+\* the refusal decided: the claim is still added until its take back, a
+\* step of its own.  A single claim refused is starved if the room the
+\* decision read had a frame for f past the reserve and past every frame and
+\* tail the other fillers hold; unnamed if that room had a frame for f past
+\* every filler in flight while no other filler held a tail.  Room that came
+\* back after the read, or that a filler claiming after the read takes, is
+\* no starvation.
 Refuse(f, r) ==
+    /\ pc' = [pc EXCEPT ![f] = "refused"]
+    /\ IF size[f] > 1 /\ ~NoFallback
+          THEN UNCHANGED <<starved, unnamed>>
+          ELSE /\ starved' = (starved \/ RoomPastTails(f, r))
+               /\ unnamed' = (unnamed \/ (RoomFor(f, r) /\ OthersTail(f) = 0))
+
+\* a claim refused for good, the claims c outstanding after its take back:
+\* starved too if a frame was left under the budget (the claims that
+\* refused it were taken back before it gave up)
+FinalRefuse(f, c) ==
+    /\ pc' = [pc EXCEPT ![f] = "idle"]
+    /\ starved' = (starved \/ c + size[f] <= budget)
+    /\ UNCHANGED unnamed
+
+\* the take back: the claim leaves the claims whole.  A chunk is claimed
+\* again as one frame; a single claim is retested (NoRetry: refused)
+TakeBack(f) ==
+    /\ pc[f] = "refused"
     /\ claims' = claims - size[f]
     /\ IF size[f] > 1 /\ ~NoFallback
           THEN /\ pc' = [pc EXCEPT ![f] = "sized"]
                /\ size' = [size EXCEPT ![f] = 1]
                /\ UNCHANGED <<starved, unnamed>>
-          ELSE /\ pc' = [pc EXCEPT ![f] = "idle"]
-               /\ starved' = (starved \/ RoomPastTails(f, r))
-               /\ unnamed' = (unnamed \/ (RoomFor(f, r) /\ OthersTail(f) = 0))
-               /\ UNCHANGED size
+          ELSE IF NoRetry
+                  THEN /\ FinalRefuse(f, claims - size[f])
+                       /\ UNCHANGED size
+                  ELSE /\ pc' = [pc EXCEPT ![f] = "retest"]
+                       /\ UNCHANGED <<starved, unnamed, size>>
+    /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, claim, tail,
+                   uncounted, seenS, seenO, seenR, claimsDone, retired, phases>>
+
+\* the retest: the claims and the budget read again; a frame under the
+\* budget now is claimed again (the claim counts as the same one), else
+\* the claim is refused
+Retest(f) ==
+    /\ pc[f] = "retest"
+    /\ IF claims + size[f] <= budget
+          THEN /\ pc' = [pc EXCEPT ![f] = "sized"]
+               /\ UNCHANGED <<starved, unnamed>>
+          ELSE FinalRefuse(f, claims)
+    /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, size,
+                   claim, tail, uncounted, seenS, seenO, seenR, claimsDone, retired,
+                   phases>>
 
 Grant(f) ==
     /\ pc' = [pc EXCEPT ![f] = "granted"]
@@ -301,7 +343,7 @@ Decide(f, s, o, r) ==
              THEN /\ Grant(f)
                   /\ UNCHANGED <<claims, starved, unnamed, size>>
              ELSE /\ Refuse(f, r)
-                  /\ UNCHANGED tail
+                  /\ UNCHANGED <<claims, size, tail>>
 
 \* the whole claim under the budget: granted; else the recompute begins
 Check(f) ==
@@ -311,7 +353,7 @@ Check(f) ==
                /\ UNCHANGED <<claims, starved, unnamed, size>>
           ELSE IF NoRefresh
                   THEN /\ Refuse(f, free)
-                       /\ UNCHANGED tail
+                       /\ UNCHANGED <<claims, size, tail>>
                   ELSE /\ pc' = [pc EXCEPT ![f] = "read1"]
                        /\ UNCHANGED <<claims, starved, unnamed, size, tail>>
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, claim,
@@ -425,7 +467,7 @@ Next ==
     \/ \E f \in Fillers :
           \/ OwnClaim(f) \/ OwnIo(f) \/ OwnCount(f)
           \/ Size(f) \/ Claim(f) \/ ClaimStore(f) \/ Check(f)
-          \/ Read1(f) \/ Read2(f) \/ Read3(f)
+          \/ Read1(f) \/ Read2(f) \/ Read3(f) \/ TakeBack(f) \/ Retest(f)
           \/ Stage(f) \/ Count(f) \/ Continue(f) \/ End(f)
 
 Spec == Init /\ [][Next]_vars
@@ -444,7 +486,8 @@ ReserveKept ==
 
 \* the fill is never refused while the room it read had a frame for it
 \* past the reserve and every filler in flight (each filler holding a
-\* tail counting as its tail)
+\* tail counting as its tail), nor refused for good while the claims left
+\* after its take back leave a frame for it under the budget
 NeverStarved == ~starved
 
 \* a refusal with room for the frame past every filler in flight comes only

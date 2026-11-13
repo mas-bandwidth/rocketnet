@@ -595,11 +595,13 @@ uint64_t rocketnet_server_transport_send_reserve_for_test( const struct rocketne
 void rocketnet_server_transport_set_keep_alive_acked_for_test( struct rocketnet_server_transport_t * server_transport, int client_index, int acked );
 /** @brief The own frames (RNSendReserve) the open fill phase has not yet given out, for a test. */
 uint64_t rocketnet_server_transport_fill_own_frames_for_test( const struct rocketnet_server_transport_t * server_transport );
-/** @brief The fill's chunked claims, for a unit test (RNSendReserve, the fill lines): a queue's claims; a fill line's tail word [held:32][tail:32] (line -1: the calling thread's); set a line's word; refuse the next reserve chunk claims; the payload ring's counter; the calling thread's ring chunk [end:32][next:32]. */
+/** @brief The fill's chunked claims, for a unit test (RNSendReserve, the fill lines): a queue's claims; a fill line's tail word [held:32][tail:32] (line -1: the calling thread's); set a line's word; refuse the next reserve chunk claims; add claims a queue's other fillers hold (wrapping: a negative delta as its two's complement); take claims back, as another filler would, between the next single claim's refusal and its retest; the payload ring's counter; the calling thread's ring chunk [end:32][next:32]. */
 uint64_t rocketnet_server_transport_fill_claims_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
 uint64_t rocketnet_server_transport_fill_tail_for_test( const struct rocketnet_server_transport_t * server_transport, int line, int queue );
 void rocketnet_server_transport_set_fill_tail_for_test( struct rocketnet_server_transport_t * server_transport, int line, int queue, uint64_t word );
 void rocketnet_server_transport_refuse_fill_chunks_for_test( struct rocketnet_server_transport_t * server_transport, int chunks );
+void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims );
+void rocketnet_server_transport_retest_take_back_for_test( struct rocketnet_server_transport_t * server_transport, uint64_t claims );
 uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct rocketnet_server_transport_t * server_transport );
 uint64_t rocketnet_server_transport_fill_ring_chunk_for_test( const struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV
