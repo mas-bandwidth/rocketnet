@@ -457,7 +457,7 @@ static void channels_test_violations()
 
 static void channels_test_single_zero_copy()
 {
-    // a frame with the payload root at a 16-aligned payload_index, as start_packet hands back
+    // a frame with the payload root at a 16-aligned payload_index, as the transport lays out the frame behind the payload start_packet returns
 
     alignas( 16 ) static uint8_t frame[64 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 

@@ -918,3 +918,11 @@ MCRNSendReserveChunk.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required
 MCRNSendReserveChunkNoGuard.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required	-
 MCRNSendReserveBrokenNoFallback.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
 MCRNSendReserveBrokenNoTailReturn.cfg	MCRNSendReserve.tla	invariant	TailsNamed	check	rnsendreserve	required	-
+MCRNFillPhase.cfg	MCRNFillPhase.tla	pass	-	check	rnfillphase	required	-
+MCRNFillPhaseBrokenLookFirst.cfg	MCRNFillPhase.tla	invariant	Sound	check	rnfillphase	required	-
+MCRNFillPhaseBrokenLoadStore.cfg	MCRNFillPhase.tla	invariant	OneFiller	check	rnfillphase	required	-
+MCRNFillPhaseBrokenNoReset.cfg	MCRNFillPhase.tla	invariant	NoFalseAlarm	check	rnfillphase	required	-
+MCRNFillPhaseBrokenNoRestore.cfg	MCRNFillPhase.tla	invariant	NoFalseAlarm	check	rnfillphase	required	-
+MCRNFillPhaseBrokenNoEpochLook.cfg	MCRNFillPhase.tla	invariant	OneFiller	check	rnfillphase	required	-
+MCRNFillPhaseBrokenScanOne.cfg	MCRNFillPhase.tla	invariant	Sound	check	rnfillphase	required	-
+MCRNFillPhaseN3.cfg	MCRNFillPhase.tla	pass	-	check	rnfillphase	bench	three-fillers-two-clients-over-budget

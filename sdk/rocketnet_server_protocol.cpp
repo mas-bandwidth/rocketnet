@@ -1915,7 +1915,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
 void rocketnet_server_protocol_note_missing_mapping( struct rocketnet_server_protocol_t * server )
 {
-    server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+    rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
 }
 
 static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mapping( struct rocketnet_server_protocol_t * server,
@@ -2220,7 +2220,7 @@ int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t 
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     if ( mapping_index < 0 )
     {
-        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
         return 0;
     }
 
@@ -2365,7 +2365,7 @@ int rocketnet_server_protocol_client_address( struct rocketnet_server_protocol_t
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     if ( mapping_index < 0 )
     {
-        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
         return 0;
     }
 
