@@ -260,28 +260,28 @@ static void sr_report_dead( void * user, int table_slot, uint32_t generation )
 // whole bank (owner), the shared socket anyone's
 static int sr_pick_stamp( sr_walk_t * walk, int owner[SR_STAMPS], int c )
 {
-	for ( int tries = 0; tries < 16; tries++ )
-	{
-		const int st = walk->random.below( SR_STAMPS );
-		if ( st == 0 )
-		{
-			return 0;
-		}
-		if ( owner[st] == 0 || owner[st] == c )
-		{
-			owner[st] = c;
-			return st;
-		}
-	}
-	for ( int st = 1; st < SR_STAMPS; st++ )
-	{
-		if ( owner[st] == 0 || owner[st] == c )
-		{
-			owner[st] = c;
-			return st;
-		}
-	}
-	return 0;
+    for ( int tries = 0; tries < 16; tries++ )
+    {
+        const int st = walk->random.below( SR_STAMPS );
+        if ( st == 0 )
+        {
+            return 0;
+        }
+        if ( owner[st] == 0 || owner[st] == c )
+        {
+            owner[st] = c;
+            return st;
+        }
+    }
+    for ( int st = 1; st < SR_STAMPS; st++ )
+    {
+        if ( owner[st] == 0 || owner[st] == c )
+        {
+            owner[st] = c;
+            return st;
+        }
+    }
+    return 0;
 }
 
 static void sr_stage( sr_walk_t * walk, int i, int c, int st )
@@ -302,48 +302,48 @@ static void sr_stage( sr_walk_t * walk, int i, int c, int st )
 // MultiStamp)
 static void sr_make_bank( sr_walk_t * walk )
 {
-	walk->claimed = 18 + walk->random.below( SR_SIZE - 18 + 2 );
-	walk->count = walk->claimed > SR_SIZE ? SR_SIZE : walk->claimed;
+    walk->claimed = 18 + walk->random.below( SR_SIZE - 18 + 2 );
+    walk->count = walk->claimed > SR_SIZE ? SR_SIZE : walk->claimed;
 
-	int owner[SR_STAMPS];
-	memset( owner, 0, sizeof( owner ) );
-	for ( int c = 1; c <= SR_CLIENTS; c++ )
-	{
-		owner[sr_stamp_index( c - 1, sr_open_generation( c - 1 ) )] = c;
-	}
-	for ( int s = 0; s < SR_CAP; s++ )
-	{
-		const int home = s + 1;
-		const int other = 1 + ( s + 1 ) % SR_CLIENTS;
-		const int stale = sr_stamp_index( s, 1 - sr_open_generation( s ) );
-		owner[stale] = other;
-		sr_stage( walk, 2 * s, home, sr_stamp_index( s, sr_open_generation( s ) ) );
-		sr_stage( walk, 2 * s + 1, other, stale );
-		walk->info[2 * s].packet_bytes = 100;
-		walk->info[2 * s + 1].packet_bytes = 100;
-	}
-	for ( int i = 2 * SR_CAP; i < walk->count; i++ )
-	{
-		const int c = 1 + walk->random.below( SR_CLIENTS );
-		const int pick = walk->random.below( 4 );
-		int st = sr_stamp_index( c - 1, sr_open_generation( c - 1 ) );
-		if ( pick == 2 )
-		{
-			st = 0;
-		}
-		else if ( pick == 3 )
-		{
-			st = sr_pick_stamp( walk, owner, c );
-		}
-		sr_stage( walk, i, c, st );
-	}
-	for ( int i = walk->count; i < SR_SIZE; i++ )
-	{
-		walk->info[i].client = 0;
-		walk->info[i].table_slot = SR_SHARED;
-		walk->info[i].generation = 0;
-		walk->info[i].packet_bytes = 0;
-	}
+    int owner[SR_STAMPS];
+    memset( owner, 0, sizeof( owner ) );
+    for ( int c = 1; c <= SR_CLIENTS; c++ )
+    {
+        owner[sr_stamp_index( c - 1, sr_open_generation( c - 1 ) )] = c;
+    }
+    for ( int s = 0; s < SR_CAP; s++ )
+    {
+        const int home = s + 1;
+        const int other = 1 + ( s + 1 ) % SR_CLIENTS;
+        const int stale = sr_stamp_index( s, 1 - sr_open_generation( s ) );
+        owner[stale] = other;
+        sr_stage( walk, 2 * s, home, sr_stamp_index( s, sr_open_generation( s ) ) );
+        sr_stage( walk, 2 * s + 1, other, stale );
+        walk->info[2 * s].packet_bytes = 100;
+        walk->info[2 * s + 1].packet_bytes = 100;
+    }
+    for ( int i = 2 * SR_CAP; i < walk->count; i++ )
+    {
+        const int c = 1 + walk->random.below( SR_CLIENTS );
+        const int pick = walk->random.below( 4 );
+        int st = sr_stamp_index( c - 1, sr_open_generation( c - 1 ) );
+        if ( pick == 2 )
+        {
+            st = 0;
+        }
+        else if ( pick == 3 )
+        {
+            st = sr_pick_stamp( walk, owner, c );
+        }
+        sr_stage( walk, i, c, st );
+    }
+    for ( int i = walk->count; i < SR_SIZE; i++ )
+    {
+        walk->info[i].client = 0;
+        walk->info[i].table_slot = SR_SHARED;
+        walk->info[i].generation = 0;
+        walk->info[i].packet_bytes = 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -383,16 +383,16 @@ static const char * sr_pc_name( const sr_walk_t * walk )
     }
     switch ( walk->state.pc )
     {
-    case ROCKETNET_MSGX_SEND_RUNS_HEAD:
-        return "\"head\"";
-    case ROCKETNET_MSGX_SEND_RUNS_SEND:
-        return "\"send\"";
-    case ROCKETNET_MSGX_SEND_RUNS_DEAD:
-        return "\"dead\"";
-    case ROCKETNET_MSGX_SEND_RUNS_KEPT:
-        return "\"kept\"";
-    default:
-        return "\"done\"";
+        case ROCKETNET_MSGX_SEND_RUNS_HEAD:
+            return "\"head\"";
+        case ROCKETNET_MSGX_SEND_RUNS_SEND:
+            return "\"send\"";
+        case ROCKETNET_MSGX_SEND_RUNS_DEAD:
+            return "\"dead\"";
+        case ROCKETNET_MSGX_SEND_RUNS_KEPT:
+            return "\"kept\"";
+        default:
+            return "\"done\"";
     }
 }
 
