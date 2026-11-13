@@ -1540,9 +1540,16 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the sent map: the
     /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
-    /// and at least reliable_messages_in_flight, so a window sent
-    /// one number to a packet never evicts an entry before its ack lands.
-    /// Default is 1024.
+    /// and at least reliable_messages_in_flight. Packets with reliable
+    /// messages and packets with only unreliable receipt sends share it.
+    /// No entry is evicted before its ack lands while it holds every tracked
+    /// packet, of both kinds and resends included, sent from any packet's
+    /// send, that packet included, until the processing of its ack: the
+    /// packets_in_flight-th tracked packet sent after an entry evicts it
+    /// unless its ack was processed first. Past that the
+    /// oldest entry can be evicted with its ack on the way: the late ack is
+    /// ignored, a reliable entry's messages are resent, and a receipt-only
+    /// entry's unreliable receipts report LOSS early. Default is 1024.
 
     int packets_in_flight;
 
@@ -1786,9 +1793,16 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the sent map per client: the
     /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
-    /// and at least reliable_messages_in_flight, so a window sent
-    /// one number to a packet never evicts an entry before its ack lands.
-    /// Default is 1024.
+    /// and at least reliable_messages_in_flight. Packets with reliable
+    /// messages and packets with only unreliable receipt sends share it.
+    /// No entry is evicted before its ack lands while it holds every tracked
+    /// packet, of both kinds and resends included, sent from any packet's
+    /// send, that packet included, until the processing of its ack: the
+    /// packets_in_flight-th tracked packet sent after an entry evicts it
+    /// unless its ack was processed first. Past that the
+    /// oldest entry can be evicted with its ack on the way: the late ack is
+    /// ignored, a reliable entry's messages are resent, and a receipt-only
+    /// entry's unreliable receipts report LOSS early. Default is 1024.
 
     int packets_in_flight;
 
