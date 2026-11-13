@@ -628,6 +628,7 @@ jobs:
         # the value is empty, which is scale 1 (tests/time_scale.h).
         env:
           ROCKETNET_TEST_CASE_TIME_SCALE: ${{ inputs.full && runner.os == 'Linux' && matrix.build_type == 'Debug' && '2' || '' }}
+          ROCKETNET_TEST_REPORT: '1'
         run: |
           set -euo pipefail
           bash tools/run_functional.sh dev --log functional-auto.log ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ./bin/functional
@@ -655,6 +656,8 @@ jobs:
       # macOS it is the functional_production row's, beside the functional row.
       - name: Run functional_production suite (automatic transport order, production library)
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
+        env:
+          ROCKETNET_TEST_REPORT: '1'
         run: |
           set -euo pipefail
           bash tools/run_functional.sh prod --log functional-production-auto.log ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ./bin/functional_production
