@@ -7670,7 +7670,7 @@ void rocketnet_test_server_disconnect_client()
 
         const struct rocketnet_counters_t copy_before = client_counters;
         payload_bytes = 0;
-        rocketnet_check( !rocketnet_client_protocol_process_packet( &client, burst + i * ROCKETNET_SEND_BUDGET, burst_bytes, 200.0, payload, sizeof( payload ), &payload_bytes ) );
+        rocketnet_check( !rocketnet_client_protocol_process_packet( &client, burst + (size_t) i * (size_t) ROCKETNET_SEND_BUDGET, burst_bytes, 200.0, payload, sizeof( payload ), &payload_bytes ) );
         rocketnet_check( payload_bytes == 0 );
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
         rocketnet_counters_expect( &copy_before, &client_counters,
@@ -14599,7 +14599,7 @@ static int rocketnet_test_sync_remote_receive_batch( void * transport, rocketnet
     int got = 0;
     while ( got < max_packets )
     {
-        const int bytes = rocketnet_test_sync_remote_receive( transport, &from[got], packet_data + got * packet_stride, packet_stride );
+        const int bytes = rocketnet_test_sync_remote_receive( transport, &from[got], packet_data + (size_t) got * (size_t) packet_stride, packet_stride );
         if ( bytes == 0 )
         {
             break;
@@ -14701,7 +14701,7 @@ static void rocketnet_test_reply_opens_a_later_update_on( const rocketnet_client
 
         const bool sent_before_update = io_core && sent_requests < ROUNDS && ( sent_requests + 1 ) % 2 == 0 &&
                                         rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                                        rocketnet_test_sync_remote_request( client, (uint64_t) ( sent_requests + 1 ) );
+                                        rocketnet_test_sync_remote_request( client, (uint64_t) sent_requests + 1 );
         if ( sent_before_update )
         {
             sent_requests++;
@@ -14744,7 +14744,7 @@ static void rocketnet_test_reply_opens_a_later_update_on( const rocketnet_client
 
                 const bool connected = rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
                 const bool sent_after_update = connected && !sent_before_update && sent_requests < ROUNDS && ( !io_core || ( sent_requests + 1 ) % 2 == 1 ) &&
-                                               rocketnet_test_sync_remote_request( client, (uint64_t) ( sent_requests + 1 ) );
+                                               rocketnet_test_sync_remote_request( client, (uint64_t) sent_requests + 1 );
                 if ( sent_after_update )
                 {
                     sent_requests++;
