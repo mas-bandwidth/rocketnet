@@ -72,6 +72,16 @@ below is for R (or, where marked, for C or the docs package) to apply.
    keeps the producer (Flush's pick of -1)." (MM141; optional, the citation
    passes without it.)
 
+5. `sdk/rocketnet_server_gso.h:153` at `18be25f05` says "the kernel's
+   UDP_MAX_SEGMENTS is 64"; line 96 of the same file (and the
+   server-gso-recv-fill COVERAGE row) say 128. Suggested: correct 153 to 128
+   (found by M9's cold read; comment only).
+6. Not for C, for R: `proofs/tla/MCRNBankFifoLayoutLifoExposed.cfg:1-3` at
+   `18be25f05` (header comment) still
+   names the iocp and rio receive banks, which README-RNBankFifoLayout.md says
+   no transport uses now. Left as is here, since editing it re-runs the case
+   for a comment older than this branch; for R to fold into a later pass.
+
 ## For the docs package (docs/TRANSPORT-INTERNALS.md)
 
 - MM143's `docs/TRANSPORT-INTERNALS.md:581-584` part (the segmentation

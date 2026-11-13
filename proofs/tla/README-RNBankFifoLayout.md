@@ -80,8 +80,10 @@ those orders.
 A refused call changes nothing, so it has no action: it is a stuttering step
 of `Spec`, which no invariant can see. The refusals are a publish with no free
 bank or with `max_ready` banks ready (`Publish`'s guard), and in
-`rocketnet_server_gso_publish_send` also a contended lane mutex (the
-try-acquire) and a stopping transport; and a take with nothing ready and no
+`rocketnet_server_gso_publish_send` also an empty producer (no packets
+staged; the model's `Publish` allows an empty bank, which covers more than
+the code does), a contended lane mutex (the try-acquire) and a stopping
+transport; and a take with nothing ready and no
 `quit` (`TxTakeNone` in `RNGsoHandoff.tla`). What the worker does with a bank
 it holds (a full socket keeping its tail, the bounded retries after shutdown)
 changes no index here: the bank stays the consumer's until `Release`.
