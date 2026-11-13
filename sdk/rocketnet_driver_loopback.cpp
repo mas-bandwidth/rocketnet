@@ -700,6 +700,8 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
     ep->bind = *bind;
     ep->dropped = 0;
     hub->send_failures[slot].store( 0, std::memory_order_relaxed );
+    // proofs/tla/LoopbackHubLayout.tla Reset: the indices and the count to zero;
+    // the slots keep whatever bytes an earlier endpoint left
     ep->head = 0;
     ep->tail = 0;
     ep->count = 0;
@@ -762,6 +764,8 @@ static void loopback_destroy( void * transport )
 
     memset( &ep->bind, 0, sizeof( ep->bind ) );
     ep->dropped = 0;
+    // proofs/tla/LoopbackHubLayout.tla Reset: datagrams still queued are
+    // discarded with the indices and the count; their bytes stay in the slots
     ep->head = 0;
     ep->tail = 0;
     ep->count = 0;

@@ -11,15 +11,31 @@
 (* keeps the hub, while any endpoint is registered; otherwise it frees    *)
 (* the hub.                                                                *)
 (*                                                                         *)
+(* Destroy is two steps in the code, and here: it reads registered under  *)
+(* the hub mutex and releases it (the check), then destroys the mutex,    *)
+(* zeroes the header and frees the block outside it (the free).  Between  *)
+(* them the hub is "retiring": its header is still intact, so a create on *)
+(* another thread passes the header check, takes the mutex and registers  *)
+(* into a hub about to be freed.  That is caller misuse (rocketnet.h:     *)
+(* destroy the hub after every server and client that uses it is          *)
+(* destroyed), and the code does not catch it.  CallerSerializesDestroy   *)
+(* is that contract: TRUE, no create runs while a destroy is in progress; *)
+(* FALSE lets one in, and MCLoopbackHubBrokenDestroyRace.cfg shows the     *)
+(* freed hub with an endpoint registered.  The roadmap item               *)
+(* loopback-hub-destroy-check-and-free is the code fix.                   *)
+(*                                                                         *)
 (* Each endpoint is built into a copy of the library.  The endpoints in   *)
 (* Foreign come from another build: the hub's magic, version and layout   *)
 (* id differ from theirs, and every use they make of it is refused.      *)
 (* Destroy is called from a copy of either build.                         *)
 (*                                                                         *)
-(* Two switches are the fixes; the reversed witnesses turn one off:      *)
+(* Two switches are the fixes and one is the caller's contract; the       *)
+(* reversed witnesses turn one off:                                       *)
 (*   DestroyChecksRegistered  destroy refuses while an endpoint is        *)
 (*                            registered (NoEndpointOutlivesHub)         *)
 (*   UseChecksHeader          every use checks the header (NoForeignUse) *)
+(*   CallerSerializesDestroy  no create between destroy's check and its   *)
+(*                            free (NoEndpointOutlivesHub)               *)
 (*                                                                         *)
 (* The code cites RegisterServer, RegisterClient, Unregister, Create and  *)
 (* Destroy where they happen.  Done is the terminal stutter after the     *)
@@ -34,10 +50,12 @@ CONSTANTS
     Foreign,                    \* endpoints built by another build of the library
     NoEndpoint,                 \* a free record's holder: no endpoint
     DestroyChecksRegistered,    \* the fix: destroy refuses while any endpoint is registered
-    UseChecksHeader             \* the fix: every use checks magic, version and layout
+    UseChecksHeader,            \* the fix: every use checks magic, version and layout
+    CallerSerializesDestroy     \* the caller's contract: no create while a destroy runs
 
 VARIABLES
-    hub,            \* "none" before create, "live", "freed" after destroy
+    hub,            \* "none" before create, "live", "retiring" between destroy's
+                    \* check and its free, "freed" after destroy
     record,         \* record index -> the endpoint registered there, or NoEndpoint
     at,             \* endpoint -> its record index, or -1 when not registered
     registered,     \* the hub's own count of registered endpoints
@@ -62,9 +80,12 @@ Init ==
     /\ lastDestroy = "none"
     /\ foreignUse = FALSE
 
-\* the header check at every use: a hub made by another build is refused
+\* the header check at every use: a hub made by another build is refused.
+\* A retiring hub's header is intact, so the check passes; only the
+\* caller's contract keeps a create out of that window.
 Usable(e) ==
-    /\ hub = "live"
+    /\ \/ hub = "live"
+       \/ hub = "retiring" /\ ~CallerSerializesDestroy
     /\ (e \in Foreign => ~UseChecksHeader)
 
 Register(e, r) ==
@@ -105,18 +126,25 @@ Unregister(e) ==
     /\ UNCHANGED <<hub, lastDestroy, foreignUse>>
 
 \* rocketnet_loopback_hub_destroy from a copy of this build (foreign = FALSE)
-\* or of another build (foreign = TRUE): a mismatch or a registered endpoint
-\* refuses and keeps the hub; otherwise the hub is freed
+\* or of another build (foreign = TRUE), in the code's two steps.  The
+\* check: a mismatch, or registered read under the mutex above zero, refuses
+\* and keeps the hub; otherwise the mutex is released and the hub retires.
+\* The free: the mutex destroyed, the header zeroed, the block freed,
+\* whatever registered later.
 Destroy(foreign) ==
-    /\ hub = "live"
-    /\ IF foreign /\ UseChecksHeader
-         THEN /\ lastDestroy' = "mismatch"
-              /\ UNCHANGED hub
-         ELSE IF registered > 0 /\ DestroyChecksRegistered
-           THEN /\ lastDestroy' = "in_use"
-                /\ UNCHANGED hub
-           ELSE /\ lastDestroy' = "ok"
-                /\ hub' = "freed"
+    /\ \/ /\ hub = "live"
+          /\ IF foreign /\ UseChecksHeader
+               THEN /\ lastDestroy' = "mismatch"
+                    /\ UNCHANGED hub
+               ELSE IF registered > 0 /\ DestroyChecksRegistered
+                 THEN /\ lastDestroy' = "in_use"
+                      /\ UNCHANGED hub
+                 ELSE /\ lastDestroy' = "ok"
+                      /\ hub' = "retiring"
+       \/ /\ hub = "retiring"
+          /\ ~foreign
+          /\ hub' = "freed"
+          /\ UNCHANGED lastDestroy
     /\ UNCHANGED <<record, at, registered, foreignUse>>
 
 Done ==
@@ -136,7 +164,7 @@ Spec == Init /\ [][Next]_vars
 RegisteredSet == { e \in Endpoints : at[e] # -1 }
 
 TypeOK ==
-    /\ hub \in {"none", "live", "freed"}
+    /\ hub \in {"none", "live", "retiring", "freed"}
     /\ record \in [ Records -> Endpoints \cup {NoEndpoint} ]
     /\ at \in [ Endpoints -> Records \cup {-1} ]
     /\ registered \in 0..MaxClients+1
@@ -161,10 +189,10 @@ CountIsRegistered ==
 WithinCapacity ==
     Cardinality({ c \in Clients : at[c] # -1 }) <= MaxClients
 
-\* no endpoint is registered with a hub that is not live: destroy never
+\* no endpoint is registered with a hub that does not exist: destroy never
 \* frees a hub an endpoint still reads
 NoEndpointOutlivesHub ==
-    hub # "live" => RegisteredSet = {}
+    hub \in {"none", "freed"} => RegisteredSet = {}
 
 \* no endpoint of another build ever registers with the hub
 NoForeignUse ==

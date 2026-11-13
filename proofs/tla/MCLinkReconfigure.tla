@@ -1,29 +1,46 @@
 ------------------------- MODULE MCLinkReconfigure -------------------------
 (***************************************************************************)
 (* Link's live setting: a sender hands packets to one link while the       *)
-(* setting in force changes (rocketnet_client_network_simulator and        *)
-(* rocketnet_server_network_simulator, sdk/rocketnet_api.cpp).             *)
+(* caller changes the setting (rocketnet_client_network_simulator and      *)
+(* rocketnet_server_network_simulator, sdk/rocketnet_api.cpp, through      *)
+(* rocketnet_network_simulator_reconfigure and _take_setting in            *)
+(* sdk/rocketnet_network_simulator.cpp).                                   *)
 (*                                                                         *)
 (* The setting is "pass" (the packet is let out, with Link's latency and   *)
-(* jitter) or "lose" (the packet is dropped at the send).  The setting     *)
-(* applies when a packet is sent: applied is the one a send acts on, and   *)
-(* setting is the one the caller last asked for.  A correct change sets    *)
-(* both, and it never touches the packets already on the wire, so their    *)
-(* setting is the one they were sent under (Reconfigure below).  This      *)
-(* module is Link's reconfiguration, kept beside Link so Link's own        *)
-(* measured configurations keep the model they were measured on.           *)
+(* jitter) or "lose" (the packet is dropped at the send).  A change is a  *)
+(* hand-over in two steps, as the code does it:                           *)
+(*   MCReconfigure  the caller writes a pending record under the           *)
+(*                  simulator's mutex and returns (reconfigure);           *)
+(*   Take           the thread that owns the simulator, before a send,    *)
+(*                  try-acquires the mutex and, when it gets it, copies   *)
+(*                  the pending record into the setting in force          *)
+(*                  (take_setting).  A busy mutex is no Take: the old     *)
+(*                  setting stays in force and the record waits for the   *)
+(*                  next uncontended pass, so a send may act on the old   *)
+(*                  setting after the change (the unit test               *)
+(*                  test_network_simulator_take_setting_does_not_wait).    *)
+(* A record written over a waiting one replaces it.  Neither step touches *)
+(* the packets already on the wire.                                        *)
 (*                                                                         *)
-(* LiveSettingHolds is the invariant the code cites:                      *)
-(*   SendUsesForce      every send used the setting in force at that send, *)
-(*                      so a packet sent after the change is held to the   *)
-(*                      new setting;                                       *)
-(*   NoInFlightDrop     a change removes nothing already in flight, so     *)
-(*                      none sent before it is dropped by it.              *)
+(* setting is the one the caller last asked for, pendingSetting the        *)
+(* record waiting, pending whether one waits, and applied the setting in  *)
+(* force, the one a send acts on.  This module is Link's reconfiguration,  *)
+(* kept beside Link so Link's own measured configurations keep the model   *)
+(* they were measured on.                                                  *)
+(*                                                                         *)
+(* LiveSettingHolds:                                                       *)
+(*   SendUsesForce   every send acts on the setting the caller last asked  *)
+(*                   for, unless a change was still waiting to be taken    *)
+(*                   at that send: once the owner has taken a change,      *)
+(*                   every later send is held to it;                       *)
+(*   NoInFlightDrop  a change removes nothing already in flight, so none   *)
+(*                   sent before it is dropped by it.                      *)
 (*                                                                         *)
 (* Defect = "inflight" changes the setting and clears the wire (the        *)
-(* reversed witness for NoInFlightDrop).  Defect = "stale" changes setting *)
-(* but leaves applied as it was, so later sends use the old setting (the   *)
-(* reversed witness for SendUsesForce).  Defect = "none" is the control.   *)
+(* reversed witness for NoInFlightDrop).  Defect = "stale" makes Take      *)
+(* clear the pending flag without copying the record, so later sends use  *)
+(* the old setting with nothing waiting (the reversed witness for         *)
+(* SendUsesForce).  Defect = "none" is the control.                       *)
 (***************************************************************************)
 EXTENDS Link, Naturals, Sequences
 
@@ -37,10 +54,9 @@ ASSUME /\ MaxSends \in Nat \ {0}
        /\ Defect \in {"none", "inflight", "stale"}
 
 (***************************************************************************)
-(* Reconfigure is the relation a live change keeps: the setting in force   *)
+(* Reconfigure is the relation a live change keeps: the requested setting  *)
 (* moves to newSetting, and a packet already in flight keeps the setting   *)
-(* it was sent under.  A packet sent after the change is held to the new   *)
-(* setting; none sent before it is dropped by it.                          *)
+(* it was sent under.                                                      *)
 (***************************************************************************)
 Reconfigure( oldSetting, newSetting ) ==
     /\ oldSetting \in Settings
@@ -49,24 +65,30 @@ Reconfigure( oldSetting, newSetting ) ==
 
 VARIABLES
     setting,          \* the setting the caller last asked for
-    applied,          \* the setting a send acts on
-    sendLog,          \* one record per send: the force and what it applied
+    pendingSetting,   \* the record handed over and not yet taken
+    pending,          \* a record waits (config_pending, the PENDING bit)
+    applied,          \* the setting in force: the one a send acts on
+    sendLog,          \* one record per send: what was asked, what applied, whether a change waited
     reconfigureDrops  \* copies a change removed from the wire (must be 0)
 
-SendRecord == [pkt : Packets, inForce : Settings, appliedAtSend : Settings]
+SendRecord == [pkt : Packets, inForce : Settings, appliedAtSend : Settings,
+               pendingAtSend : BOOLEAN]
 
-rcVars == <<wire, sent, pulse, setting, applied, sendLog, reconfigureDrops>>
+rcVars == <<wire, sent, pulse, setting, pendingSetting, pending, applied,
+            sendLog, reconfigureDrops>>
 
 RCInit ==
     /\ Init
     /\ setting = "pass"
+    /\ pendingSetting = "pass"
+    /\ pending = FALSE
     /\ applied = "pass"
     /\ sendLog = <<>>
     /\ reconfigureDrops = 0
 
 (***************************************************************************)
 (* The sender.  A send is counted whether or not the setting drops it, as  *)
-(* Link!Send does; "lose" leaves the wire as it was.                       *)
+(* Link!Send does; "lose" leaves the wire as it was.  It acts on applied.  *)
 (***************************************************************************)
 RCSend ==
     \E p \in Packets :
@@ -76,22 +98,23 @@ RCSend ==
         /\ IF applied = "lose"
              THEN UNCHANGED wire
              ELSE \E d \in 0..MaxDelay : wire' = Append(wire, [pkt |-> p, due |-> d])
-        /\ sendLog' = Append(sendLog, [pkt |-> p, inForce |-> setting, appliedAtSend |-> applied])
-        /\ UNCHANGED <<pulse, setting, applied, reconfigureDrops>>
+        /\ sendLog' = Append(sendLog, [pkt |-> p, inForce |-> setting,
+                                       appliedAtSend |-> applied,
+                                       pendingAtSend |-> pending])
+        /\ UNCHANGED <<pulse, setting, pendingSetting, pending, applied, reconfigureDrops>>
 
 RCDeliver ==
     \E p \in Packets :
         /\ Deliver(p)
-        /\ UNCHANGED <<setting, applied, sendLog, reconfigureDrops>>
+        /\ UNCHANGED <<setting, pendingSetting, pending, applied, sendLog, reconfigureDrops>>
 
 RCEnvironment ==
     /\ Environment
-    /\ UNCHANGED <<setting, applied, sendLog, reconfigureDrops>>
+    /\ UNCHANGED <<setting, pendingSetting, pending, applied, sendLog, reconfigureDrops>>
 
 (***************************************************************************)
-(* The change.  A correct change sets the setting in force and the one a   *)
-(* send acts on, and leaves the wire alone.  The two defects above are the *)
-(* reversed witnesses.                                                     *)
+(* The caller's change: the pending record and the flag, under the mutex.  *)
+(* It leaves the wire alone and the setting in force as it was.            *)
 (***************************************************************************)
 MCReconfigure ==
     \E next \in Settings :
@@ -102,12 +125,21 @@ MCReconfigure ==
              ELSE /\ reconfigureDrops' = reconfigureDrops
                   /\ UNCHANGED wire
         /\ setting' = next
-        /\ IF Defect = "stale"
-             THEN UNCHANGED applied
-             ELSE applied' = next
-        /\ UNCHANGED <<sent, pulse, sendLog>>
+        /\ pendingSetting' = next
+        /\ pending' = TRUE
+        /\ UNCHANGED <<sent, pulse, applied, sendLog>>
 
-RCNext == RCSend \/ RCDeliver \/ RCEnvironment \/ MCReconfigure
+(***************************************************************************)
+(* The owner's uncontended take: the waiting record becomes the setting in *)
+(* force and the flag clears.                                              *)
+(***************************************************************************)
+Take ==
+    /\ pending
+    /\ applied' = IF Defect = "stale" THEN applied ELSE pendingSetting
+    /\ pending' = FALSE
+    /\ UNCHANGED <<wire, sent, pulse, setting, pendingSetting, sendLog, reconfigureDrops>>
+
+RCNext == RCSend \/ RCDeliver \/ RCEnvironment \/ MCReconfigure \/ Take
 
 Spec == RCInit /\ [][RCNext]_rcVars
 
@@ -117,13 +149,16 @@ Spec == RCInit /\ [][RCNext]_rcVars
 RCTypeOK ==
     /\ TypeOK
     /\ setting \in Settings
+    /\ pendingSetting \in Settings
+    /\ pending \in BOOLEAN
     /\ applied \in Settings
     /\ sendLog \in Seq(SendRecord)
     /\ reconfigureDrops \in Nat
 
-\* A packet sent after the change is held to the new setting.
+\* A send acts on the setting last asked for, unless a change still waited.
 SendUsesForce ==
-    \A i \in DOMAIN sendLog : sendLog[i].appliedAtSend = sendLog[i].inForce
+    \A i \in DOMAIN sendLog :
+        sendLog[i].pendingAtSend \/ sendLog[i].appliedAtSend = sendLog[i].inForce
 
 \* None sent before the change is dropped by it.
 NoInFlightDrop == reconfigureDrops = 0
