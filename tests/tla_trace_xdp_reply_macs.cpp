@@ -9,17 +9,19 @@
 //
 // The walk binds the smallest table the code accepts (4 *
 // ROCKETNET_XDP_REPLY_MAC_PROBES entries) with no gateway, and drives it with
-// ipv4 and ipv6 addresses whose home slots (the code's own FNV hash) all fall in a few
-// adjacent slots across the table's end, so probe windows fill, wrap and
-// evict. Each step is one call of the code:
+// ipv4 and ipv6 addresses whose home slots (the code's own FNV hash) all fall
+// in a few adjacent slots across the table's end, so probe windows fill, wrap
+// and evict. The model runs under HomesGiven: each address is named by its
+// home slot, rocketnet_xdp_reply_macs_slot, plus a multiple of the table's
+// size, and the model takes each home as the name modulo the size. Each step
+// is one call of the code:
 //
 //   learn   rocketnet_xdp_reply_macs_learn of a usable MAC: Learn; of a
-//           multicast or zero MAC: Ignored, which changes nothing
-//   reply   rocketnet_xdp_reply_mac: Answer when it returns the answered MAC
-//           (no learned entry); Skip when it returns another MAC the table
-//           has (a learned address, or an ANSWERED entry when the call
-//           passes no answered MAC); Refused when it returns none. Skip and
-//           Refused change nothing; the call's refusal count is an argument
+//           multicast or zero MAC: Ignore
+//   reply   rocketnet_xdp_reply_mac: Answer when it returns the walk's own
+//           answered buffer; ReplyLearned or ReplyAnswered, with the MAC,
+//           when it returns an entry's MAC, by that entry's state; Refuse
+//           when it returns none, with whether the call passed a frame's MAC
 //   forget  rocketnet_xdp_reply_macs_forget: Forget
 //   reset   rocketnet_xdp_reply_macs_reset with no gateway: Reset
 //
@@ -32,15 +34,16 @@
 // entry learned last. Its effect is a learn that took a LIVE entry of
 // another address that was not the oldest of the address's full window.
 
-#if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_XDP_REPLY_MACS_PLANT 1
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <string>
 #include <vector>
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_XDP_REPLY_MACS_PLANT 1
+#include "../sdk/rocketnet_server_socket_linux.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include "tla_trace_record.h"
 
@@ -58,13 +61,9 @@ struct reply_macs_walk_t
     struct rocketnet_xdp_reply_macs_t table;
     struct rocketnet_xdp_reply_mac_entry_t entries[REPLY_MACS_ENTRIES];
     rocketnet_address_t address[REPLY_MACS_ADDRESSES];
+    std::string name[REPLY_MACS_ADDRESSES];
     uint8_t mac[REPLY_MACS_MACS][6];
 };
-
-static std::string reply_macs_address_name( int i )
-{
-    return tla_string( "a" + tla_int( i + 1 ) );
-}
 
 static std::string reply_macs_mac_name( int i )
 {
@@ -72,28 +71,28 @@ static std::string reply_macs_mac_name( int i )
 }
 
 // an entry's address as the model names it: NOADDR for the zeroed address
-// of a never-used slot, the walk's own name for a client, else a value the
-// model never takes
+// of a never-used slot, the walk's own name for a client, else a number the
+// model's addresses never are
 static std::string reply_macs_entry_address( const reply_macs_walk_t & walk, const struct rocketnet_xdp_reply_mac_entry_t & entry )
 {
     if ( entry.state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
     {
         rocketnet_address_t zero;
         memset( &zero, 0, sizeof( zero ) );
-        return memcmp( &entry.address, &zero, sizeof( zero ) ) == 0 ? "NOADDR" : tla_string( "stale address" );
+        return memcmp( &entry.address, &zero, sizeof( zero ) ) == 0 ? "NOADDR" : tla_int( -2 );
     }
     for ( int i = 0; i < REPLY_MACS_ADDRESSES; i++ )
     {
         if ( rocketnet_address_equal( &entry.address, &walk.address[i] ) )
         {
-            return reply_macs_address_name( i );
+            return walk.name[i];
         }
     }
-    return tla_string( "unknown address" );
+    return tla_int( -1 );
 }
 
 // a MAC as the model names it: the walk's own MACs by name; the zero bytes a
-// reset leaves in a never-used slot are EmptyMac, the model's free choice
+// reset leaves in a never-used slot are NOMAC
 static std::string reply_macs_mac_value( const reply_macs_walk_t & walk, const uint8_t * mac, bool empty )
 {
     for ( int i = 0; i < REPLY_MACS_MACS; i++ )
@@ -106,7 +105,7 @@ static std::string reply_macs_mac_value( const reply_macs_walk_t & walk, const u
     static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
     if ( empty && memcmp( mac, zero_mac, 6 ) == 0 )
     {
-        return "EmptyMac";
+        return "NOMAC";
     }
     return tla_string( "unknown mac" );
 }
@@ -151,7 +150,7 @@ static tla_record_t reply_macs_state( reply_macs_walk_t & walk )
     std::vector<std::string> addresses, homes, lookups;
     for ( int i = 0; i < REPLY_MACS_ADDRESSES; i++ )
     {
-        addresses.push_back( reply_macs_address_name( i ) );
+        addresses.push_back( walk.name[i] );
         homes.push_back( tla_int( rocketnet_xdp_reply_macs_slot( &walk.table, &walk.address[i] ) ) );
         lookups.push_back( reply_macs_lookup( walk, i ) );
     }
@@ -210,7 +209,8 @@ static void reply_macs_addresses( reply_macs_walk_t * walk, uint64_t seed )
     // REPLY_MACS_ADDRESSES distinct addresses, ipv4 and ipv6 in turn, whose
     // home slots are the REPLY_MACS_HOMES slots ending at slot 1, across the
     // table's end; the search starts where the seed puts it and is
-    // deterministic
+    // deterministic. Address i is named home + N * (i + 1): distinct, and
+    // the model's home of it (the name modulo N) is the code's hash slot
     int count = 0;
     for ( uint32_t n = (uint32_t) ( seed * 7919 ) & 0xFFFF; count < REPLY_MACS_ADDRESSES; n++ )
     {
@@ -235,15 +235,31 @@ static void reply_macs_addresses( reply_macs_walk_t * walk, uint64_t seed )
         const uint32_t home = rocketnet_xdp_reply_macs_slot( &walk->table, &candidate );
         if ( ( ( home + REPLY_MACS_HOMES - 2 ) & walk->table.mask ) < REPLY_MACS_HOMES )
         {
-            walk->address[count++] = candidate;
+            walk->address[count] = candidate;
+            walk->name[count] = tla_int( (int64_t) home + (int64_t) REPLY_MACS_ENTRIES * ( count + 1 ) );
+            count++;
         }
     }
+}
+
+// the slot whose MAC field a reply returned, -1 for none
+static int reply_macs_returned_slot( const reply_macs_walk_t & walk, const uint8_t * reply )
+{
+    for ( int s = 0; s < REPLY_MACS_ENTRIES; s++ )
+    {
+        if ( reply == walk.entries[s].mac )
+        {
+            return s;
+        }
+    }
+    return -1;
 }
 
 static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
 {
     static reply_macs_walk_t walk;
-    memset( &walk, 0, sizeof( walk ) );
+    memset( &walk.table, 0, sizeof( walk.table ) );
+    memset( walk.entries, 0, sizeof( walk.entries ) );
     if ( !rocketnet_xdp_reply_macs_bind( &walk.table, walk.entries, REPLY_MACS_ENTRIES ) )
     {
         fprintf( stderr, "tla_trace: the reply MAC table refused %d entries\n", REPLY_MACS_ENTRIES );
@@ -261,13 +277,14 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
     tla_report_t report;
     static struct rocketnet_xdp_reply_mac_entry_t before[REPLY_MACS_ENTRIES];
 
-    records.push_back( tla_step( "init", "init", tla_sequence( std::vector<std::string>() ), reply_macs_state( walk ) ) );
+    records.push_back( tla_step( "init", "init", "<<>>", reply_macs_state( walk ) ) );
     while ( (int) records.size() < steps + 1 )
     {
         const int roll = random.below( 100 );
         const int a = random.below( REPLY_MACS_ADDRESSES );
         const int m = random.below( REPLY_MACS_MACS );
         std::vector<std::string> args;
+        args.push_back( walk.name[a] );
         // one call in sixteen passes a MAC the code must not keep: a learn of
         // a multicast or zero MAC, a reply with one as the answered MAC
         const int unusable = random.below( 16 ) == 0 ? 1 + random.below( 2 ) : 0;
@@ -277,15 +294,13 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
             {
                 const uint8_t ignored[6] = { (uint8_t) ( unusable == 1 ? 0x01 : 0x00 ), 0x00, (uint8_t) ( unusable == 1 ? 0x5e : 0x00 ), 0x00, 0x00, 0x00 };
                 rocketnet_xdp_reply_macs_learn( &walk.table, &walk.address[a], ignored );
-                args.push_back( reply_macs_address_name( a ) );
-                args.push_back( tla_string( "unusable" ) );
-                records.push_back( tla_step( "learn", "Ignored", tla_sequence( args ), reply_macs_state( walk ) ) );
+                report.act( "Ignore" );
+                records.push_back( tla_step( "learn", "Ignore", tla_sequence( args ), reply_macs_state( walk ) ) );
                 continue;
             }
             memcpy( before, walk.entries, sizeof( before ) );
             rocketnet_xdp_reply_macs_learn( &walk.table, &walk.address[a], walk.mac[m] );
             report.act( "Learn" );
-            args.push_back( reply_macs_address_name( a ) );
             args.push_back( reply_macs_mac_name( m ) );
             records.push_back( tla_step( "learn", "Learn", tla_sequence( args ), reply_macs_state( walk ) ) );
             if ( reply_macs_evicted_newer( walk, before, a ) )
@@ -297,8 +312,9 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
         {
             // the answered MAC from a buffer of the walk's own, so the return
             // says which branch the code took: the answered MAC kept
-            // (Answer), another MAC the table already had (Skip), or none
-            // (Refused); one reply in eight has no answered MAC at all
+            // (Answer), an entry's MAC (ReplyLearned, ReplyAnswered by the
+            // entry's state), or none (Refuse); one reply in eight has no
+            // answered MAC at all
             uint8_t answered[6];
             memcpy( answered, walk.mac[m], 6 );
             if ( unusable )
@@ -309,62 +325,56 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
             const bool none = !unusable && random.below( 8 ) == 0;
             uint64_t refused = 0;
             const uint8_t * reply = rocketnet_xdp_reply_mac( &walk.table, &walk.address[a], none ? NULL : answered, &refused );
-            const char * act = reply == NULL ? "Refused" : ( reply == answered ? "Answer" : "Skip" );
-            // the census counts the model's actions: Skip, Refused and
-            // Ignored change nothing and are no action of Next
-            if ( strcmp( act, "Answer" ) == 0 )
+            const char * act = "Refuse";
+            if ( reply == NULL )
             {
-                report.act( act );
+                args.push_back( tla_bool( !none ) );
             }
-            args.push_back( reply_macs_address_name( a ) );
-            args.push_back( none ? tla_string( "none" ) : ( unusable ? tla_string( "unusable" ) : reply_macs_mac_name( m ) ) );
-            args.push_back( tla_int( (int64_t) refused ) );
+            else if ( reply == answered )
+            {
+                act = "Answer";
+                args.push_back( reply_macs_mac_name( m ) );
+            }
+            else
+            {
+                const int s = reply_macs_returned_slot( walk, reply );
+                act = s >= 0 && walk.entries[s].state == ROCKETNET_XDP_REPLY_MAC_ANSWERED ? "ReplyAnswered" : "ReplyLearned";
+                args.push_back( reply_macs_mac_value( walk, reply, false ) );
+            }
+            report.act( act );
             records.push_back( tla_step( "reply", act, tla_sequence( args ), reply_macs_state( walk ) ) );
         }
         else if ( roll < 99 )
         {
             rocketnet_xdp_reply_macs_forget( &walk.table, &walk.address[a] );
             report.act( "Forget" );
-            args.push_back( reply_macs_address_name( a ) );
             records.push_back( tla_step( "forget", "Forget", tla_sequence( args ), reply_macs_state( walk ) ) );
         }
         else
         {
             rocketnet_xdp_reply_macs_reset( &walk.table, NULL );
             report.act( "Reset" );
-            records.push_back( tla_step( "reset", "Reset", tla_sequence( args ), reply_macs_state( walk ) ) );
+            records.push_back( tla_step( "reset", "Reset", "<<>>", reply_macs_state( walk ) ) );
         }
     }
 
     report.print();
 
-    std::vector<std::string> addresses, macs;
+    std::string addresses;
     for ( int i = 0; i < REPLY_MACS_ADDRESSES; i++ )
     {
-        addresses.push_back( reply_macs_address_name( i ) );
+        addresses += ( i > 0 ? ", " : "" ) + walk.name[i];
     }
+    std::string macs;
     for ( int i = 0; i < REPLY_MACS_MACS; i++ )
     {
-        macs.push_back( reply_macs_mac_name( i ) );
+        macs += ( i > 0 ? ", " : "" ) + reply_macs_mac_name( i );
     }
-    std::string definitions = "TraceAddrs == {";
-    for ( size_t i = 0; i < addresses.size(); i++ )
-    {
-        definitions += ( i > 0 ? ", " : "" ) + addresses[i];
-    }
-    definitions += "}\nTraceMacs == {";
-    for ( size_t i = 0; i < macs.size(); i++ )
-    {
-        definitions += ( i > 0 ? ", " : "" ) + macs[i];
-    }
-    definitions += "}\n";
-
-    char constants[512];
-    snprintf( constants, sizeof( constants ),
-              "    N = %d\n    P = %d\n    Addrs <- TraceAddrs\n    Macs <- TraceMacs\n    NOADDR = NOADDR\n"
-              "    SkipOtherEntries = TRUE\n    EvictOldest = TRUE\n    InsertWindowExact = TRUE\n",
-              REPLY_MACS_ENTRIES, ROCKETNET_XDP_REPLY_MAC_PROBES );
-    return tla_write_trace( out, "MCTraceXdpReplyMacs", seed, "TraceRNXdpReplyMacsLayout", definitions, constants, records ) ? 0 : 1;
+    const std::string constants = "    N = " + tla_int( REPLY_MACS_ENTRIES ) + "\n    P = " + tla_int( ROCKETNET_XDP_REPLY_MAC_PROBES ) +
+                                  "\n    Addrs = {" + addresses + "}\n    Macs = {" + macs + "}\n    NOADDR = NOADDR\n    NOMAC = NOMAC\n" +
+                                  "    HomesGiven = TRUE\n    SkipOtherEntries = TRUE\n    EvictOldest = TRUE\n    InsertWindowExact = TRUE\n" +
+                                  "    LearnTakesEmptyFirst = TRUE\n";
+    return tla_write_trace( out, "MCTraceXdpReplyMacs", seed, "TraceRNXdpReplyMacsLayout", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "xdp-reply-macs", trace_xdp_reply_macs );
