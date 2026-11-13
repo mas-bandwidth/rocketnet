@@ -1031,7 +1031,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # the same filter for the xdp-replay trace check, at a replay window of
         # ROCKETNET_TLA_XDP_REPLAY_WINDOW sequences (sdk/rocketnet_xdp_limits.h),
         # so a walk of a few hundred steps reaches the drop rule
-        set(ROCKETNET_TLA_XDP_REPLAY_WINDOW 4)
+        set(ROCKETNET_TLA_XDP_REPLAY_WINDOW 2)
         add_library(rocketnet_xdp_filter_host_trace STATIC tests/xdp_host/server_xdp_host.c)
         target_include_directories(rocketnet_xdp_filter_host_trace BEFORE PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/xdp_host" "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
