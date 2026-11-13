@@ -1084,22 +1084,20 @@ int main( void ) { volatile double a = 2.0; __m128d r = _mm_fmadd_sd( _mm_set_sd
         # test_xdp_filter loads server_xdp.o, the object the library embeds
         # (cmake/EmbedXdp.cmake), and runs crafted frames through it with
         # BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to run).
-        if(ROCKETNET_BPF_CLANG)
-            set(ROCKETNET_XDP_FILTER_OBJECT "${ROCKETNET_XDP_OBJECT}")
-            add_executable(test_xdp_filter tests/test_xdp_filter.cpp)
-            add_dependencies(test_xdp_filter rocketnet_xdp_header)
-            # xdp_on_link_reply_reaches_the_client runs bin/server and bin/client
-            if(TARGET server AND TARGET client)
-                add_dependencies(test_xdp_filter server client)
-            endif()
-            target_compile_definitions(test_xdp_filter PRIVATE
-                "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
-            target_include_directories(test_xdp_filter PRIVATE sdk)
-            target_compile_features(test_xdp_filter PRIVATE cxx_std_11)
-            target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf RocketNet::Xdp)
-        else()
-            # The configure message above explains why the object is absent.
+        # ROCKETNET_XDP is still on here only when a clang with the BPF target
+        # was found, so the object always exists in this block.
+        set(ROCKETNET_XDP_FILTER_OBJECT "${ROCKETNET_XDP_OBJECT}")
+        add_executable(test_xdp_filter tests/test_xdp_filter.cpp)
+        add_dependencies(test_xdp_filter rocketnet_xdp_header)
+        # xdp_on_link_reply_reaches_the_client runs bin/server and bin/client
+        if(TARGET server AND TARGET client)
+            add_dependencies(test_xdp_filter server client)
         endif()
+        target_compile_definitions(test_xdp_filter PRIVATE
+            "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
+        target_include_directories(test_xdp_filter PRIVATE sdk)
+        target_compile_features(test_xdp_filter PRIVATE cxx_std_11)
+        target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf RocketNet::Xdp)
     endif()
     if(APPLE)
         add_executable(test_msgx tests/test_msgx.cpp)
@@ -1357,12 +1355,16 @@ if(ROCKETNET_BUILD_TOOLS)
         target_compile_options(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_OPTIONS>)
         target_link_libraries(xdp_packet_blaster PRIVATE rocketnet_dev RocketNet::Bpf RocketNet::Xdp Threads::Threads)
         rocketnet_use_sodium(xdp_packet_blaster)
-        find_package(Python3 COMPONENTS Interpreter REQUIRED)
-        add_custom_target(test_xdp_packet_blaster
-            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_xdp_packet_blaster.py"
-                "$<TARGET_FILE:xdp_packet_blaster>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/xdp_packet_blaster_cases.json"
-            DEPENDS xdp_packet_blaster
-            VERBATIM)
+        # an optional check target: a host with no Python 3 builds the tools
+        # without it, as check_header_guards above
+        find_package(Python3 COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_custom_target(test_xdp_packet_blaster
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_xdp_packet_blaster.py"
+                    "$<TARGET_FILE:xdp_packet_blaster>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/xdp_packet_blaster_cases.json"
+                DEPENDS xdp_packet_blaster
+                VERBATIM)
+        endif()
     endif()
     # benchmarks/transport_fill.cpp and benchmarks/lease_cost.cpp are built by hand
     # against each candidate's static library (benchmarks/transport_fill.md,
