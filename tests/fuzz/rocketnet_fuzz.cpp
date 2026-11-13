@@ -91,8 +91,8 @@ enum rocketnet_fuzz_type_t
     ROCKETNET_FUZZ_TYPE_BASE64_ENCODED,
     ROCKETNET_FUZZ_TYPE_CONFIG_INT_PARSED,
     ROCKETNET_FUZZ_TYPE_CONFIG_INT_REFUSED,
-    ROCKETNET_FUZZ_TYPE_CONFIG_LADDER_PARSED,
-    ROCKETNET_FUZZ_TYPE_CONFIG_LADDER_REFUSED,
+    ROCKETNET_FUZZ_TYPE_CONFIG_TRANSPORT_ORDER_PARSED,
+    ROCKETNET_FUZZ_TYPE_CONFIG_TRANSPORT_ORDER_REFUSED,
     ROCKETNET_FUZZ_TYPE_CONFIG_ENV_NAME,
     ROCKETNET_FUZZ_TYPE_CONFIG_ENV_NAME_REFUSED,
     ROCKETNET_FUZZ_TYPE_COUNT
@@ -126,8 +126,8 @@ static const struct rocketnet_fuzz_type_info_t rocketnet_fuzz_types[ROCKETNET_FU
     { "base64_encoded", -1 },
     { "config_int_parsed", -1 },
     { "config_int_refused", -1 },
-    { "config_ladder_parsed", -1 },
-    { "config_ladder_refused", -1 },
+    { "config_transport_order_parsed", -1 },
+    { "config_transport_order_refused", -1 },
     { "config_env_name", -1 },
     { "config_env_name_refused", -1 }
 };
@@ -378,43 +378,43 @@ static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
 
-    struct rocketnet_transport_order_t ladder;
-    memset( &ladder, 0, sizeof( ladder ) );
+    struct rocketnet_transport_order_t transport_order;
+    memset( &transport_order, 0, sizeof( transport_order ) );
 
-    const bool ladder_parsed = rocketnet_transport_order_parse( value, available, num_available, &ladder );
-    if ( ladder_parsed )
+    const bool order_parsed = rocketnet_transport_order_parse( value, available, num_available, &transport_order );
+    if ( order_parsed )
     {
-        rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_CONFIG_LADDER_PARSED]++;
+        rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_CONFIG_TRANSPORT_ORDER_PARSED]++;
     }
     else
     {
-        rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_CONFIG_LADDER_REFUSED]++;
+        rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_CONFIG_TRANSPORT_ORDER_REFUSED]++;
     }
 
-    if ( ladder_parsed )
+    if ( order_parsed )
     {
-        // a ladder that parsed is a ladder the transport will walk: every
+        // a transport order that parsed is a transport order the transport will walk: every
         // candidate must be a real transport index and the list must fit the
         // array it was written into
 
-        if ( ladder.num_candidates < 1 || ladder.num_candidates > ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+        if ( transport_order.num_candidates < 1 || transport_order.num_candidates > ROCKETNET_MAX_TRANSPORT_CANDIDATES )
         {
             abort();
         }
 
-        if ( ladder.num_skipped < 0 || ladder.num_skipped > ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+        if ( transport_order.num_skipped < 0 || transport_order.num_skipped > ROCKETNET_MAX_TRANSPORT_CANDIDATES )
         {
             abort();
         }
 
-        for ( int i = 0; i < ladder.num_candidates; i++ )
+        for ( int i = 0; i < transport_order.num_candidates; i++ )
         {
-            if ( ladder.candidates[i] < 0 || ladder.candidates[i] >= ROCKETNET_NUM_TRANSPORTS )
+            if ( transport_order.candidates[i] < 0 || transport_order.candidates[i] >= ROCKETNET_NUM_TRANSPORTS )
             {
                 abort();
             }
 
-            if ( rocketnet_transport_name( ladder.candidates[i] ) == NULL )
+            if ( rocketnet_transport_name( transport_order.candidates[i] ) == NULL )
             {
                 abort();
             }
@@ -548,13 +548,13 @@ static int rocketnet_fuzz_seed_build( int type, uint8_t * out, int capacity )
             memcpy( out + 1, "12x", 3 );
             return 4;
         }
-        case ROCKETNET_FUZZ_TYPE_CONFIG_LADDER_PARSED:
+        case ROCKETNET_FUZZ_TYPE_CONFIG_TRANSPORT_ORDER_PARSED:
         {
             out[0] = 3;
             memcpy( out + 1, "portable", 8 );
             return 9;
         }
-        case ROCKETNET_FUZZ_TYPE_CONFIG_LADDER_REFUSED:
+        case ROCKETNET_FUZZ_TYPE_CONFIG_TRANSPORT_ORDER_REFUSED:
         {
             out[0] = 3;
             memcpy( out + 1, "rocket", 6 );

@@ -18,7 +18,7 @@
 
 
 `proofs/tla/ServerConnection.tla` is the server of `sdk/rocketnet_server_protocol.cpp` (the
-request ladder, the response, the sealed session types, the sweep, the keep-alive and the
+request check sequence, the response, the sealed session types, the sweep, the keep-alive and the
 application disconnect) with its tables: the encryption map keyed by source address
 (`sdk/rocketnet_encryption_map.cpp`), the client slots (`sdk/rocketnet_client_slots.cpp`)
 and the two token tables as far as they decide admission (`sdk/rocketnet_token_tables.cpp`).
@@ -61,7 +61,7 @@ host vanishes with nothing sent.
 | Action | Who | Code |
 |---|---|---|
 | `ServerRecvRequest` | a request arrives | `rocketnet_server_protocol_process_connection_request`: a connected address is silent; a half-open mapping resends its stored challenge whatever the request's salt; no cookie, or one issued to another address, gets a cookie; a token bound elsewhere in the history, a connected client id or an admitted token is silent; the history records the binding; no free slot is a denied under fresh keys with no mapping; a full map is silent; else a mapping at a fresh nonce and its challenge |
-| `ServerRecvResponse` | a response opens under the mapping's handshake keys | the idle clock is refreshed before the ladder; `rocketnet_server_process_connection_response`: already connected or the client id connected is silent; no slot or the admitted set full of other tokens is a denied, mapping kept; else the token is admitted, a free slot assigned (`rocketnet_client_slots_assign` in `sdk/rocketnet_client_slots.cpp`, the top of its LIFO free stack; the model takes the lowest free slot) and the first keep-alive sent |
+| `ServerRecvResponse` | a response opens under the mapping's handshake keys | the idle clock is refreshed before the check sequence; `rocketnet_server_process_connection_response`: already connected or the client id connected is silent; no slot or the admitted set full of other tokens is a denied, mapping kept; else the token is admitted, a free slot assigned (`rocketnet_client_slots_assign` in `sdk/rocketnet_client_slots.cpp`, the top of its LIFO free stack; the model takes the lowest free slot) and the first keep-alive sent |
 | `ServerRecvSession` | a keep-alive or disconnect opens under the session keys | a mapping without a slot ignores it; a keep-alive refreshes the idle clock, confirms the slot and its block sets the keep-alive-acknowledged latch; a disconnect releases the slot and removes the mapping at once |
 | `ServerKeepAlive(i)` | the server's timer | `rocketnet_server_protocol_write_keep_alive_if_due`: paced off the keep-alive's own clock |
 | `ServerAppDisconnect(i)`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client`: the burst, then the slot released and the mapping removed |
@@ -73,7 +73,7 @@ host vanishes with nothing sent.
 | `C2SEnvironment`, `S2CEnvironment` | the path | Link's `Drop`, `Duplicate`, `Reorder`, `Delay` |
 
 Every packet that drives a transition crosses a Link instance; every packet has a receive
-step whatever the state (what the code's ladder, state gate or key check refuses is
+step whatever the state (what the code's check sequence, state gate or key check refuses is
 delivered and discarded), so the links' fairness is never vacuous (README-Link.md,
 caution 1).
 
@@ -143,7 +143,7 @@ the establishing keep-alive once at the response and never again. The code's beh
 - **The replay windows** are not modelled: a duplicated client keep-alive refreshes the slot
   again. That weakens nothing above (a copy on the wire is finite) and is `RNReplayWindow`'s
   business; F7 (a byte-identical response refreshes an established slot) is in the model as
-  the code has it, the refresh before the ladder.
+  the code has it, the refresh before the check sequence.
 - **The tokens** do not expire inside a run, so the admitted set never forgets (the code's
   entries leave only by expiry); the used-token history binds without eviction, and
   `History = "none"` is the flush the standard documents (S:2782-2786), checked as a separate

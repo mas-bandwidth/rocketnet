@@ -185,7 +185,7 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
     }
 }
 
-// the cookie mac generations the request ladder has paid on this thread.
+// the cookie mac generations the request check sequence has paid on this thread.
 // the gate-cost test reads the delta across one request: first contact --
 // a zero return cookie, the flood's shape -- must pay one mac, the fresh
 // cookie the refusal sends, and none for a verification a zero field can
@@ -422,7 +422,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // the request carries another salt and another token. That is a new
     // attempt from this address (the client reconnecting with a fresh token
     // while a stale half-open mapping, perhaps planted by a replay, holds
-    // its address): it goes down the whole ladder and replaces the half-open
+    // its address): it goes down the whole check sequence and replaces the half-open
     // mapping only if it passes every check, its signature verified and its
     // token bound to no address (proofs/tla/MCReceiveOrder.tla NewRequest).
     // The half-open mapping's own token may be bound (a response denied for
@@ -1222,7 +1222,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 // the sealed types through the reading order: size floor, mapping,
 // sequence, replay, open, replay advance, ack block, then dispatch. the
 // counter groups are per type, so the bookkeeping is table driven and the
-// flow is one straight ladder.
+// flow is one straight check sequence.
 
 // proofs/tla/MCReceiveOrder.tla IdleRemove: a half-open mapping can leave before its
 // handshake deadline -- by the idle timeout or the integrity limit -- and its

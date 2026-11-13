@@ -73,7 +73,7 @@
     THE HOSTILE LOAD. From --sockets sockets that are not players, at --pps
     in total shared by --threads senders, a mix of --kinds: garbage (random bytes), prefixed (the
     published test filter's prefilter header, then random bytes, so it passes
-    the prefilter and reaches the typed ladders), truncated (a valid header
+    the prefilter and reaches the typed check sequences), truncated (a valid header
     cut short), badsig (a connection request whose signature is random),
     expired (a correctly signed token that expired an hour ago), reqreplay
     (one valid, unexpired request replayed from every hostile socket) and

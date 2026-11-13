@@ -945,7 +945,7 @@ void rocketnet_server_socket_allow_commit()
 
 #if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
 // The suite's development control: select the pre-flight answer so the
-// production pin and ladder decisions can be asserted on a host that is
+// production pin and transport order decisions can be asserted on a host that is
 // neither admitted nor provisioned. It guards only this non-mutating
 // predicate; a create that reaches an attach still needs the commit barrier
 // lifted, which the suite never does for an available answer.
@@ -1400,7 +1400,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
                     (unsigned long long) memory_bytes );
 
     // R1: root. the data plane requires euid 0 -- the same refusal create
-    // itself would give, checked here so the ladder can name it without
+    // itself would give, checked here so the transport order can name it without
     // touching anything.
 
     if ( geteuid() != 0 )

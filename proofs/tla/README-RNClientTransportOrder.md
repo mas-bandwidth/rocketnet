@@ -1,6 +1,6 @@
-# RNClientLadder
+# RNClientTransportOrder
 
-`RNClientLadder.tla` models the client ladder at create
+`RNClientTransportOrder.tla` models the client transport order at create
 (`rocketnet_client_transport_create_impl` in
 `sdk/rocketnet_client_transport.cpp`, each socket opened and connected by
 `rocketnet_client_transport_open_connected`): which sockets the client
@@ -13,7 +13,7 @@ handshake that follows or the family race that runs after an IPv6 grant
 - **The token.** `token` is the set of families the connect token names:
   IPv4, IPv6 or both. The host is one with IPv6, so a token naming IPv6
   selects its IPv6 server first (`rocketnet_client_protocol_pick_server_address`).
-  A host without IPv6 selects the IPv4 server and is a one-family ladder.
+  A host without IPv6 selects the IPv4 server and is a one-family transport order.
 - **The outcomes.** `outcome[<<r, f>>]` is what the socket for family `f`
   on candidate `r` does: `"ok"` (opened and connected), `"refused"` (an open
   refused, or a connect the kernel refused: no route, a link-local address
@@ -37,9 +37,9 @@ handshake that follows or the family race that runs after an IPv6 grant
 
 - `TypeOK` holds the ranges.
 - `TriedInToken`: every socket dials a server the token names.
-- `LadderOrder`: the sockets are tried candidate by candidate, the selected
+- `TransportOrder`: the sockets are tried candidate by candidate, the selected
   family first and the IPv4 fallback next, no candidate skipped.
-- `NoExhaustWhileReachable`: the ladder exhausts only when no socket the
+- `NoExhaustWhileReachable`: the transport order exhausts only when no socket the
   token names, on any candidate, would have been granted.
 - `NoTryAfterOom`: a refusal for want of memory is the last socket tried, on
   either family.
@@ -52,27 +52,27 @@ handshake that follows or the family race that runs after an IPv6 grant
 
 ## Cases
 
-- `proofs/tla/MCRNClientLadder.cfg` passes: three candidates, every token
+- `proofs/tla/MCRNClientTransportOrder.cfg` passes: three candidates, every token
   shape and every outcome, all invariants and `Terminates` (5,385 distinct
   states).
-- `proofs/tla/MCRNClientLadderPin.cfg` passes: the same at one candidate, a
+- `proofs/tla/MCRNClientTransportOrderPin.cfg` passes: the same at one candidate, a
   pinned transport (57 distinct states).
-- `proofs/tla/MCRNClientLadderBrokenNoFallback.cfg` violates
+- `proofs/tla/MCRNClientTransportOrderBrokenNoFallback.cfg` violates
   `NoExhaustWhileReachable`. `Broken = {"nofallback"}` falls to the next
   candidate on an IPv6 refusal. TLC's trace: a token naming both families,
   the IPv6 socket refused and the IPv4 socket granted on both of two
   candidates; the client tries IPv6 on candidate 1, then IPv6 on candidate 2,
-  and the ladder exhausts with a reachable IPv4 server never dialed. This is
-  the ladder that dials only the selected server on every candidate, the
+  and the transport order exhausts with a reachable IPv4 server never dialed. This is
+  the transport order that dials only the selected server on every candidate, the
   shape `test_client_family_fallback_ipv6_connect_refused_auto` reproduces
   on the fake client driver.
-- `proofs/tla/MCRNClientLadderBrokenOomFalls.cfg` violates `NoTryAfterOom`.
+- `proofs/tla/MCRNClientTransportOrderBrokenOomFalls.cfg` violates `NoTryAfterOom`.
   `Broken = {"oomfalls"}` treats an IPv6 refusal for want of memory as an
   ordinary refusal. TLC's trace: a token naming both families, the IPv6
   socket on candidate 1 refused for memory; the client tries the IPv4 server
   on candidate 1 and is granted, so a create that ran out of memory carries
   on. `test_client_family_fallback_out_of_memory_is_fatal` is the unit case.
-- `proofs/tla/MCRNClientLadderBrokenIgnoresToken.cfg` violates `TriedInToken`.
+- `proofs/tla/MCRNClientTransportOrderBrokenIgnoresToken.cfg` violates `TriedInToken`.
   `Broken = {"ignorestoken"}` falls back to IPv4 for any refused IPv6 socket.
   TLC's trace: a token naming IPv6 alone, its socket on candidate 1 refused;
   the client tries an IPv4 server the token does not name.
@@ -82,7 +82,7 @@ handshake that follows or the family race that runs after an IPv6 grant
 Each trace was checked by hand against
 `rocketnet_client_transport_create_impl`: the fallback runs only when
 `both_families` holds and the refusal's status is not `OUT_OF_MEMORY`, on the
-candidate the ladder is on, and the race opens its second socket only when
+candidate the transport order is on, and the race opens its second socket only when
 the grant is the IPv6 server.
 
 The model bounds the list to three candidates; the code's lists are short

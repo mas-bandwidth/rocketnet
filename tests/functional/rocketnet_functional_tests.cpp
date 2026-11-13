@@ -2098,7 +2098,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
     // an IPv6 server is unreachable without IPv6: the create refuses with
-    // the existing ladder-exhausted status and says why once.
+    // the existing no-transport-found status and says why once.
 
     rocketnet_check( rocketnet_write_test_connect_token( "[::1]:9", rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
@@ -6185,7 +6185,7 @@ void rocketnet_test_server_port_zero_transport()
         // level a deployed binary and this suite run at:
         // the per-rung warn is invisible there, so if the rule were only a
         // warn a pinned port-zero create would return NULL with nothing
-        // anywhere saying why. The exhausted-ladder path restates it as an
+        // anywhere saying why. The no-transport-found path restates it as an
         // error, and this asserts that restatement rather than the warn.
 
         struct rocketnet_server_transport_config_t config;
@@ -6213,7 +6213,7 @@ void rocketnet_test_server_port_zero_transport()
 
         // and at a level that shows warns, the RUNG's own refusal names
         // the rule and the transport together -- matched as one phrase, since
-        // the transport name alone also appears in the exhausted-ladder error
+        // the transport name alone also appears in the no-transport-found error
         // and would pass this check without the rule being mentioned
 
         char expected_rung_refusal[128];
@@ -6262,7 +6262,7 @@ void rocketnet_test_server_port_zero_transport()
 #endif // #if ROCKETNET_XDP
 
         // and the rung refusal is a RUNG refusal, not a create refusal:
-        // put a discovering rung after it and the ladder falls, the port
+        // put a discovering rung after it and the transport order falls, the port
         // is discovered, and the advertised address is the real one.
 
         snprintf( config.transport, sizeof( config.transport ), "%s,portable", name );
@@ -6307,8 +6307,8 @@ void rocketnet_test_server_transport_io_pin_gso()
 void rocketnet_test_server_transport_io_pin_io_uring()
 {
     // a build without liburing has an io_uring row with no backend: the row
-    // is unavailable, and a pin of it is skipped softly by the ladder, so
-    // a ladder that names it falls to the next rung
+    // is unavailable, and a pin of it is skipped softly by the transport order, so
+    // a transport order that names it falls to the next rung
 
     const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( ROCKETNET_TRANSPORT_IO_URING );
     rocketnet_check( definition );
@@ -6384,11 +6384,11 @@ static void rocketnet_test_xdp_natural_guest( const char * case_name )
     rocketnet_xdp_veth_pair_down( natural );
 }
 
-// The documented natural provisioned ladder result: a port-zero address has
-// the port-zero rule refuse xdp before its create, and the ladder grants gso,
+// The documented natural provisioned transport order result: a port-zero address has
+// the port-zero rule refuse xdp before its create, and the transport order grants gso,
 // which discovers the real port. The rule is named in the log.
 
-static void rocketnet_test_xdp_ladder_port_zero( const struct rocketnet_server_transport_config_t * config )
+static void rocketnet_test_xdp_order_port_zero( const struct rocketnet_server_transport_config_t * config )
 {
     enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", config );
@@ -6574,9 +6574,9 @@ void rocketnet_test_xdp_create_refuses_link_local()
 
 #endif // #if ROCKETNET_XDP && ROCKETNET_DEV
 
-void rocketnet_test_server_transport_io_ladder_fall()
+void rocketnet_test_server_transport_io_order_fall()
 {
-    // The fall runs the production ladder in both pre-flight answers, not
+    // The fall runs the production transport order in both pre-flight answers, not
     // as a stand-down. With the pre-flight unavailable the xdp rung refuses
     // and the next rung -- gso -- grants; with it available and the commit
     // barrier installed the xdp rung refuses at the barrier and the same
@@ -6604,7 +6604,7 @@ void rocketnet_test_server_transport_io_ladder_fall()
     const bool naturally_provisioned = rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS );
 
 #if ROCKETNET_DEV
-    // FORCED UNAVAILABLE: xdp refuses at its own pre-flight, the ladder
+    // FORCED UNAVAILABLE: xdp refuses at its own pre-flight, the transport order
     // falls to gso on a real port, and both the refusal and the grant are
     // named.
 
@@ -6628,7 +6628,7 @@ void rocketnet_test_server_transport_io_ladder_fall()
     rocketnet_test_xdp_server_destroy( server );
 
     // FORCED AVAILABLE: the direct answer is yes, the barrier stays
-    // installed, xdp refuses at the barrier, and the ladder still falls to
+    // installed, xdp refuses at the barrier, and the transport order still falls to
     // gso rather than portable.
 
     rocketnet_server_socket_set_preflight_test_result( 1 );
@@ -6652,24 +6652,24 @@ void rocketnet_test_server_transport_io_ladder_fall()
     {
         // THE ADMITTED GUEST LEG: first prove the natural provisioned path
         // grants the requested xdp backend, then the documented port-zero
-        // ladder result -- gso, with the port-zero rule naming xdp. A guest
+        // transport order result -- gso, with the port-zero rule naming xdp. A guest
         // that is not provisioned fails the first leg by name, never skips.
 
-        rocketnet_test_xdp_natural_guest( "test_server_transport_io_ladder_fall" );
-        rocketnet_test_xdp_ladder_port_zero( &config );
+        rocketnet_test_xdp_natural_guest( "test_server_transport_io_order_fall" );
+        rocketnet_test_xdp_order_port_zero( &config );
     }
     else if ( naturally_provisioned )
     {
         // the port-zero rule refuses xdp before its create, so the documented
         // result is gso discovering the real port; the rule is named in the
-        // log. This is the natural provisioned ladder result.
+        // log. This is the natural provisioned transport order result.
 
-        rocketnet_test_xdp_ladder_port_zero( &config );
+        rocketnet_test_xdp_order_port_zero( &config );
     }
     else
     {
         // the natural unavailable answer: xdp refuses at its pre-flight on a
-        // real port and the ladder falls to gso, with the refusal named
+        // real port and the transport order falls to gso, with the refusal named
 
 #if ROCKETNET_DEV
         rocketnet_server_socket_allow_commit();
@@ -6725,18 +6725,18 @@ void rocketnet_test_server_transport_io_pin_msgx()
 #include "../suite_runner.h"
 
 // test_transport_all_skipped_uses_auto, and on Linux
-// test_server_transport_io_ladder_fall, create the development config's
+// test_server_transport_io_order_fall, create the development config's
 // full-capacity server (ROCKETNET_MAX_CLIENTS slots) on "127.0.0.1:0" and
-// accept whichever rung the ladder grants, so their footprint is the server
+// accept whichever rung the transport order grants, so their footprint is the server
 // memory plan, not the suite-wide bound: the per-slot ACK history and the
 // transport's owned receive buffers are allocated up front by design. The rungs that can grant a port-zero address
 // are the auto-order transports that are not pin-only and that discover
 // their bound port (the port-zero rule refuses the rest before create); the
-// ladder fall's "xdp,gso,portable" is a subset of them. The bound is the
+// transport order fall's "xdp,gso,portable" is a subset of them. The bound is the
 // largest of their plans plus 32 MiB for the process, as the other
 // full-capacity cases state.
 
-static long rocketnet_test_port_zero_ladder_rss_bound_mb()
+static long rocketnet_test_port_zero_order_rss_bound_mb()
 {
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -6767,15 +6767,15 @@ static long rocketnet_test_port_zero_ladder_rss_bound_mb()
     char verbose[256];
     if ( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
     {
-        printf( "port_zero_ladder rss_budget planned_bytes=%llu margin_mb=32 bound_mb=%ld\n",
+        printf( "port_zero_order rss_budget planned_bytes=%llu margin_mb=32 bound_mb=%ld\n",
                 (unsigned long long) planned, bound );
     }
     return bound;
 }
 
-SUITE_CASE_RSS_BOUND( test_transport_all_skipped_uses_auto, rocketnet_test_port_zero_ladder_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_transport_all_skipped_uses_auto, rocketnet_test_port_zero_order_rss_bound_mb );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-SUITE_CASE_RSS_BOUND( test_server_transport_io_ladder_fall, rocketnet_test_port_zero_ladder_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_server_transport_io_order_fall, rocketnet_test_port_zero_order_rss_bound_mb );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 void rocketnet_test_transport_all_skipped_uses_auto()
@@ -13468,7 +13468,7 @@ void rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait()
 // was passed over for another candidate fails the sweep. Every server
 // transport this platform lists (rocketnet_server_transport_io_availability)
 // is swept pinned on its own, with its own client transport where the client
-// list has it and portable where not, and the automatic ladder once; a listed
+// list has it and portable where not, and the automatic transport order once; a listed
 // transport that is not granted fails the sweep. Three are printed and
 // skipped, each for a reason this host reports: loopback opens no socket and
 // allocates nothing in its create (the unit loopback walks sweep it); xdp
@@ -14344,7 +14344,7 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
 }
 
 
-// The family fallback on real sockets (proofs/tla/RNClientLadder.tla). A
+// The family fallback on real sockets (proofs/tla/RNClientTransportOrder.tla). A
 // development token names a live portable server bound to 127.0.0.1 and an
 // IPv6 address no host reaches: [2001:db8::1] (the documentation prefix) and
 // [fe80::1] (link-local with no interface). Each socket client transport
@@ -15963,7 +15963,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_XDP && ROCKETNET_DEV
     { "test_xdp_transport_create_refuses_link_local", rocketnet_test_xdp_create_refuses_link_local, NULL },
 #endif // #if ROCKETNET_XDP && ROCKETNET_DEV
-    { "test_server_transport_io_ladder_fall", rocketnet_test_server_transport_io_ladder_fall, rocketnet_test_server_pin_allows_gso },
+    { "test_server_transport_io_order_fall", rocketnet_test_server_transport_io_order_fall, rocketnet_test_server_pin_allows_gso },
     { "test_gso_transport_server_probe", rocketnet_test_server_gso_probe, NULL },
     { "test_gso_transport_server_wire_ipv4", rocketnet_test_server_gso_wire_ipv4, NULL },
     { "test_gso_transport_server_wire_plain", rocketnet_test_server_gso_wire_plain, NULL },

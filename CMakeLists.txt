@@ -822,7 +822,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
     endif()
-    # The counter ladder audit (source_audit_counter_classes.cpp) reads the sdk
+    # The counter check sequence audit (source_audit_counter_classes.cpp) reads the sdk
     # files it names, relative to the source directory. Which counters a test
     # observes is tools/check_counter_observed.py, from the build's own file set.
     set_property( SOURCE tests/source_audit_counter_classes.cpp APPEND PROPERTY COMPILE_DEFINITIONS

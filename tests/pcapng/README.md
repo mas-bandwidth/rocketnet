@@ -25,7 +25,7 @@ Anything else is refused by name: `PCAPNG_TRUNCATED_BLOCK` (a block runs past th
 
 ### Interface 0: the wire
 
-`LINKTYPE_IPV4` (228). Each packet is a synthetic IPv4 + UDP frame (header length 20, TTL 64, a correct header checksum, UDP checksum 0) around the exact datagram the transport handed the simulator. The addresses are the harness's test endpoints: the client `198.51.100.7:56789` and the server `203.0.113.10:40000`, so a frame's destination says which end's receive ladder it meets.
+`LINKTYPE_IPV4` (228). Each packet is a synthetic IPv4 + UDP frame (header length 20, TTL 64, a correct header checksum, UDP checksum 0) around the exact datagram the transport handed the simulator. The addresses are the harness's test endpoints: the client `198.51.100.7:56789` and the server `203.0.113.10:40000`, so a frame's destination says which end's receive check sequence it meets.
 
 ### Interface 1: the opened plaintext
 
@@ -112,7 +112,7 @@ Captures are not byte-reproducible: the connection keys and salts are random per
 
 `test_pcapng_corpus_replay` reads every `.pcapng` here and under `regress/`, with file input only: no sockets, no threads, and no time but the files' timestamps, each at or after 1000.0 s.
 
-- An interface-0 frame is unwrapped (`PCAPNG_FRAME_NOT_IPV4_UDP` when it is not one) and its datagram goes through the receive ladder of the end it is addressed to, up to the first rung that needs a key or connection state: `rocketnet_prefilter_check`, the reserved types, the direction rule, the per-type wire size. A server-bound read is checked against `ROCKETNET_WIRE_SERVER_PACKET_VALID`, the kernel filter's rule. A connect request goes on through the fixed-offset version and protocol id comparisons into `rocketnet_read_connect_token`, `rocketnet_verify_signed_connect_data`, `rocketnet_open_connect_token_private` and `rocketnet_connect_token_private_consistent`, under the published test keys of `sdk/rocketnet_test_vectors.h` that the harness signs with; the opened private fields are wiped at once and never printed.
+- An interface-0 frame is unwrapped (`PCAPNG_FRAME_NOT_IPV4_UDP` when it is not one) and its datagram goes through the receive check sequence of the end it is addressed to, up to the first rung that needs a key or connection state: `rocketnet_prefilter_check`, the reserved types, the direction rule, the per-type wire size. A server-bound read is checked against `ROCKETNET_WIRE_SERVER_PACKET_VALID`, the kernel filter's rule. A connect request goes on through the fixed-offset version and protocol id comparisons into `rocketnet_read_connect_token`, `rocketnet_verify_signed_connect_data`, `rocketnet_open_connect_token_private` and `rocketnet_connect_token_private_consistent`, under the published test keys of `sdk/rocketnet_test_vectors.h` that the harness signs with; the opened private fields are wiped at once and never printed.
 - An interface-1 record goes to its reader. An ack block is read with an honest sender's context (the block's own largest stands in for the receiver's highest sent), then the type data is held to its type's opened size. A message payload is read with the default message limits and every first-version channel type enabled.
 
 Each packet ends read (`read <end> <what>`) or refused under the name of the counter the code fires (`sdk/rocketnet_counters.h`; a message payload's refusal is `MESSAGE_PROTOCOL_VIOLATION` plus the violation's name). A packet that ends neither way fails the test with its file and index. Under a counting allocator the replay's live bytes end at zero.

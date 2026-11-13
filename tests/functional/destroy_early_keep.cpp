@@ -47,7 +47,7 @@ static void destroy_check_handler( const char * condition, const char * function
 extern void rocketnet_functional_restore_log_function();
 extern void rocketnet_functional_restore_assert_function();
 
-// Clear the transport pins so create resolves the default threaded ladder.
+// Clear the transport pins so create resolves the default threaded transport order.
 class destroy_env_guard_t
 {
 public:
@@ -201,7 +201,7 @@ static void destroy_pair_create( destroy_pair_t * pair, void * context )
     server_config.protocol_id = DESTROY_EARLY_PROTOCOL;
     server_config.max_clients = 4;
     memcpy( server_config.backend_public_key, pair->backend_public, sizeof( server_config.backend_public_key ) );
-    // transport is left at its default, so the threaded ladder decides.
+    // transport is left at its default, so the threaded transport order decides.
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     pair->server = rocketnet_server_create( context, "127.0.0.1:0", NULL, &server_config, &status );
     check( pair->server != NULL && status == ROCKETNET_STATUS_OK );

@@ -60,7 +60,7 @@ static int counters_find( const char * name )
 }
 
 // ---------------------------------------------------------------------------
-// the source audit: the counter ladders' own source
+// the source audit: the counter check sequences' own source
 
 #ifndef ROCKETNET_SOURCE_DIR
 #error "the build passes ROCKETNET_SOURCE_DIR to this file"
@@ -101,24 +101,24 @@ static bool counters_is_identifier_char( char c )
 // ---------------------------------------------------------------------------
 // 2: an outcome sits in at most one family
 
-// An outcome counted from two ladders balances only while it stays zero: the
-// request ladder and the response ladder both counted
+// An outcome counted from two check sequences balances only while it stays zero: the
+// request check sequence and the response check sequence both counted
 // CONNECTION_REQUEST_INTERNAL_ERROR, so the two families held only while it
 // was 0. The family column gives each counter one family; this test reads the
-// ladders' own source and fails when a ladder counts a counter that sums into
-// another family. The ladder functions named here are the ones that own a
+// check sequences' own source and fails when a check sequence counts a counter that sums into
+// another family. The check sequence functions named here are the ones that own a
 // RECEIVED counter in their own body; the sealed types share one table-driven
-// ladder in each protocol file, and a counter in a table row has one place by
+// check sequence in each protocol file, and a counter in a table row has one place by
 // construction.
 
-struct counters_ladder_t
+struct counters_check_sequence_t
 {
     const char * file;
     const char * function;
     const char * received;      // the RECEIVED counter whose outcomes this function counts
 };
 
-static const counters_ladder_t counters_ladders[] = {
+static const counters_check_sequence_t counters_check_sequences[] = {
     { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_protocol_process_connection_request_known", "CONNECTION_REQUEST_RECEIVED" },
     { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_process_opened_request", "CONNECTION_REQUEST_RECEIVED" },
     { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_process_connection_response", "CONNECTION_RESPONSE_RECEIVED" },
@@ -165,7 +165,7 @@ static bool counters_function_body( const std::string & text, const char * funct
 
 // every counter a text counts: any ROCKETNET_COUNTER_<NAME> in the code, whatever
 // follows it. Matching `] ++` alone passed the same count written `+= 1` and
-// one handed to a helper (VERIFY-3 W18); a ladder body names a counter only
+// one handed to a helper (VERIFY-3 W18); a check sequence body names a counter only
 // to count it, so every name in it is a count. The caller passes code with
 // comments and literals blanked.
 
@@ -199,21 +199,21 @@ static void test_counters_every_outcome_in_at_most_one_family()
 {
     int shared = 0;
 
-    for ( size_t i = 0; i < sizeof( counters_ladders ) / sizeof( counters_ladders[0] ); i++ )
+    for ( size_t i = 0; i < sizeof( counters_check_sequences ) / sizeof( counters_check_sequences[0] ); i++ )
     {
-        const counters_ladder_t & ladder = counters_ladders[i];
+        const counters_check_sequence_t & check_sequence = counters_check_sequences[i];
 
         std::string text;
-        check( counters_read_file( ladder.file, text ) );
+        check( counters_read_file( check_sequence.file, text ) );
 
         std::string body;
-        if ( !counters_function_body( text, ladder.function, body ) )
+        if ( !counters_function_body( text, check_sequence.function, body ) )
         {
-            printf( "ladder function not found: %s in %s\n", ladder.function, ladder.file );
+            printf( "check sequence function not found: %s in %s\n", check_sequence.function, check_sequence.file );
         }
-        check( counters_function_body( text, ladder.function, body ) );
+        check( counters_function_body( text, check_sequence.function, body ) );
 
-        const int received = counters_find( ladder.received );
+        const int received = counters_find( check_sequence.received );
         check( received >= 0 );
 
         const std::vector<std::string> counted = counters_incremented( source_audit_code_only( body ) );
@@ -232,15 +232,15 @@ static void test_counters_every_outcome_in_at_most_one_family()
             {
                 continue;
             }
-            printf( "ROCKETNET_COUNTER_%s is counted in %s (the %s ladder) but sums into %s\n",
-                    counted[j].c_str(), ladder.function, ladder.received, counters_rows[family].name );
+            printf( "ROCKETNET_COUNTER_%s is counted in %s (the %s check sequence) but sums into %s\n",
+                    counted[j].c_str(), check_sequence.function, check_sequence.received, counters_rows[family].name );
             shared++;
         }
     }
 
     check( shared == 0 );
 
-    // the two connection ladders each have an internal error of their own
+    // the two connection check sequences each have an internal error of their own
 
     check( counters_rows[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR].family == ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED );
     check( counters_rows[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR].family == ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED );
@@ -252,7 +252,7 @@ REGISTER_UNIT_TEST( test_counters_every_outcome_in_at_most_one_family );
 // 3: every server process outcome lives with its siblings, documented
 
 // ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED is one of the outcomes returned by
-// the request ladder, so it belongs beside the other ROCKETNET_SERVER_PROCESS_*
+// the request check sequence, so it belongs beside the other ROCKETNET_SERVER_PROCESS_*
 // defines and in their comments, not in the counters header. This reads the
 // two headers and fails when the define is out of place or undocumented.
 

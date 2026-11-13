@@ -349,7 +349,7 @@ static void test_client_transport_connects_socket_to_server()
 }
 
 // a connect the kernel refuses refuses the transport: it is closed, nothing
-// is sent, and with no other rung the create fails as the ladder exhausted
+// is sent, and with no other rung the create fails as the transport order exhausted
 
 static void test_client_transport_refuses_when_connect_fails()
 {

@@ -109,7 +109,7 @@ the next candidate is tried (`client transport portable refused the
 IPv6 server ... trying the IPv4 server ...`), and a client granted that way
 races nothing. A refusal for want of memory on either family ends the create
 with `ROCKETNET_STATUS_OUT_OF_MEMORY` (TRANSPORT.md t11 rule 3,
-`proofs/tla/RNClientLadder.tla`, `tests/test_unit_client_family_fallback.cpp`). `tests/test_unit_client_transport_ranking.cpp` pins the order, the
+`proofs/tla/RNClientTransportOrder.tla`, `tests/test_unit_client_family_fallback.cpp`). `tests/test_unit_client_transport_ranking.cpp` pins the order, the
 fallback and the pins. `msgx` and `portable` share one client table, and the pump is
 the socket's, chosen at create from the transport name: `msgx` the Darwin
 `sendmsg_x`/`recvmsg_x` batch pump, `portable` the per-packet loop. On Linux

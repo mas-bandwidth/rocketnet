@@ -1,6 +1,6 @@
 # Dictionary for tests/fuzz/rocketnet_fuzz_token_private.cpp. Each entry is the
 # little-endian spelling of a named constant in sdk/ (cited beside it), the
-# bytes the token readers and the request ladder compare against.
+# bytes the token readers and the request check sequence compare against.
 
 # selectors: private layout, signed layout, minted, raw signed (input[0] & 3)
 sel_private="\x00"

@@ -183,7 +183,7 @@ static void test_client_transport_create_ex_reports_every_status()
     check_create_status( ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION, token, NULL, &state, &status );
 #endif // #if !ROCKETNET_DEV
 
-    // C5: an unparseable transport candidate list refuses at the ladder parse
+    // C5: an unparseable transport candidate list refuses at the transport order parse
     {
         struct rocketnet_client_transport_config_t config;
         own_filter_config( &config );

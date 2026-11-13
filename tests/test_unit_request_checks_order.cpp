@@ -4,7 +4,7 @@
 */
 
 // standard/TRANSPORT.md t12 rules 1 to 6 and t17 rule 4: the connection
-// request ladder and the half-open refresh.
+// request check sequence and the half-open refresh.
 //
 // The refresh: a request for the mapping's token from an address holding a
 // half-open mapping is answered with the stored challenge whatever its salt, and only a request
@@ -12,8 +12,8 @@
 // deadline (sdk/rocketnet_server_protocol.cpp, the mapping branch of
 // rocketnet_server_protocol_process_connection_request).
 //
-// The ladder: a request that fails two rungs counts the rung the code checks
-// first, so the counter a refusal lands on names the ladder's order.
+// The check sequence: a request that fails two rungs counts the rung the code checks
+// first, so the counter a refusal lands on names the check sequence's order.
 
 #include "test_unit_registry.h"
 
@@ -36,14 +36,14 @@
 
 #define check rocketnet_unit_check
 
-struct request_ladder_server_t
+struct request_checks_server_t
 {
     struct rocketnet_server_protocol_t server;
     struct rocketnet_counters_t counters;
     struct rocketnet_address_t client_address;
 };
 
-static void request_ladder_server_setup( struct request_ladder_server_t * test )
+static void request_checks_server_setup( struct request_checks_server_t * test )
 {
     memset( test, 0, sizeof( *test ) );
 
@@ -73,7 +73,7 @@ static void request_ladder_server_setup( struct request_ladder_server_t * test )
     check( rocketnet_address_parse( &test->client_address, "198.51.100.7:56789" ) );
 }
 
-static void request_ladder_server_teardown( struct request_ladder_server_t * test )
+static void request_checks_server_teardown( struct request_checks_server_t * test )
 {
     rocketnet_counters_assert_conserved( &test->counters );
     rocketnet_encryption_map_destroy( test->server.encryption_map );
@@ -81,7 +81,7 @@ static void request_ladder_server_teardown( struct request_ladder_server_t * tes
     rocketnet_client_slots_destroy( test->server.client_slots );
 }
 
-static void request_ladder_build_request( uint8_t * request, const uint8_t * salt )
+static void request_checks_build_request( uint8_t * request, const uint8_t * salt )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
@@ -117,7 +117,7 @@ static void request_ladder_build_request( uint8_t * request, const uint8_t * sal
                                                token.signed_connect_data, token.signature );
 }
 
-static int request_ladder_process( struct request_ladder_server_t * test, const uint8_t * request,
+static int request_checks_process( struct request_checks_server_t * test, const uint8_t * request,
                                    uint64_t current_timestamp, double current_time,
                                    uint8_t * response, int * response_bytes )
 {
@@ -127,30 +127,30 @@ static int request_ladder_process( struct request_ladder_server_t * test, const 
                                                                  response, response_bytes );
 }
 
-static const uint8_t request_ladder_other_salt[ROCKETNET_CONNECTION_SALT_BYTES] = {
+static const uint8_t request_checks_other_salt[ROCKETNET_CONNECTION_SALT_BYTES] = {
     0x4c, 0x41, 0x44, 0x44, 0x45, 0x52, 0x30, 0x32
 };
 
 // t17 rule 4: a wrong salt is answered, and does not keep the mapping alive
-static void test_request_ladder_wrong_salt_does_not_refresh_half_open()
+static void test_request_checks_wrong_salt_does_not_refresh_half_open()
 {
-    struct request_ladder_server_t test;
-    request_ladder_server_setup( &test );
+    struct request_checks_server_t test;
+    request_checks_server_setup( &test );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    request_ladder_build_request( request, rocketnet_test_salt );
+    request_checks_build_request( request, rocketnet_test_salt );
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
     // the cookie exchange, then the request that creates the half-open mapping at 1000.0
 
-    check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( request_checks_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
     memcpy( request + ROCKETNET_PREFILTER_BYTES,
             response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
             ROCKETNET_COOKIE_FIELD_BYTES );
-    check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( request_checks_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
 
     const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( index != -1 );
@@ -163,28 +163,28 @@ static void test_request_ladder_wrong_salt_does_not_refresh_half_open()
 
     uint8_t other_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     memcpy( other_request, request, sizeof( other_request ) );
-    memcpy( other_request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, request_ladder_other_salt, ROCKETNET_CONNECTION_SALT_BYTES );
+    memcpy( other_request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, request_checks_other_salt, ROCKETNET_CONNECTION_SALT_BYTES );
 
     const uint64_t resent_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT];
-    check( request_ladder_process( &test, other_request, ROCKETNET_TEST_CREATE_TS, 1003.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( request_checks_process( &test, other_request, ROCKETNET_TEST_CREATE_TS, 1003.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT] == resent_before + 1 );
     check( mapping->control->last_receive_time == 1000.0 );
 
     // the matching salt refreshes it
 
-    check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1004.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( request_checks_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1004.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( mapping->control->last_receive_time == 1004.0 );
 
-    request_ladder_server_teardown( &test );
+    request_checks_server_teardown( &test );
 }
 
 // t12 rules 4 to 6: expiry is checked before the server public key, and the
 // version before expiry; each two-rung failure counts the earlier rung only
-static void test_request_ladder_two_rung_failure_counts_first_rung()
+static void test_request_checks_two_rung_failure_counts_first_rung()
 {
-    struct request_ladder_server_t test;
-    request_ladder_server_setup( &test );
+    struct request_checks_server_t test;
+    request_checks_server_setup( &test );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -195,22 +195,22 @@ static void test_request_ladder_two_rung_failure_counts_first_rung()
 
     // expired (current timestamp at the expire timestamp) and sealed to another server key
 
-    request_ladder_build_request( request, rocketnet_test_salt );
+    request_checks_build_request( request, rocketnet_test_salt );
     request[signed_offset + ROCKETNET_SIGNED_OFFSET_SERVER_KEY] ^= 1;
-    check( request_ladder_process( &test, request, ROCKETNET_TEST_EXPIRE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( request_checks_process( &test, request, ROCKETNET_TEST_EXPIRE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( response_bytes == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] == 0 );
 
     // a wrong version and expired
 
-    request_ladder_build_request( request, rocketnet_test_salt );
+    request_checks_build_request( request, rocketnet_test_salt );
     request[signed_offset + ROCKETNET_SIGNED_OFFSET_VERSION] ^= 1;
-    check( request_ladder_process( &test, request, ROCKETNET_TEST_EXPIRE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( request_checks_process( &test, request, ROCKETNET_TEST_EXPIRE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] == 1 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
 
-    request_ladder_server_teardown( &test );
+    request_checks_server_teardown( &test );
 }
 
 // t12: the signed zero pad and the server public key are compared over their
@@ -218,10 +218,10 @@ static void test_request_ladder_two_rung_failure_counts_first_rung()
 // byte of either is refused, unanswered, on its own rung and no other; with
 // both wrong the pad's rung counts; the unmodified request still gets its
 // cookie.
-static void test_request_ladder_pad_and_server_key_compare_every_byte()
+static void test_request_checks_pad_and_server_key_compare_every_byte()
 {
-    struct request_ladder_server_t test;
-    request_ladder_server_setup( &test );
+    struct request_checks_server_t test;
+    request_checks_server_setup( &test );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -238,28 +238,28 @@ static void test_request_ladder_pad_and_server_key_compare_every_byte()
 
     for ( int i = 0; i < pad_bytes; i++ )
     {
-        request_ladder_build_request( request, rocketnet_test_salt );
+        request_checks_build_request( request, rocketnet_test_salt );
         request[signed_offset + pad_offset + i] = 0x80;
         response_bytes = -1;
-        check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( request_checks_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         check( response_bytes == 0 );
     }
 
     for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
     {
-        request_ladder_build_request( request, rocketnet_test_salt );
+        request_checks_build_request( request, rocketnet_test_salt );
         request[signed_offset + ROCKETNET_SIGNED_OFFSET_SERVER_KEY + i] ^= 0x01;
         response_bytes = -1;
-        check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( request_checks_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         check( response_bytes == 0 );
     }
 
     // both wrong: the pad is the earlier rung
 
-    request_ladder_build_request( request, rocketnet_test_salt );
+    request_checks_build_request( request, rocketnet_test_salt );
     request[signed_offset + pad_offset + pad_bytes - 1] = 0x01;
     request[signed_offset + ROCKETNET_SIGNED_OFFSET_SERVER_KEY + ROCKETNET_KEY_BYTES - 1] ^= 0x01;
-    check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( request_checks_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
 
     const uint64_t * after = test.counters.values;
     check( after[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] + (uint64_t) ( pad_bytes + ROCKETNET_KEY_BYTES + 1 ) );
@@ -270,14 +270,14 @@ static void test_request_ladder_pad_and_server_key_compare_every_byte()
 
     // the unmodified request passes both rungs and is answered with a cookie
 
-    request_ladder_build_request( request, rocketnet_test_salt );
-    check( request_ladder_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    request_checks_build_request( request, rocketnet_test_salt );
+    check( request_checks_process( &test, request, ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] + 1 );
 
-    request_ladder_server_teardown( &test );
+    request_checks_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( test_request_ladder_wrong_salt_does_not_refresh_half_open );
-REGISTER_UNIT_TEST( test_request_ladder_two_rung_failure_counts_first_rung );
-REGISTER_UNIT_TEST( test_request_ladder_pad_and_server_key_compare_every_byte );
+REGISTER_UNIT_TEST( test_request_checks_wrong_salt_does_not_refresh_half_open );
+REGISTER_UNIT_TEST( test_request_checks_two_rung_failure_counts_first_rung );
+REGISTER_UNIT_TEST( test_request_checks_pad_and_server_key_compare_every_byte );

@@ -1276,7 +1276,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     // the address the caller asked for: the bound port is written into
     // bind_address once the socket is bound, and a create that fails after
     // that hands the caller back what it asked for, so the next transport of
-    // the ladder never inherits this one's ephemeral port
+    // the transport order never inherits this one's ephemeral port
     const rocketnet_address_t requested_address = *bind_address;
 
     SOCKADDR_INET address;
@@ -1461,7 +1461,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     if ( bind_result == SOCKET_ERROR )
     {
         // a held port or an address this host cannot bind; a refusal for want
-        // of buffers (WSAENOBUFS) reads OUT_OF_MEMORY, which ends the ladder
+        // of buffers (WSAENOBUFS) reads OUT_OF_MEMORY, which ends the transport order
         rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         if ( rocketnet_platform_bind_refused( WSAGetLastError() ) )
         {
@@ -3915,7 +3915,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 #endif // #if ROCKETNET_DEV
             }
             // lane 0 wrote the port it was given into bind_address: the next
-            // transport of the ladder gets the address the caller asked for
+            // transport in the transport order gets the address the caller asked for
             *bind_address = asked_address;
             rocketnet_rio_free( rio );
             return NULL;

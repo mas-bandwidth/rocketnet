@@ -207,7 +207,7 @@ static inline void signed_token_request( uint8_t * request, const uint8_t * sign
     memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
 }
 
-// the request through the server's ladder; a refused request is never
+// the request through the server's check sequence; a refused request is never
 // answered
 
 static inline int signed_token_send( struct signed_token_server_t * test, const struct rocketnet_address_t * address,

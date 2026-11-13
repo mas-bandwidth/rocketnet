@@ -172,7 +172,7 @@ static bool rocketnet_functional_name_matches( const char * name, const char * p
 // lose its namespace to a test_xdp_transport case running beside it).
 static bool rocketnet_functional_is_xdp_case( const char * name )
 {
-    return strstr( name, "xdp" ) != NULL || strcmp( name, "test_server_transport_io_ladder_fall" ) == 0;
+    return strstr( name, "xdp" ) != NULL || strcmp( name, "test_server_transport_io_order_fall" ) == 0;
 }
 
 void rocketnet_functional_require_xdp_case( const char * fixture );

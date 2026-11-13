@@ -48,7 +48,7 @@ static void test_msgx_client_table_runs_the_io_thread()
     check( operations->send_failures && operations->connect );
 }
 
-// the client ladder on macOS: msgx (rank 10) above portable (rank 30), so an
+// the client transport order on macOS: msgx (rank 10) above portable (rank 30), so an
 // unpinned client is the msgx client
 
 static void test_msgx_client_is_the_macos_auto_choice()
