@@ -541,10 +541,10 @@
    :text "In sdk/rocketnet_receive_handoff.h main moves on to the worker's buffer (rocketnet_receive_handoff_begin) only at the start of a call whose tail is finished. After a call the per-update budget cut, the next call reads the tail and main's own buffer and leaves what the worker committed into its newer buffer for the call after, even with budget left: one more update for those datagrams, only after an overloaded update. A second try-acquire once the tail is drained within the call would close it; it needs RNReceiveHandoff to drop the backlog exemption from DeliveredByNextCall, and its trace walk to cover the second try."
    :date "2026-11-13" :origin "Receive handoff latency fix, cold read finding 4")
 
-  (item "gso-buffer-tallies-folded-late" :group "after-v1-1-landing" :area "sdk"
-   :title "A gso queue's receive tallies reach the counters only when its worker leaves the buffer"
-   :text "Since the receive handoff (2026-11-13) a gso buffer's tallies (GRO batches, overflow, size and source drops, receive errors) are folded into the transport's counters when main makes it the tail, after the worker has left it (rocketnet_receive_handoff_begin). The worker leaves a buffer at a commit after main has started on it, and an idle pass commits nothing, so a queue that goes quiet after a drop shows the drop only at its next datagram or at stop; the datagrams themselves are counted received when main first sees them. Folding the shared buffer's tallies as they are committed would need the worker to publish them under the mutex beside its count: a change to the handoff, not a point-release repair. test_gso_transport_receive_overflow_counted waits for the fold."
-   :date "2026-11-13" :origin "v1.1.54 CI: the overflow functional case read the counters before the fold on a loaded runner")
+  (item "gso-socket-drops-unit" :group "after-v1-1-landing" :area "sdk"
+   :title "Measure what the kernel's SO_RXQ_OVFL count counts on a GRO socket"
+   :text "GSO_RECEIVE_DROPPED_OVERFLOW adds the rise in the kernel's SO_RXQ_OVFL count (sk_drops) to the datagrams the gso worker lost for want of room, and the row's unit is datagrams. Whether the kernel adds one per dropped buffer or one per segment of a dropped GRO run differs by drop site and kernel version; if per buffer, one dropped run of 128 segments reads as 1 and the row undercounts. A kernel drop is also reported only on the next datagram the socket delivers, so drops with no datagram after them are never counted, even at stop. Measure on the fleet's kernels (a flood of UDP_SEGMENT runs at a socket with UDP_GRO and a small receive buffer, against the socket's SK_MEMINFO_DROPS and UDP RcvbufErrors) and make the row's text say what it counts."
+   :date "2026-11-13" :origin "cold read of the v1.1.54 gso CI repair")
 
   (item "gso-receive-dropped-socket-row" :group "after-v1-1-landing" :area "sdk"
    :title "A gso row of its own for the kernel's drops at a queue socket"

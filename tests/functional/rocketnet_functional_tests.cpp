@@ -8434,12 +8434,30 @@ void rocketnet_test_server_gso_receive_overflow_counted()
     }
     rocketnet_check( queued == 0 );
 
+    // an empty socket is not yet a full buffer: on a loaded host the kernel
+    // can still hold sends before the socket (a deferred softirq). The worker
+    // has staged them all once its buffer's committed count is the queue size
+
+    int committed = -1;
+    const double full_deadline = rocketnet_time() + 5.0;
+    while ( rocketnet_time() < full_deadline )
+    {
+        committed = rocketnet_server_gso_test_receive_committed( gso, 0 );
+        if ( committed == ROCKETNET_GSO_RECV_QUEUE_SIZE )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( committed == ROCKETNET_GSO_RECV_QUEUE_SIZE );
+
     // read everything: the buffer main shares with the worker, then the full
     // one. A buffer's tallies (its GRO batches and its overflow) reach the
     // counters only when the worker has left it and main's next call makes it
     // the tail (rocketnet_receive_handoff_begin); the worker leaves the full
-    // buffer at a pass after main has started on it, so on a loaded host the
-    // last datagram can surface before the tallies do. The reads go on until
+    // buffer at its next pass after main has started on it, so on a loaded
+    // host the last datagram can surface a call or two before the tallies
+    // do. The reads go on until
     // the full buffer's GRO batches are counted, which folds its overflow
     // with them.
 
