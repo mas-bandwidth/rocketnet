@@ -465,8 +465,7 @@ static bool qwork_undrained( const qwork_walk_t & walk )
 
 static int trace_queue_worker( uint64_t seed, int steps, const char * out )
 {
-    qwork_walk_t * walk_memory = new qwork_walk_t();
-    qwork_walk_t & walk = *walk_memory;
+    qwork_walk_t walk{};
 
     walk.banks = rocketnet_uring_send_queues_create( NULL, 1, QWORK_SLOTS );
     walk.send = walk.banks ? rocketnet_uring_queue_send_create( NULL, walk.banks, 2, 1 << 16 ) : NULL;
@@ -474,7 +473,6 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
     {
         fprintf( stderr, "tla_trace queue-worker: could not create the handoff\n" );
         rocketnet_uring_send_queues_destroy( walk.banks );
-        delete walk_memory;
         return 1;
     }
 
@@ -521,7 +519,6 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
         fprintf( stderr, "tla_trace queue-worker: could not init the worker\n" );
         rocketnet_uring_queue_send_destroy( walk.send );
         rocketnet_uring_send_queues_destroy( walk.banks );
-        delete walk_memory;
         return 1;
     }
 
@@ -721,7 +718,6 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 
     const bool written = tla_write_trace( out, name, "TraceRNUringQueueWorker", "", constants, records );
-    delete walk_memory;
     return written && !failed ? 0 : 1;
 }
 

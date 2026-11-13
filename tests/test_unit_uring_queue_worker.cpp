@@ -101,7 +101,7 @@ static int worker_test_peek( void * context, struct rocketnet_uring_queue_worker
     int n = 0;
     while ( n < max && n < (int) k->ready.size() )
     {
-        completions[n] = k->ready[n];
+        completions[n] = k->ready[(size_t) n];
         n++;
     }
     return n;
