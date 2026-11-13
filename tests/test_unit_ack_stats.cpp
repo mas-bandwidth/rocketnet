@@ -1476,3 +1476,73 @@ static void test_ack_stats_sent_low_scan_record_above_old_top()
     rocketnet_free( NULL, endpoint );
 }
 REGISTER_UNIT_TEST( test_ack_stats_sent_low_scan_record_above_old_top );
+
+// The lowest acknowledged survivor after the window slides: the walk over
+// the shadow bitmaps finds a candidate by ctz and checks it against its
+// record. A slot whose bits still name an older lap's acknowledged record
+// (here sequence 2, left in slot 2 because ring + 2 was never sent) is a
+// candidate whose record is not in the window; the walk must step past it
+// to the next one (ring + 3). A walk that does not step past finds the same
+// candidate again by the same ctz forever, so record_sent never returns: no
+// check inside the case can see that, and the unit runner's per-case limit
+// (tests/suite_runner.h) is what fails it, naming the case. No sleep, no
+// socket, no network.
+// mutation gap: me rocketnet_ack.cpp:549 sequence++ deleted
+
+static void test_ack_stats_acked_low_walk_steps_past_an_older_lap_record()
+{
+    auto * endpoint = stats_endpoint();
+    memset( endpoint->sent_written, 0, sizeof( endpoint->sent_written ) );
+    memset( endpoint->sent_held, 0, sizeof( endpoint->sent_held ) );
+    memset( endpoint->sent_unacked, 0, sizeof( endpoint->sent_unacked ) );
+
+    const uint64_t ring = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    const uint64_t planted[] = { ring + 1, 2, ring + 3 };
+    const double send_times[] = { 1100.0, 1000.0, 1300.0 };
+    for ( int i = 0; i < 3; ++i )
+    {
+        const uint64_t slot = planted[i] % ring;
+        auto & record = endpoint->sent[slot];
+        record.sequence = planted[i];
+        record.send_time = send_times[i];
+        record.wire_bytes = 100;
+        record.acked = 1;
+        endpoint->sent_written[slot >> 6] |= 1ull << ( slot & 63 );
+        endpoint->sent_held[slot >> 6] |= 1ull << ( slot & 63 );
+    }
+
+    // the window [ring + 1, ring + ring / 2] counts ring + 1 and ring + 3,
+    // both acknowledged and both loss-eligible; sending 2 * ring + 1 moves
+    // its base to ring + 2, so ring + 1 leaves and ring + 3 is the lowest
+    // acknowledged survivor
+
+    endpoint->highest_sequence = 2 * ring;
+    endpoint->stats_sent_count = 2;
+    endpoint->stats_sent_bytes = 200;
+    endpoint->stats_sent_low = ring + 1;
+    endpoint->stats_sent_low_time = 1100.0;
+    endpoint->stats_sent_high = ring + 3;
+    endpoint->stats_sent_high_time = 1300.0;
+    endpoint->stats_acked_count = 2;
+    endpoint->stats_acked_bytes = 200;
+    endpoint->stats_acked_low = ring + 1;
+    endpoint->stats_acked_low_time = 1100.0;
+    endpoint->stats_acked_high = ring + 3;
+    endpoint->stats_acked_high_time = 1300.0;
+    endpoint->stats_eligible_count = 2;
+    endpoint->stats_eligible_unacked = 0;
+    endpoint->internal_error = 0;
+
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( endpoint, 2 * ring + 1, 100, 0, 0, 1400.0 ) ==
+                          ROCKETNET_ACK_SENT_RECORDED );
+
+    const bool acked_low_walk_stepped_past_older_lap_record_to_next_acked = endpoint->stats_acked_low == ring + 3;
+    rocketnet_unit_check( acked_low_walk_stepped_past_older_lap_record_to_next_acked );
+    rocketnet_unit_check( endpoint->stats_acked_low_time == 1300.0 );
+    rocketnet_unit_check( endpoint->stats_acked_count == 1 && endpoint->stats_acked_bytes == 100 );
+    rocketnet_unit_check( endpoint->stats_sent_low == ring + 3 && endpoint->stats_sent_count == 1 );
+    rocketnet_unit_check( endpoint->internal_error == 0 );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_acked_low_walk_steps_past_an_older_lap_record );
