@@ -975,6 +975,7 @@ static void test_public_link_simulator_same_seed_same_schedule()
             }
             check( memcmp( a.received, b.received, (size_t) a_bytes ) == 0 );
             const int value = a.received[0];
+            check( value >= 0 && value < 64 );
             if ( value >= 0 && value < 64 )
             {
                 count[value]++;
@@ -1015,7 +1016,10 @@ extern bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simu
 // mutex that was never created: the answer comes from the setting word alone,
 // so it never reaches the mutex, where a try-lock would assert that the mutex
 // is not a created one. Then with the real mutex held, as a send would meet
-// it. A handed-over setting is still taken under the lock, on and off.
+// it. A handed-over setting is still taken under the lock, on and off. The
+// never-created mutex shows a lock only where asserts are compiled in (a
+// zeroed mutex is a valid unlocked one on the platforms), so that check is an
+// assert-leg check.
 
 static int public_link_simulator_lock_asserts = 0;
 
@@ -1037,7 +1041,7 @@ static void test_public_link_simulator_inactive_takes_no_lock()
         struct rocketnet_platform_mutex_t never_created;
         memset( &never_created, 0, sizeof( never_created ) );
 
-        void ( *saved_assert )( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
+        rocketnet_assert_function_t saved_assert = rn_assert_function;
         public_link_simulator_lock_asserts = 0;
         rocketnet_assert_function( public_link_simulator_lock_assert_hook );
 
@@ -1420,7 +1424,8 @@ static void test_public_link_simulator_revision_1_prefixes()
     // The guard bytes above prove a later field's value is not used and not
     // written, not that it is never read. Here each prefix ends exactly at a
     // page that can be neither read nor written, so a read one byte past the
-    // revision faults at once, in every build.
+    // revision faults at once, in every build but Windows, which keeps only
+    // the guard bytes.
 
     struct revision_tail_t client_tail;
     check( revision_tail_open( &client_tail, sizeof( client.bytes ), alignof( rocketnet_client_transport_config_t ) ) );

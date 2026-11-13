@@ -318,7 +318,7 @@ static void client_io_stop_test_wait_poll( void * context )
     hold->polls++;
     hold->closes_while_held += hold->fake->close_calls;
     rocketnet_unit_check( hold->polls < CLIENT_IO_STOP_WAKE_POLL_CEILING );
-    if ( hold->polls >= CLIENT_IO_STOP_WAKE_RELEASE_POLL || hold->polls >= CLIENT_IO_STOP_WAKE_POLL_CEILING )
+    if ( hold->polls >= CLIENT_IO_STOP_WAKE_RELEASE_POLL )
     {
         hold->io->stop_woken.store( true, std::memory_order_release );
     }

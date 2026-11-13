@@ -120,8 +120,10 @@ static void test_send_errno_kinds_and_the_first_other()
     rocketnet_unit_check( strcmp( rocketnet_platform_send_errno_kind_name( ROCKETNET_PLATFORM_SEND_ERRNO_EINTR ), "EINTR" ) == 0 );
     rocketnet_unit_check( strcmp( rocketnet_platform_send_errno_kind_name( ROCKETNET_PLATFORM_SEND_ERRNO_KINDS ), "unknown" ) == 0 );
 
-    // the first OTHER failure of a call keeps its errno; a later one, of
-    // another errno, only counts
+    // on one call, the first OTHER failure keeps its errno and a later one,
+    // of another errno, only counts. other_error is one field for every
+    // call (rocketnet_platform.h, "the first OTHER failure"); what a first
+    // OTHER on a second call does to it is not checked here
 
     rocketnet_platform_send_errnos_t errnos;
     memset( &errnos, 0, sizeof( errnos ) );
