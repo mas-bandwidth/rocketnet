@@ -12,7 +12,9 @@
 #include <new>
 #include <string.h>
 
-// proofs/tla/RNUringQueueSend.tla models one queue of this code: Publish
+// proofs/tla/RNUringQueueSend.tla models one queue of this code: Stage and
+// StageFull (a game thread's claim of a slot, which the bank refuses once it
+// is full: rocketnet_uring_send_queue.cpp), Publish
 // and PublishKept, WorkerClaim(b), WorkerSubmit(d, k, R), WorkerReap(n) and
 // WorkerRetire and WorkerRetireRefused (WorkerStep is any of the worker's)
 // are cited at the functions that are them, each by the value it returns,

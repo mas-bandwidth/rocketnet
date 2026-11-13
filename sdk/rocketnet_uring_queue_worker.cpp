@@ -250,6 +250,8 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
             break;
 
         case ROCKETNET_URING_TAG_CANCEL:
+            // RNUringQueueWorker.tla ReapCancel: the completion of a cancel the
+            // worker submitted (CancelRecv, CancelWake, CancelPoll)
             if ( worker->cancels > 0 )
             {
                 worker->cancels--;

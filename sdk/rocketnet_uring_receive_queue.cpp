@@ -442,13 +442,17 @@ bool rocketnet_uring_receive_queue_armed( const struct rocketnet_uring_receive_q
     return queue->armed;
 }
 
+// proofs/tla/RNUringQueueReceive.tla Stop (proofs/tla/RNUringQueueReceiveLayout.tla
+// Stop): the stop is seen by the worker, which cancels the multishot; a
+// completion after it is never armed again
+
 void rocketnet_uring_receive_queue_stop( struct rocketnet_uring_receive_queue_t * queue )
 {
     rocketnet_assert( queue );
     queue->stopping = true;
 }
 
-// proofs/tla/RNUringQueueReceive.tla Arm (RNUringQueueReceiveLayout Arm):
+// proofs/tla/RNUringQueueReceive.tla Arm (proofs/tla/RNUringQueueReceiveLayout.tla Arm):
 // the multishot RECVMSG over the queue's buffer group, prepared as
 // io_uring_prep_recvmsg_multishot prepares it
 
@@ -484,6 +488,8 @@ bool rocketnet_uring_receive_queue_arm( struct rocketnet_uring_receive_queue_t *
 
 // ---------------------------------------------------------------------------
 
+// proofs/tla/RNUringQueueReceive.tla Write and Publish: the slot is written,
+// then tail + 1 is published, as two steps.
 // proofs/tla/RNUringQueueReceiveLayout.tla BankOne: one accepted datagram to
 // position tail, slot tail % slots, while tail - head_seen < slots; head is
 // loaded again (acquire: main has finished reading below it) only when
@@ -724,7 +730,7 @@ int rocketnet_uring_receive_queue_cqe( struct rocketnet_uring_receive_queue_t * 
 
 // ---------------------------------------------------------------------------
 
-// proofs/tla/RNUringQueueReceive.tla Drain (RNUringQueueReceiveLayout Drain):
+// proofs/tla/RNUringQueueReceive.tla Drain (proofs/tla/RNUringQueueReceiveLayout.tla Drain):
 // head := the end of the drain before (release: main has finished reading
 // those slots), then the positions from there to the tail (acquire), at most
 // max, from slot position % slots. ROCKETNET_URING_RECEIVE_QUEUE_PLANT is the
