@@ -127,8 +127,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
+// The protocol send reserve and its counter SEND_RESERVE_REFUSED (the Linux
+// block below has the account): the client reads actual=15389932 in the
+// Windows unit job, 64 above the counter union. The server pin is still the
+// union's: its job stopped at the client check, and it is read from the next.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453183 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341292 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -171,8 +175,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453599 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988746 )
+// The protocol send reserve and its counter SEND_RESERVE_REFUSED (the Linux
+// block below has the account): measured on the studio (Apple clang, Release,
+// DEV ON, ROCKETNET_TEST_VERBOSE=1), actual=1469513311 and 15037450, 11136
+// and 128 above the counter union.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468464735 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988874 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
