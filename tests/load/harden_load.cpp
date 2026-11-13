@@ -2561,6 +2561,7 @@ static int harden_server_main( const harden_options_t & o )
         if ( o.game_threads > 0 )
         {
             harden_world_update( &space, o );
+            space.pool.Reset(); // the game jobs are complete: the frame's tasks are free for the next frame
             world_seconds = harden_now() - t_received;
             w.game_core_sum += harden_space_take_busy( space.game_busy );
             w.world_sum += world_seconds;
