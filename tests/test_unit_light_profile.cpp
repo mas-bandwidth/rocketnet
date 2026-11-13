@@ -252,7 +252,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The server protocol's per-update table of refused tokens (1024 token
 // identifiers, their reasons and a count) adds 17408 to the server across its
 // 64-byte rounding: computed from the Linux reading, not measured on macOS.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624545827 )
+// That table leaves the end before the transport's fill phase at 0 mod 64
+// here (the 72-byte mutex), so the counter PORTABLE_PIN_REFUSALS, 8 bytes in
+// the transport's counters, moves the fill phase by 64: computed from the
+// Linux layout, not measured on macOS.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624545891 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
