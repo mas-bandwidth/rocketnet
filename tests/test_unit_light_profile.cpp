@@ -147,8 +147,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the server and nothing to the client: actual=1503911323 (aws-win-rio-1,
 // MSVC, Release, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862747 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345580 )
+// The IOCP rebuild (IOCP_PIN_REFUSALS and the lanes of 4096 operations, the
+// receive banks sized by the rate) adds 24703364 to the server, and its
+// counter one 64-byte rounding to the client: actual=1528614687 and 15394220
+// (aws-win-iocp-1, MSVC, Release, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566111 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345644 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
