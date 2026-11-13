@@ -202,11 +202,15 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
     {
         const rn_store_class_t * x = &a->store.classes[c];
         const rn_store_class_t * y = &b->store.classes[c];
-        if ( x->num_chunks != y->num_chunks || x->free_head != y->free_head || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes || x->fresh != y->fresh )
+        if ( x->num_chunks != y->num_chunks || x->free_top != y->free_top || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes || x->fresh != y->fresh )
         {
             return false;
         }
         if ( memcmp( x->meta, y->meta, sizeof( uint32_t ) * x->fresh ) != 0 )
+        {
+            return false;
+        }
+        if ( memcmp( x->free_stack, y->free_stack, sizeof( uint32_t ) * x->free_top ) != 0 )
         {
             return false;
         }

@@ -2305,9 +2305,10 @@ REGISTER_UNIT_TEST( test_endpoint_write_refuses_a_frame_smaller_than_planned );
 // the receiver acknowledges packets by id, and its choice of ids frees the
 // chunks of the messages they carried, whatever their order. It holds the
 // packets of a run of reliable messages inside the window and acknowledges
-// the first and the newest; each update the sender starts two messages. The
-// first takes the freed low chunk; neither the second start nor the room
-// query before it may examine the held run (rn_store_cost_t counts the
+// the first and the newest; each update the sender starts two messages, which
+// take the two freed chunks (the stack is LIFO: the newest's first, then the
+// low one); neither start nor the room query before it may examine the held
+// run (rn_store_cost_t counts the
 // entries each choice examines; time is an argument, nothing is timed).
 
 #if ROCKETNET_DEV

@@ -43,6 +43,10 @@ The v1.1.0 Linux x86-64 Release development-build planner query described in
 [LOAD.md](LOAD.md#platform-build-and-allocator-assumptions) reports
 23,527,047,915 bytes (about 23.5 GB) for the default 1000-client server.
 The difference from one to two slots is 19,174,370 bytes (about 19.2 MB).
+After v1.1.0 the send store keeps a free stack, one `uint32_t` a store chunk,
+which adds 165,464 bytes a default client slot (165,464,000 at 1000 slots)
+and 4,632 a light slot ([LOAD.md](LOAD.md#platform-build-and-allocator-assumptions));
+the v1.1.0 figures in this section do not include it.
 These are source-specific sizing examples, not portable constants:
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before

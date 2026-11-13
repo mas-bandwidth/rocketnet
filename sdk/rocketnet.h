@@ -2780,9 +2780,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// (rocketnet_conditions_t send_refused), and the game decides what to do.
 ///
 /// For valid arguments, changes no state, counts nothing and allocates nothing.
-/// Usually constant time; a message that needs a send store chunk scans that
-/// size class for a free one, so its worst case grows with the chunks in the
-/// class. It does not reserve wire bandwidth or guarantee immediate
+/// Constant time: a message that needs a send store chunk is answered from
+/// the free stack of that size class or its next unused chunk, however many
+/// chunks are held. It does not reserve wire bandwidth or guarantee immediate
 /// transmission.
 /// A false answer may be pessimistic for a small unreliable message: start
 /// can write it straight into a transport frame without message memory.

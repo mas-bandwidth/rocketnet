@@ -316,18 +316,21 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 // larger message takes a span of the send spans, never the store. A class's
 // part of S holds its chunks, then one u32 of metadata per chunk (the class's
 // meta array): a live bit and the slot's generation tag, bumped on every take
-// of the chunk and never 0 on a live chunk. No chunk stores a reference to
-// another, and no byte outside S is spent on them. The live bit makes a
-// double free a refusal, never a corrupted pool.
+// of the chunk and never 0 on a live chunk; then one u32 per chunk for the
+// class's free stack. No chunk stores a reference to another, and no byte
+// outside S is spent on them. The live bit makes a double free a refusal,
+// never a corrupted pool.
 //
 // A handle is the class in its top two bits and the chunk index below.
 //
 // The pool is lazy (proofs/tla/RNSendStoreLayout.tla): chunks [0, fresh)
 // have been taken at least once since the init and are free or held; chunks
 // [fresh, num_chunks) were never taken, and neither their meta nor their
-// bytes are written or read until they are. free_head is at or below every
-// free chunk and at or below fresh, so a take scans the meta array's live
-// bits from free_head up and the first free chunk it meets is the lowest.
+// bytes are written or read until they are. The free stack holds exactly the
+// free chunks below fresh, each once, in entries [0, free_top); entries at or
+// past free_top are never read. A take pops the stack, or takes fresh when the
+// stack is empty, and a free pushes: both O(1), and the choice never reads a
+// held chunk's meta, whichever chunks the receiver's acks have freed.
 
 #define RN_META_LIVE            0x80000000u     // the chunk is held
 #define RN_META_GENERATION      0x7FFFFFFFu     // the chunk's generation tag: 1 on its first take, skipping 0 when it wraps
@@ -336,9 +339,10 @@ struct rn_store_class_t
 {
     uint8_t * data;
     uint32_t * meta;                    // one u32 per chunk, after the class's chunks
+    uint32_t * free_stack;              // one u32 per chunk, after the meta: the free chunks below fresh in [0, free_top)
     uint32_t chunk_bytes;
     uint32_t num_chunks;
-    uint32_t free_head;                 // the scan cursor: no free chunk lies below it, and it is at most fresh
+    uint32_t free_top;                  // the free stack's depth: the free chunks below fresh
     uint32_t free_count;
     uint32_t fresh;                     // chunks [0, fresh) have been taken since the init
 };
@@ -631,11 +635,10 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 // (rocketnet_client_can_send_message, rocketnet_server_can_send_message)
 // reads it, so the query and the send never disagree. Pure and
 // allocation-free. Checked in the allocation's order: the size, then the sticky
-// exhaustion, then a free descriptor, then the chunk or the span. The first
-// three checks are O(1), and so is the span placement of
-// rn_region_send_fit_span; rn_region_send_fit_store is not: it scans the chosen
-// class's meta array from its cursor for a free chunk (rn_send_store_find),
-// O(chunks in the class) in the worst case.
+// exhaustion, then a free descriptor, then the chunk or the span. Every check
+// is O(1): the span placement of rn_region_send_fit_span, and the chunk of
+// rn_region_send_fit_store, which is the chosen class's free stack top or its
+// first fresh chunk (rn_send_store_find), whichever chunks are held.
 #define RN_SEND_FIT_OK              0   // room: the allocation takes it
 #define RN_SEND_FIT_REFUSED         1   // bytes outside the pool's range: the caller's refusal, not exhaustion
 #define RN_SEND_FIT_EXHAUSTED       2   // the region is already exhausted (sticky until reset)

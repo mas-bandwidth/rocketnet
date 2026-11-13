@@ -167,8 +167,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual=1528614751 (the Windows unit job, run 43448217775).
 // The per-transport thread counts grow the transport config, one 64-byte
 // rounding: actual=1528614815 (the Windows unit job, run 43463295653).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566239 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
+// The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
+// bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
+// computed from the Linux reading, not measured on Windows.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1532198239 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350316 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -244,8 +247,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Each server transport's own network thread count, six int fields appended
 // to the transport config, crosses one 64-byte rounding: actual=1625576995
 // (studio, Apple clang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624528419 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
+// The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
+// bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
+// computed from the Linux reading, not measured on macOS.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1629160419 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997834 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -373,16 +379,20 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // gso 1 worker, io_uring 2), lowers the server: actual=2142726194 (the Linux
 // Debug and Release DEV=ON unit jobs, run 43463295653). arm64 adds 8 for the
 // one xdp thread record in place of 56, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141677626ULL )
+// The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
+// bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
+// actual=2147358194 and 15195026 (bench-xdp-9, gcc, Debug, DEV ON); arm64
+// the same, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146309626ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141677618ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146309618ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
 // nothing to the server: actual=15190354 (hetzner1, gcc, Debug, DEV ON).
 // The appended counter IOCP_PIN_REFUSALS adds 64 more to the client (one more
 // 64-byte rounding): actual=15190418 (hetzner1, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141842 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146450 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

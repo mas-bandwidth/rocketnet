@@ -209,9 +209,9 @@ refusals is the game's decision:
      message memory is full, or the start would be dropped or refused (not
      connected, a message already open, a bad argument).
    - For valid arguments the call changes no state, counts nothing and
-     allocates nothing. It is usually constant time; a message that needs a
-     send store chunk scans that size class for a free one, so its worst case
-     grows with the chunks in the class. It does not reserve wire bandwidth or
+     allocates nothing. It takes constant time: a message that needs a send
+     store chunk is answered from the free stack of that size class or its
+     next unused chunk, however many chunks are held. It does not reserve wire bandwidth or
      guarantee immediate transmission.
    - Only start and update take room, so a `true` answer holds until the next
      of either on that single-thread-owned object.
