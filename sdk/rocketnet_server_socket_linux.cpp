@@ -3686,11 +3686,16 @@ bool rocketnet_server_socket_test_queue_room()
 
     // an index outside the queues has no room (the assert is counted, not taken)
 
+#if ROCKETNET_ASSERTS
     rocketnet_server_socket_test_asserts = 0;
     rocketnet_assert_function( rocketnet_server_socket_test_count_assert );
+#endif // #if ROCKETNET_ASSERTS
     valid &= rocketnet_server_socket_send_room_queue( server, -1 ) == 0;
     valid &= rocketnet_server_socket_send_room_queue( server, queues ) == 0;
+#if ROCKETNET_ASSERTS
+    valid &= rocketnet_server_socket_test_asserts == 2;
     rocketnet_assert_function( NULL );
+#endif // #if ROCKETNET_ASSERTS
 
     // more queues than the reserve keeps room for read as one queue, whose
     // queue is 0
