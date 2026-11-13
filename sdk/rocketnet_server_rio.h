@@ -77,7 +77,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
 #if ROCKETNET_DEV
     // Development constructor control: fail after the socket, RIO table,
     // region, completion queues, request queue, first posted receive or last
-    // posted receive.
+    // posted receive (stages 1..7); stage 8 refuses the bind with WSAENOBUFS.
                                                       ,
                                                       int fail_stage = 0
 #endif // #if ROCKETNET_DEV
