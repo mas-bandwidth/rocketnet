@@ -452,7 +452,7 @@ static void test_fake_client_oversize_datagram_reads_too_large()
         rocketnet_unit_check( fake->inbound_count == 0 );
         rocketnet_unit_check( io.transport_faults == 1 );
 
-        rocketnet_client_io_expose( &io );
+        (void) rocketnet_client_io_rig_expose( rig, &io );
         rocketnet_client_io_fold_counters( &io );
         rocketnet_unit_check( too_large == 1 );
 
