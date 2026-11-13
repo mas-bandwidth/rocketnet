@@ -192,10 +192,10 @@ case, one for witnesses, 110-second cap per case; aws-mut-3, 2026-11-13, after r
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
 | `MCServerSession.cfg` | pass | 730,276 | 74,719 | 25.973 | 0 |
-| `MCServerSessionTwoClients.cfg` | pass, every invariant | 4,244,278 | 411,808 | 19.355 | 0 |
-| `MCServerSessionTwoClientsLive.cfg` | pass, `HandshakeResolves` | 4,244,278 | 411,808 | 72.041 | 0 |
-| `MCServerSessionTwoClientsBursts.cfg` | pass, `BurstsDrain` | 4,244,278 | 411,808 | 81.545 | 0 |
-| `MCServerSessionTwoClientsReachable.cfg` | `NotTwoConnected` violated | 880 | 439 | 0.810 | 12 |
+| `MCServerSessionTwoClients.cfg` | pass, every invariant | 4,244,278 | 411,808 | 21.671 | 0 |
+| `MCServerSessionTwoClientsLive.cfg` | pass, `HandshakeResolves` | 4,244,278 | 411,808 | 75.401 | 0 |
+| `MCServerSessionTwoClientsBursts.cfg` | pass, `BurstsDrain` | 4,244,278 | 411,808 | 89.923 | 0 |
+| `MCServerSessionTwoClientsReachable.cfg` | `NotTwoConnected` violated | 880 | 439 | 0.822 | 12 |
 | `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 1,564,903 | 259,336 | 13.200 | 12 |
 | `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 54 | 44 | 0.765 | 12 |
 | `MCServerSessionDisconnectAllLeavesClient.cfg` | `DisconnectAllIsAtomic` violated | 148 | 100 | 0.786 | 12 |

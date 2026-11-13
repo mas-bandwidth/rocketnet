@@ -109,11 +109,11 @@ control) against a staging of three, so it spreads across steps.
 | `MCServerStopSpreadBrokenStopWithHeld.cfg` | `NoCopyHeldAtStop` violated |
 | `MCServerStopSpreadBrokenNoLinkDrain.cfg` | `StopFinishesWhileUnjammed` violated (deadlock check off) |
 
-Measured on aws-mut-3 (TLC 2.19, 8 workers, 2026-11-13): the control 3,506,156
-distinct states in 59.0 s; `Live` and `LiveNoRoom` 804,126 in 67.9 s and
-64.6 s; `Queues` 303,256 in 8.9 s and `QueuesLive` in 56.8 s; `NoAbandon`
-fails at 713,340 in 72.5 s; `PooledRoom` at 162,994 in 18.6 s; the simulator
-configs reach 32,150 distinct states (2.2 s, 4.4 s, and 6.3 s for the jam);
+Measured on aws-mut-3 (the pinned jar, two workers for a control and one for a witness, 2026-11-13): the control 3,506,156
+distinct states in 56.7 s; `Live` and `LiveNoRoom` 804,126 in 66.2 s and
+66.0 s; `Queues` 303,256 in 6.2 s and `QueuesLive` in 52.0 s; `NoAbandon`
+fails at 713,340 in 71.9 s; `PooledRoom` at 162,994 in 25.4 s; the simulator
+configs reach 32,150 distinct states (2.0 s, 3.9 s, and 5.1 s for the jam);
 `StopWithHeld` fails at 187 and `NoLinkDrain` at 2,336. `RUNS.tsv` holds the
 records.
 
