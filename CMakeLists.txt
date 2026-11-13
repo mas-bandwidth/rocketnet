@@ -1183,6 +1183,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/platform_primitives.cpp
         tests/functional/server_receive_backlog.cpp
         tests/functional/server_receive_low_tick.cpp
+        tests/functional/receive_latency.cpp
         tests/functional/lifecycle_driver.cpp
         tests/functional/cpp_transports.cpp
         tests/functional/live_matrix.cpp
@@ -1331,6 +1332,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/functional/platform_primitives.cpp
             tests/functional/server_receive_backlog.cpp
             tests/functional/server_receive_low_tick.cpp
+            tests/functional/receive_latency.cpp
             tests/functional/lifecycle_driver.cpp
             tests/functional/cpp_transports.cpp
             tests/functional/live_matrix.cpp

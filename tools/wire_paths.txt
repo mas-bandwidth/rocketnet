@@ -89,6 +89,8 @@ sdk/rocketnet_packet_lease.h	process-wide packet tickets
 sdk/rocketnet_pending_frames.h	producer frame reservations
 sdk/rocketnet_platform.cpp	platform sockets, time and threads
 sdk/rocketnet_platform.h	platform sockets, time and threads
+sdk/rocketnet_receive_delivery_check.h	the shared unit-test check of the receive delivery rule (development builds only); reads and writes no byte
+sdk/rocketnet_receive_handoff.h	the receive buffer handoff between a worker and main: indices and counts under the mutex; reads and writes no byte
 sdk/rocketnet_rio_layout.h	Windows RIO region layout
 sdk/rocketnet_send_budget.h	per-connection send budget accounting
 sdk/rocketnet_send_gather.cpp	the gather orders staged send slots into one-destination runs; it reads each slot's destination and byte count and writes no packet byte
