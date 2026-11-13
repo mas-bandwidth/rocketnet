@@ -81,6 +81,20 @@ jobs:
           echo "owed cells: $(grep -c '^OWED ' run-matrix.log || [ $? -eq 1 ])"
           echo "status=$status" >> "$GITHUB_OUTPUT"
 
+      # tools/check_scheduled_watched.py --remote: every workflow file on main
+      # with a cron is registered on GitHub and active (a disabled or never
+      # registered one never fires), and a registered workflow whose cron
+      # sits only on another branch is named (GitHub fires crons from main
+      # only). The lint checks the same files against the watch's list
+      # offline; this half needs the API, so it runs here. Red by name.
+      - name: Every scheduled workflow is registered, active and on main (remote)
+        if: ${{ always() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 tools/check_scheduled_watched.py --remote --repo "$GITHUB_REPOSITORY"
+
       - name: Tell (job summary, and fail the run when red)
         if: ${{ always() }}
         env:
