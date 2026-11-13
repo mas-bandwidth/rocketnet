@@ -908,9 +908,14 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
         struct rocketnet_uring_receive_queue_config_t receive_config;
         rocketnet_server_uring_receive_config( &receive_config, i, queue->fd, max_clients, uring->ipv6, gro, socket_drops, packet_filter );
-        queue->receive = rocketnet_uring_receive_queue_create( context, &queue->ring, &receive_config );
+        bool receive_out_of_memory = false;
+        queue->receive = rocketnet_uring_receive_queue_create( context, &queue->ring, &receive_config, &receive_out_of_memory );
         if ( !queue->receive )
         {
+            if ( receive_out_of_memory )
+            {
+                rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+            }
             rocketnet_server_uring_free( uring );
             return NULL;
         }
@@ -1122,10 +1127,13 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
         counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS] += worker[ROCKETNET_URING_WORKER_COUNTER_GSO_FALLBACKS];
         counters[ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES] += receive[ROCKETNET_URING_RECEIVE_COUNTER_GRO_BATCHES];
         counters[ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS] += receive[ROCKETNET_URING_RECEIVE_COUNTER_GRO_CMSG_FAULTS];
+        counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOCKET] += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOCKET];
+        counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_ERRORS] += receive[ROCKETNET_URING_RECEIVE_COUNTER_ERRORS];
 
         // a run the socket family cannot name is dropped by the worker
-        // without a send: its packets are send drops too
-        counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] += worker[ROCKETNET_URING_WORKER_COUNTER_SEND_DROPPED];
+        // without a send: rocketnet_uring_queue_send_complete( FAILED )
+        // already counted its packets in the send module's DROPPED, so the
+        // worker's own SEND_DROPPED is not added again
     }
 }
 
@@ -1297,8 +1305,8 @@ bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring )
 // every queue's bank drained into the view (proofs/tla/RNUringQueueReceive.tla
 // Drain, which every update takes on every queue: it also releases what the
 // last drain exposed), from a rotating first queue so no queue is always
-// served last when the view fills. The queue that filled the view starts the
-// next call.
+// served last when the view fills. The queue after the one that filled the
+// view starts the next call (the gso transport's rule).
 
 void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * uring )
 {

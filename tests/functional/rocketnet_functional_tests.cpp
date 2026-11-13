@@ -8668,6 +8668,41 @@ void rocketnet_test_server_uring_send_overflow()
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
+void rocketnet_test_server_uring_send_wrong_family()
+{
+    // an ipv4 server staged packets to an ipv6 destination its socket cannot
+    // name: the worker drops the run without a send, and each packet is one
+    // send drop -- counted once, not by both the send module and the worker
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( uring );
+
+    rocketnet_address_t to;
+    rocketnet_check( rocketnet_address_parse( &to, "[::1]:40000" ) );
+
+    const int staged = 3;
+    for ( int i = 0; i < staged; i++ )
+    {
+        uint64_t packet_id = 0;
+        uint8_t * frame = rocketnet_server_uring_start_packet( uring, &to, &packet_id );
+        rocketnet_check( frame );
+        memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, (uint8_t) i, 64 );
+        rocketnet_server_uring_finish_packet( uring, packet_id, frame, 64 );
+    }
+
+    rocketnet_server_uring_send_packets( uring );
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_test_server_uring_wait_sent( uring, (uint64_t) staged, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == (uint64_t) staged );
+
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+}
+
 void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
 {
     // with one queue, send more datagrams than its provided buffer ring
@@ -14707,6 +14742,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_server_wire_gro_ipv6", rocketnet_test_server_uring_wire_gro_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_gro_cmsg_faults_counted", rocketnet_test_server_uring_gro_cmsg_faults_counted, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_send_wrong_family", rocketnet_test_server_uring_send_wrong_family, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC

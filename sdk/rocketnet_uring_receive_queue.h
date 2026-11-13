@@ -181,9 +181,12 @@ struct rocketnet_uring_receive_queue_t
 // is refused. With a ring it registers the queue's provided buffer ring on it
 // (group config->bgid) and gives it every buffer; with ring NULL the buffer
 // ring is plain memory, given every buffer the same way, that nothing
-// registers (the unit suite's and the trace walk's fake kernel).
+// registers (the unit suite's and the trace walk's fake kernel). When
+// out_of_memory is not NULL it is set true when, and only when, the NULL is
+// the allocation refused (the caller's ROCKETNET_STATUS_OUT_OF_MEMORY).
 
-struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( void * context, struct io_uring * ring, const struct rocketnet_uring_receive_queue_config_t * config );
+struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( void * context, struct io_uring * ring, const struct rocketnet_uring_receive_queue_config_t * config,
+                                                                               bool * out_of_memory = NULL );
 
 // the worker not running, and the kernel holding none of its buffers (the
 // multishot's last completion handled, or the ring torn down): unregisters

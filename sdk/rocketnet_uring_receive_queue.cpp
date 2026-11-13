@@ -287,9 +287,15 @@ static void rocketnet_uring_receive_queue_give( struct rocketnet_uring_receive_q
 
 // ---------------------------------------------------------------------------
 
-struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( void * context, struct io_uring * ring, const struct rocketnet_uring_receive_queue_config_t * config )
+struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( void * context, struct io_uring * ring, const struct rocketnet_uring_receive_queue_config_t * config,
+                                                                               bool * out_of_memory )
 {
     rocketnet_assert( config );
+
+    if ( out_of_memory )
+    {
+        *out_of_memory = false;
+    }
 
     if ( !rocketnet_uring_receive_config_ok( config, true ) )
     {
@@ -315,6 +321,10 @@ struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( v
     if ( !base )
     {
         rocketnet_error( "io_uring receive queue %d: could not allocate %" PRIu64 " bytes", config->queue_index, layout.bytes );
+        if ( out_of_memory )
+        {
+            *out_of_memory = true;
+        }
         return NULL;
     }
 
@@ -870,11 +880,16 @@ int rocketnet_uring_receive_queue_test_write( struct rocketnet_uring_receive_que
 
 // no io_uring uapi here: the functions exist, create refuses
 
-struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( void * context, struct io_uring * ring, const struct rocketnet_uring_receive_queue_config_t * config )
+struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( void * context, struct io_uring * ring, const struct rocketnet_uring_receive_queue_config_t * config,
+                                                                               bool * out_of_memory )
 {
     (void) context;
     (void) ring;
     (void) config;
+    if ( out_of_memory )
+    {
+        *out_of_memory = false;
+    }
     rocketnet_error( "io_uring receive queue: not built on this platform" );
     return NULL;
 }

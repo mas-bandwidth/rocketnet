@@ -133,7 +133,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAUL
 #define ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS                        14      // segmentation turned off for a queue: ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD destinations refused a segmented send (EINVAL, EIO or EOPNOTSUPP) and none was ever accepted
 #define ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES                          15      // receive buffers that held more than one segment (a UDP_GRO coalesced receive split by its stride)
 #define ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS                      16      // a receive whose UDP_GRO control was truncated or malformed: taken as one datagram, the gso transport's fault
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 17
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOCKET               17      // datagrams the kernel dropped at a queue socket (SO_RXQ_OVFL: a full receive buffer and the socket's other drops)
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_ERRORS                       18      // receive completions the kernel refused (a negative result other than ENOBUFS or ECANCELED); completions, not datagrams
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 19
 
 // feature bits reported by rocketnet_server_uring_features: what the create
 // probe found and the transport is using now
