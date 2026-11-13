@@ -43,8 +43,12 @@
 
 struct rocketnet_server_msgx_t;
 
+// the send threads (one transmit worker each; one more thread receives):
+// space game's peak row holds at 3 and not at 2 (measured on the 10 GbE pair,
+// peak with a game load failed at 2). Read by msgx only
+// (tests/test_unit_msgx_default_workers.cpp)
 #ifndef ROCKETNET_MSGX_DEFAULT_WORKERS
-#define ROCKETNET_MSGX_DEFAULT_WORKERS                                   4
+#define ROCKETNET_MSGX_DEFAULT_WORKERS                                   3
 #endif // #ifndef ROCKETNET_MSGX_DEFAULT_WORKERS
 
 #define ROCKETNET_MSGX_MAX_WORKERS                                      16
