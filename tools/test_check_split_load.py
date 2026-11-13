@@ -612,7 +612,12 @@ class SplitProofTests(unittest.TestCase):
         # harness's SPLIT_VERIFY_NUM_MODES and its fragmented modes array
         # (tools/load_split_verify.h), whose names sdk/rocketnet.h numbers.
         root = Path(__file__).resolve().parent.parent
-        harness = (root / "tools" / "load_split_verify.h").read_text()
+        if not (root / "sdk").is_dir():
+            # tools/check_refusal_mutants.py runs this suite on a copy holding
+            # only the checker and this file; in the repository sdk/ exists,
+            # so a missing harness header there fails below
+            self.skipTest("an isolated copy of the checker and its tests, not the repository")
+        harness =(root / "tools" / "load_split_verify.h").read_text()
         values = {name: int(value) for name, value in
                   re.findall(r"(ROCKETNET_RELIABILITY_[A-Z_]+) = (\d+)", (root / "sdk" / "rocketnet.h").read_text())}
         self.assertEqual(len(values), 8, values)
