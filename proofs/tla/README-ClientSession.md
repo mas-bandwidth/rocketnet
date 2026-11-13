@@ -62,7 +62,7 @@ one lifetime count, the not-connected drops, is not modelled.
 | `RetryPending`, `WorkerComplete`, `Connect(tok)` | A terminal retry with a running old worker requests stop and returns `CLIENT_NOT_DISCONNECTED`; a stuck worker stays pending. Completion is separate. Connect is enabled immediately for token-only errors or after completed old ownership; it joins/finalizes the old generation before reuse. Live states still refuse. Connect has the code's five outcomes (`rn_client_connect`): `malformed` (not one base64 token) is refused before anything changes, whatever the old worker is doing; `valid` starts the handshake; `invalid` and `expired` end in `INVALID_CONNECT_TOKEN` and `CONNECT_TOKEN_EXPIRED`; `createfails` (socket, thread or memory) leaves `DISCONNECTED`. |
 | `HandshakeStep` | the server's reply to the current stage arrives; the challenge writes the session keys; the establishing keep-alive reaches CONNECTED |
 | `Deny`, `TokenExpires`, `Timer` | a denial during the handshake; the token expiring during the handshake; each stage's deadline and the connected timeout |
-| `HandshakeViolation` | a challenge carrying a small-order server ephemeral key in sending connection request: `PROTOCOL_VIOLATION`, the one end of that name outside CONNECTED (TRANSPORT.md t11.2 step 4) |
+| `HandshakeViolation` | a challenge carrying a small-order server ephemeral key in sending connection request: `PROTOCOL_VIOLATION`, the end of that name a server's packet causes in the handshake (TRANSPORT.md t11.2 step 4) |
 | `ServerDisconnect`, `ClientDisconnect` | the server's disconnect; the client's disconnect from the handshake or connected |
 
 The model's end states read the reasons of `enum rocketnet_disconnect_reason_t` (`sdk/rocketnet.h`):
@@ -289,8 +289,8 @@ and returns NULL.
 The transport now ends an attempt in protocol violation (-10) when the
 connection challenge carries a small-order server ephemeral key (TRANSPORT.md
 t11.2 step 4), and `rocketnet_client_state` passes -10 through as
-`ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION`. Before it that public state was
-reached only from CONNECTED (`MessageEnd`). `HandshakeViolation` is the new
+`ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION`. Before it this model reached that
+public state only from CONNECTED (`MessageEnd`). `HandshakeViolation` is the new
 end: from `SENDING_CONNECTION_REQUEST` only, through `End` like `Deny`, so
 the one Reset runs and the worker keeps running. A connect from it is a
 connect from a terminal error (`PROTOCOL_VIOLATION` was already in
