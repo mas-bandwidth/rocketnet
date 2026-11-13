@@ -1297,8 +1297,8 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// Returns monotonic elapsed seconds from an unspecified origin, or 0 before
 /// the first rocketnet_init has set up the clock.
 ///
-/// The clock is CLOCK_BOOTTIME on Linux (CLOCK_MONOTONIC where the headers
-/// lack it), CLOCK_MONOTONIC on macOS and the other POSIX systems, and
+/// The clock is CLOCK_BOOTTIME on Linux (required: a build whose headers lack
+/// it fails), CLOCK_MONOTONIC on macOS and the other POSIX systems, and
 /// QueryPerformanceCounter on Windows. On Linux and macOS it runs at the rate
 /// the host's time sync (NTP, chrony, timesyncd) sets, the boot-calibrated
 /// rate without one, and counts time the machine was suspended or asleep.
@@ -1308,8 +1308,10 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// reference. No clock here follows a wall-clock step.
 ///
 /// A server whose token_epoch_unix_seconds is 0 checks connect tokens against
-/// the wall clock read once, at its first update, plus the time passed to
-/// update. Passing this clock keeps that check on the wall clock's rate and
+/// the wall clock read once, at its first update, plus the time elapsed on
+/// the clock passed to update since that first update
+/// (ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS).
+/// Passing this clock keeps that check on the wall clock's rate and
 /// across a suspend. What stays the operator's: a wall-clock step after
 /// the first update (the server started before time sync set the clock, or
 /// the clock was set by hand) is not followed until the server restarts; on
@@ -1322,8 +1324,10 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// functions take any forward step as elapsed time: it behaves as an outage
 /// of that length. A connection whose other end went silent meanwhile times
 /// out within one timeout of resume (packets already queued for this end are
-/// still taken first), and a connect attempt whose token lifetime has passed
-/// ends as expired.
+/// still taken first). A connect attempt still requesting a cookie or sending
+/// connection requests whose token lifetime has passed ends as expired; from
+/// sending the connection response on, the timeout alone ends it (TRANSPORT.md
+/// t11 rule 6).
 
 ROCKETNET_EXPORT double rocketnet_time( void );
 

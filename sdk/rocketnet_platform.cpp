@@ -1172,19 +1172,22 @@ void rocketnet_server_receive_buffer_granted( const char * name, int requested_b
 // time sync, the boot-calibrated rate) that also counts suspend
 // (clock_gettime(2)), so a game passing rocketnet_time keeps the
 // connect token clock (epoch plus that time) on the wall clock's rate and
-// across a suspend; a header without it falls back to CLOCK_MONOTONIC. Both
-// are vDSO reads, no system call, from Linux 5.3 (include/vdso/datapage.h,
-// VDSO_HRES); the oldest kernel the docs name is 5.10 (docs/GAMELIFT.md).
-// Elsewhere on POSIX: CLOCK_MONOTONIC. On macOS that is the wall clock less
-// the boot time, whose rate the NTP adjustment sets and which counts sleep, at
-// 1 us resolution (Libc gen/clock_gettime.c); the sleeps below wait on the
-// same clock. Neither follows a wall-clock step.
+// across a suspend. It is required on Linux, with no fallback: CLOCK_MONOTONIC
+// would stop during suspend, and every kernel (2.6.39 on) and libc the docs
+// name has CLOCK_BOOTTIME, so a header without it fails here, at compile time.
+// It is in the vDSO with CLOCK_MONOTONIC from Linux 5.3
+// (include/vdso/datapage.h, VDSO_HRES), the expected fast path; the oldest
+// kernel the docs name is 5.10 (docs/GAMELIFT.md). Elsewhere on POSIX:
+// CLOCK_MONOTONIC. On macOS that is the wall clock less the boot time, whose
+// rate the NTP adjustment sets and which counts sleep, at 1 us resolution
+// (Libc gen/clock_gettime.c); the sleeps below wait on the same clock. Neither
+// follows a wall-clock step.
 
-#if defined( __linux__ ) && defined( CLOCK_BOOTTIME )
+#if defined( __linux__ )
 #define ROCKETNET_PLATFORM_TIME_CLOCK CLOCK_BOOTTIME
-#else // #if defined( __linux__ ) && defined( CLOCK_BOOTTIME )
+#else // #if defined( __linux__ )
 #define ROCKETNET_PLATFORM_TIME_CLOCK CLOCK_MONOTONIC
-#endif // #if defined( __linux__ ) && defined( CLOCK_BOOTTIME )
+#endif // #if defined( __linux__ )
 
 // ---------------------------------------------------
 
