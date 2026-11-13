@@ -6,14 +6,14 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (21)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (20)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (4)
 - [Existing nightly proof debt](#existing-nightly-proof-debt) (6)
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
-- [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (6)
-- [Decisions for Glenn](#decisions-for-glenn) (5)
-- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (8)
-- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (20)
+- [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (7)
+- [Decisions for Glenn](#decisions-for-glenn) (6)
+- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (12)
+- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (27)
 
 ## Audit items not yet fixed
 
@@ -42,12 +42,6 @@ From: Piece G, cold reader (counters and tests sections)
 On a transport that buffers payloads in the server's ring, a thread's unused chunk slots stay on its line until the flush. If one thread sends to a client, a checked main thread call that is not send_packets follows, and another thread then sends to the same client, the second thread's packets may sit in lower slots and leave first. rocketnet.h states it. Returning every line's chunk at each checked main thread call would keep start order; it costs a walk of the 64 lines a call.
 
 From: Piece G, cold reader finding 2 (second case)
-
-### Do not sleep after a partial sendmsg_x
-
-A partial sendmsg_x result ends the call kept (sdk/rocketnet_msgx_send_runs.h), so the transmit worker marks the socket full and waits 1 ms (sdk/rocketnet_server_msgx_apple.cpp) although the socket took data. Loop again at once when the kept call made progress, and wait only when a call took nothing. Measured nowhere yet: the four space rows pass as it is.
-
-From: Piece P cold read
 
 ### Hard-killed client cases: take the wire mark after the clients read the last pass's sends
 
@@ -395,6 +389,12 @@ tools/tla_trace_check.py checks that each row's reach predicates are reached in 
 
 From: Piece A (#1074) cold reader, item 5
 
+### A tenth tla-trace shard, so shard 3 leaves room under the 2-minute cap
+
+Shard 3 of tools/tla_trace_check.py SHARDS (msgx:4, msgxsendruns, gather and msgx's reach predicates) is the slowest per-commit trace shard: 98 s on a CI runner in v1.1.53, and on v1.1.54 106 s alone on a bench and 123.5 s when three shards shared a loaded one, against the job's 120 s cap. Moving gso or gather out of it within nine shards barely helped on the bench (fix/v1.1.x/trace-shard3-lighter, not merged). Add a tenth shard (matrix.shard N/10 in .github/workflows/ci.yml and the summary's shard names) and split shard 3's entries across it, with each shard's replay time recorded.
+
+From: v1.1.54 replays: trace shard 3 at 106 s alone
+
 ## Decisions for Glenn
 
 Choices that change behavior, remove machinery, or touch repository and fleet settings.
@@ -428,6 +428,12 @@ From: Audit item 44; owner, 2026-11-12
 rocketnet-quiet also covers hetzner2; the frame budget is a wall-clock gate that compares only on one machine class.
 
 From: #731
+
+### A server token clock that follows the wall clock within a bound (option A of R40)
+
+fix/v1.1.x/token-clock moved rocketnet_time() to CLOCK_BOOTTIME on Linux and CLOCK_MONOTONIC on macOS. With token_epoch_unix_seconds 0, a server passing that clock now stays on the rate the host's time sync sets and counts suspend. Three gaps remain, each documented as the operator's: a wall-clock step after the first update (a server started before time sync set the clock); Windows QueryPerformanceCounter rate drift (not synchronized; 30 to 50 ppm typical, 50 ppm uses up the 30-second margin in about a week); and a game that passes its own clock. Option A closes all three for an epoch-0 server but changes the contract in rocketnet.h (ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS: the checks never read the wall clock, and pausing the caller's clock pauses token expiry), docs/SECURITY.md, and standard/TRANSPORT.md t2 rule 6 (no protocol decision from a clock the endpoint reads itself), so it is the owner's call. Design: token clock = epoch + caller time + offset, offset a double starting at 0, epoch-0 servers only (a configured epoch is the caller's and is untouched). Read the wall clock through the existing seam (rocketnet_platform_set_wall_clock_for_testing) once per 16 s of caller time, never per update. err = wall - token clock; nothing inside a 1 s dead band. Behind (err > 0): offset grows by at most 1 s per second of caller time since the last read, so the token clock runs at most 2x: a 1-hour lag is caught up in an hour. Ahead (err < 0): offset shrinks by at most 0.5 s per second of caller time, so the clock runs at least at half speed and never stands still or goes back. Why the bounds: going back is the security direction (an expired token valid again; a request-claim entry outlived), so the clock is non-decreasing, which keeps RNSecurityTables' and ServerConnection's forward-only clock actions valid as they are. Going forward costs only availability: whoever steps the wall clock gains at most 1 s of lead per second held, the lead is undone at 0.5 s per second afterwards, and a one-year step cannot lock connections out for good (an instant monotone follow would) or admit an expired token. Cost: one wall read per 16 s, a compare and a few adds per update; no thread, API, ABI or counter change. With it: a model proofs/tla/RNTokenClock.tla (Monotone, BoundedSlew, liveness: error within 1 s under a steady wall) with reversed witnesses for instant follow (lockout) and backward follow (resurrection), bound by a trace walk; header and SECURITY.md text (disciplined, and a paused caller clock then catches up at 2x); a TRANSPORT.md t12 sentence defining the server's current time and its bounds, as a carve-out from t2 rule 6. Red test to start from: tests/test_unit_token_clock_wall_drift.cpp with a fake wall clock that steps or drifts while the caller's clock does not.
+
+From: Review before v1.2.0, finding R40; option A of the three put to the owner
 
 ## Found while landing and re-measuring the v1.1.x pieces
 
@@ -481,9 +487,45 @@ Update the performance document's rows from the re-measure on main (XDP 59890655
 
 From: Re-measure on main, 2026-11-13
 
+### A delivery-delay column in the load report, per transport
+
+The receive handoffs of gso, xdp and portable held nearly every datagram one more server update than io_uring (measured 2026-11-13 at a steady mean of 1.49 updates against 0.52), and no load run showed it: bin/load reports update times, drops and counters, never how many server updates a message waited. Add a column to the load report: for each message, the updates between its send and the receive_messages call that returned it, as mean, p99 and max per transport, so a handoff that adds an update shows in every load run as well as in tests/functional/receive_latency.cpp.
+
+From: Receive handoff latency fix, the owner's ask for input checks that do not regress
+
+### After a cut receive call, the next call does not reach the worker's newer buffer
+
+In sdk/rocketnet_receive_handoff.h main moves on to the worker's buffer (rocketnet_receive_handoff_begin) only at the start of a call whose tail is finished. After a call the per-update budget cut, the next call reads the tail and main's own buffer and leaves what the worker committed into its newer buffer for the call after, even with budget left: one more update for those datagrams, only after an overloaded update. A second try-acquire once the tail is drained within the call would close it; it needs RNReceiveHandoff to drop the backlog exemption from DeliveredByNextCall, and its trace walk to cover the second try.
+
+From: Receive handoff latency fix, cold read finding 4
+
+### Measure what the kernel's SO_RXQ_OVFL count counts on a GRO socket
+
+GSO_RECEIVE_DROPPED_OVERFLOW adds the rise in the kernel's SO_RXQ_OVFL count (sk_drops) to the datagrams the gso worker lost for want of room, and the row's unit is datagrams. Whether the kernel adds one per dropped buffer or one per segment of a dropped GRO run differs by drop site and kernel version; if per buffer, one dropped run of 128 segments reads as 1 and the row undercounts. A kernel drop is also reported only on the next datagram the socket delivers, so drops with no datagram after them are never counted, even at stop. Measure on the fleet's kernels (a flood of UDP_SEGMENT runs at a socket with UDP_GRO and a small receive buffer, against the socket's SK_MEMINFO_DROPS and UDP RcvbufErrors) and make the row's text say what it counts.
+
+From: cold read of the v1.1.54 gso CI repair
+
+### A gso row of its own for the kernel's drops at a queue socket
+
+Since 2026-11-13 the gso drain counts the kernel's drops at a full queue socket (SO_RXQ_OVFL) in GSO_RECEIVE_DROPPED_OVERFLOW, so that row no longer aliases RECEIVE_DROPPED_FULL exactly (standard/TRANSPORT.md says so). io_uring keeps the same drops in its own URING_RECEIVE_DROPPED_SOCKET. A GSO_RECEIVE_DROPPED_SOCKET row would restore the alias and match io_uring; counter rows are ABI, so it waits for a release that may append rows.
+
+From: gso flood drops counted by no counter (W2-121); the existing row was chosen for the point release
+
 ## Found by the review before v1.2.0, not fixed for it
 
 Findings of the review that started on 2026-11-13 (main 5488a5443) that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.
+
+### macOS msgx: stop a socket retired as dead from taking its client's datagrams until it closes
+
+A connected socket retired as dead (rocketnet_msgx_socket_table_sweep) stays open and connected through its quarantine, one quiescent pass, normally until the next sweep, so the kernel keeps delivering that client's datagrams to it and not to the shared socket; each is counted RECEIVE_DROP_RETIRED at the close (sdk/rocketnet_server_msgx_apple.cpp rocketnet_server_msgx_table_close), none is lost unnamed. Design: at the retire, count the datagrams it holds (SO_NUMRCVPKT) and dup2 a placeholder descriptor over the fd, which closes the real socket at once (later datagrams reach the shared socket) and keeps the fd number reserved until the quarantine close. Cost: a send worker that resolved the fd before the retire sends on the placeholder and gets ENOTSOCK instead of reaching the old remote, which changes the quarantine promise of proofs/tla/RNMsgxSocketTable.tla (a resolved socket stays open and connected to its remote until the pass ends); the model, the send path's error kinds and the counts change with it. The trigger (a receive errno that marks a connected UDP socket dead) is not established; take it only if the path is seen.
+
+From: Review round 1, R70 (FW3); owner's call: leave as counted
+
+### macOS msgx: open client sockets off the main thread
+
+The replay walk's mark (rocketnet_server_msgx_mark) opens up to ROCKETNET_MSGX_OPENS_PER_UPDATE (64) connected client sockets an update on main (socket, bind with SO_REUSEPORT, two setsockopt, connect, a kevent registration: rocketnet_server_msgx_table_open), bounded but not free. Moving the opens to a worker would hand main a ready descriptor through the table the way the receive banks hand datagrams; it changes RNMsgxSocketTable's open path and its model. Measure the walk's open cost on a churn row first.
+
+From: Review round 1, R70 (FW2, second part)
 
 ### macOS msgx: keep the server's port from other local sockets
 
@@ -601,6 +643,36 @@ From: Audit round 1, ordered duplicate scan fix: measured the second reader's co
 
 ### The receive reservation's models are bound by citation only
 
-RNOrderingWrap (the delivery reservation, the duplicate's reservation and the deferral in rn_ordered_receive), RNWindow and RNWindowLayout (rn_window_receive_accept) and RNHeldOwnership have no tests/tla_trace_*.cpp walk. rn_window_receive_duplicate is in no model's actions: it repeats Accept's duplicate test, and it agrees with rn_window_receive_accept only by reading the two functions: tools/tla_trace_check.py does not check the code's receive path against them, so an action reordered in the code stays green against the model. Give the channel receive path a trace walk that emits Receive, ReceiveDuplicate and ReceivePartial with the read index, the held set and the deliveries, checked against RNOrderingWrap.
+RNOrderingWrap (the delivery reservation, the duplicate's reservation and the deferral in rn_ordered_receive), RNWindow and RNWindowLayout (rn_window_receive_accept) and RNHeldOwnership have no tests/tla_trace_*.cpp walk. rn_window_receive_duplicate is in no model's actions: it repeats Accept's duplicate test, and its agreement with rn_window_receive_accept was first shown by reading the two functions and is now checked by a finite test (named below), but by no trace: tools/tla_trace_check.py does not check the code's receive path against them, so an action reordered in the code stays green against the model. Give the channel receive path a trace walk that emits Receive, ReceiveDuplicate and ReceivePartial with the read index, the held set and the deliveries, checked against RNOrderingWrap. The two duplicate tests can drift apart: any check of their agreement must cover a negative delta, the half-range boundary (deltas 2^23 - 1 and 2^23), the number's 2^24 wrap against R, R at 0 and near UINT64_MAX, deltas at and past W, a set and a clear received bit, a live descriptor under another number, and a latched violation. test_window_receive_duplicate_agrees_with_accept (tests/test_unit_window_sequences.cpp) sweeps these at W = 64 now; a trace binding would keep them bound as the code changes.
 
 From: Audit round 1, ordered duplicate scan fix
+
+### Two client fill threads can stage their sequences out of slot order
+
+rocketnet_client_transport_start_packet (sdk/rocketnet_client_transport.cpp) claims a payload ring slot with one atomic add and takes the session sequence with another (rocketnet_client_protocol_start_payload, sdk/rocketnet_client_protocol.cpp). Two game threads starting at once can take slots i and i+1 and then the sequences in the other order, so the ring holds [seq+1, seq] and the I/O thread sends them in that order. The server sees what a one-packet network reorder gives it: the replay window takes both, and acks name sequences, not slots. Not changed for the point release: binding slot and sequence would need one atomic for both (a sequence derived from the slot breaks across rings, burns and the stop's final ring) or a lock on the fill path, which adds contention to every start. Decide whether wire order equal to sequence order is a property the client should keep, and measure the cost of keeping it, before any change.
+
+From: Review before v1.2.0, finding R87 second part (Carbon C-14, Emma E-21), fix/v1.1.x/client-stop-and-race
+
+### During the family race, a full receive buffer waits the whole I/O guard on the primary family's wake
+
+While the race is uncommitted and the I/O thread's receive buffer is full, rocketnet_client_race_wait (sdk/rocketnet_client_transport.cpp) waits on family[0]'s wake alone for the full guard (FullWaitsOnWake; tests/test_unit_client_bind_family.cpp test_client_race_full_buffer_waits_on_the_primary_wake_alone). The race's wake sets both families' wakes while uncommitted, so main's return of a buffer still ends that wait; a stall needs the buffer full during the handshake. Measured on main 5a2dbf403 on bench-xdp-9 with Carbon's REPRO 4 (a 400-datagram flood during the race), 9 runs: the Connection Request arrived in 0.52-0.87 ms for both the IPv6 control and the IPv4 commit, no stall; that flood does not fill the 1024-slot buffer. After the commit the wake never touches the losing family. If a stall of the order of the guard is ever measured, the fix is to cap the full-buffer wait at the race's 1 ms poll while uncommitted, with an RNClientRace step and a reversed witness.
+
+From: Review before v1.2.0, finding R89, fix/v1.1.x/client-stop-and-race
+
+### The losing family's queued datagrams are closed away uncounted at the race's commit
+
+When the reading thread first sees the commit, rocketnet_client_race_kept (sdk/rocketnet_client_transport.cpp) closes the losing family's socket; datagrams still queued on it go with the close, unread and uncounted. standard/TRANSPORT.md t13.3 (StoppedSocketDrained) covers a client whose connection has ended, and the handshake's race rule counts a packet read from the other family after the commit as from a foreign source and requires the other socket closed; neither says what happens to the losing socket's queue at the commit. Decide in the standard whether the commit drains and counts that queue (for example as CLIENT_RECEIVE_FOREIGN_SOURCE) before the close; then model it in RNClientRace and test it with the race harness.
+
+From: Review before v1.2.0, finding R88 second part, fix/v1.1.x/client-stop-and-race
+
+### Refuse at create the bind addresses and per-transport counts that start refuses
+
+rocketnet_server_create accepts a bind_ipv4_address or bind_ipv6_address that does not parse, and a transport count its transport cannot run (num_iocp_send_threads above the send lanes max_clients gives, for one); rocketnet.h says start refuses them, and it does. rocketnet_server_required_memory answers 0 for a config whose transports none can plan (the v1.2.0 fix), but create still returns OK. Moving these refusals to create (rn_server_config_valid in sdk/rocketnet_api.cpp) changes the header's stated contract, and a Windows-only count would then refuse a shared config on every platform: the owner decides whether and how (refuse only the candidates the list names, or only on the platform that builds them).
+
+From: Review before v1.2.0, Carbon finding C-18 (R79) and #1115-2(a)
+
+### Keep an open server message's memory the caller's until the next update, across a disconnect
+
+rocketnet_server_disconnect_client, rocketnet_server_disconnect_all_clients and rocketnet_server_stop abort the client's open message at once (rn_message_object_kick, sdk/rocketnet_message_server.cpp): an in-place frame goes back to the transport and the reservation is released, so a caller still writing into the pointer writes into memory that is no longer its own. rocketnet.h now says so (v1.2.0). Holding the frame or the reservation until the next update or send_packets would keep the old promise; it needs lifetime state the kick does not have today (a deferred abort list per object, and the stop's lease reset waiting for it).
+
+From: Review before v1.2.0, Fable reader, finding FT4 (R11)
