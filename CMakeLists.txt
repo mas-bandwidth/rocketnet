@@ -1340,7 +1340,10 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(harden_load PRIVATE cxx_std_11)
     target_include_directories(harden_load SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/load/enkiTS")
     if(NOT MSVC)
-        set_source_files_properties(tests/load/enkiTS/TaskScheduler.cpp PROPERTIES COMPILE_OPTIONS "-Wno-sign-conversion;-Wno-conversion;-Wno-tsan")
+        set_source_files_properties(tests/load/enkiTS/TaskScheduler.cpp PROPERTIES COMPILE_OPTIONS "-Wno-sign-conversion;-Wno-conversion")
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            set_property(SOURCE tests/load/enkiTS/TaskScheduler.cpp APPEND PROPERTY COMPILE_OPTIONS "-Wno-tsan")
+        endif()
     endif()
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
