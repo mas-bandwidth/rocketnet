@@ -3115,7 +3115,8 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         // fills of the next frame share its room
         // (rocketnet_xdp_handoff_lock)
 
-        if ( !rocketnet_xdp_handoff_lock( [socket]() { return rocketnet_platform_mutex_try_acquire( &socket->send_mutex ); }, ROCKETNET_XDP_HANDOFF_TRIES ) )
+        if ( !rocketnet_xdp_handoff_lock( [socket]()
+                                          { return rocketnet_platform_mutex_try_acquire( &socket->send_mutex ); }, ROCKETNET_XDP_HANDOFF_TRIES ) )
         {
             socket->send_publish_deferred.fetch_add( 1, std::memory_order_relaxed );
             continue;
@@ -4198,7 +4199,8 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
 
 static bool rocketnet_server_socket_receive_lock( rocketnet_server_xdp_socket_t * socket )
 {
-    if ( rocketnet_xdp_handoff_lock( [socket]() { return rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ); }, ROCKETNET_XDP_HANDOFF_TRIES ) )
+    if ( rocketnet_xdp_handoff_lock( [socket]()
+                                     { return rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ); }, ROCKETNET_XDP_HANDOFF_TRIES ) )
     {
         return true;
     }
