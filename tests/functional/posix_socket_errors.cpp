@@ -2823,8 +2823,8 @@ void rocketnet_test_linux_uring_send_cqe_errors()
 // ---------------------------------------------------
 // an explicit port another socket already holds. The portable transport's
 // bind refuses it with EADDRINUSE; the gso and io_uring transports bind their
-// first queue before it sets SO_REUSEPORT (rocketnet_server_gso_open_socket,
-// rocketnet_server_uring_open_socket), so they refuse it the same way rather
+// first queue before it sets SO_REUSEPORT (rocketnet_server_udp_open, which
+// both call), so they refuse it the same way rather
 // than joining the holder's reuseport group and sharing its datagrams. The
 // server's own later queues still join: a create of two queues on an
 // explicit free port binds both, and every datagram sent to it arrives.
