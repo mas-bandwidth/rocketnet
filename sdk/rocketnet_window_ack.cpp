@@ -818,6 +818,19 @@ int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt )
     return 1;
 }
 
+int rn_window_ack_seed_rtt_from( rn_window_ack_t * ack, double ( *rtt )( void * transport, int client_index ), void * transport, int client_index )
+{
+    rocketnet_assert( ack );
+    rocketnet_assert( rtt );
+
+    if ( ack->has_rtt )
+    {
+        return 0;
+    }
+
+    return rn_window_ack_seed_rtt( ack, rtt( transport, client_index ) );
+}
+
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
 // proofs/tla/RNRttFilter.tla Ack).
