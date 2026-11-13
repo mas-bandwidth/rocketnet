@@ -2107,6 +2107,62 @@ static bool rocketnet_iocp_endpoint_processors( void * context, rocketnet_server
 }
 
 #if ROCKETNET_DEV
+// development library only: reads a test layout "R0,R1,../W0,W1,..", processor
+// numbers in group 0, into rss and workers (each up to max). False when a
+// character is not a digit, comma or the one slash, or a number is past the
+// group's processors.
+static bool rocketnet_iocp_test_layout_read( const char * text, int * rss, int * num_rss, int * workers, int * num_workers, int max )
+{
+    const int group_processors = (int) GetActiveProcessorCount( 0 );
+    *num_rss = 0;
+    *num_workers = 0;
+    bool after_slash = false;
+    const char * p = text;
+    while ( *p )
+    {
+        if ( *p == '/' && !after_slash )
+        {
+            after_slash = true;
+            ++p;
+            continue;
+        }
+        if ( *p == ',' )
+        {
+            ++p;
+            continue;
+        }
+        if ( *p < '0' || *p > '9' )
+        {
+            return false;
+        }
+        int value = 0;
+        while ( *p >= '0' && *p <= '9' )
+        {
+            if ( value > 1000 )
+            {
+                return false;
+            }
+            value = value * 10 + ( *p - '0' );
+            ++p;
+        }
+        if ( value >= group_processors || value >= (int) ( sizeof( KAFFINITY ) * 8 ) )
+        {
+            return false;
+        }
+        if ( !after_slash && *num_rss < max )
+        {
+            rss[( *num_rss )++] = value;
+        }
+        else if ( after_slash && *num_workers < max )
+        {
+            workers[( *num_workers )++] = value;
+        }
+    }
+    return true;
+}
+#endif // #if ROCKETNET_DEV
+
+#if ROCKETNET_DEV
 static std::atomic<int> rocketnet_iocp_test_forced_flags{ 0 };
 
 void rocketnet_server_iocp_test_force_flags( int flags )
@@ -2377,6 +2433,41 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
                 else if ( strcmp( pin, "none" ) == 0 )
                 {
                     iocp->pins[e].Mask = 0;
+                }
+            }
+        }
+        // ROCKETNET_TEST_IOCP_LAYOUT="R0,R1,../W0,W1,.." puts endpoint e's
+        // socket on processor Re (SIO_CPU_AFFINITY: the processor RSS hands
+        // its flows) and its completion worker on processor We alone, group 0,
+        // for a measurement in the layout a game runs: the NIC's receive
+        // processing on cores the operator chose (Set-NetAdapterRss), the
+        // network threads on cores of their own. A list shorter than the
+        // workers, or a processor past group 0's, leaves the placement above
+        // and says so.
+        char layout[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_LAYOUT", layout, sizeof( layout ) ) > 0 )
+        {
+            int rss[ROCKETNET_IOCP_MAX_WORKERS];
+            int workers[ROCKETNET_IOCP_MAX_WORKERS];
+            int num_rss = 0;
+            int num_workers = 0;
+            if ( !rocketnet_iocp_test_layout_read( layout, rss, &num_rss, workers, &num_workers, ROCKETNET_IOCP_MAX_WORKERS ) ||
+                 num_rss < iocp->num_endpoints || num_workers < iocp->num_endpoints )
+            {
+                rocketnet_warn( "iocp transport: ROCKETNET_TEST_IOCP_LAYOUT \"%s\" does not place %d workers in group 0; placement unchanged", layout,
+                                iocp->num_endpoints );
+            }
+            else
+            {
+                for ( int e = 0; e < iocp->num_endpoints; ++e )
+                {
+                    iocp->processors[e] = rss[e];
+                    memset( &iocp->pins[e], 0, sizeof( iocp->pins[e] ) );
+                    iocp->pins[e].Group = 0;
+                    iocp->pins[e].Mask = (KAFFINITY) 1 << workers[e];
+                    memset( &iocp->cores[e], 0, sizeof( iocp->cores[e] ) );
+                    iocp->cores[e].Group = 0;
+                    iocp->cores[e].Mask = ( (KAFFINITY) 1 << rss[e] ) | ( (KAFFINITY) 1 << workers[e] );
                 }
             }
         }
