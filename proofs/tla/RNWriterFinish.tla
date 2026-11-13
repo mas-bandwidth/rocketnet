@@ -21,11 +21,10 @@
 (* wrote (NothingLeftForWalk), and every writer message is sent or        *)
 (* refused once (Accounted).                                              *)
 (*                                                                         *)
-(* Reversed witnesses: MCRNWriterFinishBrokenNoSeal (the build left open   *)
-(* for the walk, as the serial finish leaves it), MCRNWriterFinishBroken-  *)
-(* QueueNoCapacity (the no-capacity start queued for the walk), and       *)
-(* MCRNWriterFinishBrokenNoOwner (a second writer on a client in one     *)
-(* phase) each break their invariant.                                     *)
+(* Reversed witness: MCRNWriterFinishBrokenNoOwner (no ownership check, a  *)
+(* second writer on a client in one phase) breaks OneWriter. SealAtFinish  *)
+(* and RefuseNoCapacity set FALSE describe the serial finish (the build    *)
+(* left open, the no-capacity start queued); no committed run uses them.   *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 

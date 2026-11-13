@@ -39,6 +39,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -892,7 +893,8 @@ struct writer_finish_trace_t
     uint64_t packets_sent[WIDE_FILL_MAX_CLIENTS];     // per client, from the session's stats, after connect
     uint64_t bytes_sent[WIDE_FILL_MAX_CLIENTS];
     uint64_t acked[WIDE_FILL_MAX_CLIENTS];            // per client, packet ids the transport surfaced as acked
-    uint64_t acked_out_of_order;                      // a client's acked id not above its previous one
+    uint64_t acked_id_sum[WIDE_FILL_MAX_CLIENTS];     // per client, the sum of those ids (a block names its ids highest first, so their order is not compared)
+    uint64_t acked_twice;                             // a client's packet id surfaced as acked more than once
     uint32_t received[WIDE_FILL_MAX_CLIENTS][3];      // per client, messages taken by kind
     uint64_t corrupt;
     uint64_t finished;                                // finishes that returned a serial
@@ -956,7 +958,7 @@ static void writer_finish_job( writer_finish_fill_t * f, int thread )
 // the main thread's half of a frame: what was filled goes out, then update,
 // the acked ids read, and every receive drained
 static void writer_finish_main( wide_fill_world_t * world, wide_fill_slot_t * slots, const int * slot_of_client, writer_finish_trace_t * trace,
-                                int64_t * last_acked )
+                                std::vector<uint64_t> * acked_ids )
 {
     rn_send_pass_cost_reset();
     rocketnet_server_send_packets( world->server );
@@ -978,11 +980,7 @@ static void writer_finish_main( wide_fill_world_t * world, wide_fill_slot_t * sl
             continue;
         }
         trace->acked[slot]++;
-        if ( (int64_t) packet_ids[i] <= last_acked[slot] )
-        {
-            trace->acked_out_of_order++;
-        }
-        last_acked[slot] = (int64_t) packet_ids[i];
+        acked_ids[slot].push_back( packet_ids[i] );
     }
 
     while ( rocketnet_server_receive_messages( world->server ) != NULL )
@@ -1006,12 +1004,8 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
     wide_fill_slot_t slots[WIDE_FILL_MAX_CLIENTS];
     memset( slots, 0, sizeof( slots ) );
     int slot_of_client[WIDE_FILL_MAX_CLIENTS];
-    int64_t last_acked[WIDE_FILL_MAX_CLIENTS];
+    std::vector<uint64_t> acked_ids[WIDE_FILL_MAX_CLIENTS];
     rocketnet_server_client_stats_t before[WIDE_FILL_MAX_CLIENTS];
-    for ( int i = 0; i < WIDE_FILL_MAX_CLIENTS; i++ )
-    {
-        last_acked[i] = -1;
-    }
     for ( int c = 0; c < world.num_clients; c++ )
     {
         slot_of_client[c] = rocketnet_client_index( world.clients[c] );
@@ -1025,7 +1019,7 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
 
     for ( int frame = 0; frame < frames; frame++ )
     {
-        writer_finish_main( &world, slots, slot_of_client, trace, last_acked );
+        writer_finish_main( &world, slots, slot_of_client, trace, acked_ids );
 
         writer_finish_fill_t f;
         memset( &f, 0, sizeof( f ) );
@@ -1065,7 +1059,7 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
 
     for ( int step = 0; step < 60; step++ )
     {
-        writer_finish_main( &world, slots, slot_of_client, trace, last_acked );
+        writer_finish_main( &world, slots, slot_of_client, trace, acked_ids );
         world.time += 1.0 / 60.0;
     }
 
@@ -1081,6 +1075,15 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
             trace->received[slot][k] = slots[slot].received[k];
         }
         trace->corrupt += slots[slot].corrupt;
+        std::sort( acked_ids[slot].begin(), acked_ids[slot].end() );
+        for ( size_t i = 0; i < acked_ids[slot].size(); i++ )
+        {
+            trace->acked_id_sum[slot] += acked_ids[slot][i];
+            if ( i > 0 && acked_ids[slot][i] == acked_ids[slot][i - 1] )
+            {
+                trace->acked_twice++;
+            }
+        }
         check( slots[slot].received[2] == slots[slot].sent[2] );     // every reliable message, once, in order
     }
 
@@ -1098,6 +1101,7 @@ static bool writer_finish_same_accounting( const writer_finish_trace_t * a, cons
         same = same && a->packets_sent[slot] == b->packets_sent[slot];
         same = same && a->bytes_sent[slot] == b->bytes_sent[slot];
         same = same && a->acked[slot] == b->acked[slot];
+        same = same && a->acked_id_sum[slot] == b->acked_id_sum[slot];
         for ( int k = 0; k < 3; k++ )
         {
             same = same && a->received[slot][k] == b->received[slot][k];
@@ -1129,7 +1133,7 @@ static void test_writer_finish_equals_serial()
         check( t->no_capacity == 0 );
         check( t->fallback == 0 );
         check( t->corrupt == 0 );
-        check( t->acked_out_of_order == 0 );
+        check( t->acked_twice == 0 );
     }
 
     check( writer_finish_same_accounting( &serial, &one ) );
@@ -1177,7 +1181,7 @@ static void test_writer_finish_no_capacity_refused()
         check( t->no_capacity == t->refused );          // by value: one count per refused finish
         check( t->fallback == t->refused );             // each refusal was a start that fell back
         check( t->corrupt == 0 );
-        check( t->acked_out_of_order == 0 );
+        check( t->acked_twice == 0 );
     }
     check( writer_finish_same_accounting( &writer, &wide ) );
     check( writer.refused == wide.refused );
