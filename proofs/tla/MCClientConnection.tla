@@ -36,6 +36,13 @@ MCForgery       == TRUE
 \* accepted cookie arms the early send, not only the advance from 1 to 2
 MCEarlyAnyCookie == TRUE
 
+\* the small-order runs (MCClientConnectionSmallOrder.cfg and its reversed
+\* witness MCClientConnectionBrokenSmallOrderIgnored.cfg): a server with a
+\* half-open mapping may answer with a challenge whose server ephemeral key
+\* is a small-order point; the witness discards it, the code before W2-113
+MCSmallOrder        == TRUE
+MCSmallOrderIgnored == TRUE
+
 (***************************************************************************)
 (* Reachability.  A probe, not a rule: the client is connected and its     *)
 (* application has been handed a payload.  cPayloadDelivered is the ghost  *)

@@ -756,29 +756,6 @@ static void test_client_handshake_receive_counters_move_exactly()
     RCR_EXPECT( "denied with a zero sequence", &before, &pair.client_counters,
                 { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_ZERO_SEQUENCE, 1 } } );
 
-    // a challenge sealed correctly under the handshake keys, carrying a
-    // small-order server ephemeral: the derivation refuses it
-    {
-        uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
-        memset( session_nonce, 0x11, sizeof( session_nonce ) );
-
-        struct rocketnet_connection_keys_t handshake;
-        rocketnet_derive_handshake_keys( &handshake, pair.client.token.client_to_server_key, pair.client.token.server_to_client_key,
-                                         pair.client.connection_salt, session_nonce );
-
-        const uint8_t small_order_point[ROCKETNET_KEY_BYTES] = { 0 };
-        bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET, pair.client.packet_filter, 1,
-                                               session_nonce, small_order_point, ROCKETNET_KEY_BYTES,
-                                               pair.client.signed_fields.protocol_id, pair.client.connection_salt,
-                                               pair.client.client_ephemeral_public_key, handshake.handshake_server_to_client );
-        check( bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
-        before = pair.client_counters;
-        check( !rcr_to_client( &pair, packet, bytes ) );
-        RCR_EXPECT( "challenge carrying a small-order key", &before, &pair.client_counters,
-                    { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_CHALLENGE_SMALL_ORDER_KEY, 1 } } );
-        check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
-    }
-
     // the real challenge is accepted, and its retransmission has no question
     // left to answer
 
@@ -796,6 +773,122 @@ static void test_client_handshake_receive_counters_move_exactly()
 }
 
 REGISTER_UNIT_TEST( test_client_handshake_receive_counters_move_exactly );
+
+// a challenge sealed correctly under the handshake keys, carrying a
+// small-order server ephemeral. TRANSPORT.md t7 rule 5 and t11.2 step 4: the
+// server sent it, and a small-order key is a protocol violation, so the
+// attempt ends at once in protocol violation (-10) with every key erased,
+// not at its deadline. A later connect starts a clean attempt from there.
+
+static bool rcr_all_zero( const uint8_t * bytes, size_t count )
+{
+    uint8_t any = 0;
+    for ( size_t i = 0; i < count; i++ )
+    {
+        any |= bytes[i];
+    }
+    return any == 0;
+}
+
+static void test_client_small_order_challenge_is_a_protocol_violation()
+{
+    static struct rcr_pair_t pair;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_counters_t before;
+
+    rcr_pair_setup( &pair, RCR_STAGE_CHALLENGE_HELD );
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+
+    uint8_t old_salt[sizeof( pair.client.connection_salt )];
+    uint8_t old_ephemeral[sizeof( pair.client.client_ephemeral_public_key )];
+    memcpy( old_salt, pair.client.connection_salt, sizeof( old_salt ) );
+    memcpy( old_ephemeral, pair.client.client_ephemeral_public_key, sizeof( old_ephemeral ) );
+
+    {
+        uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
+        memset( session_nonce, 0x11, sizeof( session_nonce ) );
+
+        struct rocketnet_connection_keys_t handshake;
+        rocketnet_derive_handshake_keys( &handshake, pair.client.token.client_to_server_key, pair.client.token.server_to_client_key,
+                                         pair.client.connection_salt, session_nonce );
+
+        const uint8_t small_order_point[ROCKETNET_KEY_BYTES] = { 0 };
+        const int bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET, pair.client.packet_filter, 1,
+                                                         session_nonce, small_order_point, ROCKETNET_KEY_BYTES,
+                                                         pair.client.signed_fields.protocol_id, pair.client.connection_salt,
+                                                         pair.client.client_ephemeral_public_key, handshake.handshake_server_to_client );
+        check( bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+        before = pair.client_counters;
+        check( !rcr_to_client( &pair, packet, bytes ) );
+        RCR_EXPECT( "challenge carrying a small-order key", &before, &pair.client_counters,
+                    { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_CHALLENGE_SMALL_ORDER_KEY, 1 } } );
+    }
+
+    // terminal at once, every key of the attempt erased
+
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION );
+    check( rcr_all_zero( (const uint8_t *) &pair.client.keys, sizeof( pair.client.keys ) ) );
+    check( rcr_all_zero( pair.client.token.client_to_server_key, sizeof( pair.client.token.client_to_server_key ) ) );
+    check( rcr_all_zero( pair.client.token.server_to_client_key, sizeof( pair.client.token.server_to_client_key ) ) );
+    check( rcr_all_zero( pair.client.client_ephemeral_secret_key, sizeof( pair.client.client_ephemeral_secret_key ) ) );
+
+    // nothing is sent from the terminal state, and the server's real
+    // challenge, arriving late, finds no attempt to answer
+
+    {
+        int out_bytes = 0;
+        rocketnet_client_protocol_update( &pair.client, pair.time, packet, &out_bytes );
+        check( out_bytes == 0 );
+        check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION );
+    }
+
+    before = pair.client_counters;
+    check( !rcr_to_client( &pair, pair.held_challenge, pair.held_challenge_bytes ) );
+    RCR_EXPECT( "real challenge after the violation", &before, &pair.client_counters,
+                { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_STATE, 1 } } );
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION );
+
+    // a later connect from -10 is accepted and starts clean: requesting a
+    // cookie, a fresh salt and ephemeral, sequences at one, and it completes
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rcr_mint_token( token_data, 0x1401ULL );
+    check( rocketnet_client_protocol_connect( &pair.client, token_data, pair.time, ROCKETNET_TEST_CREATE_TS ) );
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+    check( pair.client.send_sequence_handshake == 1 );
+    check( memcmp( old_salt, pair.client.connection_salt, sizeof( old_salt ) ) != 0 );
+    check( memcmp( old_ephemeral, pair.client.client_ephemeral_public_key, sizeof( old_ephemeral ) ) != 0 );
+    check( rcr_all_zero( (const uint8_t *) &pair.client.keys, sizeof( pair.client.keys ) ) );
+
+    {
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+        const double start = pair.time;
+        for ( double time = start; time < start + 10.0 && pair.client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED; time += 0.05 )
+        {
+            int out_bytes = 0;
+            rocketnet_client_protocol_update( &pair.client, time, packet, &out_bytes );
+            check( pair.client.state > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+            if ( out_bytes == 0 )
+            {
+                continue;
+            }
+            int response_bytes = 0;
+            rcr_pump_client_packet( &pair, packet, out_bytes, time, response, &response_bytes );
+            if ( response_bytes > 0 )
+            {
+                rocketnet_client_protocol_process_packet( &pair.client, response, response_bytes, time + 0.01,
+                                                          payload, (int) sizeof( payload ), &payload_bytes );
+            }
+        }
+    }
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    rcr_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_client_small_order_challenge_is_a_protocol_violation );
 
 // ---------------------------------------------------------------------------
 // the server's response check sequence, and the counters only a hooked server reaches

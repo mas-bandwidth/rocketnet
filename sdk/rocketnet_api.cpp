@@ -36,6 +36,9 @@
 //                     the contracts this file keeps
 // ---------------------------------------------------------------
 
+// The transport's -10 (a small-order challenge in the handshake) reads back
+// as the public PROTOCOL_VIOLATION: proofs/tla/ClientSession.tla HandshakeViolation.
+static_assert( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION == ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION, "client state" );
 static_assert( ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED, "client state" );
 static_assert( ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN, "client state" );
 static_assert( ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT, "client state" );
