@@ -103,6 +103,8 @@ Reversed witnesses, one constant flip each (the code is `Witness = "none"`):
 | `lateorder` | no send pass: the order before W2-52, the debt an accept raises waits for the next update ack decision | `SameUpdateAck` |
 | `sweepspends` | the update ack decision pays a keep-alive's debt although a payload from the peer waits for the accept, so the send pass sends a second standalone ack | `OneStandalonePerUpdate` |
 
+`lateorder` keeps the sweep's skip of a peer with a payload waiting, which the code before W2-52 did not have; what it reproduces is that code's order, the accept after the ack decision with nothing after it to pay the debt. `sweepspends` is not earlier code: before W2-52 there was no send pass, so no update could send two standalone acks. It is the fix without the sweep's skip, the wrong fix the skip exists to prevent.
+
 `SurfacedOnce` and `BitsCoverRing` have no reversed witness.
 
 The two W2-52 witnesses, each counterexample read by hand against the code (records of 2026-11-13, pinned tlacheck):

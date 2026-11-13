@@ -5494,13 +5494,21 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
 // untouched. The sweep left these clients' acks to this pass (it skips a
 // client with a payload in the batch), so the one standalone ack an update
 // pays the debt their keep-alives and their payloads raised alike, and no
-// client gets two (OneStandalonePerUpdate): a client the batch names twice
-// owes nothing at its second visit.
-// The pass runs after the message layer wrote this update's game frames and
-// takes only the room they left: a client whose own send queue has no room,
-// or whose capacity the update spent, keeps its debt for the next sweep, and
-// the pass goes on to the clients of the queues with room
-// (rocketnet_server_transport_send_capacity_to, as the send pass).
+// client gets two (OneStandalonePerUpdate): once a visit sends, the client
+// owes nothing at a later visit.
+// Room, so that the pass never takes a game packet's: the protocol reserve
+// holds one control frame a client an update (the sweep's keep-alive or ack,
+// rocketnet_server_transport_send_reserves). A client the sweep sent nothing
+// this update (its last send is older than this update) still holds that
+// frame, so its ack takes the control room the sweep would have taken (its
+// queue's room, or the transport's), never the game's budget. A client the
+// sweep sent a keep-alive (which carried the block; only the accept's debt
+// is left) would take a second frame: that one takes only the game capacity
+// still left after the message layer wrote this update's game frames
+// (rocketnet_server_transport_send_capacity_to, as the send pass), and with
+// none left keeps its debt for the next update. A full queue holds its
+// clients and the pass goes on to the clients of the queues with room; one
+// full queue, or every queue full, ends the pass, as it ends the sweep.
 
 static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_server_transport_t * server_transport )
 {
@@ -5530,16 +5538,20 @@ static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_ser
             continue;
         }
 
-        if ( rocketnet_server_transport_send_capacity_to( server_transport, i ) <= 0 )
+        const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
+        const bool reserved = rocketnet_encryption_map_entry( server_transport->protocol.encryption_map, mapping_index )->last_send_time != current_time;
+        const int room = !reserved                         ? rocketnet_server_transport_send_capacity_to( server_transport, i )
+                         : server_transport->send_queues > 1 ? rocketnet_server_transport_queue_room( server_transport, rocketnet_server_transport_send_queue_of( server_transport, client_address ) )
+                                                             : rocketnet_server_transport_io_send_room( server_transport );
+        if ( room <= 0 )
         {
-            if ( server_transport->send_queues <= 1 )
+            if ( reserved && ( server_transport->send_queues <= 1 || rocketnet_server_transport_io_send_room_total( server_transport ) <= 0 ) )
             {
                 break;
             }
             continue;
         }
 
-        const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         struct rocketnet_server_frame_t frame;
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
         if ( !frame_data )

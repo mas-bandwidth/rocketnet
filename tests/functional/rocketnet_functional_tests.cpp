@@ -16478,13 +16478,14 @@ static void rocketnet_latency_standalone_ack( bool server_to_client, int cadence
         if ( delivered_update == update )
         {
             // the update's own sends (keep-alives) left before the snapshot,
-            // so a send here is the standalone ack of the send pass
+            // so a send here is the standalone ack of the send pass, and the
+            // receiver sends nothing else: exactly one
             const uint64_t after_send = server_to_client ? rocketnet_latency_client_sent( pair.client ) : rocketnet_latency_server_sent( pair.server, client_index );
-            if ( after_send == sent_at_delivery )
+            if ( after_send != sent_at_delivery + 1 )
             {
-                printf( "standalone ack %s: delivered at update %d, no ack in its send pass\n", server_to_client ? "s2c" : "c2s", update );
+                printf( "standalone ack %s: delivered at update %d, %d sends in its send pass\n", server_to_client ? "s2c" : "c2s", update, (int) ( after_send - sent_at_delivery ) );
             }
-            rocketnet_check( after_send > sent_at_delivery );
+            rocketnet_check( after_send == sent_at_delivery + 1 );
             measured++;
             delivered_update = -1;
         }
