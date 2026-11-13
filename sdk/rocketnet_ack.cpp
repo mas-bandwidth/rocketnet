@@ -2585,6 +2585,8 @@ void rocketnet_server_acks_begin_receive( struct rocketnet_server_acks_t * acks,
     rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_CLOSED );
     rocketnet_assert( acks->num_pending == 0 );
 
+    // proofs/tla/RNAckApplyPhase.tla BeginReceive: the batch empties, and
+    // from here blocks queue
     acks->num_acked = 0;
     acks->pending_time = time;
     if ( acks->deferred )
@@ -2619,6 +2621,9 @@ void rocketnet_server_acks_receive_block( struct rocketnet_server_acks_t * acks,
         return;
     }
 
+    // proofs/tla/RNAckApplyPhase.tla Receive: the block goes to the queue's
+    // end and onto its client's chain; one that does not fit the queue or
+    // the range store has everything queued applied and gathered first
     if ( acks->num_pending == acks->pending_capacity || block->num_ranges > acks->ranges_capacity - acks->num_ranges )
     {
         rocketnet_server_acks_gather( acks, acked_connection_ids, unknown_sequence_counter, batch_full_counter );
@@ -2685,6 +2690,8 @@ void rocketnet_server_acks_open( struct rocketnet_server_acks_t * acks )
 
     rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_RECEIVING );
 
+    // proofs/tla/RNAckApplyPhase.tla Open: every client with blocks queued
+    // gets its claim set
     for ( int e = 0; e < acks->num_pending; e++ )
     {
         struct rocketnet_server_ack_client_t * client = &acks->clients[acks->pending[e].client_index];
@@ -2706,11 +2713,23 @@ int rocketnet_server_acks_apply_client( struct rocketnet_server_acks_t * acks, i
         return 0;
     }
 
-    // proofs/tla/RNAckApplyPhase.tla Take: one exchange, one taker
+    // proofs/tla/RNAckApplyPhase.tla Take: one exchange, one taker. A call
+    // that finds the claim clear does nothing: TakeRefused while open
+    // (nothing queued for the client, or taken already), TakeOutside in any
+    // other phase (no claim stands outside the open phase)
+#if defined( ROCKETNET_ACK_APPLY_PLANT )
+    // the trace check's plant (tests/tla_trace_ack_apply.cpp): the claim is
+    // read and left set, so the client can be taken again
+    if ( acks->clients[client_index].claim.load( std::memory_order_acquire ) == 0 )
+    {
+        return 0;
+    }
+#else  // #if defined( ROCKETNET_ACK_APPLY_PLANT )
     if ( acks->clients[client_index].claim.exchange( 0, std::memory_order_acquire ) == 0 )
     {
         return 0;
     }
+#endif // #if defined( ROCKETNET_ACK_APPLY_PLANT )
 
     return rocketnet_server_acks_apply_queued( acks, client_index );
 }
@@ -2727,8 +2746,22 @@ void rocketnet_server_acks_close( struct rocketnet_server_acks_t * acks, uint64_
 
     rocketnet_assert( acks->phase == ROCKETNET_SERVER_ACKS_OPEN || acks->phase == ROCKETNET_SERVER_ACKS_RECEIVING );
 
+    // proofs/tla/RNAckApplyPhase.tla Close: every client still claimed is
+    // applied here, then the batch is gathered in arrival order
     rocketnet_server_acks_gather( acks, acked_connection_ids, unknown_sequence_counter, batch_full_counter );
     acks->phase = ROCKETNET_SERVER_ACKS_CLOSED;
+}
+
+// The trace check's seam (tests/tla_trace_ack_apply.cpp): one client's part
+// of the deferred apply, read by value. Main thread, with no taker running.
+void rocketnet_server_acks_client_for_test( const struct rocketnet_server_acks_t * acks, int client_index, int * head, int * tail, int * claim, int * ids )
+{
+    rocketnet_assert( acks && acks->deferred && client_index >= 0 && client_index < acks->max_clients );
+    const struct rocketnet_server_ack_client_t * client = &acks->clients[client_index];
+    *head = client->head;
+    *tail = client->tail;
+    *claim = (int) client->claim.load( std::memory_order_relaxed );
+    *ids = client->ids;
 }
 
 void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks )
