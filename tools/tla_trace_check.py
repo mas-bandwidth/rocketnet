@@ -88,6 +88,9 @@ LAYERS = {
             "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
                     "so it never gets there",
         },
+        # each record carries the 64 fills_in lines, and a TLC run's time is the size of the log it reads: 400 steps
+        # ran 35 to 53 s a seed on a shared bench slot (vision, 2026-11-13) against the 100 s budget
+        "steps": 120,
     },
     "sendreserve": {
         "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
