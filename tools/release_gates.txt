@@ -72,7 +72,11 @@ ci.yml | fuzz smoke (corpus replay) | full | v1.1.10 | push,pull_request | sanit
 ci.yml | happy path / linux | full | v1.1.10 | push,pull_request | real sockets end to end
 ci.yml | happy path / windows | full | v1.1.10 | push,pull_request | real sockets end to end
 ci.yml | linux / Debug / functional | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | linux / Debug / functional (0/2) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | linux / Debug / functional (1/2) | full | v1.1.31 | push,pull_request | functional suite shard
 ci.yml | linux / Release / functional | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | linux / Release / functional (0/2) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | linux / Release / functional (1/2) | full | v1.1.31 | push,pull_request | functional suite shard
 ci.yml | macos / Release / functional | full | v1.1.10 | push,pull_request | functional suite
 ci.yml | macos / Release / functional_production | full | v1.1.10 | push,pull_request | functional suite
 ci.yml | linux / Debug / transport_matrix | full | v1.1.10 | push,pull_request | functional, every transport
