@@ -1404,11 +1404,11 @@ static bool rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         if ( check == ROCKETNET_GSO_PIN_OUTSIDE_SET )
         {
-            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; it falls back to the cpus from num_os_cpus up",queue->index, cpu, CPU_SETSIZE - 1 );
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; it falls back to the cpus from num_os_cpus up", queue->index, cpu, CPU_SETSIZE - 1 );
         }
         else
         {
-            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); it falls back to the cpus from num_os_cpus up",queue->index, cpu, online - 1 );
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); it falls back to the cpus from num_os_cpus up", queue->index, cpu, online - 1 );
         }
         const bool off_core_zero = rocketnet_server_gso_confine_refused( gso, queue->index, online, calls );
         queue->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
@@ -1423,7 +1423,7 @@ static bool rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
     if ( result != 0 )
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it falls back to the cpus from num_os_cpus up",queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
+        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it falls back to the cpus from num_os_cpus up", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
         const bool off_core_zero = rocketnet_server_gso_confine_refused( gso, queue->index, online, calls );
         queue->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
         queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
