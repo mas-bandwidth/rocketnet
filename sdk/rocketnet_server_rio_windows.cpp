@@ -2301,7 +2301,7 @@ static void rocketnet_rio_take_range( rocketnet_rio_lane_t * rio, const rocketne
     }
 }
 
-// proofs/tla/RNRioWorker.tla ReceivePackets and TryFail, main, and
+// proofs/tla/RNRioWorker.tla ReceiveCall (ReceivePackets and TryFail), main, and
 // proofs/tla/RNReceiveHandoff.tla Call: the previous call's views have
 // expired, so a finished tail is emptied for the worker's later use; then one
 // try of the mutex brings main up to what the worker has committed
