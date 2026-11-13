@@ -34,7 +34,7 @@ enkiTS for these jobs; RocketNet does not create the game threads.
 | io_uring | AWS c6in.8xlarge, 32 vCPUs, x86, Linux 7.0 | AWS c7gn.8xlarge, 32 vCPUs, arm64; same placement, private network | Two network threads on CPUs 1–2; main thread on CPU 3; 28 game threads on CPUs 4–31, real-time priority |
 | GSO | AWS c8gn.8xlarge, Graviton4, arm64, 32 vCPUs; Ubuntu 26.04, GCC 15.2 | AWS c6gn.16xlarge, 64 vCPUs; same placement, private network | Two network threads on CPUs 1–2, or one on CPU 1 in the scaling run; main thread on CPU 3; 28 game threads on CPUs 4–31; no real-time priority |
 | IOCP | AWS m7i.16xlarge, 64 vCPUs, Windows Server 2025; MSVC Release | AWS c8gn.8xlarge, 32 vCPUs, Linux; private network | OS on CPUs 0–1; NIC receive steering on CPUs 2 and 4; two receive threads on CPUs 3 and 5; main thread on CPU 6; 57 game threads on CPUs 7–63; eight unpinned send threads |
-| RIO | AWS m7i.16xlarge, Windows Server 2025 | Pending | Six network lanes in the smallest passing count measured; CPU placement and game pool pending |
+| RIO | AWS m7i.16xlarge, Windows Server 2025 | AWS c8gn.8xlarge, 32 vCPUs | Six lanes: receive processors 2,4,6,8,10,12 and worker processors 3,5,7,9,11,13; main processor 14; 49 game threads on 15–63; all 50 pool threads at real-time priority |
 | macOS | Owned Macs; exact models pending | Pending | Pending |
 
 For io_uring, CPU 0 also handles NIC interrupts. The library pins each network
@@ -77,7 +77,8 @@ It is not the percentage of players that connected. The rows below report
 | IOCP | Peak | 900,300 | 60.63 | 100% | 99.999% |
 | IOCP | Average | 480,300 | 60.80 | 100% | 99.968% |
 | RIO, eight lanes | Peak | 900,000 | 60.6 | 100% | 100% |
-| RIO, six lanes | Peak | 900,000 | 60.6 | 100% | 100% |
+| RIO, six lanes | Peak | 900,319 | 60.7 | 100% | 100% |
+| RIO, six lanes | Average | 480,318 | 60.7 | 100% | 100% |
 
 IOCP's average row lost 1,487 of approximately 4.58 million client inputs;
 server-to-client delivery had no reported loss. Its peak row also had a small
@@ -101,10 +102,12 @@ dedicated network threads and do not describe the whole frame's duration.
 | IOCP | Peak | Pending | 0.178 | 0.274 | 2.97 / 3.11 / 6.35 | 0.05 |
 | IOCP | Average | 0.148 | 0.175 | 0.272 | 1.58 / 1.71 / 5.12 | 0.087 |
 | RIO, eight lanes | Peak | 0.46 | 0.57 | 0.79 | 3.1 / 3.3 / 5.4 | 0.14 |
-| RIO, six lanes | Peak | 0.46 | 0.67 | 1.18 | 2.95 / 3.14 / 6.4 | 0.15 |
+| RIO, six lanes | Peak | 0.45 | 0.48 | 0.87 | 2.72 / 2.91 / 5.2 | ≈0.15 (derived) |
+| RIO, six lanes | Average | 0.45 | 0.51 | 0.85 | 1.43 / 1.59 / 3.7 | ≈0.28 (derived) |
 
 The io_uring average-load ratio is calculated from the reported rounded means:
-0.147 / 1.81. The other ratios were supplied with their measurement rows.
+0.147 / 1.81. RIO's six-lane ratios are likewise derived from 0.45 / 2.91
+and 0.45 / 1.59. The other ratios were supplied with their measurement rows.
 For the XDP rows above, the p99 column is the mean of the per-second p99s
 in the steady window, not a p99 computed over all frames in that window.
 
@@ -114,7 +117,8 @@ in the steady window, not a p99 computed over all frames in that window.
 | io_uring peak / average | [6db162421](https://github.com/mas-bandwidth/rocketnet/commit/6db1624212079133de226fe08cb8111bd70e352d), `tests/v1.2/goal-uring`, both machines | t=25–75 s, after joining and warm-up | `--world-ms 0 --game-load 0` |
 | GSO peak / average | [d9110a19f](https://github.com/mas-bandwidth/rocketnet/commit/d9110a19fedf098a15068ce9a4cb9106f4ee603d), `tests/v1.2/goal-gso` | t=30–60 s | `--world-ms 10 --game-load 0` |
 | IOCP peak / average | [110416b4c](https://github.com/mas-bandwidth/rocketnet/commit/110416b4cec7670c97d43c752b25d454b3b90725), `tests/v1.2/goal-iocp-nofold` | Pending | `--world-ms 0 --game-load 0` |
-| RIO peak, six and eight lanes | Pending; earlier frame order | Pending | No game work reported; exact world-work setting pending |
+| RIO peak / average, six lanes | [27ede60b2](https://github.com/mas-bandwidth/rocketnet/commit/27ede60b21d2407a6d5c760b48a075e8128fab87), `tests/v1.2/goal-rio` | Pending | `--world-ms 0 --game-load 0`; earlier frame order |
+| RIO earlier peak, eight lanes | Build pending; earlier frame order | Pending | No game work reported; exact world-work setting pending |
 
 The io_uring rows use the earlier frame order with no simulated game work.
 GSO starts its network task before the world update with `--space-split top`.
@@ -126,7 +130,8 @@ socket receive buffer and the OS granted 4 MB, limited by `net.core.rmem_max`.
 There was no reported loss at this load; check the requested and granted
 values in the transport log when configuring another machine.
 
-Raw result logs are pending;
+The final RIO server and reconciliation logs were inspected; other raw
+result logs remain pending.
 the timing percentiles are reported values, not recomputed here. Confirmation
 of the io_uring, GSO, IOCP, and RIO percentile aggregation is pending. Different machines, builds, and
 sampling windows make these workload results unsuitable for ranking transports
@@ -228,6 +233,31 @@ The loaded IOCP average main-thread network times are 0.145 / 0.191 / 0.255 ms
 (mean / p99 / max); game-thread min / mean / max is 0.91 / 1.25 / 3.93 ms.
 Loaded peak timings and a corrected rerun are pending.
 
+#### RIO at six lanes
+
+RIO's four final rows use `27ede60b2`, 1000 players, and a 60 Hz target on
+the machines listed above. All four report 100% delivery in both directions.
+The run owner reports each row passing, including loaded peak on repetition;
+the nonzero counts of frames over 16.67 ms remain visible below.
+
+| RIO load | Game work | Server packets/s | Frames/s | Frames over 16.67 ms / total | Main mean / p99 / max (ms) | Game threads min / mean / max (ms) |
+| --- | --- | ---: | ---: | --- | --- | --- |
+| Peak | None | 900,319 | 60.7 | 0 / 4,952 | 0.45 / 0.48 / 0.87 | 2.72 / 2.91 / 5.2 |
+| Average | None | 480,318 | 60.7 | 0 / 4,994 | 0.45 / 0.51 / 0.85 | 1.43 / 1.59 / 3.7 |
+| Peak | Game threads half busy | 900,012 | 60.5 | 8 / 5,002 | 0.46 / 0.68 / 1.19 | 2.12 / 2.69 / 6.0 |
+| Average | Game threads half busy | 480,285 | 60.5 | 2 / 5,001 | 0.44 / 0.60 / 0.70 | 0.97 / 1.37 / 5.9 |
+| Peak, repeat | Game threads half busy | 900,029 | 60.6 | 10 / 4,974 | 0.47 / 0.65 / 1.21 | 2.08 / 2.66 / 5.9 |
+
+The loaded rows use `--game-load 0.5 --world-ms 10 --space-split top`;
+the no-game rows use `--game-load 0 --world-ms 0` and omit `--space-split`,
+retaining the earlier order. `--game-threads 50` includes the main thread.
+The g13–g17 logs confirm the 50-thread pool was pinned at real-time priority,
+1000 player connections, zero player-message loss in both directions, and
+the frame totals above. Sampling-window boundaries for the reported rates
+and timings remain pending. The frame counts include the final partial
+reporting interval and have not been converted into a steady-window
+overrun rate here.
+
 ### Network threads needed at peak
 
 These are the smallest passing counts measured so far on each stated machine
@@ -240,7 +270,7 @@ separately.
 | GSO | 1 | Peak with game threads half busy; 100% delivery both ways |
 | XDP | 1 | Peak with game threads half busy; 100% delivery both ways; no late frames |
 | io_uring | 2 | Loaded peak: one thread misses the target, two pass |
-| RIO | 6 | Peak without game work; five lanes miss target, six pass once; repeat pending |
+| RIO | 6 | Five lanes miss peak target; six pass all four rows, with loaded peak repeated; over-budget frame counts above |
 | IOCP | 10 | Peak without game work, with small input loss; fewer-thread runs pending; loaded peak not yet passing |
 
 The one-thread XDP peak run used `f46d820ba`, 1000 players, game threads half
@@ -288,19 +318,21 @@ RIO's lane sweep used the earlier frame order without game work:
 | 2 | 222,000 | 16.4 | Pending | 86.5% | Missed |
 | 4 | 629,000 | 44.7 | 100% | 100% | Missed |
 | 5 | 532,000 | 37.4 | Pending | 99.99% | Missed |
-| 6 | 900,000 | 60.6 | 100% | 100% | Reached once; repeat pending |
+| 6 | 900,000 | 60.6 | 100% | 100% | Reached in the initial sweep |
 | 8 | 900,000 | 60.6 | 100% | 100% | Reached |
 
-There is one run at each listed count. Six lanes is the smallest passing
-count measured, and that row is being repeated once. The five-lane run
+There was one run at each listed count in this initial sweep. Six lanes is
+the smallest passing count measured; the subsequent four-row set and
+loaded-peak repeat are listed above. The five-lane run
 reported a lower packet rate and frame rate than the four-lane run; no
 explanation is established. A fixed per-lane capacity is not established by
-these rows. Exact RIO commands, build, client machine, and six-lane average
-and loaded rows remain pending.
+these rows. The initial sweep's build and detailed setup remain pending;
+its rounded values are retained as historical results, separate from the
+final six-lane rows at `27ede60b2`.
 
 | Measurement still pending | Status |
 | --- | --- |
-| RIO six-lane peak repeat, exact reproduction details, average and loaded rows | Pending |
+| RIO exact Windows build/RSS setup, historical launcher, and sampling windows | Pending |
 | IOCP peak main-thread mean, sampling window, and fewer-network-thread measurements | Pending |
 | IOCP loaded peak | Not yet passing; corrected rerun pending |
 | IOCP loaded reproduction details | Pending |
@@ -460,7 +492,7 @@ documents its full checks. The NIC queue count and server's
 `--num-xdp-queues` must match.
 
 The current `--game-threads N` flag counts the main thread plus N−1 game
-threads. XDP uses 21; io_uring and GSO use 29; IOCP uses 58.
+threads. XDP uses 21; io_uring and GSO use 29; IOCP uses 58; RIO uses 50.
 `--world-ms` sets simulated work
 on the main thread; `--game-load 0.5` requests game work equal to half a frame
 per game thread. Neither is a network timing measurement.
@@ -571,6 +603,37 @@ Reconcile both logs on the Linux machine as above. These arguments retain
 the default 60 Hz and 60-second duration; the shared stop-time settings used
 by the original launcher are pending.
 
+For RIO's final six-lane rows, build `27ede60b2` on the Windows server and
+Linux client. The measured development build uses the layout override below:
+the first processor list assigns each lane's receive socket, and the second
+assigns its worker thread. These are logical processors in group 0,
+corresponding to the two siblings of physical cores 1–6. The NIC uses six
+RSS queues; the exact adapter RSS setup and MSVC build invocation remain
+pending. From the server checkout in PowerShell, the loaded peak workload is:
+
+```powershell
+$env:ROCKETNET_SERVER_BIND_IPV4_ADDRESS = $SERVER_IP
+$env:ROCKETNET_TEST_RIO_LAYOUT = "2,4,6,8,10,12/3,5,7,9,11,13"
+.\bin\Release\harden_load.exe server --address "${SERVER_IP}:40000" --transport rio --max-clients 1000 --warm-seconds 20 --sample-seconds 60 --payload pattern --frame-shape space --game-threads 50 --pin-first-cpu 14 --space-send wide --space-update split --space-net task --load peak --world-ms 10 --game-load 0.5 --space-split top --num-xdp-queues 6 > server.log 2>&1
+```
+
+`ROCKETNET_TEST_RIO_LAYOUT` is a development-only measurement override, not
+a production configuration setting. The server log should confirm the
+requested lane placement and `game_threads=50 first_cpu=14 pinned=50
+realtime=50`. On the Linux client, after copying the server public key:
+
+```sh
+./bin/harden_load clients --address "$SERVER_IP:40000" --key "$SERVER_KEY" \
+  --clients 1000 --threads 32 --messages 1 --reliable-every 1 \
+  --join-rate 100 --payload pattern > clients.log 2>&1
+```
+
+This build defaults to 256-byte client inputs. Change the server's `--load`
+to `average` for either average row. For either no-game row, set
+`--world-ms 0 --game-load 0` and remove `--space-split top`. Reconcile both
+logs as above. These are the recorded workload arguments and environment;
+the historical launcher's shared stop-time and drain settings remain pending.
+
 To repeat an XDP or io_uring row with game threads half busy, build its loaded-row commit
 from the table above. Retain that transport's machine layout, payload,
 client arguments, and peak/average load selection. In the server command,
@@ -603,11 +666,11 @@ the passing two-thread row uses a different pool size and main-thread CPU.
 | `--warm-seconds 20` | Delay before the server's first long-run sample; separate from the reported steady window. |
 | `--sample-seconds 60` | Interval between long-run server samples. |
 | `--payload` | `pattern` generates a verifiable body; `copy` copies a prebuilt body. |
-| `--num-xdp-queues` | Requested network queue count for XDP, io_uring, and GSO: 2 for baseline rows, 1 for the XDP/GSO one-thread runs; also retained in the supplied IOCP command, whose actual thread counts are listed above. |
+| `--num-xdp-queues` | Requested queue/lane count: 2 for baseline Linux rows, 1 for the XDP/GSO one-thread runs, 6 for final RIO rows; also retained in the supplied IOCP command, whose actual thread counts are listed above. |
 | `--frame-shape` | Select the test's job-based frame loop. |
 | `--load` | Set the peak or average server traffic from the workload table. |
 | `--game-threads` | Pool size including the main thread. |
-| `--pin-first-cpu` | Pin the main thread to this CPU and successive game threads to successive CPUs: 3 for Linux rows, 6 for IOCP. |
+| `--pin-first-cpu` | Pin the main thread to this CPU and successive game threads to successive CPUs: 3 for baseline Linux rows, 6 for IOCP, 14 for RIO. |
 | `--net-first-cpu 1` | Historical GSO load-test pinning for the older measured builds; omitted for library-owned pinning in `ebdce1ca4`. |
 | `--world-ms` | Main-thread simulated world work in milliseconds; 0 disables it, 10 requests 10 ms. |
 | `--game-load` | 0 disables simulated game jobs; 0.5 requests half a frame of game work per game thread. |
@@ -616,7 +679,7 @@ the passing two-thread row uses a different pool size and main-thread CPU.
 | `--space-net task` | Run network update and send work in the scheduled network task. |
 | `--space-split top` | Start the network task before the main thread's world update so they can overlap. |
 | `--key` | Server public key printed by `harden_ready`. |
-| `--threads` | Number of client-machine threads, independent of the server pool: 32 for Linux server rows, 16 for IOCP. |
+| `--threads` | Number of client-machine threads, independent of the server pool: 32 for Linux and RIO server rows, 16 for IOCP. |
 | `--messages 1` | One client input message per player per tick. |
 | `--reliable-every 1` | Preserved client command setting; the server's reliable cadence is set separately by `--load`. |
 | `--join-rate 100` | Connect approximately 100 players per second. |
