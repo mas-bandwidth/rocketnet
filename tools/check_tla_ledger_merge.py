@@ -8,9 +8,17 @@ branch's append comes out doubled, refused by tlacheck for CASES.tsv and
 RUNS.tsv and by tools/check_tla_coverage.py for COVERAGE.tsv; a doubled
 README line is removed by hand. This script stages a two-branch merge of an
 append of each ledger and proves both names survive.
+
+Every git command it runs must succeed: a failed init, add, commit or checkout,
+or a merge that fails without a conflict (a missing branch, a refused commit),
+is a FAIL naming the command, never a pass on unmerged files. Git runs with no
+global or system configuration (so a signing or hook setting of the host cannot
+change the result), and the scratch repository must be its own top level (an
+init that failed must not fall through to an enclosing checkout).
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -26,12 +34,36 @@ LEDGERS = [
 ]
 
 
+class GitFailed(Exception):
+    pass
+
+
+def git_env():
+    env = dict(os.environ)
+    for name in [key for key in env if key.startswith("GIT_")]:
+        del env[name]
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 def git(repo, *args):
     return subprocess.run(
         ["git", "-c", "user.name=ledger-check", "-c",
-         "user.email=ledger-check@invalid"] + list(args),
-        cwd=repo, capture_output=True, text=True,
+         "user.email=ledger-check@invalid", "-c", "commit.gpgsign=false",
+         "-c", "core.hooksPath=" + os.devnull] + list(args),
+        cwd=repo, capture_output=True, text=True, env=git_env(),
     )
+
+
+def must(repo, *args):
+    proc = git(repo, *args)
+    if proc.returncode != 0:
+        out = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()
+        detail = out[-1].strip() if out else "no output"
+        raise GitFailed(f"git {' '.join(args)} failed (exit {proc.returncode}): {detail}")
+    return proc
 
 
 def append_tsv_row(path, first, fill):
@@ -57,8 +89,8 @@ def commit_branch(repo, name, ledger):
             append_tsv_row(path, f"MCLedger{ledger}.cfg", f"Ledger{ledger}")
         else:
             append_readme_row(path, f"Ledger{ledger}")
-    git(repo, "add", ".")
-    git(repo, "commit", "-q", "-m", name)
+    must(repo, "add", ".")
+    must(repo, "commit", "-q", "-m", name)
 
 
 def run(root=ROOT):
@@ -72,34 +104,51 @@ def run(root=ROOT):
     build.mkdir(exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="tla-ledger-merge.", dir=str(build)))
     try:
-        git(scratch, "init", "-q", "-b", "main")
+        must(scratch, "init", "-q")
+        top = must(scratch, "rev-parse", "--show-toplevel").stdout.strip()
+        if Path(top).resolve() != scratch.resolve():
+            raise GitFailed(f"scratch repository top level is {top}, not {scratch}")
+        must(scratch, "symbolic-ref", "HEAD", "refs/heads/main")
         for rel in LEDGERS + [".gitattributes"]:
             dst = scratch / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / rel, dst)
-        git(scratch, "add", ".")
-        git(scratch, "commit", "-q", "-m", "base")
+        must(scratch, "add", ".")
+        must(scratch, "commit", "-q", "-m", "base")
 
-        git(scratch, "checkout", "-q", "-b", "a")
+        must(scratch, "checkout", "-q", "-b", "a")
         commit_branch(scratch, "a", "A")
-        git(scratch, "checkout", "-q", "main")
-        git(scratch, "checkout", "-q", "-b", "b")
+        must(scratch, "checkout", "-q", "main")
+        must(scratch, "checkout", "-q", "-b", "b")
         commit_branch(scratch, "b", "B")
-        git(scratch, "checkout", "-q", "main")
+        must(scratch, "checkout", "-q", "main")
 
+        merged = 0
         for branch in ("a", "b"):
             proc = git(scratch, "merge", "--no-ff", "--no-edit", branch)
             if proc.returncode != 0:
                 out = (proc.stdout or "") + (proc.stderr or "")
-                for line in out.splitlines():
-                    if "CONFLICT" in line:
-                        failures.append(line.strip())
-                git(scratch, "merge", "--abort")
+                conflicts = [line.strip() for line in out.splitlines() if "CONFLICT" in line]
+                if conflicts:
+                    failures.extend(conflicts)
+                    must(scratch, "merge", "--abort")
+                else:
+                    lines = out.strip().splitlines()
+                    detail = lines[-1].strip() if lines else "no output"
+                    raise GitFailed(f"git merge {branch} failed (exit {proc.returncode}) without a conflict: {detail}")
+            else:
+                merged += 1
 
+        if merged == 2:
+            parents = must(scratch, "rev-list", "--merges", "--count", "main").stdout.strip()
+            if parents != "2":
+                failures.append(f"main holds {parents} merge commits after merging a and b, not 2")
         for rel in LEDGERS:
             text = (scratch / rel).read_text()
             if "LedgerA" not in text or "LedgerB" not in text:
                 failures.append(f"{rel}: does not contain both LedgerA and LedgerB")
+    except GitFailed as error:
+        failures.append(str(error))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
