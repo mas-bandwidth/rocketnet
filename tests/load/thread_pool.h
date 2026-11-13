@@ -25,15 +25,29 @@
     PinThreadToCPUTask, whose comment names the race); here each enkiTS thread
     pins itself as it starts (the threadStart callback), so every game thread
     pins exactly once.
+
+    Windows has the same layout: SetThreadGroupAffinity puts a thread on the
+    cpu'th logical processor counted across the processor groups in order
+    (group 0 holds the first 64), and SetThreadPriority raises it to
+    THREAD_PRIORITY_TIME_CRITICAL, the highest a process that is not in the
+    realtime class gets, the counterpart of SCHED_FIFO max. A setting the
+    system refuses is counted (pin_refused, realtime_refused) with the first
+    error code, and harden_load prints that in the row.
 */
 
 #ifndef HARDEN_THREAD_POOL_H
 #define HARDEN_THREAD_POOL_H
 
 // a system include (CMakeLists.txt): enkiTS is vendored unmodified and is not held to rocketnet's warning floor
+#if defined( _WIN32 )
+#include <winsock2.h>
+#include <windows.h>
+#endif // #if defined( _WIN32 )
+
 #include <TaskScheduler.h>
 
 #include <atomic>
+#include <cstring>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -84,7 +98,12 @@ struct harden_pin_t
 {
     std::atomic<int> first_cpu{ -1 };
     std::atomic<int> pinned{ 0 };   // threads pinned to their core
-    std::atomic<int> realtime{ 0 }; // threads the process could raise to SCHED_FIFO
+    std::atomic<int> realtime{ 0 }; // threads the process could raise to SCHED_FIFO (Windows: THREAD_PRIORITY_TIME_CRITICAL)
+    std::atomic<int> attempted{ 0 }; // threads that tried to pin, whether or not it was allowed
+    std::atomic<int> pin_refused{ 0 };      // pinning the system refused
+    std::atomic<int> realtime_refused{ 0 }; // raising the priority the system refused
+    std::atomic<int> pin_error{ 0 };        // first refusal's error code (errno, Windows GetLastError), 0 if none
+    std::atomic<int> realtime_error{ 0 };
 };
 
 static harden_pin_t harden_pin;
@@ -96,19 +115,84 @@ static void harden_pin_this_thread( int cpu )
     CPU_ZERO( &set );
     const size_t core = (size_t) cpu;
     CPU_SET( core, &set );
-    if ( pthread_setaffinity_np( pthread_self(), sizeof( set ), &set ) == 0 )
+    const int pin_result = pthread_setaffinity_np( pthread_self(), sizeof( set ), &set );
+    if ( pin_result == 0 )
     {
         harden_pin.pinned.fetch_add( 1 );
     }
+    else
+    {
+        int none = 0;
+        harden_pin.pin_error.compare_exchange_strong( none, pin_result );
+        harden_pin.pin_refused.fetch_add( 1 );
+    }
     struct sched_param param;
     param.sched_priority = sched_get_priority_max( SCHED_FIFO );
-    if ( pthread_setschedparam( pthread_self(), SCHED_FIFO, &param ) == 0 )
+    const int realtime_result = pthread_setschedparam( pthread_self(), SCHED_FIFO, &param );
+    if ( realtime_result == 0 )
     {
         harden_pin.realtime.fetch_add( 1 );
+    }
+    else
+    {
+        int none = 0;
+        harden_pin.realtime_error.compare_exchange_strong( none, realtime_result );
+        harden_pin.realtime_refused.fetch_add( 1 );
+    }
+#elif defined( _WIN32 )
+    // the cpu'th logical processor across the groups, in order
+    WORD group = 0;
+    KAFFINITY mask = 0;
+    {
+        const WORD groups = GetActiveProcessorGroupCount();
+        int remaining = cpu;
+        for ( WORD g = 0; g < groups; g++ )
+        {
+            const int count = (int) GetActiveProcessorCount( g );
+            if ( remaining < count )
+            {
+                group = g;
+                mask = ( (KAFFINITY) 1 ) << remaining;
+                break;
+            }
+            remaining -= count;
+        }
+    }
+    bool pinned = false;
+    DWORD pin_error = ERROR_INVALID_PARAMETER; // cpu past the last processor
+    if ( mask != 0 )
+    {
+        GROUP_AFFINITY affinity;
+        memset( &affinity, 0, sizeof( affinity ) );
+        affinity.Group = group;
+        affinity.Mask = mask;
+        pinned = SetThreadGroupAffinity( GetCurrentThread(), &affinity, NULL ) != 0;
+        pin_error = pinned ? 0 : GetLastError();
+    }
+    if ( pinned )
+    {
+        harden_pin.pinned.fetch_add( 1 );
+    }
+    else
+    {
+        int none = 0;
+        harden_pin.pin_error.compare_exchange_strong( none, (int) pin_error );
+        harden_pin.pin_refused.fetch_add( 1 );
+    }
+    if ( SetThreadPriority( GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL ) != 0 )
+    {
+        harden_pin.realtime.fetch_add( 1 );
+    }
+    else
+    {
+        int none = 0;
+        harden_pin.realtime_error.compare_exchange_strong( none, (int) GetLastError() );
+        harden_pin.realtime_refused.fetch_add( 1 );
     }
 #else
     (void) cpu;
 #endif // #if defined( __linux__ )
+    harden_pin.attempted.fetch_add( 1 );
 }
 
 static void harden_pin_thread_start( uint32_t threadnum )
@@ -140,8 +224,8 @@ public:
         if ( first_cpu >= 0 )
         {
             harden_pin_this_thread( first_cpu );
-            // every game thread pinned before the first frame
-            for ( int i = 0; i < 2000 && harden_pin.pinned.load() < n; i++ )
+            // every game thread has tried to pin before the first frame
+            for ( int i = 0; i < 2000 && harden_pin.attempted.load() < n; i++ )
             {
                 std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
             }
