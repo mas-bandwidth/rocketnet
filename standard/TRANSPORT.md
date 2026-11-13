@@ -3826,6 +3826,7 @@ The registry of counters, in index order, is:
 | `MAIN_THREAD_CALL_OVERLAP` | `refusal` | `none` |
 | `CLIENT_SEND_TWO_THREADS` | `refusal` | `none` |
 | `SEND_RESERVE_REFUSED_TAILS_HELD` | `refusal` | `none` |
+| `RECEIVE_DROPPED_STOPPED` | `expected` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
