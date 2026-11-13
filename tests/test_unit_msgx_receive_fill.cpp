@@ -361,6 +361,44 @@ static void test_rocketnet_msgx_receive_fill_stop()
     }
 }
 
+// main's receive call (rocketnet_server_msgx_receive_packets): what it hands
+// to the server this update. Today's rule: once main has consumed its bank it
+// claims the ready bank, and takes only what that bank holds
+static int receive_fill_test_main_call( struct receive_fill_test_t * test )
+{
+    receive_fill_test_claim( test );
+    return test->bank_count[test->hand.main];
+}
+
+// a datagram the worker banked before main's receive call begins is delivered
+// by that call, whatever the rounds and publishes before it: the worker
+// banks one datagram and publishes it, then banks a second while that bank
+// still waits for main; main's next call must return both (the receive
+// handoff latency: the second waited a whole update)
+static void test_rocketnet_msgx_receive_fill_delivered_by_next_call()
+{
+    for ( int rounds = 2; rounds <= 4; rounds++ )
+    {
+        struct receive_fill_test_t * test = receive_fill_test_create( 1, 64 );
+        rocketnet_unit_check( receive_fill_test_main_call( test ) == 0 );
+
+        // one datagram per round: the first round's bank is published, the
+        // later rounds bank into the worker's own bank
+        for ( int r = 0; r < rounds; r++ )
+        {
+            receive_fill_test_arrive( test, 0, 1, 64 );
+            rocketnet_unit_check( !receive_fill_test_round( test, 8, 64 ) );
+        }
+        rocketnet_unit_check( receive_fill_test_in_kernel( test ) == 0 );
+        rocketnet_unit_check( receive_fill_test_in_banks( test ) == (uint64_t) rounds );
+
+        // every one of them was banked before this call began
+        rocketnet_unit_check( receive_fill_test_main_call( test ) == rounds );
+
+        delete test;
+    }
+}
+
 // a bank of 40 and a batch of 32 over a socket of 100: the second read asks
 // for 8, the full bank is handed over, the next bank fills to 40, main has
 // not taken the last, and the drain holds with 20 left in the socket
@@ -632,6 +670,7 @@ REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_want );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_error_kinds );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_handoff );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_stop );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_delivered_by_next_call );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_hold );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather_bounded );
