@@ -4,8 +4,9 @@
 #
 # Two network namespaces joined by a veth pair, netem on both ends (the delay
 # and the loss given), bin/server in one and N bin/client in the other for a
-# number of seconds. The server prints every counter at stop
-# (ROCKETNET_SERVER_PRINT_COUNTERS=1); the run exits 0 only when
+# number of seconds. The server prints every counter at stop, after the line
+# "rocketnet counters at stop" (ROCKETNET_SERVER_PRINT_COUNTERS=1); the run is
+# judged on those, a server log without them is refused, and it exits 0 only when
 # SEND_HISTORY_OVERFLOW is 0, every client connected, stayed connected to the
 # end (its last state line) and received payloads, and every client and the
 # server exited 0 (client-N.exit, server.exit beside the logs).
@@ -94,10 +95,18 @@ printf '%s' "$LOSS" | grep -Eq '^[0-9]+(\.[0-9]+)?%$' || fail "--loss must be a 
 # judging a run: read the logs in a directory and decide
 # ------------------------------------------------------------------------
 
+# The run is judged on the counters bin/server prints once at stop under
+# ROCKETNET_SERVER_PRINT_COUNTERS=1: the line "rocketnet counters at stop", then
+# one "rocketnet counter NAME VALUE" line per counter. The periodic dumps
+# (--counters-every, 60 s by default) are not read: a run shorter than the
+# period has none, and a longer one's last is up to a period stale.
 counter_value()
 {
-    # $1 = log, $2 = counter name; prints the value, or nothing when absent
-    awk -v name="$2" '$1 == "rocketnet" && $2 == "counter" && $3 == name { v = $4 } END { if (v != "") print v }' "$1"
+    # $1 = log, $2 = counter name; prints the at-stop value, or nothing when absent
+    awk -v name="$2" '
+        $0 == "rocketnet counters at stop" { at_stop = 1; v = ""; next }
+        at_stop && $1 == "rocketnet" && $2 == "counter" && $3 == name { v = $4 }
+        END { if (v != "") print v }' "$1"
 }
 
 evaluate()
@@ -107,8 +116,9 @@ evaluate()
 
     [ -f "$server_log" ] || fail "no server log in $dir"
 
-    echo "---- server counters ($server_log)"
-    awk '$1 == "rocketnet" && $2 == "counter" && ($3 ~ /^SEND_HISTORY_/ || $4 != 0) { print }' "$server_log"
+    echo "---- server counters at stop ($server_log)"
+    awk '$0 == "rocketnet counters at stop" { at_stop = 1; next }
+         at_stop && $1 == "rocketnet" && $2 == "counter" && ($3 ~ /^SEND_HISTORY_/ || $4 != 0) { print }' "$server_log"
 
     local overflow lost
     overflow=$(counter_value "$server_log" SEND_HISTORY_OVERFLOW)
@@ -154,8 +164,10 @@ evaluate()
     echo "SEND_HISTORY_OVERFLOW ${overflow:-missing}"
     echo "SEND_HISTORY_LOST ${lost:-missing}"
 
-    [ -n "$overflow" ] || fail "no SEND_HISTORY_OVERFLOW counter line in the server log (did the server stop and print?)"
-    [ -n "$lost" ] || fail "no SEND_HISTORY_LOST counter line in the server log"
+    grep -qx "rocketnet counters at stop" "$server_log" \
+        || fail "no 'rocketnet counters at stop' in the server log: the server did not stop and print its counters (ROCKETNET_SERVER_PRINT_COUNTERS=1)"
+    [ -n "$overflow" ] || fail "no SEND_HISTORY_OVERFLOW counter line in the server's counters at stop"
+    [ -n "$lost" ] || fail "no SEND_HISTORY_LOST counter line in the server's counters at stop"
     [ "$connected" -eq "$CLIENTS" ] || fail "only $connected of $CLIENTS clients connected"
     [ "$receiving" -eq "$CLIENTS" ] || fail "only $receiving of $CLIENTS clients received payloads"
     [ "$overflow" -eq 0 ] || fail "SEND_HISTORY_OVERFLOW is $overflow, not 0"
@@ -263,9 +275,10 @@ if command -v ping >/dev/null 2>&1; then
     ip netns exec "$NS_CLIENT" ping -c 3 -W 2 "$SERVER_ADDRESS" | tail -2
 fi
 
-# bin/server quits when its stdin closes, and a background job's stdin is
-# /dev/null. its stdin is a fifo this script holds open on fd 3 for the run, so
-# it reaches end of file only when this script exits.
+# bin/server watches its stdin only when it is a fifo, a socket or a tty, and
+# quits when a watched stdin closes. its stdin is a fifo this script holds open
+# on fd 3 for the run, so the server quits on end of file when this script exits,
+# however it exits; the run itself stops the server with SIGINT.
 mkfifo "$LOG_DIR/server.stdin" || fail "mkfifo $LOG_DIR/server.stdin"
 exec 3<>"$LOG_DIR/server.stdin" || fail "open $LOG_DIR/server.stdin"
 

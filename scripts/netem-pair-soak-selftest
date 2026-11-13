@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Selftest for scripts/netem-pair-soak's verdict (its --evaluate mode).
+#
+# Writes server and client logs in a temporary directory and requires the
+# verdict to read the counters bin/server prints at stop
+# (ROCKETNET_SERVER_PRINT_COUNTERS=1: "rocketnet counters at stop", then one
+# "rocketnet counter NAME VALUE" line each): a log with only a periodic dump,
+# or none, is refused, an overflow at stop fails, a clean stop passes. No
+# namespace, socket or root is used; every case runs, and the selftest exits
+# non-zero if any failed. Uses $TMPDIR only.
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+soak="$here/netem-pair-soak"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/netem-pair-soak-selftest.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+
+failures=0
+fail_case()
+{
+    echo "SELFTEST FAIL: $*" >&2
+    failures=$(( failures + 1 ))
+}
+
+# make_run DIR: two clients connected to the end and receiving, every exit 0
+make_run()
+{
+    local dir=$1 i
+    mkdir -p "$dir"
+    for i in 1 2; do
+        printf 'client state: connecting\nclient state: connected\nclient sent 100 and received 200 payloads\n' > "$dir/client-$i.log"
+        echo 0 > "$dir/client-$i.exit"
+    done
+    echo 0 > "$dir/server.exit"
+    : > "$dir/server.log"
+}
+
+periodic()
+{
+    printf 'rocketnet counter SEND_HISTORY_OVERFLOW %s\nrocketnet counter SEND_HISTORY_LOST 3\nrocketnet rss 1000\n' "$1"
+}
+
+at_stop()
+{
+    printf 'rocketnet counters at stop\n'
+    periodic "$1"
+}
+
+# evaluate NAME: the verdict on $tmp/NAME; output in $tmp/NAME.out, status returned
+evaluate()
+{
+    bash "$soak" --clients 2 --evaluate "$tmp/$1" > "$tmp/$1.out" 2>&1
+}
+
+# 1. only a periodic dump (a run longer than --counters-every whose server
+# never printed at stop): refused, never judged on a stale count
+make_run "$tmp/periodic"
+{ echo "server has 2 clients connected"; periodic 0; printf '\nserver stopping\n'; } > "$tmp/periodic/server.log"
+if evaluate periodic || ! grep -q "no 'rocketnet counters at stop'" "$tmp/periodic.out"; then
+    fail_case "a server log with only a periodic dump was judged"
+    cat "$tmp/periodic.out" >&2
+fi
+
+# 2. no counters at all (a run shorter than the period): refused by name
+make_run "$tmp/none"
+printf 'server has 2 clients connected\n\nserver stopping\n' > "$tmp/none/server.log"
+if evaluate none || ! grep -q "no 'rocketnet counters at stop'" "$tmp/none.out"; then
+    fail_case "a server log with no counters was not refused by name"
+    cat "$tmp/none.out" >&2
+fi
+
+# 3. a clean periodic dump, then an overflow at stop: the stop's count rules
+make_run "$tmp/overflow"
+{ periodic 0; at_stop 5; printf '\nserver stopping\n'; } > "$tmp/overflow/server.log"
+if evaluate overflow || ! grep -q "SEND_HISTORY_OVERFLOW is 5, not 0" "$tmp/overflow.out"; then
+    fail_case "an overflow in the counters at stop did not fail the run"
+    cat "$tmp/overflow.out" >&2
+fi
+
+# 4. an overflow in a periodic dump, then the counters at stop: judged at stop
+make_run "$tmp/stale"
+{ periodic 7; at_stop 0; printf '\nserver stopping\n'; } > "$tmp/stale/server.log"
+if ! evaluate stale; then
+    fail_case "a clean run was judged on a periodic dump, not on its counters at stop"
+    cat "$tmp/stale.out" >&2
+fi
+
+# 5. a clean run passes
+make_run "$tmp/clean"
+{ at_stop 0; printf '\nserver stopping\n'; } > "$tmp/clean/server.log"
+if ! evaluate clean || ! grep -q "PASS (SEND_HISTORY_OVERFLOW 0, SEND_HISTORY_LOST 3" "$tmp/clean.out"; then
+    fail_case "a clean run did not pass"
+    cat "$tmp/clean.out" >&2
+fi
+
+if [ "$failures" -ne 0 ]; then
+    echo "SELFTEST FAIL: $failures case(s)" >&2
+    exit 1
+fi
+echo "SELFTEST PASS"
