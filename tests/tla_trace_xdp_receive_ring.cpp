@@ -4,7 +4,7 @@
 */
 
 // The trace check of the XDP worker's receive pass and the ownership of its
-// frames (proofs/tla/RNXdpReceiveRing.tla, TraceRNXdpReceiveRing.tla,
+// frames (proofs/tla/RNXdpReceiveRing.tla, proofs/tla/TraceRNXdpReceiveRing.tla,
 // README-TraceCheck.md). A seeded walk drives the worker's own receive
 // code (sdk/rocketnet_xdp_receive_pass.h and rocketnet_xdp_receive_ring_finish)
 // over an RX ring and a fill ring it lays out itself: libxdp's own

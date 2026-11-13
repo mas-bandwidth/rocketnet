@@ -4,7 +4,7 @@
 */
 
 // The trace check of kernel replay protection (proofs/tla/RNXdpReplay.tla,
-// TraceRNXdpReplay.tla, README-TraceCheck.md). The walk plays the clients,
+// proofs/tla/TraceRNXdpReplay.tla, README-TraceCheck.md). The walk plays the clients,
 // the attacker, the network, the link that holds replies and the kernel's
 // answers to the map calls, and drives the code the model describes:
 //

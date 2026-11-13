@@ -4452,7 +4452,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     rocketnet_assert( socket );
 
-    pin_thread_to_cpu( socket->num_os_cpus + socket->queue );
+    pin_thread_to_cpu( rocketnet_xdp_thread_cpu( socket->num_os_cpus, socket->queue ) );
 
     // pin, then SCHED_RR at the minimum on itself. the priority call follows
     // the off switch; the pin is the queue's cpu and always runs
@@ -4471,7 +4471,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         }
     }
 
-    rocketnet_info( "pinning xdp thread %d to CPU %d", socket->queue, socket->num_os_cpus + socket->queue );
+    rocketnet_info( "pinning xdp thread %d to CPU %d", socket->queue, rocketnet_xdp_thread_cpu( socket->num_os_cpus, socket->queue ) );
 
     struct pollfd fds[1];
     fds[0].fd = xsk_socket__fd( socket->xsk );

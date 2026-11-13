@@ -4,7 +4,7 @@
 */
 
 // The trace check of the XDP replay marks buffer's layout
-// (proofs/tla/RNXdpReplayMarksLayout.tla, TraceRNXdpReplayMarksLayout.tla,
+// (proofs/tla/RNXdpReplayMarksLayout.tla, proofs/tla/TraceRNXdpReplayMarksLayout.tla,
 // README-TraceCheck.md): a seeded walk drives the code of
 // sdk/rocketnet_xdp_replay_marks.h through updates, each a forget pass, a
 // mark pass and a commit, and writes the model's variables after every step.

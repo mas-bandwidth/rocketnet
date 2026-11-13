@@ -879,6 +879,16 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
     return true;
 }
 
+// The cpu an XDP thread pins to: queue q takes cpu num_os_cpus + q. The
+// operating system keeps core 0 on Linux, so the first XDP thread is on cpu 1
+// at the least: a num_os_cpus below 1 reads as 1 and no queue ever lands on
+// core 0.
+
+static inline int rocketnet_xdp_thread_cpu( int num_os_cpus, int queue )
+{
+    return ( num_os_cpus < 1 ? 1 : num_os_cpus ) + queue;
+}
+
 // PIN TARGETS: every cpu this transport will pin to, num_os_cpus ..
 // num_os_cpus + num_queues - 1, is in the kernel's isolated cpu-list
 // ("1-7", "1,3,5-6", a trailing newline). A malformed or empty list never
@@ -933,7 +943,9 @@ static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_lis
         }
     }
 
-    for ( int cpu = num_os_cpus; cpu < num_os_cpus + num_queues; cpu++ )
+    const int first_cpu = rocketnet_xdp_thread_cpu( num_os_cpus, 0 );
+
+    for ( int cpu = first_cpu; cpu < first_cpu + num_queues; cpu++ )
     {
         bool found = false;
         const char * scan = cursor;
