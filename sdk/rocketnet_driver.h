@@ -184,9 +184,9 @@ struct rocketnet_server_transport_io_operations_t
     // optional, all three or none: a staged transport whose staging is per
     // queue (or per send lane). Without them the transport is one queue whose
     // room is send_room. The server keeps a protocol reserve in each queue:
-    // the game's fill (rocketnet_server_transport_start_packet) is refused,
+    // a game packet start (rocketnet_server_transport_start_packet) is refused,
     // counted as SEND_RESERVE_REFUSED, once its claims in a queue reach that
-    // queue's room at the start of the fill phase less the reserve; the
+    // queue's room when main last opened the budget, less the reserve; the
     // protocol's own frames (responses, keep-alives, disconnect bursts) may
     // use the whole room (proofs/tla/RNSendReserve.tla).
     //   send_queues: any thread; the queue count, fixed after create,

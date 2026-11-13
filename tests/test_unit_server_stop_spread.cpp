@@ -472,7 +472,7 @@ static void test_server_send_capacity_reports_staged_room()
     f->used = f->capacity;
     rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 0 );
 
-    // the flush opens the fill budget: the room less the protocol reserve
+    // the flush opens the budget: the room less the protocol reserve
     // (RNSendReserve: handshakes and disconnect seals per update, plus the
     // one connected slot), which here is more than the whole staging
 
@@ -524,7 +524,7 @@ static void test_server_refused_starts_counted_by_cause()
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + 1 );
 
     // the checks below are of the transport's own refusals: room well past
-    // the protocol reserve, so the fill budget the flush opens
+    // the protocol reserve, so the budget the flush opens
     // (RNSendReserve) is not what refuses them
 
     f->capacity = 1024;

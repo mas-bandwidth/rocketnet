@@ -6,8 +6,8 @@
 // The protocol send reserve (proofs/tla/RNSendReserve.tla). A server
 // connects one client over the loopback hub; then its io is swapped for a
 // fake staged transport with a fixed number of free frames per queue. Each
-// send_packets opens a fill phase. The game's fill (start_packet) then gets
-// the room less the reserve and is refused past it, counted as
+// send_packets opens the budget. The game's packets (start_packet) then get
+// the room less the reserve and are refused past it, counted as
 // SEND_RESERVE_REFUSED, while the room the reserve keeps is still free for
 // the protocol's frames. The reserve is read against its formula
 // (handshakes_per_update + disconnect_packets_per_update + free slots + the
@@ -194,7 +194,7 @@ static void sr_teardown( struct sr_rig_t * rig )
     rn_test_server_transport_stop_and_destroy( rig->server );
 }
 
-// fill client 0 until refused; returns the starts accepted, each aborted
+// start packets to client 0 until refused; returns the starts accepted, each aborted
 static int sr_fill( struct sr_rig_t * rig, int most )
 {
     int accepted = 0;
@@ -235,10 +235,10 @@ static void test_server_send_reserve_one_queue()
     check( sr_fill( &rig, 1000 ) == 40 );
     check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused_before + 1 );
 
-    // the fill left the whole reserve free for the protocol's frames
+    // the game's packets left the whole reserve free for the protocol's frames
     check( sr.room[0] == (int) reserve );
 
-    // a room at or below the reserve gives the fill nothing
+    // a room at or below the reserve gives the game's packets nothing
     sr.room[0] = (int) reserve;
     rocketnet_server_transport_send_packets( rig.server );
     check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == 0 );
@@ -247,7 +247,7 @@ static void test_server_send_reserve_one_queue()
     rocketnet_server_transport_send_packets( rig.server );
     check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == 0 );
 
-    // a new phase opens a new budget
+    // the next send_packets opens a new budget
     sr.room[0] = (int) reserve + 5;
     rocketnet_server_transport_send_packets( rig.server );
     check( sr_fill( &rig, 1000 ) == 5 );
@@ -280,7 +280,7 @@ static void test_server_send_reserve_per_queue()
     check( rocketnet_server_transport_fill_budget_for_test( rig.server, 1 ) == 7 );
     check( rocketnet_server_transport_fill_budget_for_test( rig.server, 2 ) == 0 );
 
-    // the client's queue is 1: its budget, not queue 0's larger one, bounds the fill
+    // the client's queue is 1: its budget, not queue 0's larger one, bounds the game's packets
     check( sr_fill( &rig, 1000 ) == 7 );
     check( sr.room[1] == (int) fixed + 1 );
     check( sr.room[0] == 500 );
@@ -289,7 +289,7 @@ static void test_server_send_reserve_per_queue()
 }
 
 // A connected client whose keep-alive is acknowledged owns its reserved
-// frame: the fill's first frame to it each phase takes that frame, not the
+// frame: the game's first frame to it after each opening takes that frame, not the
 // queue's budget, and its later frames claim the budget. Not acknowledged,
 // the frame stays the protocol's.
 static void test_server_send_reserve_own_frame()
@@ -323,7 +323,7 @@ static void test_server_send_reserve_own_frame()
     check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused_before + 1 );
     check( sr.room[0] == (int) reserve - 1 );
 
-    // the own frame is one per phase: the next phase has it again
+    // the own frame is one per opening: the next opening has it again
     sr.room[0] = (int) reserve;
     rocketnet_server_transport_send_packets( rig.server );
     check( sr_fill( &rig, 1000 ) == 1 );
@@ -331,8 +331,8 @@ static void test_server_send_reserve_own_frame()
     sr_teardown( &rig );
 }
 
-// RNSendReserve NoRefresh: frames the transport retires during the fill
-// phase come back to the fill. The budget opens at nothing (the room is the
+// RNSendReserve NoRefresh: frames the transport retires after the budget
+// opened come back to the game's packets. The budget opens at nothing (the room is the
 // reserve); room that frees up after it opened is granted at the next claim,
 // and the reserve is still kept.
 static void test_server_send_reserve_refill()
@@ -354,7 +354,7 @@ static void test_server_send_reserve_refill()
     check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == 0 );
     check( sr_fill( &rig, 10 ) == 0 );
 
-    // three frames retire mid-phase
+    // three frames retire before the next opening
     sr.room[0] += 3;
     check( rocketnet_server_transport_send_capacity_available( rig.server ) == 3 );
     check( sr_fill( &rig, 10 ) == 3 );
@@ -365,7 +365,7 @@ static void test_server_send_reserve_refill()
 
 // RNSendReserve Stage, a queue that refuses: a granted frame the transport
 // refuses gives its claim back, so the next frame gets the grant. Kept, the
-// claim would hold a grant no frame used for the rest of the phase.
+// claim would hold a grant no frame used until the budget opened again.
 static void test_server_send_reserve_refused_start_returns_claim()
 {
     struct sr_rig_t rig;
@@ -397,7 +397,7 @@ static void test_server_send_reserve_refused_start_returns_claim()
 
 // RNSendReserve OwnIo and witness OwnCountFirst: an own frame lowers the
 // reserve only once it has left the room. Refused by the transport, it
-// stays in the reserve (its client's keep-alive is still due), so the fill
+// stays in the reserve (its client's keep-alive is still due), so the game
 // gets nothing more from a room that is only the reserve.
 static void test_server_send_reserve_refused_own_frame_stays_reserved()
 {
@@ -445,7 +445,7 @@ static void test_server_send_reserve_full_queue_is_full_staging()
     sr.room[1] = 0;
     sr.room[2] = 0;
 
-    // a fill phase opens: the server reads the fake's queues
+    // the budget opens: the server reads the fake's queues
     rocketnet_server_transport_send_packets( rig.server );
 
     const uint64_t full_before = rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];

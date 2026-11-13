@@ -893,8 +893,8 @@ void rocketnet_test_transport_ring_exhaustion()
     {
         completion_capacity = rocketnet_server_iocp_send_queue_size( server_config.max_clients );
 #if ROCKETNET_DEV
-        // a staged transport keeps its protocol reserve out of the fill
-        // (RNSendReserve): the fill takes the client's lane less that lane's
+        // a staged transport keeps its protocol reserve out of the game's packets
+        // (RNSendReserve): the game's packets take the client's lane less that lane's
         // reserve (the largest, the only one with a connected slot), plus
         // the client's own frame when its keep-alive is acknowledged
         uint64_t reserve = 0;
@@ -914,9 +914,9 @@ void rocketnet_test_transport_ring_exhaustion()
     rocketnet_check( completion_capacity == 0 || capacity == completion_capacity );
 
     // refusal holds until the flush -- 44 more starts all refuse, and the
-    // counters attribute every refusal exactly (the fill already incurred
+    // counters attribute every refusal exactly (the game's packets already incurred
     // refusals, so the baseline is read here). A staged transport refuses
-    // the fill at its protocol reserve (send_reserve_refused) before its
+    // the game's packets at the protocol reserve (send_reserve_refused) before its
     // staging is full; a buffered one at its full ring (send_ring_full).
 
     const uint64_t * refusal_counters = rocketnet_server_transport_counters( server )->values;
