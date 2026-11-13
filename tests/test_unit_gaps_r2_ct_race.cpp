@@ -15,6 +15,7 @@
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "fake_client_driver.h"
+#include "loopback_hub.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_layers.h"
@@ -27,6 +28,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if ROCKETNET_DEV
@@ -394,4 +396,136 @@ static void test_gaps_r2_ct_race_unreadable_wait_is_the_primary_familys_wait()
 
 REGISTER_UNIT_TEST( test_gaps_r2_ct_race_unreadable_wait_is_the_primary_familys_wait );
 
+
+// ---------------------------------------------------------------------------
+// mutation gap: hunt 2/7172, 2/7175, 2/7176 (no memory for the race block refuses the create)
+//
+// A token naming both families opens the second family's socket and then
+// allocates the race block that joins the two. When that allocation fails
+// the create is refused with ROCKETNET_STATUS_OUT_OF_MEMORY (written only
+// through a status pointer it was given) and frees everything: it never goes
+// on as a one-family client. The allocator fails the first allocation after
+// the second family's socket is created, which is the race block.
+
+struct r2_race_oom_t
+{
+    int live;
+    bool fail_next;
+    int failed;
+};
+
+static r2_race_oom_t r2_race_oom;
+
+static void * r2_race_oom_alloc( void * context, size_t bytes )
+{
+    (void) context;
+    if ( r2_race_oom.fail_next )
+    {
+        r2_race_oom.fail_next = false;
+        r2_race_oom.failed++;
+        return NULL;
+    }
+    void * pointer = malloc( bytes );
+    if ( pointer )
+    {
+        r2_race_oom.live++;
+    }
+    return pointer;
+}
+
+static void r2_race_oom_free( void * context, void * pointer )
+{
+    (void) context;
+    if ( pointer )
+    {
+        r2_race_oom.live--;
+        free( pointer );
+    }
+}
+
+static void * r2_race_oom_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
+{
+    void * instance = r2_race_create( context, config, bind );
+    if ( ( (r2_race_t *) context )->creates == 2 )
+    {
+        r2_race_oom.fail_next = true;
+    }
+    return instance;
+}
+
+static void r2_race_oom_attempt( bool with_status )
+{
+    r2_race_t * r = new r2_race_t();
+    memset( (void *) r, 0, sizeof( *r ) );
+    r2_race = r;
+
+    r->operations = rocketnet_fake_client_operations_batch;
+    r->operations.create = r2_race_oom_create;
+    r->operations.connect = rocketnet_fake_client_connect;
+    r->operations.close = rocketnet_fake_client_close;
+    r->operations.receive_batch = r2_race_receive_batch;
+    r->operations.send_batch_progress = NULL;
+
+    r->now = 1000.0;
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    r2_race_mint_both( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    config.time_callback = r2_race_time;
+    memcpy( config.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+
+    r2_race_oom.fail_next = false;
+    r2_race_oom.failed = 0;
+
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp_internal(
+        &r2_race_oom, token, &config, r->now, ROCKETNET_TEST_CREATE_TS, &r->operations, r, with_status ? &status : NULL );
+
+    check( r->creates == 2 );
+    check( r2_race_oom.failed == 1 );
+
+    const bool refused = transport == NULL && ( !with_status || status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    if ( !refused )
+    {
+        printf( "mutation gap hunt 2/7172,7175,7176: with no memory for the race block a two-family create %s returned %s with status %d, not NULL with ROCKETNET_STATUS_OUT_OF_MEMORY (%d)\n",
+                with_status ? "given a status pointer" : "given no status pointer", transport ? "a transport" : "NULL", status,
+                (int) ROCKETNET_STATUS_OUT_OF_MEMORY );
+    }
+    check( refused );
+
+    if ( transport )
+    {
+        rn_test_client_transport_stop_and_destroy( transport );
+    }
+
+    r2_race = NULL;
+    delete r;
+}
+
+static void test_gaps_r2_ct_race_block_out_of_memory_refuses_the_create()
+{
+    check( rocketnet_test_loopback_hub_release() );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    r2_race_oom.live = 0;
+    int status = -1;
+    check( rocketnet_init_internal( NULL, r2_race_oom_alloc, r2_race_oom_free, &status ) );
+    check( status == ROCKETNET_STATUS_OK );
+
+    rocketnet_quiet( true );
+    r2_race_oom_attempt( true );
+    r2_race_oom_attempt( false );
+    rocketnet_quiet( false );
+
+    check( rocketnet_test_loopback_hub_release() );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    if ( r2_race_oom.live != 0 )
+    {
+        printf( "mutation gap hunt 2/7172: %d allocation(s) left live after the refused two-family creates\n", r2_race_oom.live );
+    }
+    check( r2_race_oom.live == 0 );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2_ct_race_block_out_of_memory_refuses_the_create );
 #endif // #if ROCKETNET_DEV

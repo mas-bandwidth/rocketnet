@@ -23,6 +23,7 @@
 #include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_protocol.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_test_vectors.h"
 
@@ -287,4 +288,89 @@ static void test_gaps_r2_ct_api_sends_after_stop_change_nothing()
 
 REGISTER_UNIT_TEST( test_gaps_r2_ct_api_sends_after_stop_change_nothing );
 
+
+// ---------------------------------------------------------------------------
+// mutation gap: hunt 2/7763, 2/7764 (a payload larger than the caller's buffer is refused, counted and logged)
+//
+// Two payloads arrive from the server, 20 bytes then 2. Read into an 8-byte
+// buffer, the first is refused whole: RECEIVE_CURSOR_TOO_SMALL counts it,
+// a SPAM line says so, and the cursor returns the second.
+
+static int r2_api_cursor_lines = 0;
+
+static void r2_api_cursor_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) length;
+    if ( level == ROCKETNET_LOG_LEVEL_SPAM && strstr( message, "client receive cursor refused payload" ) != NULL )
+    {
+        r2_api_cursor_lines++;
+    }
+}
+
+static int r2_api_server_payload( uint8_t * packet, uint64_t sequence, uint8_t fill, int payload_bytes )
+{
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 32];
+    memset( plaintext, 0, sizeof( plaintext ) );
+    memset( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, fill, (size_t) payload_bytes );
+    return rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, rocketnet_test_filter_value, sequence, NULL, plaintext,
+                                          ROCKETNET_ACK_BLOCK_MIN_BYTES + payload_bytes, ROCKETNET_DEV_PROTOCOL_ID, rocketnet_test_salt, NULL,
+                                          rocketnet_test_session_s2c_key );
+}
+
+static void test_gaps_r2_ct_api_receive_refuses_a_payload_larger_than_the_buffer()
+{
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+    rocketnet_client_transport_t * transport = r2_api_client( fake, true );
+
+    rocketnet_address_t server;
+    check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int bytes = r2_api_server_payload( packet, 100, 0xA1, 20 );
+    check( bytes > 0 );
+    rocketnet_fake_client_push( fake, &server, packet, bytes );
+    bytes = r2_api_server_payload( packet, 101, 0xB2, 2 );
+    check( bytes > 0 );
+    rocketnet_fake_client_push( fake, &server, packet, bytes );
+
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
+    check( io != NULL );
+    if ( io )
+    {
+        rocketnet_client_io_step( io, false );
+    }
+    r2_api_now = 1000.01;
+    rocketnet_client_transport_update( transport, r2_api_now );
+    check( rocketnet_client_transport_num_payloads( transport ) == 2 );
+
+    const uint64_t too_small = rocketnet_client_transport_counters( transport )->values[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL];
+
+    r2_api_cursor_lines = 0;
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( r2_api_cursor_log, NULL );
+
+    uint8_t copy[8];
+    memset( copy, 0, sizeof( copy ) );
+    const int read = rocketnet_client_transport_receive_packet( transport, copy, (int) sizeof( copy ) );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+
+    check( read == 2 && copy[0] == 0xB2 && copy[1] == 0xB2 );
+
+    const uint64_t counted = rocketnet_client_transport_counters( transport )->values[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] - too_small;
+    if ( counted != 1 || r2_api_cursor_lines != 1 )
+    {
+        printf( "mutation gap hunt 2/7763,7764: a 20-byte payload refused by an 8-byte buffer was counted %llu time(s) in RECEIVE_CURSOR_TOO_SMALL and logged %d time(s), not once each\n",
+                (unsigned long long) counted, r2_api_cursor_lines );
+    }
+    check( counted == 1 );
+    check( r2_api_cursor_lines == 1 );
+
+    rn_test_client_transport_stop_and_destroy( transport );
+    delete fake;
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2_ct_api_receive_refuses_a_payload_larger_than_the_buffer );
 #endif // #if ROCKETNET_DEV
