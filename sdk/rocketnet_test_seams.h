@@ -96,6 +96,16 @@ void rocketnet_dev_fail_wake_create( int error );
 // Per process, false by default. Defined in sdk/rocketnet_api.cpp.
 
 void rocketnet_dev_set_server_keygen_failure( bool fail );
+
+// The crypto source failure seam: while set, opening sodium's random source
+// fails (rocketnet_crypto_open_locked in sdk/rocketnet.cpp, under the crypto
+// mutex), so rocketnet_crypto_acquire returns false and every caller takes
+// its real failure branch: rocketnet_generate_server_keypair answers
+// CRYPTO_INIT_FAILED, and so does the generated-pair step of
+// rocketnet_server_create. Per process, false by default. Defined in
+// sdk/rocketnet.cpp.
+
+void rocketnet_dev_set_crypto_source_failure( bool fail );
 // The hash-key seed seam: the client slots, the token tables and the
 // encryption map draw their SipHash keys from OS entropy at create. A unit
 // case that depends on a table's layout sets a nonzero seed here, and every

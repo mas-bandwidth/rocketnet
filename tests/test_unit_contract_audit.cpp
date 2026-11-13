@@ -2214,6 +2214,10 @@ static void test_witness_server_takes_keep_alive_ack_at_face_value()
     uint8_t ka_out[ROCKETNET_RECEIVE_CEILING];
     check( rocketnet_server_protocol_write_keep_alive_if_due( &srv.server, 0, time + 0.10, ka_out ) == 0 );
 
+    // the positive control in the same fixture: with no send after the
+    // payload, a keep-alive is due once its 0.10 s interval has passed
+    check( rocketnet_server_protocol_write_keep_alive_if_due( &srv.server, 0, time + 0.06 + 0.11, ka_out ) > 0 );
+
     witness_server_teardown( &srv );
 }
 
@@ -2306,6 +2310,11 @@ static void test_witness_keep_alive_suppression_gap_converse_does_not_hold()
     check( rocketnet_server_protocol_start_payload( &srv.server, 0, &to, &seq ) == 1 );
     check( rocketnet_server_protocol_seal_payload_frame( &srv.server, 0, seq, 99, frame, 4, after_gap ) > 0 );
     check( rocketnet_server_protocol_write_keep_alive_if_due( &srv.server, 0, after_gap, ka_out ) == 0 );
+
+    // the positive control in the same fixture: the same 0.15 s gap with no
+    // send before the check emits a keep-alive, so the gap above went without
+    // one only because the send came first
+    check( rocketnet_server_protocol_write_keep_alive_if_due( &srv.server, 0, after_gap + 0.15, ka_out ) > 0 );
 
     witness_server_teardown( &srv );
 }

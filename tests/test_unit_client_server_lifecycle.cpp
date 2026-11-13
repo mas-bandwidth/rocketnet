@@ -61,6 +61,7 @@ static void lifecycle_identity( lifecycle_identity_t * identity )
 // that many messages, on the server and every client the world creates
 static int lifecycle_queue_messages = 0;
 static int lifecycle_disconnect_packets_per_update = 0;
+static int lifecycle_unreliable_messages_per_update = 0;
 
 static void lifecycle_queue_config( int * reliable_messages_in_flight, int * packets_in_flight, int * send_queue_messages, int * send_message_buffer_bytes )
 {
@@ -88,6 +89,10 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     if ( lifecycle_disconnect_packets_per_update > 0 )
     {
         config->disconnect_packets_per_update = lifecycle_disconnect_packets_per_update;
+    }
+    if ( lifecycle_unreliable_messages_per_update > 0 )
+    {
+        config->unreliable_messages_per_update = lifecycle_unreliable_messages_per_update;
     }
     lifecycle_queue_config( &config->reliable_messages_in_flight, &config->packets_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
@@ -1253,8 +1258,9 @@ static void test_server_rates_are_zero_idle_and_count_traffic()
 REGISTER_UNIT_TEST( test_server_rates_are_zero_idle_and_count_traffic );
 
 // set_send_kbps follows the same rule: a connection that is not CONNECTED has
-// no rate to set. The call returns INVALID_ARGUMENT, changes nothing and is
-// not misuse; once CONNECTED the same call is OK.
+// no rate to set. The call returns OK, changes nothing and is not misuse (a
+// no-op; test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rules
+// shows the budget unchanged); once CONNECTED the same call is OK and sets the rate.
 
 static void test_server_set_send_kbps_is_a_no_op_unless_connected()
 {
@@ -1658,10 +1664,86 @@ static void test_server_client_index_round_trips_as_int()
         check( out != NULL );
         rocketnet_server_abort_message( world.server );
 
+        // receipts by index: a receipted send to this index is reported
+        // ACKED, with its serial, by this index and by no other
+
+        uint8_t * receipted = rocketnet_server_start_message( world.server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 2 );
+        check( receipted != NULL );
+        uint32_t serial = 0;
+        if ( receipted )
+        {
+            receipted[0] = 0x7E;
+            receipted[1] = (uint8_t) i;
+            serial = rocketnet_server_finish_message( world.server, 2 );
+        }
+        check( serial != 0 );
+
         struct rocketnet_receipt_t receipts[4];
-        check( rocketnet_server_receipts( world.server, index, receipts, 4 ) >= 0 );
-        (void) rn_server_client_stats_of( world.server, index ).packets_sent;
-        (void) rn_server_client_stats_of( world.server, index ).rtt_ms;
+        memset( receipts, 0, sizeof( receipts ) );
+        int found = 0;
+        for ( int step = 0; step < 400 && found == 0; step++ )
+        {
+            lifecycle_pump( &world );
+            for ( int k = 0; k < world.num_clients; k++ )
+            {
+                while ( rocketnet_client_receive_messages( world.clients[k] ) != NULL )
+                {
+                }
+            }
+            found = rocketnet_server_receipts( world.server, index, receipts, 4 );
+            for ( int other = 0; other < 3; other++ )
+            {
+                if ( other != index )
+                {
+                    check( rocketnet_server_receipts( world.server, other, NULL, 0 ) == 0 );
+                }
+            }
+        }
+        check( found == 1 );
+        check( receipts[0].serial == serial && receipts[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+
+        // stats by index: a 1100-byte message from this client adds its bytes
+        // to this index's bytes_received; the other indexes see only the
+        // same updates' keep-alives, less than the message
+
+        uint64_t bytes_before[3];
+        for ( int k = 0; k < 3; k++ )
+        {
+            bytes_before[k] = rn_server_client_stats_of( world.server, k ).bytes_received;
+        }
+        uint8_t * large = rocketnet_client_start_message( world.clients[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1100 );
+        check( large != NULL );
+        if ( large )
+        {
+            memset( large, 0x5B, 1100 );
+            check( rocketnet_client_finish_message( world.clients[i], 1100 ) != 0 );
+        }
+        int arrived = 0;
+        for ( int step = 0; step < 400 && arrived == 0; step++ )
+        {
+            lifecycle_pump( &world );
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_server_receive_messages( world.server ) ) != NULL )
+            {
+                for ( int m = 0; m < batch->num_messages; m++ )
+                {
+                    check( batch->client_index[m] == index && batch->bytes[m] == 1100 );
+                    arrived++;
+                }
+            }
+        }
+        check( arrived == 1 );
+        const uint64_t own = rn_server_client_stats_of( world.server, index ).bytes_received - bytes_before[index];
+        check( own >= 1100 );
+        for ( int k = 0; k < 3; k++ )
+        {
+            if ( k != index )
+            {
+                const uint64_t other = rn_server_client_stats_of( world.server, k ).bytes_received - bytes_before[k];
+                check( other < 1100 );
+                check( own > other );
+            }
+        }
         lifecycle_exchange( &world, i, (uint8_t) ( 0x70 + i ), 1 );
 
         // an index past max_clients, and a negative one, name no client
@@ -2026,7 +2108,9 @@ static void test_client_connection_ended_state_kept_until_retry()
     }
 
     const enum rocketnet_client_state_t ended = rocketnet_client_state( client );
-    check( ended == ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH || ended == ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT );
+    // the mismatch itself ends it: a timeout here would mean the mismatch went
+    // unseen (the loopback is lossless, so the CONFIG exchange arrives)
+    check( ended == ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH );
 
     // kept through further updates
 
@@ -2418,75 +2502,128 @@ UNIT_TEST_SKIPPED_UNLESS( test_message_receive_one_queue_every_type_every_channe
 
 static void test_message_receive_pumped_in_order()
 {
-    // each client sends more than one batch; together the clients' deliveries
-    // in one update are more than one batch of the server's one queue, so
-    // the window, the send queue and the send buffer hold every message
+    // Three clients send, together, a batch and 8192 more before the server's
+    // next update, so that one update delivers more than one batch. The
+    // messages are unreliable: a packet carries at most 16 reliable numbers
+    // (ROCKETNET_PACKET_BUILDER_MAX_NUMBERS) and one server update reads at
+    // most one loopback queue of packets, 2048 here, so reliable messages
+    // reach 32768 an update at most. Each client sends its share over
+    // SENDS_AHEAD updates of its own, each well inside its packets_per_update,
+    // and the server delivers up to 65536 unreliable messages per client an
+    // update (unreliable_messages_per_update at its ceiling). The loopback
+    // queue is lossless and in order, so every message arrives, in its
+    // client's send order.
 
     enum
     {
-        NUM_SENDERS = 3
+        NUM_SENDERS = 3,
+        SENDS_AHEAD = 3,
+        PER_SEND = 8192
     };
 
-    const int per_client = ROCKETNET_RECEIVE_BATCH_MESSAGES + 17;
-    lifecycle_queue_messages = 1;
-    while ( lifecycle_queue_messages < per_client )
-    {
-        lifecycle_queue_messages *= 2;
-    }
+    const int per_client = SENDS_AHEAD * PER_SEND;
+    const int total = NUM_SENDERS * per_client;
+    check( total == ROCKETNET_RECEIVE_BATCH_MESSAGES + 8192 );
+    lifecycle_unreliable_messages_per_update = 65536;
 
     lifecycle_world_t world;
-    lifecycle_world_create( &world, 2, 1 );
+    lifecycle_world_create( &world, NUM_SENDERS, NUM_SENDERS );
+    lifecycle_unreliable_messages_per_update = 0;
 
-    rocketnet_client_t * client = world.clients[0];
-    lifecycle_connect( &world, 0, 0x1B01 );
-
-    const int index = (int) rocketnet_client_index( client );
-    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
-
-    const int total = 900;
-    for ( int i = 0; i < total; i++ )
+    int index[NUM_SENDERS];
+    for ( int c = 0; c < NUM_SENDERS; c++ )
     {
-        uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-        check( p != NULL );
-        if ( !p )
-        {
-            break;
-        }
-        p[0] = (uint8_t) i;
-        p[1] = (uint8_t) ( i >> 8 );
-        p[2] = 0;
-        p[3] = 0;
-        check( rocketnet_client_finish_message( client, 4 ) != 0 );
+        lifecycle_connect( &world, c, 0x1B01 + (uint64_t) c );
+        index[c] = (int) rocketnet_client_index( world.clients[c] );
+        check( rocketnet_client_set_send_kbps( world.clients[c], ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
     }
+
+    // the clients' updates only: the server is not updated until every
+    // message is in its loopback queue
+
+    for ( int step = 0; step < SENDS_AHEAD; step++ )
+    {
+        lifecycle_now = world.time;
+        for ( int c = 0; c < NUM_SENDERS; c++ )
+        {
+            rocketnet_client_update( world.clients[c], world.time );
+            for ( int k = 0; k < PER_SEND; k++ )
+            {
+                const int i = step * PER_SEND + k;
+                uint8_t * p = rocketnet_client_start_message( world.clients[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 4 );
+                check( p != NULL );
+                if ( !p )
+                {
+                    break;
+                }
+                p[0] = (uint8_t) i;
+                p[1] = (uint8_t) ( i >> 8 );
+                p[2] = (uint8_t) ( i >> 16 );
+                p[3] = (uint8_t) c;
+                check( rocketnet_client_finish_message( world.clients[c], 4 ) != 0 );
+            }
+            rocketnet_client_send_packets( world.clients[c] );
+        }
+        world.time += 0.01;
+    }
+
+    // one server update, pumped to empty: a full batch, then the rest in the
+    // next call of the same update, then NULL; each client's messages once
+    // each, in its send order
+
+    lifecycle_pump( &world );
 
     const struct rocketnet_message_batch_t * batch = NULL;
-    int received = 0;
-    for ( int step = 0; step < 200 && received < total; step++ )
+    int received[NUM_SENDERS] = {};
+    int calls[4] = {};
+    int num_calls = 0;
+    while ( ( batch = rocketnet_server_receive_messages( world.server ) ) != NULL )
     {
-        lifecycle_pump( &world );
-
-        while ( ( batch = rocketnet_server_receive_messages( world.server ) ) != NULL )
+        check( batch->num_messages > 0 && batch->num_messages <= ROCKETNET_RECEIVE_BATCH_MESSAGES );
+        if ( num_calls < 4 )
         {
-            check( batch->num_messages > 0 && batch->num_messages <= ROCKETNET_RECEIVE_BATCH_MESSAGES );
+            calls[num_calls] = batch->num_messages;
+        }
+        num_calls++;
 
-            for ( int i = 0; i < batch->num_messages; i++ )
+        for ( int i = 0; i < batch->num_messages; i++ )
+        {
+            check( batch->bytes[i] == 4 && batch->channel[i] == 0 );
+
+            const int c = batch->data[i][3];
+            check( c < NUM_SENDERS );
+            if ( c >= NUM_SENDERS )
             {
-                check( batch->bytes[i] == 4 && batch->client_index[i] == index && batch->channel[i] == 0 );
-
-                const int value = batch->data[i][0] | ( batch->data[i][1] << 8 );
-                check( value == received );                // once each, in send order
-                received++;
+                continue;
             }
+            check( batch->client_index[i] == index[c] );
+
+            const int value = batch->data[i][0] | ( batch->data[i][1] << 8 ) | ( batch->data[i][2] << 16 );
+            check( value == received[c] );                 // once each, in send order
+            received[c]++;
         }
     }
 
-    check( received == total );
+    if ( num_calls != 2 )
+    {
+        printf( "pumped receive: %d calls in the update (%d, %d, %d, ...)\n", num_calls, calls[0], calls[1], calls[2] );
+    }
+    check( num_calls == 2 );
+    check( calls[0] == ROCKETNET_RECEIVE_BATCH_MESSAGES );
+    check( calls[1] == total - ROCKETNET_RECEIVE_BATCH_MESSAGES );
+    for ( int c = 0; c < NUM_SENDERS; c++ )
+    {
+        check( received[c] == per_client );
+    }
 
     // an update with nothing delivered: the first receive returns NULL
 
     lifecycle_pump( &world );
     check( rocketnet_server_receive_messages( world.server ) == NULL );
-    check( rocketnet_client_receive_messages( client ) == NULL );
+    for ( int c = 0; c < NUM_SENDERS; c++ )
+    {
+        check( rocketnet_client_receive_messages( world.clients[c] ) == NULL );
+    }
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_message_receive_pumped_in_order );

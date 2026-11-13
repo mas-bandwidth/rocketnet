@@ -725,4 +725,14 @@
    :title "The functional suite step says 'on Linux' on the macOS runner"
    :text "One step of .github/workflows/ci.yml, 'Run functional suite (automatic transport order — the fall, on Linux; RSS enforced)', runs on the Linux and the macOS rows, so docs/PLATFORMS.md's macOS 27 row, which must name the step word for word (tools/check_platform_policy.py), reads 'on Linux'. Rename the step so it names no OS (or give each OS its own step), and change tools/planted_violations.tsv and both PLATFORMS.md rows in the same commit."
    :date "2026-11-13" :origin "Review before v1.2.0")
+
+  (item "server-ipv4-address-unit" :group "after-v1-1-landing" :area "tests"
+   :title "A unit case for rocketnet_server_ipv4_address beside its IPv6 twin"
+   :text "rocketnet_server_ipv6_address has a unit case for a stopped server, a running one, the needed-1 buffer size and the wrong family (test_public_server_ipv6_address_reads_the_running_address in tests/test_unit_public_api_core.cpp); rocketnet_server_ipv4_address has only the NULL-server misuse check in sdk/rocketnet_tests.cpp and the functional tests that read it. Add the matching case for the IPv4 call on the loopback transport: stopped answers false, running answers the bound address and port, a buffer one byte short is refused, and an IPv6-only server answers false."
+   :date "2026-11-13" :origin "2026-11-10 review, tests merge row TM032 (optional: new coverage)")
+
+  (item "client-bind-family-exact-foreign-count" :group "after-v1-1-landing" :area "tests"
+   :title "Client bind family: count the late IPv6 cookie exactly"
+   :text "test_unit_client_bind_family.cpp checks ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE >= 1 after the one late IPv6 cookie the case sends (about line 416), so a double count passes. If the case's schedule fixes the count (one late cookie, no other foreign datagram), check it moved by exactly 1 from a reading taken before the cookie is sent; if it does not, say why beside the check."
+   :date "2026-11-13" :origin "2026-11-10 review, tests addendum row TA008, P7's site (optional)")
  ))

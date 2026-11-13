@@ -34,6 +34,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <string>
@@ -76,6 +77,22 @@ static void sized_config_dev_server_config( struct rocketnet_server_config_t * c
     check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
 
     sized_config_test_keys( config );
+}
+
+// a caller's prefix in a heap block of exactly its config_bytes: nothing past
+// config_bytes is addressable, so a read past it is a read past the block,
+// which an AddressSanitizer build of the suite reports. A filled tail on a
+// whole struct shows only that a later value is not used; this shows it is
+// not read. The caller frees the block.
+static void * sized_config_exact_prefix( const void * config, size_t config_bytes )
+{
+    void * block = malloc( config_bytes );
+    check( block != NULL );
+    if ( block )
+    {
+        memcpy( block, config, config_bytes );
+    }
+    return block;
 }
 
 static const size_t client_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };
@@ -687,6 +704,23 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     check( rocketnet_client_required_memory( &client_config ) > 0 );
     check( rocketnet_client_required_memory( &client_config ) == rocketnet_client_required_memory( &client_defaults ) );
 
+    // the same prefix with nothing addressable after it: create and
+    // required_memory read only config_bytes
+
+    {
+        struct rocketnet_client_config_t * exact = (struct rocketnet_client_config_t *) sized_config_exact_prefix( &client_config, client_older );
+        if ( exact )
+        {
+            status = ROCKETNET_TEST_STATUS_UNSET;
+            client = rocketnet_client_create( NULL, exact, &status );
+            check( client != NULL );
+            check( status == ROCKETNET_STATUS_OK );
+            rn_test_client_stop_and_destroy( client );
+            check( rocketnet_client_required_memory( exact ) == rocketnet_client_required_memory( &client_defaults ) );
+            free( exact );
+        }
+    }
+
     // loopback_hub is past the prefix and reads its default, NULL: a loopback
     // pin in the prefix is refused, never served from a global
 
@@ -730,6 +764,20 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     sized_config_dev_server_config( &server_defaults );
     server_defaults.max_clients = 4;
     check( rocketnet_server_required_memory( &server_config ) == rocketnet_server_required_memory( &server_defaults ) );
+
+    {
+        struct rocketnet_server_config_t * exact = (struct rocketnet_server_config_t *) sized_config_exact_prefix( &server_config, server_older );
+        if ( exact )
+        {
+            status = ROCKETNET_TEST_STATUS_UNSET;
+            server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, exact, &status );
+            check( server != NULL );
+            check( status == ROCKETNET_STATUS_OK );
+            rn_test_server_stop_and_destroy( server );
+            check( rocketnet_server_required_memory( exact ) == rocketnet_server_required_memory( &server_defaults ) );
+            free( exact );
+        }
+    }
 
     server_config.transport = "loopback";
     status = ROCKETNET_STATUS_OK;
@@ -1004,8 +1052,9 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 }
 
-// The public client config has one revision and the server config has two
-// after its appended disconnect allowance (docs/ABI-EVOLUTION.md section 4):
+// The public client config has four revisions and the server config seven
+// (ROCKETNET_CLIENT_CONFIG_BYTES_1 .. _4 and ROCKETNET_SERVER_CONFIG_BYTES_1
+// .. _7 in sdk/rocketnet_layers.h; docs/ABI-EVOLUTION.md section 4):
 // the plain default fills every current field, and the plain create reads
 // every field in the caller's declared revision. The network simulator is a
 // call, not a field. Every case runs in memory: the loopback transport, step
@@ -1132,18 +1181,9 @@ static void test_network_simulator_applies_to_outgoing_packets()
 {
     rocketnet_quiet( 1 );
 
-#if !ROCKETNET_DEV
-    // a production posture has no network simulator: the call is counted
-    // misuse and changes nothing, so the pair connects under "100% loss"
-    {
-        const uint64_t misuse = rocketnet_api_misuse_count();
-        check( public_config_pair_connects( 100 ) );
-        check( rocketnet_api_misuse_count() == misuse + 1 );
-    }
-#endif // #if !ROCKETNET_DEV
-
-    // a development posture honours it: the server's total loss keeps the
-    // pair from connecting; none connects
+    // the simulator calls exist only in a development library
+    // (sdk/rocketnet_api.cpp), so this case is development-only too. The
+    // server's total loss keeps the pair from connecting; none connects
 
     check( public_config_pair_connects( 0 ) );
     check( !public_config_pair_connects( 100 ) );
