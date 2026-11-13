@@ -224,6 +224,8 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
 | `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
 | `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
+| `test_server_stats_live_without_a_worker` | functional | the loopback server create, update, statistics and stop of the thread case, with no thread count (process_thread_counts.cpp) | `./bin/functional` |
+| `test_public_step_driven_client_connects_live` | functional | the step-driven loopback client connect and stop of the thread case, with no thread count (process_thread_counts.cpp) | `./bin/functional` |
 
 Every registered unit case runs in at least one CI configuration of either
 tier. In the nightly tier, which runs every configuration the per-commit tier

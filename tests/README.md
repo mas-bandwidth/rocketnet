@@ -104,8 +104,11 @@ The process thread-count cases `test_server_stats_creates_no_thread` and
 `test_public_step_driven_client_connects_without_a_thread` read the process's
 OS thread count from `/proc/self/task`, so they are functional cases in
 `./bin/functional`, not unit cases. Their bodies are in
-`tests/functional/process_thread_counts.cpp`. On platforms without that file the
-count is -1 and the thread assertion pins nothing, so it is never unit logic.
+`tests/functional/process_thread_counts.cpp`. On macOS and Windows, where the
+count cannot be read, their runs_here predicate
+(`rocketnet_process_thread_counts_runs_here`) is false and they print SKIPPED;
+`test_server_stats_live_without_a_worker` and
+`test_public_step_driven_client_connects_live` run the rest of each case there.
 
 ## Peak memory per case
 
