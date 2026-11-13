@@ -967,7 +967,8 @@ static void test_wide_fill_default_two_threads_one_client_in_turn()
     const uint64_t two = wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS );
     const uint64_t misuse = rocketnet_api_misuse_count();
 
-    auto send_one = [&]( uint8_t value ) -> uint32_t {
+    auto send_one = [&]( uint8_t value ) -> uint32_t
+    {
         uint8_t * p = rocketnet_server_start_message( world.server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
         if ( !p )
         {
@@ -981,7 +982,8 @@ static void test_wide_fill_default_two_threads_one_client_in_turn()
     {
         check( send_one( 0x71 ) != 0 );
         uint32_t serial = 0;
-        std::thread other( [&]() { serial = send_one( 0x72 ); } );
+        std::thread other( [&]()
+                           { serial = send_one( 0x72 ); } );
         other.join();
         check( serial != 0 );
         check( send_one( 0x73 ) != 0 );
@@ -997,7 +999,8 @@ static void test_wide_fill_default_two_threads_one_client_in_turn()
     wide_fill_pump( &world );
     check( send_one( 0x74 ) != 0 );
     uint8_t * refused = (uint8_t *) &world;
-    std::thread second( [&]() { refused = rocketnet_server_start_message( world.server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 ); } );
+    std::thread second( [&]()
+                        { refused = rocketnet_server_start_message( world.server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 ); } );
     second.join();
     check( refused == NULL );
     check( wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS ) == two + 1 );
