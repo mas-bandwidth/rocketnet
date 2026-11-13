@@ -3,11 +3,13 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The structured _ex lifecycle and creation surface
-// (docs/ERRORS-AND-LOGGING.md 2.1 and 2.3, Layer 4): every failure exit that
-// is reachable without a socket or real time writes its exact status code, and
-// a failure of the allocation path is reached by a fault-injecting allocator
-// failing at each allocation in turn.
+// The structured _ex lifecycle surface (docs/ERRORS-AND-LOGGING.md 2.1 and
+// 2.3, Layer 4) and message-config validation: every failure exit that is
+// reachable without a socket or real time writes its exact status code. A
+// counting allocator, installed and then passed to init, shows the allocator
+// refusals (partial set, live allocations, already initialized) and that a
+// clean term leaves nothing behind. Init has no allocation to fail: it
+// allocates nothing through the context.
 //
 // rocketnet_init_internal CRYPTO_INIT_FAILED is reached in a development
 // build through the crypto source failure seam (sdk/rocketnet_test_seams.h),
@@ -35,17 +37,12 @@ struct allocator_state
 {
     int live;
     int calls;
-    int fail_at;
 };
 
 static void * allocate( void * context, size_t bytes )
 {
     allocator_state * state = (allocator_state *) context;
-    const int call = ++state->calls;
-    if ( state->fail_at == call )
-    {
-        return NULL;
-    }
+    ++state->calls;
 
     void * base = malloc( bytes + 128 );
     if ( !base )
@@ -167,7 +164,7 @@ static void check_message_validate_status()
 
 static void test_lifecycle_ex_reports_every_status()
 {
-    allocator_state state = { 0, 0, 0 };
+    allocator_state state = { 0, 0 };
     int status = -1;
 
     // the worker starts the process initialized; return to the pre-init state
@@ -218,7 +215,7 @@ static void test_lifecycle_ex_reports_every_status()
 
     check_message_validate_status();
 
-    // init with the fault-injecting allocator in context
+    // init with the counting allocator in context
 
     status = -1;
     check( rocketnet_init_internal( &state, allocate, release, &status ) );

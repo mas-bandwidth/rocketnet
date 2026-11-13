@@ -457,8 +457,33 @@ static void test_network_threads_plan_per_transport()
     config.max_clients = 64;
     const int iocp_lanes = rocketnet_server_iocp_send_lanes( config.max_clients );
     check( iocp_lanes == 4 );
-    config.num_iocp_send_threads = 2;
     rocketnet_server_memory_plan_t iocp_plan;
+
+    // the completion workers by value, each with its socket, beside the
+    // default send threads (2, under the 4 lanes): nothing asked on the
+    // wildcard is one worker, on a specific bind address the default, asked
+    // is that many, and past the limit is refused
+    check( rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
+    check( iocp_plan.sockets == 1 );
+    check( iocp_plan.worker_threads == 1 + ROCKETNET_IOCP_DEFAULT_SEND_THREADS );
+    snprintf( config.bind_ipv4_address, sizeof( config.bind_ipv4_address ), "10.0.0.5" );
+    check( rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
+    check( iocp_plan.sockets == ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS );
+    check( iocp_plan.worker_threads == ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS + ROCKETNET_IOCP_DEFAULT_SEND_THREADS );
+    config.bind_ipv4_address[0] = '\0';
+    config.num_iocp_completion_workers = 3;
+    check( rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
+    check( iocp_plan.sockets == 3 );
+    check( iocp_plan.worker_threads == 3 + ROCKETNET_IOCP_DEFAULT_SEND_THREADS );
+    config.num_iocp_send_threads = 1;
+    check( rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
+    check( iocp_plan.worker_threads == 3 + 1 );
+    config.num_iocp_send_threads = 0;
+    config.num_iocp_completion_workers = ROCKETNET_IOCP_MAX_COMPLETION_WORKERS + 1;
+    check( !rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
+    config.num_iocp_completion_workers = 0;
+
+    config.num_iocp_send_threads = 2;
     check( rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
     check( iocp_plan.worker_threads == iocp_plan.sockets + 2 );
     config.num_iocp_send_threads = iocp_lanes;

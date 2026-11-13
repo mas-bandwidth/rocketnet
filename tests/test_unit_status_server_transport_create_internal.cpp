@@ -18,6 +18,7 @@
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_seams.h"
 
@@ -94,8 +95,9 @@ static void production_config( struct rocketnet_server_transport_config_t * conf
     config->protocol_id = 1;
 }
 
-// A named production server rung with a concrete memory plan. The budget=1
-// case refuses before opening it, so this unit test needs no native backend.
+// The budget case below names the loopback rung, whose memory plan is
+// concrete, and a one-byte budget refuses it before it opens, so this unit
+// test needs no native backend.
 
 #if ROCKETNET_ASSERTS
 // the NULL argument below is the documented counted no-op, which fires
@@ -165,8 +167,9 @@ static void test_server_transport_create_ex_reports_every_status()
         check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     }
 
-    // Real environment budget parsing and both production budget rungs
-    // are covered by test_platform_primitives.
+    // Real environment budget parsing and both production budget rungs are
+    // covered by test_platform_primitives (a functional test); the budget's
+    // refusal itself is the NO_TRANSPORT_FOUND step below.
 
     // S4: the default config carries the published test packet filter, which
     // a production build refuses
@@ -284,6 +287,33 @@ static void test_server_transport_create_ex_reports_every_status()
         check( reached_success );
 
         state.fail_at = 0;
+    }
+
+    // NO_TRANSPORT_FOUND through the preallocation memory budget. A
+    // budget of one byte is below every candidate's plan, so the create is
+    // refused before its first allocation and before any transport opens;
+    // the transport is the in-memory loopback, so a budget check that
+    // regressed would create a server here (and fail the check), never bind a
+    // socket
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+        config.loopback_hub = rocketnet_test_loopback_hub();
+        config.max_clients = 1;
+        const int live = state.live;
+        const int calls = state.calls;
+
+        status = -1;
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_resolved( &state, "127.0.0.1:12345", &config, 1, &status );
+        check( server == NULL );
+        if ( server )
+        {
+            rn_test_server_transport_stop_and_destroy( server );
+        }
+        check( status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
+        check( state.calls == calls );
+        check( state.live == live );
     }
 
     // a clean term, then restore the default allocator for the worker's term
