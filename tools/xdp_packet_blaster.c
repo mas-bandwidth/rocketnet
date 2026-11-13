@@ -1040,6 +1040,17 @@ static int rn_blaster_mutate_case( const rn_blaster_case_t & item, const uint8_t
     return bytes;
 }
 
+/* The size of the next packet the client endpoint wants written, or 0. Every
+ * packet the tool writes is its own flush (sdk/rocketnet_endpoint.h): the
+ * write pass is opened first, as the SDK's send_packets does, because a pass
+ * that an earlier request this update ended (nothing due then) answers 0
+ * until it is opened again, and a record queued since would go unsent. */
+static int rn_blaster_endpoint_request( rn_endpoint_t * endpoint, double now )
+{
+    rn_endpoint_begin_flush( endpoint );
+    return rn_endpoint_next_packet_bytes( endpoint, now );
+}
+
 static int rn_blaster_self_test()
 {
     int failures = 0;
@@ -1328,6 +1339,69 @@ static int rn_blaster_self_test()
         rn_blaster_results_add( &total, &part );
         RN_BLASTER_CHECK( total.submitted == 7u && total.receive_wrong_thread == 2u && total.physical_wire_bytes == 1002u &&
                           total.transmit_wakeups == 4u && total.offered == 0u );
+    }
+    {
+        // every counter the run is judged on fails it alone; the reported-only ones do not
+        rn_blaster_results_t clean_results = {};
+        rn_blaster_results_t clean_disconnect = {};
+        clean_results.receive_refused = 5;
+        clean_results.not_ready = 3;
+        clean_results.unsent = 2;
+        clean_results.backpressure = 1;
+        RN_BLASTER_CHECK( rn_blaster_counters_refusal( &clean_results, &clean_disconnect ) == NULL );
+        rn_blaster_results_t bad = clean_results;
+        bad.receive_wrong_thread = 1;
+        RN_BLASTER_CHECK( rn_blaster_counters_refusal( &bad, &clean_disconnect ) &&
+                          strcmp( rn_blaster_counters_refusal( &bad, &clean_disconnect ), "rx_wrong_thread" ) == 0 );
+        bad = clean_results;
+        bad.descriptor_refused = 1;
+        RN_BLASTER_CHECK( rn_blaster_counters_refusal( &bad, &clean_disconnect ) &&
+                          strcmp( rn_blaster_counters_refusal( &bad, &clean_disconnect ), "descriptor_refused" ) == 0 );
+        bad = clean_results;
+        bad.payload_errors = 1;
+        RN_BLASTER_CHECK( rn_blaster_counters_refusal( &bad, &clean_disconnect ) &&
+                          strcmp( rn_blaster_counters_refusal( &bad, &clean_disconnect ), "payload_errors" ) == 0 );
+        bad = clean_results;
+        bad.ownership_errors = 1;
+        RN_BLASTER_CHECK( rn_blaster_counters_refusal( &bad, &clean_disconnect ) &&
+                          strcmp( rn_blaster_counters_refusal( &bad, &clean_disconnect ), "ownership_errors" ) == 0 );
+        rn_blaster_results_t bad_disconnect = {};
+        bad_disconnect.ownership_errors = 1;
+        RN_BLASTER_CHECK( rn_blaster_counters_refusal( &clean_results, &bad_disconnect ) &&
+                          strcmp( rn_blaster_counters_refusal( &clean_results, &bad_disconnect ), "ownership_errors" ) == 0 );
+    }
+    {
+        // a record queued after this update's write pass ended (nothing was due
+        // at the session's last request) still gets a packet: each request
+        // opens the pass, as a flush does
+        rocketnet_message_config_t message_config;
+        rocketnet_message_default_config( &message_config );
+        const uint64_t arena_required = rn_arena_required_bytes( &message_config, 1 );
+        RN_BLASTER_CHECK( arena_required > 0 );
+        std::vector<uint8_t> storage( (size_t) arena_required + ROCKETNET_ALLOCATION_ALIGNMENT );
+        uint8_t * block = (uint8_t *) ( ( (uintptr_t) storage.data() + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) &
+                                        ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+        rocketnet_counters_t message_counters = {};
+        rn_arena_t * arena = arena_required > 0 ? rn_arena_create_in_block( block, arena_required, &message_config, 1, &message_counters ) : NULL;
+        RN_BLASTER_CHECK( arena != NULL );
+        if ( arena )
+        {
+            rn_endpoint_t endpoint;
+            memset( &endpoint, 0, sizeof( endpoint ) );
+            rn_endpoint_config_t endpoint_config = {};
+            endpoint_config.config = &message_config;
+            endpoint_config.send_kbps = 0;
+            endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+            rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+            rn_endpoint_reset( &endpoint, 0.0 );
+            (void) rn_endpoint_begin_update( &endpoint );
+            RN_BLASTER_CHECK( rn_blaster_endpoint_request( &endpoint, 0.0 ) == 0 );
+            uint8_t body[64] = {};
+            RN_BLASTER_CHECK( rn_endpoint_send( &endpoint, body, (int) sizeof( body ), ROCKETNET_RELIABILITY_UNRELIABLE,
+                                                ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 );
+            RN_BLASTER_CHECK( rn_blaster_endpoint_request( &endpoint, 0.0 ) > 0 );
+            rn_arena_destroy( arena );
+        }
     }
 #undef RN_BLASTER_CHECK
     if ( failures == 0 )
@@ -2256,7 +2330,7 @@ static bool rn_blaster_endpoint_prepare( rn_blaster_session_t * session, double 
                                          std::array<uint8_t, ROCKETNET_SEND_BUDGET> * packet,
                                          int * packet_bytes, uint64_t * packet_id )
 {
-    const int requested = rn_endpoint_next_packet_bytes( &session->endpoint, now );
+    const int requested = rn_blaster_endpoint_request( &session->endpoint, now );
     if ( requested == 0 )
     {
         return false;
@@ -2583,8 +2657,14 @@ static void rn_blaster_worker_run( rn_blaster_shared_t * shared, rn_blaster_work
                                            ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 )
                     {
                         results.application_queued_bytes += options.plan.payload_bytes;
-                        (void) rn_blaster_endpoint_packet( xsk, &session, now, server, shared->source_mac, shared->next_hop_mac,
-                                                           &results, &scratch_packet, &scratch_packet_bytes, NULL );
+                        const uint64_t backpressure_before = results.backpressure;
+                        if ( !rn_blaster_endpoint_packet( xsk, &session, now, server, shared->source_mac, shared->next_hop_mac,
+                                                          &results, &scratch_packet, &scratch_packet_bytes, NULL ) &&
+                             results.backpressure == backpressure_before )
+                        {
+                            // queued, but no packet was written for it: counted, never silent
+                            ++results.unsent;
+                        }
                     }
                     else
                     {
@@ -2915,16 +2995,16 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         if ( threads > 1 )
         {
             printf( "RESULT_THREAD thread=%u queue=%u cpu=%d running_cpu=%d clients=%u offered=%" PRIu64 " submitted=%" PRIu64
-                    " backpressure=%" PRIu64 " not_ready=%" PRIu64 " rx_frames=%" PRIu64 " rx_wrong_thread=%" PRIu64
+                    " backpressure=%" PRIu64 " not_ready=%" PRIu64 " unsent=%" PRIu64 " rx_frames=%" PRIu64 " rx_wrong_thread=%" PRIu64
                     " rx_refused=%" PRIu64 " physical_wire_bytes=%" PRIu64 " tx_batches=%" PRIu64 " tx_wakeups=%" PRIu64
                     " workload_ns=%" PRIu64 "\n",
                     t, worker.queue, worker.cpu, worker.running_cpu, worker.clients, worker.results.offered, worker.results.submitted,
-                    worker.results.backpressure, worker.results.not_ready, worker.results.received_frames,
+                    worker.results.backpressure, worker.results.not_ready, worker.results.unsent, worker.results.received_frames,
                     worker.results.receive_wrong_thread, worker.results.receive_refused, worker.results.physical_wire_bytes,
                     worker.results.transmit_batches, worker.results.transmit_wakeups, worker.workload_ns );
         }
     }
-    printf( "RESULT work_units_offered=%" PRIu64 " submitted=%" PRIu64 " backpressure=%" PRIu64 " not_ready=%" PRIu64
+    printf( "RESULT work_units_offered=%" PRIu64 " submitted=%" PRIu64 " backpressure=%" PRIu64 " not_ready=%" PRIu64 " unsent=%" PRIu64
             " rx_frames=%" PRIu64 " rx_protocol=%" PRIu64 " rx_application=%" PRIu64
             " rx_refused=%" PRIu64 " descriptor_refused=%" PRIu64
             " protocol_bytes=%" PRIu64 " ethernet_frame_bytes=%" PRIu64 " physical_wire_bytes=%" PRIu64
@@ -2933,7 +3013,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
             " robustness_cases=%" PRIu64 " recovery_offers=%" PRIu64
             " threads=%u rx_wrong_thread=%" PRIu64 " tx_batches=%" PRIu64 " tx_wakeups=%" PRIu64
             " schedule_complete=%d workload_ns=%" PRIu64 "\n",
-            results.offered, results.submitted, results.backpressure, results.not_ready, results.received_frames,
+            results.offered, results.submitted, results.backpressure, results.not_ready, results.unsent, results.received_frames,
             results.received_protocol, results.received_application, results.receive_refused,
             results.descriptor_refused, results.protocol_bytes,
             results.ethernet_frame_bytes, results.physical_wire_bytes,
@@ -2981,9 +3061,13 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                                      results.received_application > 0;
     const bool upstream_observed = ( options.plan.direction & RN_BLASTER_DIRECTION_CLIENT_TO_SERVER ) == 0 ||
                                    results.application_queued_bytes > 0;
+    const char * counters_refusal = rn_blaster_counters_refusal( &results, &disconnect_results );
+    if ( counters_refusal )
+    {
+        fprintf( stderr, "xdp_packet_blaster: the run fails on its counters: %s is not 0\n", counters_refusal );
+    }
     if ( !sessions_ok || !all_sessions_ready || !schedule_complete || !upstream_observed ||
-         !robustness_complete || !downstream_observed || results.payload_errors != 0 ||
-         !clean || !rlimit_restored || results.ownership_errors != 0 || disconnect_results.ownership_errors != 0 ||
+         !robustness_complete || !downstream_observed || counters_refusal || !clean || !rlimit_restored ||
          term != ROCKETNET_STATUS_OK )
     {
         return 1;

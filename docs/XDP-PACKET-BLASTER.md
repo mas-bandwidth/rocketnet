@@ -150,7 +150,15 @@ Output distinguishes:
   4-byte FCS padded to the 64-byte minimum, and 12-byte inter-frame gap.
 
 The offer counter is a workload schedule, not a transmit-success counter.
-Submitted, backpressure, not-ready, receive, and refusal counts remain separate.
+Submitted, backpressure, not-ready, unsent, receive, and refusal counts remain
+separate. Every packet the tool writes is its own flush: it opens the
+endpoint's write pass first, as the SDK's send path does. `unsent` counts
+offers the endpoint queued but wrote no packet for (the update's
+`packets_per_update` spent); they leave with a later packet, or never. The
+run fails (exit 1, naming the counter) when `payload_errors`,
+`ownership_errors`, `descriptor_refused` or `rx_wrong_thread` is not 0;
+`rx_refused` is reported only, since it also counts other hosts' frames on the
+shared queue.
 Robustness expectations must be joined to the controlled server's named
 counter receipt; the local case list is not evidence that the server observed
 the mutation.
@@ -188,7 +196,8 @@ tool reads the port's Toeplitz key and indirection table (ETHTOOL_GRSSH), and
 refuses unless the UDP/IPv4 hash covers both addresses and both ports
 (`ethtool -N <if> rx-flow-hash udp4 sdfn`). It then gives each client a source
 port whose reply (server address and port to client address and port) hashes
-to its owner's queue. `RESULT` carries `rx_wrong_thread`, which must be 0.
+to its owner's queue. `RESULT` carries `rx_wrong_thread`, which must be 0: any reply steered to the
+wrong thread fails the run.
 Every `RESULT_THREAD` line shows one thread; `RESULT_RATE` shows the submitted
 rate and the Gb/s on the wire.
 

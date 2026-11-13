@@ -107,6 +107,10 @@ struct rn_blaster_results_t
     uint64_t submitted;
     uint64_t backpressure;
     uint64_t not_ready;
+    /* offers the endpoint queued but wrote no packet for in their flush (the
+     * update's packets_per_update spent): they leave with a later packet, or
+     * never */
+    uint64_t unsent;
     uint64_t received_frames;
     uint64_t received_protocol;
     uint64_t received_application;
@@ -132,6 +136,7 @@ static inline void rn_blaster_results_add( struct rn_blaster_results_t * total, 
     total->submitted += part->submitted;
     total->backpressure += part->backpressure;
     total->not_ready += part->not_ready;
+    total->unsent += part->unsent;
     total->received_frames += part->received_frames;
     total->received_protocol += part->received_protocol;
     total->received_application += part->received_application;
@@ -149,6 +154,34 @@ static inline void rn_blaster_results_add( struct rn_blaster_results_t * total, 
     total->recovery_offers += part->recovery_offers;
     total->transmit_batches += part->transmit_batches;
     total->transmit_wakeups += part->transmit_wakeups;
+}
+
+/* The counter that fails the run (docs/XDP-PACKET-BLASTER.md), or NULL when
+ * none does: a delivered payload of the wrong size or tag, a UMEM frame that
+ * could not go back to its ring, a receive descriptor outside the RX region,
+ * or a reply RSS steered to a thread that does not own its client (the
+ * Toeplitz port assignment was wrong). rx_refused is reported, not judged: it
+ * also counts frames from other hosts on the shared queue. */
+static inline const char * rn_blaster_counters_refusal( const struct rn_blaster_results_t * results,
+                                                        const struct rn_blaster_results_t * disconnect )
+{
+    if ( results->payload_errors != 0 )
+    {
+        return "payload_errors";
+    }
+    if ( results->ownership_errors != 0 || disconnect->ownership_errors != 0 )
+    {
+        return "ownership_errors";
+    }
+    if ( results->descriptor_refused != 0 )
+    {
+        return "descriptor_refused";
+    }
+    if ( results->receive_wrong_thread != 0 )
+    {
+        return "rx_wrong_thread";
+    }
+    return NULL;
 }
 
 /* Thread t's share of a total split over threads: the remainder goes to the
