@@ -1326,10 +1326,14 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os, sys, urllib.request
-          url = "https://api.github.com/repos/%s/actions/runs/%s/attempts/%s/jobs?per_page=100" % (
-              os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
-          request = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
-          jobs = json.load(urllib.request.urlopen(request, timeout=20))["jobs"]
+          try:
+              url = "https://api.github.com/repos/%s/actions/runs/%s/attempts/%s/jobs?per_page=100" % (
+                  os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+              request = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+              jobs = json.load(urllib.request.urlopen(request, timeout=20))["jobs"]
+          except Exception as error:
+              print("DEBUG-UNIT-SHARDS=FAIL no verdict: %s" % error)
+              sys.exit(1)
           bad = 0
           for shard in ("0/2", "1/2"):
               name = "linux / Debug / unit (%s)" % shard
@@ -1337,6 +1341,8 @@ jobs:
               print("%s: %s" % (name, found or "missing"))
               if found != ["success"]:
                   bad = 1
+          if bad:
+              print("DEBUG-UNIT-SHARDS=FAIL a shard did not succeed")
           sys.exit(bad)
           PY
 
