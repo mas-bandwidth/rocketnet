@@ -1465,8 +1465,12 @@ static uint64_t stop_spread_pin_row( const struct rocketnet_server_transport_io_
 // (rocketnet_server_gso_test_place_worker): the transport's own code counts,
 // and GSO_PIN_REFUSALS is read by value through the server's fold. Its row
 // counts refused pins and the failed confinements after them. A worker left
-// on cpu 0 is flagged and asks for no SCHED_RR; one kept off it, or whose
-// mask never held cpu 0, asks once.
+// on cpu 0 is flagged. Only a granted pin asks for SCHED_RR, once: a worker
+// whose pin was refused asks for none, wherever it is left (confined off cpu
+// 0, or on a mask that never held it). With cpu 0 not reserved
+// (gso_reserve_cpu_0 ROCKETNET_CPU_0_NOT_RESERVED) worker q pins to cpu q,
+// num_os_cpus is not applied, and a refused pin is counted but neither
+// confined nor flagged.
 
 static void test_server_transport_counts_gso_pin_refusals()
 {
@@ -1494,9 +1498,10 @@ static void test_server_transport_counts_gso_pin_refusals()
     rocketnet_unit_check( !left && round_robin == 1 && rocketnet_server_gso_worker_cpu( gso, 0 ) == 1 );
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 0 );
 
-    // the pin refused, the confinement (cpus 1 .. 3) taken: counted once
+    // the pin refused, the confinement (cpus 1 .. 3) taken: counted once, no
+    // SCHED_RR on the cpus it now shares
     rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, false, true, false, &left, &round_robin ) );
-    rocketnet_unit_check( !left && round_robin == 1 && rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
+    rocketnet_unit_check( !left && round_robin == 0 && rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 1 );
 
     // the pin and the confinement refused: both counted, left on cpu 0, no SCHED_RR
@@ -1517,11 +1522,25 @@ static void test_server_transport_counts_gso_pin_refusals()
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 5 );
 
     // the pin and the confinement refused on a mask without cpu 0 (cpus 1 ..
-    // 3): both counted, but the worker is not on cpu 0, so it is not flagged
-    // and asks for SCHED_RR
+    // 3): both counted, but the worker is not on cpu 0, so it is not flagged;
+    // its pin was refused, so no SCHED_RR (a cpuset of game cores)
     rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, true, true, true, &left, &round_robin ) );
-    rocketnet_unit_check( !left && round_robin == 1 && rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
+    rocketnet_unit_check( !left && round_robin == 0 && rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
     rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 7 );
+
+    // cpu 0 not reserved: queue 0 pins to cpu 0 (num_os_cpus 3 is not
+    // applied), not counted, SCHED_RR asked for
+    rocketnet_server_gso_test_set_reserve_cpu_0( gso, false );
+    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 3, 4, 4, false, false, false, &left, &round_robin ) );
+    rocketnet_unit_check( !left && round_robin == 1 && rocketnet_server_gso_worker_cpu( gso, 0 ) == 0 );
+    rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 7 );
+
+    // not reserved, every affinity set refused: the pin counted once, no
+    // confinement tried (so no second count), not flagged, no SCHED_RR
+    rocketnet_unit_check( rocketnet_server_gso_test_place_worker( gso, 0, 1, 4, 4, false, true, true, &left, &round_robin ) );
+    rocketnet_unit_check( !left && round_robin == 0 && rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
+    rocketnet_unit_check( stop_spread_pin_row( gso_operations, gso, ROCKETNET_COUNTER_GSO_PIN_REFUSALS ) == 8 );
+    rocketnet_server_gso_test_set_reserve_cpu_0( gso, true );
 
     rocketnet_unit_check( !rocketnet_server_gso_test_place_worker( gso, 1, 1, 4, 4, false, false, false, &left, &round_robin ) );
 
@@ -1547,7 +1566,11 @@ static bool stop_spread_uring_pin_read( const struct rocketnet_server_transport_
 // a fresh synthetic transport each call): the transport's own code counts, and
 // URING_PIN_REFUSALS is read by value through the server's fold. Its row counts
 // refused pins only, so a failed confinement after one is flagged and logged,
-// not counted again. A worker left on cpu 0 asks for no SCHED_RR.
+// not counted again. Only a granted pin asks for SCHED_RR: a worker whose pin
+// was refused asks for none, wherever it is left. With cpu 0 not reserved
+// (io_uring_reserve_cpu_0 ROCKETNET_CPU_0_NOT_RESERVED) worker 0 pins to cpu
+// 0, num_os_cpus is not applied, and a refused pin is neither confined nor
+// flagged.
 
 static void test_server_transport_counts_uring_pin_refusals()
 {
@@ -1567,28 +1590,41 @@ static void test_server_transport_counts_uring_pin_refusals()
     uint64_t row = UINT64_MAX;
     bool left = true;
     int round_robin = -1;
+    int cpu = -100;
 
-    // granted: not counted, SCHED_RR asked for
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, false, false, false, &row, &left, &round_robin ) );
-    rocketnet_unit_check( row == 0 && !left && round_robin == 1 );
+    // granted: cpu 1, not counted, SCHED_RR asked for
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, true, 4, 4, false, false, false, &row, &left, &round_robin, &cpu ) );
+    rocketnet_unit_check( row == 0 && !left && round_robin == 1 && cpu == 1 );
 
-    // the pin refused, the confine (cpus 1 .. 3) taken: counted once, SCHED_RR asked for
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, false, true, false, &row, &left, &round_robin ) );
-    rocketnet_unit_check( row == 1 && !left && round_robin == 1 );
+    // the pin refused, the confine (cpus 1 .. 3) taken: counted once, no
+    // SCHED_RR on the cpus it now shares
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, true, 4, 4, false, true, false, &row, &left, &round_robin, &cpu ) );
+    rocketnet_unit_check( row == 1 && !left && round_robin == 0 && cpu == ROCKETNET_URING_PIN_NONE );
 
     // the pin and the confine refused: counted once, left on cpu 0, no SCHED_RR
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, false, true, true, &row, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, true, 4, 4, false, true, true, &row, &left, &round_robin, &cpu ) );
     rocketnet_unit_check( row == 1 && left && round_robin == 0 );
 
     // one cpu online: the pin refused (counted once), nothing but cpu 0 to
     // confine to, left on cpu 0, no SCHED_RR; the call returns: the host runs
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 1, 1, false, false, false, &row, &left, &round_robin ) );
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, true, 1, 1, false, false, false, &row, &left, &round_robin, &cpu ) );
     rocketnet_unit_check( row == 1 && left && round_robin == 0 );
 
     // the pin and the confine refused on a mask without cpu 0 (cpus 1 .. 3):
-    // counted once, not on cpu 0, so not flagged, and SCHED_RR asked for
-    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, 4, 4, true, true, true, &row, &left, &round_robin ) );
-    rocketnet_unit_check( row == 1 && !left && round_robin == 1 );
+    // counted once, not on cpu 0, so not flagged; its pin was refused, so no
+    // SCHED_RR (a cpuset of game cores)
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, true, 4, 4, true, true, true, &row, &left, &round_robin, &cpu ) );
+    rocketnet_unit_check( row == 1 && !left && round_robin == 0 );
+
+    // cpu 0 not reserved: worker 0 pins to cpu 0 (num_os_cpus 3 not applied),
+    // not counted, SCHED_RR asked for
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 3, false, 4, 4, false, false, false, &row, &left, &round_robin, &cpu ) );
+    rocketnet_unit_check( row == 0 && !left && round_robin == 1 && cpu == 0 );
+
+    // not reserved, every set refused: counted once, not confined, not flagged
+    // although its mask holds cpu 0, no SCHED_RR
+    rocketnet_unit_check( rocketnet_server_uring_test_place_worker( stop_spread_uring_pin_read, uring_operations, 1, false, 4, 4, false, true, true, &row, &left, &round_robin, &cpu ) );
+    rocketnet_unit_check( row == 1 && !left && round_robin == 0 && cpu == ROCKETNET_URING_PIN_NONE );
 
     g_pin_fold_server = NULL;
     rocketnet_log_level( saved_level );
@@ -1598,5 +1634,102 @@ static void test_server_transport_counts_uring_pin_refusals()
 REGISTER_UNIT_TEST( test_server_transport_counts_uring_pin_refusals );
 
 #endif // #if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
+
+// sdk/rocketnet_driver_builtin.cpp (development library, Linux)
+typedef bool rocketnet_portable_server_test_transport_counters_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                                  uint64_t * values );
+bool rocketnet_portable_server_test_place_worker( rocketnet_portable_server_test_transport_counters_t * dispatch, int worker, int num_os_cpus,
+                                                  bool reserve_cpu_0, int online, int cpus, bool without_cpu_zero, bool refuse_pin, bool refuse_all,
+                                                  uint64_t * row, bool * left_on_core_zero, int * pinned_cpu, int * set_calls, int * granted_first );
+
+// the row as the server's fold takes it: the transport rows dispatch (the
+// synthetic server has no socket, so the whole fold, which also reads the
+// socket's send failures, is not run on it; the functional case
+// test_portable_transport_worker_placement reads the row through the public
+// counters of a real server)
+static bool stop_spread_portable_pin_read( const struct rocketnet_server_transport_io_operations_t * operations, void * transport, uint64_t * values )
+{
+    uint64_t rows[ROCKETNET_NUM_COUNTERS] = {};
+    const bool answered = rocketnet_server_transport_io_transport_counters( operations, transport, rows );
+    values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] = rows[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS];
+    return answered;
+}
+
+// The portable transport's placement of its two workers on Linux
+// (sdk/rocketnet_driver_builtin.cpp, portable_place_worker) with only the
+// refusals injected (rocketnet_portable_server_test_place_worker, a fresh
+// synthetic server each call): the send worker (0) pins to cpu num_os_cpus,
+// the receive worker (1) to num_os_cpus + 1, as the gso workers do, and
+// PORTABLE_PIN_REFUSALS is read by value as the server's fold takes it. Its row
+// counts refused pins and the failed confinements after them; a refused
+// worker is confined to the cpus from num_os_cpus up, and flagged when it is
+// left on a mask that holds cpu 0. The portable workers never ask for
+// real-time scheduling. With cpu 0 not reserved (portable_reserve_cpu_0
+// ROCKETNET_CPU_0_NOT_RESERVED) worker w pins to cpu w, num_os_cpus is not
+// applied, and a refused pin is counted but neither confined nor flagged.
+
+static void test_server_transport_counts_portable_pin_refusals()
+{
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );    // each refusal logs
+
+    uint64_t row = UINT64_MAX;
+    bool left = true;
+    int cpu = -100;
+    int sets = -1;
+    int granted = -100;
+
+    // granted: send on cpu 1, receive on cpu 2, one set each, not counted
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 0, 1, true, 4, 4, false, false, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 0 && !left && cpu == 1 && sets == 1 && granted == 1 );
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 1, 1, true, 4, 4, false, false, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 0 && !left && cpu == 2 && sets == 1 && granted == 2 );
+
+    // two cpus left to the OS: receive on cpu 3
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 1, 2, true, 4, 4, false, false, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 0 && !left && cpu == 3 );
+
+    // num_os_cpus 0 reads as 1: the OS keeps cpu 0
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 0, 0, true, 4, 4, false, false, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 0 && cpu == 1 );
+
+    // the receive worker's cpu (num_os_cpus 3, cpu 4) is not online: refused,
+    // counted once, no pin tried, confined to the cpus from num_os_cpus up:
+    // cpu 3, the last online
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 1, 3, true, 4, 4, false, false, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 1 && !left && cpu == ROCKETNET_GSO_PIN_NONE && sets == 1 && granted == 3 );
+
+    // the pin refused, the confine (cpus 1 .. 3) taken: counted once
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 0, 1, true, 4, 4, false, true, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 1 && !left && cpu == ROCKETNET_GSO_PIN_NONE && sets == 2 && granted == 1 );
+
+    // the pin and the confine refused: counted twice, left on cpu 0
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 0, 1, true, 4, 4, false, true, true, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 2 && left && cpu == ROCKETNET_GSO_PIN_NONE && sets == 2 && granted == -1 );
+
+    // the pin and the confine refused on a mask without cpu 0 (a cpuset of
+    // game cores): counted twice, not on cpu 0, so not flagged
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 0, 1, true, 4, 4, true, true, true, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 2 && !left );
+
+    // one cpu online: the pin refused (counted), nothing but cpu 0 to confine
+    // to (counted, no set tried), left on cpu 0; the call returns: the host runs
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 0, 1, true, 1, 1, false, false, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 2 && left && cpu == ROCKETNET_GSO_PIN_NONE && sets == 0 );
+
+    // cpu 0 not reserved: send on cpu 0, receive on cpu 1, num_os_cpus 3 not applied
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 0, 3, false, 4, 4, false, false, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 0 && !left && cpu == 0 && sets == 1 && granted == 0 );
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 1, 3, false, 4, 4, false, false, false, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 0 && !left && cpu == 1 && sets == 1 );
+
+    // not reserved, the pin refused: counted once, not confined (one set, the
+    // pin), not flagged although its mask holds cpu 0
+    rocketnet_unit_check( rocketnet_portable_server_test_place_worker( stop_spread_portable_pin_read, 0, 1, false, 4, 4, false, true, true, &row, &left, &cpu, &sets, &granted ) );
+    rocketnet_unit_check( row == 1 && !left && cpu == ROCKETNET_GSO_PIN_NONE && sets == 1 && granted == -1 );
+
+    rocketnet_log_level( saved_level );
+}
+REGISTER_UNIT_TEST( test_server_transport_counts_portable_pin_refusals );
 
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

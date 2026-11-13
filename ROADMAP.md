@@ -10,7 +10,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (4)
 - [Existing nightly proof debt](#existing-nightly-proof-debt) (6)
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
-- [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (5)
+- [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (6)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
 - [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (7)
 - [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (18)
@@ -376,6 +376,12 @@ From: Trace check v2, third cold reader
 TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (hetzner1, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation.
 
 From: Piece P, #1093 trace shard 0/6
+
+### Fill-phase trace check: the gaps the split-update fix left
+
+tests/tla_trace_fill_phase.cpp now reads the window and both refusal counters from the library and its reach predicates require every refusal step (MainLook, MainIn, FillLock, FillDecide, FillLook in and out of the window, TakeLook). Still open: fbroke, phaseIn, falseAlarm, mainsDone, fillsDone and takesDone are the walk's own bookkeeping, compared but read by Next, so they cannot be declared ghosts as the checker defines them; the compare-and-swap retry loop in fill_begin, the nested paths (main_owner, depth above 1) and rocketnet_fill_phase_hand_over never run under the trace. Model the nesting and hand_over and drive them from the walk, and say for each walk-kept variable what in the library it stands for.
+
+From: review fixes S1/S2, coordinator finding C7
 
 ### Refuse a reach predicate that already holds in the first state
 

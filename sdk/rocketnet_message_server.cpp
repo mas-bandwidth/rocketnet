@@ -998,8 +998,9 @@ static bool rn_message_link_splits_update( const struct rn_message_object_t * ob
 void rn_message_object_update_begin( struct rn_message_object_t * object, double time )
 {
     // the main thread's call: checked here for the begin of the update (the
-    // end is the main thread's too)
-    rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL );
+    // end is the main thread's too); an update call, which may finish an
+    // open update first
+    rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL, true );
     if ( !phase.entered )
     {
         return;
@@ -2768,8 +2769,10 @@ int rocketnet_message_server_update( struct rocketnet_message_server_t * server,
         return ROCKETNET_UPDATE_OK;
     }
     // one main-thread operation, checked before anything is written: a
-    // refused update leaves the transport's update words as they were
-    rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase );
+    // refused update leaves the transport's update words as they were. An
+    // update call: it may run with the update in three calls open, which it
+    // finishes first
+    rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase, true );
     if ( !phase.entered )
     {
         return ROCKETNET_UPDATE_OK;
@@ -2787,6 +2790,14 @@ void rocketnet_message_server_update_receive( struct rocketnet_message_server_t 
     {
         return;
     }
+    // checked before anything is written, as update is: a refused
+    // update_receive leaves the transport's disconnect allowance
+    // (disconnect_seals_left, disconnect_update_prepared) as it was
+    rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase, true );
+    if ( !phase.entered )
+    {
+        return;
+    }
     if ( server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
     {
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
@@ -2797,6 +2808,14 @@ void rocketnet_message_server_update_receive( struct rocketnet_message_server_t 
 int rocketnet_message_server_update_client_acks( struct rocketnet_message_server_t * server, int client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    // a take (sdk/rocketnet_fill_phase.h): counted in before the stage is
+    // read, so a main-thread operation that runs at once refuses one side
+    rocketnet_fill_phase_take_scope_t phase( server->object.fill_phase );
+    if ( !phase.entered )
     {
         return 0;
     }
@@ -2820,6 +2839,14 @@ int rocketnet_message_server_update_client_acks( struct rocketnet_message_server
 int rocketnet_message_server_update_finish( struct rocketnet_message_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
+    {
+        return ROCKETNET_UPDATE_OK;
+    }
+    // a main-thread operation, as update_receive is: refused while a fill
+    // call or an update_client runs, and the update then stays open for the
+    // next update call
+    rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase, true );
+    if ( !phase.entered )
     {
         return ROCKETNET_UPDATE_OK;
     }

@@ -8,6 +8,14 @@
 #include <atomic>
 #include <errno.h>
 #include <string.h>
+#if defined( __linux__ )
+#include "rocketnet_gso_pin.h"
+#include <pthread.h>
+#include <sched.h>
+#include <stdio.h>
+#include <unistd.h>
+static const int PORTABLE_WORKERS = 2; // the TX worker (0) and the RX worker (1), placed on Linux
+#endif // #if defined( __linux__ )
 
 static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind, int receive_buffer_bytes, int * status )
 {
@@ -161,7 +169,178 @@ struct portable_server_t
     int rx_capacity = 0;
     uint8_t * rx_storage = NULL; // the three banks' arrays, one allocation
     portable_rx_bank_t rx_bank[PORTABLE_RX_BANKS];
+
+#if defined( __linux__ )
+    // the workers' placement on Linux (portable_place_worker), the gso
+    // transport's rule: worker 0 (TX) and worker 1 (RX) pin to
+    // rocketnet_network_thread_cpu, cpu num_os_cpus + worker, or cpu worker
+    // when cpu 0 is not reserved. Each worker writes its own entries once, at
+    // its start; any thread reads them
+    int num_os_cpus = 1;
+    bool reserve_cpu_0 = true;
+    std::atomic<uint64_t> pin_refusals{ 0 }; // PORTABLE_PIN_REFUSALS: refused pins and failed confinements after them
+    std::atomic<int> pin_cpu[PORTABLE_WORKERS] = { { ROCKETNET_GSO_PIN_PENDING }, { ROCKETNET_GSO_PIN_PENDING } };
+    std::atomic<bool> left_on_core_zero[PORTABLE_WORKERS] = { { false }, { false } }; // pin and confinement both refused, mask holds cpu 0
+#endif // #if defined( __linux__ )
 };
+
+#if defined( __linux__ )
+
+// the affinity calls a worker makes on its own thread. The worker passes the
+// real ones; the development seam (rocketnet_portable_server_test_place_worker)
+// passes fakes, so the refusal paths run without changing any thread's
+// affinity
+
+struct portable_affinity_calls_t
+{
+    int ( *get )( cpu_set_t * mask );
+    int ( *set )( const cpu_set_t * mask );
+};
+
+static int portable_affinity_get_real( cpu_set_t * mask )
+{
+    return pthread_getaffinity_np( pthread_self(), sizeof( cpu_set_t ), mask );
+}
+
+static int portable_affinity_set_real( const cpu_set_t * mask )
+{
+    return pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), mask );
+}
+
+static const struct portable_affinity_calls_t portable_affinity_real = { portable_affinity_get_real, portable_affinity_set_real };
+
+static const char * const portable_worker_name[PORTABLE_WORKERS] = { "send", "receive" };
+
+// one warning for a worker whose confinement off cpu 0 failed, naming the
+// worker and the mask it stays on (read back). true when that mask holds cpu
+// 0 or cannot be read: the worker is left on cpu 0
+static bool portable_warn_not_confined( int worker, const struct portable_affinity_calls_t * calls, const char * why )
+{
+    cpu_set_t mask;
+    CPU_ZERO( &mask );
+    if ( calls->get( &mask ) != 0 )
+    {
+        rocketnet_warn( "portable %s worker left on cpus unknown, cpu 0 may be among them: %s", portable_worker_name[worker], why );
+        return true;
+    }
+    char cpus[128] = { 0 };
+    unsigned char in_mask[CPU_SETSIZE] = { 0 };
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+    {
+        in_mask[cpu] = CPU_ISSET( (size_t) cpu, &mask ) ? 1 : 0;
+    }
+    rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
+    if ( !in_mask[0] )
+    {
+        rocketnet_warn( "portable %s worker not confined: %s; it stays on cpus %s, which do not hold cpu 0", portable_worker_name[worker], why, cpus );
+        return false;
+    }
+    rocketnet_warn( "portable %s worker left on cpus %s, cpu 0 among them: %s", portable_worker_name[worker], cpus, why );
+    return true;
+}
+
+// The worker's placement, its first call: a pin to one cpu,
+// rocketnet_network_thread_cpu( worker, num_os_cpus, reserve_cpu_0 ), as the
+// gso workers pin (rocketnet_gso_pin.h). A refused pin (the cpu outside the
+// set or not online, or affinity refused) is a warning naming the worker and
+// the cpu, counted in pin_refusals, and the worker's pin_cpu stays NONE. With
+// cpu 0 reserved a refused worker is confined to the online cpus from
+// num_os_cpus up (rocketnet_gso_pin_fallback); a confinement that fails is
+// counted too, with one warning naming the mask the worker stays on, and
+// flagged when that mask holds cpu 0. Not reserved, it stays on the mask it
+// inherited. The portable workers ask for no real-time scheduling either way,
+// and the worker carries on: a one cpu host still runs.
+
+static void portable_place_worker( portable_server_t * server, int worker, int online, const struct portable_affinity_calls_t * calls )
+{
+    const char * name = portable_worker_name[worker];
+    const int cpu = rocketnet_network_thread_cpu( worker, server->num_os_cpus, server->reserve_cpu_0 );
+    const char * fallback = server->reserve_cpu_0 ? "it falls back to the cpus from num_os_cpus up" : "it stays on the cpus it inherited";
+    const int check = rocketnet_gso_pin_check( cpu, CPU_SETSIZE, online );
+    if ( check == ROCKETNET_GSO_PIN_OK )
+    {
+        cpu_set_t cpuset;
+        CPU_ZERO( &cpuset );
+        CPU_SET( (size_t) cpu, &cpuset );
+        const int result = calls->set( &cpuset );
+        if ( result == 0 )
+        {
+            rocketnet_info( "portable %s worker pinned to cpu %d", name, cpu );
+            server->left_on_core_zero[worker].store( false, std::memory_order_relaxed );
+            server->pin_cpu[worker].store( cpu, std::memory_order_release );
+            return;
+        }
+        rocketnet_warn( "portable %s worker not pinned: pthread_setaffinity_np cpu %d refused (%s); %s", name, cpu, rocketnet_platform_socket_error_text( result ).text, fallback );
+    }
+    else if ( check == ROCKETNET_GSO_PIN_OUTSIDE_SET )
+    {
+        rocketnet_warn( "portable %s worker not pinned: cpu %d is outside 0 .. %d; %s", name, cpu, CPU_SETSIZE - 1, fallback );
+    }
+    else
+    {
+        rocketnet_warn( "portable %s worker not pinned: cpu %d is not online (0 .. %d); %s", name, cpu, online - 1, fallback );
+    }
+    server->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+
+    bool left_on_core_zero = false;
+    if ( server->reserve_cpu_0 )
+    {
+        unsigned char allowed[CPU_SETSIZE];
+        if ( rocketnet_gso_pin_fallback( allowed, CPU_SETSIZE, online, server->num_os_cpus ) == 0 )
+        {
+            server->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+            left_on_core_zero = portable_warn_not_confined( worker, calls, "no cpu from num_os_cpus up is online" );
+        }
+        else
+        {
+            cpu_set_t confined;
+            CPU_ZERO( &confined );
+            for ( int c = 0; c < CPU_SETSIZE; c++ )
+            {
+                if ( allowed[c] )
+                {
+                    CPU_SET( (size_t) c, &confined );
+                }
+            }
+            const int result = calls->set( &confined );
+            if ( result != 0 )
+            {
+                server->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+                char why[192];
+                (void) snprintf( why, sizeof( why ), "confining it away from the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
+                left_on_core_zero = portable_warn_not_confined( worker, calls, why );
+            }
+        }
+    }
+    server->left_on_core_zero[worker].store( left_on_core_zero, std::memory_order_relaxed );
+    server->pin_cpu[worker].store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
+}
+
+// A Linux transport's <name>_reserve_cpu_0 (gso, io_uring, portable): true,
+// cpu 0 kept for the OS, for 0 (the default) and ROCKETNET_CPU_0_RESERVED;
+// false for ROCKETNET_CPU_0_NOT_RESERVED, with one info line at create, which
+// says that an explicit num_os_cpus is not applied to that transport (the
+// setting wins). The config table has refused any other value.
+
+static bool rocketnet_builtin_reserve_cpu_0( const char * transport_name, int setting, int num_os_cpus )
+{
+    if ( setting != ROCKETNET_CPU_0_NOT_RESERVED )
+    {
+        return true;
+    }
+    if ( num_os_cpus > 0 )
+    {
+        rocketnet_info( "server transport %s: cpu 0 is not reserved for the OS (%s_reserve_cpu_0), so num_os_cpus %d is not applied to it: network thread q runs on cpu q",
+                        transport_name, transport_name, num_os_cpus );
+    }
+    else
+    {
+        rocketnet_info( "server transport %s: cpu 0 is not reserved for the OS (%s_reserve_cpu_0): network thread q runs on cpu q", transport_name, transport_name );
+    }
+    return false;
+}
+
+#endif // #if defined( __linux__ )
 
 static bool portable_rx_storage_create( portable_server_t * server, int capacity, int * status = NULL )
 {
@@ -485,6 +664,9 @@ static void portable_tx_worker( rocketnet_platform_thread_t *, void * arg )
     // waits on the wake, which a publish signals.
 
     portable_server_t * server = (portable_server_t *) arg;
+#if defined( __linux__ )
+    portable_place_worker( server, 0, (int) sysconf( _SC_NPROCESSORS_ONLN ), &portable_affinity_real );
+#endif // #if defined( __linux__ )
     for ( ;; )
     {
         const portable_tx_step_t step = portable_tx_step( server );
@@ -652,6 +834,9 @@ static void portable_rx_worker( rocketnet_platform_thread_t *, void * arg )
     // after an empty read.
 
     portable_server_t * server = (portable_server_t *) arg;
+#if defined( __linux__ )
+    portable_place_worker( server, 1, (int) sysconf( _SC_NPROCESSORS_ONLN ), &portable_affinity_real );
+#endif // #if defined( __linux__ )
     for ( ;; )
     {
         const portable_rx_step_t step = portable_rx_step( server );
@@ -797,6 +982,13 @@ static void * portable_create( void * context, const rocketnet_server_transport_
 
     new ( server ) portable_server_t();
     server->context = context;
+#if defined( __linux__ )
+    // the workers' placement (portable_place_worker): the server's num_os_cpus
+    // (0, the default, reads as 1: the OS keeps cpu 0) and portable_reserve_cpu_0
+    server->num_os_cpus = config->transport && config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1;
+    server->reserve_cpu_0 = rocketnet_builtin_reserve_cpu_0( "portable", config->transport ? config->transport->portable_reserve_cpu_0 : 0,
+                                                             config->transport ? config->transport->num_os_cpus : 0 );
+#endif // #if defined( __linux__ )
 
     if ( !portable_rx_storage_create( server, portable_rx_capacity( config->transport ), config->status ) ||
          !portable_tx_storage_create( server, portable_tx_capacity( config->transport ), config->status ) )
@@ -1098,6 +1290,90 @@ rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * tran
 
     return ( (portable_server_t *) transport )->socket;
 }
+
+#if defined( __linux__ )
+// development library only (Linux): the portable workers' placement.
+// worker_cpu is the cpu worker 0 (send) or 1 (receive) pinned to,
+// ROCKETNET_GSO_PIN_PENDING before it has run its placement, or
+// ROCKETNET_GSO_PIN_NONE when the pin was refused. worker_affinity reads the
+// worker thread's own mask into allowed[0 .. count - 1] (1 or 0) and returns
+// how many are set, or -1 when it cannot be read.
+
+int rocketnet_portable_server_test_worker_cpu( void * transport, int worker )
+{
+    if ( !transport || worker < 0 || worker >= PORTABLE_WORKERS )
+    {
+        return ROCKETNET_GSO_PIN_NONE;
+    }
+    return ( (portable_server_t *) transport )->pin_cpu[worker].load( std::memory_order_acquire );
+}
+
+int rocketnet_portable_server_test_worker_affinity( void * transport, int worker, unsigned char * allowed, int count )
+{
+    if ( !transport || worker < 0 || worker >= PORTABLE_WORKERS || !allowed || count < 1 )
+    {
+        return -1;
+    }
+    portable_server_t * server = (portable_server_t *) transport;
+    rocketnet_platform_thread_t * thread = worker == 0 ? server->thread : server->rx_thread;
+    if ( !thread )
+    {
+        return -1;
+    }
+    cpu_set_t mask;
+    CPU_ZERO( &mask );
+    if ( pthread_getaffinity_np( thread->handle, sizeof( mask ), &mask ) != 0 )
+    {
+        return -1;
+    }
+    int set = 0;
+    for ( int cpu = 0; cpu < count; cpu++ )
+    {
+        allowed[cpu] = cpu < CPU_SETSIZE && CPU_ISSET( (size_t) cpu, &mask ) ? 1 : 0;
+        set += allowed[cpu];
+    }
+    return set;
+}
+
+// the fakes of rocketnet_portable_server_test_place_worker: only the refusals
+// are injected; the transport's own placement code counts and records
+static int portable_fake_cpus = 4;
+static bool portable_fake_without_cpu_zero = false;
+static bool portable_fake_refuse_pin = false;
+static bool portable_fake_refuse_all = false;
+static int portable_fake_set_calls = 0;
+static int portable_fake_granted_first = -1;
+
+static int portable_fake_get( cpu_set_t * mask )
+{
+    CPU_ZERO( mask );
+    for ( int cpu = portable_fake_without_cpu_zero ? 1 : 0; cpu < portable_fake_cpus && cpu < CPU_SETSIZE; cpu++ )
+    {
+        CPU_SET( (size_t) cpu, mask );
+    }
+    return 0;
+}
+
+static int portable_fake_set( const cpu_set_t * mask )
+{
+    portable_fake_set_calls++;
+    if ( portable_fake_refuse_all || ( portable_fake_refuse_pin && CPU_COUNT( mask ) == 1 ) )
+    {
+        return EPERM;
+    }
+    portable_fake_granted_first = -1;
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+    {
+        if ( CPU_ISSET( (size_t) cpu, mask ) )
+        {
+            portable_fake_granted_first = cpu;
+            break;
+        }
+    }
+    return 0;
+}
+
+#endif // #if defined( __linux__ )
 
 bool rocketnet_portable_tx_test_handoff()
 {
@@ -2370,7 +2646,8 @@ static void * gso_create( void * context, const rocketnet_server_transport_io_co
 {
     const int workers = rocketnet_network_threads_count( config->transport->num_gso_workers, ROCKETNET_GSO_DEFAULT_WORKERS );
     const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
-    return rocketnet_server_gso_create_pinned( context, bind, workers, config->transport->max_clients, 0, os_cpus, config->status,
+    const int flags = rocketnet_builtin_reserve_cpu_0( "gso", config->transport->gso_reserve_cpu_0, config->transport->num_os_cpus ) ? 0 : ROCKETNET_SERVER_GSO_CPU_0_NOT_RESERVED;
+    return rocketnet_server_gso_create_pinned( context, bind, workers, config->transport->max_clients, flags, os_cpus, config->status,
                                                config->transport->packet_filter );
 }
 
@@ -2434,7 +2711,8 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
 {
     const int workers = rocketnet_network_threads_count( config->transport->num_io_uring_workers, ROCKETNET_IO_URING_DEFAULT_WORKERS );
     const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
-    return rocketnet_server_uring_create_pinned( context, bind, workers, config->transport->max_clients, 0, os_cpus, config->status,
+    const int flags = rocketnet_builtin_reserve_cpu_0( "io_uring", config->transport->io_uring_reserve_cpu_0, config->transport->num_os_cpus ) ? 0 : ROCKETNET_SERVER_URING_CPU_0_NOT_RESERVED;
+    return rocketnet_server_uring_create_pinned( context, bind, workers, config->transport->max_clients, flags, os_cpus, config->status,
                                                  config->transport->packet_filter );
 }
 
@@ -3130,7 +3408,8 @@ bool rocketnet_server_transport_io_transport_counters( const rocketnet_server_tr
 {
     // builtin-only, matched on the operations table as receive_drops is: the
     // transport's own counts are rows of the public table (the GSO_, URING_,
-    // IOCP_ and RIO_ rows and XDP_PIN_REFUSALS of sdk/rocketnet_counters.h);
+    // IOCP_ and RIO_ rows, XDP_PIN_REFUSALS and PORTABLE_PIN_REFUSALS of
+    // sdk/rocketnet_counters.h);
     // the transport writes its rows of values, an array of
     // ROCKETNET_NUM_COUNTERS, and nothing else
 
@@ -3150,6 +3429,12 @@ bool rocketnet_server_transport_io_transport_counters( const rocketnet_server_tr
     if ( operations == &io_uring_operations )
     {
         rocketnet_server_uring_counters( (rocketnet_server_uring_t *) transport, values );
+        return true;
+    }
+    if ( operations == &portable_server_operations )
+    {
+        // the portable server (also the msgx name on Linux): its workers' refused pins
+        values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] = ( (portable_server_t *) transport )->pin_refusals.load( std::memory_order_relaxed );
         return true;
     }
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -3194,3 +3479,57 @@ bool rocketnet_server_transport_io_replay_counts( const rocketnet_server_transpo
 
     return false;
 }
+
+#if ROCKETNET_DEV && defined( __linux__ )
+// runs portable_place_worker for worker 0 or 1 on a portable server with no
+// socket and no thread, with the affinity calls faked: online cpus online,
+// the inherited mask cpus 0 .. cpus - 1 (less cpu 0 when without_cpu_zero),
+// the single cpu pin refused when refuse_pin, every set refused when
+// refuse_all. Writes the row PORTABLE_PIN_REFUSALS as dispatch reads it
+// (given the portable table and this instance: the test's own reader, through
+// the server's counter fold), the left flag, the pinned cpu (or NONE), how many affinity
+// sets the worker made, and the lowest cpu of the last set it was granted
+// (-1 for none). No real thread's affinity changes.
+
+typedef bool rocketnet_portable_server_test_transport_counters_t( const rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                                  uint64_t * values );
+
+bool rocketnet_portable_server_test_place_worker( rocketnet_portable_server_test_transport_counters_t * dispatch, int worker, int num_os_cpus, bool reserve_cpu_0, int online, int cpus, bool without_cpu_zero, bool refuse_pin,
+                                                  bool refuse_all, uint64_t * row, bool * left_on_core_zero, int * pinned_cpu, int * set_calls,
+                                                  int * granted_first )
+{
+    if ( !dispatch || worker < 0 || worker >= PORTABLE_WORKERS || !row || !left_on_core_zero || !pinned_cpu || !set_calls || !granted_first )
+    {
+        return false;
+    }
+    void * storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
+    if ( !storage )
+    {
+        return false;
+    }
+    portable_server_t * server = new ( storage ) portable_server_t();
+    server->num_os_cpus = num_os_cpus > 1 ? num_os_cpus : 1;
+    server->reserve_cpu_0 = reserve_cpu_0;
+
+    portable_fake_cpus = cpus;
+    portable_fake_without_cpu_zero = without_cpu_zero;
+    portable_fake_refuse_pin = refuse_pin;
+    portable_fake_refuse_all = refuse_all;
+    portable_fake_set_calls = 0;
+    portable_fake_granted_first = -1;
+    const struct portable_affinity_calls_t fake = { portable_fake_get, portable_fake_set };
+    portable_place_worker( server, worker, online, &fake );
+
+    uint64_t values[ROCKETNET_NUM_COUNTERS] = {};
+    const bool dispatched = dispatch( &portable_server_operations, server, values );
+    *row = values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS];
+    *left_on_core_zero = server->left_on_core_zero[worker].load( std::memory_order_relaxed );
+    *pinned_cpu = server->pin_cpu[worker].load( std::memory_order_acquire );
+    *set_calls = portable_fake_set_calls;
+    *granted_first = portable_fake_granted_first;
+
+    server->~portable_server_t();
+    rocketnet_free( NULL, storage );
+    return dispatched;
+}
+#endif // #if ROCKETNET_DEV && defined( __linux__ )

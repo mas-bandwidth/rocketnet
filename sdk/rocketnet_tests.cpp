@@ -12007,6 +12007,9 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_iocp_completion_workers ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_iocp_send_threads ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_msgx_transmit_workers ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, gso_reserve_cpu_0 ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, io_uring_reserve_cpu_0 ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, portable_reserve_cpu_0 ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -12251,6 +12254,9 @@ void rocketnet_test_public_config_resolve()
     server.num_iocp_send_threads = 7;
     server.num_msgx_transmit_workers = 8;
     server.num_os_cpus = 3;
+    server.gso_reserve_cpu_0 = ROCKETNET_CPU_0_NOT_RESERVED;
+    server.io_uring_reserve_cpu_0 = ROCKETNET_CPU_0_RESERVED;
+    server.portable_reserve_cpu_0 = ROCKETNET_CPU_0_NOT_RESERVED;
     server.max_timeout_seconds = 30;
     server.handshake_deadline_seconds = 7;
     server.transport = "gso,portable";
@@ -12268,6 +12274,8 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( server_transport.num_gso_workers == 3 && server_transport.num_io_uring_workers == 4 );
     rocketnet_check( server_transport.num_rio_lanes == 5 && server_transport.num_iocp_completion_workers == 6 );
     rocketnet_check( server_transport.num_iocp_send_threads == 7 && server_transport.num_msgx_transmit_workers == 8 );
+    rocketnet_check( server_transport.gso_reserve_cpu_0 == ROCKETNET_CPU_0_NOT_RESERVED && server_transport.io_uring_reserve_cpu_0 == ROCKETNET_CPU_0_RESERVED &&
+                     server_transport.portable_reserve_cpu_0 == ROCKETNET_CPU_0_NOT_RESERVED );
     rocketnet_check( server_transport.max_timeout_seconds == 30 && server_transport.handshake_deadline_seconds == 7 );
     rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 );
     rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_message_timeout_ms == 6000 );
@@ -12979,6 +12987,30 @@ void rocketnet_test_config_validation()
             for ( int value : { -1, range.max + 1 } )
             {
                 *range.field = value;
+                rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+            }
+        }
+    }
+
+    // each Linux transport's cpu 0 setting: zero (the default, reserved),
+    // ROCKETNET_CPU_0_RESERVED and ROCKETNET_CPU_0_NOT_RESERVED pass; below
+    // zero and past NOT_RESERVED are refused
+
+    {
+        rocketnet_server_transport_default_config_current( &config );
+        rocketnet_check( config.gso_reserve_cpu_0 == 0 && config.io_uring_reserve_cpu_0 == 0 && config.portable_reserve_cpu_0 == 0 );
+        int * reserve[] = { &config.gso_reserve_cpu_0, &config.io_uring_reserve_cpu_0, &config.portable_reserve_cpu_0 };
+        for ( int * field : reserve )
+        {
+            rocketnet_server_transport_default_config_current( &config );
+            for ( int value : { 0, ROCKETNET_CPU_0_RESERVED, ROCKETNET_CPU_0_NOT_RESERVED } )
+            {
+                *field = value;
+                rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+            }
+            for ( int value : { -1, ROCKETNET_CPU_0_NOT_RESERVED + 1 } )
+            {
+                *field = value;
                 rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
             }
         }

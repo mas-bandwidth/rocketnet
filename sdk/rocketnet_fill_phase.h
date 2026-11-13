@@ -85,26 +85,46 @@
 //     fill call is refused (fills_in is not 0).
 //   - A client_index outside [0, num_clients) claims nothing: the call checks
 //     only the overlap with a main operation (FillCount, FillLook, FillLeave).
+//   - The update in three calls (rocketnet_server_update_receive, then
+//     rocketnet_server_update_client on any thread, then
+//     rocketnet_server_update_finish) opens a window: from update_receive's
+//     main operation to update_finish's. window is 1 in it, stored by the
+//     main thread inside those operations (the main operation's own work:
+//     MainEpoch of a receive or a finish). In the window the only calls are
+//     update_client (a take: take_begin, take_end) and the update calls (a
+//     main operation begun with update_call: update_finish, and an
+//     update_receive or update that finishes the open update first). Any
+//     other main operation is refused at MainIn and any fill call at FillLook
+//     (it reads window with main_calls and the epoch), counted
+//     MAIN_THREAD_CALL_OVERLAP. A take counts itself in on its fills_in line
+//     (TakeCount) and looks at main_calls (TakeLook), refused when a main
+//     operation runs: so update_finish, or any main operation, made while a
+//     game thread is inside update_client is refused at MainLook, and an
+//     update_client made inside a main operation is refused at TakeLook.
+//     TakeLeave drops the count. A take claims no client: update_client's
+//     own exchange gives each client one taker.
 //
 // Cost per fill call: one CAS, two loads and two stores on the client's own
 // cache line; one add and one subtract on the calling thread's fills_in line;
 // two loads of main_calls and the epoch, which main writes twice a frame. A
 // filler writes nothing another client's filler writes, except where two
 // threads' ids hash to one fills_in line. Per main operation: two adds, two
-// stores and 64 loads, independent of max_clients.
+// stores and 65 loads, independent of max_clients. Per take: one add and one
+// subtract on the thread's fills_in line and one load of main_calls.
 //
 // The check is armed or not (rocketnet_fill_phase_arm; armed after init;
-// proofs/tla/RNFillPhase.tla Arm, and FillSkip and MainSkip for a scope that
-// begins not armed; the trace check walks both sides of the latch). The server
-// disarms it at create and arms it, for good, at the game's first call that
-// names a client (rocketnet_server_finish_client_message or
-// rocketnet_server_abort_client_message). Until then the game makes today's
+// proofs/tla/RNFillPhase.tla Arm, and FillSkip, TakeSkip and MainSkip for a
+// scope that begins not armed; the trace check walks both sides of the
+// latch). The server disarms it at create and arms it, for good, at the
+// game's first call that names a client (rocketnet_server_finish_client_message
+// or rocketnet_server_abort_client_message) or its first
+// rocketnet_server_update_receive. Until then the game makes today's
 // calls only, one thread at a time, as before this check existed, and the
 // call sites' scopes below do nothing: one relaxed load and a branch, no
 // thread id, no write. A scope remembers whether it began armed, so a call
 // in flight when the latch arms ends without touching counts it never took.
 // What that leaves unseen: a break of the contract by a call that began
-// before the game's first call that names a client.
+// before the game's first call that names a client or opens a split update.
 //
 // What the check does not see: an id is reused after its thread exits, so a
 // thread that ends and a new thread that gets its id are one filler to the
@@ -141,6 +161,7 @@ struct alignas( 64 ) rocketnet_fill_phase_client_t
 struct alignas( 64 ) rocketnet_fill_phase_t
 {
     std::atomic<uint32_t> main_calls;
+    std::atomic<uint32_t> window;               // 1: an update in three calls is open (rocketnet_fill_phase_window)
     std::atomic<uint64_t> epoch;
     std::atomic<uint64_t> main_owner;           // the thread inside a main operation, 0: none
     std::atomic<uint32_t> armed;                // 1: the call sites' scopes run the check (rocketnet_fill_phase_arm)
@@ -176,9 +197,21 @@ inline bool rocketnet_fill_phase_armed( const struct rocketnet_fill_phase_t * fi
 }
 
 // false: refused and counted (and asserted): the operation must not run.
-// Every true is matched by one main_end on the same thread.
-bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase );
+// Every true is matched by one main_end on the same thread. update_call: the
+// operation is one of the update calls, which may run in the window
+bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase, bool update_call = false );
 void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase );
+
+// the window of the update in three calls: opened at the end of
+// update_receive's work, closed by update_finish's, each by the thread inside
+// that main operation (or, not armed, the server's one thread)
+void rocketnet_fill_phase_window( struct rocketnet_fill_phase_t * fill_phase, bool open );
+
+// update_client: false: refused and counted (and asserted), a main operation
+// is running: the call must do nothing. Every true is matched by one take_end
+// on the same thread.
+bool rocketnet_fill_phase_take_begin( struct rocketnet_fill_phase_t * fill_phase );
+void rocketnet_fill_phase_take_end( struct rocketnet_fill_phase_t * fill_phase );
 
 // false: refused and counted (and asserted): the call must do nothing. Every
 // true is matched by one fill_end for the same client on the same thread.
@@ -199,9 +232,9 @@ struct rocketnet_fill_phase_main_scope_t
     struct rocketnet_fill_phase_t * fill_phase;         // NULL: no check, or not armed when the scope began
     bool entered;
 
-    explicit rocketnet_fill_phase_main_scope_t( struct rocketnet_fill_phase_t * phase )
+    explicit rocketnet_fill_phase_main_scope_t( struct rocketnet_fill_phase_t * phase, bool update_call = false )
         : fill_phase( phase && rocketnet_fill_phase_armed( phase ) ? phase : NULL ),
-          entered( fill_phase ? rocketnet_fill_phase_main_begin( fill_phase ) : true ) {}
+          entered( fill_phase ? rocketnet_fill_phase_main_begin( fill_phase, update_call ) : true ) {}
     ~rocketnet_fill_phase_main_scope_t()
     {
         if ( fill_phase && entered )
@@ -231,6 +264,25 @@ struct rocketnet_fill_phase_fill_scope_t
     }
     rocketnet_fill_phase_fill_scope_t( const rocketnet_fill_phase_fill_scope_t & ) = delete;
     rocketnet_fill_phase_fill_scope_t & operator=( const rocketnet_fill_phase_fill_scope_t & ) = delete;
+};
+
+struct rocketnet_fill_phase_take_scope_t
+{
+    struct rocketnet_fill_phase_t * fill_phase;         // NULL: no check, or not armed when the scope began
+    bool entered;
+
+    explicit rocketnet_fill_phase_take_scope_t( struct rocketnet_fill_phase_t * phase )
+        : fill_phase( phase && rocketnet_fill_phase_armed( phase ) ? phase : NULL ),
+          entered( fill_phase ? rocketnet_fill_phase_take_begin( fill_phase ) : true ) {}
+    ~rocketnet_fill_phase_take_scope_t()
+    {
+        if ( fill_phase && entered )
+        {
+            rocketnet_fill_phase_take_end( fill_phase );
+        }
+    }
+    rocketnet_fill_phase_take_scope_t( const rocketnet_fill_phase_take_scope_t & ) = delete;
+    rocketnet_fill_phase_take_scope_t & operator=( const rocketnet_fill_phase_take_scope_t & ) = delete;
 };
 
 #if ROCKETNET_DEV

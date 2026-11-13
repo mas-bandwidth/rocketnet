@@ -444,6 +444,9 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->num_iocp_completion_workers = config->num_iocp_completion_workers;
     transport->num_iocp_send_threads = config->num_iocp_send_threads;
     transport->num_msgx_transmit_workers = config->num_msgx_transmit_workers;
+    transport->gso_reserve_cpu_0 = config->gso_reserve_cpu_0;
+    transport->io_uring_reserve_cpu_0 = config->io_uring_reserve_cpu_0;
+    transport->portable_reserve_cpu_0 = config->portable_reserve_cpu_0;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
     transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
@@ -818,6 +821,10 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_iocp_completion_workers ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_iocp_send_threads ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_msgx_transmit_workers ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, gso_reserve_cpu_0 ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, io_uring_reserve_cpu_0 ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, portable_reserve_cpu_0 ),
+    ROCKETNET_SERVER_CONFIG_BYTES_8,
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 
@@ -2452,6 +2459,9 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->num_iocp_completion_workers = transport->num_iocp_completion_workers;
     config->num_iocp_send_threads = transport->num_iocp_send_threads;
     config->num_msgx_transmit_workers = transport->num_msgx_transmit_workers;
+    config->gso_reserve_cpu_0 = transport->gso_reserve_cpu_0;
+    config->io_uring_reserve_cpu_0 = transport->io_uring_reserve_cpu_0;
+    config->portable_reserve_cpu_0 = transport->portable_reserve_cpu_0;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
     config->disconnect_packets_per_update = transport->disconnect_packets_per_update;
@@ -3239,6 +3249,13 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
 
         rocketnet_error( "rocketnet_server_destroy: the server is not stopped; call rocketnet_server_stop and poll rocketnet_server_stopped before destroy" );
 
+        // an update in three calls left open is finished first: the stop
+        // below is refused inside it, and its acks would stay open
+        if ( server->running && server->running->object.update_stage != RN_MESSAGE_UPDATE_CLOSED )
+        {
+            rocketnet_server_update_finish( server );
+        }
+
         rocketnet_server_stop( server );
 
         const double deadline = rocketnet_platform_time() + rn_destroy_stop_seconds;
@@ -3304,7 +3321,13 @@ void rocketnet_server_update( struct rocketnet_server_t * server, double time )
 }
 
 // proofs/tla/RNAckApplyPhase.tla: rocketnet_server_update in three calls, so
-// the game's jobs apply the received acks client by client
+// the game's jobs apply the received acks client by client. The split update
+// is the game saying its game threads call the server (update_client): it
+// arms the thread check (sdk/rocketnet_fill_phase.h), as the first call that
+// names a client does, so from it on the window from update_receive to
+// update_finish refuses every call but update_client and update_finish.
+
+static void rn_server_arm_one_thread_a_client( struct rocketnet_server_t * server );
 
 void rocketnet_server_update_receive( struct rocketnet_server_t * server, double time )
 {
@@ -3316,6 +3339,7 @@ void rocketnet_server_update_receive( struct rocketnet_server_t * server, double
     {
         return;
     }
+    rn_server_arm_one_thread_a_client( server );
     rocketnet_message_server_update_receive( server->running, time );
 }
 

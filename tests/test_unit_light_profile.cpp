@@ -394,7 +394,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // nothing to the server: actual=15190354 (hetzner1, gcc, Debug, DEV ON).
 // The appended counter IOCP_PIN_REFUSALS adds 64 more to the client (one more
 // 64-byte rounding): actual=15190418 (hetzner1, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141842 )
+// The appended counter PORTABLE_PIN_REFUSALS adds 64 more to the client (one
+// more 64-byte rounding) and nothing to the server, with the three
+// *_reserve_cpu_0 fields appended to the transport config: actual=15190482
+// (amd-3, gcc, Debug, DEV ON).
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141906 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

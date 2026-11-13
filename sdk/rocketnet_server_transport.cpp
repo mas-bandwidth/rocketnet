@@ -4204,7 +4204,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     {
         return;
     }
-    rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
+    rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase, true );
     if ( !phase.entered )
     {
         return;
@@ -4441,6 +4441,10 @@ void rocketnet_server_transport_update_receive( struct rocketnet_server_transpor
 
     rocketnet_server_acks_open( server_transport->protocol.acks );
     server_transport->update_open = 1;
+
+    // proofs/tla/RNFillPhase.tla MainEpoch: the window opens; until
+    // update_finish only update_client and the update calls run
+    rocketnet_fill_phase_window( &server_transport->fill_phase, true );
 }
 
 static void rocketnet_server_transport_update_finish_body( struct rocketnet_server_transport_t * server_transport );
@@ -4472,6 +4476,7 @@ static void rocketnet_server_transport_update_finish_body( struct rocketnet_serv
         return;
     }
     server_transport->update_open = 0;
+    rocketnet_fill_phase_window( &server_transport->fill_phase, false );   // proofs/tla/RNFillPhase.tla MainEpoch
 
     // proofs/tla/RNAckApplyPhase.tla Close: after the game's join, every
     // client nobody took applies here, and the batch is published in arrival
@@ -5905,8 +5910,8 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     }
 
     // the gso, io_uring, iocp and rio transports' own counts are the public
-    // rows GSO_PACKETS_SENT .. RIO_COMMITS, the rio, iocp, gso, xdp and
-    // io_uring transports' refused pins *_PIN_REFUSALS, and the io_uring
+    // rows GSO_PACKETS_SENT .. RIO_COMMITS, the rio, iocp, gso, xdp, io_uring
+    // and portable transports' refused pins *_PIN_REFUSALS, and the io_uring
     // transport's URING_RECEIVE_DROPPED_SOCKET, cumulative, assigned on read;
     // a transport writes its own rows and the rest reads 0, so every platform
     // has every row
@@ -5927,6 +5932,7 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         // the kernel dropped at its sockets
         server_transport->counters.values[ROCKETNET_COUNTER_URING_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_URING_PIN_REFUSALS];
         server_transport->counters.values[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] = transport_rows[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET];
+        server_transport->counters.values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS];
     }
 
     return &server_transport->counters;
