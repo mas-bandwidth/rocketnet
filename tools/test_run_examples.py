@@ -22,7 +22,7 @@ TOOL = Path(__file__).resolve().parent / "run_examples.py"
 FAKE_EXAMPLE = """#!/bin/sh
 case "$1 $2" in
     "--wrong-protocol ") echo "expected refusal: wrong protocol id"; exit 0 ;;
-    "--seconds "*) echo "FAIL: --seconds takes 1 .. 35791394"; exit 1 ;;
+    "--seconds "*) echo "FAIL: --seconds takes 1 .. 120"; exit 1 ;;
     "--seed "*) echo "FAIL: --seed takes a whole number"; exit 1 ;;
     "--clients 1x") echo "usage: example_game_loop [--clients N]"; exit 1 ;;
     "--port "*) echo "FAIL: the port takes 1 .. 65535"; exit 1 ;;
@@ -76,6 +76,25 @@ class RunExamplesTest(unittest.TestCase):
         result = self.run_tool()
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("FAIL example_hello: did not print PASS last", result.stderr)
+
+    def test_a_soak_with_another_seconds_cap_is_refused(self):
+        # a raised cap still prints a line starting "FAIL: --seconds takes 1 .. 120"
+        for cap in ("1200", "119"):
+            with self.subTest(cap=cap):
+                self.plant()
+                self.example("soak", FAKE_EXAMPLE.replace("takes 1 .. 120", "takes 1 .. " + cap))
+                result = self.run_tool()
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FAIL example_soak --seconds", result.stderr)
+                self.assertIn("printed no line 'FAIL: --seconds takes 1 .. 120'", result.stderr)
+
+    def test_a_soak_that_takes_121_seconds_is_refused(self):
+        self.plant()
+        self.example("soak", FAKE_EXAMPLE.replace('"--seconds "*)', '"--seconds 121") echo PASS; exit 0 ;;\n'
+                                                                  '    "--seconds "*)'))
+        result = self.run_tool()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("FAIL example_soak --seconds 121: exited 0, expected 1", result.stderr)
 
     def test_no_examples_is_refused(self):
         result = self.run_tool()

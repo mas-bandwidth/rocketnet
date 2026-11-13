@@ -66,9 +66,13 @@ SINGLE_ARGS = {"soak": ["--clients", "64"]}
 # further runs. "run" is a pair (its client gets "args") or one program;
 # "env" is added to the environment; "odd_path" runs the program through a
 # link in a directory whose name holds a space and a $; "code" is the exit
-# status and "line" the start of a line the output must hold; no_drive_environment
+# status and "line" the start of a line the output must hold ("whole": the
+# whole line, so a range's upper bound is pinned); no_drive_environment
 # removes only hidden Windows drive entries for that child process;
 # suffixless_argv0 keeps the executable path but removes .exe from argv[0]
+# soak's --seconds cap is MAX_TICKS / 60 = 120 (examples/soak.c): 121 is the
+# first refused value, and the whole line names the cap
+SOAK_SECONDS_REFUSED = "FAIL: --seconds takes 1 .. 120"
 EXTRA_RUNS = [
     {"run": "client_server", "args": ["--wrong-protocol"], "code": 0, "line": "expected refusal: "},
     {"run": "config_env", "odd_path": True, "code": 0, "line": "PASS"},
@@ -76,8 +80,9 @@ EXTRA_RUNS = [
     {"run": "config_env", "suffixless_argv0": True, "code": 0, "line": "PASS"},
     {"run": "config_env", "env": {"ROCKETNET_SERVER_MAX_CLIENTS": "5", "ROCKETNET_SERVER_NUM_CHANNELS": "0"},
      "code": 1, "line": "FAIL: ROCKETNET_SERVER_MAX_CLIENTS=\"5\": server create "},
-    {"run": "soak", "args": ["--seconds", "35791395"], "code": 1, "line": "FAIL: --seconds takes 1 .. "},
-    {"run": "soak", "args": ["--seconds", "-1"], "code": 1, "line": "FAIL: --seconds takes 1 .. "},
+    {"run": "soak", "args": ["--seconds", "121"], "code": 1, "line": SOAK_SECONDS_REFUSED, "whole": True},
+    {"run": "soak", "args": ["--seconds", "35791395"], "code": 1, "line": SOAK_SECONDS_REFUSED, "whole": True},
+    {"run": "soak", "args": ["--seconds", "-1"], "code": 1, "line": SOAK_SECONDS_REFUSED, "whole": True},
     {"run": "soak", "args": ["--seed", "12x"], "code": 1, "line": "FAIL: --seed takes a whole number"},
     {"run": "game_loop", "args": ["--clients", "1x"], "code": 1, "line": "usage: example_game_loop"},
     {"run": "client_server_server", "args": ["--port", "70000"], "code": 1, "line": "FAIL: the port takes 1 .. 65535"},
@@ -168,10 +173,15 @@ def run_single(name, binary, args=None, environment=None, odd_path=False, no_dri
     return result
 
 
-def check_extra(label, output, returncode, expected_code, expected_line):
+def check_extra(label, output, returncode, expected_code, expected_line, whole=False):
     if returncode != expected_code:
         print(output, file=sys.stderr, end="")
         return failure(label, f"exited {returncode}, expected {expected_code}")
+    if whole:
+        if not any(line.rstrip() == expected_line for line in output.splitlines()):
+            print(output, file=sys.stderr, end="")
+            return failure(label, f"printed no line {expected_line!r}")
+        return True
     if not any(line.startswith(expected_line) for line in output.splitlines()):
         print(output, file=sys.stderr, end="")
         return failure(label, f"printed no line starting {expected_line!r}")
@@ -407,7 +417,7 @@ def main():
             if result is None:
                 return 1
             returncode, output = result.returncode, result.stdout + result.stderr
-        if not check_extra(label, output, returncode, extra["code"], extra["line"]):
+        if not check_extra(label, output, returncode, extra["code"], extra["line"], extra.get("whole", False)):
             return 1
         print(f"PASS example_{label}")
 
