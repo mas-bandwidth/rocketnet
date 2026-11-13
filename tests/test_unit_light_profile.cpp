@@ -167,10 +167,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual=1528614751 (the Windows unit job, run 43448217775).
 // The per-transport thread counts grow the transport config, one 64-byte
 // rounding: actual=1528614815 (the Windows unit job, run 43463295653).
-// The server protocol's per-update table of refused tokens adds 17408 to the
-// server across its 64-byte rounding: computed from the Linux reading, not
-// measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527583647 )
+// The server protocol's per-update table of refused tokens adds 17416 bytes
+// inside the transport, before its 64-byte-aligned fill phase. MSVC's
+// 16-byte mutex leaves that offset at 0 mod 64 before the table (Linux 32,
+// macOS 56) and at 8 after it, so the fill phase moves by 17472: computed
+// from the Linux layout, not measured on Windows.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527583711 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
