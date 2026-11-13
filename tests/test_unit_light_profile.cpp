@@ -284,10 +284,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Debug, DEV=ON), measured.
 // The held index's per-connection home key (rn_region_t held_key_a and
 // held_key_b, 16 bytes, the same on every 64-bit target) adds 16000 to the
-// server and nothing to the client (the Windows note has the account),
-// derived: not yet in the figure below, which stays the measured one until a
-// macOS build reads the merged tree.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664220083 )
+// server and nothing to the client (the Windows note has the account):
+// actual=1665284659, derived from the measured macOS figure above and the
+// 16000 that Linux and Windows both measured, not measured on macOS.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664236083 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997834 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
