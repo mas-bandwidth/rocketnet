@@ -313,10 +313,10 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
         return verdict;
     }
 
-    // DIFFERENTIAL, every frame: what the filter redirects, the AF_XDP
-    // transport's own frame reader accepts, and its payload view passes the
-    // userspace prefilter rungs (else the filter spends a ring slot on a frame
-    // userspace throws away). Strict: a broadcast destination MAC and a wrong
+    // DIFFERENTIAL, every frame with a config and epoch 0: what the filter
+    // redirects, the AF_XDP transport's own frame reader accepts, and its
+    // payload view passes the userspace prefilter rungs (else the filter
+    // spends a ring slot on a frame userspace throws away). Strict: a broadcast destination MAC and a wrong
     // IP version nibble, which the reader refuses, are in the oracle too
 
     if ( verdict == FZ_XDP_REDIRECT )

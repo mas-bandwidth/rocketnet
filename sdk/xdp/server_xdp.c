@@ -482,10 +482,10 @@ int server_xdp_filter( struct xdp_md * ctx )
 
     if ( (__u8 *) eth + sizeof( struct ethhdr ) <= data_end )
     {
-        // a destination MAC starting ff:ff (broadcast) passes: the AF_XDP
-        // frame reader refuses it (rocketnet_xdp_frame_parse_vlan), so it
-        // must never take a ring slot; the kernel judges it, as it does for
-        // the socket transports
+        // a destination MAC starting ff:ff (broadcast, and any other address
+        // with that prefix) passes: the AF_XDP frame reader refuses it
+        // (rocketnet_xdp_frame_parse_vlan), so it must never take a ring
+        // slot; the kernel judges it, as it does for the socket transports
 
         if ( eth->h_dest[0] == 0xff && eth->h_dest[1] == 0xff )
         {
