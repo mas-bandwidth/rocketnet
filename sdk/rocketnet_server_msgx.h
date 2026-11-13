@@ -116,7 +116,7 @@ struct rocketnet_server_msgx_stats_t
     uint64_t staging_full;                    // starts refused: the worker's producer bank was full
     uint64_t packets_received;                // datagrams banked for main
     uint64_t receive_calls;
-    uint64_t receive_refused;                 // an ICMP error (ECONNREFUSED, host or network unreachable or down) on a read of a client's or the shared socket, read past
+    uint64_t receive_refused;                 // an ICMP error (ECONNREFUSED, host or network unreachable or down, EMSGSIZE) on a read of a client's or the shared socket, read past
     uint64_t sockets_opened;
     uint64_t sockets_closed;
     uint64_t sockets_open;                    // now

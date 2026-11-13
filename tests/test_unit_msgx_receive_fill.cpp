@@ -16,7 +16,7 @@
 // otherwise the drain holds and the socket keeps the rest; the held datagrams
 // are read once main starts on the full bank; every receive call returns
 // every datagram committed before it began (the shared delivery check); an
-// ICMP error, EINTR or ENOBUFS is read past at the cost of one read of the
+// ICMP error (EMSGSIZE too), EINTR or ENOBUFS is read past at the cost of one read of the
 // budget; a dead socket ends its drain; the budget bounds one socket's reads
 // in a round; after the stop every datagram banked and never returned is
 // counted once. Then the review's case (Emma, E3): 64 sockets of 150
@@ -362,6 +362,7 @@ static void test_rocketnet_msgx_receive_fill_error_kinds()
     rocketnet_unit_check( rocketnet_msgx_receive_error_kind( EHOSTUNREACH ) == ROCKETNET_MSGX_RECEIVE_WEATHER );
     rocketnet_unit_check( rocketnet_msgx_receive_error_kind( ENETUNREACH ) == ROCKETNET_MSGX_RECEIVE_WEATHER );
     rocketnet_unit_check( rocketnet_msgx_receive_error_kind( ENETDOWN ) == ROCKETNET_MSGX_RECEIVE_WEATHER );
+    rocketnet_unit_check( rocketnet_msgx_receive_error_kind( EMSGSIZE ) == ROCKETNET_MSGX_RECEIVE_WEATHER );
 #if defined( EHOSTDOWN )
     rocketnet_unit_check( rocketnet_msgx_receive_error_kind( EHOSTDOWN ) == ROCKETNET_MSGX_RECEIVE_WEATHER );
 #endif // #if defined( EHOSTDOWN )
@@ -550,11 +551,12 @@ static void test_rocketnet_msgx_receive_fill_hold()
     delete test;
 }
 
-// ICMP errors queued for the client, EINTR and ENOBUFS are read past: each
-// costs one read of the budget and the datagrams behind them are banked
+// ICMP errors queued for the client (EMSGSIZE among them: a forged "needs
+// fragmentation"), EINTR and ENOBUFS are read past: each costs one read of
+// the budget and the datagrams behind them are banked
 static void test_rocketnet_msgx_receive_fill_weather()
 {
-    const int errors[] = { ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, ENETDOWN, EINTR, ENOBUFS };
+    const int errors[] = { ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, ENETDOWN, EMSGSIZE, EINTR, ENOBUFS };
     for ( int error : errors )
     {
         struct receive_fill_test_t * test = receive_fill_test_create( 1, 1000 );

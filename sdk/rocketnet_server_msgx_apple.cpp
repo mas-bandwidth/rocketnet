@@ -1067,7 +1067,8 @@ static bool rocketnet_server_msgx_fill_commit( void * user )
 }
 
 // a failed read (rocketnet_msgx_receive_error_kind): an ICMP error queued for
-// the client is counted beside ECONNREFUSED in receive_refused and read past;
+// the client (EMSGSIZE among them) is counted beside ECONNREFUSED in
+// receive_refused and read past;
 // ENOBUFS is read past and counted RECEIVE_FAILED, as before; EINTR is read
 // past uncounted (a signal, nothing lost); a dead connected socket is
 // reported to the table; a dead or failed read counts RECEIVE_FAILED

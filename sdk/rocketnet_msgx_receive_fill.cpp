@@ -28,7 +28,11 @@ int rocketnet_msgx_receive_error_kind( int error )
     {
         return ROCKETNET_MSGX_RECEIVE_EMPTY;
     }
-    if ( error == EINTR || error == ENOBUFS || error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH || error == ENETDOWN )
+    // EMSGSIZE is an ICMP "needs fragmentation" queued for a connected
+    // client socket, which anyone on the path can forge, as ECONNREFUSED is;
+    // a datagram too long for the buffer reports MSG_TRUNC instead
+    if ( error == EINTR || error == ENOBUFS || error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH || error == ENETDOWN ||
+         error == EMSGSIZE )
     {
         return ROCKETNET_MSGX_RECEIVE_WEATHER;
     }

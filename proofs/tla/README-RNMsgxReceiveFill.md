@@ -50,7 +50,7 @@ call.
 | `Arrive`, `KernelDrop`, `Error` | environment: the kernel and the network |
 
 `ReadWeather` is an ICMP error the kernel queued for a connected client
-(ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENETDOWN), EINTR or
+(ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENETDOWN, EMSGSIZE), EINTR or
 ENOBUFS: cleared by the read that reports it, read past at one read of the
 budget (review E5, the platform's receive weather). `ReadFailed` is a dead
 socket (ENOTCONN, EPIPE, EDESTADDRREQ, reported to the table) or any other

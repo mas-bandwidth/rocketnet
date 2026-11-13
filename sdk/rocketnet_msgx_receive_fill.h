@@ -150,7 +150,7 @@ inline uint64_t rocketnet_msgx_receive_stop_count( struct rocketnet_receive_hand
 
 // what a failed read's errno means (rocketnet_msgx_receive_error_kind)
 #define ROCKETNET_MSGX_RECEIVE_EMPTY                         0  // EAGAIN, EWOULDBLOCK: the socket is drained
-#define ROCKETNET_MSGX_RECEIVE_WEATHER                       1  // EINTR, ENOBUFS, or an ICMP error queued for the client: skipped, read on
+#define ROCKETNET_MSGX_RECEIVE_WEATHER                       1  // EINTR, ENOBUFS, or an ICMP error queued for the client (EMSGSIZE too): skipped, read on
 #define ROCKETNET_MSGX_RECEIVE_DEAD                          2  // ENOTCONN, EPIPE, EDESTADDRREQ: the connected socket is gone
 #define ROCKETNET_MSGX_RECEIVE_FAILED                        3  // anything else
 
