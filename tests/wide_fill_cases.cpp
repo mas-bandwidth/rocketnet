@@ -1106,6 +1106,17 @@ static bool writer_finish_same_accounting( const writer_finish_trace_t * a, cons
         {
             same = same && a->received[slot][k] == b->received[slot][k];
         }
+        if ( !same )
+        {
+            printf( "writer finish accounting differs at client %d: packets %llu %llu, bytes %llu %llu, acked %llu %llu, acked id sum %llu %llu, received %u,%u,%u %u,%u,%u\n",
+                    slot, (unsigned long long) a->packets_sent[slot], (unsigned long long) b->packets_sent[slot],
+                    (unsigned long long) a->bytes_sent[slot], (unsigned long long) b->bytes_sent[slot],
+                    (unsigned long long) a->acked[slot], (unsigned long long) b->acked[slot],
+                    (unsigned long long) a->acked_id_sum[slot], (unsigned long long) b->acked_id_sum[slot],
+                    a->received[slot][0], a->received[slot][1], a->received[slot][2],
+                    b->received[slot][0], b->received[slot][1], b->received[slot][2] );
+            return false;
+        }
     }
     return same;
 }
