@@ -46,10 +46,10 @@ FILES_ALLOWED = {
         ("0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
          "the GNU AGPL v3 text, third-party and verbatim"),
     "docs/RELEASE-NOTES-v1.0.0-preview-2.md":
-        ("639b58572eb213e9b1ecec9d83a8deb6149e2a8c62721907088c9db1ee18cc65",
+        ("42d023aa4b2666b8cd5252a8eb91e29358964952cb3733beb9d83c734ff9c6d2",
          "the published preview-2 record; its owner rewords it separately"),
     "docs/QUALIFICATION-v1.0.0-preview-2.md":
-        ("3d7958e9a82c214716d6de549e010613596c0768446b12b5204a9c65d78cd162",
+        ("69ff94079daff4907885493020ff3c152c71f72777a04af15c94d0c8d3541659",
          "the published preview-2 record; its owner rewords it separately"),
 }
 
