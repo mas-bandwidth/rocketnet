@@ -10,8 +10,10 @@
 #include "test_unit_registry.h"
 #include "msan_scale_allocator.h"
 #include "rocketnet.h"
+#include "rocketnet_allocator.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_history.h"
+#include "rocketnet_memory.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -85,6 +87,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // server by 960 (the studio, Debug); on Windows the client by 832 and the
 // server by 960 (the unit job: actual=15389868 and 1469501759).
 #define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
+// An AddressSanitizer build plans its red zones too (sdk/rocketnet_memory.h):
+// each connection a red zone after each region part and one after its views,
+// and a red zone plus 8 header bytes for each other carved array and each
+// allocation. The fixed term is a bound of mine, 256 such arrays and
+// allocations; Linux read 7720 bytes of it at 1000 clients (2026-11-12, gcc
+// Debug ASan: actual= 3112964443), the macOS client 3184 bytes over its
+// figure (Apple clang Debug ASan: actual= 15039610). 0 in every other build.
+#define LIGHT_RED_ZONE_BYTES( connections ) ( (size_t) ( connections ) * ( RN_NUM_PARTS + 1 ) * ROCKETNET_RED_ZONE_BYTES + ( ROCKETNET_RED_ZONE_BYTES > 0 ? (size_t) 256 * ( ROCKETNET_RED_ZONE_BYTES + 8 ) : 0 ) )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
 // The server protocol's cookie reply limit (a 262144-bit bitmap carved with
@@ -220,8 +230,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter IOCP_PIN_REFUSALS adds 128 to the server (two of its
 // counter blocks cross a 64-byte rounding) and 64 to the client: actual=
 // 1503911803 and 15041738 (the macOS unit job, Debug, DEV ON).
+// The io_uring transport's rows URING_PIN_REFUSALS and
+// URING_RECEIVE_DROPPED_SOCKET add 64 to the client: actual=15041802 (the
+// macOS unit job, Debug, DEV ON).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863227 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993162 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -342,9 +355,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter IOCP_PIN_REFUSALS adds 64 to the server (one 64-byte
 // rounding): actual=5644858567 (hetzner1, gcc, Debug, DEV ON); arm64 the same
 // 64, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810047ULL )
+// The io_uring transport's rows URING_PIN_REFUSALS and
+// URING_RECEIVE_DROPPED_SOCKET add 64 more to the server: actual=5644858631
+// (amd-3, gcc, Debug, DEV ON); arm64 the same 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810111ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809991ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810055ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
@@ -356,7 +372,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 
 // 1 when this build is the configuration the pins were read in, so the
 // figure must equal the pin; 0 elsewhere, where it may only be at most.
-#if !ROCKETNET_DEV
+// An AddressSanitizer build plans red zones (LIGHT_RED_ZONE_BYTES is a bound,
+// not a reading), so it is never the pinned configuration.
+#if !ROCKETNET_DEV || ROCKETNET_RED_ZONES
 #define LIGHT_PINNED_CONFIGURATION 0
 #elif defined( _WIN32 ) && defined( _M_X64 ) && defined( _MSC_VER ) && !defined( __clang__ )
 #define LIGHT_PINNED_CONFIGURATION 1
@@ -442,7 +460,7 @@ static void test_light_profile_server_1000_required_memory()
 
     const size_t bytes = rocketnet_server_required_memory( &config );
     check( bytes > 0 );
-    light_check_pin( "light server", bytes, LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
+    light_check_pin( "light server", bytes, LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES + LIGHT_RED_ZONE_BYTES( 1000 ) );
 }
 
 REGISTER_UNIT_TEST( test_light_profile_server_1000_required_memory );
@@ -462,7 +480,7 @@ static void test_light_profile_client_required_memory()
 
     const size_t bytes = rocketnet_client_required_memory( &config );
     check( bytes > 0 );
-    light_check_pin( "light client", bytes, LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
+    light_check_pin( "light client", bytes, LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES + LIGHT_RED_ZONE_BYTES( 1 ) );
 }
 
 REGISTER_UNIT_TEST( test_light_profile_client_required_memory );

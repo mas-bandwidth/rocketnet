@@ -13,6 +13,7 @@
 
 #include "test_unit_registry.h"
 #include "unit_arena.h"
+#include "red_zones.h"
 
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
@@ -264,7 +265,7 @@ static void test_memory_isolation_between_slots()
     const rn_region_t b_before = *b;
     uint8_t * b_memory = (uint8_t *) malloc( (size_t) b->bytes );
     check( b_memory );
-    memcpy( b_memory, b->base, (size_t) b->bytes );
+    rocketnet_test_raw_copy( b_memory, b->base, (size_t) b->bytes );     // red zones included (tests/red_zones.h)
 
     // a sends until refused: a send with no room is a refusal, not exhaustion
     // (standard/MESSAGES.md m1.7), so A is still whole
@@ -286,7 +287,7 @@ static void test_memory_isolation_between_slots()
     // nothing of B moved
 
     check( memcmp( &b_before, b, sizeof( *b ) ) == 0 );
-    check( memcmp( b_memory, b->base, (size_t) b->bytes ) == 0 );
+    check( rocketnet_test_raw_compare( b_memory, b->base, (size_t) b->bytes ) == 0 );
     check( !rn_region_exhausted( b ) );
     check( rn_connection_memory_decide( b ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
@@ -1002,7 +1003,8 @@ static void cm_refusal_close( cm_refusal_t * r )
 static void cm_refusal_mark( cm_refusal_t * r )
 {
     r->before = *r->region;
-    r->memory.assign( r->region->base, r->region->base + r->region->bytes );
+    r->memory.resize( (size_t) r->region->bytes );
+    rocketnet_test_raw_copy( r->memory.data(), r->region->base, (size_t) r->region->bytes );     // red zones included (tests/red_zones.h)
     r->counters_before = r->counters;
 }
 
@@ -1020,7 +1022,7 @@ static void cm_refusal_check( const cm_refusal_t * r, int counter )
     rn_region_t now = *region;
     now.room_refusals = r->before.room_refusals;
     check( memcmp( &r->before, &now, sizeof( now ) ) == 0 );
-    check( memcmp( r->memory.data(), region->base, (size_t) region->bytes ) == 0 );
+    check( rocketnet_test_raw_compare( r->memory.data(), region->base, (size_t) region->bytes ) == 0 );
 
     for ( int c = 0; c < ROCKETNET_NUM_COUNTERS; c++ )
     {

@@ -126,3 +126,18 @@ jobs:
             test.log
             functional.log
           if-no-files-found: ignore
+
+      # The red zones' negative control (scripts/red-zones-selftest): a planted
+      # one-past write past the server's send buffer, carved from the
+      # transport's one allocation, must be an AddressSanitizer report. Last,
+      # because it rebuilds the test binary with the plant and back; it runs
+      # after a red suite too, so one red does not hide the other. A ref from
+      # before the red zones has no script and says so.
+      - name: Red zones self-test (a planted one-past write is reported)
+        if: ${{ !cancelled() }}
+        run: |
+          if [ ! -f scripts/red-zones-selftest ]; then
+            echo "this ref predates the red zones (no scripts/red-zones-selftest)"
+            exit 0
+          fi
+          bash scripts/red-zones-selftest build

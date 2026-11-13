@@ -82,7 +82,11 @@
     counts what it sent per kind and every datagram the server sends back.
 
     Linux reads its kernel counters from /proc/net/snmp and the interface's
-    from /sys/class/net; elsewhere they print as unavailable.
+    from /sys/class/net; elsewhere they print as unavailable. With
+    --stray-table NAME a role also reads the host's stray counter (counter
+    "strays" in nftables table inet NAME, through sudo -n nft; scripts/harden-pair
+    installs it): the no-port UDP drops from hosts outside the cell, which the
+    host-wide NoPorts counts too.
 */
 
 #if defined( __linux__ ) && !defined( _GNU_SOURCE )
@@ -102,6 +106,7 @@
 #include "tests/portable_crt.h"
 #include "tests/process_resources.h"
 #include "tests/load/thread_pool.h"
+#include "tests/load/harden_chain.h"
 
 #include <algorithm>
 #include <atomic>
@@ -427,6 +432,7 @@ struct harden_options_t
     std::string key_hex;
     std::string label;
     std::string dev;
+    std::string stray_table; // --stray-table NAME: the nftables table (inet NAME) whose counter "strays" counts this host's no-port UDP from outside the cell
     std::string kinds = "garbage,prefixed,truncated,badsig,expired,reqreplay";
     std::string capture_dev;
     int max_clients = 1000;
@@ -567,6 +573,24 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--dev" ) == 0 )
         {
             o->dev = v;
+        }
+        else if ( strcmp( a, "--stray-table" ) == 0 )
+        {
+            // read through a shell (sudo -n nft): a name of letters, digits and '_' only, at most 64
+            if ( strlen( v ) > 64 )
+            {
+                fprintf( stderr, "harden_load: --stray-table is at most 64 characters\n" );
+                return false;
+            }
+            for ( const char * c = v; *c; c++ )
+            {
+                if ( !( ( *c >= 'a' && *c <= 'z' ) || ( *c >= 'A' && *c <= 'Z' ) || ( *c >= '0' && *c <= '9' ) || *c == '_' ) )
+                {
+                    fprintf( stderr, "harden_load: --stray-table is letters, digits and '_'\n" );
+                    return false;
+                }
+            }
+            o->stray_table = v;
         }
         else if ( strcmp( a, "--kinds" ) == 0 )
         {
@@ -1129,11 +1153,55 @@ static harden_link_t harden_link_read( const std::string & dev )
     return l;
 }
 
+// the host's stray counter: the packets of counter "strays" in nftables table
+// inet <table>, which scripts/harden-pair installs on each Linux machine for
+// the cell. It counts the IPv4 UDP datagrams that arrive for a local address,
+// find no socket, and come from a host other than the cell's other end: the
+// no-port drops the kernel's NoPorts counts that are not the cell's (an
+// internet scanner on the machine's public address, for one). -1 when it
+// cannot be read (no table, no sudo, not Linux)
+
+static int64_t harden_strays_read( const std::string & table )
+{
+    int64_t packets = -1;
+#if defined( __linux__ )
+    if ( table.empty() )
+    {
+        return -1;
+    }
+    char command[256];
+    snprintf( command, sizeof( command ), "sudo -n nft list counter inet %s strays 2>/dev/null", table.c_str() );
+    FILE * pipe = popen( command, "r" );
+    if ( !pipe )
+    {
+        return -1;
+    }
+    char line[512];
+    while ( fgets( line, sizeof( line ), pipe ) )
+    {
+        const char * at = strstr( line, "packets " );
+        long long value = 0;
+        if ( at && packets < 0 && sscanf( at, "packets %lld", &value ) == 1 )
+        {
+            packets = (int64_t) value;
+        }
+    }
+    if ( pclose( pipe ) != 0 )
+    {
+        packets = -1;
+    }
+#else
+    (void) table;
+#endif // #if defined( __linux__ )
+    return packets;
+}
+
 // read once at the process's start, before any traffic of its own; the cut
 // prints every term as its change since then
 
 static harden_kernel_t harden_kernel_base;
 static harden_link_t harden_link_base;
+static int64_t harden_strays_base = -1;
 
 static void harden_print_cut_term( const char * role, const char * cut, const char * name, int64_t value )
 {
@@ -1161,6 +1229,16 @@ static void harden_print_cut_network( const char * role, const char * cut, const
     harden_print_cut_term( role, cut, "ip_indiscards", k.ip_indiscards - b.ip_indiscards );
     harden_print_cut_term( role, cut, "ip_outrequests", k.ip_outrequests - b.ip_outrequests );
     harden_print_cut_term( role, cut, "ip_outdiscards", k.ip_outdiscards - b.ip_outdiscards );
+    if ( !o.stray_table.empty() )
+    {
+        // read after NoPorts here, and before it at the base: a stray landing
+        // between two reads is in the stray delta and not the NoPorts delta,
+        // which raises the chain's gap (a fail), never lowers it
+        const int64_t strays = harden_strays_read( o.stray_table );
+        const bool strays_read = strays >= 0 && harden_strays_base >= 0;
+        harden_print_cut_term( role, cut, "strays_read", strays_read ? 1 : 0 );
+        harden_print_cut_term( role, cut, "udp_noports_strays", strays_read ? strays - harden_strays_base : 0 );
+    }
     if ( !o.dev.empty() )
     {
         const harden_link_t l = harden_link_read( o.dev );
@@ -4380,59 +4458,20 @@ static bool harden_terms_load( const std::string & path, harden_terms_t * terms 
     return true;
 }
 
-// one direction's chain, every term named: what the sending library counted,
-// what the sending namespace's kernel took or refused, what the qdisc and the
-// device dropped on the way, what the receiving namespace's kernel saw, and
-// what the receiving library took
-
-struct harden_chain_t
-{
-    int64_t library_sent, kernel_out, kernel_sndbuf, qdisc_sent, qdisc_dropped, device_dropped;
-    int64_t arrived_in, arrived_inerrors, arrived_noports, arrived_ipdiscards, arrived_device_dropped;
-    int64_t library_received;
-    // refused by the receiving server transport before its protocol counts the
-    // packet received: a server transport's own receive drops (too short or
-    // too large) land in PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE, outside
-    // PACKETS_RECEIVED; the protocol's prefilter counts into the same two
-    // inside it, so a transport that passes short datagrams up makes this
-    // term too large and the chain red (library_gap < 0), never green
-    int64_t library_refused_before_received = 0;
-    const char * refused_source = "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE"; // where that term comes from, printed with the chain
-    // the receiving device's discard delta includes the stop window (a Windows adapter's counter): up to that many
-    // more packets than the library lost are named, so the library gap may be that far below zero
-    int64_t device_overlap = 0;
-    // whether each end's OS exposes the kernel, qdisc and device counters the step lines read (Linux does; Windows and
-    // macOS read none): a step line that needs a counter its OS does not expose is printed "not available on this OS"
-    // and is not part of the verdict. The verdict is the library gap against the drops that were named
-    bool sender_counters = true;
-    bool receiver_counters = true;
-};
+// one direction's chain (harden_chain_t and its judgement are in
+// tests/load/harden_chain.h, beside the unit suite's planted rows): judged,
+// then printed term by term
 
 static bool harden_chain_print( const char * direction, const harden_chain_t & c, int duplicates_expected )
 {
-    const int64_t send_gap = c.library_sent - ( c.kernel_out + c.kernel_sndbuf );
-    const int64_t path_gap = c.kernel_out - ( c.arrived_in + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped );
-    const int64_t receive_gap = c.arrived_in - ( c.library_received + c.library_refused_before_received );
-    // netem's duplicates are not counted anywhere: they are the path's
-    // excess of arrivals, and must be zero unless the row duplicates
-    // the judged equation is the libraries': every packet the sender's
-    // library counted sent is counted received by the receiver's library or
-    // dropped by a named counter. The kernel's UDP counts step by step are
-    // printed beside it: they count an skb, so a GSO send of N datagrams is
-    // one in them (and in qdisc drops), and a step gap there names where a
-    // library gap went
-    const int64_t named_drops = c.kernel_sndbuf + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped + c.library_refused_before_received;
-    const int64_t library_gap = c.library_sent - ( c.library_received + named_drops );
-    // the kernel's drops count skbs, and a GSO skb carries several datagrams:
-    // a qdisc drop, a send buffer error, or a GSO skb arriving whole (a veth
-    // and a UDP_GRO socket keep it whole) at a closed port or a full socket
-    // names one where the libraries lost several. The datagrams riding in a
-    // GSO skb beyond its first are the send_gap (OutDatagrams counts the skb),
-    // so while any of those drops, a gap of at most that many is a dropped
-    // GSO skb's later segments; the gap is never below zero
-    const int64_t skb_drops = c.qdisc_dropped + c.kernel_sndbuf + c.arrived_noports + c.arrived_inerrors;
-    const int64_t gso_slack = skb_drops > 0 && send_gap > 0 ? send_gap : 0;
-    const bool ok = duplicates_expected ? library_gap <= 0 : library_gap >= -c.device_overlap && library_gap <= gso_slack;
+    const harden_chain_result_t r = harden_chain_judge( c, duplicates_expected );
+    const int64_t send_gap = r.send_gap;
+    const int64_t path_gap = r.path_gap;
+    const int64_t receive_gap = r.receive_gap;
+    const int64_t named_drops = r.named_drops;
+    const int64_t library_gap = r.library_gap;
+    const int64_t gso_slack = r.gso_slack;
+    const bool ok = r.ok;
     printf( "harden_chain: %s library_sent=%" PRId64 " = library_received=%" PRId64 " + named_drops=%" PRId64 " (library_gap=%" PRId64 "%s", direction, c.library_sent,
             c.library_received, named_drops, library_gap, duplicates_expected && library_gap < 0 ? ", netem duplicates" : "" );
     if ( !duplicates_expected && library_gap > 0 && gso_slack > 0 )
@@ -4440,6 +4479,13 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
         printf( ", at most gso_slack=%" PRId64 ": later segments of dropped GSO skbs", gso_slack );
     }
     printf( ")\n" );
+    // the receiving host's no-port drops split by where they came from: the
+    // cell's (named above) and the strays from hosts outside the cell, which are
+    // no library's datagrams and are not in the equation
+    printf( "harden_chain: %s arrived_udp_noports=%" PRId64 " = cell_noports=%" PRId64 " + stray_noports=%" PRId64
+            " (stray: from a host outside the cell to a closed port on the receiving host%s)\n",
+            direction, c.arrived_noports, r.cell_noports, c.arrived_noports_strays,
+            r.strays_valid ? "" : "; more strays than the host's no-port drops: the stray counter is wrong, not applied" );
     if ( c.sender_counters )
     {
         printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out=%" PRId64 " + kernel_sndbuf_errors=%" PRId64 " (send_gap=%" PRId64 ")\n", direction, c.library_sent, c.kernel_out,
@@ -4451,9 +4497,9 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
     }
     if ( c.sender_counters && c.receiver_counters )
     {
-        printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + arrived_udp_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
+        printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + cell_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
                 " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " + device_rx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
-                direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, c.arrived_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
+                direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, r.cell_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
                 duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
     }
     else
@@ -4520,6 +4566,7 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.arrived_in = t.get( "server.c2s_udp_in" );
     up.arrived_inerrors = t.get( "server.c2s_udp_inerrors" );
     up.arrived_noports = t.get( "server.c2s_udp_noports" );
+    up.arrived_noports_strays = t.get( "server.c2s_udp_noports_strays" );
     up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
     up.arrived_device_dropped = t.get( "server.c2s_dev_rx_dropped" );
     up.sender_counters = t.get( "clients.c2s_kernel_read" ) != 0;
@@ -4558,6 +4605,7 @@ static int harden_reconcile_main( const harden_options_t & o )
     down.arrived_in = t.get( "clients.s2c_udp_in" );
     down.arrived_inerrors = t.get( "clients.s2c_udp_inerrors" );
     down.arrived_noports = t.get( "clients.s2c_udp_noports" );
+    down.arrived_noports_strays = t.get( "clients.s2c_udp_noports_strays" );
     down.arrived_ipdiscards = t.get( "clients.s2c_ip_indiscards" );
     down.arrived_device_dropped = t.get( "clients.s2c_dev_rx_dropped" );
     down.sender_counters = t.get( "server.s2c_kernel_read" ) != 0;
@@ -4630,6 +4678,10 @@ int main( int argc, char ** argv )
     {
         return harden_reconcile_main( o );
     }
+    // the strays before NoPorts here and after it at each cut: a stray that
+    // lands between the two reads is then in the stray delta and not the NoPorts
+    // delta, which raises the chain's gap (a fail), never lowers it
+    harden_strays_base = harden_strays_read( o.stray_table );
     harden_kernel_base = harden_kernel_read();
     harden_link_base = harden_link_read( o.dev );
     harden_payload_copy = o.payload_copy;

@@ -166,14 +166,6 @@ clang-tidy	sdk/rocketnet_server_transport.cpp	cert-err33-c	651c999da4d47226
 clang-tidy	sdk/rocketnet_server_transport.cpp	cert-err33-c	8fbe0a3c98f314c7
 clang-tidy	sdk/rocketnet_server_transport.cpp	cert-err33-c	b63782acc036bf10
 clang-tidy	sdk/rocketnet_server_transport.cpp	cert-err33-c	f04ce75e2aea5a77
-clang-tidy	sdk/rocketnet_server_uring_linux.cpp	bugprone-branch-clone	49257a5c1db75db5
-clang-tidy	sdk/rocketnet_server_uring_linux.cpp	bugprone-casting-through-void	5547863b387f243b
-clang-tidy	sdk/rocketnet_server_uring_linux.cpp	bugprone-implicit-widening-of-multiplication-result	598e54a86a6b1178
-clang-tidy	sdk/rocketnet_server_uring_linux.cpp	bugprone-implicit-widening-of-multiplication-result	ffdcfacfed11cc57
-clang-tidy	sdk/rocketnet_server_uring_linux.cpp	concurrency-mt-unsafe	102bc800218eb9ac
-clang-tidy	sdk/rocketnet_server_uring_linux.cpp	concurrency-mt-unsafe	14b95f1f395f2647
-clang-tidy	sdk/rocketnet_server_uring_linux.cpp	concurrency-mt-unsafe	80cb3832685da01c
-clang-tidy	sdk/rocketnet_server_uring_linux.cpp	concurrency-mt-unsafe	d013fa58410dbf52
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-assignment-in-if-condition	2341dbce7460eb76
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-implicit-widening-of-multiplication-result	b4d8785b20557699
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	07d56fbf852437f6

@@ -301,4 +301,64 @@
    :title "RNSendReserveCalls: a Capacity per send queue"
    :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."
    :date "2026-11-13" :origin "Piece M follow-on, cold reader")
+
+  (item "portable-server-shared-handoff" :group "audit-remaining" :area "sdk"
+   :title "Portable server transport on the shared buffer handoff"
+   :text "PR #1043 (refactor/v1.1.x/server-shared-handoff, extraction E5) moved the portable and gso server transports off their hand-written bank queues onto rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h). Its gso half is overtaken by the rebuilt gso transport (#1103), which rewrites sdk/rocketnet_server_gso_linux.cpp and also changes sdk/rocketnet_driver_builtin.cpp. After the rebuilt gso lands, redo the portable half alone on main (the portable TX and RX commits and the rocketnet_buffer_handoff_started helper), with its gates: rnportabletx, rnportablerx and rnbufferhandoff TLC, the unit mutation cases and the light memory pins."
+   :date "2026-11-13" :origin "Open-PR triage 2026-11-13: #1043 not landed")
+
+  (item "rio-registered-region-red-zones" :group "audit-remaining" :area "tests"
+   :title "ASan red zones between the rio registered region's arrays"
+   :text "In an AddressSanitizer build the rio transport's sized block (rocketnet_rio_sized_layout: slot bytes, retry slices, process arrays, drops, each bank's data, from and packet bytes) carries poisoned red zones between its carves. The registered region laid out by sdk/rocketnet_rio_layout.h (send frames, send addresses, receive slices, receive addresses; one RIORegisterBuffer) does not: its offsets are the layout RNRioLaneLayout models and the trace check binds, so a pad there changes a modelled layout. Add the pads to the layout and its model together, or record why that region stays uncovered."
+   :date "2026-11-13" :origin "#1047 merge with the rebuilt rio")
+
+  (item "uring-carve-red-zones" :group "audit-remaining" :area "tests"
+   :title "ASan red zones between the rebuilt io_uring transport's carved arrays"
+   :text "#1047 carved red zones into the replaced io_uring transport's bank block (rocketnet_server_uring_buffers_create). The rebuilt transport (#1104) removed that block; its carved allocations are now in sdk/rocketnet_uring_queue_send.cpp, sdk/rocketnet_uring_receive_queue.cpp and sdk/rocketnet_uring_send_queue.cpp, each one rocketnet_malloc of a layout. Add ROCKETNET_RED_ZONE_CARVE to each where the layout is not a modelled or kernel-registered region, and record why where it is."
+   :date "2026-11-13" :origin "#1047 merge with the rebuilt io_uring")
+
+  (item "uring-lifecycle-rss-plan" :group "audit-remaining" :area "tests"
+   :title "The io_uring provided buffers are 264 MiB a queue whatever the GRO tier"
+   :text "With ROCKETNET_SERVER_TRANSPORT=io_uring forced over the whole functional suite, test_lifecycle_transport peaks at 1269 MB resident against 698 MB, which is the suite's per-case bound (suite_case_rss_mb), not a plan bound. The cause is the receive buffers: 4096 buffers of 66 KiB a queue (ROCKETNET_URING_RECV_BUFFERS, ROCKETNET_URING_RECV_BUFFER_BYTES), 264 MiB a queue and four queues by default, made resident once the multishot writes into them, whether or not UDP_GRO was granted. Size the buffers by the tier (a buffer need only hold a whole datagram without GRO) or lower the count, and say so in the plan."
+   :date "2026-11-13" :origin "Piece L (io_uring), amd-3 run and cold reader")
+
+  (item "uring-cancel-ealready" :group "audit-remaining" :area "sdk"
+   :title "A cancel answered -EALREADY in the io_uring worker"
+   :text "The worker counts a cancel it submitted when its completion arrives (rocketnet_uring_queue_worker_reap_one, ROCKETNET_URING_TAG_CANCEL). A cancel the kernel answers -EALREADY (the target already completed) reads the same as one that took effect; the model (RNUringQueueWorker.tla CancelRecv, CancelWake, CancelPoll) has one outcome. Check the worker against the answers and add the case to the model."
+   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+
+  (item "uring-offline-cpu-holes" :group "audit-remaining" :area "sdk"
+   :title "Offline cpu holes in the io_uring pin"
+   :text "rocketnet_uring_pin_check refuses a cpu at or past the online count, but a machine with cpus offline has holes below that count (cpu 5 offline, cpu 6 online). A pin to a hole is refused by the kernel, counted, and the worker is confined to its own mask past the OS's cpus (rocketnet_uring_pin_confine_words, which never names a hole), so it is placed but not where the config said. Read the online mask (sched_getaffinity or /sys/devices/system/cpu/online) and place the workers on online cpus past the OS's."
+   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+
+  (item "transport-thread-start-mask" :group "audit-remaining" :area "sdk"
+   :title "A transport thread runs on its creator's mask until its first call"
+   :text "Every transport thread (io_uring and gso queue workers, the XDP thread) pins itself as its first call, so between rocketnet_platform_thread_create and that call it runs on the creating thread's mask, which may hold cpu 0. Give rocketnet_platform_thread_create an optional affinity (pthread_attr_setaffinity_np on Linux) so the thread starts on its placement, and use it in every transport."
+   :date "2026-11-13" :origin "Piece L (io_uring), second cold reader")
+
+  (item "uring-receive-folds" :group "audit-remaining" :area "sdk"
+   :title "io_uring receive refusals that are not in the server's drop reasons"
+   :text "The rebuilt io_uring transport's receive drop totals are the worker prefilter's and the bank's reasons plus refused completions (RECEIVE_FAILED). A truncated source (URING_RECEIVE_DROPPED_SOURCE), a completion naming no buffer (URING_RECEIVE_DROPPED_NO_BUFFER) and segments past one receive (URING_RECEIVE_DROPPED_OVERFLOW) are counted only in their URING_ rows, where the replaced transport also folded them into RECEIVE_FAILED and BANK_FULL. Decide the fold, and test it by value."
+   :date "2026-11-13" :origin "Piece L (io_uring), second cold reader")
+
+  (item "uring-complete-without-more" :group "audit-remaining" :area "sdk"
+   :title "RNUringQueueReceive: Complete without F_MORE"
+   :text "The model's Complete takes a datagram completion and keeps the multishot armed; the code (rocketnet_uring_receive_queue_cqe) also ends it when the completion has no IORING_CQE_F_MORE and arms again on the next pass. Add the ending to Complete with a reversed witness, and a trace point."
+   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+
+  (item "uring-gro-cmsg-one-datagram" :group "audit-remaining" :area "sdk"
+   :title "A malformed UDP_GRO control message is passed as one datagram"
+   :text "A receive whose control area is truncated or malformed (GRO_CMSG_FAULTS) is taken as one datagram, so a coalesced buffer of several datagrams reaches the prefilter as one long one and fails its checks there. Decide whether the receive module should drop it by name instead, with a counter row, and test the split on a malformed control area."
+   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+
+  (item "uring-rearm-spin" :group "audit-remaining" :area "sdk"
+   :title "The io_uring receive re-arm spins on a kernel that refuses multishot"
+   :text "A kernel that refuses multishot receive (Linux before 6.0) ends every arm at once; the worker arms again on its next pass without a bound, burning its core. The refusals are visible as RECEIVE_FAILED now (the receive module's ERRORS reach the drop totals). Bound the re-arms, back off, and name the kernel in the create log."
+   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+
+  (item "tlc-plant-behaviour-not-printed" :group "trace-check" :area "tools"
+   :title "Find why TLC sometimes prints no behaviour for a plant's violation"
+   :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (hetzner1, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation."
+   :date "2026-11-13" :origin "Piece P, #1093 trace shard 0/6")
  ))

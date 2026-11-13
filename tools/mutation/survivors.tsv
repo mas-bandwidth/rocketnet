@@ -19,7 +19,7 @@
 # Seeded 2026-11-12 from nightly run 43219892575 (head 76edea48e, slice 69/90): 168 survivors, each
 # applied and judged (final-fable/FIX-VERIFY-D.md); 19 closed by tests on that day, the rest listed.
 # The gap count only goes down: a new gap is added only with the gap-ratchet raised in the same change.
-gap-ratchet	49
+gap-ratchet	48
 
 # gap
 gap	sdk/rocketnet_client_protocol.cpp	1	if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )	if ( payload_bytes < 1 && payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )	killed by test_seal_payload_frame_refuses_sizes_outside_one_to_max on tests/v1.1.8/mutation-gaps-9 (not on main yet): remove this entry when it lands
@@ -69,7 +69,6 @@ gap	sdk/rocketnet_server_udp_linux.cpp	1	if ( fd < 0 )	if ( !( fd < 0 ) )	owed f
 gap	sdk/rocketnet_server_udp_linux.cpp	1	if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 0 )	if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 1 )	owed functional: the shared gso and io_uring server open, SO_RCVBUF over a real socket
 gap	sdk/rocketnet_server_udp_linux.cpp	1	granted_receive /= 2;	granted_receive /= 3;	owed functional: the shared gso and io_uring server open, granted buffer sizes over a real socket
 gap	sdk/rocketnet_server_udp_linux.cpp	1	if ( granted_send >= send_buffer_size && granted_receive >= receive_buffer_size )	if ( granted_send >= send_buffer_size && granted_receive > receive_buffer_size )	owed functional: the shared gso and io_uring server open, granted buffer sizes over a real socket
-gap	sdk/rocketnet_server_uring_linux.cpp	1	if ( run_packets > 1 && ( cqe->res == -EINVAL || cqe->res == -EIO || cqe->res == -EOPNOTSUPP ) && !uring->destroying )	if ( run_packets > 1 && ( cqe->res == -EINVAL || cqe->res == -EIO || cqe->res != -EOPNOTSUPP ) && !uring->destroying )	owed functional (io_uring): a segmented send refused with another errno
 gap	sdk/rocketnet_server_uring_linux.cpp	1	uring->queues = NULL;	{}	owed functional (io_uring): destroy of a live ring
 
 # equivalent
@@ -166,9 +165,6 @@ equivalent	sdk/rocketnet_server_socket_linux.cpp	2	server->socket = queue;	{}	in
 equivalent	sdk/rocketnet_server_socket_linux.cpp	1	uint32_t consumer[4] = {};	uint32_t consumer[3] = {};	inside a DEV self-test (test code)
 equivalent	sdk/rocketnet_server_socket_linux.cpp	1	prod[i]->cached_cons = 4;	prod[i]->cached_cons = 5;	inside a DEV self-test (test code)
 equivalent	sdk/rocketnet_server_transport.cpp	1	server_transport->disconnect_update_prepared = 1;	server_transport->disconnect_update_prepared = 2;	disconnect_update_prepared is read only as a truth value (server_transport.cpp:3372) and reset to 0 (2354, 3376)
-equivalent	sdk/rocketnet_server_uring_linux.cpp	1	uint8_t padding_0[4096];	uint8_t padding_0[4097];	cache-line padding; never read
-equivalent	sdk/rocketnet_server_uring_linux.cpp	1	rocketnet_assert( slot >= 0 && slot < ROCKETNET_URING_SEND_SLOTS );	rocketnet_assert( slot >= 1 && slot < ROCKETNET_URING_SEND_SLOTS );	rocketnet_assert, compiled out in Release; a strengthening. Debug run: RED (test_uring_segment_many_refusing_destinations_cost traps), so the Debug tier catches it
-equivalent	sdk/rocketnet_server_uring_linux.cpp	1	rocketnet_assert( fill >= 0 && fill < ROCKETNET_URING_SEND_PHASES );	rocketnet_assert( fill >= 0 || fill < ROCKETNET_URING_SEND_PHASES );	rocketnet_assert, compiled out in Release; a weakening, so a Debug run cannot catch it either
 equivalent	sdk/rocketnet_window_ack.cpp	1	if ( !rn_resend_fifo_index_ok( ack, slot ) || slot == RN_RESEND_NONE )	if ( !rn_resend_fifo_index_ok( ack, slot ) && slot == RN_RESEND_NONE )	callers pass masked slots (window_ack.cpp:859, 1096) or already-checked ones (204)
 equivalent	sdk/rocketnet_window_send.cpp	1	rocketnet_assert( send && region && region->send_numbers );	rocketnet_assert( send && region || region->send_numbers );	rocketnet_assert, compiled out in Release; a weakening, so a Debug run cannot catch it either
 equivalent	sdk/rocketnet_xdp_compat.h	1	const int result = bpf_get_link_xdp_info( interface_index, &info, sizeof( info ), 0 );	const int result = bpf_get_link_xdp_info( interface_index, &info, sizeof( info ), 1 );	ROCKETNET_XDP_LEGACY_LIBBPF path; see binary column

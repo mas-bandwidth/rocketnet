@@ -1287,6 +1287,9 @@ static bool rocketnet_server_socket_sized_create( rocketnet_server_socket_t * se
     view->packet_bytes = (int *) ( base + layout.process_packet_bytes );
     view->packet_data = (uint8_t **) ( base + layout.process_packet_data );
     server_socket->process_eth = ( uint8_t( * )[ETH_ALEN] )( base + layout.process_eth );
+
+    // ASan builds: the red zones between the carves (sdk/rocketnet_memory.h)
+    ROCKETNET_RED_ZONE_CARVE( base, rocketnet_server_socket_sized_layout( max_clients, &layout ) );
     return true;
 }
 

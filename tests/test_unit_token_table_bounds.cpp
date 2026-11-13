@@ -761,9 +761,10 @@ struct tt_allocator_t
 };
 
 // the pointer rocketnet_malloc hands out from the block the allocator returned
+// (an ASan build's red zone, sdk/rocketnet_memory.h, sits after the bytes)
 static uint8_t * tt_handed_out( const uint8_t * block )
 {
-    const uintptr_t overhead = (uintptr_t) rocketnet_allocation_overhead();
+    const uintptr_t overhead = (uintptr_t) rocketnet_allocation_overhead() - ROCKETNET_RED_ZONE_BYTES;
     return (uint8_t *) ( ( (uintptr_t) block + overhead ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
 }
 

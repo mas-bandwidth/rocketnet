@@ -39,6 +39,7 @@
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "unit_arena.h"
+#include "red_zones.h"
 #if ROCKETNET_DEV
 #include "test_env_source.h"
 #endif // #if ROCKETNET_DEV
@@ -234,7 +235,7 @@ static int secrets_wiped_count( const uint8_t * block, size_t bytes, const uint8
     int found = 0;
     for ( size_t i = 0; i + SECRETS_WIPED_PATTERN_BYTES <= bytes; i++ )
     {
-        if ( block[i] == pattern[0] && memcmp( block + i, pattern, SECRETS_WIPED_PATTERN_BYTES ) == 0 )
+        if ( rocketnet_test_raw_byte( block, i ) == pattern[0] && rocketnet_test_raw_compare( block + i, pattern, SECRETS_WIPED_PATTERN_BYTES ) == 0 )
         {
             found++;
         }
@@ -636,7 +637,8 @@ static void test_secrets_wiped_destroy_writes_only_keys()
     std::map<void *, std::vector<uint8_t>> copies;
     for ( std::map<void *, size_t>::iterator it = sizes.begin(); it != sizes.end(); ++it )
     {
-        copies[it->first].assign( (const uint8_t *) it->first, (const uint8_t *) it->first + it->second );
+        copies[it->first].resize( it->second );
+        rocketnet_test_raw_copy( copies[it->first].data(), it->first, it->second );     // red zones included (tests/red_zones.h)
     }
 
     secrets_wiped_copies = &copies;
@@ -868,7 +870,8 @@ static void test_secrets_wiped_arena_destroy_owned_writes_nothing()
     void * block = secrets_wiped_containing( arena );
     check( block != NULL );
 
-    copies[block].assign( (const uint8_t *) block, (const uint8_t *) block + sizes[block] );
+    copies[block].resize( sizes[block] );
+    rocketnet_test_raw_copy( copies[block].data(), block, sizes[block] );     // red zones included (tests/red_zones.h)
     secrets_wiped_copies = &copies;
     secrets_wiped_num_watches = 0;
     secrets_wiped_written_most = 0;
@@ -915,7 +918,8 @@ static void test_secrets_wiped_arena_destroy_in_block_writes_nothing()
 
     secrets_wiped_plant_in_arena( arena );
 
-    std::vector<uint8_t> copy( block, block + bytes );
+    std::vector<uint8_t> copy( (size_t) bytes );
+    rocketnet_test_raw_copy( copy.data(), block, (size_t) bytes );     // red zones included (tests/red_zones.h)
     rn_arena_destroy( arena );
 
     const bool unwritten = memcmp( block, copy.data(), (size_t) bytes ) == 0;
@@ -1253,7 +1257,8 @@ static void test_secrets_wiped_slots_touch_only_live_user_data()
     std::map<void *, std::vector<uint8_t>> copies;
     for ( auto it = sizes.begin(); it != sizes.end(); ++it )
     {
-        copies[it->first].assign( (const uint8_t *) it->first, (const uint8_t *) it->first + it->second );
+        copies[it->first].resize( it->second );
+        rocketnet_test_raw_copy( copies[it->first].data(), it->first, it->second );     // red zones included (tests/red_zones.h)
     }
 
     secrets_wiped_copies = &copies;

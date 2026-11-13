@@ -2506,6 +2506,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         iocp->process.from = (rocketnet_address_t *) ( base + layout.process_from );
         iocp->process.packet_bytes = (int *) ( base + layout.process_packet_bytes );
         iocp->process.packet_data = (uint8_t **) ( base + layout.process_packet_data );
+
+        // ASan builds: the red zones between the carves (sdk/rocketnet_memory.h)
+        ROCKETNET_RED_ZONE_CARVE( base, rocketnet_iocp_sized_layout( max_clients, num_workers, &layout ) );
     }
 
     iocp->workers = (rocketnet_iocp_worker_t *) rocketnet_malloc( context, sizeof( rocketnet_iocp_worker_t ) * (size_t) num_workers );

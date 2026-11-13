@@ -42,7 +42,7 @@ contents:
   `send` (from `Submit` to `ResetIndex` or `SendReturn`) or `recv` (from
   `RecvBegin` to `Swap`). `work` counts the CQEs the current call has
   reaped, and `Budget` is how many one call may reap
-  (`ROCKETNET_URING_SEND_BUDGET` and the bank size,
+  (`ROCKETNET_URING_RECEIVE_BANK_FLOOR` and the bank size,
   `rocketnet_server_uring_bank_size`, in the code, one constant here). While running, the main thread reaps only
   inside a call. The model abstracts shutdown draining separately. In the
   implementation, `rocketnet_server_uring_stopped` submits cancels and reaps

@@ -191,6 +191,30 @@ LAYERS = {
         # a kernel mark for the filter's drop rule to read, a forget the kernel refused, a held greeting
         "reach": ["KernelMarked", "ForgetRefused", "GreetingHeld"],
     },
+    "queue-send": {
+        "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
+        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
+                             "length, so it never gets there"},
+        "reach": ["Full", "AgainPosted"],
+        # the model's Ids grow with MaxFlush, the walk's length: each record
+        # carries (steps + 1) * 4 statuses
+        "steps": 200,
+    },
+    "queue-worker": {
+        "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],
+        "untraced": {"CancelWake": "the stop writes the eventfd in the walk's one step, which completes an armed "
+                                   "READ before the worker can see quit, and the worker arms no READ after it: "
+                                   "a READ to cancel is left only when the write and the arm race on two threads",
+                     "KernelWakeEnd": "the cancelled READ's completion: no READ is cancelled (CancelWake)"},
+    },
+    "receive": {
+        "modules": ["RNUringQueueReceiveLayout.tla", "TraceRNUringQueueReceiveLayout.tla"],
+        "untraced": {},
+        "reach": ["BankFull", "RingDry"],
+        # a record carries the datagrams banked and delivered so far, so TLC's
+        # time grows faster than the walk: 200 steps a seed stays in budget
+        "steps": 200,
+    },
 }
 
 STEPS = 400
@@ -202,6 +226,8 @@ SELF_CONTAINED = {"example"}
 WALK_TIMEOUT = 120
 # each trace's TLC run budget (tlacheck run --timeout); a run past it is red
 TLC_TIMEOUT = "100s"
+# TLC runs of one plant trace before its missing behaviour is red (check_seed)
+PLANT_ATTEMPTS = 5
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
 TRACE = re.compile(r"^TRACE (\S+)\.tla records=([0-9]+)$", re.M)
@@ -211,6 +237,7 @@ PLANT_AT = re.compile(r"^PLANT-AT (-|[0-9]+(?:,[0-9]+)*)$", re.M)
 CONFIG = re.compile(r"^CONFIG((?: [A-Z][A-Z0-9_]*=\S+)+)$", re.M)
 LOG_ACT = re.compile(r'act \|-> "([A-Za-z][A-Za-z0-9]*)"')
 DISTINCT = re.compile(r"([0-9,]+) distinct states found")
+TI = re.compile(r"^/\\ ti = ([0-9]+)$", re.M)
 CASE_LINE = re.compile(r"^CASE \S+ config=\S+ result=(\S+) seconds=\S+ exit=([0-9]+)", re.M)
 REFUSED = re.compile(r"^REFUSED (\S+) (bad-name|registered-twice|table-full)$", re.M)
 LAYER_NAME = re.compile(r"[a-z0-9-]+")
@@ -717,14 +744,32 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
         if distinct < reports["clean"]["records"]:
             failures.append(f"clean trace: TLC found {distinct} distinct states for {reports['clean']['records']} records")
     plant_exit, plant_log = results["plant"]
+    # TLC 2.19 sometimes reports the violation (exit 12) and prints no
+    # behaviour at all: on byte-identical inputs, with -fp and -seed pinned,
+    # one worker and a fresh metadir each run, the same plant printed it in
+    # 5, 6 and 7 of 10 runs (hetzner1, 2026-11-13). A run without a behaviour
+    # is run again, up to PLANT_ATTEMPTS in all; every attempt past the first
+    # is printed, so the flake stays visible, and a plant that never prints
+    # one stays red
+    attempts = 1
+    missing = 0
+    while plant_exit == 12 and not TI.search(plant_log) and attempts < PLANT_ATTEMPTS:
+        missing += 1
+        attempts += 1
+        plant_exit, plant_log = tlc(args, name, base / f"plant-attempt-{attempts}", reports["plant"]["module"],
+                                    expected["plant"], layer, log, source=base / "plant" / "walk")
+    if plant_exit == 12 and not TI.search(plant_log):
+        missing += 1
+    if attempts > 1:
+        log.append(f"PLANT-ATTEMPTS {attempts}: TLC printed no behaviour for the plant's violation on {missing} of them\n")
     if plant_exit != 12:
         failures.append(tlc_failure("plant", plant_exit))
     else:
         # the last matched record is ti, so the record that is not a model
         # step is ti + 1: it must be the first record the plant changed
-        values = re.findall(r"^/\\ ti = ([0-9]+)$", plant_log, re.M)
+        values = TI.findall(plant_log)
         if not values:
-            failures.append("plant rejection: no ti in TLC's counterexample")
+            failures.append(f"plant rejection: no ti in TLC's counterexample after {attempts} attempts")
         elif int(values[-1]) + 1 != changed:
             failures.append(f"plant trace rejected at record {int(values[-1]) + 1}, not at record {changed}, "
                             "the first the plant changed")
