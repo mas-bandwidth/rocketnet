@@ -21,7 +21,7 @@ views into the transport phase instead, violating
 `UpdateRequiresReleasedViews` (a name kept from when the model ended at the
 misuse: it now says no view is carried into an update).
 
-`Release` returns the view only (`rn_message_view_release`: the view marked
+`Release` returns the view only (`rn_message_connection_release_view`: the view marked
 released, the held count down); `ReleaseReturnsView` says a released record is
 no longer held. The region's charge for every delivery of the last update,
 released or taken back, returns when the next update begins
@@ -94,7 +94,7 @@ objects/API cards.
 | `Admit` | `rn_slots_admit` at apply time, then `rn_endpoint_on_acked` or `rn_endpoint_on_payload` |
 | `Kick` | Object error handling calls `rocketnet_server_transport_disconnect_client` with the exhaustion reason; the transport records SERVER_DISCONNECTED, which no later `Observe` reads (the kicked slot is observed free at reset) |
 | `ResetFree` | `rn_message_connection_release`: the kicked slot freed in O(1), its views released; its region is carved by the `Observe` that binds the slot again |
-| `Release` | `rn_message_object_release` / `rn_message_view_release`: the held view is marked released and the held count drops; the region is untouched |
+| `Release` | `rn_message_object_release` / `rn_message_connection_release_view`: the held view is marked released and the held count drops; the region is untouched |
 | `RejectUnreleasedUpdate` | `rn_message_object_update_begin` with a view held: `MESSAGE_NOT_RELEASED` counted, a debug assert, every view taken back (`held = 0`), the same expiry as `BeginUpdate`, and the update returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` |
 | `StartPending`, `FinishPending` | `rn_message_object_start`, finish and abort: one start pending per connection (`open.pending`); a second start on the same connection is refused, starts on other connections are independent |
 | `EndUpdate` | Return deliveries to the application after processing the current batch |
@@ -177,7 +177,7 @@ identifiers, not an ordering protocol.
 - **Ignore release** (`MCRNSlotsBrokenReleaseIgnored.cfg`, Broken
   `"releaseignored"`): deliver one record and return to the application; the
   mutant's `Release` records the release but leaves the view held, the
-  defect of a `rn_message_view_release` that does not mark the view
+  defect of a `rn_message_connection_release_view` that does not mark the view
   released. `ReleaseReturnsView` fails. (Before this revision the mutant kept
   the region charge in `Release`; the code never returned the charge there,
   so that witness did not reverse the code's release.)

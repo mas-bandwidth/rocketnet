@@ -30,13 +30,13 @@ branch. What follows belongs to other packages.
 
 ## For R: README.md and docs/TLA-INVENTORY.md lines
 
-- `docs/TLA-INVENTORY.md:47` (ordering index width), the clause "a packet is
+- `docs/TLA-INVENTORY.md line 47` (ordering index width), the clause "a packet is
   deferred only when its records' deliveries do not fit" overclaims since
   MM044. New text for that clause: "a packet is deferred only when `Bound`
   does not fit, the channel's sequenced hold counted whenever its release can
   take a slot (the reservation is conservative by up to that hold;
   `NoOverReservation`)".
-- `docs/TLA-INVENTORY.md:45` (message receive views): unchanged in meaning;
+- `docs/TLA-INVENTORY.md line 45` (message receive views): unchanged in meaning;
   optionally add "an update with a view held takes it back and continues".
 - `proofs/tla/README.md`: the group table has no line for `rnslots`,
   `rnchanneltypes`, `rnchannelqueues` or `rnheldownership` (only
@@ -51,13 +51,13 @@ branch. What follows belongs to other packages.
 
 ## For R: other packages' docs
 
-- `docs/OUTGOING-BUILD.md:16` says "One application reservation may be
+- `docs/OUTGOING-BUILD.md line 16` says "One application reservation may be
   pending per object". The code allows one per connection
   (`rn_message_object_start`, `open.pending`, sdk/rocketnet_message_server.cpp
   around 1487-1497). New text: "One application reservation may be pending
   per connection; starts on different connections are independent, so fill
   threads each hold one."
-- `proofs/tla/README-RNMessageViews.md:11` names `UpdateRequiresReleasedViews`
+- `proofs/tla/README-RNMessageViews.md line 11` names `UpdateRequiresReleasedViews`
   as RNSlots checking the views as a set; the name is kept and now means no
   view is carried into an update (the update takes held views back). No edit
   needed unless that README describes the update as refused.
@@ -66,77 +66,77 @@ branch. What follows belongs to other packages.
 
 MM049, RNMessageOpen.tla does not exist:
 
-- `sdk/rocketnet_message_object.h:231`: "(proofs/tla/RNMessageOpen.tla)" ->
+- `sdk/rocketnet_message_object.h line 231`: "(proofs/tla/RNMessageOpen.tla)" ->
   "(proofs/tla/RNSlots.tla StartPending, FinishPending: one pending start per
   connection)".
-- `sdk/rocketnet_message_server.cpp:540`: "proofs/tla/RNMessageOpen.tla Open
+- `sdk/rocketnet_message_server.cpp line 540`: "proofs/tla/RNMessageOpen.tla Open
   and Close: a connection's one open start," -> "proofs/tla/RNSlots.tla
   StartPending and FinishPending: a connection's one open start (the
   concurrent opens and the atomics are not modelled; roadmap
   rn-message-open-model),".
-- `sdk/rocketnet_message_server.cpp:1487`: "one start pending per connection
+- `sdk/rocketnet_message_server.cpp line 1487`: "one start pending per connection
   (proofs/tla/RNMessageOpen.tla): a" -> "one start pending per connection
   (proofs/tla/RNSlots.tla StartPending): a".
-- `tests/wide_fill_cases.cpp:9`: "(proofs/tla/RNMessageOpen.tla)" ->
+- `tests/wide_fill_cases.cpp line 9`: "(proofs/tla/RNMessageOpen.tla)" ->
   "(proofs/tla/RNSlots.tla StartPending)".
-- `tests/wide_fill_cases.cpp:738`: "one open message per client
+- `tests/wide_fill_cases.cpp line 738`: "one open message per client
   (RNMessageOpen)" -> "one open message per client (RNSlots StartPending)".
 
 MM039, RNChannelQueues Rotate:
 
-- `sdk/rocketnet_channel.cpp:1937` and the "Rotate" citation near 1953: no
+- `sdk/rocketnet_channel.cpp line 1937` and the "Rotate" citation near 1953: no
   edit needed. RNChannelQueues `Rotate` is now remove-the-ready-head, pop its
   FIFO head, rejoin the back if more is queued, which is what the code there
   does (the pop is `rn_channel_queue_pop`, the rejoin test at 1970).
 
 MM044, `NeverDeferWithRoom` renamed `NoOverReservation`:
 
-- `sdk/rocketnet_channel.cpp:2105`: "(proofs/tla/RNOrderingWrap.tla Receive,
+- `sdk/rocketnet_channel.cpp line 2105`: "(proofs/tla/RNOrderingWrap.tla Receive,
   NeverDeferWithRoom)" -> "(proofs/tla/RNOrderingWrap.tla Receive,
   NoOverReservation)".
-- `tests/test_unit_channel_ordered.cpp:1219-1220`: "The reservation is exact,
+- `tests/test_unit_channel_ordered.cpp line 1219-1220`: "The reservation is exact,
   never more (proofs/tla/RNOrderingWrap.tla NeverDeferWithRoom): with exactly
   the deliveries a packet needs left, it is taken." -> "The reservation is
   never more than the record's bound (proofs/tla/RNOrderingWrap.tla
   NoOverReservation): with exactly the deliveries a packet needs left, it is
   taken."
-- `tests/test_unit_channel_reliable_sequenced.cpp:255`:
+- `tests/test_unit_channel_reliable_sequenced.cpp line 255`:
   "(proofs/tla/RNOrderingWrap.tla NeverDeferWithRoom)" ->
   "(proofs/tla/RNOrderingWrap.tla NoOverReservation)".
 
 MM047 and MM050, RNSlots release and update:
 
-- `sdk/rocketnet_message_server.cpp:1018`: "BeginUpdate: enters the
+- `sdk/rocketnet_message_server.cpp line 1018`: "BeginUpdate: enters the
   transport phase once every view from the last update is released." ->
   "BeginUpdate: with every view released, the last update's deliveries
   expire and the transport phase begins."
-- `sdk/rocketnet_message_server.cpp:1019`: "RejectUnreleasedUpdate: a view
+- `sdk/rocketnet_message_server.cpp line 1019`: "RejectUnreleasedUpdate: a view
   still held sets the not-released result this update returns." ->
   "RejectUnreleasedUpdate: a view still held is counted, taken back, and sets
   the not-released result; the update continues."
-- `sdk/rocketnet_message_server.cpp:1106`: "(RNSlots Release's charge)" ->
+- `sdk/rocketnet_message_server.cpp line 1106`: "(RNSlots Release's charge)" ->
   "(RNSlots BeginUpdate: the region's charge returns here, released or
   not)".
-- `sdk/rocketnet_endpoint.cpp:1079`: "(RNSlots Release's charge)." ->
+- `sdk/rocketnet_endpoint.cpp line 1079`: "(RNSlots Release's charge)." ->
   "(RNSlots BeginUpdate: the region's charge returns here, released or
   not)."
-- `sdk/rocketnet_message_server.cpp:2390`: "Release: a held view returns, and
+- `sdk/rocketnet_message_server.cpp line 2390`: "Release: a held view returns, and
   the region's charge for that message returns with it." -> "Release: a held
   view returns (marked released, the held count down); the region's charge
   returns at the next update's begin (RNSlots BeginUpdate)."
-- `tests/test_unit_message_objects.cpp:1194-1196`: "RNSlots Release and
+- `tests/test_unit_message_objects.cpp line 1194-1196`: "RNSlots Release and
   RejectUnreleasedUpdate: release returns the room; update with a held view
   asserts in a debug build and is the named error in release;" -> "RNSlots
   Release, BeginUpdate and RejectUnreleasedUpdate: release returns the view
   and the update returns the room; an update with a held view asserts in a
   debug build, takes the view back and returns the named error in release;".
-- `tests/test_unit_message_objects.cpp:2934`: "proofs/tla/RNSlots.tla's five
+- `tests/test_unit_message_objects.cpp line 2934`: "proofs/tla/RNSlots.tla's five
   reversed witnesses" -> "five of proofs/tla/RNSlots.tla's reversed
   witnesses".
-- `tests/test_unit_message_objects.cpp:3095`: "ignore release
+- `tests/test_unit_message_objects.cpp line 3095`: "ignore release
   (EveryReliableDelivered):" -> "no expiry at the update
   (EveryReliableDelivered, MCRNSlotsBrokenNoExpireLive.cfg):".
-- `tests/test_unit_message_objects.cpp:3134-3135`: "update with held views
+- `tests/test_unit_message_objects.cpp line 3134-3135`: "update with held views
   (UpdateRequiresReleasedViews): a record delivered and held; the next update
   is refused by name, never run as if released" -> "update with held views
   (UpdateRequiresReleasedViews): a record delivered and held; the next update

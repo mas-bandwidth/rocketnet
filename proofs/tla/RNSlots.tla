@@ -291,7 +291,7 @@ FinishPending(s) ==
     /\ st' = [st EXCEPT !.pending[s] = FALSE, !.pendingConn[s] = 0]
     /\ UNCHANGED <<wire, sent, pulse>>
 
-\* rn_message_view_release (sdk/rocketnet_message_server.cpp): the held view
+\* rn_message_connection_release_view (sdk/rocketnet_message_server.cpp): the held view
 \* is marked released and the held count drops; the region is not touched.
 \* Broken "releaseignored" records the release but leaves the view held.
 Release(s, r) ==
@@ -409,7 +409,7 @@ ReleasedRecordsReusable == \A s \in Slots :
     /\ st.held[s] \subseteq st.region[s]
     /\ (st.phase = "transport" => st.region[s] = {})
     /\ Cardinality(st.region[s]) <= RegionCapacity
-\* A released view is no longer held (rn_message_view_release marks it
+\* A released view is no longer held (rn_message_connection_release_view marks it
 \* released and drops the held count). MCRNSlotsBrokenReleaseIgnored expects
 \* TLC to violate it.
 ReleaseReturnsView == \A s \in Slots : st.held[s] \cap st.released = {}
