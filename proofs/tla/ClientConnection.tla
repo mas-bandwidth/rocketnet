@@ -13,6 +13,7 @@
 (* timeout (sdk/rocketnet_server_protocol.cpp).                            *)
 (*                                                                         *)
 (* States use the transport constants in sdk/rocketnet_layers.h:        *)
+(* -10 protocol violation (a challenge carrying a small-order server key), *)
 (* -7 token expired, -6 invalid token, -5                                 *)
 (* connection timed out, -4 response timed out, -3 request timed out, -2   *)
 (* cookie request timed out, -1 denied, 0 disconnected, 1 requesting       *)
@@ -140,6 +141,23 @@ CommitBeforeAnswer == FALSE
 Forgery == FALSE
 
 (***************************************************************************)
+(* The small-order challenge (TRANSPORT.md t7 rule 5, t11.2 step 4).  A    *)
+(* challenge opens under the attempt's handshake keys, so only the server  *)
+(* (or a holder of the token's keys) can send it; one whose server         *)
+(* ephemeral key is a small-order point is a protocol violation, and the   *)
+(* attempt ends at once in protocol violation (-10) with its keys erased.  *)
+(* SmallOrderServer = TRUE lets a server with a half-open mapping send     *)
+(* such a challenge ("smallorder", ServerSmallOrder).  SmallOrderIgnored   *)
+(* is the reversed witness, the code before W2-113: the client discards    *)
+(* the challenge and stays in sending connection request, so the attempt   *)
+(* runs on to the server's next challenge or to its deadline.  Both are    *)
+(* definitions, replaced with <- in their cfgs, so every other run keeps   *)
+(* its cfg and its state space.                                            *)
+(***************************************************************************)
+SmallOrderServer  == FALSE
+SmallOrderIgnored == FALSE
+
+(***************************************************************************)
 (* The early send (TRANSPORT.md t11 rule 7).  The advance from requesting  *)
 (* cookie (1) to sending connection request (2), and the one from 2 to     *)
 (* sending connection response (3), arm one send of the new state packet   *)
@@ -188,6 +206,7 @@ ClientPackets ==
 ServerPackets ==
     [type : {"cookie"}, att : Att, fam : Families, forged : BOOLEAN]
     \cup [type : {"challenge"}, att : Att, nonce : Nonce]
+    \cup (IF SmallOrderServer THEN [type : {"smallorder"}, att : Att, nonce : Nonce] ELSE {})
     \cup [type : {"denied"}, att : Att, nonce : Nonce \cup {0}]
     \cup [type : SessionTypes, att : Att, nonce : Nonce, id : Id]
 
@@ -195,7 +214,7 @@ SessionPackets == [type : SessionTypes, att : Att, nonce : Nonce, id : Id]
 
 VARIABLES
     \* the client (sdk/rocketnet_client_protocol.h, struct rocketnet_client_protocol_t)
-    cstate,        \* -7..4
+    cstate,        \* -10, -7..4
     cAttempt,      \* the attempt number: salt and ephemeral, fresh per connect
     cKept,         \* has_cookie, return_cookie: the attempt's first cookie, kept
     cLatest,       \* has_latest_cookie, latest_cookie: a later cookie, see ClientRecvCookie
@@ -498,6 +517,23 @@ ClientRecvChallenge(p) ==
     /\ UNCHANGED <<cookieVars, cIndex, cEarlySends>>
     /\ UNCHANGED <<cFam, clientRecvBase>>
 
+\* rocketnet_client_process_challenge, the small-order arm: state 2, the
+\* challenge opens under the attempt's handshake keys, and the derivation
+\* refuses the server's small-order ephemeral. The attempt ends in protocol
+\* violation (-10) through rocketnet_client_set_state, which zeroes the keys
+\* and the ephemeral (rocketnet_client_connection_reset). Under the
+\* reversed witness SmallOrderIgnored the client discards it and stays in 2.
+ClientRecvSmallOrder(p) ==
+    /\ p.type = "smallorder"
+    /\ S2C!Deliver(p)
+    /\ IF cstate = 2 /\ p.att = cAttempt /\ ~SmallOrderIgnored
+         THEN /\ cstate' = -10
+              /\ cKeys' = NoKeys
+              /\ cEph' = FALSE
+         ELSE UNCHANGED <<cstate, cKeys, cEph>>
+    /\ UNCHANGED <<cookieVars, cIndex, cSinceRecv, cSeen>>
+    /\ UNCHANGED <<cFam, clientRecvUnchanged>>
+
 \* rocketnet_client_process_denied: state 2 (temporary keys from the carried
 \* nonce) or 3 (the held handshake keys). A denial is
 \* rocketnet_client_set_state(CONNECTION_DENIED). A state at or below
@@ -587,7 +623,7 @@ ClientRecvEarlyPayload(p) ==
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 ClientRecv(p) ==
-    \/ ClientRecvCookie(p) \/ ClientRecvChallenge(p)
+    \/ ClientRecvCookie(p) \/ ClientRecvChallenge(p) \/ ClientRecvSmallOrder(p)
     \/ ClientRecvDenied(p) \/ ClientRecvSession(p)
 
 (***************************************************************************)
@@ -716,6 +752,15 @@ ServerDiscCopy ==
     /\ UNCHANGED <<sMap, sOthers, sDiscKeys, sDiscId, cSeen>>
     /\ UNCHANGED serverSendUnchanged
 
+\* SmallOrderServer only: a server with a half-open mapping answers with a
+\* challenge sealed under the mapping's handshake keys whose server
+\* ephemeral key is a small-order point
+ServerSmallOrder ==
+    /\ SmallOrderServer /\ ~ServerMute /\ sMap.live /\ ~sMap.slot
+    /\ ServerSendPacket([type |-> "smallorder", att |-> sMap.att, nonce |-> sMap.nonce])
+    /\ UNCHANGED <<sMap, sOthers, sDiscPending, sDiscKeys, sDiscId, cSeen>>
+    /\ UNCHANGED serverSendUnchanged
+
 \* the server loses the mapping without a word (power, restart)
 ServerCrash ==
     /\ Disconnects /\ sMap.live
@@ -804,6 +849,7 @@ Next ==
     \/ \E p \in ServerPackets : ClientRecv(p)
     \/ \E p \in ClientPackets : ServerRecv(p)
     \/ ServerKeepAlive \/ ServerPayload \/ ServerAppDisconnect \/ ServerDiscCopy \/ ServerCrash
+    \/ ServerSmallOrder
     \/ OtherJoins \/ OtherLeaves
     \/ Tick
     \/ C2SEnvironment \/ S2CEnvironment
@@ -926,7 +972,7 @@ SpecReach ==
 (* Safety.                                                                 *)
 (***************************************************************************)
 TypeOK ==
-    /\ cstate \in -7..4 /\ cAttempt \in 0..MaxAttempts
+    /\ cstate \in {-10} \cup -7..4 /\ cAttempt \in 0..MaxAttempts
     /\ cKept \in CookieVal /\ cLatest \in CookieVal /\ cAltLatest \in BOOLEAN
     /\ cKeys \in Keys \cup {NoKeys}
     /\ cEph \in BOOLEAN /\ cIndex \in BOOLEAN
@@ -967,7 +1013,7 @@ DisconnectIsTerminal ==
 TerminalAbsorbing ==
     [][(cstate < 0 /\ cstate' # cstate) => cstate' \in {0, 1}]_vars
 
-\* a connect from a failure state (-7..-1) is a fresh attempt: a new
+\* a connect from a failure state (-10, -7..-1) is a fresh attempt: a new
 \* attempt index, which is what gives it a fresh salt, a fresh ephemeral and
 \* fresh keys, and nothing of the earlier attempt carried: no keys, no
 \* cookie, no client index, an empty replay window and fresh
@@ -979,6 +1025,20 @@ FreshAttemptFromFailure ==
          /\ cAttempt' = cAttempt + 1 /\ cKeys' = NoKeys /\ cKept' = "none" /\ cLatest' = "none" /\ cEph'
          /\ ~cIndex' /\ cSeen' = {} /\ cSinceRecv' = 0 /\ cAge' = 0
          /\ cFam' = "none" /\ cReqFams' = {}]_vars
+
+\* a challenge of this attempt carrying a small-order server key ends the
+\* attempt at once (TRANSPORT.md t7 rule 5, t11.2 step 4): delivered in
+\* sending connection request (2), the step lands in protocol violation
+\* (-10) with the keys and the ephemeral erased, not at a later deadline
+\* and never in 3. The delivery is the receive step that takes the head of
+\* the server's wire (the pulse turns).
+SmallOrderArrives ==
+    /\ s2cWire # <<>>
+    /\ Head(s2cWire).pkt.type = "smallorder" /\ Head(s2cWire).pkt.att = cAttempt
+    /\ s2cPulse' # s2cPulse
+
+SmallOrderEndsAttempt ==
+    [][(cstate = 2 /\ SmallOrderArrives) => (cstate' = -10 /\ cKeys' = NoKeys /\ ~cEph')]_vars
 
 \* a timeout from waiting state N lands in -(N+1) (S:2074-2077)
 TimeoutPairing ==
@@ -1059,7 +1119,7 @@ EphemeralErasedOutsideHandshake == cstate \notin {1, 2} => ~cEph
 \* the session keys are gone once the attempt is over: every transition to
 \* a state at or below 0 zeroes them, as rocketnet_client_set_state does
 \* (the application disconnect, a denial, a deadline or timeout, a received
-\* disconnect)
+\* disconnect, a small-order challenge)
 KeysErasedWhenDown == cstate <= 0 => cKeys = NoKeys
 
 \* the family race: a request carrying a cookie goes to one family only,

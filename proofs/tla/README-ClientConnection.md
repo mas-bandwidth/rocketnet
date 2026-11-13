@@ -13,7 +13,8 @@ as far as it drives the client. `proofs/tla/MCClientConnection.tla` and
 ## What the model covers
 
 **States** are the standard's numbers (STANDARD.md, _Client State Machine_;
-`sdk/rocketnet.h`): -7 token expired, -5 connection timed out, -4 response
+`sdk/rocketnet.h`): -10 protocol violation (a challenge carrying a small-order
+server key), -7 token expired, -5 connection timed out, -4 response
 timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disconnected,
 1 requesting cookie, 2 sending connection request, 3 sending connection response,
 4 connected. -6 (invalid token) is decided before anything is sent and is not modelled.
@@ -54,6 +55,7 @@ models in the module:
 | `ClientDiscCopy` | the client | one copy of the disconnect burst |
 | `ClientRecvCookie` | a packet arrives | `rocketnet_client_process_cookie`: 1 or 2, salt matches, store, 1 → 2 |
 | `ClientRecvChallenge` | a packet arrives | `rocketnet_client_process_challenge`: 2 only, commit keys, erase ephemeral, 2 → 3 |
+| `ClientRecvSmallOrder` | a packet arrives | `rocketnet_client_process_challenge`, the small-order arm: 2 only, the derivation refuses a small-order server ephemeral, → -10, keys and ephemeral zeroed (TRANSPORT.md t7 rule 5, t11.2 step 4) |
 | `ClientRecvDenied` | a packet arrives | `rocketnet_client_process_denied`: 2 or 3, → -1, keys and ephemeral zeroed |
 | `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session` then keep-alive (3 → 4, index set), payload (accepted in 4 only, `rocketnet_client_session_state_accepts`), disconnect (→ 0, keys zeroed) |
 | `ServerRecvRequest` | a packet arrives | `rocketnet_server_protocol_process_connection_request`: connected address ignored; half-open mapping answers its stored challenge; no cookie → cookie; no slot → denied, no mapping; else a mapping and its challenge |
@@ -63,6 +65,7 @@ models in the module:
 | `ServerPayload` | the server application | a payload, at most one per send interval |
 | `ServerAppDisconnect`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client`: the burst, slot and mapping gone at once |
 | `ServerCrash` | the outside | the mapping vanishes with nothing sent |
+| `ServerSmallOrder` | the server, `SmallOrderServer` only | a half-open mapping answers with a challenge sealed under its handshake keys whose server ephemeral key is a small-order point |
 | `OtherJoins`, `OtherLeaves` | other clients | a slot taken or freed |
 | `Tick` | time | one send interval passes: `rocketnet_client_check_deadlines` (total deadline in 1..3, then idle timeout to -(state+1)), `rocketnet_server_protocol_update` (handshake deadline for a half-open mapping, idle timeout for an established one), both links `Age` |
 | `C2SEnvironment`, `S2CEnvironment` | the path | Link's `Drop`, `Duplicate`, `Reorder`, `Delay` |
@@ -89,7 +92,8 @@ Safety, checked under every loss pattern with no fairness:
 | `NoSendOnArrival` | no receive sends (STANDARD.md, ClientConnection NoSendOnArrival) |
 | `EarlySendPerAdvance` | the early send is bounded by the advances, not by the arrivals: none in 1, at most one in 2, at most two in an attempt (TRANSPORT.md t11 rule 7) |
 | `OnlyAuthenticatedRefreshes` | the client trusts only the server: in states 1 and 2 of one attempt nothing restarts the receive clock; a cookie's salt is in the clear, so only the challenge and the session packets after it reset it (TRANSPORT.md t11 rule 8, t11.1) |
-| `FreshAttemptFromFailure` | a connect from a failure state (-7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index or replay window, and fresh timers |
+| `SmallOrderEndsAttempt` | a challenge of this attempt carrying a small-order server key, delivered in 2, ends the attempt at once in protocol violation (-10) with the keys and the ephemeral erased (TRANSPORT.md t7 rule 5, t11.2 step 4) |
+| `FreshAttemptFromFailure` | a connect from a failure state (-10, -7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index or replay window, and fresh timers |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:

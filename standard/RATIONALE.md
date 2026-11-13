@@ -619,7 +619,9 @@ response_ (3) → -4, _connected_ (4) → -5. Outside the pairing: _connection d
 which is told to the client rather than inferred from silence; _invalid connect token_
 (-6), detected before anything is sent; and _connect token expired_ (-7), which is the
 total connect deadline's terminal and is also entered before the first send when the
-token is already expired on arrival. These fall outside it. An implementation should
+token is already expired on arrival; and _protocol violation_ (-10), which a challenge
+carrying a small-order server ephemeral key ends the attempt in, told by the packet
+rather than inferred from silence. These fall outside it. An implementation should
 assert the pairing, so that a state added later cannot silently ship without its
 timeout.
 

@@ -250,6 +250,16 @@ Deny == st \in HandshakeStates /\ End(conn, "CONNECTION_DENIED", FALSE)
 \* The token expires while the handshake is still running.
 TokenExpires == st \in HandshakeStates /\ End(conn, "CONNECT_TOKEN_EXPIRED", FALSE)
 
+\* A challenge carrying a small-order server ephemeral key ends the attempt
+\* in sending connection request (rocketnet_client_process_challenge, the
+\* small-order arm; TRANSPORT.md t11.2 step 4): the transport's -10 reads back
+\* as PROTOCOL_VIOLATION, the one end of that name outside CONNECTED.
+HandshakeViolation == st = "SENDING_CONNECTION_REQUEST" /\ End(conn, "PROTOCOL_VIOLATION", FALSE)
+
+\* Reachability only (MCClientSessionReachHandshakeViolation.cfg, expected to
+\* fail): the handshake does reach PROTOCOL_VIOLATION.
+NoHandshakeViolation == [][~(st = "SENDING_CONNECTION_REQUEST" /\ st' = "PROTOCOL_VIOLATION")]_vars
+
 \* The stage deadlines and the connected timeout.
 Timer == st \in Live /\ End(conn, TimedOut(st), FALSE) /\ droppedIn' = {}
 
@@ -375,7 +385,7 @@ Next ==
     \/ /\ \/ /\ \/ Create \/ Destroy
                 \/ \E tok \in Tokens : Connect(tok)
                 \/ RetryPending \/ WorkerComplete
-                \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
+                \/ HandshakeStep \/ Deny \/ TokenExpires \/ HandshakeViolation \/ Timer \/ ServerDisconnect
                 \/ ClientDisconnect \/ DisconnectFromError \/ Send \/ ReceiveExhaust
                 \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
              /\ droppedIn' = {}

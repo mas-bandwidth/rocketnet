@@ -6147,7 +6147,10 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
     // handshake in progress (1095-1098) and, on a denied, to "release all
     // connection state" (2425-2426); proofs/tla/ClientConnection.tla holds the
     // states and their terminal transitions, whose invariant
-    // KeysErasedWhenDown pins cKeys = NoKeys at state <= 0.
+    // KeysErasedWhenDown pins cKeys = NoKeys at state <= 0. The fifth, a
+    // small-order challenge ending the attempt in protocol violation (-10),
+    // is held to the same erasure by
+    // test_client_small_order_challenge_is_a_protocol_violation.
 
     for ( int scenario = 0; scenario < 4; scenario++ )
     {
