@@ -794,8 +794,8 @@ directions:
      page-aligned `402,653,184`-byte (384 MiB raw) UMEM buffer via `mmap` plus
      kernel RX/TX rings (`786,432` bytes of descriptors per queue;
      `2,818,572,288` bytes UMEM + `5,505,024` bytes of RX and TX descriptors
-     across 7 default queues; the fill and completion rings are not in that
-     figure). UMEM is counted against `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`
+     across 7 queues, `num_xdp_threads = 7`, and a seventh of each at the
+     default of 1; the fill and completion rings are not in that figure). UMEM is counted against `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`
      and `-DROCKETNET_XDP_MEMORY_MIB`, but is not allocated from
      `rocketnet_allocator_t`.
    - **`io_uring` mapped rings**: One server-wide submission/completion ring

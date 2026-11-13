@@ -306,7 +306,7 @@ bank to the worker and never waits on the kernel
   `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
   will not grant the memory. Measured with
   `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 4 1416 io_uring 0'`:
-  on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB
+  on kernel 7.0 four queues (`num_io_uring_workers = 4`) refuse at 512 KiB and create at 768 KiB
   (in 16 KiB steps, 656 KiB on 7.0.0-38: 464 KiB for 1 queue, 528 for 2, 912
   for 8); on kernel 6.8 they create at 64 KiB (16 KiB on 6.8.0-139). These are
   single-server measurements. The probe uses 4 clients because the ring and the

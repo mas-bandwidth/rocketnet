@@ -66,7 +66,8 @@
 
 // macOS msgx transmit workers (sendmsg_x); one receive worker beside them is
 // fixed. 3: mini-m5 rows m41, m43-m45 (transport f63f4993f); 2 failed the peak
-// with a game load (m46, 50.5 fps).
+// with a game load (m46, 50.5 fps). Under re-measure 2026-11-13: 3 failed the
+// peak with a game load on mini-m5 and held 660k packets/s on the studio.
 #define ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS                          3
 #define ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS                             16
 

@@ -1961,9 +1961,8 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS sets the macOS msgx
     /// transport's send threads: transmit workers, each sending with
     /// sendmsg_x; one receive worker beside them is fixed. Default is 3 (zero
-    /// selects it): the count that held 1000 players at 60 Hz and 10 Gb/s out
-    /// on an M5 Mac mini (2026-11-13, f63f4993f; 2 ran at 50 frames a second
-    /// with a game load). Range is 1 .. 16.
+    /// selects it), under re-measure 2026-11-13 (f63f4993f; 2 ran at 50 frames
+    /// a second with a game load). Range is 1 .. 16.
     ///
     /// The portable transport has no count to choose: one send and one
     /// receive thread.
