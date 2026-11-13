@@ -2336,6 +2336,11 @@ struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, i
 // one client's part of the deferred apply. claim is the only field two
 // threads ever touch: open sets it, and exactly one exchange takes it.
 
+// Cache-line alignment pads this on MSVC (C4324); the padding is the point.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
 struct alignas( 64 ) rocketnet_server_ack_client_t
 {
     std::atomic<uint32_t> claim;
@@ -2346,6 +2351,9 @@ struct alignas( 64 ) rocketnet_server_ack_client_t
     uint64_t unknown_sequence;
     uint64_t batch_full;
 };
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
 
 // a block carries at most this many ranges on average per received packet
 // before the queue applies and gathers early (exact either way)
