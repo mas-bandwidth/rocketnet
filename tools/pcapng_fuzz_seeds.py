@@ -92,8 +92,20 @@ def write_seeds(root):
     for name, data in msg_items:
         (msg_dir / name).write_bytes(data)
 
+    # the set written is the whole set: a generated seed this run did not
+    # write (a capture renamed or re-recorded, or a seed now past the cut) is
+    # removed, so --check passes after --write
+    removed = 0
+    for directory, prefix, items in ((pre_dir, PREFIX_PREFILTER, pre_items), (msg_dir, PREFIX_MESSAGE, msg_items)):
+        written = {name for name, _ in items}
+        for path in sorted(directory.glob(prefix + "*")):
+            if path.name not in written:
+                path.unlink()
+                removed += 1
+
     print("prefilter: wrote %d seeds, cut %d" % (len(pre_items), pre_cut))
     print("message: wrote %d seeds, cut %d" % (len(msg_items), msg_cut))
+    print("removed %d generated seeds no capture gives" % removed)
     return 0
 
 
@@ -181,7 +193,17 @@ def selftest():
         assert check_seeds(root) == 0, "check failed on a freshly written set"
         (pcapng_dir / "b.pcapng").rename(pcapng_dir / "test_b.pcapng")
         assert check_seeds(root) == 1, "check did not fail after a capture was renamed"
+
+        # --write after the rename converges: the old names are removed, a
+        # hand-made seed (no generated prefix) is left alone, and --check passes
+        (pre_dir / "prefilter_hand_made").write_bytes(b"\x00hand")
+        write_seeds(root)
+        assert check_seeds(root) == 0, "check failed after --write following a rename"
+        assert (pre_dir / "prefilter_hand_made").read_bytes() == b"\x00hand", "--write touched a hand-made seed"
+        (pre_dir / "prefilter_hand_made").unlink()
         (pcapng_dir / "test_b.pcapng").rename(pcapng_dir / "b.pcapng")
+        write_seeds(root)
+        assert check_seeds(root) == 0, "check failed after --write following the rename back"
 
         # a seed nobody generates
         (pre_dir / (PREFIX_PREFILTER + "stray")).write_bytes(b"\x00stray")
@@ -208,7 +230,8 @@ def main(argv):
         return check_seeds(repo_root())
     if len(argv) == 2 and argv[1] == "--selftest":
         return selftest()
-    sys.stderr.write(__doc__ + "\n")
+    # the header is comments, so the module has no docstring
+    sys.stderr.write("usage: python3 tools/pcapng_fuzz_seeds.py --write | --check | --selftest\n")
     return 2
 
 

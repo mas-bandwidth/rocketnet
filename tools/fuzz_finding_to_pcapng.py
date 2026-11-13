@@ -29,9 +29,23 @@ class Refusal(Exception):
     """A finding that has no pcapng form, or a target that must not be written."""
 
 
+HARNESS_PREFIX = "rocketnet_fuzz"
+
+
 def _no_form(harness, selector, corpus, name):
     return ("no pcapng form for %s selector %d; keep the input as "
             "tests/fuzz/%s/regress_%s and file it" % (harness, selector, corpus, name))
+
+
+def _no_form_harness(harness, name):
+    """The advice for a harness with no pcapng form at all: its own corpus
+    (corpus<harness less rocketnet_fuzz>, as the fuzz scripts name it), and
+    no selector, which only the two converted harnesses read."""
+    if not harness.startswith(HARNESS_PREFIX + "_") or not NAME.fullmatch(harness):
+        return "unknown harness %r; harnesses are named rocketnet_fuzz_<name>" % harness
+    corpus = "corpus" + harness[len(HARNESS_PREFIX):]
+    return ("no pcapng form for %s; keep the input as tests/fuzz/%s/regress_%s and file it" %
+            (harness, corpus, name))
 
 
 def convert(root, harness, input_path, name):
@@ -60,7 +74,7 @@ def convert(root, harness, input_path, name):
         packets = [{"interface": pcapng.INTERFACE_OPENED, "linktype": pcapng.LINKTYPE_USER0,
                     "timestamp_us": pcapng.CLOCK_START_US, "data": record, "comment": "server"}]
     else:
-        raise Refusal(_no_form(harness, selector, "corpus", name))
+        raise Refusal(_no_form_harness(harness, name))
 
     target = os.path.join(root, "tests", "pcapng", "regress", name + ".pcapng")
     seed = os.path.join(root, "tests", "fuzz", corpus, "regress_" + name)
@@ -118,8 +132,12 @@ def selftest():
         with open(seed, "rb") as f:
             assert f.read() == message, "message seed differs"
 
+        # another harness: its own corpus, and no selector in the advice
         _expect_refusal(lambda: convert(root, "rocketnet_fuzz_other", prefilter_input, "unknown_harness"),
-                        "no pcapng form for rocketnet_fuzz_other")
+                        "no pcapng form for rocketnet_fuzz_other; keep the input as "
+                        "tests/fuzz/corpus_other/regress_unknown_harness and file it")
+        _expect_refusal(lambda: convert(root, "not_a_harness", prefilter_input, "unknown_harness"),
+                        "unknown harness 'not_a_harness'")
         selector_one = os.path.join(root, "selector_one.finding")
         with open(selector_one, "wb") as f:
             f.write(bytes([0x01]) + prefilter[1:])

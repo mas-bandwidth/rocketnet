@@ -30,7 +30,6 @@ KIND_ACK_BLOCK = 1
 KIND_MESSAGE_PAYLOAD = 3
 
 MAX_FILE_BYTES = 128 * 1024
-MAX_CORPUS_BYTES = 512 * 1024
 
 BLOCK_SHB = 0x0A0D0D0A
 BLOCK_IDB = 0x00000001
@@ -85,7 +84,9 @@ def write_packets(path, packets):
         body += _pad4(data)
         comment = packet.get("comment")
         if comment:
-            value = comment.encode("utf-8")
+            # surrogateescape: a comment read from bytes that are not UTF-8
+            # is written back as the same bytes
+            value = comment.encode("utf-8", "surrogateescape")
             body += struct.pack("<HH", OPT_COMMENT, len(value)) + _pad4(value)
             body += struct.pack("<HH", OPT_ENDOFOPT, 0)
         out += _block(BLOCK_EPB, body)
@@ -158,7 +159,10 @@ def read_buffer(image):
                 if value_padded > len(body) - option - 4:
                     raise PcapngError("PCAPNG_BAD_OPTION")
                 if code == OPT_COMMENT:
-                    packet["comment"] = bytes(body[option + 4: option + 4 + length]).decode("utf-8")
+                    # any bytes, as tests/pcapng.h takes them: a comment that
+                    # is not UTF-8 is kept (surrogateescape), never a
+                    # UnicodeDecodeError past the named refusals
+                    packet["comment"] = bytes(body[option + 4: option + 4 + length]).decode("utf-8", "surrogateescape")
                 option += 4 + value_padded
             packets.append(packet)
         else:
@@ -217,11 +221,27 @@ def _corpus_files(corpus, prefix):
     return out
 
 
+# The hand-made prefilter seeds tests/pcapng/hostile_prefilter.pcapng holds, by
+# name: a bare prefix would also take the seeds tools/pcapng_fuzz_seeds.py
+# derives from the captures (prefilter_pcap_*, some from this very file) and
+# any hand-made seed added later, and change the committed capture the
+# replay pins read.
+HOSTILE_PREFILTER_SEEDS = (
+    "prefilter_empty", "prefilter_keep_alive_min", "prefilter_payload_full", "prefilter_request",
+    "prefilter_reserved_type", "prefilter_too_large", "prefilter_too_short", "prefilter_wrong_epoch",
+    "prefilter_wrong_value",
+)
+
+
 def build_hostile(corpus, out_path):
-    """Every tests/fuzz/corpus/prefilter_* seed, selector byte removed, client to server on interface 0."""
+    """The HOSTILE_PREFILTER_SEEDS of tests/fuzz/corpus, selector byte removed, client to server on interface 0."""
     packets = []
     ts = CLOCK_START_US
-    for name, data in _corpus_files(corpus, "prefilter_"):
+    seeds = [(name, data) for name, data in _corpus_files(corpus, "prefilter_") if name in HOSTILE_PREFILTER_SEEDS]
+    missing = sorted(set(HOSTILE_PREFILTER_SEEDS) - {name for name, _ in seeds})
+    if missing:
+        raise SystemExit("pcapng hostile: %s holds no %s" % (corpus, ", ".join(missing)))
+    for name, data in seeds:
         frame = ipv4_udp_frame(CLIENT_ADDRESS, CLIENT_PORT, SERVER_ADDRESS, SERVER_PORT, data[1:])
         packets.append({"interface": INTERFACE_WIRE, "linktype": LINKTYPE_IPV4, "timestamp_us": ts, "data": frame,
                         "comment": name})
@@ -290,8 +310,41 @@ def selftest():
         raise AssertionError("writer took a mismatched linktype")
     except PcapngError as e:
         assert e.name == "PCAPNG_UNKNOWN_LINKTYPE"
+
+    # a comment that is not UTF-8 reads (as tests/pcapng.h reads it) and
+    # writes back as the same bytes; it is never an unnamed exception
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, "comment.pcapng")
+        write_packets(path, [{"interface": 1, "linktype": LINKTYPE_USER0, "timestamp_us": CLOCK_START_US,
+                              "data": bytes([KIND_ACK_BLOCK]), "comment": "c\xff"}])
+        with open(path, "rb") as f:
+            comment_image = bytearray(f.read())
+        at = comment_image.find(b"c\xc3\xbf")
+        assert at > 0, "the comment's bytes were not found"
+        comment_image[at: at + 3] = b"c\xff\xfe"
+        back = read_buffer(bytes(comment_image))
+        assert back[0]["comment"].encode("utf-8", "surrogateescape") == b"c\xff\xfe", "comment bytes differ"
+        write_packets(path, back)
+        with open(path, "rb") as f:
+            assert f.read() == bytes(comment_image), "a non-UTF-8 comment did not write back as its bytes"
+
+    # the hostile capture takes exactly its named hand-made seeds: a seed the
+    # captures derived (prefilter_pcap_*) or a hand-made one added later is
+    # not taken, and a missing one is refused
+    with tempfile.TemporaryDirectory() as corpus:
+        for name in HOSTILE_PREFILTER_SEEDS + ("prefilter_pcap_0001", "prefilter_added_later"):
+            with open(os.path.join(corpus, name), "wb") as f:
+                f.write(b"\x00" + name.encode("ascii"))
+        hostile = build_hostile(corpus, os.path.join(corpus, "hostile.pcapng"))
+        assert [p["comment"] for p in hostile] == sorted(HOSTILE_PREFILTER_SEEDS), "hostile took other seeds"
+        os.remove(os.path.join(corpus, HOSTILE_PREFILTER_SEEDS[0]))
+        try:
+            build_hostile(corpus, os.path.join(corpus, "hostile.pcapng"))
+            raise AssertionError("hostile built without " + HOSTILE_PREFILTER_SEEDS[0])
+        except SystemExit as e:
+            assert HOSTILE_PREFILTER_SEEDS[0] in str(e), "the missing seed is not named"
     print("pcapng selftest: ok (round trip of %d packets; refused truncated, length not a multiple of 4, "
-          "unknown linktype, over cap)" % len(packets))
+          "unknown linktype, over cap; a non-UTF-8 comment kept; hostile takes its named seeds)" % len(packets))
     return 0
 
 
