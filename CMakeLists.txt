@@ -1024,6 +1024,18 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         rocketnet_warning_floor(rocketnet_xdp_filter_host)
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
+        # the same filter for the xdp-replay trace check, at a replay window of
+        # ROCKETNET_TLA_XDP_REPLAY_WINDOW sequences (sdk/rocketnet_xdp_limits.h),
+        # so a walk of a few hundred steps reaches the drop rule
+        set(ROCKETNET_TLA_XDP_REPLAY_WINDOW 4)
+        add_library(rocketnet_xdp_filter_host_trace STATIC tests/xdp_host/server_xdp_host.c)
+        target_include_directories(rocketnet_xdp_filter_host_trace BEFORE PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/xdp_host" "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+        target_compile_definitions(rocketnet_xdp_filter_host_trace PRIVATE __linux__ __BPF__
+            "ROCKETNET_XDP_FILTER_SOURCE=\"${ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH}\""
+            ROCKETNET_TLA_XDP_REPLAY_WINDOW=${ROCKETNET_TLA_XDP_REPLAY_WINDOW})
+        target_compile_options(rocketnet_xdp_filter_host_trace PRIVATE -ffreestanding -ffp-contract=off)
+        rocketnet_warning_floor(rocketnet_xdp_filter_host_trace)
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a non-Windows host")
     endif()
@@ -1353,10 +1365,11 @@ if(ROCKETNET_BUILD_TOOLS)
         endif()
         target_link_libraries(${target} PRIVATE rocketnet_dev)
         # the XDP filter as host C, where it is built: the xdp-replay layer
-        # runs its packets through the shipped filter
-        if(TARGET rocketnet_xdp_filter_host)
-            target_link_libraries(${target} PRIVATE rocketnet_xdp_filter_host)
-            target_compile_definitions(${target} PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
+        # runs its packets through the shipped filter, at the trace's window
+        if(TARGET rocketnet_xdp_filter_host_trace)
+            target_link_libraries(${target} PRIVATE rocketnet_xdp_filter_host_trace)
+            target_compile_definitions(${target} PRIVATE ROCKETNET_XDP_FILTER_HOST=1
+                ROCKETNET_TLA_XDP_REPLAY_WINDOW=${ROCKETNET_TLA_XDP_REPLAY_WINDOW})
         endif()
         rocketnet_use_sodium(${target})
         rocketnet_warning_floor(${target})

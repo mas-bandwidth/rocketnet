@@ -240,6 +240,11 @@ uint64_t rocketnet_xdp_host_counter( int counter )
     return server_xdp_host_stats.counters[counter];
 }
 
+uint32_t rocketnet_xdp_host_replay_window( void )
+{
+    return ROCKETNET_XDP_REPLAY_WINDOW;
+}
+
 int rocketnet_xdp_host_redirect_calls( void )
 {
     return server_xdp_host_redirects;
