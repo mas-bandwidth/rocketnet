@@ -584,7 +584,7 @@ SequencedArrivedAccounted == connected =>
         m \in receiver.inTurn \/ m \in receiver.released \/ m \in receiver.refused
 \* standard/MESSAGES.md m6.3: a refused code-1 record leaves the channel
 \* unchanged, so a record that released the channel's hold or in-turn block
-\* (an accepted, acked code-4 message among them) is never one refused.
+\* (an accepted, ACK-eligible code-4 message among them) is never one refused.
 \* Reversed by Broken = "ReleaseBeforeRefuse".
 SupersederKept == receiver.superseders \cap receiver.refused = {}
 \* The same rule on the channel's state itself: a step that refuses a record

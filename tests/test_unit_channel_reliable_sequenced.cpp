@@ -984,9 +984,12 @@ REGISTER_UNIT_TEST( test_sequenced_in_turn_block_follows_record_rule );
 // hold slot, the update's unreliable allowance Du full, or stale against the
 // watermark) leaves the channel as it was. The earlier code released the
 // channel's accepted code-4 hold or in-turn block first and then refused the
-// record, so a code-4 message the sender had seen acked was never delivered,
-// and an older message could be delivered in its place
+// record, so an accepted code-4 message was never delivered, and an older
+// message could be delivered in its place
 // (proofs/tla/MCRNChannelBrokenReleaseBeforeRefuse.cfg, SupersederKept).
+// These tests drive the receive window and the dispatch in memory: they show
+// that ACK-eligible state (accepted by the window, so the transport acks its
+// packet) is preserved and later delivered. No ack exchange is run here.
 
 static void rs_init_config( rs_node_t * node, const rocketnet_message_config_t * config )
 {
@@ -997,7 +1000,7 @@ static void rs_init_config( rs_node_t * node, const rocketnet_message_config_t *
     check( rn_ordered_init( &node->ordered, node->region, config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
 }
 
-static void test_hold_full_code_1_keeps_the_acked_code_4_hold()
+static void test_hold_full_code_1_keeps_the_accepted_code_4_hold()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -1006,7 +1009,7 @@ static void test_hold_full_code_1_keeps_the_acked_code_4_hold()
     rs_node_t receiver;
     rs_init_config( &receiver, &config );
 
-    const uint8_t other = 1, acked = 2, newer = 3, older = 4, ordered = 5;
+    const uint8_t other = 1, accepted = 2, newer = 3, older = 4, ordered = 5;
     rn_delivery_t out;
 
     // channel 1's future code-1 state takes the only Ru slot
@@ -1015,8 +1018,8 @@ static void test_hold_full_code_1_keeps_the_acked_code_4_hold()
     check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
     check( receiver.region->sequenced_hold_free_count == 0 );
 
-    // channel 0's future code-4 state is accepted (its packet acked) and held
-    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 1, &acked );
+    // channel 0's future code-4 state is accepted by the receive window (ACK-eligible) and held
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 1, &accepted );
     check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
     const uint32_t hold = receiver.region->channel_receive[0].held_sequenced;
     check( hold != RN_DESCRIPTOR_NONE );
@@ -1036,23 +1039,23 @@ static void test_hold_full_code_1_keeps_the_acked_code_4_hold()
     record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 1, 1, 0, &older );
     check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
 
-    // the ordered record opens epoch 1: the acked state is delivered, once
+    // the ordered record opens epoch 1: the accepted state is delivered, once
     record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2, 0, 0, &ordered );
     check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
-    int acked_deliveries = 0;
+    int accepted_deliveries = 0;
     for ( uint32_t i = 0; i < receiver.ordered.channels.deliveries; i++ )
     {
         const rn_delivery_t & delivery = receiver.region->deliveries[i];
-        check( delivery.channel != 0 || delivery.code != ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED || delivery.data[0] == acked );
-        acked_deliveries += ( delivery.channel == 0 && delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ) ? 1 : 0;
+        check( delivery.channel != 0 || delivery.code != ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED || delivery.data[0] == accepted );
+        accepted_deliveries += ( delivery.channel == 0 && delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ) ? 1 : 0;
     }
-    check( acked_deliveries == 1 );
+    check( accepted_deliveries == 1 );
     check( receiver.region->channel_receive[0].sequenced_watermark == 2 );
     rn_ordered_end_update( &receiver.ordered );
     rn_unit_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( test_hold_full_code_1_keeps_the_acked_code_4_hold );
+REGISTER_UNIT_TEST( test_hold_full_code_1_keeps_the_accepted_code_4_hold );
 
 static void test_allowance_full_code_1_keeps_the_in_turn_block()
 {
@@ -1072,7 +1075,7 @@ static void test_allowance_full_code_1_keeps_the_in_turn_block()
     const uint8_t unreliable = 1, newer = 2, older = 3;
     rn_delivery_t out;
 
-    // the first fragment of an in-turn code-4 block is accepted (acked)
+    // the first fragment of an in-turn code-4 block is accepted (ACK-eligible)
     rocketnet_message_record_t record = rs_fragment( 0, 0, block );
     record.sequencing = 5;
     check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );

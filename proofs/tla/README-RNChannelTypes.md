@@ -325,10 +325,26 @@ turn when the update's unreliable allowance (Du) is spent is dropped as
 `MESSAGE_UNRELIABLE_DELIVERY_FULL`; in both the channel's state is unchanged.
 The code (`rn_channels_dispatch_sequenced` and `rn_sequenced_in_turn`,
 `sdk/rocketnet_channel_sequenced.cpp`) released the channel's code-4 hold or
-in-turn block as superseded and only then refused the record: an accepted,
-acked code-4 message was lost, and an older message could be delivered in its
-place. Before this revision the model had no such refusal (the hold pool and
-the allowance are not modelled), so no configuration could reach it.
+in-turn block as superseded and only then refused the record: an accepted
+(ACK-eligible) code-4 message was lost, and an older message could be
+delivered in its place. Before this revision the model had no such refusal
+(the hold pool and the allowance are not modelled), so no configuration could
+reach it.
+
+What each piece of evidence carries. The model carries the order of refusal
+and release only: the refusal is an environment boolean (the pool and the
+allowance themselves are not modelled), its indexes are small integers with
+no 24-bit arithmetic, and its ghosts record what the model's own actions do,
+so it is not a proof of the C++ composition and cannot see a clear the code
+makes without the model's action. The unit tests in
+`tests/test_unit_channel_reliable_sequenced.cpp` carry the code: the
+descriptors and payloads actually kept, the counters, and the later delivery
+of the kept message (`test_hold_full_code_1_keeps_the_accepted_code_4_hold`,
+`test_allowance_full_code_1_keeps_the_in_turn_block`), and the 24-bit half
+range (`test_stale_code_1_at_the_half_range_keeps_the_in_turn_block`). They
+drive the receive window and the dispatch in memory: they show ACK-eligible
+state (accepted by the window, so the transport acks its packet) preserved,
+not an ack exchange observed on a link.
 
 - The `refused` scenario runs the blocks plans and `<<3,4,1,2>>` (a future
   code-4 block, then a newer future code-1 record). `OpenPacket(pid, full)`
@@ -350,9 +366,9 @@ the allowance are not modelled), so no configuration could reach it.
 - Out of reach here: the stale drop at the 24-bit half range (the model's
   indexes are small; `RNSequencingWrap` owns the widths), covered by
   `test_stale_code_1_at_the_half_range_keeps_the_in_turn_block`; a refused
-  record meeting a code-1 hold (each plan has one code-1 message), covered by
-  the code's unchanged slot return; and the later delivery of the kept hold,
-  covered by the unit tests in `tests/test_unit_channel_reliable_sequenced.cpp`.
+  record meeting a code-1 hold (each plan has one code-1 message; the code's
+  slot return there is unchanged); and the later delivery of the kept hold,
+  covered by the two other unit tests named above.
 
 | Case | Expected | Exit | Generated | Distinct | Seconds (2 workers, bench-xdp-9) |
 |---|---|---:|---:|---:|---:|

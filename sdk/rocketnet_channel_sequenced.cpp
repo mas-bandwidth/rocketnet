@@ -393,8 +393,8 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
 
     // A newer record releases the in-turn block only once nothing can refuse
     // it, so a record dropped as stale or by the allowance leaves the block
-    // (accepted, acked) as it was (standard/MESSAGES.md m6.3). The allowance
-    // is proofs/tla/RNChannelTypes.tla SupersederKept, with the reversed
+    // (accepted, so ACK-eligible) as it was (standard/MESSAGES.md m6.3). The
+    // allowance is proofs/tla/RNChannelTypes.tla SupersederKept, with the reversed
     // witness MCRNChannelBrokenReleaseBeforeRefuse.cfg releasing first; the
     // stale drop at the half range is not in the model (its indexes are
     // small) and is test_stale_code_1_at_the_half_range_keeps_the_in_turn_block.
@@ -575,7 +575,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         // proofs/tla/RNChannelTypes.tla SupersederKept: a code-1 record with no
         // free Ru slot is dropped before it releases anything. Releasing a
         // code-1 hold frees the slot this record then takes; releasing a code-4
-        // hold frees none, so the accepted (acked) hold stays and the record is
+        // hold frees none, so the accepted (ACK-eligible) hold stays and the record is
         // dropped as HOLD_FULL (standard/MESSAGES.md m6.3, state unchanged).
 
         if ( !reliable && held_reliable && region->sequenced_hold_free_count == 0 )
