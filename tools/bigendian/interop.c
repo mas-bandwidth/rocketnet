@@ -25,7 +25,10 @@
     server exits when every client has come and gone.
 
     It passes (exit 0) when every reliable message and its echo arrived
-    intact, at least one unreliable message and one unreliable echo arrived
+    intact, exactly once and in the order sent (each client's reliable numbers
+    arrive as 0, 1, 2, ... on both ends, so a sequence field read in the wrong
+    byte order shows as a reorder), at least one unreliable message and one
+    unreliable echo arrived
     per client, and nothing arrived damaged. The multi-byte fields inside
     the messages are written byte by byte, so the payload means the same on
     either end.
@@ -243,6 +246,15 @@ static int interop_server( const char * address, int clients )
                 }
                 else if ( kind == INTEROP_RELIABLE )
                 {
+                    // reliable-ordered: each client's numbers arrive as 0, 1, 2, ... exactly,
+                    // so a duplicate, a loss or a reordering is a failure, not a count
+                    if ( number != (uint32_t) records[from].reliable )
+                    {
+                        printf( "BAD reliable message from client %d: number %u, expected %d\n", from, (unsigned) number,
+                                records[from].reliable );
+                        fflush( stdout );
+                        bad++;
+                    }
                     records[from].reliable++;
                 }
                 else
@@ -460,6 +472,14 @@ static int interop_clients( const char * address, const char * key_hex, int clie
                     }
                     else if ( kind == INTEROP_RELIABLE )
                     {
+                        // the echoes come back on the same ordered channel: 0, 1, 2, ... exactly
+                        if ( number != (uint32_t) x->echo_reliable )
+                        {
+                            printf( "BAD reliable echo to client %d: number %u, expected %d\n", k, (unsigned) number,
+                                    x->echo_reliable );
+                            fflush( stdout );
+                            bad++;
+                        }
                         x->echo_reliable++;
                     }
                     else

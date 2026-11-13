@@ -19,7 +19,9 @@ sdk/rocketnet_tests.cpp (the unit suite's own cases, linked only into
 ./bin/test) and test-seam code, the lines inside a preprocessor branch that
 is compiled only when ROCKETNET_DEV is on. Those lines get their own
 reached/never counts. The functional suite and the examples, which link
-rocketnet_dev, can reach seam lines.
+rocketnet_dev, can reach seam lines. The functional suite runs ./bin/test
+itself (its test_unit_case_memory row); the profiles that child writes carry
+the unit binary's signature and are counted as unit, never as production.
 
 The examples run through tools/run_examples.py's own drivers, one at a
 time, and a failing example does not stop the ones after it, so every
@@ -63,6 +65,35 @@ SEAM_MACRO = re.compile(r"\bROCKETNET_DEV\b")
 NEGATED_SEAM = re.compile(r"!\s*(defined\s*\(?\s*)?ROCKETNET_DEV\b")
 DIRECTIVE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
 SETS = ("production", "unit_only", "never")
+# Every raw profile is named <run>-<pid>-sig<binary signature>_<pool>.profraw
+# (LLVM_PROFILE_FILE's %m is a per-binary signature). The functional suite
+# execs ./bin/test itself (the test_unit_case_memory row, `test
+# --enforce-rss`), and that child inherits the functional run's profile
+# pattern; its profiles carry the unit binary's signature, so they are moved
+# to the unit set instead of being counted as production.
+PROFILE_PATTERN = "{run}-%p-sig%m.profraw"
+PROFILE_SIGNATURE = re.compile(r"-sig(\d+)_\d+\.profraw$")
+
+
+def profile_signature(path):
+    found = PROFILE_SIGNATURE.search(path.name)
+    if not found:
+        sys.exit(f"coverage_split: profile {path} carries no binary signature (%m was not expanded)")
+    return found.group(1)
+
+
+def move_unit_binary_profiles(unit_dir, production_dir):
+    """Moves every production profile written by the unit binary (its
+    signature is one the unit run wrote) into unit_dir; returns how many."""
+    unit_signatures = {profile_signature(p) for p in unit_dir.glob("*.profraw")}
+    if not unit_signatures:
+        sys.exit("coverage_split: the unit run wrote no profile, so the unit binary's own cannot be told apart")
+    moved = 0
+    for path in sorted(production_dir.glob("*.profraw")):
+        if profile_signature(path) in unit_signatures:
+            path.rename(unit_dir / ("from-" + path.name))
+            moved += 1
+    return moved
 
 
 def find_tool(name, override):
@@ -157,7 +188,9 @@ def run_examples(env, log):
                 elif len(binaries) == 2:
                     ok = examples.run_pair(base, binaries[0], binaries[1])
                 else:
-                    ok = examples.run_single(base, binaries[0])
+                    # run_single returns the completed process (or None on a
+                    # timeout); check_result judges it, as run_examples' main does
+                    ok = examples.check_result(base, examples.run_single(base, binaries[0]))
                 print(f"{'PASS' if ok is True else 'FAIL'} example_{base}", flush=True)
                 if ok is not True:
                     failed.append(f"example_{base}")
@@ -338,15 +371,18 @@ def main():
         directory.mkdir()
 
     env = dict(os.environ)
-    env["LLVM_PROFILE_FILE"] = str(raw["unit"] / "unit-%p.profraw")
+    env["LLVM_PROFILE_FILE"] = str(raw["unit"] / PROFILE_PATTERN.format(run="unit"))
     rc, seconds["unit"] = run_logged("unit suite (./bin/test)", [str(BIN / "test")], out / "unit.log", env)
     runs["unit"] = {"exit": rc, "failed": failed_cases(out / "unit.log") if rc else []}
 
-    env["LLVM_PROFILE_FILE"] = str(raw["production"] / "functional-%p.profraw")
+    env["LLVM_PROFILE_FILE"] = str(raw["production"] / PROFILE_PATTERN.format(run="functional"))
     rc, seconds["functional"] = run_logged("functional suite (./bin/functional)", [str(BIN / "functional")], out / "functional.log", env)
-    runs["functional"] = {"exit": rc, "failed": failed_cases(out / "functional.log") if rc else []}
+    moved = move_unit_binary_profiles(raw["unit"], raw["production"])
+    print(f"coverage_split: {moved} profiles the functional suite's ./bin/test child wrote moved to the unit set", flush=True)
+    runs["functional"] = {"exit": rc, "failed": failed_cases(out / "functional.log") if rc else [],
+                          "unit_binary_profiles_moved": moved}
 
-    env["LLVM_PROFILE_FILE"] = str(raw["production"] / "examples-%p.profraw")
+    env["LLVM_PROFILE_FILE"] = str(raw["production"] / PROFILE_PATTERN.format(run="examples"))
     rc, seconds["examples"], failed = run_examples(env, out / "examples.log")
     runs["examples"] = {"exit": rc, "failed": failed}
 
