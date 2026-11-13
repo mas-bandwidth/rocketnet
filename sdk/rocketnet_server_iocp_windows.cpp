@@ -801,6 +801,10 @@ struct rocketnet_server_iocp_t
     int processors[ROCKETNET_IOCP_MAX_WORKERS] = {};
     GROUP_AFFINITY pins[ROCKETNET_IOCP_MAX_WORKERS] = {};
     GROUP_AFFINITY cores[ROCKETNET_IOCP_MAX_WORKERS] = {}; // every logical processor of the pin's core
+    // what each worker found when it pinned itself
+    // (rocketnet_server_iocp_worker_placement), and a refusal's Win32 error
+    std::atomic<int> placements[ROCKETNET_IOCP_MAX_WORKERS] = {};
+    std::atomic<unsigned long> placement_errors[ROCKETNET_IOCP_MAX_WORKERS] = {};
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     uint64_t socket_generations[ROCKETNET_IOCP_MAX_WORKERS] = {};
     uint64_t port_generations[ROCKETNET_IOCP_MAX_WORKERS] = {};
@@ -1395,12 +1399,21 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
     // one worker per endpoint (rocketnet_server_iocp_t sockets)
     const int endpoint = (int) ( worker - iocp->workers );
 
-    // with several endpoints the worker runs on its socket's processor,
-    // where RSS completes its receives; a refused pin leaves it where
-    // Windows schedules it
-    if ( iocp->num_endpoints > 1 && iocp->pins[endpoint].Mask != 0 && !SetThreadGroupAffinity( GetCurrentThread(), &iocp->pins[endpoint], NULL ) )
+    // with several endpoints the worker runs where its pin says; it records
+    // what it found (rocketnet_server_iocp_worker_placement), which create
+    // waits for and logs as it is
+    if ( iocp->num_endpoints <= 1 || iocp->pins[endpoint].Mask == 0 )
     {
-        rocketnet_warn( "iocp transport: completion worker %d not pinned to processor %d (Win32 %lu)", endpoint, iocp->processors[endpoint], GetLastError() );
+        iocp->placements[endpoint].store( ROCKETNET_IOCP_PLACEMENT_NOT_ASKED, std::memory_order_release );
+    }
+    else if ( SetThreadGroupAffinity( GetCurrentThread(), &iocp->pins[endpoint], NULL ) )
+    {
+        iocp->placements[endpoint].store( ROCKETNET_IOCP_PLACEMENT_PINNED, std::memory_order_release );
+    }
+    else
+    {
+        iocp->placement_errors[endpoint].store( GetLastError(), std::memory_order_relaxed );
+        iocp->placements[endpoint].store( ROCKETNET_IOCP_PLACEMENT_REFUSED, std::memory_order_release );
     }
 
     for ( ;; )
@@ -2618,9 +2631,34 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_info( "iocp transport: %d completion workers and %d send lanes of %d on port %d, USO %s, URO %s", num_workers, iocp->num_lanes, iocp->send_queue_size, bind_address->port,
                     ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_USO ) ? "yes" : "no (WSASendTo per datagram)",
                     ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_URO ) ? "yes" : "no (WSARecvFrom per datagram)" );
+    // each worker's placement as it found it: create waits (at most a second
+    // per worker) for every answer, and says what happened
     for ( int e = 0; iocp->num_endpoints > 1 && e < iocp->num_endpoints; ++e )
     {
-        rocketnet_info( "iocp transport: worker %d on processor %d (SIO_CPU_AFFINITY), worker mask 0x%llx group %d", e, iocp->processors[e], (unsigned long long) iocp->pins[e].Mask, (int) iocp->pins[e].Group );
+        for ( int waits = 0; waits < 1000 && iocp->placements[e].load( std::memory_order_acquire ) == ROCKETNET_IOCP_PLACEMENT_PENDING; ++waits )
+        {
+            rocketnet_platform_sleep( 0.001 );
+        }
+        const int placement = iocp->placements[e].load( std::memory_order_acquire );
+        if ( placement == ROCKETNET_IOCP_PLACEMENT_PINNED )
+        {
+            rocketnet_info( "iocp transport: worker %d socket on processor %d (SIO_CPU_AFFINITY), worker pinned to mask 0x%llx in group %d", e, iocp->processors[e],
+                            (unsigned long long) iocp->pins[e].Mask, (int) iocp->pins[e].Group );
+        }
+        else if ( placement == ROCKETNET_IOCP_PLACEMENT_REFUSED )
+        {
+            rocketnet_warn( "iocp transport: worker %d socket on processor %d (SIO_CPU_AFFINITY), worker NOT pinned: SetThreadGroupAffinity to mask 0x%llx in group %d refused (Win32 %lu)",
+                            e, iocp->processors[e], (unsigned long long) iocp->pins[e].Mask, (int) iocp->pins[e].Group,
+                            iocp->placement_errors[e].load( std::memory_order_relaxed ) );
+        }
+        else if ( placement == ROCKETNET_IOCP_PLACEMENT_NOT_ASKED )
+        {
+            rocketnet_info( "iocp transport: worker %d socket on processor %d (SIO_CPU_AFFINITY), worker not pinned (not asked)", e, iocp->processors[e] );
+        }
+        else
+        {
+            rocketnet_warn( "iocp transport: worker %d socket on processor %d (SIO_CPU_AFFINITY), worker placement not reported within a second", e, iocp->processors[e] );
+        }
     }
     return iocp;
 
@@ -3302,6 +3340,28 @@ void rocketnet_server_iocp_receive_drop_totals( rocketnet_server_iocp_t * iocp, 
 int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp )
 {
     return iocp->pending.load( std::memory_order_acquire );
+}
+
+int rocketnet_server_iocp_worker_placement( rocketnet_server_iocp_t * iocp, int worker, uint64_t * mask, int * group, unsigned long * error )
+{
+    if ( !iocp || worker < 0 || worker >= iocp->num_workers || worker >= ROCKETNET_IOCP_MAX_WORKERS )
+    {
+        return ROCKETNET_IOCP_PLACEMENT_PENDING;
+    }
+    const int placement = iocp->placements[worker].load( std::memory_order_acquire );
+    if ( mask )
+    {
+        *mask = (uint64_t) iocp->pins[worker].Mask;
+    }
+    if ( group )
+    {
+        *group = (int) iocp->pins[worker].Group;
+    }
+    if ( error )
+    {
+        *error = iocp->placement_errors[worker].load( std::memory_order_relaxed );
+    }
+    return placement;
 }
 
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp )
