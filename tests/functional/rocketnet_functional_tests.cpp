@@ -6669,6 +6669,12 @@ void rocketnet_test_client_transport_io()
 // transport interoperates with a plain UDP endpoint.
 
 #include "rocketnet_server_gso.h"
+#include "rocketnet_driver.h"
+#include "rocketnet_receive_prefilter.h"
+
+// the builtin gso backend (sdk/rocketnet_driver_builtin.cpp): its
+// receive_drop_totals is read on the transports these cases drive
+extern const rocketnet_transport_backend_t rocketnet_gso_transport;
 
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -7975,6 +7981,15 @@ void rocketnet_test_server_gso_receive_overflow_counted()
     rocketnet_check( counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS] == 0 );
+
+    // the backend's receive_drop_totals reads the same site: the one
+    // datagram the full queue dropped is the server's RECEIVE_DROPPED_FULL,
+    // and nothing failed
+
+    uint64_t drops[ROCKETNET_RECEIVE_NUM_DROPS];
+    rocketnet_gso_transport.server->receive_drop_totals( gso, drops );
+    rocketnet_check( drops[ROCKETNET_RECEIVE_DROP_BANK_FULL] == 1 );
+    rocketnet_check( drops[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] == 0 );
 
     rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
@@ -12885,6 +12900,9 @@ extern void windows_server_drops_runt_and_garbage_rio_ipv6();
 extern void windows_server_counts_oversize_as_prefilter_too_large_iocp();
 extern void windows_server_counts_oversize_as_prefilter_too_large_rio();
 extern void windows_server_counts_runt_as_prefilter_too_short_rio();
+#if ROCKETNET_DEV
+extern void windows_server_rio_failed_receives_reach_the_server();
+#endif // #if ROCKETNET_DEV
 extern void windows_client_drops_oversize_and_garbage_ipv4();
 extern void windows_client_drops_oversize_and_garbage_ipv6();
 extern void windows_client_drops_oversize_and_garbage_iocp_ipv4();
@@ -15600,6 +15618,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_windows_server_counts_oversize_as_prefilter_too_large_iocp", windows_server_counts_oversize_as_prefilter_too_large_iocp, NULL },
     { "test_windows_server_counts_oversize_as_prefilter_too_large_rio", windows_server_counts_oversize_as_prefilter_too_large_rio, NULL },
     { "test_windows_server_counts_runt_as_prefilter_too_short_rio", windows_server_counts_runt_as_prefilter_too_short_rio, NULL },
+#if ROCKETNET_DEV
+    { "test_rio_transport_windows_server_failed_receives_reach_the_server", windows_server_rio_failed_receives_reach_the_server, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6, NULL },
     { "test_windows_client_drops_oversize_and_garbage_iocp_ipv4", windows_client_drops_oversize_and_garbage_iocp_ipv4, NULL },

@@ -65,7 +65,8 @@ ANY_FAMILY = re.compile(r"\b([A-Z0-9_]+_NUM_COUNTERS)\b|\benum\s+([a-z0-9_]+_cou
 KNOWN_FAMILIES = {"ROCKETNET_NUM_COUNTERS", "ROCKETNET_SERVER_XDP_NUM_COUNTERS"}
 # the public rows a platform transport moves, judged on the platform that runs it
 PUBLIC_TRANSPORT_PREFIXES = (("ROCKETNET_COUNTER_GSO_", "public-linux"), ("ROCKETNET_COUNTER_URING_", "public-linux"),
-                             ("ROCKETNET_COUNTER_IOCP_", "public-windows"), ("ROCKETNET_COUNTER_RIO_", "public-windows"))
+                             ("ROCKETNET_COUNTER_IOCP_", "public-windows"), ("ROCKETNET_COUNTER_RIO_", "public-windows"),
+                             ("ROCKETNET_COUNTER_RECEIVE_DROPPED_RETIRED", "public-macos"))
 CHECK_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 DECLARATION_END = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_*&")
 CHECK_WORD = re.compile(r"(?:^|_)(?:check|assert|expect|require|verify)(?:_|$)", re.I)
@@ -84,9 +85,18 @@ OWED = {
     "ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
     "ROCKETNET_COUNTER_IOCP_URO_BATCHES": (("windows",), "a receive completion split into more than one segment; checked only == 0"),
     "ROCKETNET_COUNTER_IOCP_USO_FALLBACKS": (("windows",), "a USO send refused and resent frame by frame; checked only == 0"),
-    "ROCKETNET_COUNTER_FILL_PHASE_OVERLAP": (ALL, "no code path yet: the fill-phase wiring that counts it (v1.2/wide-fill) drops this row"),
-    "ROCKETNET_COUNTER_FILL_TWO_FILLERS": (ALL, "no code path yet: the fill-phase wiring that counts it (v1.2/wide-fill) drops this row"),
-    "ROCKETNET_COUNTER_SEND_RESERVE_REFUSED_TAILS_HELD": (ALL, "no code path yet: the chunked reserve claim that counts it (v1.2/wide-fill, F8) drops this row"),
+    "ROCKETNET_COUNTER_RECEIVE_DROPPED_RETIRED": (("macos",), "the macOS server transport counts it at a retired socket's close on its own branch, not yet merged"),
+}
+
+# The rows a builtin transport's receive_drop_totals (sdk/rocketnet_driver_builtin.cpp)
+# does not feed yet, though that transport drops for the reason: (counter,
+# transport) -> the gap. The rows are observed (a builtin that feeds them and
+# the server's fold are checked by value), so they are not OWED above; this
+# list names which transport's contribution is missing, is printed with every
+# verdict, and only shrinks as each transport counts at its site.
+OWED_TRANSPORT_FEEDS = {
+    ("ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL", "iocp"): "IOCP_RECEIVE_DROPPED counts a full bank together with size and failed receives; no tally of its own",
+    ("ROCKETNET_COUNTER_RECEIVE_FAILED", "iocp"): "IOCP_RECEIVE_DROPPED counts a failed or unreadable receive together with size and full-bank drops; no tally of its own",
 }
 
 
@@ -508,7 +518,7 @@ def observed(root, counters, tests, dev):
 
 # the platform whose build runs a transport's counters; a public row is judged on every platform
 FAMILY_PLATFORMS = {
-    "rocketnet_wire.h": ("linux",), "public-linux": ("linux",), "public-windows": ("windows",),
+    "rocketnet_wire.h": ("linux",), "public-linux": ("linux",), "public-windows": ("windows",), "public-macos": ("macos",),
     "public": ("linux", "macos", "windows"),
 }
 
@@ -677,6 +687,8 @@ def main():
         return 1
     print("ok check_counter_observed: %d of %d counters judged on %s are observed by a test (%d test sources from the build); "
           "the rest owed, each a named gap" % (len(seen), len(counters), args.platform, len(tests)))
+    for (name, transport), gap in sorted(OWED_TRANSPORT_FEEDS.items()):
+        print("owed feed: %s from the %s transport: %s" % (name, transport, gap))
     return 0
 
 

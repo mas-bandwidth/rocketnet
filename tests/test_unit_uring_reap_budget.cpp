@@ -33,6 +33,13 @@
 
 #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 
+#include "../sdk/rocketnet_driver.h"
+#include "../sdk/rocketnet_receive_prefilter.h"
+
+// the builtin io_uring backend (sdk/rocketnet_driver_builtin.cpp): its
+// receive_drop_totals is read on the transports these cases drive
+extern const rocketnet_transport_backend_t rocketnet_io_uring_transport;
+
 #define URING_FAKE_CAPACITY             ( 1 << 18 )
 
 // the fake transport is sized for the default configuration's clients: one
@@ -471,6 +478,15 @@ static void test_io_uring_transport_receive_without_a_buffer_is_counted()
     check( !fake->guard_tripped );
     check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
     check( uring_counter( uring, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
+
+    // the backend's receive_drop_totals reads the same site: each completion
+    // naming no buffer is a failed receive (the server's RECEIVE_FAILED), and
+    // nothing found the bank full
+
+    uint64_t drops[ROCKETNET_RECEIVE_NUM_DROPS];
+    rocketnet_io_uring_transport.server->receive_drop_totals( uring, drops );
+    check( drops[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] == 2 );
+    check( drops[ROCKETNET_RECEIVE_DROP_BANK_FULL] == 0 );
 
     uring_fake_push_receive( fake, 0 );
     rocketnet_server_uring_receive_packets( uring );

@@ -184,8 +184,10 @@ struct rocketnet_server_transport_io_operations_t
     // read to the counters rocketnet_receive_drop_counters names, so a
     // datagram a worker refused reads exactly as main would have counted it,
     // and a datagram with no room in the receive bank reads
-    // RECEIVE_DROPPED_FULL. Every datagram the transport reads is either
-    // handed to receive or counted here.
+    // RECEIVE_DROPPED_FULL. The builtins read these from the rows their own
+    // receive already counts (sdk/rocketnet_driver_builtin.cpp); the
+    // reasons a builtin does not feed yet are named in
+    // tools/check_counter_observed.py (OWED_TRANSPORT_FEEDS).
     void ( *receive_drop_totals )( void * transport, uint64_t * values );
 
     // optional, all three or none: a staged transport whose staging is per

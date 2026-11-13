@@ -3,6 +3,7 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_receive_prefilter.h"
 #include <new>
 #include <atomic>
 #include <errno.h>
@@ -2318,6 +2319,21 @@ static uint64_t gso_send_failures( void * transport )
     return counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED];
 }
 
+static void gso_receive_drop_totals( void * transport, uint64_t * values )
+{
+    // read from the gso rows the receive worker already counts, at the same
+    // sites, so each pair agrees: a full receive queue (BANK_FULL is
+    // GSO_RECEIVE_DROPPED_OVERFLOW) and a source the boundary cannot read
+    // (RECEIVE_FAILED is GSO_RECEIVE_DROPPED_SOURCE). A failed recvmmsg call
+    // (GSO_RECEIVE_ERRORS) names no datagram and is not one of them.
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, counters );
+    memset( values, 0, ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) );
+    values[ROCKETNET_RECEIVE_DROP_BANK_FULL] = counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_OVERFLOW];
+    values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] = counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE];
+}
+
 static void gso_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
 {
     rocketnet_server_gso_receive_drops( (rocketnet_server_gso_t *) transport, too_short, too_large );
@@ -2329,7 +2345,7 @@ static const rocketnet_server_transport_io_operations_t gso_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, gso_begin_shutdown, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, gso_begin_shutdown, gso_receive_drop_totals, NULL, NULL, NULL
 };
 
 // the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
@@ -2368,6 +2384,25 @@ static uint64_t io_uring_send_failures( void * transport )
     return counters[ROCKETNET_COUNTER_URING_SEND_DROPPED];
 }
 
+static void io_uring_receive_drop_totals( void * transport, uint64_t * values )
+{
+    // read from the io_uring rows the reap already counts, at the same sites,
+    // so each pair agrees: a full fill bank or segments past one receive's
+    // staging (BANK_FULL is URING_RECEIVE_DROPPED_OVERFLOW), and a completed
+    // receive it cannot read (RECEIVE_FAILED is URING_RECEIVE_DROPPED_SOURCE,
+    // a truncated or unreadable source, plus URING_RECEIVE_DROPPED_NO_BUFFER,
+    // a completion naming no buffer of the ring). URING_RECEIVE_NO_BUFFERS is
+    // the kernel's ENOBUFS, a datagram the transport never read, and is not
+    // one of them.
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_uring_counters( (rocketnet_server_uring_t *) transport, counters );
+    memset( values, 0, ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) );
+    values[ROCKETNET_RECEIVE_DROP_BANK_FULL] = counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW];
+    values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] =
+        counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE] + counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER];
+}
+
 static void io_uring_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
 {
     rocketnet_server_uring_receive_drops( (rocketnet_server_uring_t *) transport, too_short, too_large );
@@ -2377,7 +2412,7 @@ static const rocketnet_server_transport_io_operations_t io_uring_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL, io_uring_receive_drop_totals, NULL, NULL, NULL
 };
 
 extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_uring_operations, NULL };
@@ -2597,6 +2632,20 @@ static uint64_t rio_send_failures( void * transport )
     return counters[ROCKETNET_COUNTER_RIO_SEND_FAILED];
 }
 
+static void rio_receive_drop_totals( void * transport, uint64_t * values )
+{
+    // read from the rio rows the I/O worker already counts, at the same sites,
+    // so each pair agrees: a datagram past the fill bank (BANK_FULL is
+    // RIO_RECEIVE_DROPPED_OVERFLOW) and a receive completed with an error
+    // status or an unreadable source (RECEIVE_FAILED is RIO_RECEIVE_FAILED).
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, counters );
+    memset( values, 0, ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) );
+    values[ROCKETNET_RECEIVE_DROP_BANK_FULL] = counters[ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_OVERFLOW];
+    values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] = counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED];
+}
+
 static void rio_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
 {
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
@@ -2609,7 +2658,7 @@ static const rocketnet_server_transport_io_operations_t rio_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     rio_create, rio_destroy, rio_stop, rio_stopped,
     rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle, NULL, rio_receive_drop_totals, NULL, NULL, NULL
 };
 
 extern const rocketnet_transport_backend_t rocketnet_rio_transport = { &rio_operations, NULL };

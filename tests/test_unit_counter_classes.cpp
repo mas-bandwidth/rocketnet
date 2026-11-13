@@ -287,11 +287,6 @@ static const char * const counters_appended_names[] = {
     "RECEIVE_DROPPED_FULL",
     "SEND_RESERVE_REFUSED",
     "RECEIVE_FAILED",
-    "FILL_PHASE_OVERLAP",
-    "FILL_TWO_FILLERS",
-    "RECEIVE_DROPPED_STOPPED",
-    "SEND_RESERVE_REFUSED_TAILS_HELD",
-    "RECEIVE_DROPPED_UNKNOWN_SHARE",
     "GSO_PACKETS_SENT",
     "GSO_PACKETS_RECEIVED",
     "GSO_SEND_SYSCALLS",
@@ -344,6 +339,7 @@ static const char * const counters_appended_names[] = {
     "RIO_RECEIVE_DROPPED_OVERFLOW",
     "RIO_RECEIVE_REPOST_FAILED",
     "RIO_COMMITS",
+    "RECEIVE_DROPPED_RETIRED",
 };
 #endif // #if ROCKETNET_DEV
 
@@ -468,8 +464,6 @@ static void test_counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_RESERVE_REFUSED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_RECEIVE_FAILED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
-    check( rocketnet_counter_class( ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
-    check( rocketnet_counter_class( ROCKETNET_COUNTER_RECEIVE_DROPPED_UNKNOWN_SHARE ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_RESENT ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
@@ -492,9 +486,6 @@ static void test_counters_every_counter_has_a_class()
         int counter_class;
     };
     static const counter_class_by_name_t counter_classes_by_name[] = {
-        { "FILL_PHASE_OVERLAP", ROCKETNET_COUNTER_CLASS_REFUSAL },
-        { "FILL_TWO_FILLERS", ROCKETNET_COUNTER_CLASS_REFUSAL },
-        { "SEND_RESERVE_REFUSED_TAILS_HELD", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "GSO_PACKETS_SENT", ROCKETNET_COUNTER_CLASS_EXPECTED },
         { "GSO_PACKETS_RECEIVED", ROCKETNET_COUNTER_CLASS_EXPECTED },
         { "GSO_SEND_SYSCALLS", ROCKETNET_COUNTER_CLASS_EXPECTED },
@@ -547,6 +538,7 @@ static void test_counters_every_counter_has_a_class()
         { "RIO_RECEIVE_DROPPED_OVERFLOW", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RIO_RECEIVE_REPOST_FAILED", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RIO_COMMITS", ROCKETNET_COUNTER_CLASS_EXPECTED },
+        { "RECEIVE_DROPPED_RETIRED", ROCKETNET_COUNTER_CLASS_REFUSAL },
     };
     for ( size_t row = 0; row < sizeof( counter_classes_by_name ) / sizeof( counter_classes_by_name[0] ); ++row )
     {
