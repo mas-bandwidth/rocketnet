@@ -556,6 +556,12 @@ def judge_release(api, repo, version, ref, out, stage="pre", gates=None, now=Non
     if not VERSION.match(version):
         say(False, f"version {version!r} is not vMAJOR.MINOR.PATCH[-PRERELEASE]")
         return False, None, None
+    _, minor, patch = version_key(version)[:3]
+    # ROCKETNET_VERSION is major * 10000 + minor * 100 + patch (sdk/rocketnet.h):
+    # one-to-one only while minor and patch are below 100 (v1.0.100 and v1.1.0
+    # would both be 10100), so such a version is refused, never released
+    say(minor < 100 and patch < 100, f"{version}'s minor and patch are below 100, so ROCKETNET_VERSION "
+                                     f"(major * 10000 + minor * 100 + patch) names it alone")
     try:
         sha = resolve(api, repo, ref)
     except NotFound:
