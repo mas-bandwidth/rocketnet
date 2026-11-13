@@ -15,6 +15,7 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
+#include "rocketnet_driver.h"
 #include "rocketnet_client_gso.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_platform.h"
