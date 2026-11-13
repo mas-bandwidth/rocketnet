@@ -87,7 +87,6 @@ NAME_LIST_PREFIX = "tests/source_audit_"
 ALL = ("linux", "macos", "windows")
 OWED = {
     "ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
-    "ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
     "ROCKETNET_COUNTER_IOCP_URO_BATCHES": (("windows",), "a receive completion split into more than one segment; checked only == 0"),
     "ROCKETNET_COUNTER_IOCP_USO_FALLBACKS": (("windows",), "a USO send refused and resent frame by frame; checked only == 0"),
 }
