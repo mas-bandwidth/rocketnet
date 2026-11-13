@@ -107,7 +107,17 @@ LAYERS = {
     },
     "xdp-replay-marks": {
         "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
-        "untraced": {},
+        "untraced": {
+            "Commit": "the start of reset_keeping, inside the one call the walk makes; the walk takes ResetKeeping, "
+                      "the call whole",
+            "CompactForgetStep": "one iteration of reset_keeping's forget loop, inside the call; ResetKeeping runs it "
+                                 "with the same arithmetic",
+            "CompactMarkStep": "one iteration of reset_keeping's mark loop, inside the call; ResetKeeping runs it "
+                               "with the same arithmetic",
+        },
+        "reach": ["ForgetsFull", "MarksFull", "SomeRefused", "ForgetsKept", "MarksKept"],
+        # an update is up to five forgets, five marks and a commit
+        "steps": 400,
     },
     "xdp-receive-ring": {
         "modules": ["RNXdpReceiveRing.tla", "TraceRNXdpReceiveRing.tla"],
