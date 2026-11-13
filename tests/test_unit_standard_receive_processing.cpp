@@ -709,8 +709,17 @@ static void standard_receive_processing_counters()
     }
 
     // the client has no opinion about the server's slot count: a keep-alive
-    // naming a count above this build's ROCKETNET_MAX_CLIENTS, or the largest
-    // buildable count, is accepted and connects the client to slot x of y
+    // naming a count above this build's ROCKETNET_MAX_CLIENTS, up to and
+    // including ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT (the largest buildable
+    // count), is accepted and connects the client to slot x of y.
+    //
+    // A count one above this build's ROCKETNET_MAX_CLIENTS is still a slot
+    // count some server can be built with only while this build is below the
+    // ceiling: every build except one at the ceiling (ROCKETNET_MAX_CLIENTS
+    // 32768) runs that case. At the ceiling, ROCKETNET_MAX_CLIENTS + 1 is the
+    // ceiling + 1, which the block below refuses. The exact-ceiling count
+    // (32768 accepted) and the ceiling + 1 refusal run in every build.
+#if ROCKETNET_MAX_CLIENTS < ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
@@ -725,6 +734,7 @@ static void standard_receive_processing_counters()
 
         standard_client_teardown( &client );
     }
+#endif // #if ROCKETNET_MAX_CLIENTS < ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
