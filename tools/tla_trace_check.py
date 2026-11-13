@@ -260,12 +260,12 @@ SHARDS = [
     ["msgx:1"],
     ["msgx:2", "xdp-replay"],
     ["msgx:3", "gso"],
-    ["msgx:4", "msgxsendruns"],
+    ["msgx:4", "msgxsendruns", "gather"],
     ["xdp-reply-macs:1", "example", "queue-worker"],
-    ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring"],
-    ["xdp-reply-macs:4", "xdp-gateway-refresh", "xdp-replay-marks"],
-    ["ackapply", "bank", "fillphase", "gather", "receive"],
-    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish"],
+    ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
+    ["xdp-reply-macs:4", "xdp-gateway-refresh"],
+    ["ackapply", "bank", "receive"],
+    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks"],
 ]
 
 STEPS = 400
