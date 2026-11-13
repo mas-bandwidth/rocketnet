@@ -70,7 +70,7 @@ transport_io_uring="io_uring"
 transport_rio="rio"
 
 # the ladder's separator, and the one name that stands alone
-transport_ladder="xdp,gso,portable"
+transport_order="xdp,gso,portable"
 transport_auto="auto"
 
 # the digits and the sign an integer value is written with

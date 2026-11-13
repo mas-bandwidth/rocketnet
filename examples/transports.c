@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Transports: auto, a pin, and a list. Three servers are created in turn:
-    one on the platform's automatic ladder, one pinned to one transport, and
+    one on the platform's automatic transport order, one pinned to one transport, and
     one given a candidate list. Each prints the transport the public query
     reports, the library's log lines say why each candidate was granted or
     refused, and a client exchange over 127.0.0.1 proves it. A fourth pins a
@@ -155,7 +155,7 @@ int main( void )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-    // auto: the platform's ladder, and the first transport that starts wins
+    // auto: the platform's transport order, and the first transport that starts wins
 
     int ok = create_and_prove( "auto", NULL );
 

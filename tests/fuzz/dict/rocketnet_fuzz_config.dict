@@ -31,7 +31,7 @@ b64_pad2="=="
 # the published test filter value ROCKETNET_TEST_FILTER_VALUE, base64
 b64_test_filter="t1kBAA=="
 
-# the transport ladder: comma-separated names, "auto" (sdk/rocketnet_drivers.inc)
+# the transport list: comma-separated names, "auto" (sdk/rocketnet_drivers.inc)
 ladder_sep=","
 ladder_auto="auto"
 ladder_portable="portable"

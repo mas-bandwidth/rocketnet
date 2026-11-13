@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.26"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.29"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        26
+    #define ROCKETNET_VERSION_PATCH                        29
 
 #else // !ROCKETNET_DEV
 
@@ -327,12 +327,16 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED = -17,
 
-    /// Every transport in the candidate list refused to start, including any
-    /// over the ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
-    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget. Set the log level to
-    /// ROCKETNET_LOG_LEVEL_WARN to see why each one refused.
+    /// No transport found: every transport this server or client was allowed
+    /// to try failed to start, including any over the
+    /// ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
+    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget, and they failed for
+    /// different reasons. When they all failed for one reason, the status
+    /// names it instead (TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_NOT_BUILT,
+    /// TRANSPORT_PORT_ZERO_UNSUPPORTED). Set the log level to
+    /// ROCKETNET_LOG_LEVEL_WARN to read why each one failed.
 
-    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED = -18,
+    ROCKETNET_STATUS_NO_TRANSPORT_FOUND = -18,
 
     /// An allocation the operation needs failed. Nothing it allocated stays
     /// live. Free memory or lower the config's sizes, then retry.
@@ -346,7 +350,7 @@ enum rocketnet_status_t
 
     /// Connect refused: the platform refused a thread. Retry after freeing
     /// system resources. Server start reports a transport that cannot start
-    /// its thread as ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED.
+    /// its thread as ROCKETNET_STATUS_NO_TRANSPORT_FOUND.
 
     ROCKETNET_STATUS_THREAD_CREATE_FAILED = -21,
 
@@ -422,7 +426,14 @@ enum rocketnet_status_t
     /// endpoint is still registered with it. Destroy every server and client
     /// that uses the hub, then destroy the hub.
 
-    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34
+    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34,
+
+    /// Start refused: the platform refused the transport's bind. Another
+    /// socket holds the address and port, or the address is not one this host
+    /// can bind. Free the port or choose another, or set a local address of
+    /// this host.
+
+    ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED = -35
 };
 
 /// The process-wide log levels, least to most verbose. A log callback may
@@ -1787,6 +1798,51 @@ struct rocketnet_server_config_t
     /// Default is 0.
 
     uint64_t token_epoch_unix_seconds;
+
+    /// ROCKETNET_SERVER_BIND_IPV4_ADDRESS is the local IPv4 address the
+    /// server binds, as "a.b.c.d" with no port: an address of one of this
+    /// machine's interfaces. The ipv4_address passed to rocketnet_server_create
+    /// is the address clients connect to, the one connect tokens name; this is
+    /// the address the server binds. Behind NAT they differ: an EC2
+    /// instance's public address reaches it at its private address, which is
+    /// the one to bind. The server binds it on the served port, so a datagram
+    /// to any other address of the machine does not reach the server. NULL or
+    /// "", the default, binds the IPv4 wildcard (0.0.0.0) on the served port,
+    /// which receives on every address.
+    ///
+    /// rocketnet_server_start refuses with ROCKETNET_STATUS_INVALID_ADDRESS,
+    /// one log line each, an address that does not parse, is not IPv4,
+    /// carries a port (":0" too), or is multicast or the broadcast address; a
+    /// bind address for a family the server does not serve; and any bind
+    /// address on a server that serves both families, whose one dual-stack
+    /// socket binds the IPv6 wildcard: to bind a specific address, serve one
+    /// family. The environment form is ambient, set once for a host or a test
+    /// run, so it applies only to a server that serves IPv4 alone: an
+    /// IPv6-only server and a server of both families ignore it, with one
+    /// log line, where they refuse the field. The xdp transport binds no
+    /// socket and does not read it: it serves the interface that holds the
+    /// served address, but a value that would be refused above still refuses
+    /// its start. rocketnet_server_create copies the string, so the caller's
+    /// pointer is not kept; a string of 256 characters or more is refused at
+    /// create with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. If the platform
+    /// refuses the bind itself (another socket holds the address and port, or
+    /// the address is not one of this machine's), start returns
+    /// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED.
+
+    const char * bind_ipv4_address;
+
+    /// ROCKETNET_SERVER_BIND_IPV6_ADDRESS is the local IPv6 address the
+    /// server binds, as "2001:db8::5" or "[2001:db8::5]" with no port. As
+    /// bind_ipv4_address, for the ipv6_address passed to create: NULL or "",
+    /// the default, binds the IPv6 wildcard ([::]) on the served port, and
+    /// start refuses the same cases, with an IPv6 multicast address
+    /// (ff00::/8), an IPv4-mapped address (::ffff:a.b.c.d: set
+    /// bind_ipv4_address instead) and a link-local address (fe80::/10, whose
+    /// bind needs an interface scope the field cannot carry) among them. Its
+    /// environment form applies only to a server that serves IPv6 alone, as
+    /// above.
+
+    const char * bind_ipv6_address;
 };
 
 /// Messages
@@ -2386,7 +2442,7 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// ROCKETNET_STATUS_INVALID_CONNECT_TOKEN, ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED,
 /// ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO,
 /// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION for a development token in a
-/// production build, ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no
+/// production build, ROCKETNET_STATUS_NO_TRANSPORT_FOUND when no
 /// transport can open,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY, ROCKETNET_STATUS_MUTEX_CREATE_FAILED or
 /// ROCKETNET_STATUS_THREAD_CREATE_FAILED.
@@ -2860,7 +2916,14 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_NOT_BUILT,
-/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no transport can bind,
+/// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED when the platform refused the
+/// bind of at least one transport and no other transport tried, except the
+/// xdp transport, failed for another reason (a server whose port another
+/// socket holds reads this where it read
+/// ROCKETNET_STATUS_NO_TRANSPORT_FOUND, whether or not it sets
+/// bind_ipv4_address or bind_ipv6_address),
+/// ROCKETNET_STATUS_NO_TRANSPORT_FOUND when no transport can start for
+/// other reasons,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY or ROCKETNET_STATUS_MUTEX_CREATE_FAILED.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );

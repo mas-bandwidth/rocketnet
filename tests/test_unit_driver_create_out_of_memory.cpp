@@ -5,7 +5,7 @@
 
 // A transport create that fails for want of memory reports OUT_OF_MEMORY
 // (rocketnet_server_transport_io_config_t.status, sdk/rocketnet_driver.h), and the
-// transport ladder ends there instead of falling to the next candidate. A
+// transport list ends there instead of falling to the next candidate. A
 // fault-injecting allocator fails each allocation in turn:
 //
 //   * test_transport_open_reports_out_of_memory: a transport open over an in-memory
@@ -383,7 +383,7 @@ static void test_transport_create_server_ladder_stops_on_out_of_memory()
     transport_oom_begin( &state );
 
     // the pin: a transport allocation that fails ends the create with
-    // OUT_OF_MEMORY, never TRANSPORT_LADDER_EXHAUSTED
+    // OUT_OF_MEMORY, never NO_TRANSPORT_FOUND
 
     const int allocations = transport_oom_walk_server( &state, "loopback" );
     check( allocations > 0 );

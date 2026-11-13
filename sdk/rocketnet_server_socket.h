@@ -242,7 +242,7 @@ inline uint64_t rocketnet_xdp_socket_dropped( uint64_t rx_dropped, uint64_t rx_r
 // condition list both this check and that script derive from. Read-only by
 // contract: it may create and close probe descriptors (an AF_XDP socket
 // never bound, a BPF program never attached) but never changes machine
-// state. create() runs it first and refuses without it; the transport ladder
+// state. create() runs it first and refuses without it; the transport list
 // and the test suite call it directly so a refusal is named without ever
 // touching the committing path.
 

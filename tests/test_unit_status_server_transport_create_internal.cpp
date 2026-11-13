@@ -10,7 +10,7 @@
 // allocator failing at each allocation in turn.
 //
 // A non-port-zero backend-open refusal still needs a live socket. This unit
-// test reaches TRANSPORT_LADDER_EXHAUSTED through the preallocation memory
+// test reaches NO_TRANSPORT_FOUND through the preallocation memory
 // budget instead; the port-zero refusal (S12) also occurs before open.
 
 #include "unit_shutdown.h"
