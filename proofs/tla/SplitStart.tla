@@ -2,10 +2,12 @@
 (***************************************************************************)
 (* The load_split start barrier (load_split.c, tools/load_split_barrier.h) *)
 (* with discrete time.  Shards connect at any time; each shard stands for  *)
-(* all of its clients.  The server waits ConnectWindow from its first      *)
-(* connection for every shard, then sends ARM and waits PhaseWindow for    *)
-(* every ACK, sends GO and waits PhaseWindow for every GO ACK, then sends  *)
-(* RUN.  Every start message is reliable ordered: a loss is the SDK's      *)
+(* all of its clients.  Time 0 is the server's split_ready line.  The      *)
+(* server waits ConnectWindow from its first connection for every shard,   *)
+(* and never past ReadyLease from time 0 (the launcher's 60 s readiness    *)
+(* lease, load_split.c ready_time), then sends ARM and waits PhaseWindow   *)
+(* for every ACK, sends GO and waits PhaseWindow for every GO ACK, then    *)
+(* sends RUN.  Every start message is reliable ordered: a loss is the SDK's *)
 (* resend, so each message arrives 1..Delay ticks after it is sent, and   *)
 (* Delay <= RunTimeout, the reliable message timeout after which the SDK   *)
 (* gives up on a connection.  A server that fails ends every connection;  *)
@@ -20,13 +22,24 @@
 (* ServerIsTheAuthority: a shard gives up on its own clock only after the  *)
 (* server has failed the start.  BoundedWait: no shard waits past its      *)
 (* deadline.  RunOnlyAfterGo: a running shard was released by the server.  *)
+(*                                                                         *)
+(* Limit: a shard enters the model at Connect, when all of its clients     *)
+(* are connected, and Connect takes no time.  Before that the shard runs   *)
+(* its own connect wait, LOAD_CONNECT_DEADLINE_S from its connect_start    *)
+(* (load_split.c), and gives up on its own clock when it ends with a       *)
+(* client still unconnected, whatever the server has decided.  That wait   *)
+(* is not modelled, so ServerIsTheAuthority, BoundedWait and the shard     *)
+(* deadline hold from each shard's start wait on, not for its connect      *)
+(* phase.                                                                  *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
-CONSTANTS Shards, ConnectWindow, PhaseWindow, RunTimeout, Delay, MaxTime, Rule
+CONSTANTS Shards, ConnectWindow, PhaseWindow, RunTimeout, Delay, MaxTime, Rule,
+          ReadyLease
 
 ASSUME Delay >= 1 /\ Delay <= RunTimeout
 ASSUME Rule \in {"one", "per_phase", "no_run"}
+ASSUME ReadyLease >= ConnectWindow
 
 Kinds == {"arm", "ack", "go", "go_ack", "run", "end"}
 None == -1
@@ -114,8 +127,13 @@ ServerRun ==
     /\ SendAll("run")
     /\ UNCHANGED <<now, firstConnect, connectedAt, phaseStart, shard, step, deadline, reason, acked, goAcked>>
 
+\* The population wait ends at the readiness lease or ConnectWindow after
+\* the first connection, whichever comes first (load_split.c:
+\* now - ready_time >= 60.0 || now - first_connected >= LOAD_CONNECT_DEADLINE_S).
 ServerExpired ==
-    \/ server = "connect" /\ firstConnect # None /\ ~AllConnected /\ now - firstConnect >= ConnectWindow
+    \/ /\ server = "connect" /\ ~AllConnected
+       /\ \/ now >= ReadyLease
+          \/ firstConnect # None /\ now - firstConnect >= ConnectWindow
     \/ server = "arm" /\ ~(\A s \in Shards : acked[s]) /\ now - phaseStart >= PhaseWindow
     \/ server = "go" /\ ~(\A s \in Shards : goAcked[s]) /\ now - phaseStart >= PhaseWindow
 
@@ -234,6 +252,13 @@ BoundedWait ==
 
 RunOnlyAfterGo ==
     \A s \in Shards : shard[s] = "running" => server = "released"
+
+\* Reversed witness: the population wait fails only ConnectWindow after a
+\* first connection.  The readiness lease ends it earlier when no shard
+\* connects in time, so MCSplitStartReadyLease.cfg must fail it.
+PopulationWindowDecides ==
+    (server = "failed" /\ phaseStart = None) =>
+        (firstConnect # None /\ now - firstConnect >= ConnectWindow)
 
 \* Reversed witness: a start does complete for every shard.
 NotAllRunning ==
