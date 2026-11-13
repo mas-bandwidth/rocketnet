@@ -65,6 +65,7 @@ committed in one walk at the end of the task.
 | `--space-split bottom\|top` | Where the network task is split off: after the world update (space's order, the default) or before it, so that it runs beside the world update. |
 | `--load peak\|average\|custom` | Space game's real load: 15 (peak) or 8 (average) unreliable 1200-byte messages per client per tick, written by the game threads, one small reliable message per client every 3 seconds, no large messages. Under `--frame-shape space` the default is peak; `custom` keeps `--base`, `--burst` and the rest. |
 | `--input-bytes B` | The message each player sends each tick (256 by default, about 100 to 200 kbps a player). |
+| `--input-stamp PORT` | Both roles. Each input carries its send time on the server's clock (the clients measure the offset against a UDP echo the server runs on PORT, least round trip of 64 probes every 2 s). The server prints `harden_delay` each second: stamped inputs, how many were late (not returned by the first receive call to begin after their send), and their wait from send to that call in updates (mean, p50, p90, p99, max); `harden_delay_total` sums the seconds in `--delay-window FROM,TO` (default 25,55). |
 
 With the space shape each second also prints three lines. `harden_frame:` leads with what rocketnet takes from the
 main thread (`main_rn_ms` p99 and max), then the join, the task (its wall time and the core time it takes from the
