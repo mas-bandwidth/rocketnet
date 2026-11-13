@@ -84,7 +84,7 @@ id are one filler to the check.
 | `MCRNFillPhaseBrokenNoReset.cfg` | `NoFalseAlarm` fails | `main_end` leaves the epoch, so the next phase's filler is refused |
 | `MCRNFillPhaseBrokenNoEpochLook.cfg` | `OneFiller` fails | the look reads `main_calls` only |
 | `MCRNFillPhaseBrokenNoRestore.cfg` | `NoFalseAlarm` fails | a refused look leaves its claim |
-| `MCRNFillPhaseLatch.cfg` | pass | none, with the check not armed at create and armed by the game's first call that names a client |
+| `MCRNFillPhaseLatch.cfg` | pass | none, with the check not armed at create and armed by the game's first finish_client_message, abort_client_message or update_receive |
 | `MCRNFillPhaseBrokenArmedAtCreate.cfg` | `NoCheckBeforeOptIn` fails | the check is armed from create: the calls of a game that names no client enter it |
 | `MCRNFillPhaseTakes.cfg` | pass | none, with takes (`update_client`) beside one fill call per filler, from not armed |
 | `MCRNFillPhaseBrokenNoWindow.cfg` | `WindowShut` fails | a fill call's look does not read the window |
@@ -163,10 +163,11 @@ nesting depths in thread-local storage, a scan of every client's word in
    design's refused look stored its own claim, out, over the word it had
    replaced: a stale call erased the current phase's claim, and a second
    filler then passed. It was fixed first by refusing a claim of a later
-   epoch. The design here restores the owner and the word instead, which
-   covers every refused look, and the decide refuses only a claim of the
-   caller's own epoch (a stale call that claims over a newer one holds the
-   lock until its look refuses it and puts both back).
+   epoch. The design here restores the word instead, which covers every
+   refused look, and the decide refuses only a claim of the caller's own
+   epoch (a stale call that claims over a newer one holds the lock until its
+   look refuses it and puts the word back; it has stored no owner, which only
+   a call the look lets in stores).
 3. **The ghost counts a refused second filler.** A run failed
    `NoFalseAlarm` with no defect in the code: the ghost recorded a second
    filler only when its claim landed. The ghost is now per refusal
@@ -183,8 +184,11 @@ The design here:
    owner: the owner is stored only by a call the look lets in).
 
 The check has a latch (`armed`; `rocketnet_fill_phase_arm`): the server transport creates
-it not armed and the server arms it, for good, at the game's first call that names a
-client or its first `update_receive` (`Arm`, `ArmedStays`), and arms each
+it not armed and the server arms it, for good, at the game's first
+`rocketnet_server_finish_client_message`, `rocketnet_server_abort_client_message`
+or `rocketnet_server_update_receive` (`Arm`, `ArmedStays`; the calls
+`rocketnet.h` names: `rocketnet_server_start_message` names a client but does
+not arm it), and arms each
 later transport at the start that creates it, so a stop and a start keep it
 armed (`test_wide_fill_check_armed_across_restart`). Not armed, a call site's scope does nothing (one
 load and a branch): the whole call is `FillSkip` or `MainSkip`, which touch no
