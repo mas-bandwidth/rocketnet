@@ -17,6 +17,7 @@
 #if defined( __linux__ ) && ROCKETNET_DEV
 
 #include <errno.h>
+#include <sched.h>
 #include <string.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -89,7 +90,9 @@ static long gso_send_queues_rss_bound_mb()
 
 SUITE_CASE_RSS_BOUND( test_server_gso_send_queues, gso_send_queues_rss_bound_mb );
 
-// a refused worker pin is the public row GSO_PIN_REFUSALS, by value
+// a refused worker pin is the public row GSO_PIN_REFUSALS, by value. The seam
+// records the refusal only: the thread that calls it (this unit runner's) keeps
+// the affinity it had, read before and after (a read, no change is made here)
 static void test_server_gso_pin_refusal_is_counted()
 {
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
@@ -97,10 +100,18 @@ static void test_server_gso_pin_refusal_is_counted()
     uint64_t counters[ROCKETNET_NUM_COUNTERS] = {};
     rocketnet_server_gso_counters( gso, counters );
     check( counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 0 );
+    cpu_set_t before;
+    cpu_set_t after;
+    CPU_ZERO( &before );
+    CPU_ZERO( &after );
+    check( sched_getaffinity( 0, sizeof( before ), &before ) == 0 );
     rocketnet_server_gso_test_refused_pin( gso );
+    check( sched_getaffinity( 0, sizeof( after ), &after ) == 0 );
+    check( CPU_EQUAL( &before, &after ) );
     rocketnet_server_gso_counters( gso, counters );
-    check( counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] >= 1 );
-    check( rocketnet_server_gso_pin_refusals( gso ) >= 1 && counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == (uint64_t) rocketnet_server_gso_pin_refusals( gso ) );
+    check( counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 1 );
+    check( rocketnet_server_gso_pin_refusals( gso ) == 1 );
+    check( rocketnet_server_gso_worker_cpu( gso, 0 ) == ROCKETNET_GSO_PIN_NONE );
     rocketnet_server_gso_test_close( gso );
 }
 
