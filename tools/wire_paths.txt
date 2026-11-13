@@ -116,8 +116,18 @@ sdk/rocketnet_test_seams.h	test and development seams
 sdk/rocketnet_test_vectors.h	test vectors: hold expected bytes, define none
 sdk/rocketnet_tests.cpp	unit tests
 sdk/rocketnet_token_tables.cpp	server token tables
+sdk/rocketnet_socket_buffer.cpp	the socket buffer size request, its step and its log line, shared by the gso and io_uring transports; sets socket options, no packet byte
+sdk/rocketnet_socket_buffer.h	declarations for socket_buffer.cpp; writes no byte
 sdk/rocketnet_token_tables.h	server token tables
 sdk/rocketnet_uring_codec.h	io_uring completion codec
+sdk/rocketnet_uring_counters.h	how the queue modules' counts sum into the public rows; no packet byte
+sdk/rocketnet_uring_pin.h	the io_uring queue workers' cpu placement and its refusals; no packet byte
+sdk/rocketnet_uring_queue_send.cpp	the io_uring queue's send handoff between the game threads, main and the worker: claims, publishes, retires banks; reads each slot's destination and byte count; writes no packet byte
+sdk/rocketnet_uring_queue_send.h	declarations for uring_queue_send.cpp; writes no byte
+sdk/rocketnet_uring_queue_worker.cpp	the io_uring queue worker's loop over its ring: submits one send per run, reaps completions; writes no packet byte
+sdk/rocketnet_uring_queue_worker.h	declarations for uring_queue_worker.cpp; writes no byte
+sdk/rocketnet_uring_receive_queue.cpp	the io_uring queue's multishot receive: splits a coalesced receive, runs the prefilter and banks the datagram; reads the packet's header bytes, writes none
+sdk/rocketnet_uring_receive_queue.h	declarations for uring_receive_queue.cpp; writes no byte
 sdk/rocketnet_uring_send_queue.cpp	the io_uring per-queue send banks: claims a frame slot and records its destination and byte count; writes no packet byte
 sdk/rocketnet_uring_send_queue.h	declarations for uring_send_queue.cpp; writes no byte
 sdk/rocketnet_xdp_compat.h	XDP program attach compatibility

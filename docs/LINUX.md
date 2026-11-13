@@ -258,8 +258,8 @@ again (`sdk/rocketnet_server_uring_linux.cpp`,
 a completion queue twice that (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`). **Send** submits one
 `SENDMSG` per send run (one segmented `SENDMSG` per run of equal-sized packets to
-one destination when `UDP_SEGMENT` is available, else one per packet) and reaps
-within a fixed per-call completion budget (`ROCKETNET_URING_SEND_BUDGET`);
+one destination when `UDP_SEGMENT` is available, else one per packet), and each
+queue's worker thread reaps those completions on its own, never main;
 `UDP_SEGMENT` and `UDP_GRO` are probed at create as `gso` probes them. Sends still pending when the call returns
 stay in the completion queue for a later call and are counted
 `SEND_DEFERRED`, so a send flush never waits unboundedly

@@ -62,7 +62,13 @@ ANY_FAMILY = re.compile(r"\b([A-Z0-9_]+_NUM_COUNTERS)\b|\benum\s+([a-z0-9_]+_cou
 # kernel map's layout. A transport keeps no counter index of its own: a new
 # *_NUM_COUNTERS or *_counter_t fails (the owner, 2026-11-13: counters are
 # ABI, the same on every platform).
-KNOWN_FAMILIES = {"ROCKETNET_NUM_COUNTERS", "ROCKETNET_SERVER_XDP_NUM_COUNTERS"}
+# The io_uring queue modules' one-writer accumulators (sdk/rocketnet_uring_*.h)
+# are not counter families: rocketnet_uring_counters_add_queue
+# (sdk/rocketnet_uring_counters.h, tests/test_unit_uring_counters.cpp) sums
+# them into the public URING_* rows, and nothing else reads them.
+KNOWN_FAMILIES = {"ROCKETNET_NUM_COUNTERS", "ROCKETNET_SERVER_XDP_NUM_COUNTERS",
+                  "ROCKETNET_URING_RECEIVE_NUM_COUNTERS", "ROCKETNET_URING_WORKER_NUM_COUNTERS",
+                  "ROCKETNET_URING_QUEUE_SEND_NUM_COUNTERS"}
 # the public rows a platform transport moves, judged on the platform that runs it
 PUBLIC_TRANSPORT_PREFIXES = (("ROCKETNET_COUNTER_GSO_", "public-linux"), ("ROCKETNET_COUNTER_URING_", "public-linux"),
                              ("ROCKETNET_COUNTER_IOCP_", "public-windows"), ("ROCKETNET_COUNTER_RIO_", "public-windows"))
@@ -81,7 +87,6 @@ NAME_LIST_PREFIX = "tests/source_audit_"
 ALL = ("linux", "macos", "windows")
 OWED = {
     "ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
-    "ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
     "ROCKETNET_COUNTER_IOCP_URO_BATCHES": (("windows",), "a receive completion split into more than one segment; checked only == 0"),
     "ROCKETNET_COUNTER_IOCP_USO_FALLBACKS": (("windows",), "a USO send refused and resent frame by frame; checked only == 0"),
 }

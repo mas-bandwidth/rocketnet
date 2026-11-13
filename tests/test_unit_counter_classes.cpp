@@ -347,6 +347,8 @@ static const char * const counters_appended_names[] = {
     "IOCP_PIN_REFUSALS",
     "GSO_PIN_REFUSALS",
     "XDP_PIN_REFUSALS",
+    "URING_PIN_REFUSALS",
+    "URING_RECEIVE_DROPPED_SOCKET",
 };
 #endif // #if ROCKETNET_DEV
 
@@ -553,6 +555,8 @@ static void test_counters_every_counter_has_a_class()
         { "IOCP_PIN_REFUSALS", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "GSO_PIN_REFUSALS", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "XDP_PIN_REFUSALS", ROCKETNET_COUNTER_CLASS_REFUSAL },
+        { "URING_PIN_REFUSALS", ROCKETNET_COUNTER_CLASS_REFUSAL },
+        { "URING_RECEIVE_DROPPED_SOCKET", ROCKETNET_COUNTER_CLASS_REFUSAL },
     };
     for ( size_t row = 0; row < sizeof( counter_classes_by_name ) / sizeof( counter_classes_by_name[0] ); ++row )
     {
