@@ -32,7 +32,11 @@
     A rule that holds datagrams back an update makes at least the second
     message of each frame late (half of all, and nearly all in practice); a
     loaded runner that stalls a thread for a fifth of a frame makes a few late.
-    It also requires every message to arrive. ROCKETNET_RECEIVE_LATENCY_REPORT
+    It also requires every message to arrive. A client row in a DEV build also
+    requires that the clients' update opened no session packet on its own
+    thread (rocketnet_crypto_tally): once connected, the I/O thread opens
+    every payload (proofs/tla/RNClientIoDecrypt.tla OpenPayloads).
+    ROCKETNET_RECEIVE_LATENCY_REPORT
     names a file each run appends its counts to, for a repeated run (a passing
     case's output is not shown). To add a transport, add a row to
     receive_latency_rows and register its case in rocketnet_functional_tests.cpp.
@@ -42,6 +46,7 @@
 #include "../time_scale.h"
 #include "../token_string.h"
 #include "rocketnet.h"
+#include "rocketnet_crypto_tally.h"
 
 #include <atomic>
 #include <stdint.h>
@@ -313,6 +318,8 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     std::atomic<int> server_updates( 0 );
     std::atomic<double> last_update( 0.0 );
     std::atomic<bool> stop( false );
+    // the session packets the clients' update opened on the client thread
+    uint64_t client_thread_opens = 0;
 
     const double start = rocketnet_time() + 0.1;
 
@@ -350,6 +357,9 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 
         // client direction: the clients update late in each frame, two frames
         // past the server's last send
+#if ROCKETNET_DEV
+        const uint64_t opens_before = rocketnet_crypto_tally_get().aead_open;
+#endif // #if ROCKETNET_DEV
         for ( int j = 0; j < frames + 2; j++ )
         {
             const double now = receive_latency_wait_until( start + ( j + RECEIVE_LATENCY_CLIENT_PHASE ) / rate );
@@ -377,7 +387,11 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
                 }
                 rocketnet_client_send_packets( clients[c] );
             }
-        } } );
+        }
+#if ROCKETNET_DEV
+        client_thread_opens = rocketnet_crypto_tally_get().aead_open - opens_before;
+#endif // #if ROCKETNET_DEV
+    } );
 
     // the server, on an absolute schedule
 
@@ -481,6 +495,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 
     receive_latency_check( lost == 0, name, "a message never arrived" );
     receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, "more messages than the bound waited an extra update" );
+    receive_latency_check( client_thread_opens == 0, name, "the clients' update opened session packets the I/O thread passed raw" );
 }
 
 static void receive_latency_run_named( const char * row_name )

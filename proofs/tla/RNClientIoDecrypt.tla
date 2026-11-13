@@ -753,7 +753,7 @@ WindowContains(w, u) ==
 \* payloadsOpen is opened and accepted by update alone (rawAccepted), so the
 \* I/O window never marks it; a later copy of it opens on the I/O thread and
 \* update refuses it as already received.
-MirrorExact ==
+IoWindowWithinMain ==
     session # "ended" =>
         WindowContains(AdvanceAll(mainWin, OpenedSeqs(Unconsumed)), ioWin)
 

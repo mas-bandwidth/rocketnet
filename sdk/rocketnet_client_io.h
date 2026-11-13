@@ -399,7 +399,9 @@ inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const 
 // Until then the I/O thread leaves a payload unopened and its sequence
 // unmarked (the raw verdict), so update counts it WRONG_STATE before any open
 // (TRANSPORT.md t11.3) and a later copy of it is still fresh to both windows.
-// One attempt per transport: the word is never cleared. A payload the I/O
+// The word is never cleared: like the key copy, which
+// rocketnet_client_io_publish_keys publishes once, it serves one connection
+// attempt per transport. A payload the I/O
 // thread reads before it sees the store is raw and update opens it.
 
 inline void rocketnet_client_io_open_payloads( rocketnet_client_io_t * io )
