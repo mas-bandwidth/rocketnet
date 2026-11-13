@@ -118,8 +118,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (read on aws-win-1, MSVC 19.52.37029, x64, DEV=ON, Release: 15258748 at the
 // tree before that merge, 15258684 after it, same toolset). The server's
 // reading did not move.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452159 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210108 )
+// v1.1.9 (read-round-1 and the branches with it) grew both: the client's
+// actual= line is 15389036 (test.exe Debug, plain and under Application
+// Verifier) and the server's 1469500799 (under Application Verifier), read on
+// aws-win-5 at integrate/v1.1.9-candidate a303a5458.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452223 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14340460 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
