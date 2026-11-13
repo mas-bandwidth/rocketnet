@@ -1950,6 +1950,12 @@ static int rocketnet_rio_dequeue_receive( rocketnet_rio_lane_t * rio )
     int total = 0;
     int room = rio->receives - rio->banks[rio->fill_bank].num_packets;
     int budget = rio->receives;
+    if ( room == 0 )
+    {
+        // backpressure: the completions wait in the queue with their slices
+        // unposted, so the kernel holds fewer posted receives
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_BANK_WAITS );
+    }
     while ( room > 0 && budget > 0 )
     {
         const int limit = room < budget ? room : budget;
@@ -1975,6 +1981,12 @@ static int rocketnet_rio_dequeue_receive( rocketnet_rio_lane_t * rio )
         {
             break;
         }
+    }
+    if ( budget == 0 )
+    {
+        // a whole lane of receives completed before this pass: every slice
+        // had been used, so the kernel had none posted for a while
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_RAN_DRY );
     }
 
     return total;
@@ -2219,7 +2231,10 @@ static void rocketnet_rio_lane_receive_packets( rocketnet_rio_lane_t * rio )
         const int candidate = rio->ready_banks[rio->ready_head];
         if ( rio->view->num_packets + total + rio->banks[candidate].num_packets > rio->view->capacity )
         {
-            break; // the oldest ready bank waits for the next call
+            // the oldest ready bank waits for the next call: the process view
+            // (shared by the lanes, filled in lane order) has no room for it
+            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_VIEW_WAITS );
+            break;
         }
         rio->ready_head = ( rio->ready_head + 1 ) % ROCKETNET_RIO_RECEIVE_BANKS;
         rio->ready_count--;
@@ -3851,6 +3866,18 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
     if ( !stopped )
     {
         return;
+    }
+    // what each lane received and where its receive path waited, so a run
+    // that lost datagrams before the worker says which limit ran dry
+    for ( int i = 0; i < rio->num_lanes; ++i )
+    {
+        const rocketnet_rio_lane_t * lane = rio->lanes[i];
+        rocketnet_info( "rio transport: lane %d received %llu, %d receives posted, fill bank full on %llu passes, a whole lane of receives taken on %llu "
+                        "passes, ready banks left for the next update %llu times",
+                        i, (unsigned long long) lane->counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED].load(), lane->receives,
+                        (unsigned long long) lane->counters[ROCKETNET_RIO_COUNTER_RECEIVE_BANK_WAITS].load(),
+                        (unsigned long long) lane->counters[ROCKETNET_RIO_COUNTER_RECEIVE_RAN_DRY].load(),
+                        (unsigned long long) lane->counters[ROCKETNET_RIO_COUNTER_RECEIVE_VIEW_WAITS].load() );
     }
     for ( int i = 0; i < rio->num_lanes; ++i )
     {

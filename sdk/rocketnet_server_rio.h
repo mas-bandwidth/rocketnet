@@ -204,6 +204,9 @@ enum rocketnet_server_rio_counter_t
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW, // datagrams past the fill bank's capacity (the bounded dequeue keeps it zero)
     ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED,    // slices retired by a refused re-post
     ROCKETNET_RIO_COUNTER_COMMITS,                  // RIO_MSG_COMMIT_ONLY calls
+    ROCKETNET_RIO_COUNTER_RECEIVE_BANK_WAITS,       // worker passes that found the fill bank full (no free bank): the receive backpressure
+    ROCKETNET_RIO_COUNTER_RECEIVE_RAN_DRY,          // worker passes that took a whole lane of receive completions: the kernel had none posted
+    ROCKETNET_RIO_COUNTER_RECEIVE_VIEW_WAITS,       // main receive calls that left a ready bank for the next update: the process view was full
     ROCKETNET_RIO_NUM_COUNTERS
 };
 

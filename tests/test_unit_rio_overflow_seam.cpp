@@ -41,6 +41,8 @@ static void test_rio_transport_overflow_seam()
     check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED] == 0 );
+    // the endlessly full queue: the pass took a whole lane of receives
+    check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_RAN_DRY] >= 1 );
     check( pending_receives == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
     // The queued tail is delivered by the next update. The seam contains two
@@ -53,7 +55,10 @@ static void test_rio_transport_overflow_seam()
 
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
     {
-        if ( i == ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED )
+        // each pass of the endlessly full fake queue takes a whole lane of
+        // receives, and the second call may leave or wait on a bank
+        if ( i == ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED || i == ROCKETNET_RIO_COUNTER_RECEIVE_RAN_DRY || i == ROCKETNET_RIO_COUNTER_RECEIVE_BANK_WAITS ||
+             i == ROCKETNET_RIO_COUNTER_RECEIVE_VIEW_WAITS )
         {
             continue;
         }
