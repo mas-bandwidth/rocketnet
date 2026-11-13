@@ -8,9 +8,10 @@
 # It is NOT nightly-soak.yml and it is NOT fuzz-nightly.yml, and the
 # difference is worth keeping. Those two are DISCOVERY: they run the same
 # instrument for longer than a gate can afford, and belief comes from
-# duration. What lands here is the opposite -- an ordinary, bounded, fully
-# deterministic gate that would pass or fail identically on the commit, and is
-# here only because the runner it needs is slow. Nothing in this file should
+# duration. What lands here is the opposite -- an ordinary, bounded gate whose
+# verdict is about the commit, here only because the runner it needs is slow
+# or the repetition it needs is long (the x50 jobs repeat cases that each pass
+# or fail on their own, to catch a one-in-fifty flake). Nothing in this file should
 # ever be justified by "it needs hours"; if it does, it belongs next door.
 #
 # A RED NIGHT HERE IS A GATE THAT WOULD HAVE GONE RED ON A COMMIT. That makes
@@ -23,7 +24,9 @@
 #
 # What is here, and why it is not on the per-commit gate:
 #
-#   windows-2025 / Debug    136s on run 34780374187, on a runner whose
+#   windows / Debug         on the fleet's native Windows runner (Windows 11,
+#                           label rocketnet-windows); 136s on run 34780374187
+#                           (then windows-2025), on a runner whose
 #                           configure-and-build floor is 46s before a single
 #                           check runs. Windows keeps its RELEASE row on every
 #                           commit -- Release is what ships, and the optimizer
@@ -50,6 +53,27 @@
 #                           pairs of connect/disconnect x1000 and of
 #                           destroy-under-traffic. ci.yml's macOS rows keep the
 #                           msgx cells of each on every commit (docs/MACOS.md).
+#
+#   linux and windows /     the same tier on the other two operating systems.
+#   Release functional      Each of the three jobs also runs the unit suite's
+#   nightly tier            nightly tier (ROCKETNET_TEST_NIGHTLY=1, the
+#                           1000-client per-client isolation case), the
+#                           functional suite with the portable rung pinned, and
+#                           the production functional suite with it pinned.
+#
+#   external transport      tools/check_driver_extension.py under MSVC: an
+#   backend / windows-2025  out-of-tree transport backend against the installed
+#                           SDK. The same script runs on every commit on Linux
+#                           and macOS.
+#
+#   windows / Release ASan  MSVC AddressSanitizer over the unit, lifecycle,
+#                           IOCP/RIO and functional suites (portable, iocp and
+#                           rio servers), about 5.5 minutes end to end.
+#
+#   windows / clang-cl x64  the clang-cl build of both suites with the DLL
+#   and MSVC ARM64 cross    consumer, package and export checks, and an MSVC
+#                           ARM64 cross build of the libraries, build-checked
+#                           only; about 7 minutes in all.
 #
 #   linux / transport       every cell of ci.yml's Linux transport family
 #   cells x50 and ASan      matrix fifty times in a row, then the same cells
@@ -169,6 +193,7 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -235,6 +260,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -299,6 +325,7 @@ jobs:
         shell: pwsh
     timeout-minutes: 7200
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -323,11 +350,22 @@ jobs:
 
       - name: Build (Release)
         timeout-minutes: 5
-        run: cmake --build build --config Release --target functional --parallel 8
+        run: cmake --build build --config Release --target test functional --parallel 8
 
       - name: Build the production functional suite (Release)
         timeout-minutes: 3
         run: cmake --build build-production --config Release --target functional_production --parallel 8
+
+      # the unit suite with its nightly tier (tests/test.cpp,
+      # rocketnet_unit_nightly_cases): the 1000-client per-client isolation case
+      - name: Unit suite, nightly tier
+        shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
+        run: |
+          set -euo pipefail
+          ./bin/Release/test.exe
 
       - name: Functional suite, nightly tier
         shell: bash
@@ -338,6 +376,17 @@ jobs:
         run: |
           set -euo pipefail
           bash tools/run_functional.sh dev ./bin/Release/functional.exe
+
+      - name: Functional suite, portable rung pinned by env
+        shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          bash tools/run_functional.sh dev-portable ./bin/Release/functional.exe
 
       - name: Production functional suite, portable rung pinned by env
         shell: bash
@@ -356,19 +405,19 @@ jobs:
   # 13's tsan runtime). On the fleet's 16-core runner hosts the leg took
   # 345-454s, past ci.yml's 3-minute law, so it runs here with a real budget.
   # The live message matrix case runs alone in the functional suite (its own
-  # suite group, tests/functional/main.cpp): its 50s tsan wall-clock bound measures
-  # the case, about 35s alone on a Linux x64 gcc bench, and not the rest of the suite.
+  # suite group, tests/functional/main.cpp): its own wall-clock bound (120 s
+  # times the scale, tests/functional/live_matrix.cpp) measures the case, about
+  # 35s alone on a Linux x64 gcc bench, and not the rest of the suite.
   #
   # Both steps run with ROCKETNET_TEST_CASE_TIME_SCALE=4, as the macOS TSan
   # leg in nightly-macos-sanitizers.yml scales its own. Under TSan the heaviest
   # unit cases are CPU-bound for minutes (test_channels_message_record_round_trip_and_never_overreads
   # about 190s and test_window_ring_operation_sequences about 90s alone on an
   # M-series bench), and the fleet label lands this leg on shared hosts beside
-  # the other nightly legs. The unscaled 600s unit bound is not enough for the
-  # window ring case on a loaded host, and the functional row
-  # test_unit_case_memory runs the whole unit suite inside one functional case
-  # bound (120s unscaled). Scaled, the unit case limit is 2400s and the
-  # functional case limit 480s.
+  # the other nightly legs. The suite runner's case limit is lifted here by
+  # ROCKETNET_NIGHTLY_NO_TIMEOUT (tests/suite_runner.h), whatever the scale;
+  # the scale feeds the cases' own completion bounds (tests/time_scale.h),
+  # such as the live message matrix's 120 s, which it makes 480 s.
 
   tsan-threaded:
     name: tsan (threaded transport)
@@ -460,6 +509,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -589,6 +639,7 @@ jobs:
         shell: pwsh
     timeout-minutes: 7200
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
