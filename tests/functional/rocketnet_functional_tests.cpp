@@ -7509,6 +7509,94 @@ void rocketnet_test_server_gso_wire_dual_stack()
     rocketnet_test_server_gso_wire_exchange( "test_gso_transport_server_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );
 }
 
+// What a Linux transport's pin is granted depends on the host: a cgroup
+// cpuset (a container, a systemd slice) may leave out cpus that are online,
+// and no thread can widen its mask past it. The placement cases read the cpus
+// this process may be placed on (rocketnet_test_placement_host) and expect,
+// for each worker, what the library must do there
+// (rocketnet_test_placement_expect): pinned where its cpu is eligible;
+// refused, counted and (cpu 0 reserved) confined off cpu 0 where it is not.
+
+struct rocketnet_test_placement_host_t
+{
+    int online;
+    unsigned char eligible[CPU_SETSIZE]; // 1: online and inside this process's cpuset
+    cpu_set_t saved;                      // the calling thread's mask before, put back by restore
+    bool restore;
+};
+
+// asks for every online cpu on the calling thread (a worker inherits its
+// creator's mask: start them all from the widest mask the host allows), then
+// reads back what was granted: the cpus a pin can be granted on
+static void rocketnet_test_placement_host( struct rocketnet_test_placement_host_t * host )
+{
+    host->online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    CPU_ZERO( &host->saved );
+    host->restore = pthread_getaffinity_np( pthread_self(), sizeof( host->saved ), &host->saved ) == 0;
+    cpu_set_t every;
+    CPU_ZERO( &every );
+    for ( int cpu = 0; cpu < host->online && cpu < CPU_SETSIZE; cpu++ )
+    {
+        CPU_SET( (size_t) cpu, &every );
+    }
+    (void) pthread_setaffinity_np( pthread_self(), sizeof( every ), &every ); // what it grants is read back below
+    cpu_set_t granted;
+    CPU_ZERO( &granted );
+    rocketnet_check( pthread_getaffinity_np( pthread_self(), sizeof( granted ), &granted ) == 0 );
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+    {
+        host->eligible[cpu] = cpu < host->online && CPU_ISSET( (size_t) cpu, &granted ) ? 1 : 0;
+    }
+}
+
+static void rocketnet_test_placement_host_restore( const struct rocketnet_test_placement_host_t * host )
+{
+    if ( host->restore )
+    {
+        (void) pthread_setaffinity_np( pthread_self(), sizeof( host->saved ), &host->saved );
+    }
+}
+
+// what the library must do for one worker whose cpu is target: pinned there
+// when it is eligible; otherwise refused (one refusal) and, with cpu 0
+// reserved, confined off cpu 0 where the host allows it. gso and portable
+// confine to the fallback cpus (rocketnet_gso_pin_fallback); a confinement
+// with no allowed cpu fails and is a second refusal on their rows. io_uring
+// confines within the mask it inherited (every eligible cpu here,
+// rocketnet_uring_pin_confine_words), past the OS's cpus or else off cpu 0,
+// and counts refused pins only
+struct rocketnet_test_placement_expect_t
+{
+    int cpu;           // the pinned cpu, or ROCKETNET_GSO_PIN_NONE
+    uint64_t refusals; // what this worker adds to its transport's row
+    bool off_cpu_0;    // refused and confined: its mask holds no cpu 0
+};
+
+static struct rocketnet_test_placement_expect_t rocketnet_test_placement_expect( const struct rocketnet_test_placement_host_t * host, int target, int num_os_cpus,
+                                                                                 bool reserved, bool uring )
+{
+    struct rocketnet_test_placement_expect_t expect = { ROCKETNET_GSO_PIN_NONE, 1, false };
+    if ( target >= 0 && target < CPU_SETSIZE && host->eligible[target] )
+    {
+        expect.cpu = target;
+        expect.refusals = 0;
+        return expect;
+    }
+    if ( reserved )
+    {
+        unsigned char allowed[CPU_SETSIZE];
+        (void) rocketnet_gso_pin_fallback( allowed, CPU_SETSIZE, host->online, num_os_cpus );
+        bool any = false;
+        for ( int cpu = 1; cpu < CPU_SETSIZE; cpu++ )
+        {
+            any = any || ( ( uring || allowed[cpu] ) && host->eligible[cpu] );
+        }
+        expect.off_cpu_0 = any;
+        expect.refusals += !any && !uring ? 1 : 0;
+    }
+    return expect;
+}
+
 // The gso client over the wire (sdk/rocketnet_client_gso_linux.cpp): the
 // client pinned to gso and granted it, a portable server, equal-sized
 // payloads both ways so every client send batch is runs that leave as
@@ -7883,63 +7971,90 @@ void rocketnet_test_gso_client_wire_plain()
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", false );
 }
 
+// a num_os_cpus (1 .. 256, the config's range) whose cpus num_os_cpus ..
+// num_os_cpus + workers - 1 are all outside what this host may pin to, so
+// every worker's pin is refused; -1 when the host allows a cpu in every such
+// run (a machine past 256 cpus with no cpuset)
+static int rocketnet_test_placement_refused_base( const struct rocketnet_test_placement_host_t * host, int workers )
+{
+    for ( int base = 1; base <= 256; base++ )
+    {
+        bool refused = true;
+        for ( int w = 0; w < workers; w++ )
+        {
+            refused = refused && !( base + w < CPU_SETSIZE && host->eligible[base + w] );
+        }
+        if ( refused )
+        {
+            return base;
+        }
+    }
+    return -1;
+}
+
 // the gso transport's refused pins reach the server's public counters: a
-// server whose num_os_cpus names a cpu this machine does not have has every
-// queue worker's pin refused, and rocketnet_server_transport_counters reads
-// GSO_PIN_REFUSALS as at least the queue count (a refused worker is confined
-// to the cpus from 1 up, which may add a refusal where affinity is refused)
+// server whose num_os_cpus names cpus this host does not allow
+// (rocketnet_test_placement_refused_base) has every queue worker's pin
+// refused, and rocketnet_server_transport_counters reads GSO_PIN_REFUSALS as
+// exactly what the library must count there (rocketnet_test_placement_expect:
+// a refused worker is confined to the cpus from num_os_cpus up, and a
+// confinement the host does not allow is a second refusal)
 void rocketnet_test_server_gso_pin_refusals_reach_server_counters()
 {
+    struct rocketnet_test_placement_host_t host;
+    rocketnet_test_placement_host( &host );
+    const int base = rocketnet_test_placement_refused_base( &host, 2 );
+    if ( base < 0 )
+    {
+        printf( "test_gso_transport_pin_refusals_reach_server_counters: no num_os_cpus in 1 .. 256 has both its cpus outside what this host allows; nothing to refuse\n" );
+        fflush( stdout );
+        rocketnet_test_placement_host_restore( &host );
+        return;
+    }
+    uint64_t expected = 0;
+    for ( int q = 0; q < 2; q++ )
+    {
+        const struct rocketnet_test_placement_expect_t expect = rocketnet_test_placement_expect( &host, base + q, base, true, false );
+        rocketnet_check( expect.cpu == ROCKETNET_GSO_PIN_NONE );
+        expected += expect.refusals;
+    }
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
     server_config.num_gso_workers = 2;
-    server_config.num_os_cpus = 256; // the config's largest: no machine here has that many cpus online, so every pin is refused
+    server_config.num_os_cpus = base;
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     rocketnet_check( server );
 
     const double start = rocketnet_platform_time();
     uint64_t refused = 0;
-    while ( rocketnet_platform_time() - start < 5.0 && refused < 2 )
+    while ( rocketnet_platform_time() - start < 5.0 && refused < expected )
     {
         refused = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS];
         rocketnet_platform_sleep( 0.001 );
     }
-    rocketnet_check( refused >= 2 );
-    // exact where the confinement that follows a refused pin can succeed: this
-    // process may run on some cpu other than cpu 0 (the allowed set, not the
-    // online count: a runner's cpuset may allow only cpu 0), so one refusal
-    // for each queue worker
-    cpu_set_t allowed;
-    CPU_ZERO( &allowed );
-    bool other_cpu = false;
-    if ( sched_getaffinity( 0, sizeof( allowed ), &allowed ) == 0 )
-    {
-        for ( int cpu = 1; cpu < CPU_SETSIZE && cpu < sysconf( _SC_NPROCESSORS_ONLN ); cpu++ )
-        {
-            other_cpu = other_cpu || CPU_ISSET( (size_t) cpu, &allowed );
-        }
-    }
-    if ( other_cpu )
-    {
-        rocketnet_platform_sleep( 0.05 );
-        rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 2 );
-    }
+    // a refusal past the expected count would land after the pins report:
+    // give it time, then read the row exact
+    rocketnet_platform_sleep( 0.05 );
+    rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == expected );
 
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, rocketnet_platform_time() );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_GSO_PIN_REFUSALS );
+    rocketnet_test_placement_host_restore( &host );
 }
 
 // the workers pin themselves (rocketnet_gso_pin.h): with num_os_cpus 0 (read as 1,
 // the OS keeps cpu 0) each worker reports cpu 1 + queue; with a
 // cpu the machine does not have, every worker reports NONE, the refusal is
-// counted once for each, and no worker is ever reported on that cpu; with
+// counted for each (twice where no confinement off cpu 0 is allowed), and no
+// worker is ever reported on that cpu; with
 // num_os_cpus 1 each worker reports cpu 1 + queue (reported only after
-// pthread_setaffinity_np succeeded), or, on a machine without the cpus, the
-// refusal path as above.
+// pthread_setaffinity_np succeeded), or, where the host does not allow that
+// cpu, the refusal path as above.
 
 static bool rocketnet_test_gso_wait_pins( struct rocketnet_server_gso_t * gso, int queues )
 {
@@ -7967,23 +8082,35 @@ void rocketnet_test_server_gso_worker_pin()
 {
     const int queues = 2;
     const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    struct rocketnet_test_placement_host_t host;
+    rocketnet_test_placement_host( &host );
 
-    // num_os_cpus 0 is read as 1 by the transport (the OS keeps cpu 0): the
-    // workers pin from cpu 1, never unpinned, and nothing is refused where the
-    // machine has the cpus
-    if ( online >= 1 + queues )
+    // placement: queue q on cpu 1 + q, with num_os_cpus 0 (read as 1 by the
+    // transport: the OS keeps cpu 0), 1, and -7 (below 0, read as 1 by the
+    // transport itself). Where this host allows that cpu the worker is pinned
+    // there, alone, and nothing is refused; where it does not, the pin is
+    // refused, counted, and the worker confined off cpu 0
+    // (rocketnet_test_placement_expect)
+    for ( int num_os_cpus : { 0, 1, -7 } )
     {
         rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
-        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 0 );
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, num_os_cpus );
         rocketnet_check( gso );
         rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
+        uint64_t refusals = 0;
         for ( int q = 0; q < queues; q++ )
         {
-            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
-            rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( gso, q ) == 0 );
+            const struct rocketnet_test_placement_expect_t expect =
+                rocketnet_test_placement_expect( &host, rocketnet_network_thread_cpu( q, num_os_cpus, true ), num_os_cpus, true, false );
+            refusals += expect.refusals;
+            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == expect.cpu );
+            if ( expect.cpu != ROCKETNET_GSO_PIN_NONE || expect.off_cpu_0 )
+            {
+                rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( gso, q ) == 0 );
+            }
         }
-        rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == 0 );
+        rocketnet_check( (uint64_t) rocketnet_server_gso_pin_refusals( gso ) == refusals );
         rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
     }
 
@@ -7994,70 +8121,26 @@ void rocketnet_test_server_gso_worker_pin()
         struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, online + 1000 );
         rocketnet_check( gso );
         rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
+        // where a refused worker runs, read from the worker thread itself:
+        // confined away from cpu 0 wherever this host allows another cpu, and
+        // a confinement it does not allow counted as a second refusal
+        uint64_t refusals = 0;
         for ( int q = 0; q < queues; q++ )
         {
+            const struct rocketnet_test_placement_expect_t expect = rocketnet_test_placement_expect( &host, online + 1000 + q, online + 1000, true, false );
+            rocketnet_check( expect.cpu == ROCKETNET_GSO_PIN_NONE );
+            refusals += expect.refusals;
             rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == ROCKETNET_GSO_PIN_NONE );
-        }
-        rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) >= queues );
-        // where a refused worker runs, read from the worker thread itself:
-        // confined away from cpu 0 wherever this process may run on another
-        // cpu (the allowed set, not the online count)
-        cpu_set_t allowed;
-        CPU_ZERO( &allowed );
-        bool other_cpu = false;
-        if ( sched_getaffinity( 0, sizeof( allowed ), &allowed ) == 0 )
-        {
-            for ( int cpu = 1; cpu < CPU_SETSIZE && cpu < online; cpu++ )
-            {
-                other_cpu = other_cpu || CPU_ISSET( (size_t) cpu, &allowed );
-            }
-        }
-        if ( other_cpu )
-        {
-            for ( int q = 0; q < queues; q++ )
+            if ( expect.off_cpu_0 )
             {
                 rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( gso, q ) == 0 );
             }
-            rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == queues );
         }
+        rocketnet_check( (uint64_t) rocketnet_server_gso_pin_refusals( gso ) == refusals );
         rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
     }
 
-    // placement: queue q on cpu 1 + q
-    if ( online >= 1 + queues )
-    {
-        rocketnet_address_t address;
-        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
-        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 1 );
-        rocketnet_check( gso );
-        rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
-        for ( int q = 0; q < queues; q++ )
-        {
-            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
-        }
-        rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == 0 );
-        rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
-    }
-    // a num_os_cpus below 0 is read as 1 by the transport itself: the OS keeps cpu 0
-    if ( online >= 1 + queues )
-    {
-        rocketnet_address_t address;
-        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
-        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, -7 );
-        rocketnet_check( gso );
-        rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
-        for ( int q = 0; q < queues; q++ )
-        {
-            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
-        }
-        rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
-    }
-
-    if ( online < 1 + queues )
-    {
-        printf( "test_gso_transport_worker_pin: %d cpus online, the placement needs %d; refusal paths only\n", online, 1 + queues );
-        fflush( stdout );
-    }
+    rocketnet_test_placement_host_restore( &host );
 }
 
 void rocketnet_test_gso_client_wire_gro()
@@ -9283,40 +9366,46 @@ void rocketnet_test_server_uring_worker_pin()
     const int queues = 2;
     const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
 
-    // num_os_cpus 0 reads as 1: cpu 0 is the OS's, so the workers pin to cpus 1 + q
-    // where the machine has them, and nothing is refused
-    if ( online >= 1 + queues )
+    // the workers inherit this thread's mask: every online cpu the host
+    // allows, cpu 0 among them (a runner may have narrowed it), so the
+    // confine is what keeps a refused worker off cpu 0; put back after
+    struct rocketnet_test_placement_host_t host;
+    rocketnet_test_placement_host( &host );
+
+    // placement: queue q on cpu 1 + q, with num_os_cpus 0 (read as 1: cpu 0
+    // is the OS's) and 1. Where this host allows that cpu the worker is pinned
+    // there and nothing is refused; where it does not, the pin is refused,
+    // counted, and the worker confined off cpu 0 where the host allows another
+    // cpu (rocketnet_test_placement_expect)
+    for ( int num_os_cpus : { 0, 1 } )
     {
         rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
-        struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 0 );
+        struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, num_os_cpus );
         rocketnet_check( uring );
         rocketnet_check( rocketnet_test_uring_wait_pins( uring, queues ) );
+        uint64_t refusals = 0;
         for ( int q = 0; q < queues; q++ )
         {
-            rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == 1 + q );
-            rocketnet_check( rocketnet_server_uring_worker_lowest_cpu( uring, q ) == 1 + q );
+            const struct rocketnet_test_placement_expect_t expect =
+                rocketnet_test_placement_expect( &host, rocketnet_network_thread_cpu( q, num_os_cpus, true ), num_os_cpus, true, true );
+            refusals += expect.refusals;
+            rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ( expect.cpu == ROCKETNET_GSO_PIN_NONE ? ROCKETNET_URING_PIN_NONE : expect.cpu ) );
+            if ( expect.cpu != ROCKETNET_GSO_PIN_NONE )
+            {
+                rocketnet_check( rocketnet_server_uring_worker_lowest_cpu( uring, q ) == expect.cpu );
+            }
+            else if ( expect.off_cpu_0 )
+            {
+                rocketnet_check( rocketnet_server_uring_worker_lowest_cpu( uring, q ) >= 1 );
+            }
         }
-        rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == 0 );
+        rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == refusals );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
     }
 
     // a cpu the machine does not have: refused by name, counted, never reported pinned
     {
-        // the workers inherit this thread's mask: every online cpu, cpu 0
-        // among them (a runner may have narrowed it), so the confine is what
-        // keeps them off cpu 0; put back after
-        cpu_set_t saved;
-        CPU_ZERO( &saved );
-        const bool restore = pthread_getaffinity_np( pthread_self(), sizeof( saved ), &saved ) == 0;
-        cpu_set_t every;
-        CPU_ZERO( &every );
-        for ( int cpu = 0; cpu < online && cpu < CPU_SETSIZE; cpu++ )
-        {
-            CPU_SET( (size_t) cpu, &every );
-        }
-        (void) pthread_setaffinity_np( pthread_self(), sizeof( every ), &every );
-
         rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
         struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, online + 1000 );
@@ -9324,47 +9413,25 @@ void rocketnet_test_server_uring_worker_pin()
         rocketnet_check( rocketnet_test_uring_wait_pins( uring, queues ) );
         for ( int q = 0; q < queues; q++ )
         {
+            const struct rocketnet_test_placement_expect_t expect = rocketnet_test_placement_expect( &host, online + 1000 + q, online + 1000, true, true );
+            rocketnet_check( expect.cpu == ROCKETNET_GSO_PIN_NONE );
             rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_NONE );
 
             // what the refused worker may run on, read back from the system:
-            // never cpu 0 on a machine with more than one cpu (the confine
-            // to the cpus past the OS's; the inherited mask holds cpu 0)
+            // never cpu 0 where the host allows another cpu (the confine to
+            // the cpus past the OS's; the inherited mask holds cpu 0)
             const int lowest = rocketnet_server_uring_worker_lowest_cpu( uring, q );
             rocketnet_check( lowest != ROCKETNET_URING_PIN_NONE && lowest != ROCKETNET_URING_PIN_PENDING );
-            if ( online > 1 )
+            if ( expect.off_cpu_0 )
             {
                 rocketnet_check( lowest >= 1 );
             }
         }
         rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == (uint64_t) queues );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
-
-        if ( restore )
-        {
-            (void) pthread_setaffinity_np( pthread_self(), sizeof( saved ), &saved );
-        }
     }
 
-    // placement: queue q on cpu 1 + q
-    if ( online >= 1 + queues )
-    {
-        rocketnet_address_t address;
-        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
-        struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 1 );
-        rocketnet_check( uring );
-        rocketnet_check( rocketnet_test_uring_wait_pins( uring, queues ) );
-        for ( int q = 0; q < queues; q++ )
-        {
-            rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == 1 + q );
-        }
-        rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == 0 );
-        rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
-    }
-    else
-    {
-        printf( "test_io_uring_transport_worker_pin: %d cpus online, the placement needs %d; refusal paths only\n", online, 1 + queues );
-        fflush( stdout );
-    }
+    rocketnet_test_placement_host_restore( &host );
 }
 
 #if ROCKETNET_DEV
@@ -9376,120 +9443,17 @@ void rocketnet_test_server_uring_worker_pin()
 // explicit num_os_cpus not applied. A refused pin is counted in the
 // transport's *_PIN_REFUSALS row and asks for no real-time scheduling.
 //
-// What a pin is granted depends on the host: a cgroup cpuset (a container, a
-// systemd slice) may leave out cpus that are online, and no thread can widen
-// its mask past it. So every case reads the cpus this process may be placed
-// on (rocketnet_test_placement_host) and expects, for each worker, what the
-// library must do there: pinned where its cpu is eligible, refused, counted
-// and (cpu 0 reserved) confined off cpu 0 where it is not. Each cell checks
-// one of the two outcomes. The forced-refusal cells need a num_os_cpus whose
-// cpus the host does not allow; only a host allowing a cpu in every pair from
-// 1 to 257 has none, and says so in a line.
+// Every case expects, for each worker, what the library must do on this host
+// (rocketnet_test_placement_host, rocketnet_test_placement_expect): pinned
+// where its cpu is eligible, refused, counted and (cpu 0 reserved) confined
+// off cpu 0 where it is not. Each cell checks one of the two outcomes. The
+// forced-refusal cells (rocketnet_test_placement_refused_base) need a
+// num_os_cpus whose cpus the host does not allow; only a host allowing a cpu
+// in every pair from 1 to 257 has none, and says so in a line.
 
 void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
 int rocketnet_portable_server_test_worker_cpu( void * transport, int worker );
 int rocketnet_portable_server_test_worker_affinity( void * transport, int worker, unsigned char * allowed, int count );
-
-struct rocketnet_test_placement_host_t
-{
-    int online;
-    unsigned char eligible[CPU_SETSIZE]; // 1: online and inside this process's cpuset
-    cpu_set_t saved;                      // the calling thread's mask before, put back by restore
-    bool restore;
-};
-
-// asks for every online cpu on the calling thread (a worker inherits its
-// creator's mask: start them all from the widest mask the host allows), then
-// reads back what was granted: the cpus a pin can be granted on
-static void rocketnet_test_placement_host( struct rocketnet_test_placement_host_t * host )
-{
-    host->online = (int) sysconf( _SC_NPROCESSORS_ONLN );
-    CPU_ZERO( &host->saved );
-    host->restore = pthread_getaffinity_np( pthread_self(), sizeof( host->saved ), &host->saved ) == 0;
-    cpu_set_t every;
-    CPU_ZERO( &every );
-    for ( int cpu = 0; cpu < host->online && cpu < CPU_SETSIZE; cpu++ )
-    {
-        CPU_SET( (size_t) cpu, &every );
-    }
-    (void) pthread_setaffinity_np( pthread_self(), sizeof( every ), &every ); // what it grants is read back below
-    cpu_set_t granted;
-    CPU_ZERO( &granted );
-    rocketnet_check( pthread_getaffinity_np( pthread_self(), sizeof( granted ), &granted ) == 0 );
-    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
-    {
-        host->eligible[cpu] = cpu < host->online && CPU_ISSET( (size_t) cpu, &granted ) ? 1 : 0;
-    }
-}
-
-static void rocketnet_test_placement_host_restore( const struct rocketnet_test_placement_host_t * host )
-{
-    if ( host->restore )
-    {
-        (void) pthread_setaffinity_np( pthread_self(), sizeof( host->saved ), &host->saved );
-    }
-}
-
-// what the library must do for one worker whose cpu is target: pinned there
-// when it is eligible; otherwise refused (one refusal) and, with cpu 0
-// reserved, confined off cpu 0 where the host allows it. gso and portable
-// confine to the fallback cpus (rocketnet_gso_pin_fallback); a confinement
-// with no allowed cpu fails and is a second refusal on their rows. io_uring
-// confines within the mask it inherited (every eligible cpu here,
-// rocketnet_uring_pin_confine_words), past the OS's cpus or else off cpu 0,
-// and counts refused pins only
-struct rocketnet_test_placement_expect_t
-{
-    int cpu;           // the pinned cpu, or ROCKETNET_GSO_PIN_NONE
-    uint64_t refusals; // what this worker adds to its transport's row
-    bool off_cpu_0;    // refused and confined: its mask holds no cpu 0
-};
-
-static struct rocketnet_test_placement_expect_t rocketnet_test_placement_expect( const struct rocketnet_test_placement_host_t * host, int target, int num_os_cpus,
-                                                                                 bool reserved, bool uring )
-{
-    struct rocketnet_test_placement_expect_t expect = { ROCKETNET_GSO_PIN_NONE, 1, false };
-    if ( target >= 0 && target < CPU_SETSIZE && host->eligible[target] )
-    {
-        expect.cpu = target;
-        expect.refusals = 0;
-        return expect;
-    }
-    if ( reserved )
-    {
-        unsigned char allowed[CPU_SETSIZE];
-        (void) rocketnet_gso_pin_fallback( allowed, CPU_SETSIZE, host->online, num_os_cpus );
-        bool any = false;
-        for ( int cpu = 1; cpu < CPU_SETSIZE; cpu++ )
-        {
-            any = any || ( ( uring || allowed[cpu] ) && host->eligible[cpu] );
-        }
-        expect.off_cpu_0 = any;
-        expect.refusals += !any && !uring ? 1 : 0;
-    }
-    return expect;
-}
-
-// a num_os_cpus (1 .. 256, the config's range) whose cpus num_os_cpus ..
-// num_os_cpus + workers - 1 are all outside what this host may pin to, so
-// every worker's pin is refused; -1 when the host allows a cpu in every such
-// run (a machine past 256 cpus with no cpuset)
-static int rocketnet_test_placement_refused_base( const struct rocketnet_test_placement_host_t * host, int workers )
-{
-    for ( int base = 1; base <= 256; base++ )
-    {
-        bool refused = true;
-        for ( int w = 0; w < workers; w++ )
-        {
-            refused = refused && !( base + w < CPU_SETSIZE && host->eligible[base + w] );
-        }
-        if ( refused )
-        {
-            return base;
-        }
-    }
-    return -1;
-}
 
 static struct rocketnet_server_transport_t * rocketnet_test_placement_server( const char * transport, int num_os_cpus, int reserve_cpu_0 )
 {
