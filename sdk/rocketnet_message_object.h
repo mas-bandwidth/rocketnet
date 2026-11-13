@@ -228,8 +228,8 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
 // message finishes; its bytes already occupy their final position in the frame.
 #define RN_MESSAGE_RECEIPT_SERIALS_MAX 16 // same bound as the endpoint's receipt_serials
 
-// the message open on one connection (proofs/tla/RNMessageOpen.tla): at most
-// one per connection, so N fill threads may each hold one open on a
+// the message open on one connection (no model yet: roadmap
+// message-open-model): at most one per connection, so N fill threads may each hold one open on a
 // different connection. Written only by that connection's one filler in a
 // fill phase (sdk/rocketnet_fill_phase.h) and by main-thread operations.
 // rn_message_open_t pending: nonzero while a start is open. NO_CAPACITY is a

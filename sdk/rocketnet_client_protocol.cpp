@@ -890,7 +890,8 @@ typedef int ( *rocketnet_client_type_data_validator_t )( struct rocketnet_client
 // server's first payloads, and a payload delivered before connected let the
 // application reply on a connection that could not yet send. The server's
 // resend carries a reliable message again after the keep-alive
-// (proofs/tla/ClientConnection.tla PayloadBeforeKeepAlive).
+// (proofs/tla/ClientConnection.tla PayloadOnlyWhenConnected; ClientRecvEarlyPayload
+// under SpecEarlyPayload is the delivery before connected that it refuses).
 
 static bool rocketnet_client_session_state_accepts( const struct rocketnet_client_protocol_t * client, uint8_t packet_type )
 {
