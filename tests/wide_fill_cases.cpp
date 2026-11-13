@@ -992,6 +992,13 @@ static void writer_finish_main( wide_fill_world_t * world, wide_fill_slot_t * sl
     }
 }
 
+// the message layer's counters (the fallback and the refusal are counted there)
+static uint64_t writer_finish_message_counter( rocketnet_server_t * server, int counter )
+{
+    const rocketnet_counters_t * counters = rocketnet_message_server_counters( rocketnet_server_message_server( server ) );
+    return counters ? counters->values[counter] : 0;
+}
+
 static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int packets_per_update, int frames, int unreliable_per_frame,
                                writer_finish_trace_t * trace )
 {
@@ -1014,8 +1021,8 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
         rocketnet_server_client_stats( world.server, slot_of_client[c], &before[slot_of_client[c]] );
     }
 
-    const uint64_t no_capacity = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY );
-    const uint64_t fallback = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+    const uint64_t no_capacity = writer_finish_message_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY );
+    const uint64_t fallback = writer_finish_message_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
 
     for ( int frame = 0; frame < frames; frame++ )
     {
@@ -1101,8 +1108,8 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
         }
     }
 
-    trace->no_capacity = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) - no_capacity;
-    trace->fallback = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) - fallback;
+    trace->no_capacity = writer_finish_message_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) - no_capacity;
+    trace->fallback = writer_finish_message_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) - fallback;
 
     wide_fill_world_destroy( &world );
 }
