@@ -20,15 +20,18 @@ The server process:
 4. Makes that public key and address available to the development client by an
    application-defined local channel. The server secret key remains inside the
    server object and is wiped at destroy.
-5. Runs a game server's 60 Hz frame and echoes each message. Each frame the
-   main thread joins last frame's split-off half, then does a bit of
-   networking (`rocketnet_server_send_packets`, `rocketnet_server_update`,
-   and `rocketnet_server_receive_messages` copied into the frame's state);
-   the second half of the network update, queuing the echoes, is split off
-   onto another thread to run in parallel with the main thread until the
-   join next frame. Two frames of state are swapped at the frame boundary.
-   An echo goes on the wire at the start of the next frame: one frame of
-   added send latency, 16.67 ms on average. The [game loop](game_loop.md)
+5. Runs a 60 Hz frame and echoes each message. By default (`--game-threads 1`)
+   every server call is made on the main thread, one thread at a time:
+   `rocketnet_server_receive_messages` reads what the last update left,
+   then the main thread queues the echoes, calls
+   `rocketnet_server_send_packets` and `rocketnet_server_update`.
+   With `--game-threads N` it runs a game server's frame: the main thread
+   joins last frame's split-off half and reads the messages into the frame's
+   state, and the second half of the network update (queue the echoes with
+   `rocketnet_server_start_message` and `rocketnet_server_finish_client_message`,
+   send, then update in three calls) is split off onto another thread to run
+   in parallel with the main thread until the join next frame. Two frames of
+   state are swapped at the frame boundary. The [game loop](game_loop.md)
    explains this frame.
 
 The client-side development token helper:
