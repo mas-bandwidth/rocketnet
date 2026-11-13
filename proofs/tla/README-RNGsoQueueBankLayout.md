@@ -42,17 +42,22 @@ action (`Load` and `Claim` at start, `Finish` at finish and abort, `Flush` at
 the publish, `WorkerReturn` at the return; `Done` is the bound's terminal
 stutter, an environment action). The code is bound to the model by the trace
 check (`TraceRNGsoQueueBankLayout.tla`, tests/tla_trace_gso.cpp, `tla_trace
---layer gso`, README-TraceCheck.md): its plant, finish and abort dividing the
-pointer's offset before testing it, is rejected at the first finish a byte
-early on a slot past 0.
+--layer gso`, README-TraceCheck.md, record format v2): its plant, finish and
+abort dividing the pointer's offset before testing it, is rejected at the
+first finish or abort that writes another claim's slot.
 
 ## The instance (MCRNGsoQueueBankLayout.tla)
 
 - `Q` = 2 queues, each with `NB` = 3 banks (`ROCKETNET_GSO_TX_BANKS`) of `S` = 3
   slots; `Stride` = 4.
 - 2 fill threads, each making 2 starts per fill (`Demand`), one destination on
-  each queue.
-- A caller may hand finish a pointer 1 byte early, exact, or 1 byte late.
+  each queue (`Dests` = {0, 1}: destination `d` is on queue `QueueOf(d)` =
+  `d % Q`; the trace walk picks addresses the code's hash puts there).
+- A caller may hand finish a pointer 1 byte early, exact, or 1 byte late
+  (`SkewSpan` = 1, and `Skew` is the definition `-SkewSpan..SkewSpan`: a cfg
+  set holds no negative number).
+- What start returns is `Claim`'s argument `r`, `ClaimResult(t)`: the slot's
+  address and the packet id, or `None` for a refused start or a lost swap.
 - `MaxFlush` = 2 in the control. At 3 (`MCRNGsoQueueBankLayoutFlush3.cfg`) a
   queue turns over onto a bank its worker returned; that instance is 32.2M
   distinct states, over the 110 s per-case budget, and is a `bench` case with
