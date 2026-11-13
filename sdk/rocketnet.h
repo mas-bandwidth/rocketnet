@@ -3104,7 +3104,8 @@ ROCKETNET_EXPORT void rocketnet_server_update_receive( struct rocketnet_server_t
 /// misuse and returns 0.
 /// @param client_index The slot, 0 to max_clients - 1. Another index, or a
 /// call outside update_receive .. update_finish, counts as API misuse and
-/// returns 0.
+/// returns 0, except on a server never started, stopping or stopped, where
+/// it returns 0 and is not counted.
 /// @return The number of acknowledgement blocks applied, 0 when the client
 /// had none.
 
