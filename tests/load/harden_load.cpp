@@ -1727,22 +1727,25 @@ static void harden_game_job( platform_task_args_t * args )
     space->game_busy[args->thread_index].seconds += harden_now() - began;
 }
 
-// the world update's stand-in, the same in both shapes: the main thread's own
-// share, then the game jobs across all game threads, which it waits on (as
-// space waits on its object and collision jobs)
+// the world update's stand-in, the same in both shapes: the game jobs are
+// handed to the game threads first and the main thread does its own share
+// while they run (as space's main thread does beside its object and collision
+// jobs), then waits for them: the update takes the longer of the two, not the
+// sum
 static void harden_world_update( harden_space_t * space, const harden_options_t & o )
 {
-    harden_spin_for( o.world_ms * 1e-3 );
+    Task * game = NULL;
     if ( o.game_load > 0.0 && space->pool.NumThreads() > 1 )
     {
         const int game_threads = space->pool.NumThreads() - 1;
         const int items = 8 * space->pool.NumThreads();
         space->game_item_seconds = o.game_load * ( 1.0 / o.hz ) * (double) game_threads / (double) items;
-        Task * game = space->pool.AddTask( harden_game_job, space, items );
-        if ( game )
-        {
-            game->Wait();
-        }
+        game = space->pool.AddTask( harden_game_job, space, items );
+    }
+    harden_spin_for( o.world_ms * 1e-3 );
+    if ( game )
+    {
+        game->Wait();
     }
 }
 
@@ -2363,13 +2366,21 @@ static int harden_server_main( const harden_options_t & o )
                 const double tf = w.task_frames ? (double) w.task_frames : 1.0;
                 const double lf = w.latency_frames ? (double) w.latency_frames : 1.0;
                 const double frame_core_ms = 1e3 * step * (double) o.game_threads;
-                const double rn_core_ms = 1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum + w.task_core_sum + w.jobs_busy_sum ) / f;
+                // all of rocketnet's core time a frame: what the main thread itself spends in its
+                // calls, plus every thread's network work (net_thread: the jobs, the serial send step
+                // and update on the thread that runs them, the main thread's part in jobs)
+                double net_all = 0.0;
+                for ( int i = 0; i < HARDEN_MAX_THREADS; i++ )
+                {
+                    net_all += w.net_thread[i];
+                }
+                const double rn_core_ms = 1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum + net_all ) / f;
                 printf( "harden_frame: t=%.1f shape=%s threads=%d pinned=%d realtime=%d main_rn_ms p99=%.3f max=%.3f join_ms avg=%.3f max=%.3f task_ms avg=%.3f max=%.3f late=%" PRIu64
                         " task_core_ms avg=%.3f max=%.3f commit_ms avg=%.3f max=%.3f world_ms avg=%.3f max=%.3f game_core_ms=%.3f rn_core_ms=%.3f leftover_core_ms=%.3f latency_ms avg=%.3f max=%.3f input_age_ms avg=%.3f max=%.3f\n",
                         t_now - started, o.space_shape ? "space" : "blocking", o.game_threads, harden_pin.pinned.load(), harden_pin.realtime.load(), 1e3 * harden_percentile( work_copy, 0.99 ),
                         1e3 * harden_percentile( work_copy, 1.0 ), 1e3 * w.join_sum / f, 1e3 * w.join_max, 1e3 * w.task_sum / tf, 1e3 * w.task_max, w.task_late, 1e3 * w.task_core_sum / tf,
                         1e3 * w.task_core_max, 1e3 * w.commit_sum / tf, 1e3 * w.commit_max, 1e3 * w.world_sum / f, 1e3 * w.world_max, 1e3 * w.game_core_sum / f, rn_core_ms,
-                        frame_core_ms - rn_core_ms - 1e3 * w.game_core_sum / f - 1e3 * o.world_ms * 1e-3, 1e3 * w.latency_sum / lf, 1e3 * w.latency_max, 1e3 * w.input_age_sum / ( w.input_age_frames ? (double) w.input_age_frames : 1.0 ),
+                        frame_core_ms - rn_core_ms - 1e3 * w.game_core_sum / f - o.world_ms, 1e3 * w.latency_sum / lf, 1e3 * w.latency_max, 1e3 * w.input_age_sum / ( w.input_age_frames ? (double) w.input_age_frames : 1.0 ),
                         1e3 * w.input_age_max );
                 // one line per thread class: the main thread's network ms a frame
                 // (wall, rocketnet's calls and the waits inside them), each game
@@ -2385,12 +2396,16 @@ static int harden_server_main( const harden_options_t & o )
                     gn++;
                 }
                 const double gmean = gn ? gsum / gn : 0.0;
+                // what each game thread has left of the frame: the frame, less its share of the game
+                // jobs (the load spread over the game threads), less its mean network work
+                const double game_per_thread_ms = gn ? 1e3 * w.game_core_sum / f / (double) gn : 0.0;
+                const double leftover_ms = 1e3 * step - game_per_thread_ms - gmean;
                 const double main_ms = 1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f;
                 printf( "harden_threads: t=%.1f send_mode=%s update_mode=%s net_mode=%s main_net_ms=%.3f main_in_jobs_ms=%.3f game_net_ms min=%.3f mean=%.3f max=%.3f ratio=%.3f"
-                        " task_send_ms=%.3f task_update_ms avg=%.3f max=%.3f\n",
+                        " task_send_ms=%.3f task_update_ms avg=%.3f max=%.3f leftover_ms=%.3f\n",
                         t_now - started, o.space_send_wide ? "wide" : "serial", o.space_update_split ? "split" : "main", o.space_net_in_task ? "task" : "main", main_ms,
                         1e3 * w.net_thread[0] / f, gn ? gmin : 0.0, gmean, gmax, gmean > 0.0 ? main_ms / gmean : 0.0, 1e3 * w.task_send_sum / tf, 1e3 * w.task_update_sum / tf,
-                        1e3 * w.task_update_max );
+                        1e3 * w.task_update_max, leftover_ms );
                 // each thread's network ms a frame, by thread index (0 = the
                 // main thread's part in jobs), to see how even the split is
                 printf( "harden_thread_net_ms: t=%.1f", t_now - started );
