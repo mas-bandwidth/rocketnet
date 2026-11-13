@@ -517,8 +517,8 @@
    :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-105")
 
   (item "promotion-enabled-mask" :group "review-v1-2" :area "rocketnet"
-   :title "Refuse at the sender a promotion the receiver's enabled mask refuses"
-   :text "A sender promotes an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to the twin's wire code (2 or 4), but checks only the chosen reliability against the enabled mask; both ends share the mask, and the receiver refuses the promoted record as MESSAGE_TYPE_NOT_ENABLED. MESSAGES.md m2.1 now states the constraint. A later release chooses one: a counted refusal at the sender, or config validation that an enabled unreliable reliability brings its twin's code."
+   :title "Decide what admits a promoted send, and count its refusal once"
+   :text "A sender promotes an UNRELIABLE or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to RELIABLE, and an UNRELIABLE_SEQUENCED one to RELIABLE_SEQUENCED, then checks that exact reliability against the enabled mask; RELIABLE_WITH_ACK_RECEIPT does not admit it, although it sends under the same wire code. The refusal counts both MESSAGE_SEND_TYPE_NOT_ENABLED and MESSAGE_SEND_REFUSED, where an unpromoted send outside the mask counts only the first. MESSAGES.md m2.1 states this behaviour. A later release decides whether the receipt twin admits a promoted UNRELIABLE_WITH_ACK_RECEIPT send, whether config validation warns when an enabled unreliable reliability lacks its promoted one, and whether the refusal counts one counter."
    :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-114")
 
   (item "go-backend-protocol-id-parse" :group "review-v1-2" :area "rocketnet"

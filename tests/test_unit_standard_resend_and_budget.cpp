@@ -102,12 +102,17 @@ static uint32_t resend_trace_pass( resend_trace_fixture_t * f, double now )
     return resent;
 }
 
+// A standard-to-internal adapter, not a test of the public setters.
 // MESSAGES.md m9.4's meaning of a budget: 0 sets the direction's default,
 // and 2147483647 is no send budget, which the message layer holds as 0
-// (uncapped). The public setters apply the same mapping. The vector states
-// the standard's value, so the trace passes it through this meaning, never
-// straight to the internal setter; the no-budget value is the header's, so
-// a header that drifted from the standard's 2147483647 fails the trace.
+// (uncapped). The vector states the standard's value, so the trace passes it
+// through this meaning, never straight to the internal setter; the no-budget
+// value is the header's, so a header that drifted from the standard's
+// 2147483647 fails the trace. The public setters' own mapping of 0, of
+// ROCKETNET_SEND_KBPS_UNLIMITED and of the largest finite rate is checked
+// through the public calls on a connected client and server in
+// test_client_set_send_kbps_limit_budget_and_reconnect_rules and
+// test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rules.
 
 static int budget_trace_message_layer_kbps( int standard_kbps, int default_kbps )
 {

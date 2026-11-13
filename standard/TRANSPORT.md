@@ -1981,7 +1981,7 @@ input: the fixed inputs and packet type 5, with no client ephemeral public key
 ```
 
 ```vector t9.payload-sealed
-input: the payload associated data, the session client-to-server key, sequence 3, plaintext the ack block and the five bytes 68 65 6c 6c 6f
+input: the payload associated data, the session client-to-server key, sequence 3, plaintext an empty ack block of seven zero bytes and the five bytes 68 65 6c 6c 6f: 00 00 00 00 00 00 00 68 65 6c 6c 6f
 e3 e6 e1 ab c8 d7 33 fe f9 d5 e1 e2 af 0d f9 49
 ae 6d 5e bc aa df f1 94 89 74 4c b4
 ```
