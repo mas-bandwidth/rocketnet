@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Refuse RocketNet-owned linked lists, pointer-linked or index-linked, except
-the index links the manifest approves.
+the link sites the manifest approves.
 
 Policy: docs/SEQUENCE-BUFFERS.md, "Owned storage manifest". Bounded
 registries, queues and pools are arrays, rings, stacks or sequence buffers;
-none links its elements to each other, except through an index link that the
-manifest's "Approved index links" table names (below). This audit reads every tracked C and
+none links its elements to each other, except at a site that the manifest's
+"Approved index links" table names (below). This audit reads every tracked C and
 C++ source outside the vendored libsodium and enkiTS trees, removes comments, string and
 character literals, and works on tokens. It never matches names such as
 next, head or list: a field is a link only by how the code uses it.

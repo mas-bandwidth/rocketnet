@@ -65,9 +65,9 @@
 # sends about one packet per iteration, so a gso refusal needs the send worker
 # held for 16384 iterations, 16384 / (iterations per second) seconds (about
 # 18.9 s at the nightly's ~868 iterations/s). It is not the smallest bank:
-# io_uring's producer bank is 4096 slots at the soak's 16 clients
+# io_uring's producer bank is 4096 slots a queue at the soak's 16 clients
 # (rocketnet_server_uring_send_slots, sdk/rocketnet_server_uring.h), so an
-# io_uring refusal needs a quarter of that hold. The main loop is a different
+# io_uring refusal can need as little as a quarter of that hold. The main loop is a different
 # thread from the worker, so its gap is only a sample of how starved the host
 # was: the bound is a tenth of the gso refusal gap (about 1888 ms at ~868/s).
 # The gso reference and the tenth are a choice, not a measurement.

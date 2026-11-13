@@ -212,7 +212,7 @@ makes the same checks required on `main` itself.
    job reads, and exits 1 naming any site this document omits.
 3. Land the release pull request with `python3 tools/land.py <pr>`. `land.py`
    does not read the version: add `--full` for a minor or major release or a
-   pre-release, so that it holds every job.
+   pre-release, so that it holds the jobs the `full` rows name too.
 4. For a minor or major release or a pre-release, dispatch the nightly tier
    on the merged commit once it is `main`'s head; `tools/release.py` requires
    every tier for these (`is_point_release` in `tools/release_gates.py`). A

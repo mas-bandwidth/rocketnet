@@ -67,7 +67,7 @@
 
   (item "windows-reflush" :group "audit-remaining" :area "rocketnet"
    :title "Windows iocp and rio re-flush"
-   :text "The iocp and rio transports do not declare ROCKETNET_TRANSPORT_REFLUSHES (iocp_operations and rio_operations in sdk/rocketnet_driver_builtin.cpp), so send_packets flushes them only after a new commit (the REFLUSHES test in sdk/rocketnet_server_transport.cpp); gso, io_uring, msgx and XDP declare it. Measure on a Windows host whether sends left unfinished at one flush wait for the next commit; add re-flush, with counters, if the measurement supports it."
+   :text "The iocp and rio transports do not declare ROCKETNET_TRANSPORT_REFLUSHES (iocp_operations and rio_operations in sdk/rocketnet_driver_builtin.cpp), so send_packets flushes them only after a new commit or at shutdown (the REFLUSHES test in rocketnet_server_transport_flush, sdk/rocketnet_server_transport.cpp); gso, io_uring, msgx and XDP (when built) declare it. Measure on a Windows host whether sends left unfinished at one flush wait for the next commit; add re-flush, with counters, if the measurement supports it."
    :date "2026-10-31" :origin "sdk/rocketnet_driver_builtin.cpp; sdk/rocketnet_server_transport.cpp")
 
 
