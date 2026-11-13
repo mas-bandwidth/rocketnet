@@ -237,7 +237,7 @@ separately.
 | --- | ---: | --- |
 | GSO | 1 | Peak with game threads half busy; 100% delivery both ways |
 | XDP | 1 | Peak with game threads half busy; 100% delivery both ways; no late frames |
-| io_uring | 2 | Peak with and without game work; one-thread run pending |
+| io_uring | 2 | Loaded peak: one thread misses the target, two pass |
 | RIO | 8 | Peak without game work; four lanes miss target; five through seven pending |
 | IOCP | 10 | Peak without game work, with small input loss; fewer-thread runs pending; loaded peak not yet passing |
 
@@ -252,6 +252,21 @@ threads on CPUs 4–23. Its sampling window is pending confirmation.
 
 The remaining-time figure uses the corrected average-budget calculation
 described above. The run reported no late frames.
+
+The io_uring one-thread loaded peak run preserved 100% delivery in both
+directions but missed the packet-rate and frame-rate targets:
+
+| io_uring network threads | Server packets/s | Frames/s | Main mean / p99 / max (ms) | Late frames |
+| --- | ---: | ---: | --- | ---: |
+| 1 | 753,920 | 51.14 | 0.192 / 1.072 / 1.225 | 145 |
+
+Two network threads are required among the tested configurations for this
+workload on this server. Both runs use `c154d7971` on the c6in.8xlarge.
+The one-thread trial places its network thread on CPU 1, main thread on
+CPU 2, and 29 game threads on CPUs 3–31, with a 30-thread pool. It uses
+`--game-load 0.5 --world-ms 10 --space-split top`; its sampling window is
+pending. The passing two-thread row above uses main CPU 3 and 28 game
+threads, so the comparison also changes the game pool and main-thread CPU.
 
 The GSO loaded-peak comparison uses library-owned network-thread pinning:
 
@@ -478,6 +493,12 @@ arguments, and a 21-thread server pool starting at CPU 3. Set the server to
 `--num-xdp-queues 1 --game-load 0.5 --world-ms 10 --space-split top`, retaining
 the other XDP peak arguments, after provisioning one NIC queue as above.
 
+To repeat the failing one-thread io_uring loaded peak trial, use `c154d7971`
+and retain the io_uring peak arguments, changing the server to
+`--num-xdp-queues 1 --game-threads 30 --pin-first-cpu 2 --game-load 0.5
+--world-ms 10 --space-split top`. This reproduces its observed layout;
+the passing two-thread row uses a different pool size and main-thread CPU.
+
 ### Command flags
 
 | Flag | Meaning |
@@ -703,4 +724,100 @@ and authentication functions are grouped. The load test's own message-body
 write costs another 0.746 ms; it is application workload, not library time.
 The main thread similarly spends 0.194 ms in the test's input-copying code.
 
-Profiles for the other transports and rows with game work remain pending.
+### io_uring profile procedure and results
+
+The io_uring profiles used the AWS c6in.8xlarge server without game work,
+at [c154d7971](https://github.com/mas-bandwidth/rocketnet/commit/c154d7971ab3e6e57c12c4e2012fe9442d7534bb)
+on `tests/v1.2/goal-uring`, built Release with `ROCKETNET_DEV=ON`.
+The peak capture ran for ten seconds starting at t=40. The record command
+did not specify `-e`; the run owner identifies its default event as cycles.
+The exact event string from the data file and perf version were not recorded.
+The exact frame rate used for conversion and average-load capture window
+are pending.
+
+On the server, select its process ID as above. The supplied commands are:
+
+```sh
+sudo perf record -F 999 -p "$pid" -o uring-perf.data -- sleep 10
+sudo perf report -f -i uring-perf.data --no-children --sort pid,dso,symbol -n --stdio > uring-perf.rep
+```
+
+This recording does not request call graphs. The report adds `dso` to the
+sort keys to distinguish the executable, libraries, and kernel alongside
+thread IDs and symbols. In this capture the main thread was the process ID,
+the next two thread IDs belonged to network threads, and the rest were game
+threads. Verify the mapping against the thread listing and affinity logs
+for a new run; thread-ID order is an observation from this capture, not an
+identity rule. Confirmation of the captured game-thread count is pending.
+
+The supplied conversion uses the same sampling approximation as XDP, with
+a ten-second capture:
+
+```text
+class ms/frame ≈ samples / 999 / 10 / frames_per_second × 1000
+mean thread ms/frame ≈ class ms/frame / number_of_threads_in_class
+```
+
+The aggregate results distinguish per-thread means from class totals:
+
+| Thread class | Peak (ms/frame) | Average load (ms/frame) |
+| --- | ---: | ---: |
+| Main thread | 0.248 | 0.233 |
+| Mean game thread | 3.16 | 1.86 |
+| Mean network thread, two threads | 8.5 | 5.87 (derived) |
+| Both network threads combined | 17.0 (derived) | 11.74 |
+
+The mean average-load network time is 11.74 / 2; the combined peak time is
+8.5 × 2. At peak each io_uring network thread uses roughly half a core and
+sleeps when idle. XDP's measured polling threads each occupy a full core.
+These profiles use different hardware, so the contrast describes the
+observed thread behavior rather than a controlled transport ranking.
+
+The leading peak main-thread self times are:
+
+| Function | Peak ms/frame |
+| --- | ---: |
+| `_raw_spin_unlock_irqrestore` [k] | 0.091 |
+| `rn_message_object_receive_messages` | 0.043 |
+| `harden_server_main` (load test) | 0.033 |
+| `harden_stream_take` (load test) | 0.021 |
+
+The peak network-thread leaders are kernel send-path functions. The values
+below are totals across both network threads, unlike the per-thread mean
+in the summary table:
+
+| Function | Peak ms/frame, both network threads combined |
+| --- | ---: |
+| `rep_movs_alternative` [k] | 2.67 |
+| `ena_start_xmit` [k] | 2.02 |
+| `kernel_init_pages` [k] | 1.70 |
+| `skb_segment` [k] | 0.98 |
+| `memset_orig` [k] | 0.85 |
+| `__alloc_skb` [k] | 0.53 |
+| `kmem_cache_alloc_node` [k] | 0.48 |
+| `ena_com_sq_update_tail` [k] | 0.37 |
+| `_raw_spin_lock` [k] | 0.36 |
+| `ena_com_prepare_tx` [k] | 0.29 |
+
+For example, `rep_movs_alternative` accounts for 2.67 ms per frame across
+the pair, or a derived 1.335 ms per network thread on average. The listed
+functions omit the smaller entries and do not sum to the full class total.
+
+The leading game-thread self times are per-thread means. Average-load labels
+are preserved as supplied; their exact exported symbol names are pending.
+
+| Peak function | Peak ms/frame per game thread | Average-load label | Average ms/frame per game thread |
+| --- | ---: | --- | ---: |
+| `chacha20_encrypt_bytes__avx2` | 0.579 | `chacha20` | 0.325 |
+| `poly1305_blocks__sse2` | 0.345 | `poly1305` | 0.192 |
+| `rocketnet_server_transport_start_packet` | 0.336 | `start_packet` | 0.207 |
+| `rocketnet_server_transport_queue_budget_now` | 0.223 | `queue_budget_now` | 0.145 |
+| `rocketnet_uring_send_queues_staged` | 0.192 | `send_queues_staged` | 0.104 |
+| `rocketnet_uring_send_queues_start` | 0.192 | `send_queues_start` | 0.099 |
+| `rocketnet_fill_phase_fill_begin` | 0.185 | `fill_begin` | 0.097 |
+| `rocketnet_server_transport_finish_packet` | 0.112 | Not supplied | — |
+| `rocketnet_ack_block_build` | 0.103 | Not supplied | — |
+| `rocketnet_uring_send_queues_finish` | 0.101 | Not supplied | — |
+| `rocketnet_next_packet_lease_id` | 0.083 | Not supplied | — |
+
+Profiles for GSO, RIO, IOCP, macOS, and rows with game work remain pending.
