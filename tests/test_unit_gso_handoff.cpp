@@ -620,13 +620,16 @@ REGISTER_UNIT_TEST( test_server_gso_receive_queue_rotation );
 // default 1000 clients' geometry; at ROCKETNET_MAX_CLIENTS 512 the budget is
 // exactly one queue, and the case is skipped and reported there
 
-static bool gso_budget_spans_two_queues()
+static bool gso_budget_ends_inside_a_queue()
 {
+    // the case's premise: the budget ends inside a queue, and the queues it
+    // claims plus the two it leaves fit the transport's queue count
     const int budget = rocketnet_server_receive_packets_per_update( ROCKETNET_DEFAULT_MAX_CLIENTS );
-    return budget > ROCKETNET_GSO_RECV_QUEUE_SIZE && budget < 2 * ROCKETNET_GSO_RECV_QUEUE_SIZE;
+    const int claimed = ( budget + ROCKETNET_GSO_RECV_QUEUE_SIZE - 1 ) / ROCKETNET_GSO_RECV_QUEUE_SIZE;
+    return budget % ROCKETNET_GSO_RECV_QUEUE_SIZE != 0 && claimed + 2 <= ROCKETNET_GSO_MAX_QUEUES;
 }
 
-UNIT_TEST_SKIPPED_UNLESS( test_server_gso_receive_queue_rotation, gso_budget_spans_two_queues() );
+UNIT_TEST_SKIPPED_UNLESS( test_server_gso_receive_queue_rotation, gso_budget_ends_inside_a_queue() );
 
 // The segmented runs a flush builds, read back from the messages it hands
 // sendmmsg: a run to one destination holds packets of the first one's size,
