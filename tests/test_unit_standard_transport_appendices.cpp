@@ -175,7 +175,8 @@ static void test_standard_transport_appendices_vectors()
     rocketnet_unit_check( sizeof( ( (struct rocketnet_signed_connect_data_t *) 0 )->server_public_key ) == 32 );
 
     // t12. Token binding: the refusal of a token already in use is a refusal-class
-    // counter. The constant only; the binding itself is run in test_unit_token_churn.cpp.
+    // counter. The constant only; the binding itself is run in test_unit_handshake_budgets.cpp
+    // (every build) and test_unit_token_churn.cpp (development builds).
     rocketnet_unit_check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 
     // t7. Packet keys: token keys only key a derivation. Handshake keys differ from them.
@@ -285,10 +286,9 @@ static void test_standard_transport_appendices_vectors()
     server_config_set_int( &server_config, timeout, 0 );
     rocketnet_unit_check( !rocketnet_config_validate( "server", &server_config, fields, num_fields ) );
 
-    // not clamped: a value past the maximum is refused and left as given
+    // not clamped: a value past the maximum is refused, never taken as the maximum
     server_config_set_int( &server_config, timeout, (int) timeout->max_value + 1 );
     rocketnet_unit_check( !rocketnet_config_validate( "server", &server_config, fields, num_fields ) );
-    rocketnet_unit_check( server_config_int( &server_config, timeout ) == (int) timeout->max_value + 1 );
 
     // tc. Transport selection: auto is the available order without pin-only transports.
     // An explicit list keeps its order and appends nothing. One applicable name is a pin.

@@ -5,9 +5,10 @@
 
 // standard/TRANSPORT.md t12 rules 4 to 6 and t17 rule 4: parts of the
 // connection request check sequence, and the half-open refresh. This file
-// orders two pairs of rungs (the version before expiry, and expiry before the
-// server public key) and shows the signed pad and the server key are each
-// compared on every byte; it does not order the rest of t12.
+// orders three pairs of rungs (the version before expiry, expiry before the
+// server public key, and the signed pad, counted with the version, before the
+// server key) and shows the pad and the server key are each compared on every
+// byte; it does not order the rest of t12.
 //
 // The refresh: a request for the mapping's token from an address holding a
 // half-open mapping is answered with the stored challenge whatever its salt, and only a request

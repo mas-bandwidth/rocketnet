@@ -559,14 +559,19 @@ static int rocketnet_handshake_terminal_absorbs( struct rocketnet_client_protoco
                                                  const struct rocketnet_counters_t * counters )
 {
     const int terminal_state = client->state;
+    const double last_send_time = client->last_send_time;
+    const double state_first_send_time = client->state_first_send_time;
 
+    // the send clocks stay where they were: past the update's guard the send
+    // path stamps them even when the state sends nothing
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     const double update_times[3] = { 120.0, 1000.0, 100000.0 };
     for ( int i = 0; i < 3; i++ )
     {
         int packet_bytes = -1;
         rocketnet_client_protocol_update( client, update_times[i], packet, &packet_bytes );
-        if ( client->state != terminal_state || packet_bytes != 0 )
+        if ( client->state != terminal_state || packet_bytes != 0 ||
+             client->last_send_time != last_send_time || client->state_first_send_time != state_first_send_time )
         {
             return 0;
         }
