@@ -85,20 +85,20 @@ Each counterexample was checked against the C by hand.
 1. **`MCRNXdpReceiveRingBrokenPeekPastStaging.cfg`**
    (`PeekStagingRoom <- PeekStagingRoomBroken`): `receive_limit` without
    `receive_capacity`. Violates `StagingInBounds` (14 states): the kernel
-   posts F1 and F2; a pass peeks two (staging room 3, pending room 3), reads
+   posts frame 1 and frame 2; a pass peeks two (staging room 3, pending room 3), reads
    both, stages 2, releases 2 and flushes both frames back. The application
-   has not taken the buffer. The kernel posts F3 and, after a refresh, F1;
+   has not taken the buffer. The kernel posts frame 3 and, after a refresh, frame 1;
    the next pass has staging room 1 but asks for the pending room, 3, and the
    peek returns 2; the loop writes `receive_buffer` index 2, then index 3,
    one past `ROCKETNET_XDP_RECV_QUEUE_SIZE` (3 here). With the term the peek
    asks for 1 and the second descriptor waits for the next pass.
 2. **`MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg`** (`FillSize = 3`): a fill
    ring of exactly the frames. Violates `FillNeverEmptyWhileFramesFree`
-   (8 states): the kernel's batch holds all three frames; a pass takes F1 and
+   (8 states): the kernel's batch holds all three frames; a pass takes frame 1 and
    its flush finds no slot (`xsk_ring_prod__reserve` gives zero: the batch's
-   taken entries keep their slots), so F1 stays in the pending return; the
-   kernel takes F3, the last entry, and the fill ring is empty while the
-   worker holds F1.
+   taken entries keep their slots), so frame 1 stays in the pending return; the
+   kernel takes frame 3, the last entry, and the fill ring is empty while the
+   worker holds frame 1.
 3. **`MCRNXdpReceiveRingBrokenRefusedRefilled.cfg`**
    (`RefusedRefilled <- RefusedRefilledBroken`): a refused descriptor's frame
    handed back like any dropped frame. Violates `FillHoldsOnlyReceiveFrames`
@@ -109,14 +109,14 @@ Each counterexample was checked against the C by hand.
 
 ## Runs
 
-Bench runs of this version (two workers):
+Bench runs of this version (hetzner2, 2026-11-13):
 
 | Case | Result | Distinct | Seconds |
 |---|---|---|---|
-| `MCRNXdpReceiveRing.cfg` | pass | 6,576 | 2.6 |
-| `MCRNXdpReceiveRingBrokenPeekPastStaging.cfg` | `StagingInBounds`, exit 12 | 1,609 | 1.4 |
-| `MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg` | `FillNeverEmptyWhileFramesFree`, exit 12 | 219 | 1.4 |
-| `MCRNXdpReceiveRingBrokenRefusedRefilled.cfg` | `FillHoldsOnlyReceiveFrames`, exit 12 | 81 | 1.1 |
+| `MCRNXdpReceiveRing.cfg` | pass | 6,551 | 1.4 |
+| `MCRNXdpReceiveRingBrokenPeekPastStaging.cfg` | `StagingInBounds`, exit 12 | 303 | 0.9 |
+| `MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg` | `FillNeverEmptyWhileFramesFree`, exit 12 | 39 | 0.9 |
+| `MCRNXdpReceiveRingBrokenRefusedRefilled.cfg` | `FillHoldsOnlyReceiveFrames`, exit 12 | 21 | 0.9 |
 
 The records are in `RUNS.tsv` (group `rnxdpreceivering`), made with the pinned
 runner as `proofs/tla/README.md` describes.
