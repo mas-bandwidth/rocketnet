@@ -616,6 +616,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
 
     double wait = 5.0;
     int resend_next = TOTAL;
+    bool resend_started = false;
     start = rocketnet_platform_time();
     for ( ;; )
     {
@@ -629,6 +630,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
             printf( "%s received %d of %d payloads\n", name, received, TOTAL );
             rocketnet_check( rocketnet_loss_gate_resend( &gate, TOTAL - received ) );
             resend_next = 0;
+            resend_started = true;
         }
 
         if ( resend_next < TOTAL )
@@ -739,7 +741,21 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
                                                         ROCKETNET_COUNTER_SEND_RING_FULL );
     printf( "%s start_refusals=%d send_ring_full=%llu\n", name, start_refusals, (unsigned long long) ring_full );
     rocketnet_check( ring_full >= (uint64_t) start_refusals );
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
+
+    // A resend means the kernel counted receive drops: the server fell behind
+    // reading its socket, so it fell behind acking too, and the client's send
+    // history was overwritten before an ACK came (SEND_HISTORY_OVERFLOW 694
+    // beside 815 kernel drops in CI 43354859354). That counter is explained
+    // only then; a run with no resend still holds it to zero.
+
+    if ( resend_started )
+    {
+        ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL, ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW );
+    }
+    else
+    {
+        ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
+    }
 
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
@@ -9691,16 +9707,27 @@ void rocketnet_test_sleep_resumes_after_signal()
     rocketnet_sleep( 0.2 );
     const double elapsed = rocketnet_test_sleep_monotonic() - start;
 
+    // SIGALRM is ignored before the timer goes off and stays ignored for the
+    // rest of the process, never restored. On macOS a timer expiry can still
+    // raise SIGALRM after setitimer( off ) returns (for any thread, the
+    // suite's watchdog included). Under the default action that ends the
+    // process: "signal 14" in CI 43349573416, 12 of 800 runs on the studio;
+    // ignoring and then restoring still left 4 of 800. Left caught, a late one
+    // cuts the next case's kevent wait short (EINTR): CI 43353232146,
+    // test_platform_wake_apple_wakes_and_reads. Ignoring discards one already
+    // pending and drops any raised later, so it interrupts no call. Nothing
+    // else in the suite uses SIGALRM.
+
+    struct sigaction ignore;
+    memset( &ignore, 0, sizeof( ignore ) );
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset( &ignore.sa_mask );
+    ignore.sa_flags = 0;
+    rocketnet_check( sigaction( SIGALRM, &ignore, NULL ) == 0 );
+
     struct itimerval off;
     memset( &off, 0, sizeof( off ) );
     rocketnet_check( setitimer( ITIMER_REAL, &off, NULL ) == 0 );
-
-    // The counting handler stays installed for the rest of the process. On
-    // macOS a timer expiry can still raise SIGALRM after setitimer( off )
-    // returns (for any thread, the suite's watchdog included), and under the
-    // default action that ends the process: "signal 14" in CI 43349573416,
-    // 12 of 800 runs on the studio. Ignoring before the restore cut it to 4 of
-    // 800, so no restore at all: nothing else in the suite uses SIGALRM.
 
     printf( "  slept %.3f seconds through %d signals\n", elapsed, (int) rocketnet_test_sleep_signals );
     fflush( stdout );

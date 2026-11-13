@@ -132,6 +132,28 @@ class Land(unittest.TestCase):
         self.assertIn("red: static analysis (gcc -fanalyzer): failure", text)
         self.assertEqual(api.writes, [])
 
+    def test_red_full_job_is_printed_and_lands_light(self):
+        api = FakeApi()
+        runs = green_pull_request(api)
+        api.jobs[runs["ci.yml"]["id"]].append(job("linux / Release / functional", "failure"))
+        runs["ci.yml"]["conclusion"] = "failure"
+        code, text = run_land(api, dry_run=False)
+        self.assertEqual(code, 0, text)
+        self.assertIn("FULL NOT GREEN (does not gate; record it for the next point release): "
+                      "linux / Release / functional: failure", text)
+        self.assertEqual(api.writes[-1][0], "PUT")
+
+    def test_red_full_job_refuses_with_full(self):
+        api = FakeApi()
+        runs = green_pull_request(api)
+        api.jobs[runs["ci.yml"]["id"]].append(job("linux / Release / functional", "failure"))
+        runs["ci.yml"]["conclusion"] = "failure"
+        out = io.StringIO()
+        code = land.land(api, REPO, PR, dry_run=False, out=out, sleep=lambda s: None, clock=lambda: 0, full=True)
+        self.assertEqual(code, 1, out.getvalue())
+        self.assertIn("red: linux / Release / functional: failure", out.getvalue())
+        self.assertEqual(api.writes, [])
+
     def test_cap_cancel_beside_a_failure_refuses_without_rerun(self):
         api = FakeApi()
         runs = green_pull_request(api)

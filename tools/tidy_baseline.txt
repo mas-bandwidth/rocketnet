@@ -171,15 +171,6 @@ clang-tidy	sdk/rocketnet_server_transport.cpp	cert-err33-c	651c999da4d47226
 clang-tidy	sdk/rocketnet_server_transport.cpp	cert-err33-c	8fbe0a3c98f314c7
 clang-tidy	sdk/rocketnet_server_transport.cpp	cert-err33-c	b63782acc036bf10
 clang-tidy	sdk/rocketnet_server_transport.cpp	cert-err33-c	f04ce75e2aea5a77
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	523a8b071e6f806d
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	535466effe80d4da
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	5cf04b78b370a57e
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	60c8504fde7642b9
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	9267698c26181e8a
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	e85992c7284b37ec
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	ee706e3b922294be
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	fbe486f1dc166c1d
-clang-tidy	sdk/rocketnet_server_udp_linux.cpp	concurrency-mt-unsafe	ff8b7589091157c4
 clang-tidy	sdk/rocketnet_server_uring_linux.cpp	bugprone-branch-clone	49257a5c1db75db5
 clang-tidy	sdk/rocketnet_server_uring_linux.cpp	bugprone-casting-through-void	5547863b387f243b
 clang-tidy	sdk/rocketnet_server_uring_linux.cpp	bugprone-implicit-widening-of-multiplication-result	598e54a86a6b1178

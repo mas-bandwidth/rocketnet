@@ -46,7 +46,7 @@ def problems(gates_path, directory):
         if workflow is None:
             found.append(f"{where}: workflow {gate.workflow} does not exist in {directory}")
             continue
-        if gate.kind in ("job", "skip", "tag"):
+        if gate.kind in ("job", "skip", "full", "tag"):
             name = gate.job.replace("<ref>", "main")
             jobs = workflow.find(name)
             if not jobs:
