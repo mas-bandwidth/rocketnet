@@ -41,6 +41,16 @@ in `rocketnet_layers.h`:
 
 N = 0 (the default) keeps every write on main. N is at most 64.
 
+## The core layout: `--main-cpu C` and `--game-cpus A-B`
+
+The game's layout: processor 0 for the OS, the network threads on cores of their own, the main thread on the next
+core, the game threads on the rest. `--main-cpu C` pins the main thread to processor C before the server is created
+(a refusal fails the row); `--game-cpus A-B` pins every fill job (the game threads) to processors A to B. The network
+threads are placed by the transport (on Windows, the development knobs `ROCKETNET_TEST_RIO_LAYOUT` and
+`ROCKETNET_TEST_IOCP_LAYOUT`, "R0,R1/W0,W1": socket processors, then worker processors), and the NIC's receive
+processing by the operator (Set-NetAdapterRss). The server prints `harden_layout:` with what was pinned.
+harden-pair passes either option through `--server-arg`. Processor group 0 on Windows; no effect on macOS.
+
 ## The verdict
 
 **The chains.** Each direction is judged on one equation over named counters:

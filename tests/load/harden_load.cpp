@@ -134,6 +134,35 @@ typedef int harden_socket_t;
 #include <netinet/udp.h>
 #endif // #if defined( __linux__ )
 
+// the game's core layout for a measurement: pins the calling thread to the
+// processors first..last (processor group 0 on Windows). True when the OS took
+// it; false on macOS (no hard affinity) or a refusal.
+static bool harden_pin_thread( int first, int last )
+{
+    if ( first < 0 || last < first || last > 63 )
+    {
+        return false;
+    }
+#if defined( _WIN32 )
+    DWORD_PTR mask = 0;
+    for ( int c = first; c <= last; c++ )
+    {
+        mask |= (DWORD_PTR) 1 << c;
+    }
+    return SetThreadAffinityMask( GetCurrentThread(), mask ) != 0;
+#elif defined( __linux__ )
+    cpu_set_t set;
+    CPU_ZERO( &set );
+    for ( int c = first; c <= last; c++ )
+    {
+        CPU_SET( c, &set );
+    }
+    return pthread_setaffinity_np( pthread_self(), sizeof( set ), &set ) == 0;
+#else
+    return false;
+#endif // #if defined( _WIN32 )
+}
+
 #if !ROCKETNET_DEV
 #error "harden_load reads the library's counters: build it against the development library (ROCKETNET_DEV=1)"
 #endif // #if !ROCKETNET_DEV
@@ -434,6 +463,9 @@ struct harden_options_t
     int burst = 15;
     int burst_clients = 0;
     int fill_jobs = 0;
+    int main_cpu = -1;       // --main-cpu: the main thread's processor (the game's layout)
+    int game_cpu_first = -1; // --game-cpus A-B: the fill jobs (game threads) on processors A..B
+    int game_cpu_last = -1;
     bool payload_copy = false;
     int sizes[HARDEN_MAX_SIZES] = { 1200, 1200, 1200, 1100, 900, 600, 300 };
     int num_sizes = 7;
@@ -581,6 +613,16 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--fill-jobs" ) == 0 )
         {
             o->fill_jobs = atoi( v );
+        }
+        else if ( strcmp( a, "--main-cpu" ) == 0 )
+        {
+            o->main_cpu = atoi( v );
+        }
+        else if ( strcmp( a, "--game-cpus" ) == 0 )
+        {
+            const char * dash = strchr( v, '-' );
+            o->game_cpu_first = atoi( v );
+            o->game_cpu_last = dash ? atoi( dash + 1 ) : o->game_cpu_first;
         }
         else if ( strcmp( a, "--payload" ) == 0 )
         {
@@ -1191,6 +1233,7 @@ struct harden_fill_pool_t
     std::vector<harden_server_slot_t> * slots = NULL;
     std::vector<harden_fill_job_t> jobs;
     std::vector<std::thread> threads;
+    std::atomic<int> jobs_pinned{ 0 };
 };
 
 static void harden_fill_range( harden_fill_pool_t * pool, int job )
@@ -1249,6 +1292,10 @@ static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
     snprintf( name, sizeof( name ), "harden_fill%d", job );
     pthread_setname_np( pthread_self(), name );
 #endif // #if defined( __linux__ )
+    if ( pool->o->game_cpu_first >= 0 && harden_pin_thread( pool->o->game_cpu_first, pool->o->game_cpu_last ) )
+    {
+        pool->jobs_pinned.fetch_add( 1 );
+    }
     uint64_t seen = 0;
     for ( ;; )
     {
@@ -1652,6 +1699,14 @@ static int harden_server_main( const harden_options_t & o )
 {
     const char * role = "server";
     static const uint8_t dev_backend_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+    // the main thread is pinned before the server exists, so nothing it makes
+    // inherits a wider mask by accident (the transport's workers set their own)
+    const bool main_pinned = o.main_cpu >= 0 && harden_pin_thread( o.main_cpu, o.main_cpu );
+    if ( o.main_cpu >= 0 && !main_pinned )
+    {
+        printf( "harden_verdict: role=server verdict=FAIL reason=main_cpu_refused cpu=%d\n", o.main_cpu );
+        return 1;
+    }
 
     struct rocketnet_server_config_t config;
     rocketnet_server_default_config( &config );
@@ -2080,6 +2135,8 @@ static int harden_server_main( const harden_options_t & o )
     // game's threads, alive at both samples): the cuts and the cleanup are main's
     harden_fill_stop( &pool );
     const double run_seconds = harden_now() - resources_started_at;
+    printf( "harden_layout: main_cpu=%d main_pinned=%d game_cpus=%d-%d game_jobs=%d game_jobs_pinned=%d\n", o.main_cpu, main_pinned ? 1 : 0, o.game_cpu_first,
+            o.game_cpu_last, o.fill_jobs, pool.jobs_pinned.load() );
 
     // T1, client to server cut: what the server took, then it freezes
     {
