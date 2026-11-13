@@ -17,7 +17,11 @@
     and returns a nondet success or failure. crypto_box_seal_open checks that
     it reads ROCKETNET_SEALED_BLOCK_BYTES at
     ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK inside the signed data and writes
-    ROCKETNET_PRIVATE_BLOCK_BYTES.
+    ROCKETNET_PRIVATE_BLOCK_BYTES. sodium_is_zero checks and then reads every
+    byte it is given and returns libsodium's answer; the opener harness
+    asserts the pad it checks is exactly the opened block's tail and that the
+    open accepts exactly a zero pad. harness_is_zero_overread_control is that
+    model's negative control: a one-byte overread of a stack block must fail.
 
     Flags: --std c++17 --z3 --overflow-check, with ESBMC's default bounds,
            pointer and divide-by-zero checks. The proof target bounds each
@@ -38,6 +42,7 @@
 #ifndef __CPROVER__
 #define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
 #define __CPROVER_assume( c ) ( (void) ( c ) )
+#define __CPROVER_same_object( a, b ) ( (void) ( a ), (void) ( b ), 1 )
 static int nondet_int( void ) { return 0; }
 static unsigned char nondet_uchar( void ) { return 0; }
 #define PROOF_R_OK( p, n ) ( (void) ( p ), (void) ( n ), 1 )
@@ -61,6 +66,12 @@ thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
 
 static const uint8_t * g_signed_connect_data;
 
+/* the private block the open model wrote, and whether it opened, so the
+   sodium_is_zero model can say where in that block the pad check looked */
+
+static const unsigned char * g_private_block;
+static int g_private_block_opened;
+
 /* libsodium models. */
 
 int crypto_box_seal_open( unsigned char * m,
@@ -77,6 +88,8 @@ int crypto_box_seal_open( unsigned char * m,
     __CPROVER_assert( PROOF_R_OK( sk, ROCKETNET_KEY_BYTES ), "seal_open reads the server secret key" );
     __CPROVER_assert( PROOF_W_OK( m, ROCKETNET_PRIVATE_BLOCK_BYTES ), "seal_open writes the private block" );
 
+    g_private_block = m;
+
     int ok = nondet_int();
     __CPROVER_assume( ok == 0 || ok == -1 );
     if ( ok != 0 )
@@ -85,6 +98,7 @@ int crypto_box_seal_open( unsigned char * m,
     }
 
     PROOF_HAVOC( m, ROCKETNET_PRIVATE_BLOCK_BYTES );
+    g_private_block_opened = 1;
 
     return 0;
 }
@@ -225,6 +239,35 @@ void sodium_memzero( void * const pnt, const size_t len )
     PROOF_HAVOC( pnt, len );
 }
 
+/* sodium_is_zero reads every byte it is given: the shim checks the whole
+   extent first, then each byte is read, so ESBMC's own bounds check fires on
+   the first byte past the object too. It returns libsodium's answer (1 when
+   every byte is zero), so the opener's pad refusal is the real path. Where the
+   call looked, and its answer, are kept for harness_open_connect_token_private. */
+
+static int g_is_zero_in_private_block;
+static size_t g_is_zero_offset;
+static size_t g_is_zero_bytes;
+static int g_is_zero_result;
+
+int sodium_is_zero( const unsigned char * n, const size_t nlen )
+{
+    __CPROVER_assert( PROOF_R_OK( n, nlen ), "is_zero reads its buffer" );
+
+    unsigned char d = 0;
+    for ( size_t i = 0; i < nlen; ++i )
+    {
+        d = (unsigned char) ( d | n[i] );
+    }
+
+    g_is_zero_in_private_block = g_private_block != NULL && __CPROVER_same_object( n, g_private_block );
+    g_is_zero_offset = g_is_zero_in_private_block ? (size_t) ( n - g_private_block ) : 0;
+    g_is_zero_bytes = nlen;
+    g_is_zero_result = d == 0;
+
+    return g_is_zero_result;
+}
+
 /* the client-side split: exactly ROCKETNET_CONNECT_TOKEN_BYTES symbolic bytes
    fill the four fields at their documented offsets. */
 
@@ -348,11 +391,42 @@ void harness_open_connect_token_private( void )
     struct rocketnet_connect_token_private_t output;
 
     g_signed_connect_data = signed_data;
+    g_private_block = NULL;
+    g_private_block_opened = 0;
+    g_is_zero_in_private_block = 0;
+    g_is_zero_bytes = 0;
+    g_is_zero_result = 0;
 
     const int result = rocketnet_open_connect_token_private( &output, signed_data,
                                                              server_public_key, server_secret_key );
 
+    /* the zero pad is the private block's tail after the client id, protocol
+       id, expire, the two keys and the user data (TRANSPORT.md t1 rule 3) */
+
+    const size_t pad_offset = 3 * 8 + 2 * ROCKETNET_KEY_BYTES + ROCKETNET_USER_DATA_BYTES;
+
     __CPROVER_assert( result == 0 || result == 1, "open returns 0 or 1" );
+    __CPROVER_assert( !g_private_block_opened || g_is_zero_in_private_block,
+                      "an opened block's pad is checked inside the opened block" );
+    __CPROVER_assert( !g_private_block_opened || g_is_zero_offset == pad_offset,
+                      "the pad check starts at the pad offset" );
+    __CPROVER_assert( !g_private_block_opened || g_is_zero_bytes == ROCKETNET_PRIVATE_BLOCK_BYTES - pad_offset,
+                      "the pad check covers exactly the block's tail" );
+    __CPROVER_assert( result == ( g_private_block_opened && g_is_zero_result ),
+                      "open accepts exactly an opened block whose pad is zero" );
+}
+
+/* the sodium_is_zero model's own control: a pad check one byte past a stack
+   private block must fail on "is_zero reads its buffer". proof.mk runs it with
+   ESBMC's own bounds and pointer checks off, so that assertion is the only
+   one that can fail and the control shows the model's check bites. */
+
+void harness_is_zero_overread_control( void )
+{
+    uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+    const size_t pad_offset = 3 * 8 + 2 * ROCKETNET_KEY_BYTES + ROCKETNET_USER_DATA_BYTES;
+
+    (void) sodium_is_zero( private_block + pad_offset, ROCKETNET_PRIVATE_BLOCK_BYTES - pad_offset + 1 );
 }
 
 /* the inner consistency check: every private field symbolic, the whole signed

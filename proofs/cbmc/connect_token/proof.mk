@@ -3,6 +3,9 @@ NIGHTLY += proofs-connect_token
 
 CONNECT_TOKEN_SOURCE = connect_token/proof_connect_token.cpp
 CONNECT_TOKEN_FLAGS = --std c++17 --z3 --overflow-check -DROCKETNET_ESBMC -DNDEBUG -I$(SDK) -I$(SDK)/../sodium
+# the is_zero control runs with ESBMC's own bounds and pointer checks off, so
+# the model's buffer assertion is the one property that can fail
+CONNECT_TOKEN_CONTROL_FLAGS = --no-bounds-check --no-pointer-check
 CONNECT_TOKEN_TIMEOUT = 1800s
 CONNECT_TOKEN_AS_LIMIT = 8589934592
 
@@ -47,4 +50,17 @@ proofs-connect_token:
 	      exit 1; \
 	    fi; \
 	    if [ -z "$$CONNECT_TOKEN_LOG_DIR" ]; then rm -f "$$output"; fi; \
-	done
+	done; \
+	harness=harness_is_zero_overread_control; \
+	output=$$(mktemp); status=0; \
+	$(CURDIR)/run_with_timeout.sh $(CONNECT_TOKEN_TIMEOUT) prlimit --as=$(CONNECT_TOKEN_AS_LIMIT) -- \
+	  $(ESBMC) $(CONNECT_TOKEN_FLAGS) $(CONNECT_TOKEN_CONTROL_FLAGS) --unwind 42 --function $$harness \
+	  $(CONNECT_TOKEN_SOURCE) > "$$output" 2>&1 || status=$$?; \
+	if [ $$status -eq 1 ] && grep -q '^VERIFICATION FAILED' "$$output" && \
+	   grep -A4 '^Violated property:' "$$output" | grep -q 'is_zero reads its buffer'; then \
+	  echo "$$harness EXPECTED FAILURE (the is_zero model refuses a one-byte overread)"; \
+	  rm -f "$$output"; \
+	else \
+	  echo "$$harness HOLD: the planted overread did not fail on the is_zero model (exit $$status)"; \
+	  cat "$$output"; rm -f "$$output"; exit 1; \
+	fi
