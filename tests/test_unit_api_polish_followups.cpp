@@ -5,11 +5,11 @@
 
 // The api-polish follow-ups, pinned: the quiet switch is Next SDK named
 // (rocketnet_quiet), the last status code is TRANSPORT_BIND_REFUSED at -35,
-// and the WARN level's name is "warn", matching its
-// enum as every other level name does. The assert callback has one way in,
-// rocketnet_assert_function; the internal pointer it writes is
-// rn_assert_function, never exported. Every case runs in memory, with no
-// clock, sockets or network.
+// and the WARN level's name is "WARN", matching its enum as every other level
+// name does; "warn", lower case, is the word its log lines carry. The assert
+// callback has one way in, rocketnet_assert_function; the internal pointer it
+// writes is rn_assert_function, never exported. Every case runs in memory,
+// with no clock, sockets or network.
 
 #include "test_unit_registry.h"
 
@@ -23,7 +23,7 @@
 #define check rocketnet_unit_check
 
 static_assert( std::is_same<decltype( &rocketnet_quiet ), void ( * )( bool )>::value, "Next SDK naming: rocketnet_quiet( bool )" );
-static_assert( ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED == -35, "the failures are dense down to the last code" );
+static_assert( ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED == -35, "TRANSPORT_BIND_REFUSED is the last failure code" );
 
 static int api_polish_followups_count = 0;
 
@@ -69,7 +69,8 @@ static void test_api_polish_followups()
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) -35 ), "TRANSPORT_BIND_REFUSED" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) -36 ), "UNKNOWN" ) == 0 );
 
-    // every level name matches its enum: WARN is "warn"
+    // every level name matches its enum: WARN is "WARN"; the word a log line
+    // carries is the lower-case "warn"
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
@@ -77,6 +78,9 @@ static void test_api_polish_followups()
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_INFO ), "INFO" ) == 0 );
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_DEBUG ), "DEBUG" ) == 0 );
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_SPAM ), "SPAM" ) == 0 );
+#if ROCKETNET_DEV
+    check( strcmp( rocketnet_log_level_word_for_test( ROCKETNET_LOG_LEVEL_WARN ), "warn" ) == 0 );
+#endif // #if ROCKETNET_DEV
 
     // the setter is the one way in: it writes the internal pointer, and NULL restores the default
 
