@@ -22,6 +22,12 @@
 #                        run on the commit that has it
 #           skip         the named job may be `skipped` in a `jobs` gate (its own
 #                        `if:` leaves it out of these events); success also passes
+#           full         the named job of a `jobs` gate is FULL tier: for a point
+#                        release and for tools/land.py (without --full) it is
+#                        printed with its result and does not gate, and the
+#                        workflow's `run` gate is judged job by job; a minor,
+#                        major or pre-release holds it like any job (owner,
+#                        2026-11-13: point releases have light tests only)
 #           tlc-rerun    a `TLC re-run full` job success on the exact commit, or
 #                        every `TLC re-run slice K/N` (K = 0..N-1) success in
 #                        scheduled runs of the last N days on ancestors of the commit
@@ -58,6 +64,19 @@ ci.yml | pinned libsodium (built from source) | skip | v1.1.8 | push,pull_reques
 ci.yml | ubuntu ${{ matrix.release }} / container build and unit suite | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
 ci.yml | platform selftests / ${{ matrix.os }} | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
 ci.yml | unit-case coverage | skip | v1.1.8 | push,pull_request | if: inputs.full && !cancelled() (nightly tier)
+ci.yml | asan + ubsan (functional suite) | full | v1.1.10 | push,pull_request | sanitizer leg
+ci.yml | asan + ubsan (unit suite 0/2) | full | v1.1.10 | push,pull_request | sanitizer leg
+ci.yml | asan + ubsan (unit suite 1/2) | full | v1.1.10 | push,pull_request | sanitizer leg
+ci.yml | tsan (loopback soak) | full | v1.1.10 | push,pull_request | sanitizer leg, real sockets
+ci.yml | fuzz smoke (corpus replay) | full | v1.1.10 | push,pull_request | sanitizer fuzz build
+ci.yml | happy path / linux | full | v1.1.10 | push,pull_request | real sockets end to end
+ci.yml | happy path / windows | full | v1.1.10 | push,pull_request | real sockets end to end
+ci.yml | linux / Debug / functional | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | linux / Release / functional | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | macos / Release / functional | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | macos / Release / functional_production | full | v1.1.10 | push,pull_request | functional suite
+ci.yml | linux / Debug / transport_matrix | full | v1.1.10 | push,pull_request | functional, every transport
+ci.yml | linux / Release / transport_matrix | full | v1.1.10 | push,pull_request | functional, every transport
 static.yml | - | jobs | v1.1.8 | push,pull_request | every static analysis job success
 docs.yml | - | jobs | v1.1.8 | push,pull_request | every docs job success
 release-check.yml | - | jobs | v1.1.8 | push,pull_request | every Release Check job success
