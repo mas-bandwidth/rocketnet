@@ -2506,14 +2506,27 @@ void rocketnet_server_iocp_set_create_for_test( iocp_create_function_t * functio
 }
 #endif // #if ROCKETNET_DEV
 
+// the completion workers: num_xdp_queues when it asks for more than one (one
+// socket per worker sharing the port by SIO_CPU_AFFINITY, so a client's
+// datagrams stay with one worker), otherwise one
+static int iocp_workers( int num_xdp_queues )
+{
+    return num_xdp_queues > 1 ? num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
+}
+
 static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker
+    const int workers = iocp_workers( config->transport->num_xdp_queues );
+    if ( workers > ROCKETNET_IOCP_MAX_WORKERS )
+    {
+        rocketnet_warn( "iocp transport refused: num_xdp_queues %d is past the iocp transport's %d workers", workers, ROCKETNET_IOCP_MAX_WORKERS );
+        return NULL;
+    }
 
 #if ROCKETNET_DEV
-    rocketnet_server_iocp_t * iocp = iocp_create_function( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
+    rocketnet_server_iocp_t * iocp = iocp_create_function( context, bind, workers, config->transport->max_clients, 0, 0, config->status );
 #else // #if ROCKETNET_DEV
-    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, config->status );
+    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( context, bind, workers, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
 
     // the completion workers refuse what main's stateless rungs would, before
@@ -2731,11 +2744,12 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if ( strcmp( transport, "iocp" ) == 0 )
     {
-        // rn-iocp-one-completion-worker: iocp always plans one completion worker plus one send worker
+        // the completion workers (iocp_workers), each with its own socket, plus one send worker
 
-        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( ROCKETNET_IOCP_DEFAULT_WORKERS, config->max_clients );
-        plan.worker_threads = ROCKETNET_IOCP_DEFAULT_WORKERS + 1;
-        plan.sockets = 1;
+        const int workers = iocp_workers( config->num_xdp_queues );
+        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( workers, config->max_clients );
+        plan.worker_threads = workers + 1;
+        plan.sockets = workers;
     }
     else if ( strcmp( transport, "rio" ) == 0 )
     {

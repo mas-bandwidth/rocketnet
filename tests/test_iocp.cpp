@@ -611,7 +611,9 @@ static void test_uso_run_owns_frames()
 static void test_datagrams_and_producers()
 {
     rocketnet_address_t bind = address( "[::]:0" );
-    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    // one worker: the dual-stack wildcard is a single exclusive socket (several
+    // workers refuse the wildcard, test_iocp_endpoints_share_by_processor)
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
     CHECK( transport && bind.port );
 
     rocketnet_address_t destination = address( "127.0.0.1:0" );
@@ -1062,14 +1064,14 @@ static void test_stop_counts_unread_datagrams( int flags )
                 {
                     rocketnet_server_iocp_receive_packets( transport );
                     received += rocketnet_server_iocp_process_packets( transport )->num_packets;
-                    return received == taken;
-                } );
+                    return received == taken; } );
 
     for ( int i = 0; i < left; ++i )
     {
         CHECK( sendto( client, "left", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
     }
-    wait_until( "the rest banked", [&]() { return iocp_counter( transport, ROCKETNET_IOCP_RECEIVE_COMPLETED ) == (uint64_t) ( taken + left ); } );
+    wait_until( "the rest banked", [&]()
+                { return iocp_counter( transport, ROCKETNET_IOCP_RECEIVE_COMPLETED ) == (uint64_t) ( taken + left ); } );
 
     uint64_t before[ROCKETNET_RECEIVE_NUM_DROPS] = {};
     rocketnet_server_iocp_receive_drop_totals( transport, before );
@@ -2747,6 +2749,85 @@ static void test_windows_port_exclusive()
     printf( "test_windows_port_exclusive\n" );
 }
 
+// Several workers are as many sockets sharing one specific address and port
+// by SIO_CPU_AFFINITY. They refuse the wildcard and IPv4-mapped addresses,
+// refuse an explicit port another socket holds (the exclusive probe), keep a
+// later SO_REUSEADDR bind out, and every datagram of every client arrives,
+// each client's in order (one flow is one processor, one endpoint).
+static void test_iocp_endpoints_share_by_processor()
+{
+    const char * refused[] = { "0.0.0.0:0", "[::]:0", "[::ffff:127.0.0.1]:0" };
+    for ( int i = 0; i < 3; ++i )
+    {
+        rocketnet_address_t bind = address( refused[i] );
+        CHECK( !rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    }
+
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 4, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    CHECK( transport && bind.port != 0 );
+
+    // the probe: a second create at the port the first holds is refused
+    rocketnet_address_t again = bind;
+    CHECK( !rocketnet_server_iocp_create( NULL, &again, 2, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+
+    SOCKET thief;
+    const bool stolen = port_thief_binds( &bind, &thief );
+    closesocket( thief );
+    CHECK( !stolen );
+
+    const int num_clients = 32;
+    const int per_client = 4;
+    rocketnet_platform_socket_t * clients[num_clients];
+    uint16_t ports[num_clients];
+    for ( int c = 0; c < num_clients; ++c )
+    {
+        rocketnet_address_t client_address = address( "127.0.0.1:0" );
+        clients[c] = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024 );
+        CHECK( clients[c] );
+        ports[c] = client_address.port;
+    }
+    for ( int s = 0; s < per_client; ++s )
+    {
+        for ( int c = 0; c < num_clients; ++c )
+        {
+            const uint8_t datagram[8] = { 0x5A, (uint8_t) c, (uint8_t) s, 1, 2, 3, 4, 5 };
+            rocketnet_platform_socket_send_packet( clients[c], &bind, datagram, sizeof( datagram ) );
+        }
+    }
+
+    int next[num_clients] = {};
+    int received = 0;
+    bool in_order = true;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( received < num_clients * per_client && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_iocp_receive_packets( transport );
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            const uint8_t * data = batch->packet_data[i];
+            CHECK( batch->packet_bytes[i] == 8 && data[0] == 0x5A && data[1] < num_clients );
+            CHECK( batch->from[i].port == ports[data[1]] );
+            in_order = in_order && data[2] == next[data[1]];
+            next[data[1]] = data[2] + 1;
+            received++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    printf( "test_iocp_endpoints_share_by_processor workers=4 received=%d of %d in_order=%d thief_bound=%d\n", received, num_clients * per_client, in_order ? 1 : 0,
+            stolen ? 1 : 0 );
+    CHECK( received == num_clients * per_client );
+    CHECK( in_order );
+
+    for ( int c = 0; c < num_clients; ++c )
+    {
+        rocketnet_platform_socket_destroy( clients[c] );
+    }
+    wait_stopped( transport );
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+}
+
 static std::atomic<int> send_failed_logs{ 0 };
 
 static void send_failed_log( void *, rocketnet_log_level_t, const char * message, size_t )
@@ -3326,6 +3407,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_create_failure_drains_posted_receives", test_rio_create_failure_drains_posted_receives },
     { "test_windows_create_refused_for_commit_is_out_of_memory", test_windows_create_refused_for_commit_is_out_of_memory },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
+    { "test_iocp_endpoints_share_by_processor", test_iocp_endpoints_share_by_processor },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
     { "test_windows_sockets_not_inherited", test_windows_sockets_not_inherited },
     { "test_platform_socket_is_non_blocking", test_platform_socket_is_non_blocking },

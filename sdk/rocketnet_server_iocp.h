@@ -30,10 +30,18 @@
 // worker drains only positions below the enqueue ticket captured at the start
 // of its pass.
 
-// One completion worker by default. Completion workers race on the one
-// completion port and each publishes its own buffer, so more than one
-// reorders a client's datagrams at the drain, which the reliable layer
-// answers with resends.
+// One completion worker by default, on one socket bound exclusively. More
+// than one worker (the server config's num_xdp_queues) is as many endpoints:
+// each worker has its own socket and completion port, the socket given the
+// worker's processor with SIO_CPU_AFFINITY before bind and all bound to the
+// same specific address and port, and the worker pinned to that processor.
+// RSS hands each flow to one processor, so a client's datagrams stay with
+// one worker and arrive in order. A refused SIO_CPU_AFFINITY is a named
+// refusal at create, never a quiet fallback; several workers refuse the
+// wildcard and IPv4-mapped addresses. Windows has no exclusive form of a
+// port shared by processor: a socket of another process that also sets
+// SIO_CPU_AFFINITY can join the port and receive the flows RSS hands its
+// processor (a plain or SO_REUSEADDR bind is refused, measured).
 #define ROCKETNET_IOCP_DEFAULT_WORKERS 1
 #define ROCKETNET_IOCP_MAX_WORKERS 32
 

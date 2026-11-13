@@ -787,11 +787,23 @@ struct rocketnet_server_iocp_t
     // the lanes whose TX worker has not exited; zero before any is created
     std::atomic<int> live_lanes{ 0 };
     void * context;
-    SOCKET socket = INVALID_SOCKET;
-    HANDLE port;
+    // The endpoints: one socket and completion port with one worker. One
+    // worker is one endpoint bound exclusively, as before. Several workers
+    // are as many endpoints, each socket given its worker's processor with
+    // SIO_CPU_AFFINITY before bind and all bound to the same address and
+    // port, so RSS delivers each flow to the endpoint on its processor and a
+    // client's datagrams stay with one worker, in order. Receive operation i
+    // is endpoint i / ROCKETNET_IOCP_RECEIVES_PER_WORKER's; a send lane posts
+    // on endpoint lane % num_endpoints.
+    int num_endpoints = 0;
+    SOCKET sockets[ROCKETNET_IOCP_MAX_WORKERS];
+    HANDLE ports[ROCKETNET_IOCP_MAX_WORKERS] = {};
+    int processors[ROCKETNET_IOCP_MAX_WORKERS] = {};
+    GROUP_AFFINITY pins[ROCKETNET_IOCP_MAX_WORKERS] = {};
+    GROUP_AFFINITY cores[ROCKETNET_IOCP_MAX_WORKERS] = {}; // every logical processor of the pin's core
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    uint64_t socket_generation = 0;
-    uint64_t port_generation = 0;
+    uint64_t socket_generations[ROCKETNET_IOCP_MAX_WORKERS] = {};
+    uint64_t port_generations[ROCKETNET_IOCP_MAX_WORKERS] = {};
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     bool ipv6;
     int num_workers;
@@ -825,6 +837,26 @@ static_assert( ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_MAX_CLIENTS ) <= U
                "packet handles reserve sixteen bits for the operation index: every index of the largest send queue fits them" );
 
 static std::atomic<uint64_t> rocketnet_iocp_next_owner_epoch{ 1 };
+
+// the endpoint an operation is posted on: a receive's by its index, a send's
+// by its lane (operations [lane * send_queue_size, ...) are the lane's)
+static int rocketnet_iocp_op_endpoint( const rocketnet_server_iocp_t * iocp, const rocketnet_iocp_operation_t * op )
+{
+    if ( iocp->num_endpoints <= 1 )
+    {
+        return 0;
+    }
+    if ( op->send )
+    {
+        return ( op->index / iocp->send_queue_size ) % iocp->num_endpoints;
+    }
+    return op->index / ROCKETNET_IOCP_RECEIVES_PER_WORKER;
+}
+
+static SOCKET rocketnet_iocp_op_socket( const rocketnet_server_iocp_t * iocp, const rocketnet_iocp_operation_t * op )
+{
+    return iocp->sockets[rocketnet_iocp_op_endpoint( iocp, op )];
+}
 
 // The fault seam (rocketnet_server_iocp_test_fail_next) exists only in the
 // test executable. Elsewhere the check is the constant false, so the
@@ -1132,14 +1164,14 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
         op->message.Control.buf = op->control;
         op->message.Control.len = sizeof( op->control );
         iocp->pending.fetch_add( 1, std::memory_order_relaxed );
-        result = iocp->receive_message( iocp->socket, &op->message, NULL, &op->overlapped, NULL );
+        result = iocp->receive_message( rocketnet_iocp_op_socket( iocp, op ), &op->message, NULL, &op->overlapped, NULL );
     }
     else
     {
         op->buffer.buf = (char *) op->frame;
         op->buffer.len = ROCKETNET_RECEIVE_CEILING + 1;
         iocp->pending.fetch_add( 1, std::memory_order_relaxed );
-        result = WSARecvFrom( iocp->socket, &op->buffer, 1, NULL, &op->flags,
+        result = WSARecvFrom( rocketnet_iocp_op_socket( iocp, op ), &op->buffer, 1, NULL, &op->flags,
                               (sockaddr *) &op->address, &op->address_bytes, &op->overlapped, NULL );
     }
 
@@ -1359,6 +1391,16 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
 {
     rocketnet_iocp_worker_t * worker = (rocketnet_iocp_worker_t *) argument;
     rocketnet_server_iocp_t * iocp = worker->owner;
+    // one worker per endpoint (rocketnet_server_iocp_t sockets)
+    const int endpoint = (int) ( worker - iocp->workers );
+
+    // with several endpoints the worker runs on its socket's processor,
+    // where RSS completes its receives; a refused pin leaves it where
+    // Windows schedules it
+    if ( iocp->num_endpoints > 1 && iocp->pins[endpoint].Mask != 0 && !SetThreadGroupAffinity( GetCurrentThread(), &iocp->pins[endpoint], NULL ) )
+    {
+        rocketnet_warn( "iocp transport: completion worker %d not pinned to processor %d (Win32 %lu)", endpoint, iocp->processors[endpoint], GetLastError() );
+    }
 
     for ( ;; )
     {
@@ -1370,11 +1412,13 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
         {
             // Every worker repeats cancellation after its last possible repost.
             // Cancel only receives, so the final posted sends can complete.
-            if ( iocp->socket != INVALID_SOCKET )
+            // the worker's endpoint is its own: its receives are
+            // [endpoint * ROCKETNET_IOCP_RECEIVES_PER_WORKER, ...)
+            if ( iocp->sockets[endpoint] != INVALID_SOCKET )
             {
-                for ( int i = 0; i < iocp->num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
+                for ( int i = endpoint * ROCKETNET_IOCP_RECEIVES_PER_WORKER; i < ( endpoint + 1 ) * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
                 {
-                    if ( !CancelIoEx( (HANDLE) iocp->socket, &iocp->receives[i].overlapped ) &&
+                    if ( !CancelIoEx( (HANDLE) iocp->sockets[endpoint], &iocp->receives[i].overlapped ) &&
                          GetLastError() != ERROR_NOT_FOUND )
                     {
                         rocketnet_error( "IOCP cancellation failed: %lu", GetLastError() );
@@ -1391,7 +1435,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
         OVERLAPPED_ENTRY entries[64];
         ULONG count = 0;
         const DWORD timeout = rocketnet_iocp_queue_count( &iocp->retry_receives ) ? 1 : 50;
-        const BOOL ok = GetQueuedCompletionStatusEx( iocp->port, entries, 64, &count, timeout, FALSE );
+        const BOOL ok = GetQueuedCompletionStatusEx( iocp->ports[endpoint], entries, 64, &count, timeout, FALSE );
         if ( !ok )
         {
             count = 0;
@@ -1489,7 +1533,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
                 // the worker, on the URO path too
                 DWORD transferred = 0;
                 DWORD completion_flags = 0;
-                if ( !WSAGetOverlappedResult( iocp->socket, &op->overlapped, &transferred, FALSE, &completion_flags ) )
+                if ( !WSAGetOverlappedResult( rocketnet_iocp_op_socket( iocp, op ), &op->overlapped, &transferred, FALSE, &completion_flags ) )
                 {
                     receive_error = WSAGetLastError();
                     if ( rocketnet_platform_receive_status_is_reset( receive_error ) )
@@ -1624,11 +1668,11 @@ void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp )
     // Cancellation runs on the workers after their current pass. This request
     // never acquires a worker mutex or waits for an overlapped operation.
 
-    if ( iocp->port )
+    for ( int e = 0; e < iocp->num_endpoints; ++e )
     {
-        for ( int i = 0; i < iocp->num_workers; ++i )
+        if ( iocp->ports[e] )
         {
-            PostQueuedCompletionStatus( iocp->port, 0, 0, NULL );
+            PostQueuedCompletionStatus( iocp->ports[e], 0, 0, NULL );
         }
     }
 }
@@ -1698,30 +1742,33 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
     }
     rocketnet_assert( iocp->pending.load() == 0 );
 
-    if ( iocp->socket != INVALID_SOCKET )
+    for ( int e = 0; e < iocp->num_endpoints; ++e )
     {
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->socket, iocp->socket_generation ) )
+        if ( iocp->sockets[e] != INVALID_SOCKET )
         {
-            const int closed = closesocket( iocp->socket );
-            rocketnet_lifecycle_track_close_end( iocp->socket_generation, closed == 0 );
-        }
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+            if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->sockets[e], iocp->socket_generations[e] ) )
+            {
+                const int closed = closesocket( iocp->sockets[e] );
+                rocketnet_lifecycle_track_close_end( iocp->socket_generations[e], closed == 0 );
+            }
 #else
-        closesocket( iocp->socket );
+            closesocket( iocp->sockets[e] );
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    }
+        }
 
-    if ( iocp->port )
-    {
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_IOCP, (uintptr_t) iocp->port, iocp->port_generation ) )
+        if ( iocp->ports[e] )
         {
-            const BOOL closed = CloseHandle( iocp->port );
-            rocketnet_lifecycle_track_close_end( iocp->port_generation, closed != 0 );
-        }
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+            if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_IOCP, (uintptr_t) iocp->ports[e], iocp->port_generations[e] ) )
+            {
+                const BOOL closed = CloseHandle( iocp->ports[e] );
+                rocketnet_lifecycle_track_close_end( iocp->port_generations[e], closed != 0 );
+            }
 #else
-        CloseHandle( iocp->port );
+            CloseHandle( iocp->ports[e] );
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        }
     }
 
     if ( iocp->sends )
@@ -1857,6 +1904,193 @@ uint64_t rocketnet_server_iocp_allocation_bytes( int workers, int max_clients )
 
 static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, void * argument );
 
+// SIO_CPU_AFFINITY (mstcpip.h): a UDP socket given a processor before bind
+// may bind an address and port that other such sockets hold, and receives
+// the datagrams whose RSS processor is its own. It cannot be combined with
+// SO_REUSEADDR or SO_EXCLUSIVEADDRUSE (measured on aws-win-rio-1: the second
+// exclusive socket's bind is refused, 10013).
+#ifndef SIO_CPU_AFFINITY
+#define SIO_CPU_AFFINITY _WSAIOW( IOC_VENDOR, 21 )
+#endif // #ifndef SIO_CPU_AFFINITY
+static_assert( (unsigned long) SIO_CPU_AFFINITY == 0x98000015ul, "SIO_CPU_AFFINITY is the vendor IOCTL 21" );
+
+// The unspecified address, 0.0.0.0 or ::.
+static bool rocketnet_iocp_address_is_wildcard( const rocketnet_address_t * address )
+{
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        return address->data.ip == 0;
+    }
+    for ( int i = 0; i < 8; ++i )
+    {
+        if ( address->data.ipv6[i] != 0 )
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Binds a plain socket to the address with SO_EXCLUSIVEADDRUSE and closes
+// it: refused when anything already holds the address and port, so endpoints
+// that share the port by SIO_CPU_AFFINITY never join a socket someone else
+// bound first. Never called for port 0.
+static bool rocketnet_iocp_exclusive_probe( const rocketnet_address_t * bind_address, int * status )
+{
+    const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
+    sockaddr_storage address;
+    const int address_bytes = rocketnet_platform_sockaddr_for( ipv6, bind_address, &address );
+    SOCKET probe = WSASocketW( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT );
+    if ( probe == INVALID_SOCKET )
+    {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        return false;
+    }
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const uint64_t generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe, "iocp exclusive probe socket" );
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    BOOL enabled = TRUE;
+    DWORD v6_only = FALSE;
+    bool bound = setsockopt( probe, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) != SOCKET_ERROR &&
+                 ( !ipv6 || setsockopt( probe, IPPROTO_IPV6, IPV6_V6ONLY, (const char *) &v6_only, sizeof( v6_only ) ) != SOCKET_ERROR ) &&
+                 bind( probe, (sockaddr *) &address, address_bytes ) != SOCKET_ERROR;
+    if ( !bound )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        rocketnet_warn( "iocp transport refused: the exclusive probe could not bind port %d (Winsock %d): another socket holds it",
+                        bind_address->port, WSAGetLastError() );
+    }
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe, generation ) )
+    {
+        const int closed = closesocket( probe );
+        rocketnet_lifecycle_track_close_end( generation, closed == 0 );
+    }
+#else
+    closesocket( probe );
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return bound;
+}
+
+// The processor of each endpoint, into iocp->processors and iocp->pins: the
+// first logical processor of each physical core in processor-index order,
+// then the cores' other logical processors in order, wrapping past the last.
+// Windows' default RSS layout (base processor 0, one processor per core: on
+// the ENA adapter Get-NetAdapterRss lists 0, 2, 4, ...) hands receive queue i
+// to the first processor of core i, so with as many workers as queues each
+// queue's flows reach the endpoint on its processor. A flow whose RSS
+// processor has no endpoint is delivered to the first endpoint bound
+// (measured), so a different RSS layout costs spread, never datagrams. The
+// index SIO_CPU_AFFINITY takes is the group's offset (the active processors
+// of the groups before it) plus the processor's number in its group. The same
+// order as the RIO transport's lanes (rocketnet_rio_lane_processors). False
+// only when Windows cannot list its processors.
+static bool rocketnet_iocp_endpoint_processors( void * context, rocketnet_server_iocp_t * iocp, int * status )
+{
+    DWORD bytes = 0;
+    if ( GetLogicalProcessorInformationEx( RelationProcessorCore, NULL, &bytes ) || GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0 )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+        rocketnet_error( "iocp transport refused: the processors could not be listed for the workers (Win32 %lu)", GetLastError() );
+        return false;
+    }
+    struct processor_t
+    {
+        int index;           // the processor index SIO_CPU_AFFINITY takes
+        GROUP_AFFINITY pin;  // the same processor
+        GROUP_AFFINITY core; // every logical processor of its core
+    };
+    const DWORD logical = GetActiveProcessorCount( ALL_PROCESSOR_GROUPS );
+    uint8_t * info = (uint8_t *) rocketnet_malloc( context, (size_t) bytes );
+    processor_t * order = (processor_t *) rocketnet_malloc( context, sizeof( processor_t ) * ( (size_t) logical + 1 ) );
+    if ( !info || !order )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_free( context, order );
+        rocketnet_free( context, info );
+        return false;
+    }
+    bool ok = logical > 0 && GetLogicalProcessorInformationEx( RelationProcessorCore, (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX) info, &bytes );
+    int count = 0;
+    // pass 0 takes each core's first logical processor, pass 1 the others
+    for ( int pass = 0; ok && pass < 2; ++pass )
+    {
+        const int first = count;
+        for ( DWORD offset = 0; offset < bytes; )
+        {
+            const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX * entry = (const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *) ( info + offset );
+            if ( entry->Size == 0 )
+            {
+                break;
+            }
+            offset += entry->Size;
+            if ( entry->Relationship != RelationProcessorCore || entry->Processor.GroupCount == 0 )
+            {
+                continue;
+            }
+            const GROUP_AFFINITY * mask = &entry->Processor.GroupMask[0];
+            int group_offset = 0;
+            for ( WORD g = 0; g < mask->Group; ++g )
+            {
+                group_offset += (int) GetActiveProcessorCount( g );
+            }
+            bool seen_first = false;
+            for ( int bit = 0; bit < (int) ( sizeof( KAFFINITY ) * 8 ); ++bit )
+            {
+                if ( !( mask->Mask & ( (KAFFINITY) 1 << bit ) ) )
+                {
+                    continue;
+                }
+                const bool take = pass == 0 ? !seen_first : seen_first;
+                seen_first = true;
+                if ( !take || count >= (int) logical )
+                {
+                    continue;
+                }
+                processor_t * p = &order[count++];
+                memset( p, 0, sizeof( *p ) );
+                p->index = group_offset + bit;
+                p->pin.Group = mask->Group;
+                p->pin.Mask = (KAFFINITY) 1 << bit;
+                p->core.Group = mask->Group;
+                p->core.Mask = mask->Mask;
+                if ( pass == 0 )
+                {
+                    break;
+                }
+            }
+        }
+        // each pass in processor-index order
+        for ( int i = first + 1; i < count; ++i )
+        {
+            const processor_t key = order[i];
+            int j = i - 1;
+            while ( j >= first && order[j].index > key.index )
+            {
+                order[j + 1] = order[j];
+                --j;
+            }
+            order[j + 1] = key;
+        }
+    }
+    ok = ok && count > 0;
+    for ( int i = 0; ok && i < iocp->num_endpoints; ++i )
+    {
+        iocp->processors[i] = order[i % count].index;
+        iocp->pins[i] = order[i % count].pin;
+        iocp->cores[i] = order[i % count].core;
+    }
+    if ( !ok )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+        rocketnet_error( "iocp transport refused: the processors could not be listed for the workers (Win32 %lu)", GetLastError() );
+    }
+    rocketnet_free( context, order );
+    rocketnet_free( context, info );
+    return ok;
+}
+
 #if ROCKETNET_DEV
 static std::atomic<int> rocketnet_iocp_test_forced_flags{ 0 };
 
@@ -1897,6 +2131,37 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     {
         return NULL;
     }
+    // More than one worker shares the port by SIO_CPU_AFFINITY, which has no
+    // exclusive form, so the endpoints take a specific local address: a
+    // squatter on that exact address and port is refused by the probe below,
+    // and a later plain bind of the wildcard at that port (which Windows
+    // allows, measured) is less specific than the endpoints. An IPv4-mapped
+    // address would give endpoint 0 a dual-stack socket whose bound name
+    // comes back as IPv4. One worker binds exclusively and takes either.
+    if ( num_workers > 1 && rocketnet_iocp_address_is_wildcard( bind_address ) )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_INVALID_ADDRESS );
+        rocketnet_warn( "iocp transport refused: %d workers need a specific local address; set bind_ipv4_address or bind_ipv6_address in the server config", num_workers );
+        return NULL;
+    }
+    if ( num_workers > 1 && bind_address->type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( bind_address ) )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_INVALID_ADDRESS );
+        rocketnet_warn( "iocp transport refused: %d workers need a specific local address, not an IPv4-mapped one; set bind_ipv4_address in the server config", num_workers );
+        return NULL;
+    }
+    // An explicit port is probed. Port 0 is not: endpoint 0 binds it with
+    // SIO_CPU_AFFINITY and Windows hands it a port no socket holds, so there
+    // is no gap between a probe and the endpoints. Once endpoint 0 is bound,
+    // a later plain or SO_REUSEADDR bind of its address and port is refused
+    // (measured, 10048 and 10013), but a socket of another process that also
+    // sets SIO_CPU_AFFINITY can join the port and receive the flows RSS hands
+    // its processor: Windows offers no exclusive form of a port shared by
+    // processor (SO_EXCLUSIVEADDRUSE refuses the second endpoint).
+    if ( num_workers > 1 && bind_address->port != 0 && !rocketnet_iocp_exclusive_probe( bind_address, status ) )
+    {
+        return NULL;
+    }
 
     void * storage = rocketnet_malloc( context, sizeof( rocketnet_server_iocp_t ) );
     if ( !storage )
@@ -1907,6 +2172,11 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_server_iocp_t * iocp = new ( storage ) rocketnet_server_iocp_t();
     iocp->context = context;
     iocp->num_workers = num_workers;
+    for ( int e = 0; e < ROCKETNET_IOCP_MAX_WORKERS; ++e )
+    {
+        iocp->sockets[e] = INVALID_SOCKET;
+    }
+    iocp->num_endpoints = num_workers;
     iocp->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     iocp->owner_epoch = rocketnet_iocp_next_owner_epoch.fetch_add( 1, std::memory_order_relaxed );
     iocp->send_queue_size = layout.send_queue_size;
@@ -1927,6 +2197,8 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     DWORD returned_bytes = 0;
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
+    bool uso_everywhere = true;
+    bool uro_everywhere = true;
     if ( iocp->owner_epoch == 0 )
     {
         goto failed;
@@ -2061,127 +2333,214 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         op->state = ROCKETNET_IOCP_OPERATION_IDLE;
     }
 
-    iocp->socket = WSASocketW( iocp->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( iocp->socket != INVALID_SOCKET )
+    if ( iocp->num_endpoints > 1 && !rocketnet_iocp_endpoint_processors( context, iocp, status ) )
     {
-        iocp->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->socket, "iocp socket" );
-    }
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( iocp->socket == INVALID_SOCKET )
-    {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         goto failed;
     }
 #if ROCKETNET_DEV
-    if ( fail_stage == 1 )
+    // development library only: ROCKETNET_TEST_IOCP_PIN places the completion
+    // workers for a measurement: "sibling" on the core's other logical
+    // processors (the RSS processor keeps the receive DPCs), "core" on the
+    // whole core, "none" unpinned; unset is the RSS processor
+    if ( iocp->num_endpoints > 1 )
     {
-        goto failed;
-    }
-#endif // #if ROCKETNET_DEV
-    if ( setsockopt( iocp->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
-    {
-        goto failed;
-    }
-    if ( iocp->ipv6 && setsockopt( iocp->socket, IPPROTO_IPV6, IPV6_V6ONLY, (const char *) &v6_only, sizeof( v6_only ) ) == SOCKET_ERROR )
-    {
-        goto failed;
-    }
-    if ( setsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (const char *) &buffer_bytes, sizeof( buffer_bytes ) ) == SOCKET_ERROR )
-    {
-        goto failed;
-    }
-    if ( getsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (char *) &granted_receive_bytes, &granted_length ) == SOCKET_ERROR )
-    {
-        granted_receive_bytes = 0;
-    }
-    rocketnet_server_receive_buffer_granted( "iocp", receive_buffer_bytes, granted_receive_bytes );
-    buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
-    if ( setsockopt( iocp->socket, SOL_SOCKET, SO_SNDBUF, (const char *) &buffer_bytes, sizeof( buffer_bytes ) ) == SOCKET_ERROR )
-    {
-        goto failed;
-    }
-    // Match the portable socket's don't-fragment rule, tolerating option refusal.
-
-    if ( iocp->ipv6 )
-    {
-        setsockopt( iocp->socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) );
-    }
-    setsockopt( iocp->socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
-    // both ICMP reset reports off; a refusal is logged once and the receive
-    // paths skip the statuses
-
-    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) iocp->socket );
-    if ( bind( iocp->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
-    {
-        goto failed;
-    }
-    address_bytes = sizeof( address );
-    if ( getsockname( iocp->socket, (sockaddr *) &address, &address_bytes ) == SOCKET_ERROR )
-    {
-        goto failed;
-    }
-
-    // The probes run on the bound socket; a refusal is a tier, not an error.
-    // UDP_SEND_MSG_SIZE (IPPROTO_UDP socket options, Winsock reference,
-    // learn.microsoft.com): a DWORD; non-zero makes the stack break each sent
-    // buffer into messages of that size, the last one possibly shorter; zero,
-    // the default, is no segmentation. The probe writes zero.
-#if ROCKETNET_DEV
-    if ( ( flags & ROCKETNET_IOCP_DISABLE_USO ) == 0 )
-#endif // #if ROCKETNET_DEV
-    {
-        DWORD zero = 0;
-        if ( setsockopt( iocp->socket, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (const char *) &zero, sizeof( zero ) ) != SOCKET_ERROR )
+        char pin[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_PIN", pin, sizeof( pin ) ) > 0 )
         {
-            iocp->features.fetch_or( ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );
+            for ( int e = 0; e < iocp->num_endpoints; ++e )
+            {
+                if ( strcmp( pin, "sibling" ) == 0 && ( iocp->cores[e].Mask & ~iocp->pins[e].Mask ) != 0 )
+                {
+                    const KAFFINITY rss = iocp->pins[e].Mask;
+                    iocp->pins[e] = iocp->cores[e];
+                    iocp->pins[e].Mask &= ~rss;
+                }
+                else if ( strcmp( pin, "core" ) == 0 )
+                {
+                    iocp->pins[e] = iocp->cores[e];
+                }
+                else if ( strcmp( pin, "none" ) == 0 )
+                {
+                    iocp->pins[e].Mask = 0;
+                }
+            }
         }
     }
-
-    // UDP_RECV_MAX_COALESCED_SIZE (same page): a DWORD; non-zero lets the stack
-    // coalesce datagrams of one source address and port into one message of
-    // at most that many bytes, all the same size but a shorter last one; the
-    // stride reaches the application only through a receive with control
-    // data (WSARecvMsg) as the DWORD control message UDP_COALESCED_INFO.
-#if ROCKETNET_DEV
-    if ( ( flags & ROCKETNET_IOCP_DISABLE_URO ) == 0 )
 #endif // #if ROCKETNET_DEV
+
+    // One endpoint per worker. Endpoint 0 binds the address (and takes the
+    // port when it is 0); the others bind the address endpoint 0 was given.
+    // The probes run on every bound socket and a feature is used only when
+    // every endpoint takes it; a refusal is a tier, not an error.
+    for ( int e = 0; e < iocp->num_endpoints; ++e )
     {
-        GUID guid = WSAID_WSARECVMSG;
-        DWORD maximum = ROCKETNET_IOCP_URO_BUFFER_BYTES;
-        if ( WSAIoctl( iocp->socket, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof( guid ), &iocp->receive_message,
-                       sizeof( iocp->receive_message ), &returned_bytes, NULL, NULL ) != SOCKET_ERROR &&
-             iocp->receive_message &&
-             setsockopt( iocp->socket, IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *) &maximum, sizeof( maximum ) ) != SOCKET_ERROR )
+        SOCKET socket = WSASocketW( iocp->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
+        iocp->sockets[e] = socket;
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        if ( socket != INVALID_SOCKET )
         {
-            iocp->uro_buffers = (uint8_t *) rocketnet_malloc( context, (size_t) num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * ROCKETNET_IOCP_URO_BUFFER_BYTES );
-            if ( !iocp->uro_buffers )
+            iocp->socket_generations[e] = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) socket, "iocp socket" );
+        }
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        if ( socket == INVALID_SOCKET )
+        {
+            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+            goto failed;
+        }
+#if ROCKETNET_DEV
+        if ( fail_stage == 1 )
+        {
+            goto failed;
+        }
+#endif // #if ROCKETNET_DEV
+        if ( iocp->num_endpoints > 1 )
+        {
+            // before bind, and instead of SO_EXCLUSIVEADDRUSE: a refusal is
+            // named, never a quiet fallback to one endpoint
+            USHORT processor = (USHORT) iocp->processors[e];
+            DWORD returned = 0;
+            if ( WSAIoctl( socket, SIO_CPU_AFFINITY, &processor, sizeof( processor ), NULL, 0, &returned, NULL, NULL ) == SOCKET_ERROR )
             {
-                rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+                rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+                rocketnet_error( "iocp transport refused: SIO_CPU_AFFINITY to processor %d was refused (Winsock %d); workers share the port only through it",
+                                 iocp->processors[e], WSAGetLastError() );
                 goto failed;
             }
-            iocp->features.fetch_or( ROCKETNET_IOCP_FEATURE_URO, std::memory_order_relaxed );
+        }
+        else if ( setsockopt( socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
+        {
+            goto failed;
+        }
+        if ( iocp->ipv6 && setsockopt( socket, IPPROTO_IPV6, IPV6_V6ONLY, (const char *) &v6_only, sizeof( v6_only ) ) == SOCKET_ERROR )
+        {
+            goto failed;
+        }
+        buffer_bytes = receive_buffer_bytes;
+        if ( setsockopt( socket, SOL_SOCKET, SO_RCVBUF, (const char *) &buffer_bytes, sizeof( buffer_bytes ) ) == SOCKET_ERROR )
+        {
+            goto failed;
+        }
+        if ( e == 0 )
+        {
+            granted_length = sizeof( granted_receive_bytes );
+            if ( getsockopt( socket, SOL_SOCKET, SO_RCVBUF, (char *) &granted_receive_bytes, &granted_length ) == SOCKET_ERROR )
+            {
+                granted_receive_bytes = 0;
+            }
+            rocketnet_server_receive_buffer_granted( "iocp", receive_buffer_bytes, granted_receive_bytes );
+        }
+        buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
+        if ( setsockopt( socket, SOL_SOCKET, SO_SNDBUF, (const char *) &buffer_bytes, sizeof( buffer_bytes ) ) == SOCKET_ERROR )
+        {
+            goto failed;
+        }
+        // Match the portable socket's don't-fragment rule, tolerating option refusal.
+
+        if ( iocp->ipv6 )
+        {
+            setsockopt( socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) );
+        }
+        setsockopt( socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
+        // both ICMP reset reports off; a refusal is logged once and the receive
+        // paths skip the statuses
+
+        rocketnet_platform_socket_disable_udp_resets( (uintptr_t) socket );
+        if ( bind( socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
+        {
+            goto failed;
+        }
+        if ( e == 0 )
+        {
+            // the others bind the port endpoint 0 was given
+            address_bytes = sizeof( address );
+            if ( getsockname( socket, (sockaddr *) &address, &address_bytes ) == SOCKET_ERROR )
+            {
+                goto failed;
+            }
+        }
+
+        // UDP_SEND_MSG_SIZE (IPPROTO_UDP socket options, Winsock reference,
+        // learn.microsoft.com): a DWORD; non-zero makes the stack break each
+        // sent buffer into messages of that size, the last one possibly
+        // shorter; zero, the default, is no segmentation. The probe writes zero.
+        DWORD zero = 0;
+        if ( setsockopt( socket, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (const char *) &zero, sizeof( zero ) ) == SOCKET_ERROR )
+        {
+            uso_everywhere = false;
+        }
+
+        // UDP_RECV_MAX_COALESCED_SIZE (same page): a DWORD; non-zero lets the
+        // stack coalesce datagrams of one source address and port into one
+        // message of at most that many bytes, all the same size but a shorter
+        // last one; the stride reaches the application only through a receive
+        // with control data (WSARecvMsg) as the DWORD control message
+        // UDP_COALESCED_INFO. WSARecvMsg is the provider's, the same for
+        // every endpoint.
+        DWORD maximum = ROCKETNET_IOCP_URO_BUFFER_BYTES;
+        GUID guid = WSAID_WSARECVMSG;
+        if ( ( e == 0 && ( WSAIoctl( socket, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof( guid ), &iocp->receive_message, sizeof( iocp->receive_message ),
+                                     &returned_bytes, NULL, NULL ) == SOCKET_ERROR ||
+                           !iocp->receive_message ) ) ||
+             setsockopt( socket, IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *) &maximum, sizeof( maximum ) ) == SOCKET_ERROR )
+        {
+            uro_everywhere = false;
+        }
+
+        // one completion port per endpoint, drained by its one worker
+        iocp->ports[e] = CreateIoCompletionPort( (HANDLE) socket, NULL, 0, 1 );
+        if ( !iocp->ports[e] )
+        {
+            rocketnet_platform_windows_create_status( status, GetLastError() );
+        }
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        if ( iocp->ports[e] )
+        {
+            iocp->port_generations[e] = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_IOCP, (uintptr_t) iocp->ports[e], "iocp completion port" );
+        }
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        if ( !iocp->ports[e]
+#if ROCKETNET_DEV
+             || fail_stage == 2
+#endif // #if ROCKETNET_DEV
+        )
+        {
+            goto failed;
         }
     }
 
-    iocp->port = CreateIoCompletionPort( (HANDLE) iocp->socket, NULL, 0, (DWORD) num_workers );
-    if ( !iocp->port )
-    {
-        rocketnet_platform_windows_create_status( status, GetLastError() );
-    }
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( iocp->port )
-    {
-        iocp->port_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_IOCP, (uintptr_t) iocp->port, "iocp completion port" );
-    }
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( !iocp->port
 #if ROCKETNET_DEV
-         || fail_stage == 2
-#endif // #if ROCKETNET_DEV
-    )
+    if ( flags & ROCKETNET_IOCP_DISABLE_USO )
     {
-        goto failed;
+        uso_everywhere = false;
+    }
+    if ( flags & ROCKETNET_IOCP_DISABLE_URO )
+    {
+        uro_everywhere = false;
+    }
+#endif // #if ROCKETNET_DEV
+    if ( uso_everywhere )
+    {
+        iocp->features.fetch_or( ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );
+    }
+    if ( uro_everywhere )
+    {
+        iocp->uro_buffers = (uint8_t *) rocketnet_malloc( context, (size_t) num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * ROCKETNET_IOCP_URO_BUFFER_BYTES );
+        if ( !iocp->uro_buffers )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+            goto failed;
+        }
+        iocp->features.fetch_or( ROCKETNET_IOCP_FEATURE_URO, std::memory_order_relaxed );
+    }
+    else
+    {
+        // a URO setting a probe left on one endpoint is cleared: every
+        // endpoint receives one datagram per message, as WSARecvFrom expects
+        DWORD off = 0;
+        for ( int e = 0; e < iocp->num_endpoints; ++e )
+        {
+            setsockopt( iocp->sockets[e], IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *) &off, sizeof( off ) );
+        }
     }
     for ( int l = 0; l < iocp->num_lanes; ++l )
     {
@@ -2257,6 +2616,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_info( "iocp transport: %d completion workers and %d send lanes of %d on port %d, USO %s, URO %s", num_workers, iocp->num_lanes, iocp->send_queue_size, bind_address->port,
                     ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_USO ) ? "yes" : "no (WSASendTo per datagram)",
                     ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_URO ) ? "yes" : "no (WSARecvFrom per datagram)" );
+    for ( int e = 0; iocp->num_endpoints > 1 && e < iocp->num_endpoints; ++e )
+    {
+        rocketnet_info( "iocp transport: worker %d on processor %d (SIO_CPU_AFFINITY), worker mask 0x%llx group %d", e, iocp->processors[e], (unsigned long long) iocp->pins[e].Mask, (int) iocp->pins[e].Group );
+    }
     return iocp;
 
 failed:
@@ -2481,7 +2844,7 @@ static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, const rock
 
     if ( !ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_SEND_POST, &error ) )
     {
-        result = WSASendTo( iocp->socket, &op->buffer, 1, NULL, 0,
+        result = WSASendTo( rocketnet_iocp_op_socket( iocp, op ), &op->buffer, 1, NULL, 0,
                             (sockaddr *) &op->address, op->address_bytes, &op->overlapped, NULL );
         if ( result == SOCKET_ERROR )
         {
@@ -2570,7 +2933,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
     if ( !ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_SEND_POST, &error ) )
     {
-        result = WSASendMsg( iocp->socket, &first->message, 0, NULL, &first->overlapped, NULL );
+        result = WSASendMsg( rocketnet_iocp_op_socket( iocp, first ), &first->message, 0, NULL, &first->overlapped, NULL );
         if ( result == 0 )
         {
             iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
@@ -2834,9 +3197,9 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
     // the completion workers exit once every lane has: wake them on each
     // lane's exit, so the last one is never missed
     iocp->live_lanes.fetch_sub( 1, std::memory_order_acq_rel );
-    for ( int i = 0; i < iocp->num_workers; ++i )
+    for ( int e = 0; e < iocp->num_endpoints; ++e )
     {
-        PostQueuedCompletionStatus( iocp->port, 0, 0, NULL );
+        PostQueuedCompletionStatus( iocp->ports[e], 0, 0, NULL );
     }
 }
 
@@ -2947,7 +3310,7 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp )
 #if ROCKETNET_DEV
 uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp )
 {
-    return (uintptr_t) iocp->socket;
+    return (uintptr_t) iocp->sockets[0];
 }
 
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold )
