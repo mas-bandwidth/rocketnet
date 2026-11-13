@@ -3374,6 +3374,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
                                &server_transport->counters.values[ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP],
                                &server_transport->counters.values[ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS] );
 
+    // one thread a client is the rule of a game that sends from game threads:
+    // it is armed by that game's first call that names a client
+    // (sdk/rocketnet_api.cpp), and a game that makes today's calls only is
+    // never refused for it
+    rocketnet_fill_phase_arm_one_filler( &server_transport->fill_phase, false );
+
     if ( server_transport->io.operations->replay_mark )
     {
         server_transport->replay_marks = rocketnet_server_replay_marks_create( context, max_clients );

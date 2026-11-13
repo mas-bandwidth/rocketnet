@@ -1035,15 +1035,18 @@ struct rocketnet_client_t;
 /// rocketnet_server_start_message, rocketnet_server_finish_client_message
 /// and rocketnet_server_abort_client_message. The main thread may make them
 /// too. Every other server call is a main thread call. A thread here is an
-/// operating system thread: a server that several threads share under a lock
-/// is bound by these rules as well. The rules:
+/// operating system thread. The rules:
 ///
 /// - The game threads have returned from their calls before the main thread
 ///   makes its next call, and the main thread has returned from its call
 ///   before a game thread calls again. Join the game threads' work, or pass
 ///   a barrier, in both directions.
 /// - Between one main thread call and the next, every one of the three calls
-///   for one client index comes from one thread, so a message is finished or
+///   for one client index comes from one thread (this rule is in force from
+///   the server's first rocketnet_server_finish_client_message or
+///   rocketnet_server_abort_client_message on; a server that never makes
+///   those calls is used one thread at a time, and its threads may send to
+///   one client in turn), so a message is finished or
 ///   aborted by the thread that started it. (rocketnet_server_finish_message
 ///   and rocketnet_server_abort_message, the calls of a server used one
 ///   thread at a time, may come from another thread: they count as a main

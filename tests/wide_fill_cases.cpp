@@ -948,7 +948,67 @@ static void test_wide_fill_default_start_on_one_thread_abort_on_another()
     wide_fill_start_here_close_there( false );
 }
 
+// The default, one thread at a time and today's calls only: two threads send
+// to one client in turn with no main thread call between, as a game that
+// shares its server under a lock may. Nothing is refused and nothing is
+// counted. Once the game has made a call that names a client, the same turn
+// is a second thread on the client: refused and counted.
+static void test_wide_fill_default_two_threads_one_client_in_turn()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    g_wide_fill_asserts = 0;
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 2 );
+    wide_fill_connect_all( &world );
+    const int slot = rocketnet_client_index( world.clients[0] );
+
+    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
+    const uint64_t two = wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+
+    auto send_one = [&]( uint8_t value ) -> uint32_t {
+        uint8_t * p = rocketnet_server_start_message( world.server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
+        if ( !p )
+        {
+            return 0;
+        }
+        memset( p, value, 8 );
+        return rocketnet_server_finish_message( world.server, 8 );
+    };
+
+    for ( int round = 0; round < 3; round++ )
+    {
+        check( send_one( 0x71 ) != 0 );
+        uint32_t serial = 0;
+        std::thread other( [&]() { serial = send_one( 0x72 ); } );
+        other.join();
+        check( serial != 0 );
+        check( send_one( 0x73 ) != 0 );
+    }
+    check( g_wide_fill_asserts == 0 );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS ) == two );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    // the game names a client: from here one thread a client is the rule
+    wide_fill_pump( &world );
+    rocketnet_server_abort_client_message( world.server, slot );
+    wide_fill_pump( &world );
+    check( send_one( 0x74 ) != 0 );
+    uint8_t * refused = (uint8_t *) &world;
+    std::thread second( [&]() { refused = rocketnet_server_start_message( world.server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 ); } );
+    second.join();
+    check( refused == NULL );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS ) == two + 1 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 1 ) );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
 REGISTER_UNIT_TEST( test_wide_fill_one_thread );
+REGISTER_UNIT_TEST( test_wide_fill_default_two_threads_one_client_in_turn );
 REGISTER_UNIT_TEST( test_wide_fill_default_start_on_one_thread_finish_on_another );
 REGISTER_UNIT_TEST( test_wide_fill_default_start_on_one_thread_abort_on_another );
 REGISTER_UNIT_TEST( test_wide_fill_four_threads );

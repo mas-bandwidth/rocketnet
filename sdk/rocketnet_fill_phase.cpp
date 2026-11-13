@@ -91,6 +91,7 @@ void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int 
     fill_phase->main_calls.store( 0 );
     fill_phase->epoch.store( 1 );
     fill_phase->main_owner.store( 0 );
+    fill_phase->one_filler.store( 1 );
     fill_phase->main_depth = 0;
     fill_phase->num_clients = num_clients < 0 ? 0 : ( num_clients > ROCKETNET_MAX_CLIENTS ? ROCKETNET_MAX_CLIENTS : num_clients );
     fill_phase->overlap_counter = overlap_counter;
@@ -172,6 +173,15 @@ void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
     RN_FILL_PHASE_TRACE( "MainEpoch", -1, epoch, false );
     fill_phase->main_calls.fetch_sub( 1 );
     RN_FILL_PHASE_TRACE( "MainDrop", -1, epoch, false );
+}
+
+void rocketnet_fill_phase_arm_one_filler( struct rocketnet_fill_phase_t * fill_phase, bool armed )
+{
+    rocketnet_assert( fill_phase );
+    if ( ( fill_phase->one_filler.load( std::memory_order_relaxed ) != 0 ) != armed )
+    {
+        fill_phase->one_filler.store( armed ? 1 : 0 );
+    }
 }
 
 // One main operation with nothing inside it (proofs/tla/RNFillPhase.tla
@@ -265,7 +275,8 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         // other filler of the client is refused at FillLock
 
         owner_before = owner->load();
-        if ( owner_before != 0 && owner_before != me && rn_fill_phase_word_epoch( before ) == epoch )
+        if ( fill_phase->one_filler.load( std::memory_order_relaxed ) != 0 && owner_before != 0 && owner_before != me &&
+             rn_fill_phase_word_epoch( before ) == epoch )
         {
             word->store( before );
             rn_fill_phase_count( fill_phase->two_fillers_counter );

@@ -3604,7 +3604,18 @@ static bool rn_server_hand_over_open( struct rocketnet_server_t * server, int sl
 }
 
 // finish and abort of the message open on one client: any number of fill
-// threads, each on its own clients (sdk/rocketnet_fill_phase.h)
+// threads, each on its own clients (sdk/rocketnet_fill_phase.h). The first
+// of these calls is the game saying it sends from game threads: from it on,
+// one thread a client between main-thread calls is enforced.
+
+static void rn_server_arm_one_thread_a_client( struct rocketnet_server_t * server )
+{
+    struct rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rn_server_transport( server ) );
+    if ( phase )
+    {
+        rocketnet_fill_phase_arm_one_filler( phase, true );
+    }
+}
 
 uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * server, int client_index, int bytes_written )
 {
@@ -3625,6 +3636,7 @@ uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * ser
         return 0;
     }
 
+    rn_server_arm_one_thread_a_client( server );
     return rocketnet_message_server_finish( rn_server( server ), client_index, bytes_written );
 }
 
@@ -3646,6 +3658,7 @@ void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, 
         return;
     }
 
+    rn_server_arm_one_thread_a_client( server );
     rocketnet_message_server_abort( rn_server( server ), client_index );
 }
 

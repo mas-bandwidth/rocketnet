@@ -93,6 +93,18 @@
 // threads' ids hash to one fills_in line. Per main operation: two adds, two
 // stores and 64 loads, independent of max_clients.
 //
+// The one-filler rule is armed or not (rocketnet_fill_phase_arm_one_filler;
+// armed after init, and what RNFillPhase models and the trace check walks).
+// The server disarms it at create and arms it at the game's first call that
+// names a client (rocketnet_server_finish_client_message or
+// rocketnet_server_abort_client_message): a game that makes today's calls
+// only, from one thread at a time under its own lock, may send to one client
+// from two threads in turn within a phase, as it always could. Disarmed,
+// FillDecide takes the client over from another thread's claim of this epoch
+// in place of refusing; FillLock still refuses a thread that finds another
+// inside a call for the client, and the overlap with a main operation is
+// checked as ever.
+//
 // What the check does not see: an id is reused after its thread exits, so a
 // thread that ends and a new thread that gets its id are one filler to the
 // check. The epoch is 56 bits and does not wrap in practice (2^56 main
@@ -130,6 +142,7 @@ struct alignas( 64 ) rocketnet_fill_phase_t
     std::atomic<uint32_t> main_calls;
     std::atomic<uint64_t> epoch;
     std::atomic<uint64_t> main_owner;           // the thread inside a main operation, 0: none
+    std::atomic<uint32_t> one_filler;           // 1: one filler per client in a phase is enforced (rocketnet_fill_phase_arm_one_filler)
     int main_depth;                             // written and read only by main_owner
     int num_clients;
     uint64_t * overlap_counter;                 // MAIN_THREAD_CALL_OVERLAP, NULL: not counted
@@ -150,6 +163,10 @@ inline int rocketnet_fill_phase_line_of( uint64_t thread_id )
 // num_clients is the server's max_clients; the counters may be NULL
 void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int num_clients,
                                 uint64_t * overlap_counter, uint64_t * two_fillers_counter );
+
+// armed: a second thread on a client within one phase is refused; not armed:
+// it takes the client over (see above). Set by main, with no fill running.
+void rocketnet_fill_phase_arm_one_filler( struct rocketnet_fill_phase_t * fill_phase, bool armed );
 
 // false: refused and counted (and asserted): the operation must not run.
 // Every true is matched by one main_end on the same thread.
