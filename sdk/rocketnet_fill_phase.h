@@ -93,17 +93,17 @@
 // threads' ids hash to one fills_in line. Per main operation: two adds, two
 // stores and 64 loads, independent of max_clients.
 //
-// The one-filler rule is armed or not (rocketnet_fill_phase_arm_one_filler;
-// armed after init, and what RNFillPhase models and the trace check walks).
-// The server disarms it at create and arms it at the game's first call that
+// The check is armed or not (rocketnet_fill_phase_arm; armed after init,
+// which is what RNFillPhase models and the trace check walks). The server
+// disarms it at create and arms it, for good, at the game's first call that
 // names a client (rocketnet_server_finish_client_message or
-// rocketnet_server_abort_client_message): a game that makes today's calls
-// only, from one thread at a time under its own lock, may send to one client
-// from two threads in turn within a phase, as it always could. Disarmed,
-// FillDecide takes the client over from another thread's claim of this epoch
-// in place of refusing; FillLock still refuses a thread that finds another
-// inside a call for the client, and the overlap with a main operation is
-// checked as ever.
+// rocketnet_server_abort_client_message). Until then the game makes today's
+// calls only, one thread at a time, as before this check existed, and the
+// call sites' scopes below do nothing: one relaxed load and a branch, no
+// thread id, no write. A scope remembers whether it began armed, so a call
+// in flight when the latch arms ends without touching counts it never took.
+// What that leaves unseen: a break of the contract by a call that began
+// before the game's first call that names a client.
 //
 // What the check does not see: an id is reused after its thread exits, so a
 // thread that ends and a new thread that gets its id are one filler to the
@@ -142,7 +142,7 @@ struct alignas( 64 ) rocketnet_fill_phase_t
     std::atomic<uint32_t> main_calls;
     std::atomic<uint64_t> epoch;
     std::atomic<uint64_t> main_owner;           // the thread inside a main operation, 0: none
-    std::atomic<uint32_t> one_filler;           // 1: one filler per client in a phase is enforced (rocketnet_fill_phase_arm_one_filler)
+    std::atomic<uint32_t> armed;                // 1: the call sites' scopes run the check (rocketnet_fill_phase_arm)
     int main_depth;                             // written and read only by main_owner
     int num_clients;
     uint64_t * overlap_counter;                 // MAIN_THREAD_CALL_OVERLAP, NULL: not counted
@@ -164,9 +164,15 @@ inline int rocketnet_fill_phase_line_of( uint64_t thread_id )
 void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int num_clients,
                                 uint64_t * overlap_counter, uint64_t * two_fillers_counter );
 
-// armed: a second thread on a client within one phase is refused; not armed:
-// it takes the client over (see above). Set by main, with no fill running.
-void rocketnet_fill_phase_arm_one_filler( struct rocketnet_fill_phase_t * fill_phase, bool armed );
+// armed: the scopes below run the check; not armed: they do nothing (see
+// above). main_begin, main_end, fill_begin and fill_end themselves always
+// check: they are for a caller that armed the check.
+void rocketnet_fill_phase_arm( struct rocketnet_fill_phase_t * fill_phase, bool armed );
+
+inline bool rocketnet_fill_phase_armed( const struct rocketnet_fill_phase_t * fill_phase )
+{
+    return fill_phase->armed.load( std::memory_order_relaxed ) != 0;
+}
 
 // false: refused and counted (and asserted): the operation must not run.
 // Every true is matched by one main_end on the same thread.
@@ -189,11 +195,12 @@ bool rocketnet_fill_phase_hand_over( struct rocketnet_fill_phase_t * fill_phase,
 // RAII forms for the call sites
 struct rocketnet_fill_phase_main_scope_t
 {
-    struct rocketnet_fill_phase_t * fill_phase;
+    struct rocketnet_fill_phase_t * fill_phase;         // NULL: no check, or not armed when the scope began
     bool entered;
 
     explicit rocketnet_fill_phase_main_scope_t( struct rocketnet_fill_phase_t * phase )
-        : fill_phase( phase ), entered( phase ? rocketnet_fill_phase_main_begin( phase ) : true ) {}
+        : fill_phase( phase && rocketnet_fill_phase_armed( phase ) ? phase : NULL ),
+          entered( fill_phase ? rocketnet_fill_phase_main_begin( fill_phase ) : true ) {}
     ~rocketnet_fill_phase_main_scope_t()
     {
         if ( fill_phase && entered )
@@ -207,12 +214,13 @@ struct rocketnet_fill_phase_main_scope_t
 
 struct rocketnet_fill_phase_fill_scope_t
 {
-    struct rocketnet_fill_phase_t * fill_phase;
+    struct rocketnet_fill_phase_t * fill_phase;         // NULL: no check, or not armed when the scope began
     int client_index;
     bool entered;
 
     rocketnet_fill_phase_fill_scope_t( struct rocketnet_fill_phase_t * phase, int client )
-        : fill_phase( phase ), client_index( client ), entered( phase ? rocketnet_fill_phase_fill_begin( phase, client ) : true ) {}
+        : fill_phase( phase && rocketnet_fill_phase_armed( phase ) ? phase : NULL ), client_index( client ),
+          entered( fill_phase ? rocketnet_fill_phase_fill_begin( fill_phase, client ) : true ) {}
     ~rocketnet_fill_phase_fill_scope_t()
     {
         if ( fill_phase && entered )
