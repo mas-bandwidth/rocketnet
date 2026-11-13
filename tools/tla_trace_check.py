@@ -83,6 +83,16 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
+    "iocp-admit": {
+        "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
+        "untraced": {},
+        "reach": ["BankFull"],
+    },
+    "iocp-lanes": {
+        "modules": ["RNIocpSendLanes.tla", "TraceRNIocpSendLanes.tla"],
+        "untraced": {},
+        "reach": ["LaneEmpty", "EveryThreadPosts"],
+    },
     "bank": {
         "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
         "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
