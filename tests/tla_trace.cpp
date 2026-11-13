@@ -29,6 +29,51 @@
 
 #include "tla_trace_record.h"
 
+// the library configuration this translation unit was compiled with, as
+// the preprocessor sees it: tools/tla_trace_check.py compares the line with
+// the library's own definitions (tla_trace_config.txt, written by CMake from
+// rocketnet_dev), and the clean binary's line with the plant binary's, so a
+// planted copy of library code is never compiled with a configuration the
+// library does not have (code compiled out, other sizes).
+#define TLA_TRACE_TEXT( x ) #x
+#define TLA_TRACE_VALUE( x ) TLA_TRACE_TEXT( x )
+
+static void print_config()
+{
+    printf( "CONFIG" );
+#if defined( ROCKETNET_DEV )
+    printf( " ROCKETNET_DEV=%s", TLA_TRACE_VALUE( ROCKETNET_DEV ) );
+#else  // #if defined( ROCKETNET_DEV )
+    printf( " ROCKETNET_DEV=undef" );
+#endif // #if defined( ROCKETNET_DEV )
+#if defined( ROCKETNET_MAX_CLIENTS )
+    printf( " ROCKETNET_MAX_CLIENTS=%s", TLA_TRACE_VALUE( ROCKETNET_MAX_CLIENTS ) );
+#else  // #if defined( ROCKETNET_MAX_CLIENTS )
+    printf( " ROCKETNET_MAX_CLIENTS=undef" );
+#endif // #if defined( ROCKETNET_MAX_CLIENTS )
+#if defined( ROCKETNET_HISTORY_PACKETS )
+    printf( " ROCKETNET_HISTORY_PACKETS=%s", TLA_TRACE_VALUE( ROCKETNET_HISTORY_PACKETS ) );
+#else  // #if defined( ROCKETNET_HISTORY_PACKETS )
+    printf( " ROCKETNET_HISTORY_PACKETS=undef" );
+#endif // #if defined( ROCKETNET_HISTORY_PACKETS )
+#if defined( ROCKETNET_XDP )
+    printf( " ROCKETNET_XDP=%s", TLA_TRACE_VALUE( ROCKETNET_XDP ) );
+#else  // #if defined( ROCKETNET_XDP )
+    printf( " ROCKETNET_XDP=undef" );
+#endif // #if defined( ROCKETNET_XDP )
+#if defined( ROCKETNET_IO_URING )
+    printf( " ROCKETNET_IO_URING=%s", TLA_TRACE_VALUE( ROCKETNET_IO_URING ) );
+#else  // #if defined( ROCKETNET_IO_URING )
+    printf( " ROCKETNET_IO_URING=undef" );
+#endif // #if defined( ROCKETNET_IO_URING )
+#if defined( ROCKETNET_XDP_MEMORY_MIB )
+    printf( " ROCKETNET_XDP_MEMORY_MIB=%s", TLA_TRACE_VALUE( ROCKETNET_XDP_MEMORY_MIB ) );
+#else  // #if defined( ROCKETNET_XDP_MEMORY_MIB )
+    printf( " ROCKETNET_XDP_MEMORY_MIB=undef" );
+#endif // #if defined( ROCKETNET_XDP_MEMORY_MIB )
+    printf( "\n" );
+}
+
 static void usage()
 {
     fprintf( stderr, "usage: tla_trace --layer NAME --seed N --out DIR [--steps K] | tla_trace --list\n" );
@@ -39,8 +84,12 @@ int main( int argc, char ** argv )
     const tla_trace_table_t & table = tla_trace_layers();
     if ( table.refused > 0 )
     {
-        fprintf( stderr, "tla_trace: %d layers past the table's %d: raise TLA_TRACE_MAX_LAYERS\n", table.refused, TLA_TRACE_MAX_LAYERS );
-        return 2;
+        for ( int i = 0; i < table.refused && i < TLA_TRACE_MAX_LAYERS; i++ )
+        {
+            printf( "REFUSED %s %s\n", table.refusal[i].name, table.refusal[i].reason );
+        }
+        fprintf( stderr, "tla_trace: %d layer registrations refused\n", table.refused );
+        return 3;
     }
 
     const char * layer = NULL;
@@ -93,6 +142,7 @@ int main( int argc, char ** argv )
     {
         if ( strcmp( layer, table.layer[j].name ) == 0 )
         {
+            print_config();
             return table.layer[j].walk( seed, steps, out );
         }
     }

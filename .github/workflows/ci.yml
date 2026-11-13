@@ -1313,7 +1313,7 @@ jobs:
           CXX: g++
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
-          cmake --build build --target tla_trace tla_trace_plant --parallel 8
+          cmake --build build --target tla_trace_all --parallel 8
 
       - name: Build the pinned tlacheck and find the pinned jar
         shell: bash
