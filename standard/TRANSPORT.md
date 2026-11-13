@@ -3765,6 +3765,7 @@ The registry of counters, in index order, is:
 | `FILL_TWO_FILLERS` | `refusal` | `none` |
 | `RECEIVE_DROPPED_STOPPED` | `refusal` | `none` |
 | `SEND_RESERVE_REFUSED_TAILS_HELD` | `refusal` | `none` |
+| `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver

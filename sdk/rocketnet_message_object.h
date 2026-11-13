@@ -207,9 +207,19 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
 // one per connection, so N fill threads may each hold one open on a
 // different connection. Written only by that connection's one filler in a
 // fill phase (sdk/rocketnet_fill_phase.h) and by main-thread operations.
+// rn_message_open_t pending: nonzero while a start is open. NO_CAPACITY is a
+// fitting unreliable start that found no capacity to be written in place (no
+// transport frame, the round kept for the write pass, packets_per_update
+// spent, or a budget that cannot pay it) and took the queued path: the serial
+// finish queues it for send_packets as before; the writer's finish
+// (rn_message_object_finish_client) refuses it, so nothing a writer finishes
+// is left for send_packets (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY)
+#define RN_MESSAGE_OPEN_PENDING 1
+#define RN_MESSAGE_OPEN_PENDING_NO_CAPACITY 2
+
 struct rn_message_open_t
 {
-    int pending;                                // 1 while a start is open here, until its finish, abort or a cancel
+    int pending;                                // RN_MESSAGE_OPEN_PENDING* while a start is open here, until its finish, abort or a cancel; 0 otherwise
     int in_place;                               // the open start: 0 region, 1 whole frame, 2 appended record;
                                                 // -1: an in-place start an update or send_packets closed, whose finish returns 0
     struct rocketnet_packet_context_t in_place_context;
@@ -354,6 +364,17 @@ void rn_message_object_send_packets( struct rn_message_object_t * object );
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes );
 
+// the writer's finish (rocketnet_server_finish_client_message): as
+// rn_message_object_finish, except that the packet holding an unreliable
+// message written in place is sealed, ack-stamped, encrypted and handed to
+// the transport in this call, and an unreliable start that found no capacity
+// (RN_MESSAGE_OPEN_PENDING_NO_CAPACITY) is refused, its start aborted and
+// MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counted. A message the writer
+// finishes is either on its way to the network or refused; send_packets
+// builds nothing of it. Large and ordering-queued messages (no in-place
+// form) queue as on the serial finish.
+uint32_t rn_message_object_finish_client( struct rn_message_object_t * object, int index, int bytes );
+
 // the messages open across the connections (the sum of the open lines), and
 // the connection the calling thread last opened a message on
 int64_t rn_message_open_count( const struct rn_message_object_t * object );
@@ -395,11 +416,14 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 #if ROCKETNET_DEV
 // The send pass's cost, counted on this thread by
 // rn_message_object_send_packets (development builds only): the connection
-// slots its rounds visit, and the frames started and then aborted in it.
+// slots its rounds visit, the frames started and then aborted in it, and the
+// packets it finished (open builds sealed at BeginFlush and frames written):
+// the work send_packets did that a writer's finish could have done.
 struct rn_send_pass_cost_t
 {
     uint64_t slot_visits;
     uint64_t frames_aborted;
+    uint64_t packets_finished;
 };
 
 void rn_send_pass_cost_reset();

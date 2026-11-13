@@ -78,7 +78,7 @@ struct wide_fill_world_t
     double time;
 };
 
-static void wide_fill_world_create( wide_fill_world_t * world, int num_clients )
+static void wide_fill_world_create( wide_fill_world_t * world, int num_clients, int packets_per_update = 0 )
 {
     memset( world, 0, sizeof( *world ) );
     rocketnet_quiet( 1 );
@@ -102,6 +102,10 @@ static void wide_fill_world_create( wide_fill_world_t * world, int num_clients )
     memcpy( server_config.backend_public_key, world->backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
     server_config.loopback_hub = world->hub;
+    if ( packets_per_update > 0 )
+    {
+        server_config.packets_per_update = packets_per_update;
+    }
 
     world->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world->server != NULL );
@@ -861,6 +865,330 @@ static void test_wide_fill_refused_finish_and_start()
     rocketnet_assert_function( NULL );
 }
 
+// ---------------------------------------------------------------------------
+// the writer's finish: a packet finished on the thread that wrote it
+// ---------------------------------------------------------------------------
+//
+// rocketnet_server_finish_client_message seals the packet of an unreliable
+// message written in place inside the call (ack block, sequence, packet id,
+// encryption, handed to the transport), and refuses an unreliable start that
+// found no capacity (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY) instead of
+// queueing it for send_packets. The serial finish is unchanged. One trace is
+// run through the serial finish on one thread, the writer's finish on one
+// thread, and the writer's finish on four threads with ownership rotating
+// every frame; per client, what was sent, acked and received must be equal.
+
+#define WRITER_FINISH_CLIENTS 8
+#define WRITER_FINISH_PACKET_BYTES 1200
+
+enum writer_finish_mode_t
+{
+    WRITER_FINISH_SERIAL,           // start + rocketnet_server_finish_message, one thread
+    WRITER_FINISH_CLIENT,           // start + rocketnet_server_finish_client_message
+};
+
+struct writer_finish_trace_t
+{
+    uint64_t packets_sent[WIDE_FILL_MAX_CLIENTS];     // per client, from the session's stats, after connect
+    uint64_t bytes_sent[WIDE_FILL_MAX_CLIENTS];
+    uint64_t acked[WIDE_FILL_MAX_CLIENTS];            // per client, packet ids the transport surfaced as acked
+    uint64_t acked_out_of_order;                      // a client's acked id not above its previous one
+    uint32_t received[WIDE_FILL_MAX_CLIENTS][3];      // per client, messages taken by kind
+    uint64_t corrupt;
+    uint64_t finished;                                // finishes that returned a serial
+    uint64_t refused;                                 // finishes that returned 0
+    uint64_t walk_packets;                            // packets send_packets finished
+    uint64_t no_capacity;                             // MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY, moved
+    uint64_t fallback;                                // MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, moved
+};
+
+struct writer_finish_fill_t
+{
+    rocketnet_server_t * server;
+    wide_fill_slot_t * slots;
+    const int * slot_of_client;
+    int num_clients;
+    int num_threads;
+    int frame;
+    int unreliable_per_frame;
+    writer_finish_mode_t mode;
+    uint64_t finished[8];
+    uint64_t refused[8];
+};
+
+static void writer_finish_job( writer_finish_fill_t * f, int thread )
+{
+    for ( int c = 0; c < f->num_clients; c++ )
+    {
+        if ( ( c + f->frame ) % f->num_threads != thread )
+        {
+            continue;
+        }
+
+        const int slot = f->slot_of_client[c];
+        wide_fill_slot_t * s = &f->slots[slot];
+        for ( int m = 0; m <= f->unreliable_per_frame; m++ )
+        {
+            // packet-sized unreliable payloads, then one small reliable message
+            const int k = m < f->unreliable_per_frame ? 0 : 2;
+            const int bytes = k == 0 ? WRITER_FINISH_PACKET_BYTES : WIDE_FILL_HEADER_BYTES + 6;
+            uint8_t * p = rocketnet_server_start_message( f->server, (uint64_t) slot, 0, (enum rocketnet_reliability_t) wide_fill_kinds[k], bytes );
+            check( p != NULL );
+            if ( !p )
+            {
+                continue;
+            }
+            wide_fill_write( p, bytes, k, slot, s->sent[k], (uint32_t) f->frame );
+            const uint32_t serial = f->mode == WRITER_FINISH_SERIAL ? rocketnet_server_finish_message( f->server, bytes )
+                                                                     : rocketnet_server_finish_client_message( f->server, slot, bytes );
+            if ( serial == 0 )
+            {
+                f->refused[thread]++;
+                check( k == 0 );                        // only an unreliable start with no capacity is refused
+                continue;
+            }
+            f->finished[thread]++;
+            s->sent[k]++;
+        }
+    }
+}
+
+// the main thread's half of a frame: what was filled goes out, then update,
+// the acked ids read, and every receive drained
+static void writer_finish_main( wide_fill_world_t * world, wide_fill_slot_t * slots, const int * slot_of_client, writer_finish_trace_t * trace,
+                                int64_t * last_acked )
+{
+    rn_send_pass_cost_reset();
+    rocketnet_server_send_packets( world->server );
+    trace->walk_packets += rn_send_pass_cost_read().packets_finished;
+
+    wide_fill_clients_step( world );
+    rocketnet_server_update( world->server, world->time );
+
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( world->server ) );
+    const int * client_index = NULL;
+    const uint64_t * packet_ids = NULL;
+    const int acked = rocketnet_server_transport_acked_packets( transport, &client_index, &packet_ids );
+    for ( int i = 0; i < acked; i++ )
+    {
+        const int slot = client_index[i];
+        check( slot >= 0 && slot < WIDE_FILL_MAX_CLIENTS );
+        if ( slot < 0 || slot >= WIDE_FILL_MAX_CLIENTS )
+        {
+            continue;
+        }
+        trace->acked[slot]++;
+        if ( (int64_t) packet_ids[i] <= last_acked[slot] )
+        {
+            trace->acked_out_of_order++;
+        }
+        last_acked[slot] = (int64_t) packet_ids[i];
+    }
+
+    while ( rocketnet_server_receive_messages( world->server ) != NULL )
+    {
+    }
+    for ( int c = 0; c < world->num_clients; c++ )
+    {
+        wide_fill_client_receive( world, c, &slots[slot_of_client[c]], slot_of_client[c] );
+    }
+}
+
+static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int packets_per_update, int frames, int unreliable_per_frame,
+                               writer_finish_trace_t * trace )
+{
+    memset( trace, 0, sizeof( *trace ) );
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, WRITER_FINISH_CLIENTS, packets_per_update );
+    wide_fill_connect_all( &world );
+
+    wide_fill_slot_t slots[WIDE_FILL_MAX_CLIENTS];
+    memset( slots, 0, sizeof( slots ) );
+    int slot_of_client[WIDE_FILL_MAX_CLIENTS];
+    int64_t last_acked[WIDE_FILL_MAX_CLIENTS];
+    rocketnet_server_client_stats_t before[WIDE_FILL_MAX_CLIENTS];
+    for ( int i = 0; i < WIDE_FILL_MAX_CLIENTS; i++ )
+    {
+        last_acked[i] = -1;
+    }
+    for ( int c = 0; c < world.num_clients; c++ )
+    {
+        slot_of_client[c] = rocketnet_client_index( world.clients[c] );
+        slots[slot_of_client[c]].last_sequenced = -1;
+        slots[slot_of_client[c]].last_unreliable = -1;
+        rocketnet_server_client_stats( world.server, slot_of_client[c], &before[slot_of_client[c]] );
+    }
+
+    const uint64_t no_capacity = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY );
+    const uint64_t fallback = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+
+    for ( int frame = 0; frame < frames; frame++ )
+    {
+        writer_finish_main( &world, slots, slot_of_client, trace, last_acked );
+
+        writer_finish_fill_t f;
+        memset( &f, 0, sizeof( f ) );
+        f.server = world.server;
+        f.slots = slots;
+        f.slot_of_client = slot_of_client;
+        f.num_clients = world.num_clients;
+        f.num_threads = num_threads;
+        f.frame = frame;
+        f.unreliable_per_frame = unreliable_per_frame;
+        f.mode = mode;
+
+        if ( num_threads == 1 )
+        {
+            writer_finish_job( &f, 0 );
+        }
+        else
+        {
+            std::vector<std::thread> threads;
+            for ( int t = 0; t < num_threads; t++ )
+            {
+                threads.emplace_back( writer_finish_job, &f, t );
+            }
+            for ( std::thread & thread : threads )
+            {
+                thread.join();
+            }
+        }
+        for ( int t = 0; t < num_threads; t++ )
+        {
+            trace->finished += f.finished[t];
+            trace->refused += f.refused[t];
+        }
+
+        world.time += 1.0 / 60.0;
+    }
+
+    for ( int step = 0; step < 60; step++ )
+    {
+        writer_finish_main( &world, slots, slot_of_client, trace, last_acked );
+        world.time += 1.0 / 60.0;
+    }
+
+    for ( int c = 0; c < world.num_clients; c++ )
+    {
+        const int slot = slot_of_client[c];
+        rocketnet_server_client_stats_t after;
+        rocketnet_server_client_stats( world.server, slot, &after );
+        trace->packets_sent[slot] = after.packets_sent - before[slot].packets_sent;
+        trace->bytes_sent[slot] = after.bytes_sent - before[slot].bytes_sent;
+        for ( int k = 0; k < 3; k++ )
+        {
+            trace->received[slot][k] = slots[slot].received[k];
+        }
+        trace->corrupt += slots[slot].corrupt;
+        check( slots[slot].received[2] == slots[slot].sent[2] );     // every reliable message, once, in order
+    }
+
+    trace->no_capacity = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) - no_capacity;
+    trace->fallback = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) - fallback;
+
+    wide_fill_world_destroy( &world );
+}
+
+static bool writer_finish_same_accounting( const writer_finish_trace_t * a, const writer_finish_trace_t * b )
+{
+    bool same = true;
+    for ( int slot = 0; slot < WIDE_FILL_MAX_CLIENTS; slot++ )
+    {
+        same = same && a->packets_sent[slot] == b->packets_sent[slot];
+        same = same && a->bytes_sent[slot] == b->bytes_sent[slot];
+        same = same && a->acked[slot] == b->acked[slot];
+        for ( int k = 0; k < 3; k++ )
+        {
+            same = same && a->received[slot][k] == b->received[slot][k];
+        }
+    }
+    return same;
+}
+
+// packet-sized payloads: the writer's finish leaves send_packets one packet
+// fewer per client per frame (the last packet the serial finish left open),
+// and sends, acks and delivers exactly what the serial finish does
+static void test_writer_finish_equals_serial()
+{
+    const int frames = 30;
+    const int per_client = 3;
+
+    writer_finish_trace_t serial;
+    writer_finish_trace_t one;
+    writer_finish_trace_t four;
+    writer_finish_run( WRITER_FINISH_SERIAL, 1, 0, frames, per_client, &serial );
+    writer_finish_run( WRITER_FINISH_CLIENT, 1, 0, frames, per_client, &one );
+    writer_finish_run( WRITER_FINISH_CLIENT, 4, 0, frames, per_client, &four );
+
+    const uint64_t messages = (uint64_t) frames * WRITER_FINISH_CLIENTS * ( per_client + 1 );
+    for ( const writer_finish_trace_t * t : { &serial, &one, &four } )
+    {
+        check( t->finished == messages );
+        check( t->refused == 0 );
+        check( t->no_capacity == 0 );
+        check( t->fallback == 0 );
+        check( t->corrupt == 0 );
+        check( t->acked_out_of_order == 0 );
+    }
+
+    check( writer_finish_same_accounting( &serial, &one ) );
+    check( writer_finish_same_accounting( &serial, &four ) );
+
+    uint64_t sent = 0;
+    uint64_t acked = 0;
+    for ( int slot = 0; slot < WIDE_FILL_MAX_CLIENTS; slot++ )
+    {
+        sent += serial.packets_sent[slot];
+        acked += serial.acked[slot];
+    }
+    check( sent >= (uint64_t) frames * WRITER_FINISH_CLIENTS * ( per_client + 1 ) );
+    check( acked > 0 );
+
+    // the serial finish leaves each client's last unreliable packet open for
+    // send_packets; the writer's finish leaves it nothing of the unreliable
+    check( serial.walk_packets == one.walk_packets + (uint64_t) frames * WRITER_FINISH_CLIENTS );
+    check( one.walk_packets == four.walk_packets );
+}
+
+// packets_per_update 2 and four packet-sized payloads per client: the third
+// and fourth find the update's allowance spent. The serial finish queues them
+// for send_packets; the writer's finish refuses them, each refusal counted
+// once by value, and send_packets builds none of them
+static void test_writer_finish_no_capacity_refused()
+{
+    const int frames = 10;
+    const int per_client = 4;
+
+    writer_finish_trace_t serial;
+    writer_finish_trace_t writer;
+    writer_finish_trace_t wide;
+    writer_finish_run( WRITER_FINISH_SERIAL, 1, 2, frames, per_client, &serial );
+    writer_finish_run( WRITER_FINISH_CLIENT, 1, 2, frames, per_client, &writer );
+    writer_finish_run( WRITER_FINISH_CLIENT, 4, 2, frames, per_client, &wide );
+
+    check( serial.refused == 0 );
+    check( serial.no_capacity == 0 );
+    check( serial.fallback >= (uint64_t) frames * WRITER_FINISH_CLIENTS * 2 );
+
+    for ( const writer_finish_trace_t * t : { &writer, &wide } )
+    {
+        check( t->refused >= (uint64_t) frames * WRITER_FINISH_CLIENTS * 2 );
+        check( t->no_capacity == t->refused );          // by value: one count per refused finish
+        check( t->fallback == t->refused );             // each refusal was a start that fell back
+        check( t->corrupt == 0 );
+        check( t->acked_out_of_order == 0 );
+    }
+    check( writer_finish_same_accounting( &writer, &wide ) );
+    check( writer.refused == wide.refused );
+
+    // the serial run's walk built the queued unreliable payloads; the
+    // writer's walk built none of them
+    check( serial.walk_packets > writer.walk_packets );
+}
+
+REGISTER_UNIT_TEST( test_writer_finish_equals_serial );
+REGISTER_UNIT_TEST( test_writer_finish_no_capacity_refused );
 REGISTER_UNIT_TEST( test_wide_fill_one_thread );
 REGISTER_UNIT_TEST( test_wide_fill_four_threads );
 REGISTER_UNIT_TEST( test_wide_fill_eight_threads_large );
