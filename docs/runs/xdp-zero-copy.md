@@ -56,7 +56,7 @@ Setup, then restored after the probe:
 
 ```text
 sudo ip addr add 10.99.0.1/24 dev enp9s0f0
-sudo scripts/rocketnet-provision enp9s0f0 2      # run twice: R7 set 2 queues, the second run pinned irqs 179/180/181 to cpus 1/2/3
+sudo scripts/rocketnet-provision enp9s0f0 2      # run twice: R7 (the script's queue-count rule) set 2 queues, the second run pinned irqs 179/180/181 to cpus 1/2/3
 dead-man: sudo setsid nohup bash -c "sleep 90; ip link set dev enp9s0f0 xdp off; ip addr del 10.99.0.1/24 dev enp9s0f0" &
 ```
 
@@ -70,6 +70,10 @@ address removed.
 ```text
 sudo env ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=2 ROCKETNET_SERVER_NUM_OS_CPUS=1 ROCKETNET_GATEWAY_ETHERNET_ADDRESS=02:00:00:00:00:01 timeout -s INT 15 ./bin/load_split server 10 10 0123456789abcdef 10.99.0.1:40000 10.99.0.1 80000
 ```
+
+The command is as it was run. `ROCKETNET_SERVER_NUM_XDP_QUEUES` is retired and
+no longer read; today's spelling of that setting is
+`ROCKETNET_SERVER_NUM_XDP_THREADS=2`.
 
 Create log (sdk/rocketnet_server_socket_linux.cpp:1760 and :1898-1903):
 
@@ -93,7 +97,7 @@ Create log (sdk/rocketnet_server_socket_linux.cpp:1760 and :1898-1903):
 | load_split plan-server / plan-client-shard | not made |
 | load_split series 10/100/250/500/1000, zero copy | not made: no zero-copy server |
 
-## Decision owed (coordinator)
+## Open question at the time of this run
 
 Which machine qualifies zero copy:
 

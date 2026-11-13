@@ -47,14 +47,21 @@ The manifest's seven-by-six oracle mapping is:
 
 XDP owns the first five filter/type stages before the shared server protocol,
 and its kernel drops count only in its own kernel counters. The other physical
-server transports publish the generic named counters. As
-[RN-1 t10](../standard/TRANSPORT.md#t10) rule 2 permits, their native receive
-paths may drop a datagram shorter than the smallest packet a server receives
-or longer than the receive ceiling before the shared checks, counted in
-`PREFILTER_TOO_SHORT` or `PREFILTER_TOO_LARGE` and not in `PACKETS_RECEIVED`;
-`server-ingress-size-filter` is therefore the published
-counter-family stage, not a claim that one shared function executed. Wrong
-epoch/value and reserved-type packets reach the shared server checks.
+server transports publish the generic named counters. Their receive workers
+run the server's stateless prefilter before a datagram takes a receive slot:
+a datagram that is too short, too large, of the wrong epoch or filter value,
+of a reserved type, sent in the wrong direction or of the wrong size for its
+type is dropped there and counted as the server's own checks would count it:
+`PACKETS_RECEIVED` first, then the reason's counter (a wrong-size packet adds
+its type's received counter between the two). As
+[RN-1 t10](../standard/TRANSPORT.md#t10) rule 2 permits, `io_uring`, `iocp`
+and `rio` also make a size pass before the prefilter: a datagram shorter than
+the smallest packet a server receives or longer than the receive ceiling is
+dropped there, counted in `PREFILTER_TOO_SHORT` or `PREFILTER_TOO_LARGE` and
+not in `PACKETS_RECEIVED`. On `gso` and `msgx` the same datagram is counted
+in `PACKETS_RECEIVED` and then the size counter.
+`server-ingress-size-filter` is therefore the published counter-family stage,
+not a claim that one shared function executed.
 Replay and authenticated-open refusals remain shared payload-stage oracles for
 all six profiles. The case order, mutation bytes, accepted/fresh preconditions,
 expected deltas, and recovery traffic are unchanged by profile selection.
@@ -114,7 +121,7 @@ attaches no program, and transmits nothing:
 
 Targets are limited to RFC 1918 IPv4 or IPv6 ULA source and server addresses.
 Duration is 1–600 seconds, clients 1–1000, offered rate 1–20,000,000 packets/s,
-and application payload 1–1200 bytes. The plan prints the deterministic offer
+and application payload 1–1411 bytes. The plan prints the deterministic offer
 count, fixed memory geometry, and all non-secret inputs before `--execute` can
 attach. Tokens, keys, and packet bodies are never logged; decoded tokens are
 wiped when planning or execution ends. Execution allows at most 30 seconds for
@@ -123,7 +130,7 @@ the requested workload duration begin. Offer ordinal zero is due at workload
 time zero and the last ordinal is strictly capped by the planned count.
 
 No implementation test for this tool should pass `--execute`. Physical NIC
-traffic belongs only in the separately admitted qualification card.
+traffic belongs only in a separate qualification run.
 
 For a robustness dry-run, change the mode to `robustness` and declare the
 controlled server build, for example `--server-transport-profile gso`. The
@@ -209,10 +216,11 @@ Placement rules, measured on ixgbe (X540):
 
 The setup:
 
-- Sender: vision (64 CPUs, SMT on, NIC on node 0). Six threads on CPUs 1 to 6,
+- Sender: a 64-CPU machine (SMT on, NIC on node 0). Six threads on CPUs 1 to 6,
   with `TxRx-0..5` on CPUs 33 to 38.
-- Server: hulk (32 CPUs, `isolcpus=1-15`). `tests/client_server/server`
-  echo, `--num-xdp-queues 6`, XDP workers on CPUs 1 to 6, main thread on
+- Server: a 32-CPU machine (`isolcpus=1-15`). `tests/client_server/server`
+  echo, `--num-xdp-queues 6` (the flag as it was run; today's spelling is
+  `--num-xdp-threads 6`), XDP workers on CPUs 1 to 6, main thread on
   CPU 7, `--update-hz 2000`, queue vectors repinned.
 - Link: 10G direct cable, 256 clients, zero-copy on both ends.
 
@@ -222,7 +230,7 @@ rate at 64 B payload is about 7.49 Mpps.
 | payload | to server | back to sender | XOFF sent by | limit |
 | --- | --- | --- | --- | --- |
 | 64 B | 152 kpps, 0.27 Gb/s (2% of line pps) | 28 kpps | both | server |
-| 1200 B | 165 kpps, 1.69 Gb/s (17%) | 157 kpps, 1.64 Gb/s | hulk only | server |
+| 1200 B | 165 kpps, 1.69 Gb/s (17%) | 157 kpps, 1.64 Gb/s | server only | server |
 
 The sender is not the limit; the server's main thread is. It is the only
 thread that opens and seals packets, and at 1.7 Gb/s it is busy on CPU 7 back

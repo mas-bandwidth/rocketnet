@@ -44,8 +44,8 @@ N = 0 (the default) keeps every write on main. N is at most 64.
 The server role has two frame shapes. `blocking` (the default) is the frame above, with the main thread blocked
 through all of networking. It is kept for comparison: a row measured in it is a comparison, never a result.
 
-`space` is the frame of space game's server, run on a thread pool of `--game-threads N` threads in all (N at least 2):
-the main thread first and special, the rest game threads. The pool is space's `ThreadPool` API
+`space` is a game server's frame, run on a thread pool of `--game-threads N` threads in all (N at least 2):
+the main thread first and special, the rest game threads. The pool is a game's `ThreadPool` API
 (`tests/load/thread_pool.h`) over enkiTS, vendored in `tests/load/enkiTS` for this tool only and never linked into the
 SDK. The frame is the first half on the main thread (send_packets, update, receive), the world update, then the second
 half split off as a task on the game threads that writes every player's messages as jobs and stages them through the
@@ -62,8 +62,8 @@ committed in one walk at the end of the task.
 | `--space-send serial\|wide` | Who sends the players' messages. `serial` (the default) is the frame above: the jobs write and stage them and one walk at the end of the task commits them. `wide`: each game thread starts and finishes its own players' messages itself (`rocketnet_server_start_message`, then `rocketnet_server_finish_client_message`), so the packet is built and sealed on the thread that wrote it and no serial commit is left; a refusal ends that player's frame. Not with `--big-every`: large messages are not written from the game threads. |
 | `--space-update main\|split` | The server update. `main` (the default) is one call, `rocketnet_server_update`. `split` is three: `rocketnet_server_update_receive`, `rocketnet_server_update_client` over ranges of client slots as jobs on the game threads, then `rocketnet_server_update_finish`. |
 | `--space-net main\|task` | Where send_packets and the update run. `main` (the default): send_packets and the update at the main thread's frame start, as above. `task`: both run at the end of the split-off task, on whichever thread runs the task (the pool's wait runs queued tasks, so the main thread can take a share: `main_in_jobs_ms` shows it), beside the main thread's frame, so the main thread's first half is only the read of what that update received. `harden_frame:` then gives `input_age_ms`, from the update finishing to the main thread handing its inputs to the world update. |
-| `--space-split bottom\|top` | Where the network task is split off: after the world update (space's order, the default) or before it, so that it runs beside the world update. |
-| `--load peak\|average\|custom` | Space game's real load: 15 (peak) or 8 (average) unreliable 1200-byte messages per client per tick, written by the game threads, one small reliable message per client every 3 seconds, no large messages. Under `--frame-shape space` the default is peak; `custom` keeps `--base`, `--burst` and the rest. |
+| `--space-split bottom\|top` | Where the network task is split off: after the world update (the default) or before it, so that it runs beside the world update. |
+| `--load peak\|average\|custom` | A game's server-to-client load: 15 (peak) or 8 (average) unreliable 1200-byte messages per client per tick, written by the game threads, one small reliable message per client every 3 seconds, no large messages. Under `--frame-shape space` the default is peak; `custom` keeps `--base`, `--burst` and the rest. |
 | `--input-bytes B` | The message each player sends each tick (256 by default, about 100 to 200 kbps a player). |
 
 With the space shape each second also prints three lines. `harden_frame:` leads with what rocketnet takes from the
@@ -83,7 +83,7 @@ reported (the last partial second is in `run_p99`, not in the mean). The mean of
 run: a slow stretch inside one second moves that second's p99 alone. The reconcile's
 `harden_frame: work_p99_us` is the whole run's, the same as `run_p99`.
 
-With the three flags set, every number a row prints leads with what rocketnet takes from the main thread (`main_rn_ms`). The main thread's wait to join the task at the top of a frame is not in it: it is in `join_ms` and counted in `late`. `rn_core_ms` counts the update's range jobs once, in the threads that run them, and the main thread's own serial calls only. `harden_threads:` names the modes (`send_mode`, `update_mode`, `net_mode`) and prints the task's send and update milliseconds (`task_send_ms`, `task_update_ms`), the serial part that is left. The flags are the owner's layout one step at a time: each changes where one piece of rocketnet's work runs and uses only the public API (`sdk/rocketnet.h`).
+With the three flags set, every number a row prints leads with what rocketnet takes from the main thread (`main_rn_ms`). The main thread's wait to join the task at the top of a frame is not in it: it is in `join_ms` and counted in `late`. `rn_core_ms` counts the update's range jobs once, in the threads that run them, and the main thread's own serial calls only. `harden_threads:` names the modes (`send_mode`, `update_mode`, `net_mode`) and prints the task's send and update milliseconds (`task_send_ms`, `task_update_ms`), the serial part that is left. The flags move to the target layout one step at a time: each changes where one piece of rocketnet's work runs and uses only the public API (`sdk/rocketnet.h`).
 
 `scripts/space-frame-row` runs one such row on the XDP transport in the layout the game runs (all three flags set), over two
 machines, and can profile the server with perf (`--profile`).
@@ -149,8 +149,8 @@ post-warmup sample to the end.
 Host-wide kernel counters include traffic that is not the cell's. Run cells on hosts that carry nothing else.
 
 **Strays.** A machine with a public address takes datagrams from the internet at closed ports all day (scanners), and
-the kernel's NoPorts counts them with the cell's. On the X710 pair on 2026-11-13 the XDP rows counted one to seven a
-row while the library sent and received exactly the same count, so the chain read them as drops the library never had
+the kernel's NoPorts counts them with the cell's. On one pair of machines with public addresses the XDP rows counted
+one to seven a row while the library sent and received exactly the same count, so the chain read them as drops the library never had
 and failed with a negative gap; the row captured with a log of the ICMP port unreachables each machine sent had one at
 each machine, both from one internet host to the machine's public address, inside the measured window. `scripts/harden-pair` therefore installs on each Linux machine an nftables table (`inet
 harden_cell`, through `sudo -n`, removed at the end) whose counter `strays` counts the IPv4 UDP datagrams that reach a
@@ -182,9 +182,9 @@ window is counted `late_past_window` only, and no count goes below zero.
 - `scripts/harden-rows` defines the rows: control, space, churn, impair, duplicate, hostile and longrun. It is sourced
   by the two scripts below.
 - `scripts/harden-cell` runs a cell on one Linux machine, across two network namespaces over a veth, with the server
-  on a third of the CPUs. Run it as root, under nova-reserve:
+  on the first third of the CPUs the process may run on. Run it as root:
 
-      nova-reserve run -- sudo scripts/harden-cell --bin bin --transport gso --row space --burst-clients 3 \
+      sudo scripts/harden-cell --bin bin --transport gso --row space --burst-clients 3 \
           --fill-jobs 4 --out ../cells/<cell> --slot 90 --seconds 30 --clients 100 --threads 4
 
 - `scripts/harden-pair` runs a cell on two machines over a real link, driven by ssh from a control machine that
