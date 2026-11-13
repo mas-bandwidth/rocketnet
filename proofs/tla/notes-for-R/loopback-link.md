@@ -44,7 +44,7 @@ No new roadmap entries: no row of this package was a missing model or binding.
 
 ## Cross-family text held here (needs a serial R step)
 
-- `proofs/tla/Link.tla` lines 37-40 still say the simulator's store-full drop "is a harness
+- `proofs/tla/Link.tla` (header, lines 37-40) still say the simulator's store-full drop "is a harness
   artefact at 4096 slots and is not modelled", and lines 42-47 do not say that the simulator
   is only Link with Reordering = TRUE. Editing Link.tla stales every group that instantiates
   Link (clientconnection, rnblocks, rnchannel, rnendpoint, rnslots, rnwindow, serverconnection,
@@ -64,7 +64,7 @@ No new roadmap entries: no row of this package was a missing model or binding.
 (* SpecSlotStore), so a model over it needs Reordering = TRUE.             *)
 ```
 
-- `proofs/tla/RNSimulatorStoreLayout.tla:375` (comment on SendTakesLowest): "drops it only when
+- `proofs/tla/RNSimulatorStoreLayout.tla` (the comment on SendTakesLowest, line 375): "drops it only when
   none is free" is true of the model only; the code also refuses at an exhausted generation
   (README-RNSimulatorStoreLayout.md now says so). Suggested: "the send places a packet in the
   lowest free slot, and drops it only when none is free (the code also drops at an exhausted
@@ -77,30 +77,30 @@ LoopbackHubLayout action Reset cited: sdk/rocketnet_driver_loopback.cpp, two com
 "proofs/tla/LoopbackHubLayout.tla Reset: ..." in loopback_create (before `ep->head = 0`) and in
 loopback_destroy. The rest is C's:
 
-- sdk/rocketnet_driver_loopback.cpp:364-369 (loopback_queue_pop): "A queue that empties
+- sdk/rocketnet_driver_loopback.cpp (loopback_queue_pop, lines 364-369 at this head): "A queue that empties
   therefore writes only the slots its deepest backlog reached" is wrong (MM192). New text:
   "A queue that empties therefore writes only the slots below the longest run of sends it took
   between two empties (proofs/tla/LoopbackQueue.tla TouchedWithinRun); FIFO cannot change
   because an empty queue has nothing to reorder. A popped slot keeps its bytes."
-- sdk/rocketnet_network_simulator.cpp:439-441 (rocketnet_network_simulator_reconfigure): cites
+- sdk/rocketnet_network_simulator.cpp (rocketnet_network_simulator_reconfigure, lines 439-441): cites
   "MCSend", which does not exist, and says the setting in force at the send holds the packet.
   New text: "proofs/tla/MCLinkReconfigure.tla models the change: MCReconfigure writes the pending
   record, Take is the owner's uncontended try-lock that puts it in force, and a send acts on the
   setting last asked for unless a change still waits (SendUsesForce); the change removes nothing
   already in flight (NoInFlightDrop)."
-- sdk/rocketnet_network_simulator.cpp near 459-469 (rocketnet_network_simulator_take_setting):
+- sdk/rocketnet_network_simulator.cpp (rocketnet_network_simulator_take_setting, lines 459-469):
   add "proofs/tla/MCLinkReconfigure.tla Take".
-- sdk/rocketnet_network_simulator.h:178-183: same correction as reconfigure (a busy try-lock
+- sdk/rocketnet_network_simulator.h (the comment above rocketnet_network_simulator_take_setting, lines 178-183): same correction as reconfigure (a busy try-lock
   keeps the old setting in force until the next uncontended pass).
-- sdk/rocketnet_server_transport.cpp:1626-1632: "the setting in force at the send is the setting
+- sdk/rocketnet_server_transport.cpp (the comment above rocketnet_server_link_active, lines 1626-1632): "the setting in force at the send is the setting
   the caller last asked for: the change takes effect at once" is not what the code does when the
   try-lock is busy, and it cites Link.tla. New text: "Taking the setting applies the one the
   caller handed over when the simulator's mutex is free; when it is busy the old setting stays in
   force for this send and the next uncontended pass applies it
   (proofs/tla/MCLinkReconfigure.tla Take, SendUsesForce). A change removes nothing already in
   flight (NoInFlightDrop)."
-- sdk/rocketnet_network_simulator.cpp:63-65: add after the Link action list "; the slot store
+- sdk/rocketnet_network_simulator.cpp (the Link.tla citation above ROCKETNET_SIMULATOR_NO_SLOT, lines 63-65): add after the Link action list "; the slot store
   delivers the due packets in slot order, not send order, and counts the store-full drop
   (proofs/tla/MCLinkPatterns.tla SpecSlotStore)".
-- sdk/rocketnet_network_simulator.cpp:1125 (rocketnet_network_simulator_flush_window): may cite
+- sdk/rocketnet_network_simulator.cpp (rocketnet_network_simulator_flush_window): may cite
   "proofs/tla/MCLinkPatterns.tla FlushWindow: any positive count, a short window reversed too".
