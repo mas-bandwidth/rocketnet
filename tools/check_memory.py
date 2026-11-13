@@ -48,7 +48,8 @@ for transport in transports:
         # add a TX worker to their RX worker. Statistics run no thread. The
         # native planner must include every worker.
         assert plan['worker_threads'] == 2
-        assert plan['sockets'] == 1
+        # msgx keeps a connected socket per client beside the shared one
+        assert plan['sockets'] == (1 + profile[0] if transport == 'msgx' else 1), (transport, profile, plan['sockets'])
         # Startup shims can be freed before this observation, even for
         # portable. The native probe bounds that difference by its planned
         # worker allocations and refuses any allocations left after destroy.
