@@ -3665,14 +3665,11 @@ void rocketnet_test_linux_gso_refuses_explicit_port_in_use()
     posix_port_refused( POSIX_NATIVE_GSO );
 }
 
+// the row runs where io_uring is offered (runs_here rocketnet_server_uring_available)
+// and prints SKIPPED elsewhere; run by name where it is not, it fails
 void rocketnet_test_linux_uring_refuses_explicit_port_in_use()
 {
-    if ( !rocketnet_server_uring_available() )
-    {
-        printf( "  io_uring not offered by this kernel (built without liburing or refused by the kernel): the case has no cell here\n" );
-        return;
-    }
-
+    posix_check( rocketnet_server_uring_available() );
     posix_port_refused( POSIX_NATIVE_URING );
 }
 
