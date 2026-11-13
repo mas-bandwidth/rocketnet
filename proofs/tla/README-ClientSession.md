@@ -8,7 +8,7 @@ finalize the old generation and reuse the block. The detailed two-ring and key
 wipe ownership model remains [RNClientIoShutdown](README-RNClientIoShutdown.md).
 These models are related by their completion boundary, not a proved refinement.
 The current Linux measurements are recorded in `proofs/tla/RUNS.tsv`; all
-twelve declared cases have their expected outcomes for this revision.
+fourteen declared cases have their expected outcomes for this revision.
 
 `proofs/tla/ClientSession.tla` models the client object over many connections: create (no token,
 DISCONNECTED), connect(token), the handshake abstracted to its three stages, CONNECTED, every
@@ -283,3 +283,30 @@ itself; the start below it sets `send_error` to MESSAGE_MEMORY_EXHAUSTED only
 when `rn_region_exhausted` (`sdk/rocketnet_endpoint.cpp`), which
 only the receive side sets; a start with no room counts `send_refused`
 and returns NULL.
+
+## Revision 1.1.3: a small-order challenge ends the handshake in PROTOCOL_VIOLATION
+
+The transport now ends an attempt in protocol violation (-10) when the
+connection challenge carries a small-order server ephemeral key (TRANSPORT.md
+t11.2 step 4), and `rocketnet_client_state` passes -10 through as
+`ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION`. Before it that public state was
+reached only from CONNECTED (`MessageEnd`). `HandshakeViolation` is the new
+end: from `SENDING_CONNECTION_REQUEST` only, through `End` like `Deny`, so
+the one Reset runs and the worker keeps running. A connect from it is a
+connect from a terminal error (`PROTOCOL_VIOLATION` was already in
+`RestartStates`).
+
+`NoHandshakeViolation` (`[][~(st = "SENDING_CONNECTION_REQUEST" /\ st' =
+"PROTOCOL_VIOLATION")]_vars`) is a reachability witness only.
+
+| Case | Expected | Exit | Distinct | Seconds (2 workers, amd-3) |
+|---|---|---:|---:|---:|
+| `MCClientSession.cfg` | pass | 0 | 33897 | 2.4 |
+| `MCClientSessionReachHandshakeViolation.cfg` | `NoHandshakeViolation` | 13 | 34 | 0.8 |
+
+The other twelve cases reach their declared results unchanged. The witness
+trace (5 states): create, connect, the cookie, then `HandshakeViolation` from
+`SENDING_CONNECTION_REQUEST`. In the code `rocketnet_client_process_challenge`
+(`sdk/rocketnet_client_protocol.cpp`) is reached only in sending connection
+request (2), and its small-order arm calls `rocketnet_client_set_state` with
+-10, which runs `rocketnet_client_connection_reset`.
