@@ -250,9 +250,10 @@ static void st_ring_replay_commit( void * p )
     ( (st_ring_fake_t *) p )->commits++;
 }
 
-// Slot i connected from 127.0.0.1 port 1000 + i with a fresh connection id,
-// as the handshake would leave it.
-static void st_ring_connect( rocketnet_server_transport_t * server, int i )
+// A client from 127.0.0.1 port 1000 + i connected in the slot the slot API
+// hands it, with a fresh connection id, as the handshake would leave it.
+// Returns the slot.
+static int st_ring_connect_port( rocketnet_server_transport_t * server, int i )
 {
     rocketnet_address_t address;
     rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
@@ -264,15 +265,23 @@ static void st_ring_connect( rocketnet_server_transport_t * server, int i )
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
     const uint64_t owner_generation = rocketnet_encryption_map_owner_generation( server->protocol.encryption_map, index );
-    rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) ( i + 1 ), index,
-                                                         owner_generation, user_data ) == i );
-    mapping->control->client_index = i;
+    const int slot = rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) ( i + 1 ), index,
+                                                    owner_generation, user_data );
+    rocketnet_unit_check( slot >= 0 );
+    mapping->control->client_index = slot;
     mapping->client_id = (uint64_t) ( i + 1 );
     mapping->control->established = 1;
     mapping->control->timeout_seconds = 1000;
     mapping->control->last_receive_time = 1000.0;
     memset( &mapping->keys, i + 1, sizeof( mapping->keys ) );
-    server->protocol.connection_ids[i] = ++server->protocol.next_connection_id;
+    server->protocol.connection_ids[slot] = ++server->protocol.next_connection_id;
+    return slot;
+}
+
+// Slot i connected from port 1000 + i.
+static void st_ring_connect( rocketnet_server_transport_t * server, int i )
+{
+    rocketnet_unit_check( st_ring_connect_port( server, i ) == i );
 }
 
 enum st_ring_kind_t
@@ -823,6 +832,61 @@ static void test_gaps_st_ring_cursor_falls_with_the_head()
     delete f;
 }
 
+// The stop abandons its waiting bursts for want of room (none left, nothing
+// in flight) and resets the drain cursor with them. Here the stop goes on,
+// because the link simulator still holds packets, and a direct transport
+// user defers new bursts in the stop: the first seal goes to the new head
+// burst, not to wherever the old cursor pointed.
+// mutation gap: hunt 2/5366 (disconnect_burst_cursor = 0 deleted at the abandon)
+static void test_gaps_st_ring_abandon_resets_the_cursor()
+{
+    st_ring_fake_t * f = new st_ring_fake_t();
+    f->capacity = 2;
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = st_ring_server( f, &operations, ST_RING_STAGED, 3, 3 );
+
+    // every packet doubled: the simulator holds what the room cannot take
+    rocketnet_unit_check( rocketnet_server_transport_network_simulator( server, 0, 0, 0, 100 ) );
+
+    for ( int i = 0; i < 3; i++ )
+    {
+        rocketnet_server_transport_disconnect_client_shutdown( server, i );
+    }
+    rocketnet_server_transport_stop( server );
+
+    // one partial pass: the first two bursts have one seal each, the cursor is past them
+    st_ring_expect( server->disconnect_burst_count == 3 && server->disconnect_burst_cursor == 2, "the first stop step was not one partial pass over two of three bursts" );
+    st_ring_expect( rocketnet_network_simulator_holds_any( server->link_simulator ), "the link simulator holds nothing after the first stop step" );
+
+    // no room and nothing in flight: the waiting bursts are abandoned, and the
+    // held packets keep the stop going
+    f->capacity = 0;
+    st_ring_expect( !rocketnet_server_transport_stopped( server ), "the stop finished with packets still in the link simulator" );
+    st_ring_expect( server->disconnect_burst_count == 0, "the bursts were not abandoned for want of room" );
+
+    // three new bursts deferred during the stop, then room for one seal
+    rocketnet_client_slots_publish( server->protocol.client_slots );
+    for ( int i = 0; i < 3; i++ )
+    {
+        rocketnet_server_transport_disconnect_client_shutdown( server, st_ring_connect_port( server, i ) );
+    }
+    rocketnet_unit_check( server->disconnect_burst_count == 3 );
+    f->capacity = 1;
+    rocketnet_server_transport_stopped( server );
+
+    const int head = server->disconnect_burst_head;
+    const int capacity = server->disconnect_burst_capacity;
+    st_ring_expect( server->disconnect_bursts[head].sealed == 1, "the first seal after the abandon did not go to the head burst (a stale cursor)" );
+    st_ring_expect( server->disconnect_bursts[( head + 2 ) % capacity].sealed == 0, "the first seal after the abandon went to the third burst (the cursor left past the abandoned bursts)" );
+
+    f->capacity = 64;
+    for ( int poll = 0; poll < 16 && !rocketnet_server_transport_stopped( server ); poll++ )
+    {
+    }
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
 // begin_message_update on a transport that is not running opens no
 // allowance: a kick during the stop with the update's allowance spent
 // defers its burst exactly as it would without the begin call.
@@ -944,8 +1008,15 @@ static void test_gaps_st_ring_replay_walk_forgets_a_departed_client()
 
     rocketnet_server_transport_disconnect_client( server, 0 );
     time += 1.0 / 60.0;
-    rocketnet_server_transport_update( server, time );
 
+    // a sink without the forget is reported by the walk's assert, named here
+    rocketnet_assert_function_t saved = rn_assert_function;
+    g_st_ring_asserts = 0;
+    rocketnet_assert_function( st_ring_assert_hook );
+    rocketnet_server_transport_update( server, time );
+    rocketnet_assert_function( saved );
+
+    st_ring_expect( g_st_ring_asserts == 0, "the replay walk was handed a sink without the transport's forget" );
     st_ring_expect( f->forgets == 1, "the departed client was not forgotten through the transport's replay_forget" );
     st_ring_expect( f->forgotten.port == ST_RING_PORT_BASE, "the forget did not name the departed client's address" );
 
@@ -1059,6 +1130,7 @@ REGISTER_UNIT_TEST( test_gaps_st_ring_full_staging_keeps_the_burst );
 REGISTER_UNIT_TEST( test_gaps_st_ring_deferred_burst_charges_no_slot );
 REGISTER_UNIT_TEST( test_gaps_st_ring_immediate_burst_charges_its_slot );
 REGISTER_UNIT_TEST( test_gaps_st_ring_cursor_falls_with_the_head );
+REGISTER_UNIT_TEST( test_gaps_st_ring_abandon_resets_the_cursor );
 REGISTER_UNIT_TEST( test_gaps_st_ring_begin_update_while_stopping_opens_nothing );
 REGISTER_UNIT_TEST( test_gaps_st_ring_oversize_datagram_accounting );
 REGISTER_UNIT_TEST( test_gaps_st_ring_sweep_cursor_rests_on_empty_slot );
