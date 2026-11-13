@@ -3092,7 +3092,21 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
     up.arrived_device_dropped = t.get( "server.c2s_dev_rx_dropped" );
     up.library_received = t.get( "server.c2s_packets_received" );
-    up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
+    // a transport that prefilters off the main thread (IOCP's completion
+    // workers, for one) counts each datagram it refuses into the public
+    // PACKETS_RECEIVED and its reason, and main's stats never see it: the
+    // difference is the refusals before main. A transport that drops on its
+    // own receive path counts the drop in PREFILTER_TOO_SHORT/TOO_LARGE and
+    // in neither received count
+    const int64_t refused_off_main = t.get( "server.c2s_transport_PACKETS_RECEIVED" ) - up.library_received;
+    if ( refused_off_main > 0 )
+    {
+        up.library_refused_before_received = refused_off_main;
+    }
+    else
+    {
+        up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
+    }
 
     harden_chain_t down;
     down.library_sent = t.get( "server.s2c_packets_sent" );
