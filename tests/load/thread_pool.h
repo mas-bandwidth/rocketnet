@@ -35,7 +35,9 @@
 
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 
 #if defined( __linux__ )
 #include <pthread.h>
@@ -128,14 +130,22 @@ public:
     {
         assert( n >= 1 );
         harden_pin.first_cpu.store( first_cpu );
-        if ( first_cpu >= 0 )
-        {
-            harden_pin_this_thread( first_cpu );
-        }
         enki::TaskSchedulerConfig config;
         config.numTaskThreadsToCreate = (uint32_t) ( n - 1 );
         config.profilerCallbacks.threadStart = harden_pin_thread_start;
+        // the game threads are made before the main thread pins itself: a thread
+        // inherits its maker's core and SCHED_FIFO, and a spinning main thread at
+        // SCHED_FIFO max on that one core never lets them run to pin themselves
         scheduler.Initialize( config );
+        if ( first_cpu >= 0 )
+        {
+            harden_pin_this_thread( first_cpu );
+            // every game thread pinned before the first frame
+            for ( int i = 0; i < 2000 && harden_pin.pinned.load() < n; i++ )
+            {
+                std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+            }
+        }
         num_threads = n;
         for ( int i = 0; i < HARDEN_MAX_TASKS; i++ )
         {
