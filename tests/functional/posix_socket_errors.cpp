@@ -152,7 +152,7 @@ static int posix_receive_each( rocketnet_platform_socket_t * socket, struct rock
 // protocol's prefilter and counts in the transport's own RECEIVE_DROPPED_SIZE,
 // and the transport reads the same drops into PREFILTER_TOO_SHORT and
 // PREFILTER_TOO_LARGE through the builtin transport's receive_drops hook
-// (sdk/rocketnet_server_transport.cpp:3084-3098)
+// (sdk/rocketnet_server_transport.cpp)
 
 void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
 
@@ -403,11 +403,10 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     // each cell names the transports it tests, so a transport pin in the
     // environment (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)
     // is lifted for the two creates below and restored after them, as
-    // posix_cell_begin does (tests/functional/posix_lifecycle_stress.cpp:516).
+    // posix_cell_begin (tests/functional/posix_lifecycle_stress.cpp) does.
     // under a pin the ladder grants the pinned transport, and a gso or io_uring
     // cell casts pair->transport to its own transport type
-    // (posix_native_counter, tests/functional/posix_socket_errors.cpp:103;
-    // posix_linux_uring_fail_sends, tests/functional/posix_socket_errors.cpp:1337)
+    // (posix_native_counter and posix_linux_uring_fail_sends, both in this file)
 
     char saved_server_transport[64] = "";
     char saved_client_transport[64] = "";
@@ -661,7 +660,7 @@ static bool posix_valid_matches( int index, const uint8_t * payload, int bytes )
 }
 
 // the counters are read through the call each time: the server folds its
-// transport's own drop counts in on that call (sdk/rocketnet_server_transport.cpp:3084-3098)
+// transport's own drop counts in on that call (sdk/rocketnet_server_transport.cpp)
 
 static const struct rocketnet_counters_t * posix_pair_counters( struct posix_pair_t * pair, int at_server )
 {
@@ -2475,7 +2474,7 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void ( *fail 
     *dropped_out = dropped;
 
     // the transport's SEND_FAILED reads the transport's own send drops (its
-    // send_failures operation, sdk/rocketnet_server_transport.cpp:3081-3083), so it moves by exactly the dropped count
+    // send_failures operation, sdk/rocketnet_server_transport.cpp), so it moves by exactly the dropped count
 
     const uint64_t transport_failed = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED] - transport_failed_before;
     if ( transport_failed != dropped )
@@ -2823,8 +2822,8 @@ void rocketnet_test_linux_uring_send_cqe_errors()
 // ---------------------------------------------------
 // an explicit port another socket already holds. The portable transport's
 // bind refuses it with EADDRINUSE; the gso and io_uring transports bind their
-// first queue before it sets SO_REUSEPORT (rocketnet_server_gso_open_socket,
-// rocketnet_server_uring_open_socket), so they refuse it the same way rather
+// first queue before it sets SO_REUSEPORT (rocketnet_server_udp_open, which
+// both call), so they refuse it the same way rather
 // than joining the holder's reuseport group and sharing its datagrams. The
 // server's own later queues still join: a create of two queues on an
 // explicit free port binds both, and every datagram sent to it arrives.
@@ -2844,7 +2843,7 @@ static void posix_port_log( void * context, enum rocketnet_log_level_t level, co
     (void) level;
     (void) length;
 
-    if ( strstr( message, "failed to bind socket" ) != NULL && strstr( message, strerror( EADDRINUSE ) ) != NULL )
+    if ( strstr( message, "failed to bind socket" ) != NULL && strstr( message, "EADDRINUSE" ) != NULL )
     {
         posix_port_bind_refusals++;
     }
@@ -3213,14 +3212,16 @@ void rocketnet_test_linux_uring_socket_hygiene()
 #include <fcntl.h>
 
 // the xdp transport's staging entry with its queue and destination MAC named
-// (sdk/rocketnet_server_socket_linux.cpp:2261)
+// (sdk/rocketnet_server_socket_linux.cpp)
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 #include <sched.h>
 #include <sys/vfs.h>
 
-#define POSIX_XDP_NETNS         "rnxdpwx"
-#define POSIX_XDP_NEAR          "rnxdpwx0"
-#define POSIX_XDP_FAR           "rnxdpwx1"
+#include "xdp_test_net.h"
+
+// the pair's names and addresses are the case's own (tests/functional/xdp_test_net.h)
+static struct rocketnet_xdp_test_net_t posix_xdp_net;
+
 #define POSIX_XDP_PORT          40412
 #define POSIX_XDP_OTHER_PORT    40413
 #define POSIX_XDP_OTHER_BYTES   4000    // larger than the MTU: fragmented
@@ -3246,7 +3247,9 @@ static void posix_xdp_teardown()
 
     if ( posix_xdp_made )
     {
-        if ( system( "ip netns del " POSIX_XDP_NETNS " 2>/dev/null; ip link del " POSIX_XDP_NEAR " 2>/dev/null" ) != 0 )
+        char command[256];
+        snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", posix_xdp_net.netns, posix_xdp_net.near_name );
+        if ( system( command ) != 0 )
         {
             // already gone
         }
@@ -3289,7 +3292,9 @@ static bool posix_xdp_inside_virtme()
 
 static uint64_t posix_xdp_frag_creates( int ipv6 )
 {
-    FILE * file = popen( ipv6 ? "ip netns exec " POSIX_XDP_NETNS " cat /proc/net/snmp6" : "ip netns exec " POSIX_XDP_NETNS " cat /proc/net/snmp", "r" );
+    char command[128];
+    snprintf( command, sizeof( command ), "ip netns exec %s cat /proc/net/snmp%s", posix_xdp_net.netns, ipv6 ? "6" : "" );
+    FILE * file = popen( command, "r" );
     posix_check( file != NULL );
 
     char line[4096];
@@ -3445,7 +3450,9 @@ static uint64_t posix_xdp_total( const struct posix_xdp_expect_t * a )
 
 static uint64_t posix_xdp_veth_drops()
 {
-    FILE * file = popen( "ip netns exec " POSIX_XDP_NETNS " cat /sys/class/net/" POSIX_XDP_FAR "/statistics/tx_dropped", "r" );
+    char command[1024];
+    snprintf( command, sizeof( command ), "ip netns exec %s cat /sys/class/net/%s/statistics/tx_dropped", posix_xdp_net.netns, posix_xdp_net.far_name );
+    FILE * file = popen( command, "r" );
     posix_check( file != NULL );
 
     unsigned long long value = 0;
@@ -3491,7 +3498,6 @@ void rocketnet_functional_require_xdp_case( const char * fixture );
 
 static void posix_xdp_weather( int ipv6 )
 {
-    rocketnet_functional_require_xdp_case( POSIX_XDP_NETNS );
     const char * case_name = ipv6 ? "test_xdp_transport_linux_receive_weather_ipv6" : "test_xdp_transport_linux_receive_weather_ipv4";
 
     atexit( posix_xdp_teardown );
@@ -3502,36 +3508,64 @@ static void posix_xdp_weather( int ipv6 )
         posix_xdp_run( "mount -t bpf bpf /sys/fs/bpf" );
     }
 
-    if ( system( "ip netns del " POSIX_XDP_NETNS " 2>/dev/null; ip link del " POSIX_XDP_NEAR " 2>/dev/null" ) != 0 )
+    char reason[512];
+    if ( !rocketnet_xdp_test_net_take( case_name, &posix_xdp_net, reason, sizeof( reason ) ) )
+    {
+        printf( "%s\n", reason );
+        fflush( stdout );
+        const bool test_network_taken = false;
+        posix_check( test_network_taken );
+    }
+
+    const struct rocketnet_xdp_test_net_t & net = posix_xdp_net;
+    rocketnet_functional_require_xdp_case( net.netns );
+
+    char command[1024];
+    snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", net.netns, net.near_name );
+    if ( system( command ) != 0 )
     {
         // nothing left from an earlier run
     }
 
     posix_xdp_made = true;
-    posix_xdp_run( "ip netns add " POSIX_XDP_NETNS );
-    posix_xdp_run( "ip link add " POSIX_XDP_NEAR " mtu 1500 type veth peer name " POSIX_XDP_FAR " mtu 1500" );
-    posix_xdp_run( "ip link set " POSIX_XDP_FAR " netns " POSIX_XDP_NETNS );
+    snprintf( command, sizeof( command ), "ip netns add %s", net.netns );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip link add %s mtu 1500 type veth peer name %s mtu 1500", net.near_name, net.far_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip link set %s netns %s", net.far_name, net.netns );
+    posix_xdp_run( command );
 
     if ( ipv6 )
     {
-        posix_xdp_run( "sysctl -qw net.ipv6.conf." POSIX_XDP_NEAR ".addr_gen_mode=1" );
-        posix_xdp_run( "ip netns exec " POSIX_XDP_NETNS " sysctl -qw net.ipv6.conf." POSIX_XDP_FAR ".addr_gen_mode=1" );
-        posix_xdp_run( "ip addr add 2001:db8:78::1/64 dev " POSIX_XDP_NEAR " nodad" );
-        posix_xdp_run( "ip -n " POSIX_XDP_NETNS " addr add 2001:db8:78::2/64 dev " POSIX_XDP_FAR " nodad" );
+        snprintf( command, sizeof( command ), "sysctl -qw net.ipv6.conf.%s.addr_gen_mode=1", net.near_name );
+        posix_xdp_run( command );
+        snprintf( command, sizeof( command ), "ip netns exec %s sysctl -qw net.ipv6.conf.%s.addr_gen_mode=1", net.netns, net.far_name );
+        posix_xdp_run( command );
+        snprintf( command, sizeof( command ), "ip addr add %s/64 dev %s nodad", net.near6, net.near_name );
+        posix_xdp_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s addr add %s/64 dev %s nodad", net.netns, net.far6, net.far_name );
+        posix_xdp_run( command );
     }
     else
     {
-        posix_xdp_run( "ip addr add 10.77.3.1/24 dev " POSIX_XDP_NEAR );
-        posix_xdp_run( "ip -n " POSIX_XDP_NETNS " addr add 10.77.3.2/24 dev " POSIX_XDP_FAR );
+        snprintf( command, sizeof( command ), "ip addr add %s/24 dev %s", net.near4, net.near_name );
+        posix_xdp_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s addr add %s/24 dev %s", net.netns, net.far4, net.far_name );
+        posix_xdp_run( command );
     }
 
-    posix_xdp_run( "ip link set " POSIX_XDP_NEAR " up" );
-    posix_xdp_run( "echo 2 > /sys/class/net/" POSIX_XDP_NEAR "/napi_defer_hard_irqs" );
-    posix_xdp_run( "echo 200000 > /sys/class/net/" POSIX_XDP_NEAR "/gro_flush_timeout" );
-    posix_xdp_run( "ip -n " POSIX_XDP_NETNS " link set lo up" );
-    posix_xdp_run( "ip -n " POSIX_XDP_NETNS " link set " POSIX_XDP_FAR " up" );
+    snprintf( command, sizeof( command ), "ip link set %s up", net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs", net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "echo 200000 > /sys/class/net/%s/gro_flush_timeout", net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set lo up", net.netns );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set %s up", net.netns, net.far_name );
+    posix_xdp_run( command );
 
-    const char * server_host = ipv6 ? "2001:db8:78::1" : "10.77.3.1";
+    const char * server_host = ipv6 ? net.near6 : net.near4;
     char server_address[128];
     snprintf( server_address, sizeof( server_address ), ipv6 ? "[%s]:%d" : "%s:%d", server_host, POSIX_XDP_PORT );
 
@@ -3604,7 +3638,7 @@ static void posix_xdp_weather( int ipv6 )
     snprintf( client_config.transport, sizeof( client_config.transport ), "portable" );
 
     const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
-    const int far_ns = open( "/var/run/netns/" POSIX_XDP_NETNS, O_RDONLY );
+    const int far_ns = open( posix_xdp_net.netns_path, O_RDONLY );
     posix_check( self_ns >= 0 && far_ns >= 0 );
     posix_check( setns( far_ns, CLONE_NEWNET ) == 0 );
 
@@ -4086,7 +4120,7 @@ static void posix_xdp_weather( int ipv6 )
 
     // a send the xdp frame codec refuses to build (a destination of the
     // family this server does not serve) is dropped and counted in the
-    // queue's send_refused_build (sdk/rocketnet_server_socket_linux.cpp:3156), and
+    // queue's send_refused_build (sdk/rocketnet_server_socket_linux.cpp), and
     // the transport's SEND_FAILED reads it through the xdp send_failures
     // operation: it moves by exactly that one datagram
 
@@ -4098,7 +4132,9 @@ static void posix_xdp_weather( int ipv6 )
 
         const uint64_t failed_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED];
         rocketnet_address_t other_family;
-        posix_check( rocketnet_address_parse( &other_family, ipv6 ? "10.77.3.2:40412" : "[2001:db8:78::2]:40412" ) );
+        char other_family_text[64];
+        snprintf( other_family_text, sizeof( other_family_text ), ipv6 ? "%s:%d" : "[%s]:%d", ipv6 ? posix_xdp_net.far4 : posix_xdp_net.far6, POSIX_XDP_PORT );
+        posix_check( rocketnet_address_parse( &other_family, other_family_text ) );
 
         static const uint8_t other_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
         uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, 0, 0, &other_family, other_mac );

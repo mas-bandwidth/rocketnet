@@ -1,0 +1,129 @@
+# Nightly client frame time: one row per platform client transport.
+#
+# Runs benchmarks/client_frame_time through tools/check_client_frame_time.py:
+# one client against a real server on loopback at the space client profile
+# (15 MTU packets a tick, 60 Hz, 3600 measured frames), with the transport the
+# library picks on each platform (gso on Linux, msgx on macOS, iocp on
+# Windows). Each row records the worst client frame, enforces zero
+# steady-state allocations inside client calls, and runs the red proofs: a
+# 500 us busy loop planted inside update must fail the worst-frame assertion,
+# and an allocation planted inside send must fail the allocation assertion.
+#
+# The Linux leg enforces the worst frame (400 us) on the quiet runner. The
+# macOS and Windows legs are report-only for the worst frame: those runners
+# carry other fleet work, so a frame over 400 us is a FAIL verdict that exits
+# 0 with a REPORT-ONLY-FAIL annotation the nightly watch lists. The allocation
+# assertion and the red proofs fail the job on every leg.
+#
+# Not part of per-commit CI.
+#
+# Hosted minutes budget:
+#   - linux-client-frame-time:   0 hosted minutes (self-hosted rocketnet-quiet)
+#   - macos-client-frame-time:   0 hosted minutes (self-hosted macOS, ARM64, fleet)
+#   - windows-client-frame-time: 0 hosted minutes (self-hosted rocketnet-windows)
+
+name: Nightly Client Frame Time
+
+on:
+  schedule:
+    - cron: "45 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-client-frame-time-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+  linux-client-frame-time:
+    name: client frame time (${{ matrix.ref }} / linux-quiet gso)
+    runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON('["main"]') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Configure and build client_frame_time (Release, production library)
+        timeout-minutes: 2
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
+          cmake --build build --target client_frame_time --parallel 8
+
+      - name: Client frame time row (gso)
+        run: python3 tools/check_client_frame_time.py --bin ./bin/client_frame_time --max-us 400
+
+  macos-client-frame-time:
+    name: client frame time (${{ matrix.ref }} / macos msgx report-only)
+    runs-on: [self-hosted, macOS, ARM64, fleet]
+    timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a worst frame over --max-us exits 0 (report-only, as the
+      # header above states) and annotates REPORT-ONLY-FAIL; the watch lists it red
+      ROCKETNET_REPORT_ONLY: 'the fleet Mac is not reserved quiet (header of nightly-client-frame-time.yml)'
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON('["main"]') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Configure and build client_frame_time (Release, production library)
+        timeout-minutes: 2
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
+          cmake --build build --target client_frame_time --parallel 4
+
+      - name: Client frame time row (msgx, report-only)
+        run: python3 tools/check_client_frame_time.py --bin ./bin/client_frame_time --max-us 400 --report-only
+
+  windows-client-frame-time:
+    name: client frame time (${{ matrix.ref }} / windows iocp report-only)
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
+    timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a worst frame over --max-us exits 0 (report-only, as the
+      # header above states) and annotates REPORT-ONLY-FAIL; the watch lists it red
+      ROCKETNET_REPORT_ONLY: 'the Windows fleet runner also carries other fleet work (header of nightly-client-frame-time.yml)'
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Configure
+        timeout-minutes: 2
+        run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
+
+      - name: Build client_frame_time (Release, production library)
+        timeout-minutes: 2
+        run: cmake --build build --config Release --target client_frame_time --parallel 8
+
+      - name: Client frame time row (iocp, report-only)
+        run: python tools/check_client_frame_time.py --bin ./bin/Release/client_frame_time.exe --max-us 400 --report-only

@@ -363,7 +363,7 @@ static void ip_pair_setup( ip_pair_t * pair, int packets_per_update = 8 )
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.num_channels = 4;
+    config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     config.packets_per_update = packets_per_update;
     config.message_resend_delay_initial_ms = 100;
     pair->net = new ip_net_t();
@@ -1908,6 +1908,7 @@ static void test_unreliable_in_place_budget_edges()
 }
 
 REGISTER_UNIT_TEST( test_unreliable_packed_size_and_space_edges );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_packed_size_and_space_edges, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_unreliable_in_place_budget_edges );
 REGISTER_UNIT_TEST( test_unreliable_whole_frame_sent_inside_the_budget_window );
 REGISTER_UNIT_TEST( test_unreliable_packed_build_dropped_over_budget_at_seal );
@@ -1915,13 +1916,22 @@ REGISTER_UNIT_TEST( test_unreliable_packing_abort_and_short_finish );
 REGISTER_UNIT_TEST( test_unreliable_packing_receipt_boundary );
 
 REGISTER_UNIT_TEST( test_unreliable_fit_is_written_in_the_packet );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_fit_is_written_in_the_packet, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_unreliable_fit_in_place_every_transport );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_fit_in_place_every_transport, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_unreliable_fit_has_no_message_copy );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_fit_has_no_message_copy, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_unreliable_over_fit_takes_the_message_buffer );
+UNIT_TEST_SKIPPED_UNLESS( test_unreliable_over_fit_takes_the_message_buffer, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_in_place_unreliable_keeps_acks_and_order );
+UNIT_TEST_SKIPPED_UNLESS( test_in_place_unreliable_keeps_acks_and_order, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_mixed_in_place_and_queued_respect_packet_cap );
+UNIT_TEST_SKIPPED_UNLESS( test_mixed_in_place_and_queued_respect_packet_cap, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_repeated_fill_flush_respects_packet_cap );
+UNIT_TEST_SKIPPED_UNLESS( test_repeated_fill_flush_respects_packet_cap, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_reliable_not_starved_by_in_place );
+UNIT_TEST_SKIPPED_UNLESS( test_reliable_not_starved_by_in_place, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_message_burst_start_finish_delivers_every_message );
+UNIT_TEST_SKIPPED_UNLESS( test_message_burst_start_finish_delivers_every_message, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_start_past_packet_allowance_falls_back_to_the_region );
 REGISTER_UNIT_TEST( test_unreliable_refused_start_counts_once );

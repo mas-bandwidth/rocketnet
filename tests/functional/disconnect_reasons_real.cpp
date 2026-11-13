@@ -392,12 +392,27 @@ void rocketnet_test_conditions_portable()
         reasons_step( &pair, true, true );
     }
 
-    // traffic flows both ways and nothing reliable is waiting
+    // traffic flows both ways and nothing reliable is waiting. Over a real
+    // transport the connect's reliable traffic can still be in flight after a
+    // fixed number of steps on a loaded host (macOS Release, studio-4, CI run
+    // 43306427273: seconds_since_progress was not -1 after 50 steps), so the
+    // pair steps on until both ends report nothing in flight, up to the case's
+    // deadline, and the checks below then judge what the ends report
 
     struct rocketnet_conditions_t server_conditions;
     struct rocketnet_conditions_t client_conditions;
-    reasons_check( rocketnet_server_client_conditions( pair.server, pair.slot, &server_conditions, (int) sizeof( server_conditions ) ) );
-    reasons_check( rocketnet_client_conditions( pair.client, &client_conditions, (int) sizeof( client_conditions ) ) );
+    const double settle = rocketnet_time();
+    for ( ;; )
+    {
+        reasons_check( rocketnet_server_client_conditions( pair.server, pair.slot, &server_conditions, (int) sizeof( server_conditions ) ) );
+        reasons_check( rocketnet_client_conditions( pair.client, &client_conditions, (int) sizeof( client_conditions ) ) );
+        if ( ( server_conditions.seconds_since_progress == -1.0 && client_conditions.seconds_since_progress == -1.0 ) ||
+             rocketnet_time() - settle >= reasons_wait_seconds )
+        {
+            break;
+        }
+        reasons_step( &pair, true, true );
+    }
     reasons_check( server_conditions.seconds_since_heard >= 0.0 && server_conditions.seconds_since_heard < 0.25 );
     reasons_check( client_conditions.seconds_since_heard >= 0.0 && client_conditions.seconds_since_heard < 0.25 );
     reasons_check( server_conditions.seconds_since_progress == -1.0 && client_conditions.seconds_since_progress == -1.0 );

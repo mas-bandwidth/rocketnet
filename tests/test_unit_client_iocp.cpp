@@ -270,6 +270,50 @@ static void test_client_iocp_receive_completes_into_slots()
     rocketnet_unit_check( rocketnet_client_iocp_close( &test_iocp, 1, 1.0 ) );
 }
 
+// An empty datagram and one longer than the posted buffer are datagrams: the
+// Win32 binding reads past the buffer into a discard buffer, so the
+// completion carries the true length. Each becomes a record with its true
+// size (the prefix stored), so the transport's prefilter counts it
+// (PREFILTER_TOO_SHORT, PREFILTER_TOO_LARGE) as on the portable client.
+
+static void test_client_iocp_empty_and_oversize_are_records()
+{
+    test_iocp_create();
+
+    rocketnet_address_t from[8];
+    uint8_t slots[8 * 128];
+    int packet_bytes[8];
+
+    const rocketnet_address_t server = fake_iocp_server( 40000 );
+
+    fake_iocp.posted[1] = false;
+    fake_iocp_queue( ROCKETNET_CLIENT_IOCP_COMPLETION_RECEIVE, 1, true, 0, &server );
+
+    for ( int i = 0; i < FAKE_IOCP_BUFFER_BYTES; i++ )
+    {
+        fake_iocp.buffer[2][i] = (uint8_t) ( 7 + i );
+    }
+    fake_iocp.posted[2] = false;
+    fake_iocp_queue( ROCKETNET_CLIENT_IOCP_COMPLETION_RECEIVE, 2, true, 2000, &server );
+
+    memset( slots, 0, sizeof( slots ) );
+    rocketnet_unit_check( rocketnet_client_iocp_receive_batch( &test_iocp, from, slots, 128, packet_bytes, 8 ) == 2 );
+    rocketnet_unit_check( packet_bytes[0] == 0 );
+    rocketnet_unit_check( packet_bytes[1] == 2000 );
+    rocketnet_unit_check( from[0].port == 40000 && from[1].port == 40000 );
+
+    // the copy stops at the posted buffer: 64 bytes of prefix, nothing past
+
+    rocketnet_unit_check( slots[128] == 7 && slots[128 + 63] == 70 );
+    rocketnet_unit_check( slots[128 + 64] == 0 );
+    rocketnet_unit_check( test_iocp.receives_completed == 2 );
+    rocketnet_unit_check( test_iocp.receives_failed == 0 );
+    rocketnet_unit_check( test_iocp.num_posted == 4 );
+
+    fake_iocp.aborts_per_dequeue = -1;
+    rocketnet_unit_check( rocketnet_client_iocp_close( &test_iocp, 1, 1.0 ) );
+}
+
 // the wake is one posted completion on the port, coalesced while one is
 // outstanding; wait consumes it, and honours its timeout when none comes
 
@@ -383,6 +427,7 @@ static void test_client_iocp_destroy_drains_posted_receives()
 }
 
 REGISTER_UNIT_TEST( test_client_iocp_receive_completes_into_slots );
+REGISTER_UNIT_TEST( test_client_iocp_empty_and_oversize_are_records );
 REGISTER_UNIT_TEST( test_client_iocp_wake_is_a_posted_completion );
 
 // a refused wake post leaves nothing on the port: the next wake posts again

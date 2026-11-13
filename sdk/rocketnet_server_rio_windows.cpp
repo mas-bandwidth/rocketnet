@@ -1360,9 +1360,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
 failed:
 #if ROCKETNET_DEV
-    rocketnet_warn( "rio transport create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
+    rocketnet_warn( "rio transport create failed (%s, Win32 %lu, test stage %d)", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text, GetLastError(), fail_stage );
 #else
-    rocketnet_warn( "rio transport create failed (Winsock %d, Win32 %lu)", WSAGetLastError(), GetLastError() );
+    rocketnet_warn( "rio transport create failed (%s, Win32 %lu)", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text, GetLastError() );
 #endif
     // Partial construction remains private to this synchronous create call.
     if ( !rocketnet_rio_create_failed_drain( rio ) )

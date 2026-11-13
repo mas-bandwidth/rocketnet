@@ -50,7 +50,8 @@ int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_s
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 static const uint64_t MASS_DISCONNECT_PROTOCOL_ID = 0x4D41535344495343ULL;
-static const int MASS_DISCONNECT_CLIENTS = 1000;
+// the default max_clients: 1000, or a smaller build maximum (rocketnet.h)
+static const int MASS_DISCONNECT_CLIENTS = ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000;
 
 #if ROCKETNET_DEV
 static int mass_disconnect_setenv( const char * name, const char * value )
@@ -371,12 +372,16 @@ SUITE_CASE_RSS_BOUND( test_mass_join_spreads_handshakes_across_updates, mass_dis
 // clock, so each send interval (10 Hz) their requests land in the same
 // update, a valid cookie each. No update processes more of them than the
 // default handshake work budget; the rest are dropped unanswered and counted,
-// and each client's next request is processed in a later update, so every
-// client connects inside its 10-second token timeout: 16 per send interval
-// seats 1000 in about 6.3 s (proofs/tla/RNSecurityTables.tla HonestRequest,
-// HonestConnectsUnderFlood). Every request here is honest, so each one the
-// budget admits sends one fresh challenge: the per-update count of fresh
-// challenges is the work it did.
+// and each client's next request is processed in a later update
+// (proofs/tla/RNSecurityTables.tla HonestRequest, HonestConnectsUnderFlood).
+// The case checks the budget's spreading, not a join time: the server's
+// token and cookie clock is held at 1000
+// (rocketnet_server_transport_set_test_timestamp), so no cookie expires
+// while a client waits. A real server's clock moves, and real joins arrive
+// spread out because the backend issues each connect token
+// (standard/RATIONALE.md, the handshake work budget). Every request here is
+// honest, so each one the budget admits sends one fresh challenge: the
+// per-update count of fresh challenges is the work it did.
 static void test_mass_join_spreads_handshakes_across_updates()
 {
 #if ROCKETNET_DEV
@@ -466,6 +471,19 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
     mass_disconnect_connect_all( &population );
     rocketnet_server_transport_t * transport = mass_disconnect_server_transport( population.server );
 
+    // the slot each kicked client holds, read from the client: client i is
+    // not always in slot i. A first cookie request whose source address
+    // shares its bit of the server's per-update cookie reply bitmap with an
+    // earlier client's (a SipHash under a key drawn at create) is dropped
+    // unanswered; that client connects one send interval later and takes a
+    // later slot (CI run 43290229994)
+    int kicked_slot[kicked];
+    for ( int i = 0; i < kicked; i++ )
+    {
+        kicked_slot[i] = rocketnet_client_index( population.clients[i] );
+        check( kicked_slot[i] >= 0 && rocketnet_server_client_connected( population.server, kicked_slot[i] ) );
+    }
+
     for ( int i = 0; i < kicked; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( population.clients[i], 0,
@@ -507,7 +525,7 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
     check( rocketnet_server_num_connected_clients( population.server ) == MASS_DISCONNECT_CLIENTS - kicked );
     for ( int i = 0; i < kicked; i++ )
     {
-        check( !rocketnet_server_client_connected( population.server, i ) );
+        check( !rocketnet_server_client_connected( population.server, kicked_slot[i] ) );
     }
 
     int remaining = -1;

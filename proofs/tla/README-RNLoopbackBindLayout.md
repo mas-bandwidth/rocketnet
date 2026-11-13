@@ -13,9 +13,10 @@ walk of the endpoint records.
 |---|---|
 | `live[r]`, `fam[r]`, `addr[r]`, `port[r]` | `hub->endpoints[r]`: `live` and `bind` (its type, its address as the family's wildcard or a specific one, its port) |
 | `bound[f][p]` | `hub->bound[f == IPv6][p]` through `loopback_bound_entry`: the record index plus one of the live endpoint bound there, 0 for none |
-| `nextPort` | `hub->next_port`, `ROCKETNET_LOOPBACK_FIRST_PORT` at hub create |
+| `nextPort` | `hub->next_port`, the range's first port at hub create |
 | `registered` | `hub->registered` |
-| `First`, `Last` | `ROCKETNET_LOOPBACK_FIRST_PORT` (49152) and `ROCKETNET_LOOPBACK_LAST_PORT` (65535, the largest `uint16_t` port) |
+| `First`, `Last` | `ROCKETNET_LOOPBACK_FIRST_PORT` (49152), or the DEV seam's port (`rocketnet_loopback_test_first_port`), and `ROCKETNET_LOOPBACK_LAST_PORT` (65535, the largest `uint16_t` port) |
+| `Low` | `hub->first_port`, set at create by `loopback_first_port`: `First`, or `Last + 1 - Records` when `First..Last` has fewer ports than the hub has records (`Sized`) |
 
 Record 0 is the server's and records 1 onward the clients'. Because `Last`
 stands for 65535, the code's `uint16_t` `port + 1` at the last port is
@@ -70,6 +71,10 @@ when its endpoint is a live IPv6 wildcard (dual stack).
   port of the range is held by a live endpoint of either family.
 - **`NoPortZero`**, **`NextPortInRange`**: no live endpoint holds port 0, and
   `next_port` stays in the range.
+- **`HoldsEveryRecord`**: unless a DEV seam narrowed the range (`HoldAll`
+  FALSE), a bind to port 0 is never refused: the range has a port for every
+  record, so a hub of `ROCKETNET_MAX_CLIENTS` clients holds them all and its
+  server.
 - **`DestroyFindsOwnEntry`**: destroy's test always finds its own entry.
 - **`RegisteredCount`**: `registered` is the number of live records.
 
@@ -91,8 +96,15 @@ address or another.
 
 `MCRNLoopbackBindLayoutFullRange.cfg`: the same three records with the range
 4..5 (two ports, fewer than the records) and explicit binds to ports 1 and 4,
-so a bind to port 0 can find every port of the range held and is refused, as
-a hub of 16384 or more clients can hold all 16384 ports of the real range.
+so a bind to port 0 can find every port of the range held and is refused.
+This is the DEV seam's narrowed range (`Sized` and `HoldAll` FALSE), the way
+`test_loopback_transport_io_refuses_a_bind_when_every_ephemeral_port_is_held`
+reaches the refusal.
+
+`MCRNLoopbackBindLayoutSized.cfg`: the same three records and `First..Last`
+4..5 with the sizing on, so create lowers the range to 3..5 and every
+invariant holds, `HoldsEveryRecord` among them: the hub of more than 16383
+clients, whose records outnumber 49152..65535.
 
 ## Reversed witnesses
 
@@ -141,6 +153,11 @@ counterexample below was checked against the C by hand.
    finds both held, is left on 4 after its two steps, and takes port 4 from
    client record 1, overwriting its entry so record 1 is bound but
    unreachable.
+7. **`MCRNLoopbackBindLayoutBrokenNotSized.cfg`** (`Sized = FALSE`), on
+   `First..Last` 4..5 with three records: hub create without lowering the
+   range. Violates `HoldsEveryRecord`: two binds to port 0 take ports 4 and
+   5, and the third record's bind to port 0 finds both held and is refused,
+   as a build of `ROCKETNET_MAX_CLIENTS` 32768 refused its 16384th client.
 
 ## Runs
 

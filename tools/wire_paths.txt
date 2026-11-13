@@ -3,8 +3,9 @@
 # wire constants (the one file the sdk and the kernel program both read), and
 # the protocol layer that writes and reads packets. Deliberately not the whole
 # sdk: a gate that cries wolf on a transport refactor is a gate people learn
-# to merge past. One tracked path a line; tools/check_wire_paths.py fails a
-# path that is not tracked, a duplicate, or an empty list.
+# to merge past. One tracked path a line, up to the first [section] line;
+# tools/check_wire_paths.py fails a path that is not tracked, a duplicate,
+# or an empty list.
 standard/TRANSPORT.md
 standard/MESSAGES.md
 sdk/rocketnet_wire.h
@@ -30,3 +31,112 @@ sdk/rocketnet_keys.h
 sdk/rocketnet_read_write.h
 sdk/rocketnet_layers.h
 sdk/rocketnet.h
+
+# Every other tracked source under sdk/ (.h, .cpp, .c, .inc) is on one of the
+# two lists below, so a new or renamed sdk file is a decision, not a silent
+# omission: tools/check_wire_paths.py fails a source on no list, on two
+# lists, or a listed path that is gone. A line is the path, a tab, and why.
+[not wire]
+sdk/rocketnet.cpp	the unity build: includes the other sources, writes nothing itself
+sdk/rocketnet_abi.cpp	sized public configs (docs/ABI-EVOLUTION.md): API, not wire
+sdk/rocketnet_api.cpp	the public client and server over the layers; :993 calls connect_token.cpp's writer, composes no bytes
+sdk/rocketnet_address.cpp	address text rendering and parsing; the wire address bytes are protocol.cpp:522
+sdk/rocketnet_address.h	address type and text API; the wire address bytes are protocol.cpp:522
+sdk/rocketnet_allocator.cpp	layer 1 memory regions
+sdk/rocketnet_allocator.h	layer 1 memory regions
+sdk/rocketnet_base64.cpp	base64 text for tokens handed between processes, not datagram bytes
+sdk/rocketnet_base64.h	base64 text for tokens handed between processes, not datagram bytes
+sdk/rocketnet_buffer_handoff.h	buffers crossing threads
+sdk/rocketnet_client_gso.h	Linux UDP segmentation offload for the client socket
+sdk/rocketnet_client_gso_linux.cpp	Linux UDP segmentation offload for the client socket
+sdk/rocketnet_client_io.h	client receive I/O; :409 reads the sequence at the offset rocketnet_wire.h defines, writes no packet byte
+sdk/rocketnet_client_iocp.h	Windows IOCP client socket transport
+sdk/rocketnet_client_iocp_windows.cpp	Windows IOCP client socket transport
+sdk/rocketnet_client_slots.cpp	client slot table
+sdk/rocketnet_client_slots.h	client slot table
+sdk/rocketnet_client_transport.cpp	client transport: moves datagrams the protocol layer wrote and reads
+sdk/rocketnet_coalesce.h	UDP coalescing rules for the socket layer
+sdk/rocketnet_config.cpp	config parsing and validation
+sdk/rocketnet_config.h	config parsing and validation
+sdk/rocketnet_connection_reset.cpp	connection teardown and secret wipes
+sdk/rocketnet_connection_reset.h	connection teardown and secret wipes
+sdk/rocketnet_counters.cpp	counter tables
+sdk/rocketnet_counters.h	counter tables
+sdk/rocketnet_crypto_tally.h	test tally of receive-path cryptography
+sdk/rocketnet_driver.cpp	transport driver selection
+sdk/rocketnet_driver.h	transport driver selection
+sdk/rocketnet_driver_builtin.cpp	built-in transport drivers
+sdk/rocketnet_driver_loopback.cpp	in-process loopback transport
+sdk/rocketnet_driver_loopback.h	in-process loopback transport
+sdk/rocketnet_drivers.inc	the driver rows each build mode compiles
+sdk/rocketnet_gateway_netlink.h	XDP gateway discovery through rtnetlink
+sdk/rocketnet_gateway_netlink_linux.cpp	XDP gateway discovery through rtnetlink
+sdk/rocketnet_hash.cpp	FNV-1a for in-process tables
+sdk/rocketnet_hash.h	FNV-1a for in-process tables
+sdk/rocketnet_internal.h	the internal include list
+sdk/rocketnet_memory.h	component memory budgets
+sdk/rocketnet_message_client.cpp	the client message object API over the message layer, which message.cpp encodes
+sdk/rocketnet_message_object.h	message object layers 7 and 8 (standard/MESSAGES.md m11): API over the encoder in message.cpp
+sdk/rocketnet_message_server.cpp	the server message object API over the message layer, which message.cpp encodes
+sdk/rocketnet_network_simulator.cpp	test network simulator: drops and delays datagrams, writes none
+sdk/rocketnet_network_simulator.h	test network simulator: drops and delays datagrams, writes none
+sdk/rocketnet_packet_batch.h	receive batch view over transport buffers
+sdk/rocketnet_packet_lease.h	process-wide packet tickets
+sdk/rocketnet_pending_frames.h	producer frame reservations
+sdk/rocketnet_platform.cpp	platform sockets, time and threads
+sdk/rocketnet_platform.h	platform sockets, time and threads
+sdk/rocketnet_rio_layout.h	Windows RIO region layout
+sdk/rocketnet_send_budget.h	per-connection send budget accounting
+sdk/rocketnet_server.h	server limits (signature-verify budget, token skew)
+sdk/rocketnet_server_gso.h	Linux UDP segmentation offload for the server socket
+sdk/rocketnet_server_gso_linux.cpp	Linux UDP segmentation offload for the server socket
+sdk/rocketnet_server_iocp.h	Windows IOCP server transport
+sdk/rocketnet_server_iocp_windows.cpp	Windows IOCP server transport
+sdk/rocketnet_server_replay_marks.cpp	server replay slot marks for the kernel map
+sdk/rocketnet_server_replay_marks.h	server replay slot marks for the kernel map
+sdk/rocketnet_server_rio.h	Windows RIO server transport
+sdk/rocketnet_server_rio_windows.cpp	Windows RIO server transport
+sdk/rocketnet_server_socket.h	server socket and XDP send staging
+sdk/rocketnet_server_socket_linux.cpp	server socket transport
+sdk/rocketnet_server_transport.cpp	server transport; :4104 calls protocol.cpp's sealed writer with protocol.cpp's ack block, composes no bytes
+sdk/rocketnet_server_uring.h	io_uring server transport
+sdk/rocketnet_server_udp_linux.cpp	the Linux UDP socket open the gso and io_uring server transports share
+sdk/rocketnet_server_udp_linux.h	the Linux UDP socket open the gso and io_uring server transports share
+sdk/rocketnet_server_uring_linux.cpp	io_uring server transport
+sdk/rocketnet_slots.cpp	server slot table
+sdk/rocketnet_slots.h	server slot table
+sdk/rocketnet_stats_window.h	time-bucketed statistics
+sdk/rocketnet_test_seams.h	test and development seams
+sdk/rocketnet_test_vectors.h	test vectors: hold expected bytes, define none
+sdk/rocketnet_tests.cpp	unit tests
+sdk/rocketnet_token_tables.cpp	server token tables
+sdk/rocketnet_token_tables.h	server token tables
+sdk/rocketnet_uring_codec.h	io_uring completion codec
+sdk/rocketnet_xdp_compat.h	XDP program attach compatibility
+sdk/rocketnet_xdp_frame.h	AF_XDP Ethernet, IP and UDP framing: the standard outer headers, not the rocketnet payload
+sdk/rocketnet_xdp_free_list.h	AF_XDP frame free list
+sdk/rocketnet_xdp_limits.h	XDP map sizes
+sdk/rocketnet_xdp_replay_marks.h	userspace buffer for the kernel replay map
+sdk/rocketnet_xdp_socket_config.h	AF_XDP socket bind config
+sdk/xdp/server_xdp.c	the kernel filter: :360-424 read header bytes at the offsets rocketnet_wire.h defines, write none
+# Files a review named as defining wire bytes that the owner has not yet
+# ruled on. The check accepts them and names every one on every run; they
+# are not in the gate above until the owner moves each to a list.
+[wire-defining, classification pending owner, since 2026-11-12]
+sdk/rocketnet_packet_builder.cpp	:105-134 rn_builder_record sets the record number (masked to 24 bits), control, block and fragment fields that :544 rocketnet_message_writer_add puts in the packet, and chooses which records share a packet
+sdk/rocketnet_packet_builder.h	:39-40 the 16 numbers and 16 records one packet carries
+sdk/rocketnet_endpoint.cpp	:1505 rn_endpoint_write_packet_taken chooses the packet kind written into the payload: :1534 rn_ordered_write, :1553 rn_packet_builder_write
+sdk/rocketnet_endpoint.h	:40-43 the packet kinds the endpoint writes (ordered, unreliable, sequenced large)
+sdk/rocketnet_window_ack.cpp	:109 rn_window_ack_resend_next picks which reliable record is resent; it writes no byte itself
+sdk/rocketnet_window_ack.h	declarations for window_ack.cpp; writes no byte
+sdk/rocketnet_window_send.cpp	:156-189 rn_window_send_first_write assigns the reliable number and ring start a record carries on the wire
+sdk/rocketnet_window_send.h	declarations for window_send.cpp; writes no byte
+sdk/rocketnet_window_receive.cpp	:39 rn_window_receive_accept accepts received records; receive side, writes no byte
+sdk/rocketnet_window_receive.h	declarations for window_receive.cpp; writes no byte
+sdk/rocketnet_constants.h	:22-38 static asserts that tie the packet size limits to rocketnet_wire.h; defines no wire value itself
+sdk/rocketnet_standard_rules.h	:22 rn_endpoint_unreliable_record_limit, the standard's m2.1 largest one-record unreliable message
+sdk/rocketnet_replay.cpp	:74 rocketnet_replay_advance sets the bits protocol.cpp:507 hands to the ack block builder
+sdk/rocketnet_replay.h	the replay window struct the ack block encodes; :26 its size is ROCKETNET_HISTORY_PACKETS
+sdk/rocketnet_encryption_map.cpp	none found: :253 writes address bytes into a local buffer to hash a map key, not onto the wire
+sdk/rocketnet_encryption_map.h	none found: mapping layout and the half-open timeout
+sdk/rocketnet_history.h	:10-11 the published depth bounds (standard/TRANSPORT.md t14); :20 keeps a retained run within one u16 ack range

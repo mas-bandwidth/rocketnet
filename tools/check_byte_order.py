@@ -21,18 +21,25 @@ joined. Rules:
   shift swap   one logical line that moves a value both ways by 8 bits with a
                byte mask (0xff00 or 0x00ff), or both ways by 24 bits: a
                hand-written 16- or 32-bit swap.
-  host read    a pointer cast to a 16-, 32- or 64-bit integer type that is
-               dereferenced or indexed in the same expression, or a memcpy
-               whose size is exactly sizeof one such type: the integer is
-               read or written in host byte order.
+  host read    a pointer cast to a 16-, 32- or 64-bit integer type (int,
+               unsigned, long and a typedef of one in the file included) that
+               is dereferenced or indexed in the same statement; a pointer to
+               such a type initialised from a cast of another pointer; a
+               memcpy whose size is sizeof one such type, sizeof a variable
+               of one, or the literal 2, 4 or 8; or a union that lays an
+               integer over bytes: the integer is read or written in host
+               byte order.
   netlink      htons, ntohs, htonl, ntohl or a library hton/ntoh helper in
                the netlink gateway: netlink headers and attributes are host
                order, so a network-order conversion there is the mistake.
 
-The first three pass inside a preprocessor branch whose condition names the
-byte order (ROCKETNET_BIG_ENDIAN, __BYTE_ORDER__, __ORDER_*_ENDIAN__,
-__LITTLE_ENDIAN__, __BIG_ENDIAN__, BYTE_ORDER): there the swap has a
-direction. sdk/rocketnet_read_write.h, the one file that defines the
+The first three pass inside a preprocessor branch whose condition names one
+of the byte-order macros exactly (ROCKETNET_BIG_ENDIAN, __BYTE_ORDER__,
+__ORDER_LITTLE_ENDIAN__, __ORDER_BIG_ENDIAN__, __LITTLE_ENDIAN__,
+__BIG_ENDIAN__, BYTE_ORDER, __BYTE_ORDER): there the swap has a direction. A
+macro that merely contains ENDIAN in its name does not. Every rule reads one
+statement, joined across lines to its semicolon or brace, so a swap split
+over two lines is still one. No file to scan fails. sdk/rocketnet_read_write.h, the one file that defines the
 byte-wise readers and writers, is not read. Every other site passes only
 through the ALLOWED list below, each entry a file, a text the line holds,
 and the reason; an entry that matches nothing fails, so the list cannot go
@@ -78,6 +85,89 @@ ALLOWED = [
      "a netlink attribute is host order: the local kernel wrote it"),
     ("sdk/rocketnet_platform.h", "long long observed = *(volatile long long *) value;",
      "the Windows atomic max reads a counter of this process as the interlocked type; no wire byte"),
+    # VERIFY-3 A-3 widened the host-read rule (int and unsigned casts, memcpy
+    # by sizeof a variable or a literal 2, 4 or 8); each site it found is one
+    # of these, read and kept for the reason given.
+    ('sdk/rocketnet_address.cpp', 'memcpy( address->data.ipv4, (uint8_t *) &big_endian_ipv4, 4 )',
+     'IPv4 address bytes stay in network order on both sides (the sin_addr layout); nothing is converted'),
+    ('sdk/rocketnet_address.cpp', 'memcpy( address->data.ipv4, &addr4, 4 )',
+     'IPv4 address bytes stay in network order on both sides (the sin_addr layout); nothing is converted'),
+    ('sdk/rocketnet_address.cpp', 'memcpy( (char *) &ipv4, address->data.ipv4, 4 )',
+     'IPv4 address bytes stay in network order on both sides (the sin_addr layout); nothing is converted'),
+    ('sdk/rocketnet_server_socket_linux.cpp', 'memcpy( &public_address_ipv4, public_address->data.ipv4, 4 )',
+     'IPv4 address bytes stay in network order on both sides (the sin_addr layout); nothing is converted'),
+    ('sdk/rocketnet_client_gso_linux.cpp', 'memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) )',
+     "the kernel's control message is host order: this process and the local kernel share it"),
+    ('sdk/rocketnet_client_gso_linux.cpp', 'memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof( segment_bytes ) )',
+     "the kernel's control message is host order: this process and the local kernel share it"),
+    ('sdk/rocketnet_server_gso_linux.cpp', 'memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof( segment_bytes ) )',
+     "the kernel's control message is host order: this process and the local kernel share it"),
+    ('sdk/rocketnet_server_gso_linux.cpp', 'memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) )',
+     "the kernel's control message is host order: this process and the local kernel share it"),
+    ('sdk/rocketnet_server_gso_linux.cpp', 'memcpy( CMSG_DATA( cmsg ), &segment_bytes, sizeof( segment_bytes ) )',
+     "the kernel's control message is host order: this process and the local kernel share it"),
+    ('sdk/rocketnet_server_uring_linux.cpp', 'memcpy( control + CMSG_LEN( 0 ), &stride, sizeof( stride ) )',
+     "the kernel's control message is host order: this process and the local kernel share it"),
+    ('sdk/rocketnet_uring_codec.h', 'memcpy( &stride, control + offset + CMSG_LEN( 0 ), sizeof( stride ) )',
+     "the kernel's control message is host order: this process and the local kernel share it"),
+    ('sdk/rocketnet_uring_codec.h', 'memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) )',
+     "the kernel's control message is host order: this process and the local kernel share it"),
+    ('sdk/rocketnet_gateway_netlink_linux.cpp', 'memcpy( &code, payload, sizeof( code ) )',
+     'a netlink error code is host order: the local kernel wrote it'),
+    ('sdk/rocketnet_gateway_netlink_linux.cpp', 'memcpy( &vlan_id, data.value[IFLA_VLAN_ID], sizeof( vlan_id ) )',
+     "a netlink attribute's IFLA_VLAN_ID is host order: the local kernel wrote it"),
+    ('sdk/rocketnet_client_io.h', 'memcpy( &bytes, view->wire_bytes + (size_t)',
+     "the ring's per-slot length, an int this process stored; not the datagram's bytes"),
+    ('sdk/rocketnet_client_slots.cpp', 'memcpy( &value, hash, 8 )',
+     'hash bytes taken as a table index in this process; the host order changes only the bucket'),
+    ('sdk/rocketnet_encryption_map.cpp', 'memcpy( &value, hash, 8 )',
+     'hash bytes taken as a table index in this process; the host order changes only the bucket'),
+    ('sdk/rocketnet_server_protocol.cpp', 'memcpy( &value, hash, 8 )',
+     'hash bytes taken as a table index in this process; the host order changes only the bucket'),
+    ('sdk/rocketnet_token_tables.cpp', 'memcpy( &value, hash, sizeof( value ) )',
+     'hash bytes taken as a table index in this process; the host order changes only the bucket'),
+    ('sdk/rocketnet_config.cpp', 'memcpy( &value, base, sizeof( value ) )',
+     "config field reflection over this process's own struct; no wire byte"),
+    ('sdk/rocketnet_config.cpp', 'memcpy( base, &parsed, sizeof( parsed ) )',
+     "config field reflection over this process's own struct; no wire byte"),
+    ('sdk/rocketnet_config.cpp', 'memcpy( &value, (const uint8_t *) config + field->offset, sizeof( value ) )',
+     "config field reflection over this process's own struct; no wire byte"),
+    ('sdk/rocketnet_platform.cpp', 'const int handle = *(const int *) user;',
+     "a callback's context pointer to an int of this process; no wire byte"),
+    ('sdk/rocketnet_server_udp_linux.cpp', 'const int fd = *(const int *) user;',
+     "a callback's context pointer to an int of this process; no wire byte"),
+    ('sdk/rocketnet_server_replay_marks.cpp', '( *(int *) context )++;',
+     "a callback's context pointer to an int of this process; no wire byte"),
+    ('sdk/rocketnet_server_transport.cpp', '++*(int *) context;',
+     "a callback's context pointer to an int of this process; no wire byte"),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( bytes, &value, 4 );',
+     'rocketnet_test_endian builds host values from wire bytes on purpose, to test the conversion on either host'),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( &v16, wire, 2 );',
+     'rocketnet_test_endian builds host values from wire bytes on purpose, to test the conversion on either host'),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( &v32, wire, 4 );',
+     'rocketnet_test_endian builds host values from wire bytes on purpose, to test the conversion on either host'),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( &v64, wire, 8 );',
+     'rocketnet_test_endian builds host values from wire bytes on purpose, to test the conversion on either host'),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( out, &v64, 8 );',
+     'rocketnet_test_endian builds host values from wire bytes on purpose, to test the conversion on either host'),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( &expected_value, expected, sizeof( expected_value ) );',
+     "inet_pton's result is network-order bytes in a uint32_t; the test compares the stored bytes, unconverted"),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( &current, (uint8_t *) config + field->offset, sizeof( current ) );',
+     "config field reflection over this process's own struct; no wire byte"),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( &applied, base, sizeof( applied ) );',
+     "config field reflection over this process's own struct; no wire byte"),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( (uint8_t *) config + field->offset, &start, sizeof( start ) );',
+     "config field reflection over this process's own struct; no wire byte"),
+    ('sdk/rocketnet_tests.cpp', '*(int *) config = 1000;',
+     "config field reflection over this process's own struct; no wire byte"),
+    ('sdk/rocketnet_tests.cpp', '- ROCKETNET_FRAME_WIRE_OFFSET, &id, 8 );',
+     "a test's own payload bytes, written and read by one process; the library never reads them"),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( &id, payload, 8 );',
+     "a test's own payload bytes, written and read by one process; the library never reads them"),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( &r, payload, 8 );',
+     "a test's own payload bytes, written and read by one process; the library never reads them"),
+    ('sdk/rocketnet_tests.cpp', '- ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );',
+     "a test's own payload bytes, written and read by one process; the library never reads them"),
 ]
 
 SWAP = re.compile(r"\b(?:__builtin_bswap(?:16|32|64|128)|bswap_(?:16|32|64)|__bswap_(?:16|32|64)"
@@ -90,13 +180,35 @@ MASK_8 = re.compile(r"\b0x(?:00)?ff(?:00)?\b", re.IGNORECASE)
 MASK_16 = re.compile(r"\b0x(?:ff00|00ff)\b", re.IGNORECASE)
 SHIFT_24 = re.compile(r"<<\s*24\b")
 SHIFT_24_BACK = re.compile(r">>\s*24\b")
-INTEGER = r"(?:u?int(?:16|32|64)_t|__u(?:16|32|64)|__be(?:16|32|64)|__le(?:16|32|64)|unsigned\s+short|short|unsigned\s+int|unsigned\s+long(?:\s+long)?|long\s+long)"
-CAST = r"\(\s*(?:const\s+)?(?:volatile\s+)?" + INTEGER + r"\s*(?:const\s*)?\*\s*\)"
-CAST_DEREF = re.compile(r"\*\s*" + CAST)
-CAST_INDEX = re.compile(r"\(\s*" + CAST + r"[^;]*?\)\s*\[")
-MEMCPY_SCALAR = re.compile(r"\bmemcpy\s*\([^;]*,\s*sizeof\s*\(\s*" + INTEGER + r"\s*\)\s*\)")
+INTEGER = (r"(?:u?int(?:16|32|64)_t|__u(?:16|32|64)|__be(?:16|32|64)|__le(?:16|32|64)"
+           r"|(?:unsigned\s+|signed\s+)?(?:short|long\s+long|long|int)(?:\s+int)?|unsigned|signed)")
 NETWORK_ORDER = re.compile(r"\b(?:htons|ntohs|htonl|ntohl|\w*_htons|\w*_ntohs|\w*_htonl|\w*_ntohl)\s*\(")
-BYTE_ORDER_CONDITION = re.compile(r"ENDIAN|BYTE_ORDER")
+BYTE_ORDER_MACROS = ("ROCKETNET_BIG_ENDIAN", "__BYTE_ORDER__", "__ORDER_LITTLE_ENDIAN__", "__ORDER_BIG_ENDIAN__",
+                     "__LITTLE_ENDIAN__", "__BIG_ENDIAN__", "BYTE_ORDER", "__BYTE_ORDER")
+BYTE_ORDER_CONDITION = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(m) for m in BYTE_ORDER_MACROS) + r")(?!\w)")
+TYPEDEF = re.compile(r"\btypedef\s+(?:const\s+)?(" + INTEGER + r")\s+(\w+)\s*;")
+ALLOCATION = re.compile(r"\w*(?:alloc|malloc|calloc|realloc|new)\w*\s*\(", re.IGNORECASE)
+
+
+class Patterns:
+    """The host-read patterns for one file: INTEGER plus the file's typedefs of it."""
+
+    def __init__(self, text):
+        names = [m.group(2) for m in TYPEDEF.finditer(text)]
+        integer = INTEGER if not names else "(?:" + INTEGER + "|" + "|".join(re.escape(n) for n in names) + ")"
+        integer = r"(?<![\w])" + integer + r"(?![\w])"
+        cast = r"\(\s*(?:const\s+)?(?:volatile\s+)?" + integer + r"\s*(?:const\s*)?(?:volatile\s*)?\*\s*\)"
+        self.cast_deref = re.compile(r"\*\s*" + cast)
+        self.cast_index = re.compile(r"\(\s*" + cast + r"[^;]*?\)\s*\[")
+        # const uint16_t * p = (const uint16_t *) packet;  (an allocation is no read)
+        self.cast_pointer = re.compile(r"(?:^|[;{(,]\s*)(?:static\s+)?(?:const\s+)?(?:volatile\s+)?" + integer
+                                       + r"\s*(?:const\s*)?\*\s*(?:const\s+)?\w+\s*=\s*" + cast + r"\s*([^;]*)")
+        self.integer = re.compile(r"^" + integer + r"$")
+        # variables declared with one of these types in the file (no pointer, no array)
+        self.scalars = set(re.findall(r"(?<![\w*])" + integer + r"\s+(\w+)\s*(?:=[^;]*)?[;,)]", text))
+        self.union = re.compile(r"\bunion\b[^{;]*\{([^}]*)\}")
+        self.integer_member = re.compile(integer + r"\s+\w+\s*;")
+        self.byte_member = re.compile(r"\b(?:u?int8_t|unsigned\s+char|char|__u8)\s+\w+\s*\[")
 
 LITERALS = re.compile(
     r"(?P<number>(?<![\w.])\.?\d(?:'?[\w.]|[eEpP][+-])*)"
@@ -116,7 +228,9 @@ def blank(text):
 
 
 def logical_lines(text):
-    """Join backslash continuations; yield (first physical line number, text)."""
+    """Join backslash continuations, and join a statement across lines to its
+    semicolon or brace; a preprocessor line stays one line. Yield (first
+    physical line number, text)."""
     lines = text.split("\n")
     i = 0
     while i < len(lines):
@@ -125,6 +239,11 @@ def logical_lines(text):
         while line.endswith("\\") and i + 1 < len(lines):
             i += 1
             line = line[:-1] + " " + lines[i]
+        if not DIRECTIVE.match(line):
+            while (line.strip() and not re.search(r"[;{}]\s*$", line) and i + 1 < len(lines)
+                   and not DIRECTIVE.match(lines[i + 1]) and i - start < 12):
+                i += 1
+                line = line + " " + lines[i]
         yield start + 1, line
         i += 1
 
@@ -135,12 +254,63 @@ def shift_swap(line):
     return bool(SHIFT_24.search(line) and SHIFT_24_BACK.search(line))
 
 
+def call_arguments(line, name):
+    """The top-level arguments of each call of name in line."""
+    calls = []
+    for m in re.finditer(r"\b" + name + r"\s*\(", line):
+        depth, start, args = 1, m.end(), []
+        i = start
+        while i < len(line) and depth:
+            c = line[i]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth == 0:
+                    args.append(line[start:i].strip())
+            elif c == "," and depth == 1:
+                args.append(line[start:i].strip())
+                start = i + 1
+            i += 1
+        calls.append(args)
+    return calls
+
+
+ADDRESS_OF = re.compile(r"^(?:\(\s*(?:const\s+)?\w+\s*\*\s*\)\s*)?&\s*(\w+)$")
+
+
+def memcpy_host_read(line, patterns):
+    """memcpy( a, b, size ) moves one integer between a variable and memory:
+    size is sizeof an integer type, sizeof an integer variable, or 2, 4 or 8;
+    one side is the address of an integer variable and the other is not the
+    address of a variable (that is a copy between two variables of this
+    process, never wire bytes)."""
+    for args in call_arguments(line, "memcpy"):
+        if len(args) != 3:
+            continue
+        size = args[2].strip()
+        sized = re.match(r"^sizeof\s*\(?\s*([\w\s]+?)\s*\)?$", size)
+        one_integer = (size in ("2", "4", "8")
+                       or (sized and (patterns.integer.match(sized.group(1)) or sized.group(1) in patterns.scalars)))
+        if not one_integer:
+            continue
+        sides = [ADDRESS_OF.match(a.strip()) for a in args[:2]]
+        if all(sides):
+            continue
+        if sized and patterns.integer.match(sized.group(1)):
+            return True
+        if any(m and m.group(1) in patterns.scalars for m in sides):
+            return True
+    return False
+
+
 def scan_text(text, relative):
     """Return [(line number, rule, source line)] for every finding in one file."""
     if relative == DEFINER:
         return []
     raw_lines = text.split("\n")
     findings = []
+    patterns = Patterns(blank(text))
     # one frame per open #if: whether its condition (or an earlier branch's) names the byte order
     stack = []
     for number, line in logical_lines(blank(text)):
@@ -164,10 +334,17 @@ def scan_text(text, relative):
                     findings.append((number, "named swap " + match.group(1), source))
             if shift_swap(line):
                 findings.append((number, "shift swap", source))
-        if CAST_DEREF.search(line) or CAST_INDEX.search(line):
+        if patterns.cast_deref.search(line) or patterns.cast_index.search(line):
             findings.append((number, "host read (integer pointer cast)", source))
-        if MEMCPY_SCALAR.search(line):
+        else:
+            m = patterns.cast_pointer.search(line)
+            if m and not ALLOCATION.match(m.group(1).lstrip("( ")):
+                findings.append((number, "host read (integer pointer from a cast)", source))
+        if memcpy_host_read(line, patterns):
             findings.append((number, "host read (memcpy of one integer)", source))
+        m = patterns.union.search(line)
+        if m and patterns.integer_member.search(m.group(1)) and patterns.byte_member.search(m.group(1)):
+            findings.append((number, "host read (union of bytes and an integer)", source))
         if relative == NETLINK:
             for match in NETWORK_ORDER.finditer(line):
                 findings.append((number, "netlink is host order: " + match.group(0).rstrip("( "), source))
@@ -230,7 +407,7 @@ CONTROLS = [
     ("host read: deref of a u16 cast", "sdk/x.cpp", "uint16_t length = *(const uint16_t *) ( packet + 4 );\n", 1),
     ("host read: deref of a __be16 cast", "sdk/xdp/x.c", "__u16 n = *( __be16 * ) p;\n", 1),
     ("host read: indexed u32 cast", "sdk/x.cpp", "uint32_t w = ( (const uint32_t *) buffer )[2];\n", 1),
-    ("host read: memcpy of one integer", "sdk/x.cpp", "memcpy( &sequence, packet + 1, sizeof( uint32_t ) );\n", 1),
+    ("host read: memcpy of one integer", "sdk/x.cpp", "uint32_t sequence;\nmemcpy( &sequence, packet + 1, sizeof( uint32_t ) );\n", 1),
     ("an array memcpy is no scalar read", "sdk/x.cpp", "memcpy( counters, last, 8 * sizeof( uint64_t ) );\n", 0),
     ("a cast not dereferenced", "sdk/x.cpp", "rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[c], 1 );\n", 0),
     ("an allocation cast", "sdk/x.cpp", "ids = (uint64_t *) rocketnet_malloc( context, n * sizeof( uint64_t ) );\n", 0),
@@ -239,6 +416,30 @@ CONTROLS = [
     ("netlink library ntohl", NETLINK, "const uint32_t index = rocketnet_platform_ntohl( value );\n", 1),
     ("netlink host order is fine", NETLINK, "header.nlmsg_len = length;\n", 0),
     ("htons outside netlink is fine", "sdk/x.cpp", "out->sin_port = rocketnet_platform_htons( port );\n", 0),
+    # VERIFY-3 A-3: each of these passed before
+    ("host read: deref of an int cast", "sdk/x.cpp", "int v = *(const int *) ( packet + 4 );\n", 1),
+    ("host read: deref of an unsigned cast", "sdk/x.cpp", "unsigned v = *(const unsigned *) ( packet + 4 );\n", 1),
+    ("host read: memcpy sizeof a scalar variable", "sdk/x.cpp",
+     "uint32_t sequence;\nmemcpy( &sequence, packet + 1, sizeof( sequence ) );\n", 1),
+    ("host read: memcpy of a literal 4", "sdk/x.cpp", "uint32_t sequence;\nmemcpy( &sequence, packet + 1, 4 );\n", 1),
+    ("host write: memcpy of an integer into a buffer", "sdk/x.cpp", "uint64_t id;\nmemcpy( frame + 8, &id, 8 );\n", 1),
+    ("an 8-byte array copy is no integer read", "sdk/x.cpp", "uint8_t salt[8];\nmemcpy( input, salt, 8 );\n", 0),
+    ("a copy between two variables is no wire read", "sdk/x.cpp",
+     "uint32_t value; enum level_t level;\nmemcpy( &value, &level, sizeof( value ) );\n", 0),
+    ("an array memcpy by sizeof the array is no scalar read", "sdk/x.cpp",
+     "uint8_t key[32];\nmemcpy( key, packet, sizeof( key ) );\n", 0),
+    ("host read: a typedef of an integer", "sdk/x.cpp",
+     "typedef uint16_t planted_u16;\nuint16_t v = *(const planted_u16 *) packet;\n", 1),
+    ("host read: a pointer variable from a cast", "sdk/x.cpp",
+     "const uint16_t * p = (const uint16_t *) packet; return *p;\n", 1),
+    ("an allocation into an integer pointer is no read", "sdk/x.cpp",
+     "uint64_t * ids = (uint64_t *) rocketnet_malloc( context, n * sizeof( uint64_t ) );\n", 0),
+    ("host read: a union of bytes and an integer", "sdk/x.cpp",
+     "union { uint8_t bytes[4]; uint32_t value; } u;\n", 1),
+    ("a shift swap split over two lines", "sdk/x.cpp",
+     "uint16_t v = (uint16_t) ( ( ( w << 8 ) & 0xFF00 ) |\n    ( ( w >> 8 ) & 0x00FF ) );\n", 1),
+    ("a swap under a macro that only contains ENDIAN", "sdk/x.c",
+     "#ifndef ROCKETNET_PLANTED_NO_ENDIAN_NOTE\nv = __builtin_bswap16( v );\n#endif\n", 1),
 ]
 
 

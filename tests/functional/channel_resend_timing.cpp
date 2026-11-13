@@ -28,13 +28,19 @@
       rn_resend_gaps_t, measured where rn_window_ack_commit sets last_send),
       is at least the adaptive resend delay in force at the
       resend, and at most the delay in force at the update before plus one
-      tick; the resend delay follows max(resend_delay_min, min(2*SRTT + 4*dev + 30 ms, resend_delay_max));
+      tick, unless probe pacing held the number at the update before; the resend delay follows max(resend_delay_min, min(2*SRTT + 4*dev + 30 ms, resend_delay_max));
+    - no number is resent while probe pacing holds it, and a number held at
+      the update before is resent at the update that ends the hold (m9.3:
+      with the reliable timeout off, after 1 second with no reliable number
+      newly acknowledged, every number but U waits for the next one; the
+      default leg only);
     - ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS gaps of the largest size fit
       inside reliable_timeout (RNResendTiming AttemptsBeforeTimeout);
     - every message's latency is within its own ceiling: the one-way latency
       and its jitter, the harness floor of two ticks (a send waits for its
       update, a delivery is seen at the receiver's next one) and, for each
-      send of it before the one that arrived, the preceding update's formula-derived resend delay plus a tick.
+      send of it before the one that arrived, the preceding update's formula-derived resend delay plus a tick
+      (for a send held by probe pacing, the gap to the hold's end, checked above).
 
     The p50, p99 and p99.9 columns are printed, not asserted. A p99 of 400
     samples is the fifth-slowest message, which moves by a whole resend when
@@ -55,6 +61,12 @@
     up to the drop, and when it raises it, longer than the earlier send's
     delay. At the update before the resend the number was not due, so the
     gap is less than that update's delay plus the time to the next update.
+    The one exception is probe pacing: a number due while the hold is on
+    waits for the update that ends it, so its gap is as long as the hold.
+    The case applies the hold rule itself, from U, U's first send and the
+    library's last progress time, and follows every resend of a number
+    until it is acknowledged (not only until it is delivered), so the gap
+    record's extremes are checked against the resends the case saw.
 */
 
 #include "channel_harness.h"
@@ -80,6 +92,7 @@ static void resend_timing_fail( const char * condition, int line )
 #define RESEND_TIMING_MESSAGES 400
 #define RESEND_TIMING_BYTES 64
 #define RESEND_TIMING_MAX_SENDS 64
+#define RESEND_TIMING_PROBE_SECONDS 1.0     // standard/MESSAGES.md m9.3: no reliable progress for 1 second
 
 struct resend_timing_row_t
 {
@@ -101,9 +114,12 @@ struct resend_timing_row_t
     double reliable_message_timeout_ms;
     double ceiling_slack_ms;        // max over messages of latency - its own ceiling
     int max_sends;                  // most sends of one message before its delivery
-    uint64_t seen_resends;          // resends this case saw itself (a subset of the record's: undelivered messages only)
+    uint64_t seen_resends;          // resends this case saw itself, every resend of a number until it is acknowledged
     double seen_gap_min_ms;         // the smallest and largest of those gaps
     double seen_gap_max_ms;
+    uint64_t held_resends;          // resends of a number probe pacing held at the update before
+    double held_gap_max_ms;         // the largest of their gaps
+    double held_late_max_ms;        // the largest of their gaps less the delay at the update before
 };
 
 static double resend_timing_percentile( const double * sorted, int count, double fraction )
@@ -135,6 +151,22 @@ static double resend_timing_resend_delay_bound( const rn_window_ack_t * ack )
         return ack->resend_delay_initial;
     }
     return std::max( ack->resend_delay_min, std::min( 2.0 * ack->srtt + 4.0 * ack->rttvar + 0.030, ack->resend_delay_max ) );
+}
+
+// Independent oracle for probe pacing (standard/MESSAGES.md m9.3): with the
+// reliable timeout off and U sent and unacknowledged, once no reliable number
+// has been newly acknowledged for 1 second, counted from the later of the last
+// progress and U's first send, every number but U is held. The last progress
+// time is the library's record of when acks arrived; the rule is applied here.
+// U's first send is the one this case saw (u_first_send < 0: not sent yet).
+static bool resend_timing_probing( int reliable_timeout_ms, uint64_t u, uint64_t next, double u_first_send, double last_progress, double now )
+{
+    if ( reliable_timeout_ms > 0 || u >= next || u_first_send < 0.0 )
+    {
+        return false;
+    }
+    const double from = last_progress > u_first_send ? last_progress : u_first_send;
+    return now - from >= RESEND_TIMING_PROBE_SECONDS;
 }
 
 static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_ms, int loss_percent, int reliable_timeout_ms, resend_timing_row_t * row )
@@ -201,10 +233,15 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     uint64_t seen_resends = 0;
     double seen_gap_min_ms = 1.0e30;
     double seen_gap_max_ms = 0.0;
+    uint64_t held_resends = 0;
+    double held_gap_max_ms = 0.0;
+    double held_late_max_ms = -1.0e30;
+    bool previous_probing = false;          // probe pacing at the update before, and U then
+    uint64_t previous_u = 0;
 
     int sent = 0;
     int delivered = 0;
-    int undelivered_from = 0;
+    int unacked_from = 0;
     int up = 1;
     const int max_updates = RESEND_TIMING_MESSAGES + 60 * 15;      // the sends, then up past reliable_timeout
     for ( int update = 0; update < max_updates && delivered < RESEND_TIMING_MESSAGES && up; update++ )
@@ -232,43 +269,72 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         resend_timing_check( fabs( ack->resend_delay * 1000.0 - current_resend_delay_ms ) <= 1e-6 );
         resend_delay_bound_ms = std::max( resend_delay_bound_ms, current_resend_delay_ms );
 
-        // each send of each undelivered message: a send sets its number's
-        // last_send to the update's time, at most once an update
+        // probe pacing at this update's walk, which runs after its acks:
+        // U, the window and the last progress time as the pump left them
 
-        while ( undelivered_from < sent && seen[undelivered_from] )
+        const uint64_t u = ordered->send.U;
+        const uint64_t u_index = u - first_number;
+        const double u_first_send = u >= first_number && u_index < (uint64_t) sent && sends[u_index] > 0 ? sends_at[u_index][0] : -1.0;
+        const bool probing = resend_timing_probing( reliable_timeout_ms, u, ordered->send.next, u_first_send, ack->last_progress, h.now );
+
+        // each send of each message until it is acknowledged: a send sets
+        // its number's last_send to the update's time, at most once an update
+
+        while ( unacked_from < sent )
         {
-            undelivered_from++;
+            const uint64_t number = first_number + (uint64_t) unacked_from;
+            const rn_send_number_t * slot = &region->send_numbers[number & ( region->window - 1 )];
+            if ( slot->number == number && !slot->acked )
+            {
+                break;
+            }
+            unacked_from++;
         }
 
-        for ( int i = undelivered_from; i < sent; i++ )
+        for ( int i = unacked_from; i < sent; i++ )
         {
-            if ( seen[i] )
-            {
-                continue;
-            }
-
             const uint64_t number = first_number + (uint64_t) i;
             const rn_send_number_t * slot = &region->send_numbers[number & ( region->window - 1 )];
-            if ( slot->number != number || slot->last_send != h.now )
+            if ( slot->number != number || slot->acked || slot->last_send != h.now )
             {
                 continue;
             }
             resend_timing_check( sends[i] < RESEND_TIMING_MAX_SENDS );
 
             const int n = sends[i];
+            double ceiling_ms = 0.0;
             if ( n > 0 )
             {
+                // no number is resent while the hold is on, and one held at
+                // the update before goes at the update that ends the hold
+
+                resend_timing_check( !probing || number == u );
+
                 const double gap_ms = ( h.now - sends_at[i][n - 1] ) * 1000.0;
                 resend_timing_check( gap_ms >= current_resend_delay_ms - 1e-6 );
-                resend_timing_check( gap_ms <= previous_resend_delay_ms + tick_ms + 1e-6 );
+                double gap_ceiling_ms = previous_resend_delay_ms + tick_ms;
+                if ( gap_ms > gap_ceiling_ms + 1e-6 )
+                {
+                    // later than the delay allows: only a hold at the update before explains it
+
+                    resend_timing_check( previous_probing && number != previous_u );
+                    held_resends++;
+                    held_gap_max_ms = std::max( held_gap_max_ms, gap_ms );
+                    held_late_max_ms = std::max( held_late_max_ms, gap_ms - previous_resend_delay_ms );
+                    gap_ceiling_ms = gap_ms;
+                }
                 seen_resends++;
                 seen_gap_min_ms = std::min( seen_gap_min_ms, gap_ms );
                 seen_gap_max_ms = std::max( seen_gap_max_ms, gap_ms );
+                ceiling_ms = resend_ceiling_ms[i][n - 1] + gap_ceiling_ms;
             }
 
-            resend_ceiling_ms[i][n] = n == 0 ? 0.0 : resend_ceiling_ms[i][n - 1] + previous_resend_delay_ms + tick_ms;
+            resend_ceiling_ms[i][n] = ceiling_ms;
             sends_at[i][sends[i]++] = h.now;
         }
+
+        previous_probing = probing;
+        previous_u = u;
 
         rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
@@ -344,6 +410,9 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     row->seen_resends = seen_resends;
     row->seen_gap_min_ms = seen_gap_min_ms;
     row->seen_gap_max_ms = seen_gap_max_ms;
+    row->held_resends = held_resends;
+    row->held_gap_max_ms = held_gap_max_ms;
+    row->held_late_max_ms = held_late_max_ms;
     resend_timing_check( gaps->count[1] == 0 );         // no chunks in this case
 
     rocketnet_channel_harness_destroy( &h );
@@ -373,7 +442,7 @@ static void resend_timing_table_over_lossy_links_leg( int reliable_timeout_ms )
 
     printf( "test_resend_timing_table_over_lossy_links: %d reliable %d-byte messages per row, one per 60 Hz update\n",
             RESEND_TIMING_MESSAGES, RESEND_TIMING_BYTES );
-    printf( "schedule rtt_ms loss_pct p50_ms p99_ms p999_ms copies timeouts model_p99_ms resends gap_min_ms gap_max_ms early_min_ms late_max_ms max_sends ceiling_slack_ms\n" );
+    printf( "schedule rtt_ms loss_pct p50_ms p99_ms p999_ms copies timeouts model_p99_ms resends gap_min_ms gap_max_ms early_min_ms late_max_ms max_sends ceiling_slack_ms held\n" );
     for ( int s = 0; s < 2; s++ )
     {
         for ( int r = 0; r < 4; r++ )
@@ -382,11 +451,11 @@ static void resend_timing_table_over_lossy_links_leg( int reliable_timeout_ms )
             {
                 const resend_timing_row_t * row = &rows[s][r][l];
 
-                printf( "%-8s %6d %8d %6.1f %6.1f %7.1f %6.2f %8d %12.0f %7" PRIu64 " %10.2f %10.2f %12.3f %11.3f %9d %16.2f\n",
+                printf( "%-8s %6d %8d %6.1f %6.1f %7.1f %6.2f %8d %12.0f %7" PRIu64 " %10.2f %10.2f %12.3f %11.3f %9d %16.2f %4" PRIu64 "\n",
                         row->schedule, row->rtt_ms, row->loss_percent, row->p50_ms, row->p99_ms, row->p999_ms,
                         row->copies, row->timeouts, s == 0 ? model_p99[r] : 0.0,
                         row->gaps, row->gaps ? row->gap_min_ms : 0.0, row->gap_max_ms, row->gaps ? row->early_min_ms : 0.0,
-                        row->gaps ? row->late_max_ms : 0.0, row->max_sends, row->ceiling_slack_ms );
+                        row->gaps ? row->late_max_ms : 0.0, row->max_sends, row->ceiling_slack_ms, row->held_resends );
             }
         }
     }
@@ -405,7 +474,8 @@ static void resend_timing_table_over_lossy_links_leg( int reliable_timeout_ms )
                 const resend_timing_row_t * row = &rows[s][r][l];
                 resend_timing_check( row->timeouts == 0 );
 
-                // the rule, per resend: delay at the resend <= gap <= delay at the update before + a tick
+                // the rule, per resend: delay at the resend <= gap <= delay at the update before + a tick,
+                // or later only for a number probe pacing held at the update before
 
                 resend_timing_check( row->gaps > 0 );
 
@@ -422,9 +492,16 @@ static void resend_timing_table_over_lossy_links_leg( int reliable_timeout_ms )
                 resend_timing_check( row->early_min_ms < row->gap_max_ms );
                 resend_timing_check( row->late_max_ms > -row->resend_delay_bound_ms );
 
+                // the record's late extremes are a tick, or a held resend this case saw and checked;
+                // with the reliable timeout configured nothing is held
+
+                if ( reliable_timeout_ms > 0 )
+                {
+                    resend_timing_check( row->held_resends == 0 );
+                }
                 resend_timing_check( row->early_min_ms >= -eps_ms );
-                resend_timing_check( row->late_max_ms <= tick_ms + eps_ms );
-                resend_timing_check( row->gap_max_ms <= row->resend_delay_bound_ms + tick_ms + eps_ms );
+                resend_timing_check( row->late_max_ms <= std::max( tick_ms, row->held_late_max_ms ) + eps_ms );
+                resend_timing_check( row->gap_max_ms <= std::max( row->resend_delay_bound_ms + tick_ms, row->held_gap_max_ms ) + eps_ms );
 
                 // the attempts rule: MIN_RESEND_ATTEMPTS of the largest gap fit
                 // inside reliable_timeout; at the default there is none

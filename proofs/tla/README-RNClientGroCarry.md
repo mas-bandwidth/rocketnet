@@ -11,10 +11,12 @@ them before it reads the socket again. The I/O thread above it is
 
 ## The instance
 
-`MCRNClientGroCarry.tla`: rooms 1 to 4 (`Cap = 4`), messages of up to three
-segments (`MaxSeg = 3`), seven datagrams in all. `MaxSeg` below `Cap` lets one
-call read a second message after a short first one, which the code allows
-whenever the room left holds `ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
+`MCRNClientGroCarry.tla`: rooms 1 to 4 (`Cap = 4`), a read threshold of three
+segments (`MaxSeg = 3`, GRO's count), messages of up to five (`MaxMsg = 5`, a
+local segmented send past GRO's count, and past every room), seven datagrams
+in all. `MaxSeg` below `Cap` lets one call read a second message after a short
+first one, which the code allows whenever the room left holds
+`ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
 
 ## Actions and the code they mirror
 
@@ -23,7 +25,8 @@ whenever the room left holds `ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
 | `Arrive(k)` | the network: a message of `k` datagrams lands in the socket (environment) |
 | `Begin(r)` | the call, `max_packets = r`, `total = 0` |
 | `Deliver` | `rocketnet_client_gso_receive_deliver`: `slots[total] = segment carry_segment`, both incremented, while `carry_segment < carry_segments` and `total < max_packets` |
-| `Read` | the `recvmmsg` of one message into the coalesce buffer, only once no segment is held, and past the first slot only while `max_packets - total >= ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`; the message is held from then on (`carry_segment = 0`, `carry_segments = num_segments`) |
+| `Read` | the `recvmmsg` of one message into the coalesce buffer, only once no segment is held, and past the first slot only while `max_packets - total >= ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`; the message is held from then on (`carry_segment = 0`, `carry_segments = num_segments`), and only while the call's read budget lasts (`reads_remaining > 0`); it spends one read |
+| `Skip` | a read that delivers nothing: a weather errno, or a zero-length, truncated or refused-source datagram skipped; under the same conditions as `Read`, it spends one read |
 | `End` | the call returns `total` when neither is enabled |
 | `Done` | a terminal stutter once every datagram arrived and was returned |
 
@@ -33,6 +36,7 @@ whenever the room left holds `ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
 |---|---|
 | `Conservation` | every datagram that arrived is returned, in this call's slots, held, or in the socket, each once and in arrival order |
 | `InRoom` | a call writes only the slots below its room |
+| `ReadBudget` | a call reads the socket at most `max_packets` times, kept or skipped: one read budget, as the platform's receive has it (`docs/TRANSPORT-INTERNALS.md`) |
 
 ## Reversed witnesses
 
@@ -41,6 +45,8 @@ whenever the room left holds `ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
 | `MCRNClientGroCarryBrokenDropTail.cfg` | the segments past the room are dropped when the call ends, as the code did before the carry (it counted them in `gro_packets_dropped`) | `Conservation` |
 | `MCRNClientGroCarryBrokenReadOverHeld.cfg` | the socket is read while segments are held, and the new message overwrites them | `Conservation` |
 | `MCRNClientGroCarryBrokenPastRoom.cfg` | the delivery loop runs while `total <= room` | `InRoom` |
+| `MCRNClientGroCarryBrokenSkipBudget.cfg` | a skip does not spend the read budget, as the code before v1.1.8 kept separate weather (8) and skip (`max_packets`) counts | `ReadBudget` |
+| `MCRNClientGroCarryBrokenCollapse.cfg` | a message of more than `MaxSeg` segments is held as one segment, as the code did before it cut such a message at its stride (one record of all its bytes, counted a fault) | `Conservation` |
 
 Each counterexample was checked by hand against the code. The drop-tail
 trace is a message of two arriving, a call with room 1 that reads it and
@@ -50,3 +56,5 @@ and added it to `gro_packets_dropped`, and the next call read the socket
 again. `test_client_gso_receive_splits_gro_by_stride` gives a call
 room for four of a ten-segment message and checks that the next calls return
 the other six, in order, before the datagram behind it, with one `recvmmsg`.
+`test_client_gso_receive_delivers_past_64_segments` does the same for a
+message of 130 segments, past GRO's 64, over three calls of 64.

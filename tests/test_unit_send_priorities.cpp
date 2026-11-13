@@ -436,8 +436,10 @@ static void test_send_priorities_no_allocation_after_create()
 }
 
 REGISTER_UNIT_TEST( test_higher_priority_first_within_class );
+UNIT_TEST_SKIPPED_UNLESS( test_higher_priority_first_within_class, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_channel_fifo_kept_per_channel );
 REGISTER_UNIT_TEST( test_round_robin_across_channels );
+UNIT_TEST_SKIPPED_UNLESS( test_round_robin_across_channels, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_no_starvation_of_low );
 REGISTER_UNIT_TEST( test_budget_class_order_still_rules );
 REGISTER_UNIT_TEST( test_rnscheduler_witness_replays );

@@ -24,7 +24,10 @@
 //   structured tweaks: t0 bit 0 wrong destination port, bit 1 wrong destination
 //   address, bit 2 IPv4 ihl/frag or IPv6 next header taken from t1, bit 3 IP
 //   length off by (int8) t2, bit 4 UDP length off by (int8) t3, bit 5 UDP
-//   source port t1*257
+//   source port t1*257, bit 6 an 802.1Q tag after the MACs (VLAN 42, or 43
+//   when t3 bit 0; priority and DEI from the high nibble of t2), bit 7 the
+//   server is on VLAN 42 (config vlan_id); a raw frame's server is on VLAN
+//   42 when the queue byte is odd
 //
 // ORACLES:
 //   - the verdict is XDP_DROP, XDP_PASS or XDP_REDIRECT (never ABORTED or TX);
@@ -36,7 +39,9 @@
 //     [ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES, ROCKETNET_RECEIVE_CEILING];
 //     and the converse: a well-formed frame (no tweak) to the configured
 //     address and port, whose payload passes those checks, with a socket and
-//     no replay entry, is redirected.
+//     no replay entry, untagged or tagged with the server's VLAN, is
+//     redirected. The frame reader is the server's: rocketnet_xdp_frame_parse_vlan
+//     with the config's VLAN ID.
 //
 // WHERE IT RUNS: the filter is GNU C, built as host C only by GCC or Clang on
 // a non-Windows host (tests/xdp_host/). The build that links the host object
@@ -129,6 +134,8 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
     const uint32_t high_water = (uint32_t) data[3] | ( (uint32_t) data[4] << 8 ) | ( (uint32_t) data[5] << 16 ) | ( (uint32_t) data[6] << 24 );
     const uint8_t * body = data + 7;
     const size_t body_bytes = size - 7;
+    const bool structured_input = ( flags & 1 ) != 0;
+    const int server_vlan = structured_input ? ( body_bytes >= 4 && ( body[0] & 0x80 ) ? 42 : 0 ) : ( data[1] & 1 ? 42 : 0 );
 
     rocketnet_xdp_host_reset();
 
@@ -143,6 +150,9 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
     memcpy( &config.public_port, port_bytes, 2 );
     memcpy( config.packet_filter, fz_filter, 4 );
     config.filter_epoch = epoch;
+    uint8_t vlan_bytes[2];
+    fz_put16( vlan_bytes, (uint32_t) server_vlan );
+    memcpy( &config.vlan_id, vlan_bytes, 2 );
     if ( !( flags & 4 ) )
     {
         memcpy( config.public_address_ipv6, fz_server_ipv6, 16 );
@@ -162,6 +172,7 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
     const uint8_t * payload = NULL;
     int payload_bytes = 0;
     bool replay = false;
+    bool tag_ours = true;           // untagged, or tagged with the server's VLAN
 
     if ( !structured )
     {
@@ -186,13 +197,23 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
         const uint16_t source_port = ( t0 & 0x20 ) ? (uint16_t) ( t1 * 257u ) : 50000;
         const uint16_t dest_port = ( t0 & 1 ) ? (uint16_t) ( fz_server_port + 1 ) : fz_server_port;
 
+        const bool tagged = ( t0 & 0x40 ) != 0;
+        const int tag = tagged ? 4 : 0;
+        const int frame_vlan = ( t3 & 1 ) ? 43 : 42;
+        tag_ours = !tagged || frame_vlan == server_vlan;
+
         uint8_t * p = fz_frame;
-        memset( p, 0, 14 );
+        memset( p, 0, 14 + (size_t) tag );
         p[0] = 0x02;
         p[6] = 0x02;
         p[11] = 1;
-        fz_put16( p + 12, ipv6 ? 0x86dd : 0x0800 );
-        p += 14;
+        if ( tagged )
+        {
+            fz_put16( p + 12, 0x8100 );
+            fz_put16( p + 14, (uint32_t) ( ( t2 & 0xf0 ) << 8 ) | (uint32_t) frame_vlan );
+        }
+        fz_put16( p + 12 + tag, ipv6 ? 0x86dd : 0x0800 );
+        p += 14 + tag;
 
         const int udp_bytes = 8 + payload_bytes;
         int ip_header = 0;
@@ -253,7 +274,7 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
         fz_put16( p + 4, (uint32_t) ulen & 0xffff );
         p += 8;
         memcpy( p, payload, (size_t) payload_bytes );
-        frame_bytes = 14 + ip_header + 8 + payload_bytes;
+        frame_bytes = 14 + tag + ip_header + 8 + payload_bytes;
 
         if ( flags & 0x40 )
         {
@@ -308,8 +329,11 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
     // FZ_XDP_STRICT_VERSION=1 keeps it in the oracle.
 
     static const int strict_version = getenv( "FZ_XDP_STRICT_VERSION" ) != NULL;
-    const bool ipv4_bad_version = frame_bytes > 14 && fz_frame[12] == 0x08 && fz_frame[13] == 0x00 && ( fz_frame[14] >> 4 ) != 4;
-    const bool ipv6_bad_version = frame_bytes > 14 && fz_frame[12] == 0x86 && fz_frame[13] == 0xdd && ( fz_frame[14] >> 4 ) != 6;
+    // the version nibble after one tag of the server's VLAN when there is one
+
+    const int e = frame_bytes >= 18 && fz_frame[12] == 0x81 && fz_frame[13] == 0x00 ? 4 : 0;
+    const bool ipv4_bad_version = frame_bytes > 14 + e && fz_frame[12 + e] == 0x08 && fz_frame[13 + e] == 0x00 && ( fz_frame[14 + e] >> 4 ) != 4;
+    const bool ipv6_bad_version = frame_bytes > 14 + e && fz_frame[12 + e] == 0x86 && fz_frame[13 + e] == 0xdd && ( fz_frame[14 + e] >> 4 ) != 6;
 
     if ( verdict == FZ_XDP_REDIRECT && ( strict_mac || !broadcast ) && ( strict_version || ( !ipv4_bad_version && !ipv6_bad_version ) ) )
     {
@@ -318,7 +342,7 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
         rocketnet_address_t from;
         const uint8_t * view = NULL;
         int view_bytes = 0;
-        const bool parsed = rocketnet_xdp_frame_parse( copy, (size_t) frame_bytes, &from, &view, &view_bytes );
+        const bool parsed = rocketnet_xdp_frame_parse_vlan( copy, (size_t) frame_bytes, server_vlan, &from, &view, &view_bytes );
         if ( !parsed )
         {
             fprintf( stderr, "frame_bytes %d\n", frame_bytes );
@@ -350,7 +374,12 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
         fz_require( user_accepts, "DIFFERENTIAL: a clean frame the filter redirects passes the userspace prefilter rungs" );
     }
 
-    if ( clean && socket && !replay && user_accepts )
+    if ( !tag_ours )
+    {
+        fz_require( verdict == FZ_XDP_PASS, "a frame tagged for another VLAN, or any tag on an untagged server, passes" );
+    }
+
+    if ( clean && socket && !replay && user_accepts && tag_ours )
     {
         if ( verdict != FZ_XDP_REDIRECT )
         {

@@ -169,7 +169,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `serversession` | Server lifecycle, slot reuse, stopping and public connection identity. |
 | `rnclientreceivequit` | The client receive thread's quit-and-wake handshake with destroy. |
 | `rnserversendfair` | The server send pass under a payload-frame cap. |
-| `rnservermaintenancesweep` | The server maintenance sweep at the cursor's layout (README-RNServerMaintenanceSweep.md), four slots with two unreachable. |
+| `rnservermaintenancesweep` | The server maintenance sweep at the cursor's layout (README-RNServerMaintenanceSweep.md), four slots, one unreachable and one refused with room left. |
 | `splitstart` | The load_split start barrier (docs/LOAD_SPLIT.md). |
 | `rnmsgxpause` | Shared macOS msgx pause expiry (README-RNMsgxPause.md). |
 | `rnportablerx` | The portable/msgx server receive worker (README-RNPortableRx.md). |
@@ -209,15 +209,15 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnxdpreplymacslayout` | The XDP reply MAC table's open addressing, four entries, a window of two, three addresses over every home map (README-RNXdpReplyMacsLayout.md). |
 | `rndisconnectburstring` | The server transport's ring of deferred disconnect bursts at the code's layout (README-RNDisconnectBurstRing.md). |
 | `rnserverreplayslots` | The per-slot records of the kernel replay walk across slot reuse, two slots and two addresses (README-RNServerReplaySlots.md). |
-| `rnloopbackbindlayout` | The loopback hub's bound table and ephemeral port search at the code's layout, three records and ports 0..5 with the range 2..5, and with the range 4..5 so every port can be held (README-RNLoopbackBindLayout.md). |
+| `rnloopbackbindlayout` | The loopback hub's bound table and ephemeral port search at the code's layout, three records and ports 0..5 with the range 2..5, with the range 4..5 so every port can be held, and with 4..5 lowered by the sizing to hold every record (README-RNLoopbackBindLayout.md). |
 | `rnclientslotslayout` | The client slots' LIFO free stack and owner generations at the code's layout, three slots, two ids and five generations (README-RNClientSlotsLayout.md). |
 | `rnsimulatorstorelayout` | The development link simulator's slot store and destination index at the code's layout, three slots, two shards and three destinations (README-RNSimulatorStoreLayout.md). |
 | `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout (README-RNServerPayloadRingLayout.md). |
-| `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4 and messages of up to three segments (README-RNClientGroCarry.md). |
+| `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4, a read threshold of three segments and messages of up to five (README-RNClientGroCarry.md). |
 | `serverstopspread` | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md). |
 | `rnuringreaplayout` | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md). |
 | `rnuringsendphases` | The io_uring send staging's two phases at the code's layout, phases of two slots over four updates (README-RNUringSendPhases.md). |
-| `rnsegmentrefusal` | A refused UDP segmented send scoped to its destination on the gso and io_uring server transports, two destinations one of which refuses, and three on a kernel that cannot segment (README-RNSegmentRefusal.md). |
+| `rnsegmentrefusal` | A refused UDP segmented send scoped to its destination on the gso and io_uring server transports, two destinations one of which refuses, three on a kernel that cannot segment, and two that share one table entry on it (README-RNSegmentRefusal.md). |
 | `rnsequencingwrap` | The 24-bit ordering and sequencing compares of the sequenced receive path at the half range, the wire modulo 8, uint32 modulo 32, starts at 0 and 6 (README-RNSequencingWrap.md). |
 
 Experiments described outside the declared cases remain historical evidence;

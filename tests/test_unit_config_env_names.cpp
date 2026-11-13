@@ -8,22 +8,23 @@
 // reads what the env passes do through the log callback; none opens a
 // socket, starts a transport or reads the clock.
 //
-//   - the public env pass (sdk/rocketnet_api.cpp:119)
+//   - the public env pass (sdk/rocketnet_api.cpp)
 //     reads the message table under the endpoint's prefix and the budget under
 //     its own name; the budget is never read a second time under a message
 //     field's name (ROCKETNET_CLIENT_CLIENT_SEND_KBPS)
-//   - a message object's create (sdk/rocketnet_message_server.cpp:154)
+//   - a message object's create (sdk/rocketnet_message_server.cpp)
 //     reads no environment, so nothing overrides
 //     ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS after it is applied
-//   - rocketnet_init (sdk/rocketnet.cpp:759) applies ROCKETNET_LOG_LEVEL before
+//   - rocketnet_init (sdk/rocketnet.cpp) applies ROCKETNET_LOG_LEVEL before
 //     its first log line
-//   - the step_driven row (sdk/rocketnet_config.cpp:94)
+//   - the step_driven row (sdk/rocketnet_config.cpp (rocketnet_client_config_fields))
 //     takes 0 or 1 only
 //   - every variable those passes apply has the same unique inventory in
 //     sdk/rocketnet.h and BUILDING.md
-//   - transport env passes (sdk/rocketnet_client_transport.cpp:613-616,652-653
-//     and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env,
-//     rocketnet_config_apply_env_uint64) are fully inventoried,
+//   - transport env passes (sdk/rocketnet_client_transport.cpp
+//     (rocketnet_client_transport_resolve) and sdk/rocketnet_server_transport.cpp
+//     (rocketnet_server_transport_resolve_staged), through rocketnet_config_apply_env
+//     and rocketnet_config_apply_env_uint64) are fully inventoried,
 //     including public fields and simulator/internal rows
 
 #include <stdio.h>
@@ -63,7 +64,7 @@ static void env_names_log_capture( void * context, rocketnet_log_level_t level, 
     log->levels.push_back( (int) level );
 }
 
-// rocketnet_config_apply_env logs "<endpoint> config override NAME=value" (sdk/rocketnet_config.cpp:745)
+// rocketnet_config_apply_env logs "<endpoint> config override NAME=value" (sdk/rocketnet_config.cpp)
 
 static std::vector<std::string> env_names_overrides( const env_names_log_t & log )
 {
@@ -472,9 +473,9 @@ REGISTER_UNIT_TEST( test_config_env_dev_simulator_numbers_are_strict );
 
 // ---------------------------------------------------------------------------
 // (4) transport passes also exercise development, internal and operator rows:
-// SIMULATED_*, TOKEN_EPOCH_UNIX_SECONDS, and MEMORY_BUDGET_BYTES (sdk/rocketnet_client_transport.cpp:613-616,652-653
-// and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env and
-// rocketnet_config_apply_env_uint64)
+// SIMULATED_*, TOKEN_EPOCH_UNIX_SECONDS, and MEMORY_BUDGET_BYTES (sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_resolve)
+// and sdk/rocketnet_server_transport.cpp (rocketnet_server_transport_resolve_staged), through
+// rocketnet_config_apply_env and rocketnet_config_apply_env_uint64)
 // ---------------------------------------------------------------------------
 
 #if ROCKETNET_DEV

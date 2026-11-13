@@ -133,7 +133,7 @@ struct rocketnet_client_io_open_t
     uint32_t loaded_epoch;          // the epoch the I/O thread last took; I/O thread only
 };
 
-// Both handoffs are rocketnet_buffer_handoff_t (proofs/tla/RNBufferHandoff.tla):
+// Both handoffs are rocketnet_buffer_handoff_t, modelled by proofs/tla/RNBufferHandoff.tla:
 // each ring and each receive buffer has one owner at a time, and only their
 // indices cross threads, under the transport's mutex (shared in development
 // builds only with rocketnet_network_simulator_reconfigure, which acquires it
@@ -173,11 +173,13 @@ struct rocketnet_client_io_t
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
     std::atomic<bool> stopped; // released only after the final core access
+    std::atomic<bool> stop_woken; // stored by the main thread once stop's wake call has returned; the I/O thread's exit closes the wake handle only after it
     struct rocketnet_client_io_open_t open;
     std::atomic<uint64_t> transport_faults;     // written by the I/O thread only: a send result, receive count or byte count this step refused
     std::atomic<uint64_t> receive_too_large;    // written by the receiving thread only: byte counts refused as past the UDP size limit
     uint64_t receive_too_large_folded;          // main thread only: the part of receive_too_large already added to prefilter_too_large
     uint64_t * prefilter_too_large;             // main thread only, optional: the PREFILTER_TOO_LARGE counter rocketnet_client_io_fold_counters adds to
+    std::atomic<uint64_t> receive_discarded_at_stop; // written by the I/O thread at its exit, before stopped: datagrams read from the socket there and discarded
 };
 
 // RNBufferHandoff Init; main thread. Takes the ring views and the receive
@@ -223,6 +225,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->time_context = time_context;
     io->guard_timeout_seconds = ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS;
     io->quit.store( false, std::memory_order_relaxed );
+    io->stop_woken.store( false, std::memory_order_relaxed );
 
     io->stopped.store( false, std::memory_order_relaxed );
 
@@ -239,6 +242,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->receive_too_large.store( 0, std::memory_order_relaxed );
     io->receive_too_large_folded = 0;
     io->prefilter_too_large = NULL;
+    io->receive_discarded_at_stop.store( 0, std::memory_order_relaxed );
 }
 
 // Main thread, at update after the expose. The I/O thread counts every
@@ -482,6 +486,10 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io, uint64_t commi
     {
         io->transport->operations->wake( io->transport->instance );
     }
+
+    // proofs/tla/RNClientIoShutdown.tla RequestReturn: the wake call has
+    // returned; the I/O thread's exit may now close the wake handle
+    io->stop_woken.store( true, std::memory_order_release );
 }
 
 // proofs/tla/RNBufferHandoff.tla MainTryLock: binds the Filling ring's destination, then try-acquires the mutex.
@@ -760,6 +768,87 @@ inline bool rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring,
 // proofs/tla/RNBufferHandoff.tla WorkerWait: the idle worker waits on the wake.
 // proofs/tla/RNBufferHandoff.tla WorkerWakes: that wait returns and the worker runs again.
 
+// datagrams read per call at the exit's discard, into the worker's stack
+#define ROCKETNET_CLIENT_IO_DISCARD_BATCH 4
+
+// The exit's discard reads at most this many datagrams. A datagram takes at
+// least one byte of the socket's receive buffer, which the kernel may double,
+// so a queue never holds more; a sender that keeps the queue full cannot hold
+// the exit longer than this.
+#define ROCKETNET_CLIENT_IO_DISCARD_MAX ( 2 * (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE )
+
+// proofs/tla/RNClientIoShutdown.tla WorkerExit; I/O thread, at its exit, after
+// its last send and before stopped is stored. The worker is the transport's
+// last reader: it reads every datagram still queued on the socket, counts each
+// one in receive_discarded_at_stop (the transport surfaces it as
+// CLIENT_RECEIVE_DISCARDED_AT_STOP), and closes the transport's handles with
+// the close operation (sdk/rocketnet_driver.h), so a datagram that arrives
+// later meets a closed port and none waits unread until destroy frees it.
+// destroy, on the caller's thread, frees the memory and closes nothing more.
+
+inline void rocketnet_client_io_discard_at_stop( rocketnet_client_io_t * io )
+{
+    const rocketnet_client_transport_io_operations_t * operations = io->transport->operations;
+    void * instance = io->transport->instance;
+
+    uint8_t packet_data[ROCKETNET_CLIENT_IO_DISCARD_BATCH * ROCKETNET_FRAME_SIZE];
+    uint64_t discarded = 0;
+
+    while ( discarded < ROCKETNET_CLIENT_IO_DISCARD_MAX )
+    {
+        int got = 0;
+
+        if ( operations->receive_batch )
+        {
+            rocketnet_address_t from[ROCKETNET_CLIENT_IO_DISCARD_BATCH];
+            int packet_bytes[ROCKETNET_CLIENT_IO_DISCARD_BATCH];
+            got = operations->receive_batch( instance, from, packet_data, ROCKETNET_FRAME_SIZE, packet_bytes, ROCKETNET_CLIENT_IO_DISCARD_BATCH );
+            if ( got > ROCKETNET_CLIENT_IO_DISCARD_BATCH )
+            {
+                io->transport_faults++;
+                got = ROCKETNET_CLIENT_IO_DISCARD_BATCH;
+            }
+        }
+        else
+        {
+            rocketnet_address_t from;
+            const int bytes = operations->receive( instance, &from, packet_data, ROCKETNET_RECEIVE_PACKET_BYTES );
+            got = bytes < 0 ? -1 : ( bytes > 0 ? 1 : 0 );
+        }
+
+        // a refused read count is a transport fault, as in the step's drain
+
+        if ( got < 0 )
+        {
+            io->transport_faults++;
+            break;
+        }
+
+        if ( got == 0 )
+        {
+            break;
+        }
+
+        discarded += (uint64_t) got;
+    }
+
+    io->receive_discarded_at_stop.store( discarded, std::memory_order_relaxed );
+
+    // proofs/tla/RNClientIoShutdown.tla WorkerQuiesce: quit is stored before
+    // stop's wake call, so the exit can run while that call is still to
+    // return; the wake handle closes only once it has (stop_woken), so the
+    // call never writes to a closed, possibly reused, descriptor
+    while ( !io->stop_woken.load( std::memory_order_acquire ) )
+    {
+        rocketnet_platform_sleep( 0.0001 );
+    }
+
+    if ( operations->close )
+    {
+        operations->close( instance );
+    }
+}
+
 inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
     rocketnet_assert( io );
@@ -820,6 +909,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         }
 
         rocketnet_client_io_drop_keys( io );
+
+        rocketnet_client_io_discard_at_stop( io );
 
         io->stopped.store( true, std::memory_order_release );
         return ROCKETNET_CLIENT_IO_EXITED;
@@ -1075,5 +1166,8 @@ void rocketnet_client_transport_step_legacy_for_test( struct rocketnet_client_tr
 
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );
+
+// Stop's count of the final ring's committed slots, sent at the I/O thread's exit; returns committed.
+uint64_t rocketnet_client_transport_count_final( struct rocketnet_client_transport_t * client_transport, uint64_t committed );
 
 #endif // ROCKETNET_SDK_ROCKETNET_CLIENT_IO_H

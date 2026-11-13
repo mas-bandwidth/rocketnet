@@ -18,7 +18,14 @@
 //                 whose output interface is this interface: its RTA_GATEWAY
 //                 is the gateway. An IPv4 multipath default route answers
 //                 with its first next hop, as /proc/net/route (netstat -rn)
-//                 shows it.
+//                 shows it. A default route that names only a nexthop
+//                 object (RTA_NH_ID, as the kernel dumps it when
+//                 net.ipv4.nexthop_compat_mode is 0) is answered after the
+//                 dump by an RTM_GETNEXTHOP query for that id (ip nexthop
+//                 get id N): an object on this interface with an
+//                 NHA_GATEWAY is the route. A group, a blackhole, an object
+//                 on another interface or without a gateway, or the
+//                 kernel refusing the query, is no default route.
 //   RTM_GETNEIGH  no dump: the one neighbour entry of the family on this
 //                 interface whose NDA_DST is the gateway (ip neigh get), in
 //                 a state ip(8) shows (reachable, stale, delay, probe or
@@ -130,5 +137,62 @@ int rocketnet_gateway_netlink_refresh_with( const struct rocketnet_gateway_netli
 // the outcome's name for a log line
 
 const char * rocketnet_gateway_netlink_result_name( int result );
+
+// ---------------------------------------------------------------------------
+// THE LINK: what the interface that owns the server's address is, from the
+// one RTM_NEWLINK reply to an RTM_GETLINK for its index (ip -d link show):
+// its name, its link kind (IFLA_INFO_KIND: "" for a device with none, a
+// physical NIC), the device it is stacked on (IFLA_LINK) and, for a VLAN
+// device, its VLAN ID and tag protocol. The XDP transport reads it at
+// pre-flight and create (rocketnet_xdp_link_classify) for the device it
+// attaches to.
+
+#define ROCKETNET_GATEWAY_NETLINK_NAME_BYTES    16  // IFNAMSIZ
+
+struct rocketnet_gateway_netlink_link_t
+{
+    int index;
+    char name[ROCKETNET_GATEWAY_NETLINK_NAME_BYTES];    // IFLA_IFNAME
+    char kind[ROCKETNET_GATEWAY_NETLINK_NAME_BYTES];    // IFLA_INFO_KIND; "" when there is none
+    int link_index;                                     // IFLA_LINK; 0 when absent or the device itself
+    bool link_netns;                                    // IFLA_LINK_NETNSID present: the link is in another namespace
+    int vlan_id;                                        // IFLA_VLAN_ID of kind "vlan"; 0 otherwise
+    int vlan_protocol;                                  // IFLA_VLAN_PROTOCOL of kind "vlan", host order; 0 otherwise
+};
+
+// one received datagram of the reply: FOUND fills link from the RTM_NEWLINK
+// of interface_index; a name or kind past its bytes, or a VLAN attribute of
+// the wrong size, is MALFORMED
+
+int rocketnet_gateway_netlink_parse_link( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id,
+                                          int interface_index, struct rocketnet_gateway_netlink_link_t * link, int * error );
+
+// the query, over a fresh NETLINK_ROUTE socket as above: FOUND, or the
+// failure; a reply with no message for the index is DONE
+
+int rocketnet_gateway_netlink_link( int interface_index, struct rocketnet_gateway_netlink_link_t * link, int * error );
+
+int rocketnet_gateway_netlink_link_with( const struct rocketnet_gateway_netlink_system_t * system, int interface_index,
+                                         struct rocketnet_gateway_netlink_link_t * link, int * error );
+
+// What the XDP transport does with the device that owns the address, given
+// that device and, when it names one (link_index), the device it is stacked
+// on (lower; NULL when it names none):
+//
+//   PLAIN    no stacking the transport knows: XDP on the device itself, as
+//            before VLAN support (a physical NIC, veth, virtio and the rest)
+//   VLAN     one 802.1Q VLAN device on a device with no link kind (a
+//            physical NIC) or on veth: XDP on lower, frames tagged with
+//            vlan_id
+//   REFUSED  *reason names what was found: an 802.1ad VLAN, a VLAN on a
+//            VLAN (QinQ) or on any other stacked kind, a VLAN with VLAN ID 0
+//            or no lower device in this namespace, or the address directly
+//            on a bond, bridge, team, macvlan, macvtap, ipvlan or ipvtap
+
+#define ROCKETNET_XDP_LINK_PLAIN    0
+#define ROCKETNET_XDP_LINK_VLAN     1
+#define ROCKETNET_XDP_LINK_REFUSED  2
+
+int rocketnet_xdp_link_classify( const struct rocketnet_gateway_netlink_link_t * device, const struct rocketnet_gateway_netlink_link_t * lower, const char ** reason );
 
 #endif // ROCKETNET_SDK_ROCKETNET_GATEWAY_NETLINK_H

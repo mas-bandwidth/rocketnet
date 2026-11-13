@@ -13,6 +13,13 @@
 # directory are missing has nothing to read, and that is an error (zero inputs
 # is never a pass).
 #
+# Every corpus is read (tests/fuzz/corpus*/regress_*), not only the two with
+# a capture form: a regress_ seed in any other corpus must be listed in
+# NO_CAPTURE with the reason it has no capture, and a listed seed that is
+# gone fails, so the count printed is every regression in the tree
+# (VERIFY-3 A-5: two of sixteen corpora were read, and a seed planted in
+# corpus_session passed).
+#
 #   python3 tools/check_fuzz_regressions.py [--root DIR]
 #   python3 tools/check_fuzz_regressions.py --selftest
 
@@ -25,6 +32,42 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGESS = os.path.join("tests", "pcapng", "regress")
 SEED_CORPORA = (("tests/fuzz/corpus", pcapng.INTERFACE_WIRE),
                 ("tests/fuzz/corpus_message", pcapng.INTERFACE_OPENED))
+FUZZ = os.path.join("tests", "fuzz")
+
+# regress_ seeds of corpora with no capture form: their target's input is
+# not one datagram or one opened payload, so there is nothing to replay.
+NO_CAPTURE = {
+    "tests/fuzz/corpus_client_transport/regress_pair_stats_worker_thread":
+        "the client transport target's input is a config selector and a stream of records (raw, sealed, cookie, mutated and time steps), not one datagram",
+    "tests/fuzz/corpus_config/regress_config_f80d0030":
+        "the config target's input is environment text for the config parser, not a packet",
+}
+
+
+def uncaptured(root):
+    """Problems among regress_ seeds of corpora with no capture form, and the listed count."""
+    problems = []
+    found = set()
+    fuzz = os.path.join(root, FUZZ)
+    paired_corpora = {corpus for corpus, _ in SEED_CORPORA}
+    corpora = sorted(n for n in os.listdir(fuzz) if n.startswith("corpus")) if os.path.isdir(fuzz) else []
+    for corpus_name in corpora:
+        corpus = "tests/fuzz/" + corpus_name
+        directory = os.path.join(fuzz, corpus_name)
+        if corpus in paired_corpora or not os.path.isdir(directory):
+            continue
+        for filename in sorted(os.listdir(directory)):
+            if not filename.startswith("regress_"):
+                continue
+            relative = corpus + "/" + filename
+            found.add(relative)
+            if relative not in NO_CAPTURE:
+                problems.append("unlisted seed %s: %s has no capture form; list it in NO_CAPTURE "
+                                "(tools/check_fuzz_regressions.py) with the reason" % (relative, corpus))
+    for relative in sorted(NO_CAPTURE):
+        if relative not in found:
+            problems.append("stale NO_CAPTURE entry %s: no such seed" % relative)
+    return problems, len(found & set(NO_CAPTURE))
 
 
 def seeds(root):
@@ -150,11 +193,31 @@ def selftest():
         assert len(problems) == 1 and "orphan capture" in problems[0], "a missing seed was not one orphan"
         assert paired == 1, "a missing seed must leave one pair"
 
+        # a seed in a corpus with no capture form is listed or red; a listed one that is gone is red
+        global NO_CAPTURE
+        saved = NO_CAPTURE
+        try:
+            NO_CAPTURE = {}
+            assert uncaptured(root) == ([], 0), "no other corpus, nothing to list"
+            _write_seed(root, "tests/fuzz/corpus_session", "planted", b"x")
+            problems, _ = uncaptured(root)
+            assert len(problems) == 1 and "unlisted seed tests/fuzz/corpus_session/regress_planted" in problems[0], \
+                "an unlisted seed in another corpus was not red: %r" % problems
+            NO_CAPTURE = {"tests/fuzz/corpus_session/regress_planted": "control"}
+            assert uncaptured(root) == ([], 1), "a listed seed must pass and count"
+            NO_CAPTURE = {"tests/fuzz/corpus_session/regress_planted": "control",
+                          "tests/fuzz/corpus_config/regress_gone": "control"}
+            problems, _ = uncaptured(root)
+            assert len(problems) == 1 and "stale NO_CAPTURE entry" in problems[0], "a stale entry was not red"
+        finally:
+            NO_CAPTURE = saved
+
     with tempfile.TemporaryDirectory() as empty:
         problems, paired = check(empty)
         assert problems and "nothing was checked" in problems[0], "a tree with no corpora was accepted"
 
-    print("check_fuzz_regressions selftest: ok (two converted pairs; missing capture, missing seed and an empty tree each red)")
+    print("check_fuzz_regressions selftest: ok (two converted pairs; missing capture, missing seed, "
+          "unlisted seed in another corpus, stale listing and an empty tree each red)")
     return 0
 
 
@@ -168,11 +231,14 @@ def main(argv):
         sys.stderr.write("usage: python3 tools/check_fuzz_regressions.py [--selftest | --root DIR]\n")
         return 2
     problems, paired = check(root)
+    more, listed = uncaptured(root)
+    problems += more
     if problems:
         for line in problems:
             print(line)
         return 1
-    print("%d regressions" % paired)
+    print("%d regressions (%d paired with a capture, %d with no capture form, listed)"
+          % (paired + listed, paired, listed))
     return 0
 
 

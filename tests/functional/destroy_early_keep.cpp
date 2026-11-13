@@ -22,6 +22,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <atomic>
+#include <mutex>
 #include <string>
 
 static void destroy_check_handler( const char * condition, const char * function, const char * file, int line )
@@ -141,8 +143,12 @@ static void destroy_assert_recorder( const char * condition, const char * functi
 
 // --- the log capture -------------------------------------------------------
 
-static int destroy_error_lines = 0;
+// the server's and client's threads log too (sdk/rocketnet.h, rocketnet_log_function):
+// the count is atomic, and the last line is written and read under a lock
+static std::atomic<int> destroy_error_lines( 0 );
+static std::mutex destroy_log_lock;
 static char destroy_last_error[1024];
+static char destroy_last_error_read_copy[1024];
 
 static void destroy_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
@@ -152,9 +158,19 @@ static void destroy_log_capture( void * context, enum rocketnet_log_level_t leve
         return;
     }
     destroy_error_lines++;
+    std::lock_guard<std::mutex> guard( destroy_log_lock );
     const size_t copied = length < sizeof( destroy_last_error ) - 1 ? length : sizeof( destroy_last_error ) - 1;
     memcpy( destroy_last_error, message, copied );
     destroy_last_error[copied] = '\0';
+}
+
+// a copy of the last error line to search, taken under the lock
+
+static const char * destroy_last_error_read()
+{
+    std::lock_guard<std::mutex> guard( destroy_log_lock );
+    memcpy( destroy_last_error_read_copy, destroy_last_error, sizeof( destroy_last_error_read_copy ) );
+    return destroy_last_error_read_copy;
 }
 
 // --- the fixture -----------------------------------------------------------
@@ -309,7 +325,7 @@ void test_client_destroy_early_threaded_frees()
     destroy_error_lines = 0;
     rocketnet_client_destroy( pair.client );
     check( destroy_error_lines == 1 );
-    check( strstr( destroy_last_error, "rocketnet_client_destroy" ) != NULL );
+    check( strstr( destroy_last_error_read(), "rocketnet_client_destroy" ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
 
     destroy_server_teardown( &pair );
@@ -334,7 +350,7 @@ void test_server_destroy_early_threaded_frees()
     destroy_error_lines = 0;
     rocketnet_server_destroy( pair.server );
     check( destroy_error_lines == 1 );
-    check( strstr( destroy_last_error, "rocketnet_server_destroy" ) != NULL );
+    check( strstr( destroy_last_error_read(), "rocketnet_server_destroy" ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
 
     destroy_client_teardown( &pair );
@@ -344,6 +360,13 @@ void test_server_destroy_early_threaded_frees()
 }
 
 // the keep path: with no budget the destroy makes one pass and does not sleep
+//
+// The client case needs a second cpu the process may use: on one cpu the
+// disconnect wakes the client's worker, the worker runs to its exit before
+// the destroy's pass looks, and every attempt frees (a guest booted with
+// isolcpus=1: 20 of 20 attempts, 5 of 5 runs). It is registered with the
+// predicate rocketnet_test_two_usable_cpus, so on one cpu it is skipped,
+// printed and counted.
 
 void test_client_destroy_early_threaded_keeps_then_frees()
 {
@@ -373,8 +396,8 @@ void test_client_destroy_early_threaded_keeps_then_frees()
         destroy_server_teardown( &pair );
         check( state.live == before );
     }
-    check( strstr( destroy_last_error, "rocketnet_client_destroy" ) != NULL );
-    check( strstr( destroy_last_error, "kept, not freed" ) != NULL );
+    check( strstr( destroy_last_error_read(), "rocketnet_client_destroy" ) != NULL );
+    check( strstr( destroy_last_error_read(), "kept, not freed" ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
     // The handle stays valid: its memory is not freed and its queries answer.
     check( state.live > before );
@@ -428,8 +451,8 @@ void test_server_destroy_early_threaded_keeps_then_frees()
         destroy_client_teardown( &pair );
         check( state.live == before );
     }
-    check( strstr( destroy_last_error, "rocketnet_server_destroy" ) != NULL );
-    check( strstr( destroy_last_error, "kept, not freed" ) != NULL );
+    check( strstr( destroy_last_error_read(), "rocketnet_server_destroy" ) != NULL );
+    check( strstr( destroy_last_error_read(), "kept, not freed" ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
     check( state.live > before );
     (void) rocketnet_server_running( pair.server );

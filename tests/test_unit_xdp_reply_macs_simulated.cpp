@@ -299,5 +299,48 @@ static void test_xdp_transport_reply_mac_answered_entries_never_displace_learned
     rocketnet_unit_check( mac && memcmp( mac, client_mac, 6 ) == 0 );
 }
 
+// a learn of an address whose window holds another address's answered entry
+// and a never-used slot takes the never-used slot: a reply held for the
+// answered address still finds its MAC
+static void test_xdp_transport_reply_mac_learn_keeps_a_colliding_answered_entry()
+{
+    static const uint8_t answered_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0b };
+    static const uint8_t client_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0c };
+
+    struct rocketnet_xdp_reply_macs_t * table = &simulated_reply_macs;
+    simulated_reply_macs_bind( table, NULL );
+
+    rocketnet_address_t answered;
+    rocketnet_unit_check( rocketnet_address_parse( &answered, "10.77.5.2:50000" ) );
+
+    // a client address in the answered address's home slot
+    rocketnet_address_t client = answered;
+    client.data.ipv4[2] = 6;
+    for ( client.port = 1000; rocketnet_xdp_reply_macs_slot( table, &client ) != rocketnet_xdp_reply_macs_slot( table, &answered ); client.port++ )
+    {
+        rocketnet_unit_check( client.port < 60000 );
+    }
+
+    struct fake_receive_view_t view;
+    memset( &view, 0, sizeof( view ) );
+
+    struct fake_link_t link;
+    memset( &link, 0, sizeof( link ) );
+
+    uint64_t refused = 0;
+    fake_receive( &view, &answered, answered_mac );
+    rocketnet_unit_check( fake_start_packet( table, &view, &view.from[0], &refused ) != NULL );
+    fake_link_hold( &link, &view.from[0], 1000.1 );
+    view.num_packets = 0;
+
+    rocketnet_xdp_reply_macs_learn( table, &client, client_mac );
+    rocketnet_unit_check( rocketnet_xdp_reply_macs_find( table, &client ) != NULL );
+
+    rocketnet_unit_check( rocketnet_xdp_reply_macs_find_state( table, &answered, ROCKETNET_XDP_REPLY_MAC_ANSWERED ) != NULL );
+    rocketnet_unit_check( fake_link_drain( &link, table, &view, 1000.1, answered_mac, &refused ) == 1 );
+    rocketnet_unit_check( refused == 0 );
+}
+
 REGISTER_UNIT_TEST( test_xdp_transport_reply_mac_held_reply_finds_the_answered_mac );
+REGISTER_UNIT_TEST( test_xdp_transport_reply_mac_learn_keeps_a_colliding_answered_entry );
 REGISTER_UNIT_TEST( test_xdp_transport_reply_mac_answered_entries_never_displace_learned );

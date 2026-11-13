@@ -1694,12 +1694,15 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
             // the first block that acknowledges a sequence yields one rtt
             // sample: the elapsed time between sending it and receiving the
-            // block
+            // block. An elapsed time at or past ROCKETNET_ACK_RTT_NONE
+            // (a legal jump of the update clock) is no sample, as the
+            // minimum already has it: summed, it made the jitter infinite,
+            // then NaN, and past float's range its conversion is undefined
 
-            double sample = time - record->send_time;
-            if ( sample >= 0.0 )
+            const double sample_ms = ( time - record->send_time ) * 1000.0;
+            if ( sample_ms >= 0.0 && sample_ms < (double) ROCKETNET_ACK_RTT_NONE )
             {
-                rocketnet_ack_stats_rtt_write( endpoint, (int) ( sequence % ROCKETNET_RTT_HISTORY_SIZE ), (float) ( sample * 1000.0 ) );
+                rocketnet_ack_stats_rtt_write( endpoint, (int) ( sequence % ROCKETNET_RTT_HISTORY_SIZE ), (float) sample_ms );
                 endpoint->has_rtt_sample = 1;
             }
 

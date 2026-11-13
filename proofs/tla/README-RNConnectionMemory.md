@@ -200,6 +200,6 @@ TakeBeforeFit's trace (5 states), checked by hand against the code: `Connect(s1,
 two `Use(s1)` (`used` 2 of 3), then a two-record span start that does not fit
 takes one record (`used` 2 to 3) and is refused.
 The code cannot do this: `rn_region_send_alloc_span` fits at
-`sdk/rocketnet_allocator.cpp:1139` on a const region and refuses at 1142,
+`sdk/rocketnet_allocator.cpp` on a const region and refuses at 1142,
 and takes its descriptor only at 1148, after the fit; `rn_region_send_alloc`
 fits at 901, refuses at 904, and takes at 908 and 910.

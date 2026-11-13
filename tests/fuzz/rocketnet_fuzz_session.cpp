@@ -52,6 +52,7 @@
 #include "../dst_checks.h"
 
 #include <filesystem>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -644,16 +645,30 @@ static bool rocketnet_fuzz_session_generate( const char * dir )
     {
         int count = 0;
 
+        // the first twelve by name: directory order is the filesystem's, so
+        // taking the first twelve the iterator yields wrote a different seed
+        // set on each platform (VERIFY-5 W3)
+
+        std::vector<std::filesystem::path> prefilter;
         for ( const auto & entry : std::filesystem::directory_iterator( from ) )
         {
-            const std::string file = entry.path().filename().string();
-            if ( file.rfind( "prefilter_", 0 ) != 0 || !entry.is_regular_file() || count >= 12 )
+            if ( entry.is_regular_file() && entry.path().filename().string().rfind( "prefilter_", 0 ) == 0 )
             {
-                continue;
+                prefilter.push_back( entry.path() );
+            }
+        }
+        std::sort( prefilter.begin(), prefilter.end() );
+
+        for ( const std::filesystem::path & path : prefilter )
+        {
+            const std::string file = path.filename().string();
+            if ( count >= 12 )
+            {
+                break;
             }
 
             static uint8_t body[ROCKETNET_RECEIVE_CEILING + 2];
-            FILE * f = rocketnet_test_fopen( entry.path().string().c_str(), "rb" );
+            FILE * f = rocketnet_test_fopen( path.string().c_str(), "rb" );
             if ( !f )
             {
                 continue;
