@@ -3665,6 +3665,7 @@ jobs:
       # schedule or checker with no cell, a cell whose step does not run it, or
       # an owed cell past its date is red here. The nightly watch adds --remote.
       - name: Every verification cell is declared and wired to the job that runs it
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_run_matrix.py --self-test
           python3 tools/check_run_matrix.py
