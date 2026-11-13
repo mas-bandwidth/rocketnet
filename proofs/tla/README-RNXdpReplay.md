@@ -207,6 +207,10 @@ Properties:
   an older entry under a seen slot whose cache reads 0) or it is
   pending, kept across every commit the kernel refused it. No stale entry
   outlives a released slot by more than the commits it took to succeed.
+- `ForgetQueuedAfterWalk`: after the walk, an entry for an address with no
+  live session has its forget pending, unless the pending buffer is full.
+  `ForgetOwedUntilApplied` lets the owed forget wait in the walk's records;
+  this one says the walk queued it.
 - `MarkNeverAhead`: with a live session, the entry for its address is none,
   or was taken from that session and is at most its `highest_opened`, or a
   mark of that session is pending (for this commit, or kept after a refusal),
@@ -364,8 +368,17 @@ refused again in the commit that lands a newer session's mark): 239,206
 distinct states (596,195 generated, depth 36), and `TypeOK`,
 `ForgetOwedUntilApplied`, `MarkNeverAhead`, `MarksTakenFromTheTruth`,
 `FreshGenuineNeverDropped`, `NewSessionNeverDroppedByOldMark`,
-`ReleasedSlotForgetsItsReplyMac`, `RetryNeverDeletesNewerMark` and
-`KernelNeverWrites` hold. The measured records are in `proofs/tla/RUNS.tsv`.
+`ReleasedSlotForgetsItsReplyMac`, `RetryNeverDeletesNewerMark`,
+`MarkOwedUntilApplied`, `ForgetQueuedAfterWalk` and `KernelNeverWrites`
+hold. The measured records are in `proofs/tla/RUNS.tsv`.
+
+`MCRNXdpReplayInFlight.cfg`: one address, `MaxSeq = 4`, `W = 2`,
+`Sessions = 2` and `MaxInFlight = 2`, so a genuine packet can sit on the
+wire behind a later one of its session that userspace opens first, and the
+kernel meets it behind the raised mark. Every other control sets
+`MaxInFlight = 1`, where no genuine packet is reordered and
+`FreshGenuineNeverDropped` has no reordered case. 2,205,932 distinct states
+(6,673,554 generated), every property of the control holding.
 
 `MCRNXdpReplayReconnect.cfg`: the same, with `Sessions = 3`, so a reconnect
 at one address can meet a release, a full pending buffer or a refused
@@ -395,7 +408,7 @@ every property of the design control hold. The measured records are in
 | Configuration | Rule removed | Expected failure |
 |---|---|---|
 | `MCRNXdpReplayBrokenKernelAdvances.cfg` | the kernel never writes: `KernelAdvances <- KernelAdvancesBroken`, `kmap[a] := seq` on every pass | `FreshGenuineNeverDropped`, exit 12, depth 6 |
-| `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `ReleasedSlotForgetsItsReplyMac`, exit 12, a 6-state trace |
+| `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `ForgetQueuedAfterWalk`, exit 12, a 6-state trace |
 | `MCRNXdpReplayBrokenNarrowWindow.cfg` | the kernel window is the userspace window: `KernelWindow <- KernelWindowBroken` (`W - 1`) | `FreshGenuineNeverDropped`, exit 12, depth 9 |
 | `MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg` | forgetting only marked slots | `ReleasedSlotForgetsItsReplyMac`, exit 12, depth 6 |
 | `MCRNXdpReplayBrokenFailedForgetDropped.cfg` | a refused forget stays pending: `KeepFailedForgets <- KeepFailedForgetsBroken` | `ForgetOwedUntilApplied`, exit 12, depth 10 |
@@ -416,8 +429,9 @@ broken rule acts: the kernel-advances shape fails `MarksTakenFromTheTruth` at
 depth 3 (a forged packet passes and its sequence becomes the entry), and the
 no-forget shape fails `MarkNeverAhead` at depth 11 (the reconnect, with the
 old session's entry still in the map; with this design's zero mark that
-reconnect is now covered, and the shape fails `ReleasedSlotForgetsItsReplyMac`
-instead). Both were bench experiments, not cases.
+reconnect is now covered, and the shape fails `ForgetQueuedAfterWalk`
+instead, on the kernel entry the walk left). Both were bench experiments,
+not cases.
 
 ### KernelAdvances, checked by hand against the design
 
@@ -436,15 +450,22 @@ traffic: one spoofed packet would silence a client.
 
 ### NoForget, checked by hand against the design
 
-1. `Connect(A1)`: session 1, its reply MAC learned; `Walk` sees the slot;
-   `Commit`.
-2. `Release(A1)`; `Walk`: the broken walk forgets nothing, so the flush
-   phase holds the released address's reply MAC with no MAC forget pending.
+1. `Connect(A1)`: session 1, its reply MAC learned; `Walk` sees the slot
+   and takes its zero mark; `Commit` applies it, so the kernel holds an
+   entry for `A1` (`high_water` 0, session 1).
+2. `Release(A1)`; `Walk`: the broken walk forgets nothing, so in the flush
+   phase the kernel still holds `A1`'s entry, no forget of it is pending
+   and the buffer has room: `ForgetQueuedAfterWalk` fails. The released
+   address's reply MAC is still learned in the same state
+   (`ReleasedSlotForgetsItsReplyMac`, left out of this cfg so the kernel
+   entry is the reported reason).
 
-In the design the walk queues `A1` with its MAC forget. The kernel entry
-the broken walk leaves no longer harms a reconnect (the new session's zero
-mark replaces it), so `NewSessionNeverDroppedByOldMark` holds here; the
-loss is the reply MAC and the map space a stale entry keeps.
+`ForgetOwedUntilApplied` cannot fail under this shape: the walk's records
+keep the slot seen, its disjunct. In the design the walk queues `A1` with
+its MAC forget. The kernel entry the broken walk leaves no longer harms a
+reconnect (the new session's zero mark replaces it), so
+`NewSessionNeverDroppedByOldMark` holds here; the loss is the map space a
+stale entry keeps and the reply MAC.
 
 ### ReconnectFreshness, checked by hand against the design
 
