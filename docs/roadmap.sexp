@@ -281,4 +281,9 @@
    :title "RNSendReserveCalls: a Capacity per send queue"
    :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."
    :date "2026-11-13" :origin "Piece M follow-on, cold reader")
+
+  (item "uring-lifecycle-rss-plan" :group "audit-remaining" :area "tests"
+   :title "The io_uring memory plan against the lifecycle case's resident size"
+   :text "With ROCKETNET_SERVER_TRANSPORT=io_uring forced over the whole functional suite, test_lifecycle_transport peaks at 1269 MB resident against a plan bound of 698 MB (suite_case_rss_mb). The default suite and the per-commit rows do not run that combination. Compare the plan (rocketnet_server_uring_allocation_bytes and mapped bytes) with what the receive queues' provided buffers make resident once the multishot has written into them, and make the plan or the case's bound say it."
+   :date "2026-11-13" :origin "Piece L (io_uring), amd-3 run")
  ))
