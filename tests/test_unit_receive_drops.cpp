@@ -48,6 +48,8 @@ static void test_receive_drop_counters_bank_full_is_its_own()
     check( counters[0] == ROCKETNET_COUNTER_RECEIVE_FAILED );
     check( rocketnet_receive_drop_counters( ROCKETNET_RECEIVE_DROP_STOPPED, counters ) == 1 );
     check( counters[0] == ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED );
+    check( rocketnet_receive_drop_counters( ROCKETNET_RECEIVE_DROP_RETIRED, counters ) == 1 );
+    check( counters[0] == ROCKETNET_COUNTER_RECEIVE_DROPPED_RETIRED );
     check( rocketnet_receive_drop_counters( ROCKETNET_RECEIVE_ACCEPT, counters ) == 0 );
 }
 
@@ -150,6 +152,12 @@ static void test_server_transport_folds_receive_drop_totals()
     rp_fake_totals[ROCKETNET_RECEIVE_DROP_STOPPED] = 4;
     const struct rocketnet_counters_t stopped = *rocketnet_server_transport_counters( server );
     rocketnet_counters_expect( &after, &stopped, { { ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED, 4 } } );
+
+    // a datagram queued at a client socket the transport retired is
+    // RECEIVE_DROPPED_RETIRED alone
+    rp_fake_totals[ROCKETNET_RECEIVE_DROP_RETIRED] = 3;
+    const struct rocketnet_counters_t retired = *rocketnet_server_transport_counters( server );
+    rocketnet_counters_expect( &stopped, &retired, { { ROCKETNET_COUNTER_RECEIVE_DROPPED_RETIRED, 3 } } );
 
     swapped_operations = real_operations;
     rocketnet_server_transport_swap_io_for_test( server, &swapped_operations, &swapped_instance );

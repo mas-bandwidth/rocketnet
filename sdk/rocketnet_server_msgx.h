@@ -73,6 +73,9 @@ struct rocketnet_server_msgx_t;
 
 // sockets opened in one update at most: a connect storm of 1000 clients
 // opens over 16 updates instead of one long frame. Chosen, not measured.
+// the most datagrams read off one retired socket when it is closed
+#define ROCKETNET_MSGX_RETIRED_DRAIN_LIMIT                           65536
+
 #define ROCKETNET_MSGX_OPENS_PER_UPDATE                                 64
 
 // descriptors the process keeps beyond one per client

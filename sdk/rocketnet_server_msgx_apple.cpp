@@ -176,6 +176,7 @@ struct rocketnet_server_msgx_receiver_t
     struct rocketnet_server_msgx_recv_bank_t * free_bank;
     uint32_t main_cursor;           // main only: the retained tail of main_bank
     uint64_t main_stopped = 0;      // main only: the main bank's tail left at stop, RECEIVE_DROP_STOPPED
+    uint64_t main_retired = 0;      // main only: datagrams read off a retired socket at its close, RECEIVE_DROP_RETIRED
 
     uint8_t padding_2[4096];
 
@@ -355,9 +356,32 @@ static int rocketnet_server_msgx_table_open( void * user, const rocketnet_addres
     return fd;
 }
 
+// the descriptor of a retired socket is closed here, on main. The poller forgot
+// it at the retire, so what the kernel queued for it since reaches no one:
+// every datagram it still holds is read and counted (RECEIVE_DROP_RETIRED)
+// before the close. Later datagrams of that address reach the shared socket.
 static void rocketnet_server_msgx_table_close( void * user, int fd )
 {
-    (void) user;
+    struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) user;
+    uint8_t scratch[ROCKETNET_FRAME_STRIDE];
+    uint64_t drained = 0;
+    for ( int i = 0; i < ROCKETNET_MSGX_RETIRED_DRAIN_LIMIT; i++ )
+    {
+        if ( recv( fd, scratch, sizeof( scratch ), MSG_DONTWAIT ) >= 0 )
+        {
+            drained++;
+        }
+        else if ( errno == EAGAIN || errno == EWOULDBLOCK )
+        {
+            break;
+        }
+        // any other error (a pending ICMP refusal, a truncated datagram) is
+        // cleared by this read; the next read finds the next datagram
+    }
+    if ( msgx && msgx->receiver )
+    {
+        msgx->receiver->main_retired += drained;
+    }
     close( fd );
 }
 
@@ -1123,6 +1147,7 @@ void rocketnet_server_msgx_receive_drop_totals( struct rocketnet_server_msgx_t *
     memset( values, 0, sizeof( uint64_t ) * ROCKETNET_RECEIVE_NUM_DROPS );
     rocketnet_receive_drop_tally_sum( &msgx->receiver->tally, 1, values );
     values[ROCKETNET_RECEIVE_DROP_STOPPED] += msgx->receiver->main_stopped;
+    values[ROCKETNET_RECEIVE_DROP_RETIRED] += msgx->receiver->main_retired;
     values[ROCKETNET_RECEIVE_ACCEPT] = 0;
 }
 
@@ -1266,6 +1291,7 @@ static void rocketnet_server_msgx_free( struct rocketnet_server_msgx_t * msgx )
         }
         msgx->receiver->~rocketnet_server_msgx_receiver_t();
         rocketnet_free( context, msgx->receiver );
+        msgx->receiver = NULL;     // the table's close_all below reads it
     }
     if ( msgx->table )
     {
@@ -1383,6 +1409,7 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
         receiver->ready_bank = NULL;
         receiver->main_cursor = 0;
         receiver->main_stopped = 0;
+        receiver->main_retired = 0;
         for ( int b = 0; b < 3; b++ )
         {
             receiver->banks[b].num_packets = 0;

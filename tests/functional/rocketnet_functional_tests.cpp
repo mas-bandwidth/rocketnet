@@ -14468,6 +14468,9 @@ void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
 void rocketnet_test_posix_client_drops_foreign_sources();
 void rocketnet_test_posix_platform_send_seam();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+void rocketnet_test_posix_msgx_retired_socket_counted();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void rocketnet_test_posix_transport_send_seam();
 void rocketnet_test_posix_send_burst();
 #if defined( __linux__ )
@@ -15502,6 +15505,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather, NULL },
     { "test_posix_client_drops_foreign_sources", rocketnet_test_posix_client_drops_foreign_sources, NULL },
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam, NULL },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_posix_msgx_retired_socket_counted", rocketnet_test_posix_msgx_retired_socket_counted, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam, NULL },
     { "test_posix_send_burst", rocketnet_test_posix_send_burst, NULL },
 #endif // #if !defined( _WIN32 ) && ROCKETNET_DEV

@@ -53,6 +53,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include "rocketnet_server_msgx.h"
+#include "rocketnet_receive_prefilter.h"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 // darwin declares IPV6_DONTFRAG only under __APPLE_USE_RFC_3542, which the
@@ -2221,6 +2222,100 @@ static void posix_msgx_send_seam_cell( int ipv6 )
     rocketnet_server_msgx_test_fail_sends( msgx, 0, 0 );
 
     posix_pair_destroy( &pair );
+}
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+// A client's connected socket that the server retires (the client left or
+// moved) still receives that client's datagrams until the close: the poller
+// forgot it, so no worker reads them. They are counted when the socket is
+// closed (RECEIVE_DROP_RETIRED), never lost unnamed. Real sockets: the
+// server's transport directly, one plain UDP socket as the client.
+
+void rocketnet_test_posix_msgx_retired_socket_counted()
+{
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
+    memset( packet_filter, 0x5a, sizeof( packet_filter ) );
+    int status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_msgx_t * msgx = rocketnet_server_msgx_create( NULL, &bind_address, 2, 8, packet_filter, &status );
+    posix_check( msgx != NULL );
+
+    const int client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( client >= 0 );
+    struct sockaddr_in local;
+    memset( &local, 0, sizeof( local ) );
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    posix_check( bind( client, (const struct sockaddr *) &local, sizeof( local ) ) == 0 );
+    socklen_t local_bytes = sizeof( local );
+    posix_check( getsockname( client, (struct sockaddr *) &local, &local_bytes ) == 0 );
+    rocketnet_address_t client_address;
+    posix_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
+    client_address.port = ntohs( local.sin_port );
+
+    struct sockaddr_in server_address;
+    memset( &server_address, 0, sizeof( server_address ) );
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    server_address.sin_port = htons( bind_address.port );
+
+    // the replay walk opens the client's connected socket
+    const double open_deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_server_msgx_test_sockets_open( msgx ) != 1 && rocketnet_platform_time() < open_deadline )
+    {
+        rocketnet_server_msgx_mark( msgx, &client_address );
+        rocketnet_server_msgx_commit( msgx );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    posix_check( rocketnet_server_msgx_test_sockets_open( msgx ) == 1 );
+
+    // the client leaves: its socket is retired, not yet closed
+    posix_check( rocketnet_server_msgx_forget( msgx, &client_address ) );
+
+    // its datagrams meet the retired socket
+    const int num_datagrams = 5;
+    uint8_t datagram[64];
+    memset( datagram, 0x42, sizeof( datagram ) );
+    for ( int i = 0; i < num_datagrams; i++ )
+    {
+        posix_check( sendto( client, datagram, sizeof( datagram ), 0, (const struct sockaddr *) &server_address, sizeof( server_address ) ) ==
+                     (ssize_t) sizeof( datagram ) );
+    }
+    rocketnet_platform_sleep( 0.01 );
+
+    // the sweep closes the retired socket once every worker is past it
+    const double close_deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_server_msgx_test_sockets_open( msgx ) != 0 && rocketnet_platform_time() < close_deadline )
+    {
+        rocketnet_server_msgx_commit( msgx );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_server_msgx_commit( msgx );
+    posix_check( rocketnet_server_msgx_test_sockets_open( msgx ) == 0 );
+
+    uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS];
+    memset( totals, 0, sizeof( totals ) );
+    rocketnet_server_msgx_receive_drop_totals( msgx, totals );
+    printf( "  msgx retired socket: %d datagrams sent, RECEIVE_DROP_RETIRED %llu\n", num_datagrams,
+            (unsigned long long) totals[ROCKETNET_RECEIVE_DROP_RETIRED] );
+    fflush( stdout );
+    posix_check( totals[ROCKETNET_RECEIVE_DROP_RETIRED] == (uint64_t) num_datagrams );
+
+    // none of them reached main
+    rocketnet_server_msgx_receive_packets( msgx );
+    posix_check( rocketnet_server_msgx_process_packets( msgx )->num_packets == 0 );
+
+    close( client );
+    rocketnet_server_msgx_stop( msgx );
+    const double stop_deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_msgx_stopped( msgx ) && rocketnet_platform_time() < stop_deadline )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+    posix_check( rocketnet_server_msgx_stopped( msgx ) );
+    rocketnet_server_msgx_destroy( msgx );
 }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 

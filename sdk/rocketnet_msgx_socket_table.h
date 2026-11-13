@@ -436,7 +436,7 @@ inline bool rocketnet_msgx_socket_table_mark( struct rocketnet_msgx_socket_table
     return true;
 }
 
-// proofs/tla/RNMsgxSocketTable.tla Forget: the client at address left or moved. Retires its
+// proofs/tla/RNMsgxSocketTable.tla Forget and ForgetCall (the whole call, the trace check's action): the client at address left or moved. Retires its
 // socket, if it has one. Always true: nothing is owed.
 inline bool rocketnet_msgx_socket_table_forget( struct rocketnet_msgx_socket_table_t * table, const struct rocketnet_address_t * address, int * retired_fd )
 {
@@ -468,7 +468,7 @@ inline bool rocketnet_msgx_socket_table_quiescent( const struct rocketnet_msgx_s
     return true;
 }
 
-// proofs/tla/RNMsgxSocketTable.tla SweepBegin, RetireDead and Close: main's sweep, once per update.
+// proofs/tla/RNMsgxSocketTable.tla SweepBegin, RetireDead and Close, and SweepCall (the whole sweep, the trace check's action): main's sweep, once per update.
 // First every slot a holder reported dead (at the generation it reported) is
 // retired and its address cooled down; retire_hook is called with each such
 // descriptor before its retire (the caller deregisters it from its poller).
