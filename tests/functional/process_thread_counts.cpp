@@ -92,7 +92,7 @@ struct process_thread_transport_guard_t
 #include "../public_step_pair.h"
 
 // The threads of this process, counted from /proc/self/task; -1 where the
-// platform has no such count, and the thread case then pins nothing there.
+// platform has no such count.
 static int no_worker_thread_count()
 {
 #if defined( __linux__ )
@@ -142,20 +142,38 @@ static int public_step_thread_count()
 #endif // #if defined( __linux__ )
 }
 
+// The runs_here of the two thread-count rows (test_server_stats_creates_no_thread,
+// test_public_step_driven_client_connects_without_a_thread): true where this
+// process can count its threads (/proc/self/task, Linux). Elsewhere the rows
+// are left out and print SKIPPED with this name (tests/functional/expected_skips.txt
+// lists the macOS and Windows legs), and the two _live rows below still run
+// the loopback, statistics and stop checks there. Counting threads on macOS
+// and Windows is a roadmap entry.
+bool rocketnet_process_thread_counts_runs_here()
+{
+    return no_worker_thread_count() >= 0 && public_step_thread_count() >= 0;
+}
+
 // Creating, starting and updating a server starts no thread: the loopback
 // transport has none and the statistics need none, yet the slot's statistics
 // are live after the updates. A server that computed its statistics on a
 // worker either adds a thread at create or, with the worker held back (the
-// manual mode unit builds once defaulted to), publishes nothing.
-void rocketnet_test_server_stats_creates_no_thread()
+// manual mode unit builds once defaulted to), publishes nothing. With
+// count_threads false the thread counts are not read (the _live row, for
+// hosts that cannot count them); every other check runs.
+static void server_stats_without_a_worker( bool count_threads )
 {
     process_thread_transport_guard_t transport_guard;
     no_worker_world_t * world = &g_no_worker_world;
-    const int before = no_worker_thread_count();
+    const int before = count_threads ? no_worker_thread_count() : -1;
+    if ( count_threads )
+    {
+        check( before >= 0 );
+    }
 
     no_worker_server_create( world, NO_WORKER_CLIENTS );
 
-    const int after_create = no_worker_thread_count();
+    const int after_create = count_threads ? no_worker_thread_count() : -1;
 
     no_worker_clients_create( world, 1 );
     no_worker_connect_all( world );
@@ -171,16 +189,10 @@ void rocketnet_test_server_stats_creates_no_thread()
         no_worker_step( world, true, 0.1 );
     }
 
-    const int after_updates = no_worker_thread_count();
-
-    if ( before >= 0 )
+    if ( count_threads )
     {
         check( after_create == before );
-        check( after_updates == before );
-    }
-    else
-    {
-        printf( "SKIP process thread-count assertions: /proc/self/task is unavailable; loopback and stop completion remain checked.\n" );
+        check( no_worker_thread_count() == before );
     }
 
     struct rocketnet_server_client_stats_t stats;
@@ -189,45 +201,61 @@ void rocketnet_test_server_stats_creates_no_thread()
 
     no_worker_server_stop_and_wait( world );
 
-    const int after_stop = no_worker_thread_count();
-
-    if ( before >= 0 )
+    if ( count_threads )
     {
-        check( after_stop == before );
+        check( no_worker_thread_count() == before );
     }
 
     no_worker_world_destroy( world );
 
-    const int after_destroy = no_worker_thread_count();
-
-    if ( before >= 0 )
+    if ( count_threads )
     {
-        check( after_destroy == before );
+        check( no_worker_thread_count() == before );
     }
 }
 
-void rocketnet_test_public_step_driven_client_connects_without_a_thread()
+void rocketnet_test_server_stats_creates_no_thread()
+{
+    server_stats_without_a_worker( true );
+}
+
+void rocketnet_test_server_stats_live_without_a_worker()
+{
+    server_stats_without_a_worker( false );
+}
+
+// A step-driven client connects to a step-driven server over loopback and
+// both stop; with count_threads the client starts no thread of its own and
+// the pair leaves none behind.
+static void public_step_driven_client_connects( bool count_threads )
 {
     process_thread_transport_guard_t transport_guard;
     public_step_identity_t identity;
     public_step_identity( &identity );
 
     public_step_pair_t pair;
-    public_step_pair_create( &pair, &identity, 0, public_step_thread_count );
-    if ( pair.threads_before_client >= 0 && pair.threads_after_client >= 0 )
+    public_step_pair_create( &pair, &identity, 0, count_threads ? public_step_thread_count : NULL );
+    if ( count_threads )
     {
+        check( pair.threads_before_pair >= 0 && pair.threads_before_client >= 0 && pair.threads_after_client >= 0 );
         check( pair.threads_after_client == pair.threads_before_client );
-    }
-    else
-    {
-        printf( "SKIP process thread-count assertions: /proc/self/task is unavailable; loopback and stop completion remain checked.\n" );
     }
 
     public_step_connect( &pair );
     public_step_pair_stop_server_and_wait( &pair );
     public_step_pair_destroy( &pair );
-    if ( pair.threads_before_pair >= 0 )
+    if ( count_threads )
     {
         check( public_step_thread_count() == pair.threads_before_pair );
     }
+}
+
+void rocketnet_test_public_step_driven_client_connects_without_a_thread()
+{
+    public_step_driven_client_connects( true );
+}
+
+void rocketnet_test_public_step_driven_client_connects_live()
+{
+    public_step_driven_client_connects( false );
 }
