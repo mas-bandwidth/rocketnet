@@ -61,6 +61,11 @@ void rocketnet_server_replay_marks_destroy( struct rocketnet_server_replay_marks
 #if ROCKETNET_DEV
 // Unit-test poison/forget witness for the private per-slot mark cache.
 bool rocketnet_server_replay_marks_reset_witness_for_test();
+
+// The trace check's read of one slot's record (tests/tla_trace_xdp_replay.cpp):
+// false for an index out of range, else the record's fields.
+bool rocketnet_server_replay_marks_slot_for_test( const struct rocketnet_server_replay_marks_t * marks, int index, bool * has_mark, uint32_t * marked_value,
+                                                  bool * seen, struct rocketnet_address_t * seen_address, bool * mark_owed );
 #endif // #if ROCKETNET_DEV
 
 // proofs/tla/RNXdpReplay.tla Walk: PASS 1 forgets the address of every slot that

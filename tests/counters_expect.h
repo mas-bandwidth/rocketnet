@@ -40,6 +40,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_receive_prefilter.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -170,6 +171,41 @@ do                                                                              
     ROCKETNET_COUNTERS_CHECK( rocketnet_counters_balanced );                                                      \
 } while(0)
 
+// Whether a transport row counts the same events as a shared row
+// (standard/TRANSPORT.md t18, the aliasing table): the shared row is the
+// transport-blind total, so a walk over every refusal row reads the shared
+// row and leaves these out, or it counts one event twice. IOCP_RECEIVE_DROPPED
+// is not one of them: it also counts full-bank and failed receives, which
+// iocp does not yet feed to a shared row.
+
+inline bool rocketnet_counter_aliases_shared_row( int counter )
+{
+    switch ( counter )
+    {
+        case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE:
+        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE:
+        case ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT:
+        case ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE:
+        case ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_SIZE:
+        case ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT:
+        case ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE:
+        case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_OVERFLOW:
+        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW:
+        case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE:
+        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE:
+        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER:
+        case ROCKETNET_COUNTER_RIO_RECEIVE_FAILED:
+        case ROCKETNET_COUNTER_GSO_SEND_DROPPED:
+        case ROCKETNET_COUNTER_URING_SEND_DROPPED:
+        case ROCKETNET_COUNTER_IOCP_SEND_FAILED:
+        case ROCKETNET_COUNTER_RIO_SEND_FAILED:
+        case ROCKETNET_COUNTER_RIO_SEND_FULL:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // The clean-run rule: every REFUSAL counter reads 0 on a clean path. Returns
 // the number of refusal counters that moved, and writes one line per counter
 // into report (NULL for none). A caller whose run injects a fault lists the
@@ -203,7 +239,8 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
 
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
-        if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || counters->values[i] == 0 )
+        if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || counters->values[i] == 0 ||
+             rocketnet_counter_aliases_shared_row( i ) )
         {
             continue;
         }
@@ -234,6 +271,14 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
 
     if ( report && report_bytes > 0 )
     {
+#if ROCKETNET_DEV
+        // the first refused datagrams (sdk/rocketnet_receive_prefilter.h), so a
+        // refusal that should not have moved names its source in the log
+        if ( moved )
+        {
+            lines += rocketnet_receive_drop_samples_text();
+        }
+#endif // #if ROCKETNET_DEV
         snprintf( report, (size_t) report_bytes, "%s", moved ? ( std::string( "refusals moved on a run that should be clean:\n" ) + lines ).c_str() : "" );
     }
 

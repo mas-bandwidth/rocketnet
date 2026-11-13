@@ -29,6 +29,7 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #include "rocketnet_server_iocp.h"
+#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_server_rio.h"
 
 #define NOMINMAX
@@ -334,6 +335,14 @@ static uint64_t windows_socket_errors_refusals( const struct rocketnet_counters_
 
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
+        // the transports' own rows (GSO_ through RIO_) are the transport's
+        // counts, which windows_socket_errors_transport_drops reads; summed
+        // here as well they would count each of those drops twice
+
+        if ( ( i >= ROCKETNET_COUNTER_GSO_PACKETS_SENT && i <= ROCKETNET_COUNTER_RIO_COMMITS ) || i == ROCKETNET_COUNTER_IOCP_PIN_REFUSALS )
+        {
+            continue;
+        }
         if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL )
         {
             sum += rocketnet_counter_value( counters, i );
@@ -349,28 +358,31 @@ static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_ses
 
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
-        uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
-        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) instance, counters );
+        // Every datagram IOCP drops reaches a public refusal counter: sizes
+        // and the completion worker's prefilter reasons, BANK_FULL and
+        // RECEIVE_FAILED through receive_drop_totals. Its own RECEIVE_DROPPED
+        // counts the same datagrams again for its direct readers, so what it
+        // counts beyond the public reasons is the transport's own drop: read
+        // by value from the transport's rows.
 
-        // Size drops now also enter the server's public prefilter counters.
-        // Keep this aggregate one event per datagram while retaining the
-        // transport's legacy RECEIVE_DROPPED total for its direct readers.
-
-        return counters[ROCKETNET_IOCP_RECEIVE_DROPPED] -
-               counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] -
-               counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+        uint64_t transport_rows[ROCKETNET_NUM_COUNTERS] = {};
+        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) instance, transport_rows );
+        const struct rocketnet_counters_t * public_counters = rocketnet_server_transport_counters( session->server );
+        uint64_t public_drops = 0;
+        for ( int drop = ROCKETNET_RECEIVE_ACCEPT + 1; drop < ROCKETNET_RECEIVE_NUM_DROPS; ++drop )
+        {
+            int reasons[ROCKETNET_RECEIVE_DROP_MAX_COUNTERS];
+            const int num_reasons = rocketnet_receive_drop_counters( (enum rocketnet_receive_drop_t) drop, reasons );
+            public_drops += num_reasons > 0 ? rocketnet_counter_value( public_counters, reasons[num_reasons - 1] ) : 0;
+        }
+        const uint64_t dropped = transport_rows[ROCKETNET_COUNTER_IOCP_RECEIVE_DROPPED];
+        return dropped > public_drops ? dropped - public_drops : 0;
     }
 
-    if ( strcmp( session->transport.transport, "rio" ) == 0 )
-    {
-        uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
-        rocketnet_server_rio_counters( (rocketnet_server_rio_t *) instance, counters );
-
-        // RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above;
-        // failed completions are still transport-only drops.
-
-        return counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED];
-    }
+    // rio: RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above,
+    // and its failed completions and full-bank drops reach the server's own
+    // RECEIVE_FAILED and RECEIVE_DROPPED_FULL through the backend's
+    // receive_drop_totals, so the refusals above count every rio drop once
 
     return 0;
 }
@@ -832,6 +844,66 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
 
     rocketnet_platform_socket_destroy( socket );
 }
+
+#if ROCKETNET_DEV
+// The rio backend's failed receive completions reach the server's own
+// RECEIVE_FAILED through its receive_drop_totals, one for one with the
+// transport's RIO_RECEIVE_FAILED at the same site; nothing reads as a full
+// bank: rio never drops for one.
+static void windows_server_rio_failed_receives_reach_the_server_case()
+{
+    windows_socket_errors_transport_t transport = { "rio", false };
+    windows_socket_errors_session_t session;
+    windows_socket_errors_session_start( &session, &transport );
+
+    rocketnet_server_rio_t * rio = (rocketnet_server_rio_t *) rocketnet_server_transport_io_name_for_testing( session.server );
+    uint64_t rio_before[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, rio_before );
+    const struct rocketnet_counters_t before = *rocketnet_server_transport_counters( session.server );
+
+    const int failures = 5;
+    rocketnet_server_rio_test_fail_next( rio, ROCKETNET_RIO_TEST_FAULT_RECEIVE_COMPLETION, failures, WSAENOBUFS );
+
+    std::vector<windows_socket_errors_datagram_t> datagrams( (size_t) failures );
+    for ( size_t i = 0; i < datagrams.size(); i++ )
+    {
+        datagrams[i].bytes.resize( 64, 0x5a );
+    }
+    windows_socket_errors_inject( &session, rocketnet_server_transport_port( session.server ), datagrams );
+
+    uint64_t failed = 0;
+    const double drain = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - drain < 5.0 )
+    {
+        windows_socket_errors_tick( &session );
+        failed = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), ROCKETNET_COUNTER_RECEIVE_FAILED ) -
+                 rocketnet_counter_value( &before, ROCKETNET_COUNTER_RECEIVE_FAILED );
+        if ( failed == (uint64_t) failures )
+        {
+            break;
+        }
+    }
+
+    const struct rocketnet_counters_t after = *rocketnet_server_transport_counters( session.server );
+    uint64_t rio_after[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, rio_after );
+
+    const uint64_t rio_failed = rio_after[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED] - rio_before[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED];
+    const uint64_t full = rocketnet_counter_value( &after, ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL ) -
+                          rocketnet_counter_value( &before, ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL );
+
+    printf( "windows_server_rio_failed_receives_reach_the_server: failed %llu at the server, %llu at the transport; full %llu at the server\n",
+            (unsigned long long) failed, (unsigned long long) rio_failed, (unsigned long long) full );
+    fflush( stdout );
+
+    windows_socket_errors_require( failed == (uint64_t) failures );
+    windows_socket_errors_require( rio_failed == (uint64_t) failures );
+    windows_socket_errors_require( full == 0 );
+    windows_socket_errors_session_finish( &session );
+}
+
+void windows_server_rio_failed_receives_reach_the_server() { windows_server_rio_failed_receives_reach_the_server_case(); }
+#endif // #if ROCKETNET_DEV
 
 #define WINDOWS_SOCKET_ERRORS_CASES( name )                                                                     \
     void name##_portable_ipv4() { windows_socket_errors_transport_t t = { "portable", false }; name( &t ); }   \

@@ -8,19 +8,19 @@ that no workflow runs is unsupported, even if the code happens to build there.
 
 The table below is the whole claim. Each row names the workflow file and the
 runner's operating-system and architecture tokens. `tools/check_platform_policy.py`
-checks that each row is backed by the workflow it names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kernel/provisioning requirements, and host verification guide, and [docs/WINDOWS.md](WINDOWS.md) for the Windows build, transports, host requirements and verification.
+checks that each row is backed by the workflow it names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport list, kernel/provisioning requirements, and host verification guide, and [docs/WINDOWS.md](WINDOWS.md) for the Windows build, transports, host requirements and verification.
 
 ## The table
 
 | Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label | Per-commit functional |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Ubuntu 26.04 (Linux, CI) | x86_64 | GCC 15 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite (auto ladder — the fall, on Linux; RSS enforced) |
+| Ubuntu 26.04 (Linux, CI) | x86_64 | GCC 15 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite (automatic transport order — the fall, on Linux; RSS enforced) |
 | Ubuntu 26.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | build only: portable, gso, io_uring, xdp; run: no transport (byte cases, XDP filter as host C) | supported | .github/workflows/ci.yml | Linux, X64 | subset: Run the big-endian wire check; Run the byte vectors and the XDP filter cases on big-endian |
-| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite (auto ladder — the fall, on Linux; RSS enforced) |
+| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite (automatic transport order — the fall, on Linux; RSS enforced) |
 | [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | Windows, X64 | subset: Run happy_path |
 | Ubuntu 26.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 | - |
 | Ubuntu 26.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 | - |
-| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable (pinned), and the auto ladder's grant (gso built; io_uring and xdp not built) | nightly | .github/workflows/nightly-bigendian-system.yml | Linux, X64 | - |
+| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable (pinned), and the automatic transport order's grant (gso built; io_uring and xdp not built) | nightly | .github/workflows/nightly-bigendian-system.yml | Linux, X64 | - |
 | Ubuntu 24.04 LTS (Linux, container) | x86_64 | GCC 13 | build and unit suite: portable, gso, io_uring, xdp (libxdp 1.4) | nightly | .github/workflows/ci.yml | Linux, X64 | - |
 | Ubuntu 22.04 LTS (Linux, container) | x86_64 | GCC 11 | build and unit suite: portable, gso, xdp (libbpf 0.5); io_uring not built (liburing 2.1) | nightly | .github/workflows/ci.yml | Linux, X64 | - |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macOS, ARM64 | - |
@@ -119,7 +119,7 @@ What is built and tested on big-endian (s390x), and what is not.
 | `tools/bigendian/wire_check.cpp` and `test_sodium` under qemu-user | `ci.yml`, `big-endian` | every commit | the endian helpers, address parses, a same-host seal and open |
 | The standard's byte vectors, 59 cases, and 31 XDP filter cases (`tools/bigendian/run_byte_cases.sh`) | `ci.yml`, `big-endian`, qemu-user | every commit | a field written or read in host order that has a vector |
 | The XDP filter compiled as host C for s390x, 30 cases | `ci.yml`, `big-endian`, qemu-user; and `./bin/test` in the guest | every commit; nightly | a conversion in the XDP program that swaps whatever the byte order is |
-| `./bin/test`, `./bin/functional` (auto ladder, then portable pinned) | nightly guest | nightly | big-endian to big-endian behaviour of the rungs the guest grants |
+| `./bin/test`, `./bin/functional` (automatic transport order, then portable pinned) | nightly guest | nightly | big-endian to big-endian behaviour of the rungs the guest grants |
 | Cross-endian interoperability, three clients each way (`tools/bigendian/run_interop.sh`) | nightly guest against the x86-64 runner | nightly | a wire field in host order that has no vector |
 | `tools/check_byte_order.py` over sdk/ | `ci.yml`, lint | every commit | a fixed-direction swap or a host-order read of wire bytes, at review |
 
@@ -133,7 +133,7 @@ Not built or not run on big-endian:
   big-endian.
 - The io_uring rung: the guest installs no liburing, so it is not built there,
   and no transport runs under qemu-user (it reports on the emulator, not the
-  platform). gso runs only if the guest's auto ladder grants it.
+  platform). gso runs only if the guest's automatic transport order grants it.
 - A physical big-endian machine. Every big-endian run is emulated.
 - Local table hashes (never on the wire) pick different buckets on
   big-endian; nothing checks that a seeded IPv6 simulator run is identical

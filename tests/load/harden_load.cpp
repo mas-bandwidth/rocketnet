@@ -40,10 +40,20 @@
     rocketnet_message_single_finish and finish_packet), and main joins them
     before it writes the reliable and big messages through the message
     server and calls send_packets. Inbound messages from the clients are
-    verified the same way. Each
+    verified the same way. That frame, the main thread blocked through all
+    of networking, is --frame-shape blocking (the default), kept for
+    comparison. --frame-shape space runs space game's server frame
+    (harden_space_t below): the main thread does the first half of the
+    network update, the world update, then splits the second half off into
+    a task on --game-threads (space's ThreadPool over the vendored enkiTS)
+    that writes every player's messages as jobs and stages them through the
+    public API while the main thread runs to the end of its frame; they
+    leave at the next frame's send_packets. --world-ms and --game-load are a
+    stand-in game in either shape. Each
     second it prints "harden_tick:" (connected, frames, overruns past one
     frame, the work time per frame avg/p99/max split into update, receive,
-    write and send_packets, messages and packets per second, start refusals),
+    write and send_packets, the jobs' summed busy time per frame as
+    jobs_core_ms, messages and packets per second, start refusals),
     and each --sample-seconds a "harden_sample:" (fds, threads, resident
     bytes, library bytes and every nonzero counter): the long-run mode reads
     those against process_resources.h's flat rule, the nightly soak's method.
@@ -61,7 +71,7 @@
     every packet that client object ever received.
 
     THE HOSTILE LOAD. From --sockets sockets that are not players, at --pps
-    in total, a mix of --kinds: garbage (random bytes), prefixed (the
+    in total shared by --threads senders, a mix of --kinds: garbage (random bytes), prefixed (the
     published test filter's prefilter header, then random bytes, so it passes
     the prefilter and reaches the typed ladders), truncated (a valid header
     cut short), badsig (a connection request whose signature is random),
@@ -72,7 +82,11 @@
     counts what it sent per kind and every datagram the server sends back.
 
     Linux reads its kernel counters from /proc/net/snmp and the interface's
-    from /sys/class/net; elsewhere they print as unavailable.
+    from /sys/class/net; elsewhere they print as unavailable. With
+    --stray-table NAME a role also reads the host's stray counter (counter
+    "strays" in nftables table inet NAME, through sudo -n nft; scripts/harden-pair
+    installs it): the no-port UDP drops from hosts outside the cell, which the
+    host-wide NoPorts counts too.
 */
 
 #if defined( __linux__ ) && !defined( _GNU_SOURCE )
@@ -91,6 +105,8 @@
 #include "rocketnet_read_write.h"
 #include "tests/portable_crt.h"
 #include "tests/process_resources.h"
+#include "tests/load/thread_pool.h"
+#include "tests/load/harden_chain.h"
 
 #include <algorithm>
 #include <atomic>
@@ -109,6 +125,7 @@
 #if defined( _WIN32 )
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 typedef SOCKET harden_socket_t;
 #define HARDEN_INVALID_SOCKET INVALID_SOCKET
 #else
@@ -124,6 +141,7 @@ typedef int harden_socket_t;
 
 #if defined( __linux__ )
 #include <linux/if_ether.h>
+#include <pthread.h>
 #include <linux/if_packet.h>
 #include <net/if.h>
 #include <netinet/ip.h>
@@ -149,7 +167,7 @@ typedef int harden_socket_t;
 #define HARDEN_CHANNEL_BIG 2
 #define HARDEN_MAX_SIZES 16
 #define HARDEN_MAX_THREADS 64
-#define HARDEN_INPUT_BYTES 64
+#define HARDEN_INPUT_BYTES 256 // honest input: about 100-200 kbps a client
 #define HARDEN_INPUT_RELIABLE_BYTES 200
 #define HARDEN_COUNTER_SLOTS 512
 #define HARDEN_SLOT_PACKETS_SENT HARDEN_COUNTER_SLOTS
@@ -198,10 +216,13 @@ static uint64_t harden_mix64( uint64_t x )
     return x;
 }
 
-static uint8_t harden_pattern_byte( uint64_t client_id, uint32_t connection, uint32_t kind, uint32_t sequence, int i )
+// the pattern's word for the 8-byte block holding byte i: byte i is
+// (uint8_t) ( word >> ( 8 * ( i % 8 ) ) ). One mix a block, not a byte: the
+// writer runs on the server's main thread (or its jobs) inside the
+// measured frame, so its cost is kept to a fraction of the seal's
+static uint64_t harden_pattern_word( uint64_t client_id, uint32_t connection, uint32_t kind, uint32_t sequence, int block )
 {
-    const uint64_t word = harden_mix64( client_id ^ ( (uint64_t) connection << 40 ) ^ ( (uint64_t) kind << 56 ) ^ ( (uint64_t) sequence << 8 ) ^ (uint64_t) ( i / 8 ) );
-    return (uint8_t) ( word >> ( 8 * ( i % 8 ) ) );
+    return harden_mix64( client_id ^ ( (uint64_t) connection << 40 ) ^ ( (uint64_t) kind << 56 ) ^ ( (uint64_t) sequence << 8 ) ^ (uint64_t) block );
 }
 
 // ---------------------------------------------------------------- the message format
@@ -215,6 +236,26 @@ struct harden_message_t
     uint32_t bytes;
 };
 
+// --payload copy: every message's body is one pre-built pattern, copied in
+// behind the header, so the writer costs a memcpy (a game copying its own
+// state) instead of a pattern computed per message. The header still names
+// the client, connection, kind and sequence, and the receiver still checks
+// every byte, against the pre-built body. Both ends must use the same mode.
+// Set once, before any thread starts
+
+#define HARDEN_COPY_BODY_BYTES 65536
+
+static bool harden_payload_copy = false;
+static uint8_t harden_copy_body[HARDEN_COPY_BODY_BYTES];
+
+static void harden_copy_body_build()
+{
+    for ( int i = 0; i < HARDEN_COPY_BODY_BYTES; i++ )
+    {
+        harden_copy_body[i] = (uint8_t) ( harden_mix64( UINT64_C( 0x5eedc0de ) ^ (uint64_t) ( i / 8 ) ) >> ( 8 * ( i % 8 ) ) );
+    }
+}
+
 static void harden_write_message( uint8_t * p, int bytes, uint32_t kind, uint64_t client_id, uint32_t connection, uint32_t sequence )
 {
     uint8_t * cursor = p;
@@ -224,9 +265,19 @@ static void harden_write_message( uint8_t * p, int bytes, uint32_t kind, uint64_
     rocketnet_write_uint32( &cursor, connection );
     rocketnet_write_uint32( &cursor, sequence );
     rocketnet_write_uint32( &cursor, (uint32_t) bytes );
+    if ( harden_payload_copy )
+    {
+        memcpy( p + HARDEN_HEADER_BYTES, harden_copy_body + HARDEN_HEADER_BYTES, (size_t) ( bytes - HARDEN_HEADER_BYTES ) );
+        return;
+    }
+    uint64_t word = 0;
     for ( int i = HARDEN_HEADER_BYTES; i < bytes; i++ )
     {
-        p[i] = harden_pattern_byte( client_id, connection, kind, sequence, i );
+        if ( i == HARDEN_HEADER_BYTES || i % 8 == 0 )
+        {
+            word = harden_pattern_word( client_id, connection, kind, sequence, i / 8 );
+        }
+        p[i] = (uint8_t) ( word >> ( 8 * ( i % 8 ) ) );
     }
 }
 
@@ -249,9 +300,18 @@ static int harden_read_message( const uint8_t * p, int bytes, struct harden_mess
     {
         return 0;
     }
+    if ( harden_payload_copy )
+    {
+        return memcmp( p + HARDEN_HEADER_BYTES, harden_copy_body + HARDEN_HEADER_BYTES, (size_t) ( bytes - HARDEN_HEADER_BYTES ) ) == 0 ? 1 : 0;
+    }
+    uint64_t word = 0;
     for ( int i = HARDEN_HEADER_BYTES; i < bytes; i++ )
     {
-        if ( p[i] != harden_pattern_byte( out->client_id, out->connection, out->kind, out->sequence, i ) )
+        if ( i == HARDEN_HEADER_BYTES || i % 8 == 0 )
+        {
+            word = harden_pattern_word( out->client_id, out->connection, out->kind, out->sequence, i / 8 );
+        }
+        if ( p[i] != (uint8_t) ( word >> ( 8 * ( i % 8 ) ) ) )
         {
             return 0;
         }
@@ -372,6 +432,7 @@ struct harden_options_t
     std::string key_hex;
     std::string label;
     std::string dev;
+    std::string stray_table; // --stray-table NAME: the nftables table (inet NAME) whose counter "strays" counts this host's no-port UDP from outside the cell
     std::string kinds = "garbage,prefixed,truncated,badsig,expired,reqreplay";
     std::string capture_dev;
     int max_clients = 1000;
@@ -384,10 +445,23 @@ struct harden_options_t
     int churn_clients = 0;
     double churn_rate = 0.0;
     int messages = 1;
+    int input_bytes = HARDEN_INPUT_BYTES; // --input-bytes N: each player's unreliable input message a tick (honest input: about 300 B a tick, 100-200 kbps)
+    std::string load;         // --load peak|average|custom: space game's real server-to-client load (see harden_apply_load); custom keeps the flags
     int base = 1;
     int burst = 15;
     int burst_clients = 0;
     int fill_jobs = 0;
+    bool space_shape = false; // --frame-shape space: space game's server frame (see harden_space_t)
+    int game_threads = 0;     // --game-threads N: the ThreadPool, N threads in all, the main thread first
+    int pin_first_cpu = -1;   // --pin-first-cpu C: the main thread on core C, game thread i on C + i
+    double world_ms = 2.0;    // --world-ms: the main thread's own share of the stand-in world update
+    double game_load = 0.5;   // --game-load F: stand-in game jobs, F of each game thread per frame
+    // departures from space's frame, one at a time (SPACE-FRAME-SHAPE.md "Departures"); the defaults are space exact
+    bool space_send_wide = false;   // --space-send wide: the player jobs start and finish each client's messages themselves (no serial commit)
+    bool space_update_split = false; // --space-update split: update_receive, update_client over client ranges as jobs, update_finish
+    bool space_net_in_task = false;  // --space-net task: send_packets and the update run at the end of the split-off task, not in the first half
+    bool space_split_top = false;    // --space-split top: the network task is split off at the top of the frame, before the world update, and runs in parallel with it
+    bool payload_copy = false;
     int sizes[HARDEN_MAX_SIZES] = { 1200, 1200, 1200, 1100, 900, 600, 300 };
     int num_sizes = 7;
     int reliable_every = 1;
@@ -402,12 +476,44 @@ struct harden_options_t
     double pps = 100000.0;
     int sockets = 64;
     int warm_seconds = 60;
+    double profile_after = 0.0;
+    double profile_seconds = 0.0;
+    std::string profile_out = "profile.txt";
     std::string logs;
     int netem_duplicates = 0;
-    int frame_p99_us = 12000;
+    int frame_p99_us = 5000; // rocketnet's share of a 60 Hz game frame: the rest of the game runs in it too
     double min_delivery = 99.9;
     uint64_t protocol_id = HARDEN_PROTOCOL_ID;
 };
+
+// space game's real load: the game state as unreliable messages
+// of about one MTU (one message = one packet), 15 a client a tick at the peak
+// (about 10 Mb/s a client, 10 Gb/s server-wide) and 8 on average (5 to 6 Mb/s);
+// no large messages; reliable only as a trickle, one small message a client
+// every 3 seconds. The input each client sends is --input-bytes (256 B a tick).
+static bool harden_apply_load( harden_options_t * o, const char * v )
+{
+    if ( strcmp( v, "peak" ) == 0 || strcmp( v, "average" ) == 0 )
+    {
+        o->load = v;
+        o->base = strcmp( v, "peak" ) == 0 ? 15 : 8;
+        o->burst = 0;
+        o->burst_clients = 0;
+        o->sizes[0] = 1200;
+        o->num_sizes = 1;
+        o->reliable_every = 180;
+        o->reliable_bytes = 100;
+        o->big_every = 0;
+        return true;
+    }
+    if ( strcmp( v, "custom" ) == 0 )
+    {
+        o->load = v;
+        return true;
+    }
+    fprintf( stderr, "harden_load: --load is peak, average or custom\n" );
+    return false;
+}
 
 static bool harden_parse_sizes( const char * text, harden_options_t * o )
 {
@@ -467,6 +573,24 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--dev" ) == 0 )
         {
             o->dev = v;
+        }
+        else if ( strcmp( a, "--stray-table" ) == 0 )
+        {
+            // read through a shell (sudo -n nft): a name of letters, digits and '_' only, at most 64
+            if ( strlen( v ) > 64 )
+            {
+                fprintf( stderr, "harden_load: --stray-table is at most 64 characters\n" );
+                return false;
+            }
+            for ( const char * c = v; *c; c++ )
+            {
+                if ( !( ( *c >= 'a' && *c <= 'z' ) || ( *c >= 'A' && *c <= 'Z' ) || ( *c >= '0' && *c <= '9' ) || *c == '_' ) )
+                {
+                    fprintf( stderr, "harden_load: --stray-table is letters, digits and '_'\n" );
+                    return false;
+                }
+            }
+            o->stray_table = v;
         }
         else if ( strcmp( a, "--kinds" ) == 0 )
         {
@@ -531,6 +655,93 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--fill-jobs" ) == 0 )
         {
             o->fill_jobs = atoi( v );
+        }
+        else if ( strcmp( a, "--frame-shape" ) == 0 )
+        {
+            if ( strcmp( v, "space" ) == 0 )
+            {
+                o->space_shape = true;
+            }
+            else if ( strcmp( v, "blocking" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --frame-shape is blocking or space\n" );
+                return false;
+            }
+        }
+        else if ( strcmp( a, "--game-threads" ) == 0 )
+        {
+            o->game_threads = atoi( v );
+        }
+        else if ( strcmp( a, "--pin-first-cpu" ) == 0 )
+        {
+            o->pin_first_cpu = atoi( v );
+        }
+        else if ( strcmp( a, "--world-ms" ) == 0 )
+        {
+            o->world_ms = atof( v );
+        }
+        else if ( strcmp( a, "--game-load" ) == 0 )
+        {
+            o->game_load = atof( v );
+        }
+        else if ( strcmp( a, "--space-send" ) == 0 )
+        {
+            o->space_send_wide = strcmp( v, "wide" ) == 0;
+            if ( !o->space_send_wide && strcmp( v, "serial" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --space-send is serial or wide\n" );
+                return false;
+            }
+        }
+        else if ( strcmp( a, "--load" ) == 0 )
+        {
+            if ( !harden_apply_load( o, v ) )
+            {
+                return false;
+            }
+        }
+        else if ( strcmp( a, "--space-update" ) == 0 )
+        {
+            o->space_update_split = strcmp( v, "split" ) == 0;
+            if ( !o->space_update_split && strcmp( v, "main" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --space-update is main or split\n" );
+                return false;
+            }
+        }
+        else if ( strcmp( a, "--space-net" ) == 0 )
+        {
+            o->space_net_in_task = strcmp( v, "task" ) == 0;
+            if ( !o->space_net_in_task && strcmp( v, "main" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --space-net is main or task\n" );
+                return false;
+            }
+        }
+        else if ( strcmp( a, "--space-split" ) == 0 )
+        {
+            o->space_split_top = strcmp( v, "top" ) == 0;
+            if ( !o->space_split_top && strcmp( v, "bottom" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --space-split is bottom (after the world update, space's order) or top\n" );
+                return false;
+            }
+        }
+        else if ( strcmp( a, "--input-bytes" ) == 0 )
+        {
+            o->input_bytes = atoi( v );
+        }
+        else if ( strcmp( a, "--payload" ) == 0 )
+        {
+            if ( strcmp( v, "copy" ) == 0 )
+            {
+                o->payload_copy = true;
+            }
+            else if ( strcmp( v, "pattern" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --payload is pattern or copy\n" );
+                return false;
+            }
         }
         else if ( strcmp( a, "--sizes" ) == 0 )
         {
@@ -608,20 +819,51 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         {
             o->warm_seconds = atoi( v );
         }
+        else if ( strcmp( a, "--profile-after" ) == 0 )
+        {
+            o->profile_after = atof( v );
+        }
+        else if ( strcmp( a, "--profile-seconds" ) == 0 )
+        {
+            o->profile_seconds = atof( v );
+        }
+        else if ( strcmp( a, "--profile-out" ) == 0 )
+        {
+            o->profile_out = v;
+        }
         else
         {
             fprintf( stderr, "harden_load: unknown option %s\n", a );
             return false;
         }
     }
+    if ( o->load.empty() && o->space_shape && !harden_apply_load( o, "peak" ) )
+    {
+        return false;
+    }
     if ( o->max_clients < 1 || o->clients < 0 || o->threads < 1 || o->threads > HARDEN_MAX_THREADS || o->seconds <= 0.0 || o->hz <= 0.0 ||
          o->join_rate <= 0.0 || o->churn_clients < 0 || o->churn_clients > o->clients || o->churn_rate < 0.0 || o->messages < 0 ||
-         o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->fill_jobs < 0 || o->fill_jobs > HARDEN_MAX_FILL_JOBS || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES ||
-         o->big_every < 0 || o->big_bytes < HARDEN_HEADER_BYTES || o->sample_seconds < 1 || o->quiet_seconds < 0.1 || o->token_timeout < 1 ||
-         o->pps < 0.0 || o->sockets < 1 || o->sockets > 4096 || o->warm_seconds < 0 )
+         o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->fill_jobs < 0 || o->fill_jobs > HARDEN_MAX_FILL_JOBS || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES || o->input_bytes < HARDEN_HEADER_BYTES || o->input_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 64 ||
+         o->big_every < 0 || o->big_bytes < HARDEN_HEADER_BYTES || ( o->payload_copy && o->big_bytes > HARDEN_COPY_BODY_BYTES ) || o->sample_seconds < 1 || o->quiet_seconds < 0.1 || o->token_timeout < 1 ||
+         o->pps < 0.0 || o->sockets < 1 || o->sockets > 4096 || o->warm_seconds < 0 || o->game_threads < 0 || o->game_threads > HARDEN_MAX_THREADS ||
+         ( o->space_shape && ( o->game_threads < 2 || o->fill_jobs > 0 || ( o->space_send_wide && o->big_every > 0 ) ) ) || o->world_ms < 0.0 || o->game_load < 0.0 || o->game_load > 1.0 )
     {
         fprintf( stderr, "harden_load: an option is out of range\n" );
         return false;
+    }
+    if ( o->payload_copy )
+    {
+        // --payload copy copies from one body of HARDEN_COPY_BODY_BYTES: every message size must fit in it
+        bool fits = o->reliable_bytes <= HARDEN_COPY_BODY_BYTES && o->input_bytes <= HARDEN_COPY_BODY_BYTES;
+        for ( int i = 0; i < o->num_sizes; i++ )
+        {
+            fits = fits && o->sizes[i] <= HARDEN_COPY_BODY_BYTES;
+        }
+        if ( !fits )
+        {
+            fprintf( stderr, "harden_load: --payload copy needs every message size (--sizes, --reliable-bytes, --input-bytes, --big-bytes) at most %d\n", HARDEN_COPY_BODY_BYTES );
+            return false;
+        }
     }
     return true;
 }
@@ -762,6 +1004,57 @@ static int64_t harden_sys_value( const char * dev, const char * name )
     }
     fclose( file );
     return (int64_t) v;
+#elif defined( _WIN32 )
+    // the adapter's own counters (what Get-NetAdapterStatistics reads), by interface alias or
+    // description: rx_dropped is its ReceivedDiscardedPackets, tx_dropped OutDiscards. The
+    // library is loaded by name so the tool links nothing new
+    typedef DWORD( WINAPI * get_if_table2_t )( MIB_IF_TABLE2 ** );
+    typedef VOID( WINAPI * free_mib_table_t )( PVOID );
+    const HMODULE iphlpapi = LoadLibraryA( "iphlpapi.dll" );
+    if ( !iphlpapi )
+    {
+        return -1;
+    }
+    const get_if_table2_t get_table = reinterpret_cast<get_if_table2_t>( reinterpret_cast<void *>( GetProcAddress( iphlpapi, "GetIfTable2" ) ) );
+    const free_mib_table_t free_table = reinterpret_cast<free_mib_table_t>( reinterpret_cast<void *>( GetProcAddress( iphlpapi, "FreeMibTable" ) ) );
+    int64_t value = -1;
+    MIB_IF_TABLE2 * table = NULL;
+    if ( get_table && free_table && get_table( &table ) == NO_ERROR && table )
+    {
+        std::wstring wide;
+        for ( const char * c = dev; *c; c++ )
+        {
+            wide.push_back( static_cast<wchar_t>( static_cast<unsigned char>( *c ) ) );
+        }
+        for ( ULONG i = 0; i < table->NumEntries; i++ )
+        {
+            const MIB_IF_ROW2 & row = table->Table[i];
+            if ( wide != row.Alias && wide != row.Description )
+            {
+                continue;
+            }
+            if ( strcmp( name, "rx_dropped" ) == 0 )
+            {
+                value = (int64_t) row.InDiscards;
+            }
+            else if ( strcmp( name, "tx_dropped" ) == 0 )
+            {
+                value = (int64_t) row.OutDiscards;
+            }
+            else if ( strcmp( name, "rx_packets" ) == 0 )
+            {
+                value = (int64_t) ( row.InUcastPkts + row.InNUcastPkts );
+            }
+            else if ( strcmp( name, "tx_packets" ) == 0 )
+            {
+                value = (int64_t) ( row.OutUcastPkts + row.OutNUcastPkts );
+            }
+            break;
+        }
+        free_table( table );
+    }
+    FreeLibrary( iphlpapi );
+    return value;
 #else
     (void) dev;
     (void) name;
@@ -860,11 +1153,55 @@ static harden_link_t harden_link_read( const std::string & dev )
     return l;
 }
 
+// the host's stray counter: the packets of counter "strays" in nftables table
+// inet <table>, which scripts/harden-pair installs on each Linux machine for
+// the cell. It counts the IPv4 UDP datagrams that arrive for a local address,
+// find no socket, and come from a host other than the cell's other end: the
+// no-port drops the kernel's NoPorts counts that are not the cell's (an
+// internet scanner on the machine's public address, for one). -1 when it
+// cannot be read (no table, no sudo, not Linux)
+
+static int64_t harden_strays_read( const std::string & table )
+{
+    int64_t packets = -1;
+#if defined( __linux__ )
+    if ( table.empty() )
+    {
+        return -1;
+    }
+    char command[256];
+    snprintf( command, sizeof( command ), "sudo -n nft list counter inet %s strays 2>/dev/null", table.c_str() );
+    FILE * pipe = popen( command, "r" );
+    if ( !pipe )
+    {
+        return -1;
+    }
+    char line[512];
+    while ( fgets( line, sizeof( line ), pipe ) )
+    {
+        const char * at = strstr( line, "packets " );
+        long long value = 0;
+        if ( at && packets < 0 && sscanf( at, "packets %lld", &value ) == 1 )
+        {
+            packets = (int64_t) value;
+        }
+    }
+    if ( pclose( pipe ) != 0 )
+    {
+        packets = -1;
+    }
+#else
+    (void) table;
+#endif // #if defined( __linux__ )
+    return packets;
+}
+
 // read once at the process's start, before any traffic of its own; the cut
 // prints every term as its change since then
 
 static harden_kernel_t harden_kernel_base;
 static harden_link_t harden_link_base;
+static int64_t harden_strays_base = -1;
 
 static void harden_print_cut_term( const char * role, const char * cut, const char * name, int64_t value )
 {
@@ -892,6 +1229,16 @@ static void harden_print_cut_network( const char * role, const char * cut, const
     harden_print_cut_term( role, cut, "ip_indiscards", k.ip_indiscards - b.ip_indiscards );
     harden_print_cut_term( role, cut, "ip_outrequests", k.ip_outrequests - b.ip_outrequests );
     harden_print_cut_term( role, cut, "ip_outdiscards", k.ip_outdiscards - b.ip_outdiscards );
+    if ( !o.stray_table.empty() )
+    {
+        // read after NoPorts here, and before it at the base: a stray landing
+        // between two reads is in the stray delta and not the NoPorts delta,
+        // which raises the chain's gap (a fail), never lowers it
+        const int64_t strays = harden_strays_read( o.stray_table );
+        const bool strays_read = strays >= 0 && harden_strays_base >= 0;
+        harden_print_cut_term( role, cut, "strays_read", strays_read ? 1 : 0 );
+        harden_print_cut_term( role, cut, "udp_noports_strays", strays_read ? strays - harden_strays_base : 0 );
+    }
     if ( !o.dev.empty() )
     {
         const harden_link_t l = harden_link_read( o.dev );
@@ -902,6 +1249,11 @@ static void harden_print_cut_network( const char * role, const char * cut, const
         harden_print_cut_term( role, cut, "dev_tx_dropped", l.tx_dropped - lb.tx_dropped );
         harden_print_cut_term( role, cut, "dev_rx_packets", l.rx_packets - lb.rx_packets );
         harden_print_cut_term( role, cut, "dev_rx_dropped", l.rx_dropped - lb.rx_dropped );
+#if defined( _WIN32 )
+        // the adapter's discard count is read over the cut's window, which includes the stop window after the cut's senders
+        // were frozen: the delta is the named drop, and the chain does not require it to close exactly
+        harden_print_cut_term( role, cut, "dev_rx_inexact", 1 );
+#endif // #if defined( _WIN32 )
         harden_print_cut_term( role, cut, "nic_pps_allowance", l.pps_allowance - lb.pps_allowance );
         harden_print_cut_term( role, cut, "nic_bw_in_allowance", l.bw_in_allowance - lb.bw_in_allowance );
         harden_print_cut_term( role, cut, "nic_bw_out_allowance", l.bw_out_allowance - lb.bw_out_allowance );
@@ -1050,9 +1402,25 @@ struct harden_frame_window_t
 {
     std::vector<double> work;
     double update_sum = 0, receive_sum = 0, write_sum = 0, send_sum = 0;
+    double update_core_sum = 0;                    // the update's seconds on the main thread's own core: with --space-update split its serial calls only (the range jobs count themselves in net_thread), the wall time otherwise
     double update_max = 0, receive_max = 0, write_max = 0, send_max = 0;
     uint64_t frames = 0, overruns = 0;
     uint64_t messages = 0, start_refused = 0, received = 0;
+    double jobs_busy_sum = 0; // core seconds the jobs spent, summed over the jobs
+    // the space frame shape (and the stand-in game in either shape)
+    double join_sum = 0, join_max = 0;             // the main thread blocked at the join
+    double task_sum = 0, task_max = 0;             // the split-off task, start to end
+    double task_core_sum = 0, task_core_max = 0;   // core seconds of rocketnet's work on the game threads: write jobs + commit
+    double commit_sum = 0, commit_max = 0;         // the commit inside the task: start/finish per staged message
+    double latency_sum = 0, latency_max = 0;       // a frame's packets: built from the state to sent by send_packets
+    uint64_t latency_frames = 0, task_frames = 0, task_late = 0;
+    double input_age_sum = 0, input_age_max = 0;   // --space-net task: from the task's update finishing to the main thread handing those inputs to the world update
+    uint64_t input_age_frames = 0;
+    double game_core_sum = 0;                      // core seconds the stand-in game jobs ran
+    double world_sum = 0, world_max = 0;           // the main thread's world update, its own share plus the game jobs it waits on
+    double task_send_sum = 0, task_update_sum = 0, task_update_max = 0; // --space-net task: the task's send_packets and update (serial part)
+    double net_thread[HARDEN_MAX_THREADS] = {};    // rocketnet's work by thread index (0 = the main thread's part in jobs)
+    double range_thread[HARDEN_MAX_THREADS] = {};  // the part of it in range jobs (writes, update_client): no serial walk
 };
 
 static double harden_percentile( std::vector<double> & v, double p )
@@ -1099,6 +1467,7 @@ struct harden_fill_job_t
     alignas( 64 ) uint64_t messages = 0;
     uint64_t start_refused = 0;
     uint64_t finish_refused = 0;
+    double busy = 0.0; // seconds inside the fill range: the core time the game gives up to the job
 };
 
 struct harden_fill_pool_t
@@ -1125,6 +1494,7 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
     const int num_jobs = (int) pool->jobs.size();
     const int begin = (int) ( (int64_t) plan.size() * job / num_jobs );
     const int end = (int) ( (int64_t) plan.size() * ( job + 1 ) / num_jobs );
+    const double began = harden_now();
     for ( int k = begin; k < end; k++ )
     {
         const harden_fill_item_t & item = plan[(size_t) k];
@@ -1161,10 +1531,17 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
             stats.messages++;
         }
     }
+    stats.busy += harden_now() - began;
 }
 
 static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
 {
+#if defined( __linux__ )
+    // named, so a profile or ps -L finds the jobs
+    char name[16];
+    snprintf( name, sizeof( name ), "harden_fill%d", job );
+    pthread_setname_np( pthread_self(), name );
+#endif // #if defined( __linux__ )
     uint64_t seen = 0;
     for ( ;; )
     {
@@ -1190,7 +1567,7 @@ static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
     }
 }
 
-// one fill phase: wake every job on the plan and wait for all of them
+// run the plan once: wake every job on it and wait for all of them
 static void harden_fill_run( harden_fill_pool_t * pool, const std::vector<harden_fill_item_t> & plan )
 {
     std::unique_lock<std::mutex> lock( pool->mutex );
@@ -1216,6 +1593,328 @@ static void harden_fill_stop( harden_fill_pool_t * pool )
     pool->threads.clear();
 }
 
+// ---------------------------------------------------------------- the space frame shape
+//
+// --frame-shape space runs space game's server frame (Apps/Server/Server.cpp,
+// server_update_internal, at the framework import e3c684e; the record is
+// SPACE-FRAME-SHAPE.md), one step for each of its steps:
+//
+//   join (S:588-601)       the main thread waits for last frame's network task,
+//                          resets the pool, swaps the frame's buffers
+//   first half (S:603-641) on the main thread: send_packets (last frame's
+//                          staged packets leave), update, receive every batch
+//                          and copy the inputs into game state
+//   world (S:643-961)      on the main thread, going wide on the game threads:
+//                          the reliable messages and a second send_packets
+//                          (S:678-712), the main thread's own world work
+//                          (--world-ms), the stand-in game jobs it waits on
+//                          (--game-load), the state record (S:811-822): the frame's
+//                          player plan, into its slot of the frame ring
+//   split (S:963-971)      AddTask( the network task, this frame's plan ); the
+//                          main thread carries on to the end of its frame
+//   the task (S:91-127)    writes every player's packets as jobs across all
+//                          the game threads into the game's own staging
+//                          (PacketWriter WritePlayerPackets), waits for them,
+//                          then stages each through rocketnet
+//                          (start_message/finish_message, PacketWriter
+//                          SendPackets). Space also builds baseline, delta and
+//                          explosion packets between the add and the wait; the
+//                          load test has none
+//   the tail (S:1313-1369) the main thread paces to the frame edge
+//
+// The packets a frame stages leave at the next frame's send_packets: one
+// frame of send latency, the price the owner accepts. The task is the
+// server's only user from the split to the join (Server.cpp's comment at
+// S:97-101), so this is the public API one thread at a time. Unlike space's
+// loop, the per-second report reads the server after the join, not in the
+// tail beside the task (S:1266-1309 read it beside the task).
+
+struct harden_stage_t
+{
+    std::vector<uint8_t> data; // the player's messages this frame, back to back: game memory, not the library's
+    int lengths[HARDEN_MAX_SIZES * 8] = {};
+    int count = 0;
+};
+
+#define HARDEN_SPACE_RING 2 // the frame ring of plans (space's state records: frame % 128)
+
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 ) // the cache-line aligned counters pad their struct: the padding is the point
+#endif // #if defined( _MSC_VER )
+struct harden_space_t
+{
+    ThreadPool pool;
+    struct rocketnet_server_t * server = NULL;
+    const harden_options_t * o = NULL;
+    std::vector<harden_server_slot_t> * slots = NULL;
+    std::vector<harden_fill_item_t> plans[HARDEN_SPACE_RING];
+    const std::vector<harden_fill_item_t> * plan = NULL; // the task's frame
+    std::vector<harden_stage_t> stage;
+    Task * task = NULL;
+    // written by the task, read by the main thread after the join
+    double task_began = 0, task_ended = 0, commit_seconds = 0;
+    uint64_t messages = 0, refused = 0;
+    uint64_t tick = 0; // the frame the task writes, for the reliable trickle each job writes with its own players
+    struct alignas( 64 ) busy_t
+    {
+        double seconds = 0;
+    };
+    busy_t write_busy[HARDEN_MAX_THREADS]; // by enkiTS thread index: one writer per entry
+    busy_t game_busy[HARDEN_MAX_THREADS];
+    // every piece of rocketnet's work (and the packet writing) by thread
+    // index, 0 the main thread: the even-spread report
+    busy_t net_busy[HARDEN_MAX_THREADS];
+    busy_t range_busy[HARDEN_MAX_THREADS]; // net_busy's range-job part
+    struct alignas( 64 ) count_t
+    {
+        uint64_t count = 0;
+    };
+    count_t wide_messages[HARDEN_MAX_THREADS]; // --space-send wide: messages each thread queued
+    count_t wide_refused[HARDEN_MAX_THREADS];
+    double game_item_seconds = 0;
+    double task_update_seconds = 0, task_send_seconds = 0; // --space-net task: the task's send_packets and update
+    double task_sent_at = 0;                               // --space-net task: when the task's send_packets began
+    double update_done_at = 0;                             // --space-net task: when the task's update finished (the batch the next receive reads)
+};
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
+
+// the per-client part of the server update, over a range of client slots:
+// a plain range call any job system can make (rocketnet_server_update_client)
+static void harden_space_update_clients( platform_task_args_t * args )
+{
+    harden_space_t * space = (harden_space_t *) args->data;
+    const double began = harden_now();
+    for ( int i = args->start; i < args->finish; i++ )
+    {
+        (void) rocketnet_server_update_client( space->server, i );
+    }
+    space->net_busy[args->thread_index].seconds += harden_now() - began;
+    space->range_busy[args->thread_index].seconds += harden_now() - began;
+}
+
+// the server update, whole or split into receive, the client range jobs and
+// finish. Returns the seconds the calling thread spent in its own serial part
+// (the whole update, or receive plus finish); the jobs count their own
+static double harden_space_update( harden_space_t * space, double time )
+{
+    const double began = harden_now();
+    if ( !space->o->space_update_split )
+    {
+        rocketnet_server_update( space->server, time );
+        return harden_now() - began;
+    }
+    rocketnet_server_update_receive( space->server, time );
+    const double received = harden_now();
+    Task * clients = space->pool.AddTask( harden_space_update_clients, space, space->o->max_clients );
+    if ( clients )
+    {
+        clients->Wait();
+    }
+    const double finishing = harden_now();
+    rocketnet_server_update_finish( space->server );
+    return ( received - began ) + ( harden_now() - finishing );
+}
+
+static void harden_spin_for( double seconds )
+{
+    const double until = harden_now() + seconds;
+    while ( harden_now() < until )
+    {
+    }
+}
+
+// PacketWriter's WritePlayerPacketThreadFunction: a range of players, each
+// written into its own staging, nothing of the library's touched
+static void harden_space_write_players( platform_task_args_t * args )
+{
+    harden_space_t * space = (harden_space_t *) args->data;
+    const harden_options_t & o = *space->o;
+    const std::vector<harden_fill_item_t> & plan = *space->plan;
+    const double began = harden_now();
+    if ( o.space_send_wide )
+    {
+        // departure 1 (wide): each job starts and finishes its own players'
+        // messages, the packet built and sealed on this thread; no staging,
+        // no serial commit. A refusal ends that player's frame, so its
+        // sequences stay contiguous
+        uint64_t messages = 0, refused = 0;
+        for ( int k = args->start; k < args->finish; k++ )
+        {
+            const harden_fill_item_t & item = plan[(size_t) k];
+            harden_server_slot_t & slot = ( *space->slots )[(size_t) item.slot];
+            if ( o.reliable_every > 0 && space->tick % (uint64_t) o.reliable_every == 0 )
+            {
+                // the reliable trickle: written here, by the thread that owns this player this frame, because the
+                // library gives a player to one thread at a time (the main thread writing it first refuses the jobs' writes)
+                uint8_t * r = rocketnet_server_start_message( space->server, (uint64_t) item.slot, HARDEN_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.reliable_bytes );
+                if ( r )
+                {
+                    harden_write_message( r, o.reliable_bytes, HARDEN_KIND_RELIABLE, item.client_id, item.connection, slot.next[HARDEN_KIND_RELIABLE]++ );
+                    if ( rocketnet_server_finish_client_message( space->server, item.slot, o.reliable_bytes ) != 0 )
+                    {
+                        messages++;
+                    }
+                }
+                else
+                {
+                    refused++;
+                }
+            }
+            for ( int n = 0; n < item.count; n++ )
+            {
+                const uint32_t sequence = slot.next[HARDEN_KIND_BURST];
+                const int bytes = o.sizes[sequence % (uint32_t) o.num_sizes];
+                uint8_t * p = rocketnet_server_start_message( space->server, (uint64_t) item.slot, HARDEN_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+                if ( !p )
+                {
+                    refused += (uint64_t) ( item.count - n );
+                    break;
+                }
+                harden_write_message( p, bytes, HARDEN_KIND_BURST, item.client_id, item.connection, sequence );
+                if ( rocketnet_server_finish_client_message( space->server, item.slot, bytes ) == 0 )
+                {
+                    refused += (uint64_t) ( item.count - n );
+                    break;
+                }
+                slot.next[HARDEN_KIND_BURST]++;
+                messages++;
+            }
+        }
+        space->wide_messages[args->thread_index].count += messages;
+        space->wide_refused[args->thread_index].count += refused;
+        space->net_busy[args->thread_index].seconds += harden_now() - began;
+        space->range_busy[args->thread_index].seconds += harden_now() - began;
+        return;
+    }
+    for ( int k = args->start; k < args->finish; k++ )
+    {
+        const harden_fill_item_t & item = plan[(size_t) k];
+        const harden_server_slot_t & slot = ( *space->slots )[(size_t) item.slot];
+        harden_stage_t & stage = space->stage[(size_t) item.slot];
+        size_t offset = 0;
+        stage.count = 0;
+        for ( int n = 0; n < item.count && n < (int) ( sizeof( stage.lengths ) / sizeof( stage.lengths[0] ) ); n++ )
+        {
+            const uint32_t sequence = slot.next[HARDEN_KIND_BURST] + (uint32_t) n;
+            const int bytes = o.sizes[sequence % (uint32_t) o.num_sizes];
+            harden_write_message( stage.data.data() + offset, bytes, HARDEN_KIND_BURST, item.client_id, item.connection, sequence );
+            stage.lengths[n] = bytes;
+            stage.count++;
+            offset += (size_t) bytes;
+        }
+    }
+    space->write_busy[args->thread_index].seconds += harden_now() - began;
+    space->net_busy[args->thread_index].seconds += harden_now() - began;
+    space->range_busy[args->thread_index].seconds += harden_now() - began;
+}
+
+// the network task, space's AsyncThreadFunction
+static void harden_space_task( platform_task_args_t * args )
+{
+    harden_space_t * space = (harden_space_t *) args->data;
+    space->task_began = harden_now();
+    Task * players = space->plan->empty() ? NULL : space->pool.AddTask( harden_space_write_players, space, (int) space->plan->size() );
+    if ( players )
+    {
+        players->Wait();
+    }
+    // PacketWriter SendPackets: every staged packet committed on this thread,
+    // the server's only user until the next frame joins this task
+    const double commit_began = harden_now();
+    for ( const harden_fill_item_t & item : *space->plan )
+    {
+        if ( space->o->space_send_wide )
+        {
+            break; // the jobs queued every message themselves
+        }
+        harden_server_slot_t & slot = ( *space->slots )[(size_t) item.slot];
+        const harden_stage_t & stage = space->stage[(size_t) item.slot];
+        size_t offset = 0;
+        for ( int n = 0; n < stage.count; n++ )
+        {
+            const int bytes = stage.lengths[n];
+            uint8_t * p = rocketnet_server_start_message( space->server, (uint64_t) item.slot, HARDEN_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+            if ( !p )
+            {
+                // the rest of this player's frame is dropped, so its sequences stay contiguous
+                space->refused += (uint64_t) ( stage.count - n );
+                break;
+            }
+            memcpy( p, stage.data.data() + offset, (size_t) bytes );
+            rocketnet_server_finish_message( space->server, bytes );
+            slot.next[HARDEN_KIND_BURST]++;
+            space->messages++;
+            offset += (size_t) bytes;
+        }
+    }
+    const double committed = harden_now();
+    space->commit_seconds = committed - commit_began;
+    space->net_busy[args->thread_index].seconds += committed - commit_began;
+    if ( space->o->space_net_in_task )
+    {
+        // departure 3: the frame's packets leave now, and the next frame's
+        // update runs here too, so the main thread's first half is the read
+        // of what this update received
+        space->task_sent_at = committed;
+        rocketnet_server_send_packets( space->server );
+        const double sent = harden_now();
+        space->task_send_seconds = sent - committed;
+        const double serial = harden_space_update( space, sent );
+        space->task_update_seconds = serial;
+        space->update_done_at = harden_now();
+        space->net_busy[args->thread_index].seconds += ( sent - committed ) + serial;
+    }
+    space->task_ended = harden_now();
+}
+
+// the stand-in game: jobs that each hold a core for a slice of the frame
+static void harden_game_job( platform_task_args_t * args )
+{
+    harden_space_t * space = (harden_space_t *) args->data;
+    const double began = harden_now();
+    for ( int k = args->start; k < args->finish; k++ )
+    {
+        harden_spin_for( space->game_item_seconds );
+    }
+    space->game_busy[args->thread_index].seconds += harden_now() - began;
+}
+
+// the world update's stand-in, the same in both shapes: the game jobs are
+// handed to the game threads first and the main thread does its own share
+// while they run (as space's main thread does beside its object and collision
+// jobs), then waits for them: the update takes the longer of the two, not the
+// sum
+static void harden_world_update( harden_space_t * space, const harden_options_t & o )
+{
+    Task * game = NULL;
+    if ( o.game_load > 0.0 && space->pool.NumThreads() > 1 )
+    {
+        const int game_threads = space->pool.NumThreads() - 1;
+        const int items = 8 * space->pool.NumThreads();
+        space->game_item_seconds = o.game_load * ( 1.0 / o.hz ) * (double) game_threads / (double) items;
+        game = space->pool.AddTask( harden_game_job, space, items );
+    }
+    harden_spin_for( o.world_ms * 1e-3 );
+    if ( game )
+    {
+        game->Wait();
+    }
+}
+
+static double harden_space_take_busy( harden_space_t::busy_t * busy )
+{
+    double sum = 0;
+    for ( int i = 0; i < HARDEN_MAX_THREADS; i++ )
+    {
+        sum += busy[i].seconds;
+        busy[i].seconds = 0;
+    }
+    return sum;
+}
+
 static void harden_print_resources( const char * tag, double t, const process_resources_t & r )
 {
     printf( "harden_sample: tag=%s t=%.0f", tag, t );
@@ -1225,6 +1924,353 @@ static void harden_print_resources( const char * tag, double t, const process_re
     }
     printf( " library_bytes=%" PRId64, harden_library_bytes() );
 }
+
+// the server main thread's phase of the frame, for the profile to tag each
+// sample with: one relaxed store at each boundary the tick already times
+enum harden_main_phase_t
+{
+    HARDEN_MAIN_OTHER = 0,
+    HARDEN_MAIN_UPDATE,
+    HARDEN_MAIN_RECEIVE,
+    HARDEN_MAIN_WRITE,
+    HARDEN_MAIN_SEND,
+    HARDEN_MAIN_SLEEP,
+    HARDEN_MAIN_PHASES
+};
+
+static std::atomic<int> harden_main_phase{ HARDEN_MAIN_OTHER };
+
+// THE WINDOWS PROFILE (--profile-after A --profile-seconds S, Windows only):
+// the images the Windows rows run on carry no sampling profiler, so the
+// server samples itself. A seconds into the run a profiler thread lists the
+// process's threads with their start routines and CPU times, then for S
+// seconds stops the main thread about once a millisecond, reads its program
+// counter and lets it go; at the end it names each address through DbgHelp
+// (loaded at run time, so nothing links it) and writes --profile-out: every
+// thread's share of a core over the window with its start routine, and the
+// main thread's flat profile (the function each sample stopped in, as perf
+// report --no-children), whole and per phase of the frame (update, receive,
+// write, send, sleep, other), each sample tagged with the phase main was in.
+// Threads are listed with their creation time from the process's, so threads
+// that share a start routine (the transport's lane workers, made in lane
+// order) can be told apart. Each stop costs the main thread a few microseconds.
+#if defined( _WIN32 )
+#include <tlhelp32.h>
+#include <dbghelp.h>
+
+struct harden_profile_symbol_t
+{
+    SYMBOL_INFO info;
+    char name[512];
+};
+
+typedef LONG( NTAPI * harden_nt_query_thread_t )( HANDLE, int, PVOID, ULONG, PULONG );
+typedef DWORD( WINAPI * harden_sym_set_options_t )( DWORD );
+typedef BOOL( WINAPI * harden_sym_initialize_t )( HANDLE, PCSTR, BOOL );
+typedef BOOL( WINAPI * harden_sym_from_addr_t )( HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO );
+typedef BOOL( WINAPI * harden_sym_cleanup_t )( HANDLE );
+
+struct harden_profile_thread_t
+{
+    DWORD id = 0;
+    HANDLE handle = NULL;
+    uint64_t start_address = 0;
+    uint64_t cpu_start = 0;
+    uint64_t cpu_end = 0;
+    uint64_t created = 0; // 100 ns units since the process was created
+};
+
+static uint64_t harden_profile_filetime( const FILETIME & t )
+{
+    return ( (uint64_t) t.dwHighDateTime << 32 ) | t.dwLowDateTime;
+}
+
+static uint64_t harden_profile_created( HANDLE thread )
+{
+    FILETIME created, exited, kernel, user;
+    FILETIME process_created, process_exited, process_kernel, process_user;
+    if ( !GetThreadTimes( thread, &created, &exited, &kernel, &user ) ||
+         !GetProcessTimes( GetCurrentProcess(), &process_created, &process_exited, &process_kernel, &process_user ) )
+    {
+        return 0;
+    }
+    const uint64_t t = harden_profile_filetime( created );
+    const uint64_t p = harden_profile_filetime( process_created );
+    return t > p ? t - p : 0;
+}
+
+static uint64_t harden_profile_cpu( HANDLE thread )
+{
+    FILETIME created, exited, kernel, user;
+    if ( !GetThreadTimes( thread, &created, &exited, &kernel, &user ) )
+    {
+        return 0;
+    }
+    const uint64_t k = ( (uint64_t) kernel.dwHighDateTime << 32 ) | kernel.dwLowDateTime;
+    const uint64_t u = ( (uint64_t) user.dwHighDateTime << 32 ) | user.dwLowDateTime;
+    return k + u; // 100 ns units
+}
+
+static double harden_profile_clock()
+{
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter( &now );
+    QueryPerformanceFrequency( &frequency );
+    return (double) now.QuadPart / (double) frequency.QuadPart;
+}
+
+struct harden_profile_t
+{
+    double after = 0.0;
+    double seconds = 0.0;
+    std::string out;
+    DWORD main_id = 0;
+    std::atomic<bool> stop{ false };
+    std::thread thread;
+
+    ~harden_profile_t()
+    {
+        stop.store( true );
+        if ( thread.joinable() )
+        {
+            thread.join();
+        }
+    }
+};
+
+static void harden_profile_run( harden_profile_t * p )
+{
+    const double begun = harden_profile_clock();
+    while ( harden_profile_clock() - begun < p->after )
+    {
+        if ( p->stop.load() )
+        {
+            return;
+        }
+        Sleep( 50 );
+    }
+    FILE * f = rocketnet_test_fopen( p->out.c_str(), "w" );
+    if ( !f )
+    {
+        return;
+    }
+    const HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
+    const harden_nt_query_thread_t nt_query = ntdll ? reinterpret_cast<harden_nt_query_thread_t>( reinterpret_cast<void *>( GetProcAddress( ntdll, "NtQueryInformationThread" ) ) ) : NULL;
+
+    // every thread of this process but the profiler, with its start routine
+    std::vector<harden_profile_thread_t> threads;
+    HANDLE main_thread = NULL;
+    const HANDLE listing = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
+    if ( listing != INVALID_HANDLE_VALUE )
+    {
+        THREADENTRY32 entry;
+        entry.dwSize = sizeof( entry );
+        for ( BOOL more = Thread32First( listing, &entry ); more; more = Thread32Next( listing, &entry ) )
+        {
+            if ( entry.th32OwnerProcessID != GetCurrentProcessId() || entry.th32ThreadID == GetCurrentThreadId() )
+            {
+                continue;
+            }
+            harden_profile_thread_t t;
+            t.id = entry.th32ThreadID;
+            t.handle = OpenThread( THREAD_QUERY_INFORMATION | THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, t.id );
+            if ( !t.handle )
+            {
+                continue;
+            }
+            if ( nt_query )
+            {
+                PVOID start = NULL;
+                const int thread_query_set_win32_start_address = 9;
+                if ( nt_query( t.handle, thread_query_set_win32_start_address, &start, sizeof( start ), NULL ) == 0 )
+                {
+                    t.start_address = (uint64_t) (uintptr_t) start;
+                }
+            }
+            t.cpu_start = harden_profile_cpu( t.handle );
+            t.created = harden_profile_created( t.handle );
+            if ( t.id == p->main_id )
+            {
+                main_thread = t.handle;
+            }
+            threads.push_back( t );
+        }
+        CloseHandle( listing );
+    }
+
+    // the main thread's program counter, about once a millisecond, with the
+    // phase of the frame it was in
+    // the samples' room is reserved before the window, and nothing is allocated while the main thread is
+    // suspended (it may hold the heap lock): a full vector ends the sampling
+    std::vector<std::pair<int, uint64_t>> samples;
+    samples.reserve( (size_t) ( p->seconds * 1000.0 * 1.5 ) + 1024 );
+    const double window_start = harden_profile_clock();
+    double next = window_start;
+    while ( main_thread && samples.size() < samples.capacity() && harden_profile_clock() - window_start < p->seconds && !p->stop.load() )
+    {
+        while ( harden_profile_clock() < next )
+        {
+            // spin: Sleep() resolves to the timer tick, about 15.6 ms
+        }
+        next += 0.001;
+        if ( SuspendThread( main_thread ) == (DWORD) -1 )
+        {
+            break;
+        }
+        CONTEXT context;
+        memset( &context, 0, sizeof( context ) );
+        context.ContextFlags = CONTEXT_CONTROL;
+        const int phase = harden_main_phase.load( std::memory_order_relaxed );
+        uint64_t counter = 0;
+        const bool got = GetThreadContext( main_thread, &context ) != 0;
+        if ( got )
+        {
+#if defined( _M_ARM64 )
+            counter = (uint64_t) context.Pc;
+#else
+            counter = (uint64_t) context.Rip;
+#endif // #if defined( _M_ARM64 )
+        }
+        ResumeThread( main_thread );
+        if ( got )
+        {
+            samples.push_back( std::make_pair( phase, counter ) ); // within the reserved room: no allocation
+        }
+    }
+    const double window = harden_profile_clock() - window_start;
+    for ( harden_profile_thread_t & t : threads )
+    {
+        t.cpu_end = harden_profile_cpu( t.handle );
+    }
+
+    // names, through DbgHelp loaded at run time
+    harden_sym_from_addr_t sym_from_addr = NULL;
+    const HMODULE dbghelp = LoadLibraryW( L"dbghelp.dll" );
+    if ( dbghelp )
+    {
+        const harden_sym_set_options_t sym_set_options = reinterpret_cast<harden_sym_set_options_t>( reinterpret_cast<void *>( GetProcAddress( dbghelp, "SymSetOptions" ) ) );
+        const harden_sym_initialize_t sym_initialize = reinterpret_cast<harden_sym_initialize_t>( reinterpret_cast<void *>( GetProcAddress( dbghelp, "SymInitialize" ) ) );
+        sym_from_addr = reinterpret_cast<harden_sym_from_addr_t>( reinterpret_cast<void *>( GetProcAddress( dbghelp, "SymFromAddr" ) ) );
+        if ( sym_set_options && sym_initialize && sym_from_addr )
+        {
+            sym_set_options( 0x00000002 /* SYMOPT_UNDNAME */ | 0x00000004 /* SYMOPT_DEFERRED_LOADS */ );
+            if ( !sym_initialize( GetCurrentProcess(), NULL, TRUE ) )
+            {
+                sym_from_addr = NULL;
+            }
+        }
+        else
+        {
+            sym_from_addr = NULL;
+        }
+    }
+    auto name_of = [&]( uint64_t address ) -> std::string
+    {
+        if ( sym_from_addr && address )
+        {
+            harden_profile_symbol_t symbol;
+            memset( &symbol, 0, sizeof( symbol ) );
+            symbol.info.SizeOfStruct = sizeof( SYMBOL_INFO );
+            symbol.info.MaxNameLen = sizeof( symbol.name );
+            DWORD64 displacement = 0;
+            if ( sym_from_addr( GetCurrentProcess(), address, &displacement, &symbol.info ) )
+            {
+                return std::string( symbol.info.Name );
+            }
+        }
+        char hex[32];
+        snprintf( hex, sizeof( hex ), "0x%" PRIx64, address );
+        return std::string( hex );
+    };
+
+    std::sort( threads.begin(), threads.end(), []( const harden_profile_thread_t & a, const harden_profile_thread_t & b )
+               { return a.cpu_end - a.cpu_start > b.cpu_end - b.cpu_start; } );
+    fprintf( f, "harden_profile: window_seconds=%.2f main_samples=%zu threads=%zu symbols=%s\n", window, samples.size(), threads.size(), sym_from_addr ? "dbghelp" : "none" );
+    for ( const harden_profile_thread_t & t : threads )
+    {
+        const double share = window > 0.0 ? (double) ( t.cpu_end - t.cpu_start ) / ( window * 1.0e7 ) * 100.0 : 0.0;
+        fprintf( f, "harden_profile_thread: id=%lu cpu=%.1f%% main=%d created_ms=%.1f start=%s\n", (unsigned long) t.id, share, t.id == p->main_id ? 1 : 0, (double) t.created / 1.0e4,
+                 name_of( t.start_address ).c_str() );
+    }
+
+    // the flat profile of the samples in one phase (or every phase, -1)
+    const char * phase_names[HARDEN_MAIN_PHASES] = { "other", "update", "receive", "write", "send", "sleep" };
+    auto flat = [&]( int phase, std::vector<std::pair<std::string, int>> * counts ) -> int
+    {
+        std::vector<std::string> names;
+        names.reserve( samples.size() );
+        for ( const std::pair<int, uint64_t> & sample : samples )
+        {
+            if ( phase < 0 || sample.first == phase )
+            {
+                names.push_back( name_of( sample.second ) );
+            }
+        }
+        std::sort( names.begin(), names.end() );
+        for ( size_t i = 0; i < names.size(); )
+        {
+            size_t j = i;
+            while ( j < names.size() && names[j] == names[i] )
+            {
+                j++;
+            }
+            counts->push_back( std::make_pair( names[i], (int) ( j - i ) ) );
+            i = j;
+        }
+        std::sort( counts->begin(), counts->end(), []( const std::pair<std::string, int> & a, const std::pair<std::string, int> & b )
+                   { return a.second > b.second; } );
+        return (int) names.size();
+    };
+    for ( int phase = 0; phase < HARDEN_MAIN_PHASES; phase++ )
+    {
+        int n = 0;
+        for ( const std::pair<int, uint64_t> & sample : samples )
+        {
+            n += sample.first == phase ? 1 : 0;
+        }
+        fprintf( f, "harden_profile_phase: %s %.2f%% samples=%d\n", phase_names[phase], samples.empty() ? 0.0 : 100.0 * n / (double) samples.size(), n );
+    }
+    {
+        std::vector<std::pair<std::string, int>> counts;
+        const int n = flat( -1, &counts );
+        for ( size_t i = 0; i < counts.size() && i < 60; i++ )
+        {
+            fprintf( f, "harden_profile_main: %6.2f%% %s\n", n ? 100.0 * counts[i].second / (double) n : 0.0, counts[i].first.c_str() );
+        }
+    }
+    for ( int phase = HARDEN_MAIN_UPDATE; phase <= HARDEN_MAIN_SEND; phase++ )
+    {
+        std::vector<std::pair<std::string, int>> counts;
+        const int n = flat( phase, &counts );
+        for ( size_t i = 0; i < counts.size() && i < 30; i++ )
+        {
+            fprintf( f, "harden_profile_in: phase=%s %6.2f%% %s\n", phase_names[phase], n ? 100.0 * counts[i].second / (double) n : 0.0, counts[i].first.c_str() );
+        }
+    }
+    fclose( f );
+    for ( harden_profile_thread_t & t : threads )
+    {
+        CloseHandle( t.handle );
+    }
+
+    // give back what DbgHelp opened, and stay alive until the server ends:
+    // the resource judgement compares handles and threads from the
+    // post-warmup sample to the end, and the profile must not move either
+    if ( dbghelp )
+    {
+        const harden_sym_cleanup_t sym_cleanup = reinterpret_cast<harden_sym_cleanup_t>( reinterpret_cast<void *>( GetProcAddress( dbghelp, "SymCleanup" ) ) );
+        if ( sym_from_addr && sym_cleanup )
+        {
+            sym_cleanup( GetCurrentProcess() );
+        }
+        FreeLibrary( dbghelp );
+    }
+    while ( !p->stop.load() )
+    {
+        Sleep( 50 );
+    }
+}
+#endif // #if defined( _WIN32 )
 
 static int harden_server_main( const harden_options_t & o )
 {
@@ -1270,8 +2316,32 @@ static int harden_server_main( const harden_options_t & o )
     }
     char utc[32];
     harden_utc( utc, sizeof( utc ) );
-    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
-            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs,
+#if defined( _WIN32 )
+    harden_profile_t profile;
+    if ( o.profile_seconds > 0.0 )
+    {
+        profile.after = o.profile_after;
+        profile.seconds = o.profile_seconds;
+        profile.out = o.profile_out;
+        profile.main_id = GetCurrentThreadId();
+        profile.thread = std::thread( harden_profile_run, &profile );
+    }
+#else
+    if ( o.profile_seconds > 0.0 )
+    {
+        printf( "harden_profile: unavailable here (Windows only; perf samples Linux)\n" );
+    }
+#endif // #if defined( _WIN32 )
+    bool warm_touched = false;
+    // the soak's warm-up touch, before any player joins: run after the
+    // players are in, it stalled the main thread for seconds (a 0.7% loss)
+    {
+        const int64_t touched = process_resources_touch_all();
+        printf( "harden_sample: tag=touch bytes=%" PRId64 " before_join=1\n", touched );
+        warm_touched = true;
+    }
+    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d load=%s payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
+            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.load.empty() ? "blocking-default" : o.load.c_str(), o.payload_copy ? "copy" : "pattern",
             o.reliable_every, o.reliable_bytes, o.big_every, o.big_bytes );
     for ( int i = 0; i < o.num_sizes; i++ )
     {
@@ -1303,6 +2373,44 @@ static int harden_server_main( const harden_options_t & o )
         }
         plan.reserve( (size_t) o.max_clients );
     }
+    // the game's ThreadPool (space's), in either shape when --game-threads is set
+    harden_space_t space;
+    if ( o.game_threads > 0 )
+    {
+        space.pool.Initialize( o.game_threads, o.pin_first_cpu );
+        space.server = server;
+        space.o = &o;
+        space.slots = &slots;
+        int largest = 0;
+        for ( int i = 0; i < o.num_sizes; i++ )
+        {
+            largest = std::max( largest, o.sizes[i] );
+        }
+        const int most = std::max( o.base, o.burst );
+        space.stage.resize( (size_t) o.max_clients );
+        for ( harden_stage_t & s : space.stage )
+        {
+            s.data.resize( (size_t) ( most * largest ) );
+        }
+        for ( std::vector<harden_fill_item_t> & p : space.plans )
+        {
+            p.reserve( (size_t) o.max_clients );
+        }
+        printf( "harden_pool: shape=%s game_threads=%d first_cpu=%d pinned=%d realtime=%d world_ms=%.2f game_load=%.2f\n", o.space_shape ? "space" : "blocking", o.game_threads, o.pin_first_cpu,
+                harden_pin.pinned.load(), harden_pin.realtime.load(), o.world_ms, o.game_load );
+        // a setting the system refused is in the row (nothing prints when every setting held)
+        if ( harden_pin.pin_refused.load() > 0 || harden_pin.realtime_refused.load() > 0 )
+        {
+            printf( "harden_pool_refused: pin_refused=%d pin_error=%d realtime_refused=%d realtime_error=%d (error codes are errno, or GetLastError on Windows; priority is SCHED_FIFO max, or THREAD_PRIORITY_TIME_CRITICAL on Windows)\n",
+                    harden_pin.pin_refused.load(), harden_pin.pin_error.load(), harden_pin.realtime_refused.load(), harden_pin.realtime_error.load() );
+        }
+#if defined( __APPLE__ )
+        printf( "harden_pool_advisory: pinning is advisory on macOS: no hard CPU pinning; threads get QOS_CLASS_USER_INTERACTIVE and an affinity tag (pinned counts accepted tags, realtime counts QoS set; on macOS the pin_error is a kern_return_t)\n" );
+#endif // #if defined( __APPLE__ )
+        fflush( stdout );
+    }
+    double last_plan_time = 0.0; // space: when the frame the task staged was built from game state
+    double last_world_end = 0.0; // space: when the last world update finished (--space-split top: the state the task sends)
     harden_verify_t verify;
     harden_frame_window_t w;
     uint64_t total_messages = 0, total_start_refused = 0, total_frames = 0, total_overruns = 0;
@@ -1375,25 +2483,143 @@ static int harden_server_main( const harden_options_t & o )
             }
         }
     };
-    for ( ;; )
+    // the per-second report and the long-run samples. They read the server, so
+    // in the space shape they run after the join, never beside the task
+    auto report_and_sample = [&]() -> bool
     {
-        const double frame_start = harden_now();
-        const double wall = harden_wall();
-        if ( !draining && wall >= end_at )
+        const double t_now = harden_now();
+        if ( t_now - last_report >= 1.0 )
         {
-            draining = true;
-            harden_utc( utc, sizeof( utc ) );
-            printf( "harden_phase: role=server phase=writes_stop t=%.1f utc=%s\n", frame_start - started, utc );
+            struct rocketnet_server_stats_t stats;
+            rocketnet_server_stats( server, &stats );
+            const double span = t_now - last_report;
+            const double f = w.frames ? (double) w.frames : 1.0;
+            const uint64_t ring_full = transport ? rocketnet_counter_value( rocketnet_server_transport_counters( transport ), ROCKETNET_COUNTER_SEND_RING_FULL ) : 0;
+            std::vector<double> work_copy = w.work;
+            printf( "harden_tick: t=%.1f conn=%d frames=%" PRIu64 " overruns=%" PRIu64 " work_ms avg=%.3f p99=%.3f max=%.3f update=%.3f/%.3f receive=%.3f/%.3f write=%.3f/%.3f send=%.3f/%.3f"
+                    " jobs_core_ms=%.3f msgs_ps=%.0f pkts_ps=%.0f in_msgs_ps=%.0f start_refused=%" PRIu64 " send_ring_full_total=%" PRIu64 "\n",
+                    t_now - started, rocketnet_server_num_connected_clients( server ), w.frames, w.overruns,
+                    1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f, 1e3 * harden_percentile( work_copy, 0.99 ), 1e3 * harden_percentile( work_copy, 1.0 ),
+                    1e3 * w.update_sum / f, 1e3 * w.update_max, 1e3 * w.receive_sum / f, 1e3 * w.receive_max, 1e3 * w.write_sum / f, 1e3 * w.write_max,
+                    1e3 * w.send_sum / f, 1e3 * w.send_max, 1e3 * w.jobs_busy_sum / f, (double) w.messages / span, (double) ( stats.packets_sent - last_packets_sent ) / span,
+                    (double) w.received / span, w.start_refused, ring_full );
+            if ( o.game_threads > 0 )
+            {
+                // the frame as the game sees it: main_rn is what rocketnet takes from the
+                // main thread (work_ms above), task and task_core what it takes from the
+                // game threads, join what the main thread waits for it, latency a frame's
+                // packets from its game state to send_packets
+                const double tf = w.task_frames ? (double) w.task_frames : 1.0;
+                const double lf = w.latency_frames ? (double) w.latency_frames : 1.0;
+                const double frame_core_ms = 1e3 * step * (double) o.game_threads;
+                // all of rocketnet's core time a frame: what the main thread itself spends in its
+                // calls, plus every thread's network work (net_thread: the jobs, the serial send step
+                // and update on the thread that runs them, the main thread's part in jobs)
+                double net_all = 0.0;
+                for ( int i = 0; i < HARDEN_MAX_THREADS; i++ )
+                {
+                    net_all += w.net_thread[i];
+                }
+                const double rn_core_ms = 1e3 * ( w.update_core_sum + w.receive_sum + w.write_sum + w.send_sum + net_all ) / f;
+                printf( "harden_frame: t=%.1f shape=%s threads=%d pinned=%d realtime=%d main_rn_ms p99=%.3f max=%.3f join_ms avg=%.3f max=%.3f task_ms avg=%.3f max=%.3f late=%" PRIu64
+                        " task_core_ms avg=%.3f max=%.3f commit_ms avg=%.3f max=%.3f world_ms avg=%.3f max=%.3f game_core_ms=%.3f rn_core_ms=%.3f leftover_core_ms=%.3f latency_ms avg=%.3f max=%.3f input_age_ms avg=%.3f max=%.3f\n",
+                        t_now - started, o.space_shape ? "space" : "blocking", o.game_threads, harden_pin.pinned.load(), harden_pin.realtime.load(), 1e3 * harden_percentile( work_copy, 0.99 ),
+                        1e3 * harden_percentile( work_copy, 1.0 ), 1e3 * w.join_sum / f, 1e3 * w.join_max, 1e3 * w.task_sum / tf, 1e3 * w.task_max, w.task_late, 1e3 * w.task_core_sum / tf,
+                        1e3 * w.task_core_max, 1e3 * w.commit_sum / tf, 1e3 * w.commit_max, 1e3 * w.world_sum / f, 1e3 * w.world_max, 1e3 * w.game_core_sum / f, rn_core_ms,
+                        frame_core_ms - rn_core_ms - 1e3 * w.game_core_sum / f - o.world_ms, 1e3 * w.latency_sum / lf, 1e3 * w.latency_max, 1e3 * w.input_age_sum / ( w.input_age_frames ? (double) w.input_age_frames : 1.0 ),
+                        1e3 * w.input_age_max );
+                // one line per thread class: the main thread's network ms a frame
+                // (wall, rocketnet's calls and the waits inside them), each game
+                // thread's (busy in rocketnet's work), and main : mean game thread
+                double gmin = 1e30, gmax = 0.0, gsum = 0.0;
+                int gn = 0;
+                for ( int i = 1; i < o.game_threads && i < HARDEN_MAX_THREADS; i++ )
+                {
+                    const double v = 1e3 * w.net_thread[i] / f;
+                    gmin = std::min( gmin, v );
+                    gmax = std::max( gmax, v );
+                    gsum += v;
+                    gn++;
+                }
+                const double gmean = gn ? gsum / gn : 0.0;
+                // what each game thread has left of the frame: the frame, less its share of the game
+                // jobs (the load spread over the game threads), less its mean network work
+                const double game_per_thread_ms = gn ? 1e3 * w.game_core_sum / f / (double) gn : 0.0;
+                const double leftover_ms = 1e3 * step - game_per_thread_ms - gmean;
+                const double main_ms = 1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f;
+                printf( "harden_threads: t=%.1f send_mode=%s update_mode=%s net_mode=%s main_net_ms=%.3f main_in_jobs_ms=%.3f game_net_ms min=%.3f mean=%.3f max=%.3f ratio=%.3f"
+                        " task_send_ms=%.3f task_update_ms avg=%.3f max=%.3f leftover_ms=%.3f\n",
+                        t_now - started, o.space_send_wide ? "wide" : "serial", o.space_update_split ? "split" : "main", o.space_net_in_task ? "task" : "main", main_ms,
+                        1e3 * w.net_thread[0] / f, gn ? gmin : 0.0, gmean, gmax, gmean > 0.0 ? main_ms / gmean : 0.0, 1e3 * w.task_send_sum / tf, 1e3 * w.task_update_sum / tf,
+                        1e3 * w.task_update_max, leftover_ms );
+                // each thread's network ms a frame, by thread index (0 = the
+                // main thread's part in jobs), to see how even the split is
+                printf( "harden_thread_net_ms: t=%.1f", t_now - started );
+                for ( int i = 0; i < o.game_threads && i < HARDEN_MAX_THREADS; i++ )
+                {
+                    printf( " %.3f", 1e3 * w.net_thread[i] / f );
+                }
+                printf( "\n" );
+                // the range jobs' part alone (no serial walk): the even-spread check
+                printf( "harden_thread_range_ms: t=%.1f", t_now - started );
+                for ( int i = 0; i < o.game_threads && i < HARDEN_MAX_THREADS; i++ )
+                {
+                    printf( " %.3f", 1e3 * w.range_thread[i] / f );
+                }
+                printf( "\n" );
+            }
             fflush( stdout );
+            last_packets_sent = stats.packets_sent;
+            total_messages += w.messages;
+            total_start_refused += w.start_refused;
+            total_frames += w.frames;
+            total_overruns += w.overruns;
+            w = harden_frame_window_t();
+            last_report = t_now;
         }
-        if ( wall >= cut_c2s_at )
+
+        // the long-run samples: the first after --warm-seconds is the
+        // post-warmup sample (after the soak's warm-up touch), the rest peaks
+        if ( t_now - started >= (double) o.warm_seconds && ( !resources_started || t_now - last_sample >= (double) o.sample_seconds ) )
         {
-            break;
+            process_resources_t r;
+            if ( !resources_started && !warm_touched )
+            {
+                const int64_t touched = process_resources_touch_all();
+                printf( "harden_sample: tag=touch bytes=%" PRId64 "\n", touched );
+            }
+            if ( !process_resources_read( &r ) )
+            {
+                printf( "harden_verdict: role=server verdict=FAIL reason=resource_read\n" );
+                return false;
+            }
+            const char * tag = resources_started ? "peak" : "post_warmup";
+            if ( !resources_started )
+            {
+                resources_start = r;
+                resources_peak = r;
+                library_start = harden_library_bytes();
+                library_peak = library_start;
+                resources_started = true;
+                resources_started_at = t_now;
+            }
+            process_resources_peak( &resources_peak, &r );
+            library_peak = std::max( library_peak, harden_library_bytes() );
+            harden_print_resources( tag, t_now - started, r );
+            printf( " counters:" );
+            harden_print_counters( "transport", role, transport ? rocketnet_server_transport_counters( transport ) : NULL, false );
+            printf( " message:" );
+            harden_print_counters( "message", role, message_server ? rocketnet_message_server_counters( message_server ) : NULL, false );
+            printf( "\n" );
+            fflush( stdout );
+            last_sample = t_now;
         }
-
-        rocketnet_server_update( server, frame_start );
-        const double t_update = harden_now();
-
+        return true;
+    };
+    // receive until NULL, every input checked and copied into game state (the
+    // slots' inbound streams): space's input parse (S:617-640)
+    auto drain_receive = [&]()
+    {
         const struct rocketnet_message_batch_t * batch;
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
         {
@@ -1416,7 +2642,278 @@ static int harden_server_main( const harden_options_t & o )
                 w.received++;
             }
         }
+    };
+    // the bursting clients rotate: a window of burst_clients slots among the
+    // connected ones, advancing burst_clients each tick
+    auto client_count = [&]( int bursting_seen, int connected_count ) -> int
+    {
+        int count = o.base;
+        if ( o.burst_clients > 0 && connected_count > 0 )
+        {
+            const uint64_t window = ( tick * (uint64_t) o.burst_clients ) % (uint64_t) connected_count;
+            const uint64_t position = ( (uint64_t) bursting_seen + (uint64_t) connected_count - window ) % (uint64_t) connected_count;
+            if ( position < (uint64_t) o.burst_clients )
+            {
+                count = o.burst;
+            }
+        }
+        return count;
+    };
+    for ( ;; )
+    {
+        const double frame_start = harden_now();
+        if ( o.space_shape )
+        {
+            // ---- join (S:588-601): last frame's network task, then the
+            // frame's buffers turn over (the plan ring by tick, as space's
+            // state records by frame; ClearNewExplosions' A/B has no counterpart
+            // here)
+            const double t_join = harden_now();
+            if ( space.task )
+            {
+                space.task->Wait();
+                space.task = NULL;
+                const double task_seconds = space.task_ended - space.task_began;
+                const double task_core = harden_space_take_busy( space.write_busy ) + space.commit_seconds;
+                w.task_sum += task_seconds;
+                w.task_max = std::max( w.task_max, task_seconds );
+                w.task_core_sum += task_core;
+                w.task_core_max = std::max( w.task_core_max, task_core );
+                w.commit_sum += space.commit_seconds;
+                w.commit_max = std::max( w.commit_max, space.commit_seconds );
+                w.task_frames++;
+                if ( space.task_ended > t_join )
+                {
+                    w.task_late++; // the main thread reached the join before the task ended
+                }
+                w.messages += space.messages;
+                w.start_refused += space.refused;
+                space.messages = 0;
+                space.refused = 0;
+                for ( int i = 0; i < HARDEN_MAX_THREADS; i++ )
+                {
+                    w.messages += space.wide_messages[i].count;
+                    w.start_refused += space.wide_refused[i].count;
+                    space.wide_messages[i].count = 0;
+                    space.wide_refused[i].count = 0;
+                }
+                w.task_send_sum += space.task_send_seconds;
+                w.task_update_sum += space.task_update_seconds;
+                w.task_update_max = std::max( w.task_update_max, space.task_update_seconds );
+                space.task_send_seconds = 0;
+                space.task_update_seconds = 0;
+            }
+            // every thread's rocketnet work since the last join (the first
+            // half's update jobs included)
+            for ( int i = 0; i < HARDEN_MAX_THREADS; i++ )
+            {
+                w.net_thread[i] += space.net_busy[i].seconds;
+                space.net_busy[i].seconds = 0;
+                w.range_thread[i] += space.range_busy[i].seconds;
+                space.range_busy[i].seconds = 0;
+            }
+            const double t_joined = harden_now();
+            space.pool.Reset();
+            w.join_sum += t_joined - t_join;
+            w.join_max = std::max( w.join_max, t_joined - t_join );
+            if ( !report_and_sample() )
+            {
+                space.pool.Shutdown();
+                return 1;
+            }
+            const double wall_now = harden_wall();
+            if ( !draining && wall_now >= end_at )
+            {
+                draining = true;
+                harden_utc( utc, sizeof( utc ) );
+                printf( "harden_phase: role=server phase=writes_stop t=%.1f utc=%s\n", frame_start - started, utc );
+                fflush( stdout );
+            }
+            if ( wall_now >= cut_c2s_at )
+            {
+                break;
+            }
+
+            // ---- first half, the main thread (S:603-641)
+            const double t_first = harden_now();
+            harden_main_phase.store( HARDEN_MAIN_SEND, std::memory_order_relaxed );
+            if ( !o.space_net_in_task )
+            {
+                rocketnet_server_send_packets( server );
+            }
+            const double t_sent = harden_now();
+            if ( last_plan_time > 0.0 )
+            {
+                // a frame's packets from its state to the send_packets that sends them
+                const double sent_at = o.space_net_in_task ? space.task_sent_at : t_first;
+                w.latency_sum += sent_at - last_plan_time;
+                w.latency_max = std::max( w.latency_max, sent_at - last_plan_time );
+                w.latency_frames++;
+                last_plan_time = 0.0;
+            }
+            harden_main_phase.store( HARDEN_MAIN_UPDATE, std::memory_order_relaxed );
+            double update_serial = -1.0;
+            if ( !o.space_net_in_task )
+            {
+                update_serial = harden_space_update( &space, frame_start );
+            }
+            const double t_update = harden_now();
+            harden_main_phase.store( HARDEN_MAIN_RECEIVE, std::memory_order_relaxed );
+            drain_receive();
+            const double t_receive = harden_now();
+            if ( o.space_net_in_task && space.update_done_at > 0.0 )
+            {
+                const double age = t_receive - space.update_done_at;
+                w.input_age_sum += age;
+                w.input_age_max = std::max( w.input_age_max, age );
+                w.input_age_frames++;
+            }
+
+            // ---- the world update, the main thread (S:643-961). First the
+            // reliable messages and a second send_packets (S:678-712)
+            harden_main_phase.store( HARDEN_MAIN_WRITE, std::memory_order_relaxed );
+            std::vector<harden_fill_item_t> & frame_plan = space.plans[tick % HARDEN_SPACE_RING];
+            frame_plan.clear();
+            if ( !draining )
+            {
+                const int connected_count = rocketnet_server_num_connected_clients( server );
+                int bursting_seen = 0;
+                for ( int i = 0; i < o.max_clients; i++ )
+                {
+                    if ( !rocketnet_server_client_connected( server, i ) )
+                    {
+                        continue;
+                    }
+                    harden_server_slot_t & slot = slots[(size_t) i];
+                    const uint64_t id = rocketnet_server_client_id( server, i );
+                    const uint32_t connection = (uint32_t) rocketnet_server_client_connection_id( server, i );
+                    if ( slot.client_id != id || slot.connection != connection )
+                    {
+                        slot = harden_server_slot_t();
+                        slot.client_id = id;
+                        slot.connection = connection;
+                    }
+                    frame_plan.push_back( harden_fill_item_t{ i, client_count( bursting_seen, connected_count ), id, connection } );
+                    bursting_seen++;
+                    if ( !o.space_send_wide )
+                    {
+                        write_reliable_and_big( i, id, connection, slot );
+                    }
+                }
+            }
+            const double t_reliable = harden_now();
+            harden_main_phase.store( HARDEN_MAIN_SEND, std::memory_order_relaxed );
+            if ( !o.space_net_in_task )
+            {
+                rocketnet_server_send_packets( server ); // S:711; with --space-net task the task's send_packets sends them
+            }
+            const double t_sent_reliable = harden_now();
+            harden_main_phase.store( HARDEN_MAIN_OTHER, std::memory_order_relaxed );
+
+            // --space-split top: the network task is split off here, before the
+            // world update, and the main thread does not touch the server again
+            // until the next join; the state it sends is the one the last world
+            // update produced
+            const bool split_here = o.space_split_top;
+            if ( split_here && ( !frame_plan.empty() || o.space_net_in_task ) )
+            {
+                space.plan = &frame_plan;
+                space.tick = tick;
+                last_plan_time = last_world_end > 0.0 ? last_world_end : harden_now();
+                space.task = space.pool.AddTask( harden_space_task, &space );
+            }
+
+            // the rest of the world: the main thread's own share, then the
+            // stand-in game jobs across all the game threads, waited on
+            const double t_world_began = harden_now();
+            harden_world_update( &space, o );
+            const double t_world = harden_now();
+            last_world_end = t_world;
+            w.game_core_sum += harden_space_take_busy( space.game_busy );
+            w.world_sum += t_world - t_world_began;
+            w.world_max = std::max( w.world_max, t_world - t_world_began );
+
+            // ---- the split (S:963-971): the frame's plan is its state record
+            if ( !split_here && ( !frame_plan.empty() || o.space_net_in_task ) )
+            {
+                space.plan = &frame_plan;
+                space.tick = tick;
+                last_plan_time = harden_now();
+                space.task = space.pool.AddTask( harden_space_task, &space );
+            }
+
+            // what rocketnet took from the main thread this frame
+            const double work = ( t_sent - t_first ) + ( t_receive - t_sent ) + ( t_sent_reliable - t_receive );
+            w.work.push_back( work );
+            all_work.push_back( work );
+            all_work_max = std::max( all_work_max, work );
+            w.send_sum += ( t_sent - t_first ) + ( t_sent_reliable - t_reliable );
+            w.send_max = std::max( w.send_max, ( t_sent - t_first ) + ( t_sent_reliable - t_reliable ) );
+            w.update_sum += t_update - t_sent;
+            w.update_core_sum += update_serial >= 0.0 ? update_serial : t_update - t_sent;
+            w.update_max = std::max( w.update_max, t_update - t_sent );
+            w.receive_sum += t_receive - t_update;
+            w.receive_max = std::max( w.receive_max, t_receive - t_update );
+            w.write_sum += t_reliable - t_receive;
+            w.write_max = std::max( w.write_max, t_reliable - t_receive );
+            w.frames++;
+            if ( harden_now() - frame_start > step )
+            {
+                w.overruns++;
+            }
+            tick++;
+
+            // ---- the tail (S:1313-1369): the main thread paces to the frame
+            // edge while the task runs
+            next += step;
+            const double wait = next - harden_now();
+            if ( wait > 0.0 )
+            {
+                harden_main_phase.store( HARDEN_MAIN_SLEEP, std::memory_order_relaxed );
+                rocketnet_sleep( wait );
+                harden_main_phase.store( HARDEN_MAIN_OTHER, std::memory_order_relaxed );
+            }
+            else
+            {
+                next = harden_now();
+            }
+            continue;
+        }
+        const double wall = harden_wall();
+        if ( !draining && wall >= end_at )
+        {
+            draining = true;
+            harden_utc( utc, sizeof( utc ) );
+            printf( "harden_phase: role=server phase=writes_stop t=%.1f utc=%s\n", frame_start - started, utc );
+            fflush( stdout );
+        }
+        if ( wall >= cut_c2s_at )
+        {
+            break;
+        }
+
+        harden_main_phase.store( HARDEN_MAIN_UPDATE, std::memory_order_relaxed );
+        rocketnet_server_update( server, frame_start );
+        const double t_update = harden_now();
+        harden_main_phase.store( HARDEN_MAIN_RECEIVE, std::memory_order_relaxed );
+        drain_receive();
+        const double t_received = harden_now();
+
+        // the blocking shape with the stand-in game: the world update between
+        // receive and write, the main thread blocked through all of networking
+        // around it
+        double world_seconds = 0.0;
+        if ( o.game_threads > 0 )
+        {
+            harden_world_update( &space, o );
+            space.pool.Reset(); // the game jobs are complete: the frame's tasks are free for the next frame
+            world_seconds = harden_now() - t_received;
+            w.game_core_sum += harden_space_take_busy( space.game_busy );
+            w.world_sum += world_seconds;
+            w.world_max = std::max( w.world_max, world_seconds );
+        }
         const double t_receive = harden_now();
+        harden_main_phase.store( HARDEN_MAIN_WRITE, std::memory_order_relaxed );
 
         if ( !draining )
         {
@@ -1437,18 +2934,7 @@ static int harden_server_main( const harden_options_t & o )
                     slot.client_id = id;
                     slot.connection = connection;
                 }
-                // the bursting clients rotate: a window of burst_clients slots
-                // among the connected ones, advancing burst_clients each tick
-                int count = o.base;
-                if ( o.burst_clients > 0 && connected_count > 0 )
-                {
-                    const uint64_t window = ( tick * (uint64_t) o.burst_clients ) % (uint64_t) connected_count;
-                    const uint64_t position = ( (uint64_t) bursting_seen + (uint64_t) connected_count - window ) % (uint64_t) connected_count;
-                    if ( position < (uint64_t) o.burst_clients )
-                    {
-                        count = o.burst;
-                    }
-                }
+                const int count = client_count( bursting_seen, connected_count );
                 bursting_seen++;
                 if ( o.fill_jobs > 0 )
                 {
@@ -1480,6 +2966,7 @@ static int harden_server_main( const harden_options_t & o )
                 {
                     w.messages += job.messages;
                     w.start_refused += job.start_refused + job.finish_refused;
+                    w.jobs_busy_sum += job.busy;
                     job = harden_fill_job_t();
                 }
                 for ( const harden_fill_item_t & item : plan )
@@ -1490,98 +2977,49 @@ static int harden_server_main( const harden_options_t & o )
             }
         }
         const double t_write = harden_now();
+        harden_main_phase.store( HARDEN_MAIN_SEND, std::memory_order_relaxed );
 
         rocketnet_server_send_packets( server );
         const double t_send = harden_now();
+        harden_main_phase.store( HARDEN_MAIN_OTHER, std::memory_order_relaxed );
 
-        const double work = t_send - frame_start;
+        // what rocketnet took from the main thread: the frame less the world update
+        const double work = t_send - frame_start - world_seconds;
         w.work.push_back( work );
         all_work.push_back( work );
         all_work_max = std::max( all_work_max, work );
         w.update_sum += t_update - frame_start;
-        w.receive_sum += t_receive - t_update;
+        w.update_core_sum += t_update - frame_start;
+        w.receive_sum += t_received - t_update;
         w.write_sum += t_write - t_receive;
         w.send_sum += t_send - t_write;
         w.update_max = std::max( w.update_max, t_update - frame_start );
-        w.receive_max = std::max( w.receive_max, t_receive - t_update );
+        w.receive_max = std::max( w.receive_max, t_received - t_update );
         w.write_max = std::max( w.write_max, t_write - t_receive );
         w.send_max = std::max( w.send_max, t_send - t_write );
+        // a frame's packets, from its game state (the world update's end) to send_packets
+        w.latency_sum += t_send - t_receive;
+        w.latency_max = std::max( w.latency_max, t_send - t_receive );
+        w.latency_frames++;
         w.frames++;
-        if ( work > step )
+        if ( t_send - frame_start > step )
         {
             w.overruns++;
         }
         tick++;
-
-        const double t_now = harden_now();
-        if ( t_now - last_report >= 1.0 )
+        if ( !report_and_sample() )
         {
-            struct rocketnet_server_stats_t stats;
-            rocketnet_server_stats( server, &stats );
-            const double span = t_now - last_report;
-            const double f = w.frames ? (double) w.frames : 1.0;
-            const uint64_t ring_full = transport ? rocketnet_counter_value( rocketnet_server_transport_counters( transport ), ROCKETNET_COUNTER_SEND_RING_FULL ) : 0;
-            std::vector<double> work_copy = w.work;
-            printf( "harden_tick: t=%.1f conn=%d frames=%" PRIu64 " overruns=%" PRIu64 " work_ms avg=%.3f p99=%.3f max=%.3f update=%.3f/%.3f receive=%.3f/%.3f write=%.3f/%.3f send=%.3f/%.3f"
-                    " msgs_ps=%.0f pkts_ps=%.0f in_msgs_ps=%.0f start_refused=%" PRIu64 " send_ring_full_total=%" PRIu64 "\n",
-                    t_now - started, rocketnet_server_num_connected_clients( server ), w.frames, w.overruns,
-                    1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f, 1e3 * harden_percentile( work_copy, 0.99 ), 1e3 * harden_percentile( work_copy, 1.0 ),
-                    1e3 * w.update_sum / f, 1e3 * w.update_max, 1e3 * w.receive_sum / f, 1e3 * w.receive_max, 1e3 * w.write_sum / f, 1e3 * w.write_max,
-                    1e3 * w.send_sum / f, 1e3 * w.send_max, (double) w.messages / span, (double) ( stats.packets_sent - last_packets_sent ) / span,
-                    (double) w.received / span, w.start_refused, ring_full );
-            fflush( stdout );
-            last_packets_sent = stats.packets_sent;
-            total_messages += w.messages;
-            total_start_refused += w.start_refused;
-            total_frames += w.frames;
-            total_overruns += w.overruns;
-            w = harden_frame_window_t();
-            last_report = t_now;
-        }
-
-        // the long-run samples: the first after --warm-seconds is the
-        // post-warmup sample (after the soak's warm-up touch), the rest peaks
-        if ( t_now - started >= (double) o.warm_seconds && ( !resources_started || t_now - last_sample >= (double) o.sample_seconds ) )
-        {
-            process_resources_t r;
-            if ( !resources_started )
-            {
-                const int64_t touched = process_resources_touch_all();
-                printf( "harden_sample: tag=touch bytes=%" PRId64 "\n", touched );
-            }
-            if ( !process_resources_read( &r ) )
-            {
-                printf( "harden_verdict: role=server verdict=FAIL reason=resource_read\n" );
-                harden_fill_stop( &pool );
-                return 1;
-            }
-            const char * tag = resources_started ? "peak" : "post_warmup";
-            if ( !resources_started )
-            {
-                resources_start = r;
-                resources_peak = r;
-                library_start = harden_library_bytes();
-                library_peak = library_start;
-                resources_started = true;
-                resources_started_at = t_now;
-            }
-            process_resources_peak( &resources_peak, &r );
-            library_peak = std::max( library_peak, harden_library_bytes() );
-            harden_print_resources( tag, t_now - started, r );
-            printf( " counters:" );
-            harden_print_counters( "transport", role, transport ? rocketnet_server_transport_counters( transport ) : NULL, false );
-            printf( " message:" );
-            harden_print_counters( "message", role, message_server ? rocketnet_message_server_counters( message_server ) : NULL, false );
-            printf( "\n" );
-            fflush( stdout );
-            last_sample = t_now;
+            harden_fill_stop( &pool );
+            return 1;
         }
 
         next += step;
         const double wait = next - harden_now();
         if ( wait > 0.0 )
         {
+            harden_main_phase.store( HARDEN_MAIN_SLEEP, std::memory_order_relaxed );
             rocketnet_sleep( wait );
+            harden_main_phase.store( HARDEN_MAIN_OTHER, std::memory_order_relaxed );
         }
         else
         {
@@ -1599,9 +3037,15 @@ static int harden_server_main( const harden_options_t & o )
     process_resources_t resources_end;
     const bool end_read = process_resources_read( &resources_end );
     const int64_t library_end = harden_library_bytes();
-    // the fill jobs end with the frames, after the end sample (they are the
+    // the jobs end with the frames, after the end sample (they are the
     // game's threads, alive at both samples): the cuts and the cleanup are main's
     harden_fill_stop( &pool );
+    if ( o.game_threads > 0 )
+    {
+        // the space shape joined its last task before the loop ended; its
+        // staged packets leave in the flush below
+        space.pool.Shutdown();
+    }
     const double run_seconds = harden_now() - resources_started_at;
 
     // T1, client to server cut: what the server took, then it freezes
@@ -1698,7 +3142,9 @@ static int harden_server_main( const harden_options_t & o )
         {
             // the process's memory count is printed, never asserted (the
             // soak's rule): the library's own bytes are the memory guard
-            const bool judged = i != PROCESS_RESOURCES_MEMORY;
+            // a --profile row's handle count is printed and not judged: the profiler's symbol load opens handles
+            // inside the run (the profile thread keeps them until the end), which is the profiler's and not the server's
+            const bool judged = i != PROCESS_RESOURCES_MEMORY && !( i == PROCESS_RESOURCES_HANDLES && o.profile_seconds > 0.0 );
             const bool ok = !judged || process_resources_flat( i, resources_start.values[i], resources_end.values[i], run_seconds );
             printf( "harden_resources: %s start=%" PRId64 " end=%" PRId64 " peak=%" PRId64 " judged=%d flat=%d\n", process_resources_name( i ),
                     resources_start.values[i], resources_end.values[i], resources_peak.values[i], judged ? 1 : 0, ok ? 1 : 0 );
@@ -2067,14 +3513,14 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
                     {
                         for ( int m = 0; m < o->messages; m++ )
                         {
-                            uint8_t * p = rocketnet_client_start_message( c.client, HARDEN_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, HARDEN_INPUT_BYTES );
+                            uint8_t * p = rocketnet_client_start_message( c.client, HARDEN_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, o->input_bytes );
                             if ( !p )
                             {
                                 inputs_refused++;
                                 break;
                             }
-                            harden_write_message( p, HARDEN_INPUT_BYTES, HARDEN_KIND_INPUT, c.client_id, c.connection_serial, c.next_input++ );
-                            rocketnet_client_finish_message( c.client, HARDEN_INPUT_BYTES );
+                            harden_write_message( p, o->input_bytes, HARDEN_KIND_INPUT, c.client_id, c.connection_serial, c.next_input++ );
+                            rocketnet_client_finish_message( c.client, o->input_bytes );
                             inputs_sent++;
                         }
                         if ( o->reliable_every > 0 && c.tick % (uint64_t) ( 30 * o->reliable_every ) == 0 )
@@ -2268,8 +3714,8 @@ static int harden_clients_main( const harden_options_t & o )
     }
     char utc[32];
     harden_utc( utc, sizeof( utc ) );
-    printf( "harden_clients: address=%s clients=%d threads=%d first_id=%d hz=%.0f join_rate=%.0f churn_clients=%d churn_rate=%.2f messages=%d token_timeout=%d seconds=%.0f utc=%s\n",
-            o.address.c_str(), o.clients, o.threads, o.first_id, o.hz, o.join_rate, o.churn_clients, o.churn_rate, o.messages, o.token_timeout, o.seconds, utc );
+    printf( "harden_clients: address=%s clients=%d threads=%d first_id=%d hz=%.0f join_rate=%.0f churn_clients=%d churn_rate=%.2f messages=%d input_bytes=%d token_timeout=%d seconds=%.0f utc=%s\n",
+            o.address.c_str(), o.clients, o.threads, o.first_id, o.hz, o.join_rate, o.churn_clients, o.churn_rate, o.messages, o.input_bytes, o.token_timeout, o.seconds, utc );
     fflush( stdout );
 
     static harden_client_totals_t totals;
@@ -2542,6 +3988,170 @@ static bool harden_capture( const harden_options_t & o, int want, std::vector<st
 }
 #endif // #if defined( __linux__ )
 
+// one hostile sender: its sockets, its share of the rate, its own generator
+// (xorshift64; rand() is shared state and was the first version's ceiling)
+// and its own counts, summed by the role after the join
+struct harden_hostile_worker_t
+{
+    const harden_hostile_t * h = nullptr;
+    const bool * enabled = nullptr;
+    int num_enabled = 0;
+    std::vector<harden_socket_t> sockets;
+    struct sockaddr_in server = {};
+    double pps = 0.0;
+    double started = 0.0;
+    double hostile_end = 0.0;
+    uint64_t random = 1;
+    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
+    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
+    std::atomic<uint64_t> progress_sent{ 0 }, progress_received{ 0 }, progress_errors{ 0 };
+
+    harden_hostile_worker_t() = default;
+    harden_hostile_worker_t( const harden_hostile_worker_t & ) = delete;
+    harden_hostile_worker_t & operator=( const harden_hostile_worker_t & ) = delete;
+};
+
+static uint64_t harden_hostile_next( harden_hostile_worker_t * w )
+{
+    uint64_t x = w->random;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    w->random = x;
+    return x;
+}
+
+static void harden_hostile_fill( harden_hostile_worker_t * w, uint8_t * p, int from, int to )
+{
+    int i = from;
+    while ( i < to )
+    {
+        uint64_t r = harden_hostile_next( w );
+        for ( int b = 0; b < 8 && i < to; b++, i++ )
+        {
+            p[i] = (uint8_t) r;
+            r >>= 8;
+        }
+    }
+}
+
+static void harden_hostile_send_loop( harden_hostile_worker_t * w )
+{
+    static const uint8_t session_types[] = { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET };
+    const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const harden_hostile_t & h = *w->h;
+    uint64_t sent_total = 0;
+    int socket_cursor = 0, kind_cursor = 0;
+    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
+    while ( harden_wall() < w->hostile_end )
+    {
+        const uint64_t due_total = (uint64_t) ( ( harden_now() - w->started ) * w->pps );
+        int burst = 0;
+        while ( sent_total < due_total && burst < 4096 && w->num_enabled > 0 )
+        {
+            int kind = kind_cursor;
+            while ( !w->enabled[kind] )
+            {
+                kind = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
+            }
+            kind_cursor = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
+            const uint64_t pick = harden_hostile_next( w );
+            int bytes = 0;
+            const uint8_t * data = packet;
+            switch ( kind )
+            {
+                case 0:
+                {
+                    bytes = 1 + (int) ( pick % 1400 );
+                    harden_hostile_fill( w, packet, 0, bytes );
+                    break;
+                }
+                case 1:
+                {
+                    const uint8_t type = session_types[pick % sizeof( session_types )];
+                    uint8_t * p = packet;
+                    rocketnet_write_prefilter_header( &p, type, filter );
+                    bytes = rocketnet_session_min_wire_bytes( type ) + (int) ( ( pick >> 16 ) % 1200 );
+                    harden_hostile_fill( w, packet, ROCKETNET_PREFILTER_BYTES, bytes );
+                    break;
+                }
+                case 2:
+                {
+                    const uint8_t type = session_types[pick % sizeof( session_types )];
+                    uint8_t * p = packet;
+                    rocketnet_write_prefilter_header( &p, type, filter );
+                    const int minimum = rocketnet_session_min_wire_bytes( type );
+                    bytes = 1 + (int) ( ( pick >> 16 ) % (uint64_t) ( minimum > 1 ? minimum - 1 : 1 ) );
+                    harden_hostile_fill( w, packet, ROCKETNET_PREFILTER_BYTES, bytes );
+                    break;
+                }
+                case 3:
+                {
+                    const std::vector<uint8_t> & r = h.requests_badsig[(size_t) ( pick % h.requests_badsig.size() )];
+                    data = r.data();
+                    bytes = (int) r.size();
+                    break;
+                }
+                case 4:
+                {
+                    data = h.request_expired.data();
+                    bytes = (int) h.request_expired.size();
+                    break;
+                }
+                case 5:
+                {
+                    data = h.request_valid.data();
+                    bytes = (int) h.request_valid.size();
+                    break;
+                }
+                default:
+                {
+                    const std::vector<uint8_t> & r = h.captured[(size_t) ( pick % h.captured.size() )];
+                    data = r.data();
+                    bytes = (int) r.size();
+                    break;
+                }
+            }
+            const harden_socket_t s = w->sockets[(size_t) socket_cursor];
+            socket_cursor = ( socket_cursor + 1 ) % (int) w->sockets.size();
+            const int result = (int) sendto( s, (const char *) data, (size_t) bytes, 0, (const struct sockaddr *) &w->server, sizeof( w->server ) );
+            if ( result == bytes )
+            {
+                w->sent[kind]++;
+                w->sent_bytes += (uint64_t) bytes;
+            }
+            else
+            {
+                w->send_errors++;
+            }
+            sent_total++;
+            burst++;
+        }
+        // read whatever the server answered
+        for ( harden_socket_t s : w->sockets )
+        {
+            for ( ;; )
+            {
+                const int n = (int) recv( s, (char *) packet, (int) sizeof( packet ), 0 );
+                if ( n < 0 )
+                {
+                    break;
+                }
+                w->received++;
+                w->received_bytes += (uint64_t) n;
+            }
+        }
+        w->progress_sent.store( sent_total, std::memory_order_relaxed );
+        w->progress_received.store( w->received, std::memory_order_relaxed );
+        w->progress_errors.store( w->send_errors, std::memory_order_relaxed );
+        // sleep only when caught up with the rate
+        if ( sent_total >= due_total )
+        {
+            rocketnet_sleep( 0.001 );
+        }
+    }
+}
+
 static int harden_hostile_main( const harden_options_t & o )
 {
     const char * role = "hostile";
@@ -2643,135 +4253,74 @@ static int harden_hostile_main( const harden_options_t & o )
     printf( "harden_hostile: address=%s pps=%.0f sockets=%d kinds=%s seconds=%.0f utc=%s\n", o.address.c_str(), o.pps, o.sockets, o.kinds.c_str(), o.seconds, utc );
     fflush( stdout );
 
-    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
-    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
-    const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    static const uint8_t session_types[] = { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET };
+    // --threads senders, each with its own share of the sockets and the rate,
+    // its own generator and its own counts; one thread's sendto and the
+    // per-byte rand() of the first version topped out near 200k a second
+    const int num_workers = std::max( 1, std::min( o.threads, (int) sockets.size() ) );
+    std::vector<harden_hostile_worker_t> workers( (size_t) num_workers );
+    for ( int i = 0; i < (int) sockets.size(); i++ )
+    {
+        workers[(size_t) ( i % num_workers )].sockets.push_back( sockets[(size_t) i] );
+    }
     const double started = harden_now();
-    double last_report = started;
-    uint64_t due_total = 0, sent_total = 0, last_sent_total = 0;
-    int socket_cursor = 0, kind_cursor = 0;
-    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
     // the hostile load ends a second before the cut, so its last packets and
     // the answers to them are in before the terms are read
     const double hostile_end = o.end_at > 0.0 ? o.end_at - 1.0 : harden_wall() + o.seconds;
+    const uint64_t seed = (uint64_t) time( NULL );
+    std::vector<std::thread> threads;
+    for ( int w = 0; w < num_workers; w++ )
+    {
+        harden_hostile_worker_t & worker = workers[(size_t) w];
+        worker.h = &h;
+        worker.enabled = enabled;
+        worker.num_enabled = num_enabled;
+        worker.server = server;
+        worker.pps = o.pps / num_workers;
+        worker.started = started;
+        worker.hostile_end = hostile_end;
+        worker.random = harden_mix64( seed ^ ( (uint64_t) ( w + 1 ) << 32 ) ) | 1;
+        threads.emplace_back( harden_hostile_send_loop, &worker );
+    }
+    uint64_t last_sent_total = 0;
+    double last_report = started;
     while ( harden_wall() < hostile_end )
     {
+        rocketnet_sleep( 0.05 );
         const double t = harden_now();
-        due_total = (uint64_t) ( ( t - started ) * o.pps );
-        int burst = 0;
-        while ( sent_total < due_total && burst < 4096 && num_enabled > 0 )
-        {
-            int kind = kind_cursor;
-            while ( !enabled[kind] )
-            {
-                kind = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
-            }
-            kind_cursor = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
-            int bytes = 0;
-            const uint8_t * data = packet;
-            switch ( kind )
-            {
-                case 0:
-                {
-                    bytes = 1 + rand() % 1400;
-                    for ( int i = 0; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 1:
-                {
-                    const uint8_t type = session_types[(size_t) rand() % sizeof( session_types )];
-                    uint8_t * p = packet;
-                    rocketnet_write_prefilter_header( &p, type, filter );
-                    bytes = rocketnet_session_min_wire_bytes( type ) + rand() % 1200;
-                    for ( int i = ROCKETNET_PREFILTER_BYTES; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 2:
-                {
-                    const uint8_t type = session_types[(size_t) rand() % sizeof( session_types )];
-                    uint8_t * p = packet;
-                    rocketnet_write_prefilter_header( &p, type, filter );
-                    const int minimum = rocketnet_session_min_wire_bytes( type );
-                    bytes = 1 + rand() % ( minimum > 1 ? minimum - 1 : 1 );
-                    for ( int i = ROCKETNET_PREFILTER_BYTES; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 3:
-                {
-                    const std::vector<uint8_t> & r = h.requests_badsig[(size_t) rand() % h.requests_badsig.size()];
-                    data = r.data();
-                    bytes = (int) r.size();
-                    break;
-                }
-                case 4:
-                {
-                    data = h.request_expired.data();
-                    bytes = (int) h.request_expired.size();
-                    break;
-                }
-                case 5:
-                {
-                    data = h.request_valid.data();
-                    bytes = (int) h.request_valid.size();
-                    break;
-                }
-                default:
-                {
-                    const std::vector<uint8_t> & r = h.captured[(size_t) rand() % h.captured.size()];
-                    data = r.data();
-                    bytes = (int) r.size();
-                    break;
-                }
-            }
-            const harden_socket_t s = sockets[(size_t) socket_cursor];
-            socket_cursor = ( socket_cursor + 1 ) % (int) sockets.size();
-            const int result = (int) sendto( s, (const char *) data, (size_t) bytes, 0, (const struct sockaddr *) &server, sizeof( server ) );
-            if ( result == bytes )
-            {
-                sent[kind]++;
-                sent_bytes += (uint64_t) bytes;
-            }
-            else
-            {
-                send_errors++;
-            }
-            sent_total++;
-            burst++;
-        }
-        // read whatever the server answered
-        for ( harden_socket_t s : sockets )
-        {
-            for ( ;; )
-            {
-                const int n = (int) recv( s, (char *) packet, (int) sizeof( packet ), 0 );
-                if ( n < 0 )
-                {
-                    break;
-                }
-                received++;
-                received_bytes += (uint64_t) n;
-            }
-        }
         if ( t - last_report >= 1.0 )
         {
+            uint64_t sent_total = 0, received_now = 0, errors_now = 0;
+            for ( const harden_hostile_worker_t & worker : workers )
+            {
+                sent_total += worker.progress_sent.load( std::memory_order_relaxed );
+                received_now += worker.progress_received.load( std::memory_order_relaxed );
+                errors_now += worker.progress_errors.load( std::memory_order_relaxed );
+            }
             printf( "harden_hostile_tick: t=%.1f sent_ps=%.0f received_total=%" PRIu64 " send_errors=%" PRIu64 "\n", t - started,
-                    (double) ( sent_total - last_sent_total ) / ( t - last_report ), received, send_errors );
+                    (double) ( sent_total - last_sent_total ) / ( t - last_report ), received_now, errors_now );
             fflush( stdout );
             last_sent_total = sent_total;
             last_report = t;
         }
-        rocketnet_sleep( 0.001 );
     }
+    for ( std::thread & thread : threads )
+    {
+        thread.join();
+    }
+    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
+    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
+    for ( const harden_hostile_worker_t & worker : workers )
+    {
+        for ( int k = 0; k < HARDEN_HOSTILE_KINDS; k++ )
+        {
+            sent[k] += worker.sent[k];
+        }
+        send_errors += worker.send_errors;
+        received += worker.received;
+        received_bytes += worker.received_bytes;
+        sent_bytes += worker.sent_bytes;
+    }
+    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
 
     // a last read for late answers, then close every socket
     const double tail = harden_now() + 2.0;
@@ -2909,50 +4458,20 @@ static bool harden_terms_load( const std::string & path, harden_terms_t * terms 
     return true;
 }
 
-// one direction's chain, every term named: what the sending library counted,
-// what the sending namespace's kernel took or refused, what the qdisc and the
-// device dropped on the way, what the receiving namespace's kernel saw, and
-// what the receiving library took
-
-struct harden_chain_t
-{
-    int64_t library_sent, kernel_out, kernel_sndbuf, qdisc_sent, qdisc_dropped, device_dropped;
-    int64_t arrived_in, arrived_inerrors, arrived_noports, arrived_ipdiscards, arrived_device_dropped;
-    int64_t library_received;
-    // refused by the receiving server transport before its protocol counts the
-    // packet received: a server transport's own receive drops (too short or
-    // too large) land in PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE, outside
-    // PACKETS_RECEIVED; the protocol's prefilter counts into the same two
-    // inside it, so a transport that passes short datagrams up makes this
-    // term too large and the chain red (library_gap < 0), never green
-    int64_t library_refused_before_received = 0;
-};
+// one direction's chain (harden_chain_t and its judgement are in
+// tests/load/harden_chain.h, beside the unit suite's planted rows): judged,
+// then printed term by term
 
 static bool harden_chain_print( const char * direction, const harden_chain_t & c, int duplicates_expected )
 {
-    const int64_t send_gap = c.library_sent - ( c.kernel_out + c.kernel_sndbuf );
-    const int64_t path_gap = c.kernel_out - ( c.arrived_in + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped );
-    const int64_t receive_gap = c.arrived_in - ( c.library_received + c.library_refused_before_received );
-    // netem's duplicates are not counted anywhere: they are the path's
-    // excess of arrivals, and must be zero unless the row duplicates
-    // the judged equation is the libraries': every packet the sender's
-    // library counted sent is counted received by the receiver's library or
-    // dropped by a named counter. The kernel's UDP counts step by step are
-    // printed beside it: they count an skb, so a GSO send of N datagrams is
-    // one in them (and in qdisc drops), and a step gap there names where a
-    // library gap went
-    const int64_t named_drops = c.kernel_sndbuf + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped + c.library_refused_before_received;
-    const int64_t library_gap = c.library_sent - ( c.library_received + named_drops );
-    // the kernel's drops count skbs, and a GSO skb carries several datagrams:
-    // a qdisc drop, a send buffer error, or a GSO skb arriving whole (a veth
-    // and a UDP_GRO socket keep it whole) at a closed port or a full socket
-    // names one where the libraries lost several. The datagrams riding in a
-    // GSO skb beyond its first are the send_gap (OutDatagrams counts the skb),
-    // so while any of those drops, a gap of at most that many is a dropped
-    // GSO skb's later segments; the gap is never below zero
-    const int64_t skb_drops = c.qdisc_dropped + c.kernel_sndbuf + c.arrived_noports + c.arrived_inerrors;
-    const int64_t gso_slack = skb_drops > 0 && send_gap > 0 ? send_gap : 0;
-    const bool ok = duplicates_expected ? library_gap <= 0 : library_gap >= 0 && library_gap <= gso_slack;
+    const harden_chain_result_t r = harden_chain_judge( c, duplicates_expected );
+    const int64_t send_gap = r.send_gap;
+    const int64_t path_gap = r.path_gap;
+    const int64_t receive_gap = r.receive_gap;
+    const int64_t named_drops = r.named_drops;
+    const int64_t library_gap = r.library_gap;
+    const int64_t gso_slack = r.gso_slack;
+    const bool ok = r.ok;
     printf( "harden_chain: %s library_sent=%" PRId64 " = library_received=%" PRId64 " + named_drops=%" PRId64 " (library_gap=%" PRId64 "%s", direction, c.library_sent,
             c.library_received, named_drops, library_gap, duplicates_expected && library_gap < 0 ? ", netem duplicates" : "" );
     if ( !duplicates_expected && library_gap > 0 && gso_slack > 0 )
@@ -2960,19 +4479,59 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
         printf( ", at most gso_slack=%" PRId64 ": later segments of dropped GSO skbs", gso_slack );
     }
     printf( ")\n" );
-    printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out=%" PRId64 " + kernel_sndbuf_errors=%" PRId64 " (send_gap=%" PRId64 ")\n", direction, c.library_sent, c.kernel_out,
-            c.kernel_sndbuf, send_gap );
-    printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + arrived_udp_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
-            " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " + device_rx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
-            direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, c.arrived_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
-            duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
-    printf( "harden_chain: %s arrived_udp_in=%" PRId64 " = library_received=%" PRId64 " + library_refused_before_received=%" PRId64 " (receive_gap=%" PRId64 ")\n", direction,
-            c.arrived_in, c.library_received, c.library_refused_before_received, receive_gap );
+    // the receiving host's no-port drops split by where they came from: the
+    // cell's (named above) and the strays from hosts outside the cell, which are
+    // no library's datagrams and are not in the equation
+    printf( "harden_chain: %s arrived_udp_noports=%" PRId64 " = cell_noports=%" PRId64 " + stray_noports=%" PRId64
+            " (stray: from a host outside the cell to a closed port on the receiving host%s)\n",
+            direction, c.arrived_noports, r.cell_noports, c.arrived_noports_strays,
+            r.strays_valid ? "" : "; more strays than the host's no-port drops: the stray counter is wrong, not applied" );
+    if ( c.sender_counters )
+    {
+        printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out=%" PRId64 " + kernel_sndbuf_errors=%" PRId64 " (send_gap=%" PRId64 ")\n", direction, c.library_sent, c.kernel_out,
+                c.kernel_sndbuf, send_gap );
+    }
+    else
+    {
+        printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out + kernel_sndbuf_errors: not available on this OS (the sender's side reads no kernel counters)\n", direction, c.library_sent );
+    }
+    if ( c.sender_counters && c.receiver_counters )
+    {
+        printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + cell_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
+                " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " + device_rx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
+                direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, r.cell_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
+                duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
+    }
+    else
+    {
+        printf( "harden_chain: %s kernel_out = arrived_udp_in + drops on the path: not available on this OS (one end reads no kernel counters)\n", direction );
+    }
+    if ( c.receiver_counters )
+    {
+        printf( "harden_chain: %s arrived_udp_in=%" PRId64 " = library_received=%" PRId64 " + library_refused_before_received=%" PRId64 " (receive_gap=%" PRId64 ")\n", direction,
+                c.arrived_in, c.library_received, c.library_refused_before_received, receive_gap );
+    }
+    else
+    {
+        printf( "harden_chain: %s arrived_udp_in = library_received + library_refused_before_received: not available on this OS (the receiver's side reads no kernel counters)\n", direction );
+    }
     // the qdisc counts each GSO segment it sends and each skb it drops: with
     // nothing dropped it is the datagrams that left this end, so a library
     // gap is the sender's (wire_gap > 0) or the receiver's (wire_gap 0)
-    printf( "harden_chain: %s library_sent=%" PRId64 " = qdisc_sent_segments=%" PRId64 " + qdisc_dropped=%" PRId64 " (wire_gap=%" PRId64 ")\n", direction, c.library_sent, c.qdisc_sent,
-            c.qdisc_dropped, c.library_sent - c.qdisc_sent - c.qdisc_dropped );
+    if ( c.sender_counters )
+    {
+        printf( "harden_chain: %s library_sent=%" PRId64 " = qdisc_sent_segments=%" PRId64 " + qdisc_dropped=%" PRId64 " (wire_gap=%" PRId64 ")\n", direction, c.library_sent, c.qdisc_sent,
+                c.qdisc_dropped, c.library_sent - c.qdisc_sent - c.qdisc_dropped );
+    }
+    else
+    {
+        printf( "harden_chain: %s library_sent = qdisc_sent_segments + qdisc_dropped: not available on this OS (the sender's side reads no qdisc counters)\n", direction );
+    }
+    if ( !ok && library_gap > 0 && named_drops == 0 )
+    {
+        printf( "harden_chain: %s library gap with no named drop: the library sent packets that neither arrived nor were counted dropped anywhere\n", direction );
+    }
+    printf( "harden_chain: %s library_refused_before_received=%" PRId64 " from %s\n", direction, c.library_refused_before_received, c.refused_source );
     printf( "harden_chain: %s verdict=%s\n", direction, ok ? "PASS" : "FAIL" );
     return ok;
 }
@@ -3007,10 +4566,34 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.arrived_in = t.get( "server.c2s_udp_in" );
     up.arrived_inerrors = t.get( "server.c2s_udp_inerrors" );
     up.arrived_noports = t.get( "server.c2s_udp_noports" );
+    up.arrived_noports_strays = t.get( "server.c2s_udp_noports_strays" );
     up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
     up.arrived_device_dropped = t.get( "server.c2s_dev_rx_dropped" );
+    up.sender_counters = t.get( "clients.c2s_kernel_read" ) != 0;
+    up.receiver_counters = t.get( "server.c2s_kernel_read" ) != 0;
+    up.device_overlap = t.get( "server.c2s_dev_rx_inexact" ) != 0 ? std::max<int64_t>( up.arrived_device_dropped, 0 ) : 0;
     up.library_received = t.get( "server.c2s_packets_received" );
-    up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
+    // a transport that prefilters off the main thread (IOCP's completion
+    // workers, for one) counts each datagram it refuses into the public
+    // PACKETS_RECEIVED and its reason, and main's stats never see it: the
+    // difference is the refusals before main. A transport that drops on its
+    // own receive path counts the drop in PREFILTER_TOO_SHORT/TOO_LARGE and
+    // in neither received count. The transport's PACKETS_RECEIVED can also count
+    // datagrams no client sent (the hostile role's), so that difference is a
+    // named drop only in a cell with no hostile role; its source is printed
+    const int64_t refused_off_main = t.get( "server.c2s_transport_PACKETS_RECEIVED" ) - up.library_received;
+    const bool hostile_present = t.get( "hostile.sent" ) != 0;
+    if ( refused_off_main > 0 && !hostile_present )
+    {
+        up.library_refused_before_received = refused_off_main;
+        up.refused_source = "transport PACKETS_RECEIVED less the library's received (refused off the main thread)";
+    }
+    else
+    {
+        up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
+        up.refused_source = refused_off_main > 0 ? "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE (the off-main difference is not applied: a hostile role is present)"
+                                                 : "PREFILTER_TOO_SHORT + PREFILTER_TOO_LARGE";
+    }
 
     harden_chain_t down;
     down.library_sent = t.get( "server.s2c_packets_sent" );
@@ -3022,8 +4605,12 @@ static int harden_reconcile_main( const harden_options_t & o )
     down.arrived_in = t.get( "clients.s2c_udp_in" );
     down.arrived_inerrors = t.get( "clients.s2c_udp_inerrors" );
     down.arrived_noports = t.get( "clients.s2c_udp_noports" );
+    down.arrived_noports_strays = t.get( "clients.s2c_udp_noports_strays" );
     down.arrived_ipdiscards = t.get( "clients.s2c_ip_indiscards" );
     down.arrived_device_dropped = t.get( "clients.s2c_dev_rx_dropped" );
+    down.sender_counters = t.get( "server.s2c_kernel_read" ) != 0;
+    down.receiver_counters = t.get( "clients.s2c_kernel_read" ) != 0;
+    down.device_overlap = t.get( "clients.s2c_dev_rx_inexact" ) != 0 ? std::max<int64_t>( down.arrived_device_dropped, 0 ) : 0;
     down.library_received = t.get( "clients.s2c_packets_received" ) + t.get( "hostile.received" );
 
     const bool up_ok = harden_chain_print( "clients_to_server", up, o.netem_duplicates );
@@ -3035,7 +4622,12 @@ static int harden_reconcile_main( const harden_options_t & o )
             t.get( "clients.s2c_nic_pps_allowance" ), t.get( "clients.s2c_nic_bw_in_allowance" ), t.get( "clients.s2c_nic_bw_out_allowance" ), t.get( "server.s2c_nic_pps_allowance" ),
             t.get( "server.s2c_nic_bw_in_allowance" ), t.get( "server.s2c_nic_bw_out_allowance" ) );
 
-    // the players: delivery verified, nobody stable dropped, the frame held
+    // the frame: what rocketnet takes from the main thread (the frame less the
+    // world update in the blocking shape; the first half's send, update and
+    // receive, and the main thread's writes and second send in the space shape;
+    // the join wait is not in it, it is join_ms), measured once per frame. Its
+    // p99 is held to the aim (--frame-p99-us), which is
+    // reported, not judged: the cell's verdict is the chains and the players
     const int64_t p99 = t.get( "server.work_p99_us" );
     const bool frame_ok = p99 <= (int64_t) o.frame_p99_us;
     // delivery: unreliable messages each way, delivered against delivered +
@@ -3054,11 +4646,11 @@ static int harden_reconcile_main( const harden_options_t & o )
             t.get( "clients.connects" ), t.get( "clients.stable_ends" ), t.get( "clients.unplanned_ends" ), t.get( "clients.errors" ), t.get( "server.in_errors" ),
             down_delivered, down_lost, t.get( "clients.reordered_kind0" ), down_percent, up_delivered, up_lost, t.get( "server.in_reordered_kind3" ), up_percent, o.min_delivery,
             t.get( "clients.delivered_kind1" ), t.get( "clients.delivered_kind2" ), players_ok ? "PASS" : "FAIL" );
-    printf( "harden_frame: work_p99_us=%" PRId64 " work_p999_us=%" PRId64 " work_max_us=%" PRId64 " overruns=%" PRId64 " frames=%" PRId64 " bound_p99_us=%d verdict=%s\n", p99,
-            t.get( "server.work_p999_us" ), t.get( "server.work_max_us" ), t.get( "server.overruns" ), t.get( "server.frames" ), o.frame_p99_us, frame_ok ? "PASS" : "FAIL" );
-    const bool ok = up_ok && down_ok && frame_ok && players_ok;
-    printf( "harden_reconcile: verdict=%s chains=%s players=%s frame=%s\n", ok ? "PASS" : "FAIL", up_ok && down_ok ? "PASS" : "FAIL", players_ok ? "PASS" : "FAIL",
-            frame_ok ? "PASS" : "FAIL" );
+    printf( "harden_frame: work_p99_us=%" PRId64 " work_max_us=%" PRId64 " work_p999_us=%" PRId64 " overruns=%" PRId64 " frames=%" PRId64 " aim_p99_us=%d aim=%s\n", p99,
+            t.get( "server.work_max_us" ), t.get( "server.work_p999_us" ), t.get( "server.overruns" ), t.get( "server.frames" ), o.frame_p99_us, frame_ok ? "MET" : "MISSED" );
+    const bool ok = up_ok && down_ok && players_ok;
+    printf( "harden_reconcile: verdict=%s chains=%s players=%s frame_aim=%s\n", ok ? "PASS" : "FAIL", up_ok && down_ok ? "PASS" : "FAIL", players_ok ? "PASS" : "FAIL",
+            frame_ok ? "MET" : "MISSED" );
     return ok ? 0 : 1;
 }
 
@@ -3086,8 +4678,17 @@ int main( int argc, char ** argv )
     {
         return harden_reconcile_main( o );
     }
+    // the strays before NoPorts here and after it at each cut: a stray that
+    // lands between the two reads is then in the stray delta and not the NoPorts
+    // delta, which raises the chain's gap (a fail), never lowers it
+    harden_strays_base = harden_strays_read( o.stray_table );
     harden_kernel_base = harden_kernel_read();
     harden_link_base = harden_link_read( o.dev );
+    harden_payload_copy = o.payload_copy;
+    if ( harden_payload_copy )
+    {
+        harden_copy_body_build();
+    }
 
 #if defined( _WIN32 )
     WSADATA wsa;

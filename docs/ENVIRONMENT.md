@@ -60,6 +60,10 @@ Process-wide and platform-specific controls:
 | --- | --- |
 | `ROCKETNET_TEST_XDP_FAIL_AT_QUEUE` | Development libraries only (DEV=1): fail XDP queue creation at the named queue index. Production libraries do not recognize this variable. |
 | `ROCKETNET_TEST_GSO_PLAIN` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_gso_linux.cpp`: `1` forces the plain GSO send path. A production build (`ROCKETNET_DEV=0`) does not recognize this variable. |
+| `ROCKETNET_TEST_RIO_LANES` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: `2` to `32` runs every RIO server that leaves the lane count to the transport (`num_xdp_queues` unset) on that many lanes, except a wildcard bind, which keeps one; one lane asked for explicitly stays one. A production build (`ROCKETNET_DEV=0`) does not recognize this variable. |
+| `ROCKETNET_TEST_RIO_LANES_PLANT` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: set to anything, every RIO transport makes one lane whatever was asked. The plant control of a hand run of the RIO server cases on four lanes: every check of the lanes actually made must fail under it (no CI step runs it). A production build does not recognize this variable. |
+| `ROCKETNET_TEST_RIO_PIN` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: places a RIO lane's worker for a measurement: `rss` on the RSS processor, `core` on the whole core, `none` unpinned; unset is the default (the core's other logical processors). A production build does not recognize this variable. |
+| `ROCKETNET_TEST_RIO_LAYOUT` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: `R0,R1,..` `/` `W0,W1,..` places RIO lane i's socket on processor Ri (SIO_CPU_AFFINITY) and its worker on processor Wi alone, processor group 0, with more than one lane, for a measurement in the layout a game runs; a shorter list or a processor past group 0 keeps the default placement and says so. A production build does not recognize this variable. |
 | `ROCKETNET_LOG_LEVEL` | Maximum emitted log level before initialization logs: 0 .. 5 (`ROCKETNET_LOG_LEVEL_NONE` .. `ROCKETNET_LOG_LEVEL_SPAM`). Only a whole-string decimal integer is accepted; names such as `info` and values outside that range are ignored with a warning. |
 | `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | Linux XDP only: overrides gateway MAC discovery in `xx:xx:xx:xx:xx:xx` form. A malformed value refuses socket creation. |
 
@@ -114,11 +118,11 @@ development key must not be used for production.
     compile-time caps.
   - The budget applies to each transport candidate's connect/start plan, not
     to the endpoint and message block allocated at create. As the endpoint
-    walks its resolved transport ladder, each candidate's `total_bytes`
+    walks its resolved transport list, each candidate's `total_bytes`
     (`allocator_bytes + umem_bytes`, including page-aligned AF_XDP UMEM) is
     checked against the stored budget before that transport allocates. A
     candidate over budget is skipped; if no candidate can be granted,
-    connect/start returns `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`.
+    connect/start returns `ROCKETNET_STATUS_NO_TRANSPORT_FOUND`.
     `rocketnet_*_required_memory` still reports the complete caller-allocator
     lifecycle peak (plus its 1 MiB slack) and does not return `0` merely because this transport budget
     is smaller than the create-time endpoint/message block.
@@ -129,7 +133,7 @@ development key must not be used for production.
     It is a preprocessor definition, not a CMake option: an embedding build
     defines it for the library and for every file that includes
     `rocketnet.h`, with the same value.
-  - `-DROCKETNET_XDP_MEMORY_MIB` (default `4096` MiB) bounds planned AF_XDP
+  - `-DROCKETNET_XDP_MEMORY_MIB` (default `8192` MiB) bounds planned AF_XDP
     transport + UMEM memory across `num_xdp_queues`.
 
 ## Operational tuning with environment overrides
@@ -138,7 +142,7 @@ For full workload sizing formulas and deterministic memory tables, see
 [`docs/LOAD.md`](LOAD.md). Common operational uses of the environment layer
 include:
 
-- **Pinning or narrowing the transport ladder per host**: set
+- **Pinning or narrowing the transport list per host**: set
   `ROCKETNET_SERVER_TRANSPORT=gso` or `ROCKETNET_SERVER_TRANSPORT=portable` on
   machines or containers that do not use `xdp` or `io_uring`, so both
   `rocketnet_server_required_memory` and `rocketnet_server_create` size for the
@@ -148,8 +152,8 @@ include:
   `ROCKETNET_SERVER_NUM_OS_CPUS` (`1 .. 256`) overrides. The same queue count
   applies to `gso` and `io_uring`, but `gso` and `io_uring` refuse a value
   above `32`. Preserve the pinned
-  AF_XDP geometry: 4,096-byte frames, a 4,096-entry send queue, 16,384-entry
-  receive queue and fill set, a 32,768-entry fill ring, and 49,152 UMEM frames
+  AF_XDP geometry: 4,096-byte frames, a 16,384-entry send queue, 32,768-entry
+  receive queue and fill set, a 65,536-entry fill ring, and 98,304 UMEM frames
   per queue.
 - **Right-sizing server match capacity**: set `ROCKETNET_SERVER_MAX_CLIENTS` to
   the server instance's actual player cap (`1 .. ROCKETNET_MAX_CLIENTS`),

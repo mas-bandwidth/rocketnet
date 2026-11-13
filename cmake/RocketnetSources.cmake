@@ -34,6 +34,7 @@ set(ROCKETNET_SDK_SOURCES_COMMON
     sdk/rocketnet_connect_token.cpp
     sdk/rocketnet_counters.cpp
     sdk/rocketnet_encryption_map.cpp
+    sdk/rocketnet_fill_phase.cpp
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
@@ -54,8 +55,14 @@ set(ROCKETNET_SDK_SOURCES_COMMON
     sdk/rocketnet_replay.cpp
     sdk/rocketnet_server_replay_marks.cpp
     sdk/rocketnet_server_protocol.cpp
+    sdk/rocketnet_send_gather.cpp
     sdk/rocketnet_server_transport.cpp
-    sdk/rocketnet_token_tables.cpp)
+    sdk/rocketnet_socket_buffer.cpp
+    sdk/rocketnet_token_tables.cpp
+    sdk/rocketnet_uring_queue_send.cpp
+    sdk/rocketnet_uring_queue_worker.cpp
+    sdk/rocketnet_uring_receive_queue.cpp
+    sdk/rocketnet_uring_send_queue.cpp)
 
 set(ROCKETNET_SDK_SOURCES_LINUX
     sdk/rocketnet_client_gso_linux.cpp

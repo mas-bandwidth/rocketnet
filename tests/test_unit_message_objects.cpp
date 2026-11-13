@@ -25,6 +25,7 @@
 
 #include "test_unit_registry.h"
 #include "unit_arena.h"
+#include "red_zones.h"
 #if ROCKETNET_DEV
 #include "test_env_source.h"
 #endif // #if ROCKETNET_DEV
@@ -636,12 +637,14 @@ static uint64_t mo_message_object_layout_formula( const rocketnet_message_config
     const uint64_t n = (uint64_t) connections;
     const uint64_t deliveries = (uint64_t) sized.reliable_messages_in_flight + (uint64_t) sized.unreliable_messages_per_update;
     uint64_t offset = mo_align64( sizeof( rn_message_object_t ) > sizeof( rocketnet_message_server_t ) ? sizeof( rn_message_object_t ) : sizeof( rocketnet_message_server_t ) );
-    offset += mo_align64( ( old_cursor_array ? sizeof( mo_old_message_connection_hot_t ) : sizeof( rn_message_connection_hot_t ) ) * n );
-    offset += mo_align64( sizeof( rn_message_connection_t ) * n );
-    offset += mo_align64( sizeof( uint64_t ) * n );     // the slots machine's connection ids
-    offset += mo_align64( sizeof( uint8_t ) * n );      // and its changed flags
-    offset += n > 1 ? mo_align64( sizeof( int32_t ) * 2 * n ) : 0;    // the send pass's writer list (a server's)
-    offset += mo_align64( deliveries ) * n;
+    // ASan builds: a red zone after each array (sdk/rocketnet_memory.h)
+    const uint64_t pad = ROCKETNET_RED_ZONE_BYTES;
+    offset += mo_align64( ( old_cursor_array ? sizeof( mo_old_message_connection_hot_t ) : sizeof( rn_message_connection_hot_t ) ) * n + pad );
+    offset += mo_align64( sizeof( rn_message_connection_t ) * n + pad );
+    offset += mo_align64( sizeof( uint64_t ) * n + pad );     // the slots machine's connection ids
+    offset += mo_align64( sizeof( uint8_t ) * n + pad );      // and its changed flags
+    offset += n > 1 ? mo_align64( sizeof( int32_t ) * 2 * n + pad ) : 0;    // the send pass's writer list (a server's)
+    offset += mo_align64( deliveries + pad ) * n;
     if ( old_cursor_array )
     {
         offset += mo_align64( sizeof( uint32_t ) * (uint64_t) sized.num_channels ) * n;
@@ -1352,13 +1355,13 @@ static void test_message_release_after_receive_and_in_place_header()
         check( p != NULL );
         check( connection->pending_header == header );
         check( connection->pending_channel == channels[c] );
-        if ( pair.clients[0]->object.in_place == 2 )
+        if ( pair.clients[0]->object.connections[0].open.in_place == 2 )
         {
             check( p == connection->unreliable_build.writer.payload + connection->unreliable_build.writer.bytes + header );
         }
         else
         {
-            check( pair.clients[0]->object.in_place == 1 && p == pair.clients[0]->object.in_place_payload + header );
+            check( pair.clients[0]->object.connections[0].open.in_place == 1 && p == pair.clients[0]->object.connections[0].open.in_place_payload + header );
         }
         check( rocketnet_message_client_finish( pair.clients[0], 0 ) == 0 );
     }
@@ -1764,7 +1767,8 @@ static void mo_send_side_take( mo_send_side_t * side, const rn_message_object_t 
 {
     const rn_message_connection_t * connection = &object->connections[index];
     const rn_region_t * region = connection->region;
-    side->region_memory.assign( region->base, region->base + region->bytes );
+    side->region_memory.resize( (size_t) region->bytes );
+    rocketnet_test_raw_copy( side->region_memory.data(), region->base, (size_t) region->bytes );     // red zones included (tests/red_zones.h)
     side->region.assign( (const uint8_t *) region, (const uint8_t *) region + sizeof( *region ) );
     side->endpoint.assign( (const uint8_t *) connection, (const uint8_t *) connection + sizeof( *connection ) );
     side->hot.assign( (const uint8_t *) &object->hot_connections[index], (const uint8_t *) &object->hot_connections[index] + sizeof( object->hot_connections[index] ) );
@@ -1788,8 +1792,18 @@ static int mo_send_side_check_refused( const mo_send_side_t * before, const rn_m
     check( connection->send_error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     check( before->region_memory.size() == region->bytes );
-    check( memcmp( before->region_memory.data(), region->base, region->bytes ) == 0 );
-    check( memcmp( before->region.data(), region, sizeof( *region ) ) == 0 );
+    check( rocketnet_test_raw_compare( before->region_memory.data(), region->base, region->bytes ) == 0 );
+    // the region: every byte but room_refusals, which is one higher
+
+    {
+        rn_region_t region_was;
+        memcpy( &region_was, before->region.data(), sizeof( region_was ) );
+        check( region->room_refusals == region_was.room_refusals + 1 );
+        rn_region_t region_now;
+        memcpy( &region_now, region, sizeof( region_now ) );
+        region_now.room_refusals = region_was.room_refusals;
+        check( memcmp( &region_now, &region_was, sizeof( region_now ) ) == 0 );
+    }
     check( memcmp( before->hot.data(), &object->hot_connections[index], sizeof( object->hot_connections[index] ) ) == 0 );
 
     // the endpoint: every byte but send_refused, which is one higher
@@ -3696,7 +3710,8 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
     }
     check( rn_region_send_fits( region, 100, NULL, NULL, NULL ) == 0 );
 
-    std::vector<uint8_t> memory_before( region->base, region->base + region->bytes );
+    std::vector<uint8_t> memory_before( (size_t) region->bytes );
+    rocketnet_test_raw_copy( memory_before.data(), region->base, (size_t) region->bytes );     // red zones included (tests/red_zones.h)
     std::vector<uint8_t> region_before( (const uint8_t *) region, (const uint8_t *) region + sizeof( *region ) );
     rocketnet_counters_t counters_before;
     memcpy( &counters_before, &counters, sizeof( counters ) );
@@ -3704,8 +3719,16 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
     check( rn_region_send_alloc( region, 100 ) == RN_DESCRIPTOR_NONE );
     check( !rn_region_exhausted( region ) );
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
-    check( memcmp( memory_before.data(), region->base, region->bytes ) == 0 );
-    check( memcmp( region_before.data(), region, sizeof( *region ) ) == 0 );
+    check( rocketnet_test_raw_compare( memory_before.data(), region->base, region->bytes ) == 0 );
+    {
+        rn_region_t region_was;
+        memcpy( &region_was, region_before.data(), sizeof( region_was ) );
+        check( region->room_refusals == region_was.room_refusals + 1 );
+        rn_region_t region_now;
+        memcpy( &region_now, region, sizeof( region_now ) );
+        region_now.room_refusals = region_was.room_refusals;
+        check( memcmp( &region_now, &region_was, sizeof( region_now ) ) == 0 );
+    }
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
         check( counters.values[i] == counters_before.values[i] + ( i == ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ? 1 : 0 ) );
@@ -3769,7 +3792,8 @@ static void mo_room_ask_everything( rn_message_object_t * object, int index )
 
     const uint64_t block_bytes = rn_message_object_required_bytes( &object->config, object->num_connections, object->is_server );
     check( block_bytes > 0 );
-    std::vector<uint8_t> before( (const uint8_t *) object->block, (const uint8_t *) object->block + block_bytes );
+    std::vector<uint8_t> before( (size_t) block_bytes );
+    rocketnet_test_raw_copy( before.data(), object->block, (size_t) block_bytes );     // red zones included (tests/red_zones.h)
     for ( size_t r = 0; r < sizeof( mo_room_ask_reliabilities ) / sizeof( mo_room_ask_reliabilities[0] ); r++ )
     {
         for ( size_t b = 0; b < sizeof( mo_room_ask_bytes ) / sizeof( mo_room_ask_bytes[0] ); b++ )
@@ -3783,7 +3807,7 @@ static void mo_room_ask_everything( rn_message_object_t * object, int index )
             }
         }
     }
-    check( memcmp( before.data(), object->block, block_bytes ) == 0 );
+    check( rocketnet_test_raw_compare( before.data(), object->block, (size_t) block_bytes ) == 0 );
 }
 
 // one object queues without sending until a start finds no room. Before each
@@ -4151,7 +4175,7 @@ static void test_pending_start_cancelled_by_slot_reset()
     check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
     check( slot->region->carves == carves + 1 );
     check( slot->hot->state == RN_MESSAGE_CONNECTION_CONNECTED );
-    check( pair.server->object.pending_connection == -1 );
+    check( rn_message_open_count( &pair.server->object ) == 0 );
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
 
     // the finish after the reset asserts in Debug and returns 0 in Release: nothing joins the new connection's queue
@@ -4184,7 +4208,7 @@ static void test_pending_start_cancelled_by_slot_reset()
     mo_net_drop_slot( pair.net, 1 );
     check( rocketnet_message_client_update( pair.clients[1], pair.time + 0.01 ) == ROCKETNET_UPDATE_OK );
     check( mo_client_connection( pair.clients[1] )->hot->state == RN_MESSAGE_CONNECTION_FREE );
-    check( pair.clients[1]->object.pending_connection == -1 );
+    check( rn_message_open_count( &pair.clients[1]->object ) == 0 );
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
     check( rocketnet_message_client_finish( pair.clients[1], 100 ) == 0 );
@@ -5151,7 +5175,7 @@ static void test_message_budget_refunded_on_failed_in_place_finish()
 
     uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 900 );
     check( p != NULL );
-    check( pair.server->object.in_place == 1 );
+    check( pair.server->object.connections[0].open.in_place == 1 );
     if ( p )
     {
         mo_fill( p, 42, 900 );
@@ -5377,7 +5401,7 @@ static void test_message_whole_frame_in_place_send_each_type()
         pair.net->start_limit_bytes = 1000;
         uint8_t * p = rocketnet_message_server_start( pair.server, 0, channel, types[t], 900 );
         check( p != NULL );
-        check( pair.server->object.in_place == 1 );
+        check( pair.server->object.connections[0].open.in_place == 1 );
         uint32_t serial = 0;
         if ( p )
         {
@@ -5387,7 +5411,7 @@ static void test_message_whole_frame_in_place_send_each_type()
         }
         pair.net->start_limit_bytes = 0;
         check( serial != 0 );
-        check( pair.server->object.in_place == 0 && pair.server->object.pending_connection == -1 );
+        check( pair.server->object.connections[0].open.in_place == 0 && rn_message_open_count( &pair.server->object ) == 0 );
         check( pair.net->fail_finish == 0 );
 
         const rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
@@ -5457,7 +5481,7 @@ static uint8_t * mo_whole_frame_start( mo_pair_t * pair, int reliability, int re
     uint8_t * p = rocketnet_message_server_start( pair->server, 0, 1, reliability, reserve );
     pair->net->start_limit_bytes = 0;
     check( p != NULL );
-    check( pair->server->object.in_place == 1 );
+    check( pair->server->object.connections[0].open.in_place == 1 );
     return p;
 }
 
@@ -5507,7 +5531,7 @@ static void test_message_whole_frame_in_place_finish_edges()
         {
             check( mo_whole_frame_start( &pair, types[t], 900 ) != NULL );
             check( rocketnet_message_server_finish( pair.server, 0, refused_sizes[r] ) == 0 );
-            check( pair.server->object.in_place == 0 && pair.server->object.pending_connection == -1 );
+            check( pair.server->object.connections[0].open.in_place == 0 && rn_message_open_count( &pair.server->object ) == 0 );
             check( slot->pending_type == -1 && slot->pending_in_place == 0 && slot->pending_bytes == 0 );
         }
         check( pair.net->server->sent_log.size() == logged );
@@ -5587,7 +5611,7 @@ static void test_message_whole_frame_in_place_finish_edges()
             check( (int) slot->written == written_drop + 1 );       // the frame start took counts, as a failed send does
             check( slot->in_place_admitted == 0 && slot->in_place_receipt == 0 );
             check( slot->budget.tokens == 0.0 );
-            check( pair.server->object.in_place == 0 && pair.server->object.pending_connection == -1 );
+            check( pair.server->object.connections[0].open.in_place == 0 && rn_message_open_count( &pair.server->object ) == 0 );
 
             // a bucket holding exactly the charge pays it
 
@@ -5779,7 +5803,7 @@ static void test_message_packed_build_dropped_over_budget_at_seal()
         {
             uint8_t * p = rocketnet_message_server_start( pair.server, 0, 1, types[i], 200 );
             check( p != NULL );
-            check( pair.server->object.in_place == 2 );                      // packed into the open build
+            check( pair.server->object.connections[0].open.in_place == 2 );                      // packed into the open build
             if ( p )
             {
                 mo_fill( p, (uint32_t) ( 110 + i ), 200 );

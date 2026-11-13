@@ -7,9 +7,9 @@
 // is given, or in the direct allocation count (sdk/rocketnet_memory.h) for the
 // regions and rings a transport takes from the OS itself. A create/destroy
 // cycle returns both to their start. The unit tier reaches the fixtures that
-// build a transport without a socket or a kernel ring: the io_uring fake on
-// Linux and the RIO overflow fixture on Windows; the real creates (AF_XDP UMEM
-// and rings, io_uring rings, the RIO region) open sockets, so the soak's
+// build a transport without a socket or a kernel ring: the RIO overflow
+// fixture on Windows; the real creates (AF_XDP UMEM and rings, the io_uring
+// queues' rings and workers, the RIO region) open sockets, so the soak's
 // --assert-flat covers them. No real time, no sockets, no threads.
 
 #include "test_unit_registry.h"
@@ -17,19 +17,10 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_memory.h"
-#include "../sdk/rocketnet_server_uring.h"
+
 #if defined( _WIN32 )
 #include "../sdk/rocketnet_server_rio.h"
 #endif // #if defined( _WIN32 )
-#if defined( __linux__ )
-#include "../sdk/rocketnet_uring_codec.h"
-#endif // #if defined( __linux__ )
-
-#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
-#define DIRECT_COUNT_URING_CASE 1
-#else
-#define DIRECT_COUNT_URING_CASE 0
-#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 #if defined( _WIN32 ) && ROCKETNET_DEV
 #define DIRECT_COUNT_RIO_CASE 1
 #else
@@ -42,7 +33,7 @@
 
 #define check rocketnet_unit_check
 
-#if DIRECT_COUNT_URING_CASE || DIRECT_COUNT_RIO_CASE
+#if DIRECT_COUNT_RIO_CASE
 
 enum
 {
@@ -92,7 +83,7 @@ static void direct_count_uninstall()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
-#endif // #if DIRECT_COUNT_URING_CASE || DIRECT_COUNT_RIO_CASE
+#endif // #if DIRECT_COUNT_RIO_CASE
 
 // the count itself: an add then its remove leaves it where it started
 
@@ -108,42 +99,6 @@ static void test_direct_allocation_count_returns_to_start()
 }
 
 REGISTER_UNIT_TEST( test_direct_allocation_count_returns_to_start );
-
-#if DIRECT_COUNT_URING_CASE
-
-// red first: the fake took its transport and queues with new, so the
-// allocator saw none of it. Now both blocks are the allocator's, held while
-// the fake lives and returned at its destroy; nothing goes to the direct count.
-
-static void test_io_uring_fake_create_destroy_counted()
-{
-    direct_count_install();
-
-    const size_t live_before = g_direct_live_bytes;
-    const size_t calls_before = g_direct_allocation_calls;
-    const uint64_t direct_before = rocketnet_direct_allocation_bytes();
-
-    for ( int cycle = 0; cycle < 3; cycle++ )
-    {
-        struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create_fake( 2 );
-        check( uring != NULL );
-        if ( !uring )
-        {
-            break;
-        }
-        check( g_direct_live_bytes > live_before );
-        check( g_direct_allocation_calls == calls_before + 2 * (size_t) ( cycle + 1 ) );
-        rocketnet_server_uring_test_destroy_fake( uring );
-        check( g_direct_live_bytes == live_before );
-        check( rocketnet_direct_allocation_bytes() == direct_before );
-    }
-
-    direct_count_uninstall();
-}
-
-REGISTER_UNIT_TEST( test_io_uring_fake_create_destroy_counted );
-
-#endif // #if DIRECT_COUNT_URING_CASE
 
 #if DIRECT_COUNT_RIO_CASE
 
@@ -163,7 +118,7 @@ static void test_rio_fixture_create_destroy_counted()
     const size_t calls_before = g_direct_allocation_calls;
     const uint64_t direct_before = rocketnet_direct_allocation_bytes();
 
-    uint64_t counters[2 * ROCKETNET_RIO_NUM_COUNTERS] = {};
+    uint64_t counters[2 * ROCKETNET_NUM_COUNTERS] = {};
     int packet_counts[2] = { 0, 0 };
     int repost_calls = 0;
     int pending_receives = 0;

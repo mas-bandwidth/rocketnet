@@ -47,7 +47,7 @@ rocketnet_fuzz_gateway_netlink:ROCKETNET_FUZZ_WITHHOLD:neighbor_enoent
 
 # harness:seed: the transports a server can name differ by platform
 PLATFORM_SEEDS="
-rocketnet_fuzz_config:server_transport_ladder_available
+rocketnet_fuzz_config:server_transport_order_available
 "
 
 bin=bin

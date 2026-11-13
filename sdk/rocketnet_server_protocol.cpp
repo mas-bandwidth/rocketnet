@@ -9,6 +9,7 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_encryption_map.h"
@@ -1584,24 +1585,16 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
         rocketnet_ack_endpoint_record_received( endpoint, sequence, packet_bytes, current_time );
 
-        int before = server->acks->num_acked;
-        rocketnet_ack_endpoint_process_block( endpoint, &block, current_time,
-                                              server->acks->acked_packet_ids, server->acks->acked_capacity, &server->acks->num_acked,
-                                              &counters[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE],
-                                              &counters[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
-        // P9b: each acked id is tagged with the connection it was received
-        // for, beside its client index, as it is appended
+        // the block applies now, or queues for its client's apply between
+        // the receive and the rest of update (rocketnet_server_acks_t, the
+        // deferred apply); its acked ids are tagged with the connection the
+        // packet was received for (P9b) either way
 
-        const uint64_t connection_id = rocketnet_server_protocol_connection_id( server, client_index );
-
-        for ( int i = before; i < server->acks->num_acked; i++ )
-        {
-            server->acks->acked_client_index[i] = client_index;
-            if ( server->acked_connection_ids )
-            {
-                server->acked_connection_ids[i] = connection_id;
-            }
-        }
+        rocketnet_server_acks_receive_block( server->acks, client_index, &block, current_time,
+                                             rocketnet_server_protocol_connection_id( server, client_index ),
+                                             server->acked_connection_ids,
+                                             &counters[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE],
+                                             &counters[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
 
         if ( rocketnet_session_elicits_ack( packet_type ) )
         {
@@ -1698,6 +1691,9 @@ int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol
     if ( packet_type < 0 )
     {
         rocketnet_spam( "server dropped packet. failed prefilter" );
+#if ROCKETNET_DEV
+        rocketnet_receive_drop_sample_record( packet_type, from, packet_data, packet_bytes );
+#endif // #if ROCKETNET_DEV
         counters[rocketnet_prefilter_counter( packet_type )]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
@@ -1919,7 +1915,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
 void rocketnet_server_protocol_note_missing_mapping( struct rocketnet_server_protocol_t * server )
 {
-    server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+    rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
 }
 
 static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mapping( struct rocketnet_server_protocol_t * server,
@@ -2033,6 +2029,9 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
 
     if ( server->acks && client_index >= 0 )
     {
+        // a send changes the client's sent side: its queued blocks apply first
+        // (rocketnet_server_acks_settle)
+        rocketnet_server_acks_settle( server->acks, client_index );
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
         rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, bytes, 0, 0, current_time ),
                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
@@ -2224,7 +2223,7 @@ int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t 
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     if ( mapping_index < 0 )
     {
-        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
         return 0;
     }
 
@@ -2279,6 +2278,8 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
 
     if ( server->acks )
     {
+        // the fill runs with the acks closed: nothing is queued
+        rocketnet_assert( server->acks->phase == ROCKETNET_SERVER_ACKS_CLOSED );
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
         rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, wire_bytes, packet_id, 1, current_time ),
                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
@@ -2339,6 +2340,8 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
 
     if ( server->acks )
     {
+        // the fill runs with the acks closed: nothing is queued
+        rocketnet_assert( server->acks->phase == ROCKETNET_SERVER_ACKS_CLOSED );
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
         rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, bytes, 0, 0, current_time ),
                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
@@ -2369,7 +2372,7 @@ int rocketnet_server_protocol_client_address( struct rocketnet_server_protocol_t
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     if ( mapping_index < 0 )
     {
-        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING], 1 );     // a fill thread may count it
         return 0;
     }
 

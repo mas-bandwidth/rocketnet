@@ -3,6 +3,7 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_receive_prefilter.h"
 #include <new>
 #include <atomic>
 #include <errno.h>
@@ -1961,7 +1962,7 @@ bool rocketnet_portable_tx_test_carry_wake()
 static const rocketnet_server_transport_io_operations_t portable_server_operations = {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, portable_stop, portable_stopped,
     NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive,
-    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send, portable_send_room, portable_send_idle, portable_begin_shutdown
+    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send, portable_send_room, portable_send_idle, portable_begin_shutdown, NULL, NULL, NULL, NULL
 };
 
 #if ROCKETNET_DEV
@@ -2283,9 +2284,8 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
 #include "rocketnet_server_socket.h"
 #endif // #if ROCKETNET_XDP
 
-// the native transports' drop counts behind send_failures and receive_drops,
-// defined as rocketnet_server_gso_receive_drops (sdk/rocketnet_server_gso_linux.cpp) and rocketnet_server_socket_send_failures (sdk/rocketnet_server_socket_linux.cpp)
-void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
+// the native transports' drop counts behind send_failures,
+// defined as rocketnet_server_socket_send_failures (sdk/rocketnet_server_socket_linux.cpp)
 // gso's begin_shutdown hook, rocketnet_server_gso_begin_shutdown in sdk/rocketnet_server_gso_linux.cpp
 void rocketnet_server_gso_begin_shutdown( struct rocketnet_server_gso_t * gso );
 
@@ -2305,7 +2305,9 @@ static void * gso_create( void * context, const rocketnet_server_transport_io_co
         return NULL;
     }
 
-    return rocketnet_server_gso_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, config->status );
+    const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
+    return rocketnet_server_gso_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+                                               config->transport->packet_filter );
 }
 
 static void gso_destroy( void * transport ) { rocketnet_server_gso_destroy( (rocketnet_server_gso_t *) transport ); }
@@ -2318,16 +2320,32 @@ ROCKETNET_STAGED_ADAPTER( gso, rocketnet_server_gso_t, rocketnet_server_gso )
 
 static uint64_t gso_send_failures( void * transport )
 {
-    // SEND_DROPPED: the datagrams a refused sendmmsg dropped
+    // SEND_DROPPED: the datagrams a refused sendmmsg dropped; and the frames a
+    // refused finish never staged
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, counters );
-    return counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED];
+    return counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] + rocketnet_server_gso_send_finish_refused( (rocketnet_server_gso_t *) transport );
 }
 
-static void gso_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
+// the queue workers' prefilter and bank drops (sdk/rocketnet_receive_prefilter.h)
+static void gso_receive_drop_totals( void * transport, uint64_t * values )
 {
-    rocketnet_server_gso_receive_drops( (rocketnet_server_gso_t *) transport, too_short, too_large );
+    rocketnet_server_gso_receive_drop_totals( (rocketnet_server_gso_t *) transport, values );
+}
+
+// per-queue staging: the queue a destination's frames are staged in is the
+// one rocketnet_server_gso_start_packet uses
+static int gso_send_queues( void * transport ) { return rocketnet_server_gso_send_queues( (rocketnet_server_gso_t *) transport ); }
+
+static int gso_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_gso_send_queue( to, rocketnet_server_gso_send_queues( (rocketnet_server_gso_t *) transport ) );
+}
+
+static int gso_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_gso_send_room_queue( (rocketnet_server_gso_t *) transport, queue );
 }
 
 static void gso_begin_shutdown( void * transport ) { rocketnet_server_gso_begin_shutdown( (rocketnet_server_gso_t *) transport ); }
@@ -2336,7 +2354,8 @@ static const rocketnet_server_transport_io_operations_t gso_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, gso_begin_shutdown
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, gso_begin_shutdown, gso_receive_drop_totals,
+    gso_send_queues, gso_send_queue_of, gso_send_room_queue
 };
 
 // the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
@@ -2354,7 +2373,9 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
         return NULL;
     }
 
-    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, config->status );
+    const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
+    return rocketnet_server_uring_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+                                                 config->transport->packet_filter );
 }
 
 static void io_uring_destroy( void * transport ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t *) transport ); }
@@ -2370,9 +2391,29 @@ static uint64_t io_uring_send_failures( void * transport )
     // SEND_DROPPED: send CQEs with a negative result, and destinations the
     // socket family cannot carry
 
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( (rocketnet_server_uring_t *) transport, counters );
-    return counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED];
+    return counters[ROCKETNET_COUNTER_URING_SEND_DROPPED];
+}
+
+// what the workers' prefilter and bank refused, by reason (rocketnet_driver.h)
+static void io_uring_receive_drop_totals( void * transport, uint64_t * values )
+{
+    rocketnet_server_uring_receive_drop_totals( (rocketnet_server_uring_t *) transport, values );
+}
+
+// per-queue staging: the queue a destination's frames are staged in is the
+// one rocketnet_server_uring_start_packet uses
+static int io_uring_send_queues( void * transport ) { return rocketnet_server_uring_send_queues( (rocketnet_server_uring_t *) transport ); }
+
+static int io_uring_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_uring_send_queue_of( (rocketnet_server_uring_t *) transport, to );
+}
+
+static int io_uring_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_uring_send_room_queue( (rocketnet_server_uring_t *) transport, queue );
 }
 
 static void io_uring_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
@@ -2384,7 +2425,8 @@ static const rocketnet_server_transport_io_operations_t io_uring_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL, io_uring_receive_drop_totals,
+    io_uring_send_queues, io_uring_send_queue_of, io_uring_send_room_queue
 };
 
 extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_uring_operations, NULL };
@@ -2459,11 +2501,27 @@ static void xdp_begin_shutdown( void * transport )
     rocketnet_server_socket_begin_shutdown( (rocketnet_server_socket_t *) transport );
 }
 
+static int xdp_send_queues( void * transport )
+{
+    return rocketnet_server_socket_send_queues( (rocketnet_server_socket_t *) transport );
+}
+
+static int xdp_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_socket_send_queue_of( (rocketnet_server_socket_t *) transport, to );
+}
+
+static int xdp_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_socket_send_room_queue( (rocketnet_server_socket_t *) transport, queue );
+}
+
 static const rocketnet_server_transport_io_operations_t xdp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS | ROCKETNET_TRANSPORT_REFLUSHES,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle, xdp_begin_shutdown
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle, xdp_begin_shutdown, NULL,
+    xdp_send_queues, xdp_send_queue_of, xdp_send_room_queue
 };
 #else
 static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
@@ -2492,7 +2550,7 @@ static int xdp_disabled_receive( void *, rocketnet_address_t *, uint8_t *, int, 
 static const rocketnet_server_transport_io_operations_t xdp_operations = {
     0, xdp_disabled_create, xdp_disabled_destroy, synchronous_stop, synchronous_stopped,
     NULL, NULL, NULL, NULL, NULL, xdp_disabled_send, xdp_disabled_receive,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 #endif // #if ROCKETNET_XDP
 
@@ -2515,15 +2573,34 @@ void rocketnet_server_iocp_set_create_for_test( iocp_create_function_t * functio
 }
 #endif // #if ROCKETNET_DEV
 
+static int iocp_workers( int num_xdp_queues )
+{
+    return num_xdp_queues > 1 ? num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
+}
+
 static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker
+    const int workers = iocp_workers( config->transport->num_xdp_queues );
+    if ( workers > ROCKETNET_IOCP_MAX_WORKERS )
+    {
+        rocketnet_warn( "iocp transport refused: num_xdp_queues %d is past the iocp transport's %d workers", workers, ROCKETNET_IOCP_MAX_WORKERS );
+        return NULL;
+    }
 
 #if ROCKETNET_DEV
-    return iocp_create_function( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
+    rocketnet_server_iocp_t * iocp = iocp_create_function( context, bind, workers, config->transport->max_clients, 0, 0, config->status );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, config->status );
+    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( context, bind, workers, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
+
+    // the completion workers refuse what main's stateless rungs would, before
+    // it takes a bank slot (rocketnet_receive_prefilter)
+
+    if ( iocp )
+    {
+        rocketnet_server_iocp_set_packet_filter( iocp, config->transport->packet_filter );
+    }
+    return iocp;
 }
 
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t *) transport ); }
@@ -2543,26 +2620,52 @@ ROCKETNET_STAGED_ADAPTER( iocp, rocketnet_server_iocp_t, rocketnet_server_iocp )
 static uint64_t iocp_send_failures( void * transport )
 {
     // SEND_FAILED: the transport's own count of datagrams a refused post or a failed
-    // send completion dropped (ROCKETNET_IOCP_SEND_FAILED)
+    // send completion dropped (ROCKETNET_COUNTER_IOCP_SEND_FAILED)
 
-    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) transport, counters );
-    return counters[ROCKETNET_IOCP_SEND_FAILED];
+    return counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED];
 }
 
 static void iocp_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
 {
-    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) transport, counters );
-    *too_short = counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT];
-    *too_large = counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+    *too_short = counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT];
+    *too_large = counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE];
+}
+
+static void iocp_receive_drop_totals( void * transport, uint64_t * values )
+{
+    rocketnet_server_iocp_receive_drop_totals( (rocketnet_server_iocp_t *) transport, values );
+}
+
+// the send lanes are the server's send queues: the protocol reserve is held
+// in the lane each client's frames stage in
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_MAX_LANES <= ROCKETNET_SERVER_MAX_SEND_QUEUES, "every send lane must be a queue the server's reserve can hold" );
+
+static int iocp_send_queues( void * transport )
+{
+    return rocketnet_server_iocp_send_lane_count( (rocketnet_server_iocp_t *) transport );
+}
+
+static int iocp_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_iocp_send_lane( (rocketnet_server_iocp_t *) transport, to );
+}
+
+static int iocp_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_iocp_send_lane_room( (rocketnet_server_iocp_t *) transport, queue );
 }
 
 static const rocketnet_server_transport_io_operations_t iocp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     iocp_create, iocp_destroy, iocp_stop, iocp_stopped,
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle, NULL
+    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle, NULL, iocp_receive_drop_totals,
+    iocp_send_queues, iocp_send_queue_of, iocp_send_room_queue
 };
 
 // the client column is the iocp client (sdk/rocketnet_client_iocp_windows.cpp):
@@ -2571,12 +2674,24 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 
 #include "rocketnet_server_rio.h"
 
+// num_xdp_queues is the lane count (0 is one lane); every lane's worker
+// prefilters with the server's packet filter
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
+    if ( !rocketnet_server_rio_lane_count( config->transport->num_xdp_queues ) )
+    {
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+        rocketnet_warn( "rio transport refused: num_xdp_queues %d is past the rio transport's %d lanes",
+                        config->transport->num_xdp_queues, ROCKETNET_RIO_MAX_LANES );
+        return NULL;
+    }
+    rocketnet_server_rio_options_t options;
+    options.lanes = config->transport->num_xdp_queues;
+    options.packet_filter = config->transport->packet_filter;
 #if ROCKETNET_DEV
-    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, 0, config->status );
+    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, 0, config->status, &options );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, config->status );
+    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, config->status, &options );
 #endif // #if ROCKETNET_DEV
 }
 
@@ -2597,26 +2712,54 @@ ROCKETNET_STAGED_ADAPTER( rio, rocketnet_server_rio_t, rocketnet_server_rio )
 static uint64_t rio_send_failures( void * transport )
 {
     // SEND_FAILED: the transport's own count of datagrams a refused post or a failed
-    // send completion dropped (ROCKETNET_RIO_COUNTER_SEND_FAILED)
+    // send completion dropped (ROCKETNET_COUNTER_RIO_SEND_FAILED)
 
-    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, counters );
-    return counters[ROCKETNET_RIO_COUNTER_SEND_FAILED];
+    return counters[ROCKETNET_COUNTER_RIO_SEND_FAILED];
+}
+
+static void rio_receive_drop_totals( void * transport, uint64_t * values )
+{
+    // the lanes' worker tallies (the prefilter's refusals by reason, and
+    // datagrams with no room or left at stop), summed over every lane; plus
+    // RECEIVE_FAILED, read from the rio row the I/O worker already counts at
+    // the same site, so the pair agrees: a receive completed with an error
+    // status or an unreadable source (RECEIVE_FAILED is RIO_RECEIVE_FAILED)
+
+    rocketnet_server_rio_receive_drop_totals( (rocketnet_server_rio_t *) transport, values );
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, counters );
+    values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] = counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED];
+}
+
+// each lane is a send queue for the server's protocol send reserve
+static int rio_send_queues( void * transport ) { return rocketnet_server_rio_lanes( (rocketnet_server_rio_t *) transport ); }
+
+static int rio_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_rio_lane_of( (rocketnet_server_rio_t *) transport, to );
+}
+
+static int rio_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_rio_lane_send_room( (rocketnet_server_rio_t *) transport, queue );
 }
 
 static void rio_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
 {
-    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, counters );
-    *too_short = counters[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT];
-    *too_large = counters[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE];
+    *too_short = counters[ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT];
+    *too_large = counters[ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE];
 }
 
 static const rocketnet_server_transport_io_operations_t rio_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     rio_create, rio_destroy, rio_stop, rio_stopped,
     rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle, NULL
+    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle, NULL, rio_receive_drop_totals,
+    rio_send_queues, rio_send_queue_of, rio_send_room_queue
 };
 
 extern const rocketnet_transport_backend_t rocketnet_rio_transport = { &rio_operations, NULL };
@@ -2688,7 +2831,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
         plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes( queues, config->max_clients );
         plan.mapped_ring_bytes = rocketnet_server_uring_mapped_bytes( queues );
-        plan.worker_threads = 0;
+        plan.worker_threads = queues; // a worker per queue owns its ring
         plan.sockets = queues;
     }
 #if ROCKETNET_XDP
@@ -2705,32 +2848,49 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if ( strcmp( transport, "iocp" ) == 0 )
     {
-        // rn-iocp-one-completion-worker: iocp always plans one completion worker plus one send worker
+        // the completion workers (iocp_workers), each with its own socket,
+        // plus the send threads the lanes get (at most ROCKETNET_IOCP_SEND_THREADS,
+        // one for a one-lane server). The plan refuses what create refuses
+        // for want of a size: more workers than ROCKETNET_IOCP_MAX_WORKERS.
 
-        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( ROCKETNET_IOCP_DEFAULT_WORKERS, config->max_clients );
-        plan.worker_threads = ROCKETNET_IOCP_DEFAULT_WORKERS + 1;
-        plan.sockets = 1;
+        const int workers = iocp_workers( config->num_xdp_queues );
+        if ( workers > ROCKETNET_IOCP_MAX_WORKERS )
+        {
+            return false;
+        }
+        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( workers, config->max_clients );
+        if ( !plan.transport_io_bytes )
+        {
+            return false;
+        }
+        plan.worker_threads = workers + rocketnet_server_iocp_send_threads( rocketnet_server_iocp_send_lanes( config->max_clients ) );
+        plan.sockets = workers;
     }
     else if ( strcmp( transport, "rio" ) == 0 )
     {
-        plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes( config->max_clients );
+        // a socket, an I/O worker and a registered region per lane
+        // (num_xdp_queues; rocketnet_server_rio_create)
 
-        // the registered region is one rocketnet_malloc (rocketnet_server_rio_create)
+        const int lanes = rocketnet_server_rio_lane_count( config->num_xdp_queues );
+        plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes( config->max_clients, lanes );
+
+        // each lane's registered region is one rocketnet_malloc
 
         const uint64_t region = rocketnet_server_rio_registered_region_bytes( config->max_clients );
-        if ( !region )
+        if ( !lanes || !region )
         {
             return false;
         }
 
-        plan.registered_region_bytes = rocketnet_memory_allocations( { region } );
-        if ( !plan.registered_region_bytes )
+        plan.registered_region_bytes = 0;
+        if ( !rocketnet_memory_add( plan.registered_region_bytes, (uint64_t) lanes, rocketnet_memory_allocations( { region } ) ) ||
+             !plan.registered_region_bytes )
         {
             return false;
         }
 
-        plan.worker_threads = 1;
-        plan.sockets = 1;
+        plan.worker_threads = lanes;
+        plan.sockets = lanes;
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else
@@ -2749,11 +2909,7 @@ bool rocketnet_server_transport_io_receive_drops( const rocketnet_server_transpo
     // name, so custom transports retain their own counter policy without a cast.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    if ( operations == &gso_operations )
-    {
-        gso_receive_drops( transport, too_short, too_large );
-    }
-    else if ( operations == &io_uring_operations )
+    if ( operations == &io_uring_operations )
     {
         io_uring_receive_drops( transport, too_short, too_large );
     }
@@ -2808,6 +2964,51 @@ bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_serve
     (void) operations;
     (void) transport;
     (void) dropped;
+
+    return false;
+}
+
+bool rocketnet_server_transport_io_transport_counters( const rocketnet_server_transport_io_operations_t * operations, void * transport, uint64_t * values )
+{
+    // builtin-only, matched on the operations table as receive_drops is: the
+    // transport's own counts are rows of the public table (the GSO_, URING_,
+    // IOCP_ and RIO_ rows and XDP_PIN_REFUSALS of sdk/rocketnet_counters.h);
+    // the transport writes its rows of values, an array of
+    // ROCKETNET_NUM_COUNTERS, and nothing else
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
+    if ( operations == &xdp_operations )
+    {
+        values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = rocketnet_server_socket_pin_refusals( (rocketnet_server_socket_t *) transport );
+        return true;
+    }
+#endif // #if ROCKETNET_XDP
+    if ( operations == &gso_operations )
+    {
+        rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, values );
+        return true;
+    }
+    if ( operations == &io_uring_operations )
+    {
+        rocketnet_server_uring_counters( (rocketnet_server_uring_t *) transport, values );
+        return true;
+    }
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    if ( operations == &iocp_operations )
+    {
+        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) transport, values );
+        return true;
+    }
+    if ( operations == &rio_operations )
+    {
+        rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, values );
+        return true;
+    }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    (void) operations;
+    (void) transport;
+    (void) values;
 
     return false;
 }

@@ -95,7 +95,7 @@ status code and the accompanying `ERROR` log line:
      configured client epoch, connect checks expiry at the time of the
      client's most recent update (zero if it has never been updated), so a
      client whose clock does not start at zero is updated once before connect.
-3. **Transport ladder and host capability failures (`INVALID_TRANSPORT_LIST`, `TRANSPORT_NOT_BUILT`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_LADDER_EXHAUSTED`)**:
+3. **Transport list and host capability failures (`INVALID_TRANSPORT_LIST`, `TRANSPORT_NOT_BUILT`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `NO_TRANSPORT_FOUND`)**:
    - `INVALID_TRANSPORT_LIST`: `config.transport` (or
      `ROCKETNET_*_TRANSPORT`) contains an unknown transport name, an empty
      comma-separated token, or mixes `"auto"` with other names (`"auto"` must
@@ -104,15 +104,15 @@ status code and the accompanying `ERROR` log line:
      binary (`docs/LINUX.md`).
    - `TRANSPORT_FAMILIES_UNSUPPORTED`: the selected transport cannot
      serve the configured IPv4/IPv6 family combination.
-   - `TRANSPORT_LADDER_EXHAUSTED`: every candidate in the resolved
-     transport ladder failed host preflight, socket bind, or the operator
+   - `NO_TRANSPORT_FOUND`: every candidate in the resolved
+     transport list failed host preflight, socket bind, or the operator
      transport memory budget (`ROCKETNET_*_MEMORY_BUDGET_BYTES`, which checks
      `allocator_bytes + umem_bytes` per candidate, not the create-time block).
    - **Action**: inspect the `WARN` / `ERROR` log lines emitted by each
      candidate during `start` or `connect`. When troubleshooting `xdp` on
-     Linux, preserve the pinned geometry: 4,096-byte frames, a 4,096-entry send
-     queue, 16,384-entry receive queue and fill set, a 32,768-entry fill ring,
-     and 49,152 UMEM frames per queue. Use only the supported runtime controls
+     Linux, preserve the pinned geometry: 4,096-byte frames, a 16,384-entry send
+     queue, 32,768-entry receive queue and fill set, a 65,536-entry fill ring,
+     and 98,304 UMEM frames per queue. Use only the supported runtime controls
      (`num_xdp_queues`, `num_os_cpus`, and
      `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`). The XDP data plane requires
      effective UID 0; Linux capabilities alone do not satisfy that preflight.
@@ -502,7 +502,7 @@ application error.
 | `rocketnet_server_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
 | `rocketnet_server_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
 | `rocketnet_server_create( context, ipv4_address, ipv6_address, config, status )` | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an address that does not parse or names the wrong family), or `OK` with the handle. It also returns `NULL` with `CRYPTO_INIT_FAILED`, and no error line, when the server key could not be generated or derived |
-| `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
+| `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`NO_TRANSPORT_FOUND`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | nothing (`void`); a refused time is counted as API misuse and logged |
 | `rocketnet_create_dev_connect_token`, `*_set_send_kbps` | the status code; see each declaration in `sdk/rocketnet.h` |
 
@@ -535,7 +535,7 @@ applications call only declarations in [rocketnet.h](../sdk/rocketnet.h).
 Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is negative, from `-1` to `-34`. `-9` is not a code
+2. Every failure code is negative, from `-1` to `-35`. `-9` is not a code
    and `-22` is reserved; no call returns either. `status < 0` means the call
    failed.
 3. There is no count value. `rocketnet_status_name` maps each code by value.
@@ -560,10 +560,11 @@ out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 error line, when its key could not be generated or derived. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `CONNECT_TOKEN_PORT_ZERO`, `SERVER_NOT_STOPPED`,
-`TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
+`NO_TRANSPORT_FOUND`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`,
+`TRANSPORT_BIND_REFUSED`, `MISSING_KEYS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED` and
 `THREAD_CREATE_FAILED`. Server start reports a
-transport whose thread the platform refused as `TRANSPORT_LADDER_EXHAUSTED`;
+transport whose thread the platform refused as `NO_TRANSPORT_FOUND`;
 `THREAD_CREATE_FAILED` comes from client connect when the operating system
 refuses its network thread. An allocation refused anywhere in connect or start,
 the thread's record included, is `OUT_OF_MEMORY`.
@@ -597,10 +598,23 @@ refuse a transport list that names `loopback` when the config's
 `loopback_hub` is `NULL`. `ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH` is -33:
 create and `rocketnet_loopback_hub_destroy` refuse a hub whose magic, version
 or layout id differ from this library's, one made by another build.
-`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34, the last code:
+`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34:
 `rocketnet_loopback_hub_destroy` refuses while a server or client endpoint is
 registered with the hub, keeps the hub, logs one `ERROR` line and counts API
-misuse.
+misuse. `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED` is -35, the last code: server
+start returns it when the platform refused the bind of at least one transport
+(another socket holds the address and port, or the address is not one this host
+can bind) and no other transport tried, except the xdp transport, failed for a
+reason of its own. A transport reports it when the platform refuses its bind
+with EADDRINUSE, EADDRNOTAVAIL or EACCES (WSAEADDRINUSE, WSAEADDRNOTAVAIL or
+WSAEACCES on Windows): the portable socket, gso, io_uring, iocp and rio
+transports. The xdp transport binds no datagram socket and never reports it, and
+its own refusal does not stop the others' bind refusal from naming the start. A
+transport skipped for the memory budget is not counted. A server whose port
+another socket holds, with neither bind field set, now reads this status where it
+read `NO_TRANSPORT_FOUND`. When no transport was refused its bind and
+every transport that was tried refused the address as invalid (the xdp transport
+does, for an address it cannot serve), start returns `INVALID_ADDRESS`.
 
 <a id="22-reporting"></a>
 

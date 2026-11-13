@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+#
+# The red zones' negative control: a planted one-past write must be reported
+# by AddressSanitizer, so the poisoned gaps between carved arrays
+# (sdk/rocketnet_memory.h, ROCKETNET_RED_ZONES) are proven to bite and not
+# only to exist.
+#
+#   bash scripts/red-zones-selftest [build-dir [bin-dir]]
+#
+# Needs an AddressSanitizer development build (ROCKETNET_DEV=ON, the default)
+# configured in build-dir (default: build), with its binaries in bin-dir
+# (default: ./bin), as nightly-leaks.yml makes. Prints one line per leg; any leg that misbehaves
+# prints why and the script exits nonzero. The source is restored on exit,
+# whatever happens, and the test binary is rebuilt from it.
+#
+# The plant is mutant 4691 of the mutation runs (HUNT-MUTATION, 2026-11-11):
+# rocketnet_server_reserve_send_frame's full check on the unstaged send
+# buffer, `num_packets >= capacity`, read as `>`. At exactly capacity the
+# buffer is not flushed and the next frame's address is written to to[capacity],
+# one past the array. Without red zones that write lands in packet_bytes, the
+# next array carved from the transport's one allocation, and AddressSanitizer
+# cannot see it (the mutant survived ASan before the red zones).
+#
+# The legs:
+#
+#   1  control  -- the clean tree: the reaching case passes.
+#   2  plant    -- the mutant: the same case exits nonzero with an
+#                  AddressSanitizer use-after-poison report whose stack is in
+#                  rocketnet_server_reserve_send_frame.
+
+set -u
+
+cd "$( dirname "${BASH_SOURCE[0]}" )/.." || exit 1
+
+BUILD="${1:-build}"
+TEST="${2:-./bin}/test"
+SOURCE=sdk/rocketnet_server_transport.cpp
+CASE=test_server_stats_current_every_update
+CLEAN='if ( send_buffer->num_packets >= send_buffer->capacity )'
+PLANT='if ( send_buffer->num_packets > send_buffer->capacity )'
+
+if [ ! -d "$BUILD" ]; then
+    echo "red-zones-selftest: no build directory $BUILD -- configure an ASan build first" >&2
+    exit 1
+fi
+
+WORK="$( mktemp -d "${TMPDIR:-/tmp}/red-zones-selftest.XXXXXX" )"
+cp "$SOURCE" "$WORK/source"
+
+restore()
+{
+    cp "$WORK/source" "$SOURCE"
+    touch "$SOURCE"
+    cmake --build "$BUILD" --target test --parallel > "$WORK/rebuild.log" 2>&1 || echo "red-zones-selftest: rebuild after restore failed" >&2
+    rm -rf "$WORK"
+}
+trap restore EXIT
+
+failures=0
+
+fail()
+{
+    echo "FAIL: $*" >&2
+    failures=$(( failures + 1 ))
+}
+
+export ASAN_OPTIONS=detect_leaks=0
+export UBSAN_OPTIONS=print_stacktrace=1
+
+# ---------------------------------------------------------------------------
+# 1. control: the clean tree passes the reaching case
+
+if ! cmake --build "$BUILD" --target test --parallel > "$WORK/build-clean.log" 2>&1; then
+    fail "the clean test build failed"
+    tail -n 20 "$WORK/build-clean.log" >&2
+    exit 1
+fi
+"$TEST" --run "$CASE" > "$WORK/clean.log" 2>&1
+status=$?
+if [ "$status" -ne 0 ] || grep -q 'AddressSanitizer' "$WORK/clean.log"; then
+    fail "control: $CASE on the clean tree exited $status"
+    tail -n 20 "$WORK/clean.log" >&2
+    exit 1
+fi
+echo "leg 1  control: $CASE passes on the clean tree"
+
+# ---------------------------------------------------------------------------
+# 2. plant: the one-past write is reported where it happens
+
+count=$( grep -c -F "$CLEAN" "$SOURCE" )
+if [ "$count" -ne 1 ]; then
+    fail "the plant site occurs $count times in $SOURCE, expected exactly 1 (has the full check moved?)"
+    exit 1
+fi
+# sed, not bash's ${var/pattern/text}, which is quadratic over a file this size;
+# the pattern holds no regex metacharacter but the literal parentheses BRE reads as text
+sed 's/if ( send_buffer->num_packets >= send_buffer->capacity )/if ( send_buffer->num_packets > send_buffer->capacity )/' "$SOURCE" > "$WORK/planted"
+cp "$WORK/planted" "$SOURCE"
+if [ "$( grep -c -F "$PLANT" "$SOURCE" )" -ne 1 ] || [ "$( grep -c -F "$CLEAN" "$SOURCE" )" -ne 0 ]; then
+    fail "the plant was not applied"
+    exit 1
+fi
+
+if ! cmake --build "$BUILD" --target test --parallel > "$WORK/build-plant.log" 2>&1; then
+    fail "the planted test build failed"
+    tail -n 20 "$WORK/build-plant.log" >&2
+    exit 1
+fi
+"$TEST" --run "$CASE" > "$WORK/plant.log" 2>&1
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "plant: $CASE exited 0 with a one-past write -- the red zones are decoration"
+elif ! grep -q 'ERROR: AddressSanitizer: use-after-poison' "$WORK/plant.log"; then
+    fail "plant: $CASE exited $status without an AddressSanitizer use-after-poison report"
+    tail -n 20 "$WORK/plant.log" >&2
+elif ! grep -q 'in rocketnet_server_reserve_send_frame' "$WORK/plant.log"; then
+    fail "plant: the report's stack is not in rocketnet_server_reserve_send_frame"
+    grep -m 8 -E '^ *#[0-9]+ ' "$WORK/plant.log" >&2
+else
+    echo "leg 2  plant: one past the send buffer is reported, exit $status: $( grep -m 1 -E '^ *#[0-9]+ .*rocketnet_server_reserve_send_frame' "$WORK/plant.log" | sed 's/^ *//' )"
+fi
+
+# ---------------------------------------------------------------------------
+
+if [ "$failures" -ne 0 ]; then
+    echo "red-zones-selftest: $failures leg(s) failed" >&2
+    exit 1
+fi
+
+exit 0

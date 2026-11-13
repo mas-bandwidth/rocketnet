@@ -13,6 +13,8 @@
 #include "rocketnet_address.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_test_seams.h"
+#include "rocketnet_memory.h"
+#include "suite_runner.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -463,7 +465,7 @@ static void test_server_send_capacity_reports_staged_room()
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
         rocketnet_unit_check( frame );
-        memset( frame + context.payload_index, i, 16 );
+        memset( frame, i, 16 );
         rocketnet_unit_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) > 0 );
     }
 
@@ -472,11 +474,29 @@ static void test_server_send_capacity_reports_staged_room()
     f->used = f->capacity;
     rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 0 );
 
+    // the flush opens the budget: the room less the protocol reserve
+    // (RNSendReserve: handshakes and disconnect seals per update, plus the
+    // one connected slot, never more than half the staging). A staging of 24
+    // is less than twice that, so half of it is kept
+
+    const int formula = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE + ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE + 1;
     rocketnet_server_transport_send_packets( server );
-    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 24 );
+    rocketnet_unit_check( (int) server->send_reserve[0] == 12 );
+    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 12 );
+
+    // a staging of twice the reserve and 24 more: the whole reserve is kept
+
+    f->capacity = 2 * formula + 24;
+    rocketnet_server_transport_send_packets( server );
+    const int reserve = (int) server->send_reserve[0];
+    rocketnet_unit_check( reserve == formula );
+    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == formula + 24 );
+
+    // a transport that does not report its room is unbounded, less the reserve
 
     operations.send_room = NULL;
-    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == INT_MAX );
+    rocketnet_server_transport_send_packets( server );
+    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == INT_MAX - reserve );
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
@@ -502,13 +522,19 @@ static void test_server_refused_starts_counted_by_cause()
     struct rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
     rocketnet_unit_check( frame );
-    memset( frame + context.payload_index, 1, 16 );
+    memset( frame, 1, 16 );
     rocketnet_unit_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) > 0 );
 
     // the staging is full: a full ring
 
     rocketnet_unit_check( !rocketnet_server_transport_start_packet( server, 0, 16, &context ) );
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + 1 );
+
+    // the checks below are of the transport's own refusals: room well past
+    // the protocol reserve, so the budget the flush opens
+    // (RNSendReserve) is not what refuses them
+
+    f->capacity = 1024;
     rocketnet_server_transport_send_packets( server );
 
     // room left, but the transport refuses the destination: not a full ring
@@ -1176,6 +1202,37 @@ static void test_server_transport_replay_counts_left_on_other_tables()
 }
 REGISTER_UNIT_TEST( test_server_transport_replay_counts_left_on_other_tables );
 
+// XDP_PIN_REFUSALS is assigned only when the transport's io table answers the
+// transport rows (the xdp table, on Linux with XDP built): on every other
+// table, on every platform, a read leaves the row as it was
+
+// sdk/rocketnet_driver_builtin.cpp, declared by its one reader
+// (sdk/rocketnet_server_transport.cpp) and here
+bool rocketnet_server_transport_io_transport_counters( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                       uint64_t * values );
+
+static void test_server_transport_xdp_pin_refusals_left_on_other_tables()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, 1, true );
+
+    server->counters.values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = 6;
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] == 6 );
+
+    uint64_t values[ROCKETNET_NUM_COUNTERS] = {};
+    values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = 1;
+    rocketnet_unit_check( !rocketnet_server_transport_io_transport_counters( server->io.operations, server->io.instance, values ) );
+    rocketnet_unit_check( values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] == 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_xdp_pin_refusals_left_on_other_tables );
+
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
 // The transport's own read of XDP_RECEIVE_FRAME_DROPPED
@@ -1248,6 +1305,27 @@ static bool stop_spread_replay_counts_read( const struct rocketnet_server_transp
     return true;
 }
 
+uint64_t rocketnet_server_socket_memory_required( int num_queues, int max_clients );
+
+// The two synthetic queues rocketnet_server_socket_test_receive_dropped
+// builds are whole queue objects, zeroed at construction, each holding its
+// receive staging and send buffers: past the suite's default bound of 698
+// MiB (measured 1189 MiB in a Debug build on CI). The bound is the XDP plan
+// of a two-queue server less the UMEM the case never maps, plus 64 MiB for
+// the process and the case's own 64-client server.
+static long stop_spread_xdp_two_queue_rss_bound_mb()
+{
+    const uint64_t plan = rocketnet_server_socket_memory_required( 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    const uint64_t umem = rocketnet_xdp_umem_bytes( 2 );
+    if ( !plan || !umem || plan <= umem )
+    {
+        return 0;
+    }
+    return suite_rss_bound_mb( plan - umem, 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_server_transport_counts_xdp_frames_dropped, stop_spread_xdp_two_queue_rss_bound_mb );
+
 static void test_server_transport_counts_xdp_frames_dropped()
 {
     stop_spread_fixture_t * f = new stop_spread_fixture_t();
@@ -1288,5 +1366,70 @@ static void test_server_transport_counts_xdp_frames_dropped()
     delete f;
 }
 REGISTER_UNIT_TEST( test_server_transport_counts_xdp_frames_dropped );
+
+// The transport's own read of XDP_PIN_REFUSALS: the development case
+// rocketnet_server_socket_test_pin_refusals pins two synthetic xdp queues
+// through fake affinity calls (granted, the affinity call refused, the cpu not
+// online, the cpu outside the set) and asks its dispatch for the public row
+// after each step (0, 1, 2, 3). Here the dispatch is a server transport whose
+// I/O is the xdp table over those queues: the answer is what
+// rocketnet_server_transport_counters leaves in XDP_PIN_REFUSALS, by value, so
+// the case passes only when the row holds each count exactly; a second read
+// leaves it unchanged (assigned, never added).
+
+typedef bool rocketnet_server_socket_test_transport_counters_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                                uint64_t * values );
+bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_transport_counters_t * dispatch,
+                                                const struct rocketnet_server_transport_io_operations_t * xdp );
+
+static int g_pin_refusals_reads;
+
+static bool stop_spread_pin_refusals_read( const struct rocketnet_server_transport_io_operations_t * operations, void * transport, uint64_t * values )
+{
+    rocketnet_server_transport_t * server = g_frames_dropped_server;
+    const rocketnet_server_transport_io_operations_t * saved_operations = server->io.operations;
+    void * saved_instance = server->io.instance;
+    server->io.operations = operations;
+    server->io.instance = transport;
+
+    const uint64_t refusals = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS];
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] == refusals );
+
+    server->io.operations = saved_operations;
+    server->io.instance = saved_instance;
+    g_pin_refusals_reads++;
+    values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = refusals;
+    return true;
+}
+
+SUITE_CASE_RSS_BOUND( test_server_transport_counts_xdp_pin_refusals, stop_spread_xdp_two_queue_rss_bound_mb );
+
+static void test_server_transport_counts_xdp_pin_refusals()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, 1, true );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );    // each refused pin logs, and the synthetic queues have no stats map
+
+    const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
+    rocketnet_unit_check( xdp && xdp->backend && xdp->backend->server );
+    g_frames_dropped_server = server;
+    g_pin_refusals_reads = 0;
+    rocketnet_unit_check( rocketnet_server_socket_test_pin_refusals( stop_spread_pin_refusals_read, xdp->backend->server ) );
+    rocketnet_unit_check( g_pin_refusals_reads == 4 );
+    g_frames_dropped_server = NULL;
+
+    // the last count stays until the next xdp read: a read through the fake
+    // table assigns nothing
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] == 3 );
+
+    rocketnet_log_level( saved_level );
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_counts_xdp_pin_refusals );
 
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP

@@ -910,6 +910,13 @@ static void test_server_response_and_slot_counters_move_exactly()
     rcr_pair_setup( &pair, RCR_STAGE_CONNECTED );
 
     {
+        // a batch that holds two, as its own allocations, so a write one past
+        // it is past the arrays (an ASan build reports it: sdk/rocketnet_memory.h)
+        rocketnet_free( pair.server.acks->context, pair.server.acks->acked_client_index );
+        rocketnet_free( pair.server.acks->context, pair.server.acks->acked_packet_ids );
+        pair.server.acks->acked_client_index = (int *) rocketnet_malloc( pair.server.acks->context, 2 * sizeof( int ) );
+        pair.server.acks->acked_packet_ids = (uint64_t *) rocketnet_malloc( pair.server.acks->context, 2 * sizeof( uint64_t ) );
+        check( pair.server.acks->acked_client_index && pair.server.acks->acked_packet_ids );
         pair.server.acks->acked_capacity = 2;
 
         uint64_t first_sequence = 0;

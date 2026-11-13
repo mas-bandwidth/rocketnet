@@ -20,7 +20,7 @@ and resolves the configured list before that activation. The list rides the conf
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
-    ./bin/functional                                # auto: the platform's recommended ladder
+    ./bin/functional                                # auto: the platform's recommended transport order
                                                 #   (production linux: xdp,gso,io_uring,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 #   portable server is available in both build modes
@@ -39,7 +39,7 @@ clamped: the public range is 1–1024 (zero selects a transport default),
 while gso and io_uring accept at most 32. XDP also checks its memory and host
 geometry before starting. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
-that degradation is internal to the transport, below the ladder; likewise the Darwin
+that degradation is internal to the transport, below the transport list; likewise the Darwin
 batch pump's live-refusal pause. Select the portable server in either
 build with `ROCKETNET_SERVER_TRANSPORT=portable`; select the client's portable
 side with `ROCKETNET_CLIENT_TRANSPORT=portable` in either build.
@@ -66,12 +66,15 @@ send buffers are recycled only after completion, and stop cancels and drains
 outstanding operations. IPv6 binds accept both address families. Windows clients independently select `iocp` or `portable`; a server pin does
 not change the client selection.
 
-The public IOCP adapter ignores `num_xdp_queues` and always starts one
-completion worker and one transmit worker. The completion worker owns the
-single socket's receive completions. At the default `max_clients` of 1000
-there are 128 posted receives, 4096 receive staging slots per worker buffer,
-and 2048 shared send frames. Its three command banks hold references to that
-frame pool; they do not multiply it. Staging and send capacities scale with
+The public IOCP adapter runs `num_xdp_queues` completion workers (1 to 32;
+zero or 1 is one), each with its own socket and completion port, and two send
+threads. More than one worker needs a specific local address in
+`bind_ipv4_address` or `bind_ipv6_address`: start refuses the wildcard. Each
+completion worker owns its socket's receive completions. At the default
+`max_clients` of 1000 there are 128 posted receives a worker, 16000 receive
+staging slots across the workers, and 8 send lanes of 4096 frames. Each lane's
+three command banks hold references to that lane's frame pool; they do not
+multiply it. Staging and send capacities scale with
 the server's configured `max_clients`; see [Maximum clients](MEMORY.md#maximum-clients). These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
@@ -131,7 +134,7 @@ Cold, on a fresh box, as root:
     scripts/rocketnet-provision eth0 7 verify
 
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
-    #    auto ladder falls to gso with the reason named where it is not.
+    #    automatic transport order falls to gso with the reason named where it is not.
 
     # 4a. ON IXGBE (and any NIC whose XDP attach resets the port): the attach
     #    rebuilds the interrupt vectors after the pre-flight has passed, and
@@ -231,7 +234,7 @@ BPF object, static/shared libraries, examples and XDP test executables. Run
 libraries. Jammy's liburing 2.1 lacks multishot receive, so configure prints
 `liburing found without multishot receive` and does not build the io_uring
 transport: it is absent from the transport list, as in a build without
-liburing, and the production ladder is `xdp -> gso -> portable`. XDP is
+liburing, and the production transport order is `xdp -> gso -> portable`. XDP is
 independent of it.
 
 Compilation and linking in an Ubuntu 22.04 container qualify its toolchain and

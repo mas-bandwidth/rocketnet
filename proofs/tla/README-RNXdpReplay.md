@@ -264,7 +264,9 @@ MAC as the address's answered entry (`Answer`, `answered[a]`); a reply with
 no frame in hand takes the learned MAC, else its own address's answered
 entry, else it is refused (`Drain`); a learn takes the answered entry's slot
 (`Connect`), and a forget leaves the learned MAC as the answered entry
-(`Commit`). `replyMac[a]`, the learned MAC, is still dropped by the forget, so
+(`Walk`, where the sink queues the forget and drops the learned MAC, as the
+code does; the commit after it clears `pendingMacForget`). `replyMac[a]`,
+the learned MAC, is still dropped by the forget, so
 `ReleasedSlotForgetsItsReplyMac` is unchanged. `HoldSessionReply` holds a live
 session's reply and `HoldStray` a reply to any address, one no frame need
 ever have come from. `HeldReplyBudget` bounds the held replies over a run; it
@@ -335,7 +337,7 @@ done
 `MaxInFlight = 1`, `ForgetCapacity = 1`. TLC explores every send, forgery,
 duplicate, kernel pass or drop, open, release, walk and commit interleaving,
 with up to two refused forgets anywhere in the run
-(`ForgetFailureBudget <- ForgetFailureBudgetTwo`, so a kept forget can be
+(`ForgetFailureBudget = 2`, so a kept forget can be
 refused again in the commit that lands a newer session's mark): 239,206
 distinct states (596,195 generated, depth 36), and `TypeOK`,
 `ForgetOwedUntilApplied`, `MarkNeverAhead`, `MarksTakenFromTheTruth`,
@@ -345,13 +347,13 @@ distinct states (596,195 generated, depth 36), and `TypeOK`,
 
 `MCRNXdpReplayReconnect.cfg`: the same, with `Sessions = 3`, so a reconnect
 at one address can meet a release, a full pending buffer or a refused
-delete at the other: 4,527,982 distinct states (11,919,449 generated, depth
+delete at the other: 4,490,030 distinct states (11,823,585 generated, depth
 49), every property of the control holding.
 
 `MCRNXdpReplayRefusedMark.cfg`: two addresses, `MaxSeq = 3`, `W = 2`,
 `Sessions = 2`, `MaxInFlight = 1`, `ForgetCapacity = 1`, one refused forget
 and up to two refused marks, by the kernel or by the buffer
-(`MarkFailureBudget <- MarkFailureBudgetTwo`), so a reconnect's zero mark
+(`MarkFailureBudget = 2`), so a reconnect's zero mark
 can be refused, kept or owed, refused again and applied, with its greeting
 held throughout. `NewSessionNeverDroppedByOldMark`, `MarkOwedUntilApplied`,
 `MarkNeverAhead`, `ForgetOwedUntilApplied`, `RetryNeverDeletesNewerMark` and
@@ -359,7 +361,7 @@ the rest hold. The measured records are in `proofs/tla/RUNS.tsv`.
 
 `MCRNXdpReplayHeldReply.cfg`: two addresses, `MaxSeq = 3`, `W = 2`,
 `Sessions = 2`, `MaxInFlight = 1`, `ForgetCapacity = 1`, and up to two held
-replies (`HeldReplyBudget <- HeldReplyBudgetTwo`): a handshake reply, a live
+replies (`HeldReplyBudget = 2`): a handshake reply, a live
 session's reply or a reply to an address no frame came from, each sent later
 with no frame in hand, before or after a learn, a release and its forget.
 `NeverSeenNeverSentTo`, `HeldReplyFindsItsMac`, `AnsweredOnlyHeard` and

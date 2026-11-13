@@ -201,14 +201,14 @@ static uint64_t posix_native_counter( int kind, void * transport, int gso_index,
 #if defined( __linux__ )
     if ( kind == POSIX_NATIVE_GSO )
     {
-        uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+        uint64_t counters[ROCKETNET_NUM_COUNTERS];
         rocketnet_server_gso_counters( (struct rocketnet_server_gso_t *) transport, counters );
         return counters[gso_index];
     }
 
     if ( kind == POSIX_NATIVE_URING )
     {
-        uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+        uint64_t counters[ROCKETNET_NUM_COUNTERS];
         rocketnet_server_uring_counters( (struct rocketnet_server_uring_t *) transport, counters );
         return counters[uring_index];
     }
@@ -225,7 +225,7 @@ static uint64_t posix_native_counter( int kind, void * transport, int gso_index,
 static uint64_t posix_native_dropped_size( int kind, void * transport )
 {
 #if defined( __linux__ )
-    return posix_native_counter( kind, transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE );
+    return posix_native_counter( kind, transport, ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE, ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE );
 #else
     return posix_native_counter( kind, transport, 0, 0 );
 #endif // #if defined( __linux__ )
@@ -768,7 +768,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
         uint8_t * frame = at_server ? rocketnet_client_transport_start_packet( pair.client, POSIX_WEATHER_VALID_BYTES, &context )
                                     : rocketnet_server_transport_start_packet( pair.server, pair.client_index, POSIX_WEATHER_VALID_BYTES, &context );
         posix_check( frame != NULL );
-        posix_valid_payload( index, frame + context.payload_index );
+        posix_valid_payload( index, frame );
 
         if ( at_server )
         {
@@ -1448,8 +1448,8 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
             struct rocketnet_packet_context_t context;
             uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
             posix_check( frame != NULL );
-            memset( frame + context.payload_index, 0xdd, 16 );
-            frame[context.payload_index + 1] = (uint8_t) i;
+            memset( frame, 0xdd, 16 );
+            frame[1] = (uint8_t) i;
             posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
         }
 
@@ -1553,8 +1553,8 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
             struct rocketnet_packet_context_t context;
             uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
             posix_check( frame != NULL );
-            memset( frame + context.payload_index, 0x5a, 16 );
-            frame[context.payload_index] = (uint8_t) ( tag + i );
+            memset( frame, 0x5a, 16 );
+            frame[0] = (uint8_t) ( tag + i );
             posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
         }
 
@@ -1612,7 +1612,7 @@ static void posix_transport_stop_drains_refused_bank( int ipv6, int error )
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
         posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0xdd, 16 );
+        memset( frame, 0xdd, 16 );
         posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
     }
 
@@ -2251,8 +2251,8 @@ static void posix_linux_client_traffic_resumes( struct posix_pair_t * pair, int 
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_client_transport_start_packet( pair->client, 16, &context );
         posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0x5a, 16 );
-        frame[context.payload_index] = (uint8_t) ( tag + i );
+        memset( frame, 0x5a, 16 );
+        frame[0] = (uint8_t) ( tag + i );
         posix_check( rocketnet_client_transport_finish_packet( pair->client, &context, 16 ) > 0 );
     }
 
@@ -2297,8 +2297,8 @@ static void posix_linux_server_traffic_resumes( struct posix_pair_t * pair, int 
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( pair->server, pair->client_index, 16, &context );
         posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0x5a, 16 );
-        frame[context.payload_index] = (uint8_t) ( tag + i );
+        memset( frame, 0x5a, 16 );
+        frame[0] = (uint8_t) ( tag + i );
         posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
     }
 
@@ -2423,10 +2423,10 @@ static void posix_linux_wait_send_idle( struct posix_pair_t * pair, const char *
 static void posix_linux_dropped_flush( struct posix_pair_t * pair, void ( *fail )( struct posix_pair_t *, int ), uint64_t * dropped_out,
                                        uint64_t * transport_failed_out )
 {
-    const int gso_sent = ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT;
-    const int gso_dropped = ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED;
-    const int uring_sent = ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT;
-    const int uring_dropped = ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED;
+    const int gso_sent = ROCKETNET_COUNTER_GSO_PACKETS_SENT;
+    const int gso_dropped = ROCKETNET_COUNTER_GSO_SEND_DROPPED;
+    const int uring_sent = ROCKETNET_COUNTER_URING_PACKETS_SENT;
+    const int uring_dropped = ROCKETNET_COUNTER_URING_SEND_DROPPED;
 
     // drain the update's own sends, and every earlier flush's (the previous
     // cell's traffic can reach the client before the gso worker has counted
@@ -2450,7 +2450,7 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void ( *fail 
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( pair->server, pair->client_index, 16, &context );
         posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0xdd, 16 );
+        memset( frame, 0xdd, 16 );
         posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
     }
 
@@ -2526,18 +2526,18 @@ static void posix_linux_gso_full_socket_flush( struct posix_pair_t * pair, int e
     posix_pair_update( pair );
     posix_linux_wait_send_idle( pair, "before the full-socket flush" );
 
-    const uint64_t sent_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT, 0 );
-    const uint64_t dropped_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED, 0 );
-    const uint64_t syscalls_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS, 0 );
+    const uint64_t sent_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_COUNTER_GSO_PACKETS_SENT, 0 );
+    const uint64_t dropped_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_COUNTER_GSO_SEND_DROPPED, 0 );
+    const uint64_t syscalls_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_COUNTER_GSO_SEND_SYSCALLS, 0 );
     const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED];
 
     rocketnet_server_gso_test_fail_sends( (struct rocketnet_server_gso_t *) pair->transport, refusals, error );
     posix_linux_server_traffic_resumes( pair, tag );
     posix_linux_wait_send_idle( pair, "after the full-socket flush" );
 
-    const uint64_t sent = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT, 0 ) - sent_before;
-    const uint64_t dropped = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED, 0 ) - dropped_before;
-    const uint64_t syscalls = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS, 0 ) - syscalls_before;
+    const uint64_t sent = posix_native_counter( pair->native, pair->transport, ROCKETNET_COUNTER_GSO_PACKETS_SENT, 0 ) - sent_before;
+    const uint64_t dropped = posix_native_counter( pair->native, pair->transport, ROCKETNET_COUNTER_GSO_SEND_DROPPED, 0 ) - dropped_before;
+    const uint64_t syscalls = posix_native_counter( pair->native, pair->transport, ROCKETNET_COUNTER_GSO_SEND_SYSCALLS, 0 ) - syscalls_before;
     const uint64_t transport_failed = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED] - transport_failed_before;
     if ( dropped != 0 || transport_failed != 0 || sent < 8 || syscalls < (uint64_t) refusals + 1 )
     {
@@ -2616,9 +2616,9 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
 
     posix_pair_update( &pair );
 
-    const uint64_t syscalls_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 );
-    const uint64_t errors_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 );
-    const uint64_t received_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 );
+    const uint64_t syscalls_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_RECEIVE_SYSCALLS, 0 );
+    const uint64_t errors_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS, 0 );
+    const uint64_t received_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED, 0 );
 
     rocketnet_server_gso_test_fail_receives( (struct rocketnet_server_gso_t *) pair.transport, 64, EIO );
     posix_linux_client_traffic_resumes( &pair, 0 );
@@ -2631,8 +2631,8 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
     const double deadline = rocketnet_platform_time() + 5.0;
     while ( rocketnet_platform_time() < deadline )
     {
-        syscalls = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - syscalls_before;
-        errors = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before;
+        syscalls = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_RECEIVE_SYSCALLS, 0 ) - syscalls_before;
+        errors = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS, 0 ) - errors_before;
         if ( syscalls >= 64 && errors >= 64 )
         {
             break;
@@ -2641,7 +2641,7 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
         rocketnet_platform_sleep( 0.001 );
     }
 
-    const uint64_t received = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 ) - received_before;
+    const uint64_t received = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED, 0 ) - received_before;
 
     if ( errors != 64 )
     {
@@ -2658,14 +2658,14 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
 
     posix_linux_client_traffic_resumes( &pair, 8 );
     posix_pair_check_connected( &pair );
-    posix_check( posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before == 64 );
+    posix_check( posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS, 0 ) - errors_before == 64 );
 
     // the next 64 recvmmsg calls answer -1 with EINTR: each is retried at
     // once and counted as a receive syscall, never as a receive error, and
     // the datagrams behind them are read
 
-    const uint64_t eintr_syscalls_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 );
-    const uint64_t eintr_received_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 );
+    const uint64_t eintr_syscalls_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_RECEIVE_SYSCALLS, 0 );
+    const uint64_t eintr_received_before = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED, 0 );
 
     rocketnet_server_gso_test_fail_receives( (struct rocketnet_server_gso_t *) pair.transport, 64, EINTR );
     posix_linux_client_traffic_resumes( &pair, 16 );
@@ -2675,7 +2675,7 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
     const double eintr_deadline = rocketnet_platform_time() + 5.0;
     while ( rocketnet_platform_time() < eintr_deadline )
     {
-        eintr_syscalls = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - eintr_syscalls_before;
+        eintr_syscalls = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_RECEIVE_SYSCALLS, 0 ) - eintr_syscalls_before;
         if ( eintr_syscalls >= 64 )
         {
             break;
@@ -2684,8 +2684,8 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
         rocketnet_platform_sleep( 0.001 );
     }
 
-    const uint64_t eintr_received = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 ) - eintr_received_before;
-    const uint64_t eintr_errors = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before - 64;
+    const uint64_t eintr_received = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED, 0 ) - eintr_received_before;
+    const uint64_t eintr_errors = posix_native_counter( pair.native, pair.transport, ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS, 0 ) - errors_before - 64;
     if ( eintr_errors != 0 )
     {
         printf( "gso recvmmsg EINTR: receive errors +%llu, want +0\n", (unsigned long long) eintr_errors );
@@ -2737,8 +2737,8 @@ void rocketnet_test_linux_uring_receive_cqe_errors()
         {
             posix_pair_update( &pair );
 
-            const uint64_t rearms_before = posix_native_counter( pair.native, uring, 0, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS );
-            const uint64_t no_buffers_before = posix_native_counter( pair.native, uring, 0, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS );
+            const uint64_t rearms_before = posix_native_counter( pair.native, uring, 0, ROCKETNET_COUNTER_URING_RECEIVE_REARMS );
+            const uint64_t no_buffers_before = posix_native_counter( pair.native, uring, 0, ROCKETNET_COUNTER_URING_RECEIVE_NO_BUFFERS );
 
             // every queue's multishot ends with this error, as a failed
             // kernel receive ends it
@@ -2753,7 +2753,7 @@ void rocketnet_test_linux_uring_receive_cqe_errors()
             while ( rocketnet_platform_time() < deadline )
             {
                 posix_pair_update( &pair );
-                rearms = posix_native_counter( pair.native, uring, 0, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) - rearms_before;
+                rearms = posix_native_counter( pair.native, uring, 0, ROCKETNET_COUNTER_URING_RECEIVE_REARMS ) - rearms_before;
                 if ( rearms >= (uint64_t) queues )
                 {
                     break;
@@ -2767,7 +2767,7 @@ void rocketnet_test_linux_uring_receive_cqe_errors()
             }
 
             posix_check( rearms == (uint64_t) queues );
-            posix_check( posix_native_counter( pair.native, uring, 0, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS ) == no_buffers_before );
+            posix_check( posix_native_counter( pair.native, uring, 0, ROCKETNET_COUNTER_URING_RECEIVE_NO_BUFFERS ) == no_buffers_before );
 
             posix_linux_client_traffic_resumes( &pair, tag );
             tag += 8;
@@ -3213,7 +3213,7 @@ void rocketnet_test_linux_uring_socket_hygiene()
 
 // the xdp transport's staging entry with its queue and destination MAC named
 // (sdk/rocketnet_server_socket_linux.cpp)
-uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t * packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 #include <sched.h>
 #include <sys/vfs.h>
 
@@ -3792,7 +3792,7 @@ static void posix_xdp_weather( int ipv6 )
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_client_transport_start_packet( client, POSIX_WEATHER_VALID_BYTES, &context );
         posix_check( frame != NULL );
-        posix_valid_payload( index, frame + context.payload_index );
+        posix_valid_payload( index, frame );
         posix_check( rocketnet_client_transport_finish_packet( client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
         rocketnet_client_transport_send_packets( client );
     };
@@ -4137,7 +4137,7 @@ static void posix_xdp_weather( int ipv6 )
         posix_check( rocketnet_address_parse( &other_family, other_family_text ) );
 
         static const uint8_t other_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
-        uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, 0, 0, &other_family, other_mac );
+        uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, NULL, 0, &other_family, other_mac );
         posix_check( frame != NULL );
         memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, 0x77, 64 );
         rocketnet_server_socket_finish_packet( xdp, 0, frame, 64 );

@@ -2,12 +2,13 @@
 """Every counter the library keeps is observed moving by some test.
 
 The library's counters are the public ROCKETNET_COUNTER_* rows
-(sdk/rocketnet_counters.h) and each server transport's own counter index:
-gso, io_uring and the XDP program (#define ..._COUNTER_<NAME> <n>), iocp and
-rio (enum rocketnet_server_<t>_counter_t). The client transports, msgx and
-portable keep no counter index of their own: they count into the public rows.
-A counter index the checker does not know (a new *_NUM_COUNTERS or
-*_counter_t in sdk/) fails, so a new family cannot arrive unread.
+(sdk/rocketnet_counters.h), the same on every platform, and the XDP program's
+kernel map index (#define ROCKETNET_SERVER_XDP_COUNTER_<NAME> <n>, which the
+public XDP_KERNEL_* rows copy). The server transports count into public rows
+(gso and io_uring into GSO_* and URING_*, iocp and rio into IOCP_* and RIO_*),
+as the client transports, msgx and portable do. A counter index of any other
+kind (a new *_NUM_COUNTERS or *_counter_t in sdk/) fails, so no transport
+grows a private counter family again.
 
 The test code comes from the build, never a list of directories: every source
 the compile database (--compile-commands, the build's compile_commands.json)
@@ -18,8 +19,9 @@ not tests), every header those include by a quoted name, and the
 the tests include. The two sources that list every name as data are left out.
 Test binaries differ by platform (test_iocp is Windows only, the XDP and
 io_uring suites Linux only), so each platform's build is checked on its own
-(--platform): a public row on every platform, a transport's counters on the
-platform that runs that transport. An OWED row names the platforms it is owed
+(--platform): a public row on every platform, except a transport's rows
+(GSO_, URING_, IOCP_, RIO_, and the XDP program's index) on the platform that
+runs that transport (elsewhere they read 0). An OWED row names the platforms it is owed
 on. A test observes a counter when the counter's name appears in that code
 (comments and string literals blanked, whole names only: a test function's
 name, a string row or a comment never counts) inside a check:
@@ -56,11 +58,20 @@ PUBLIC_ROW = re.compile(r"^\s*X\(\s*([A-Z0-9_]+)\s*,", re.M)
 DEFINE_INDEX = re.compile(r"^#define\s+(ROCKETNET_SERVER_(?:GSO|URING|XDP)_COUNTER_[A-Z0-9_]+)\s+\d+", re.M)
 ENUM_INDEX = re.compile(r"enum\s+(rocketnet_server_(?:iocp|rio)_counter_t)\s*\{(.*?)\}", re.S)
 ANY_FAMILY = re.compile(r"\b([A-Z0-9_]+_NUM_COUNTERS)\b|\benum\s+([a-z0-9_]+_counter_t)\b")
-KNOWN_FAMILIES = {
-    "ROCKETNET_NUM_COUNTERS", "ROCKETNET_SERVER_GSO_NUM_COUNTERS", "ROCKETNET_SERVER_URING_NUM_COUNTERS",
-    "ROCKETNET_SERVER_XDP_NUM_COUNTERS", "ROCKETNET_IOCP_NUM_COUNTERS", "ROCKETNET_RIO_NUM_COUNTERS",
-    "rocketnet_server_iocp_counter_t", "rocketnet_server_rio_counter_t",
-}
+# Counters are the public rows; the one other index is the XDP program's, a
+# kernel map's layout. A transport keeps no counter index of its own: a new
+# *_NUM_COUNTERS or *_counter_t fails (the owner, 2026-11-13: counters are
+# ABI, the same on every platform).
+# The io_uring queue modules' one-writer accumulators (sdk/rocketnet_uring_*.h)
+# are not counter families: rocketnet_uring_counters_add_queue
+# (sdk/rocketnet_uring_counters.h, tests/test_unit_uring_counters.cpp) sums
+# them into the public URING_* rows, and nothing else reads them.
+KNOWN_FAMILIES = {"ROCKETNET_NUM_COUNTERS", "ROCKETNET_SERVER_XDP_NUM_COUNTERS",
+                  "ROCKETNET_URING_RECEIVE_NUM_COUNTERS", "ROCKETNET_URING_WORKER_NUM_COUNTERS",
+                  "ROCKETNET_URING_QUEUE_SEND_NUM_COUNTERS"}
+# the public rows a platform transport moves, judged on the platform that runs it
+PUBLIC_TRANSPORT_PREFIXES = (("ROCKETNET_COUNTER_GSO_", "public-linux"), ("ROCKETNET_COUNTER_URING_", "public-linux"),
+                             ("ROCKETNET_COUNTER_IOCP_", "public-windows"), ("ROCKETNET_COUNTER_RIO_", "public-windows"))
 CHECK_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 DECLARATION_END = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_*&")
 CHECK_WORD = re.compile(r"(?:^|_)(?:check|assert|expect|require|verify)(?:_|$)", re.I)
@@ -75,10 +86,18 @@ NAME_LIST_PREFIX = "tests/source_audit_"
 # as a test comes to observe the counter there: the list only shrinks.
 ALL = ("linux", "macos", "windows")
 OWED = {
-    "ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
-    "ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
-    "ROCKETNET_IOCP_URO_BATCHES": (("windows",), "a receive completion split into more than one segment; checked only == 0"),
-    "ROCKETNET_IOCP_USO_FALLBACKS": (("windows",), "a USO send refused and resent frame by frame; checked only == 0"),
+    "ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
+    "ROCKETNET_COUNTER_IOCP_URO_BATCHES": (("windows",), "a receive completion split into more than one segment; checked only == 0"),
+    "ROCKETNET_COUNTER_IOCP_USO_FALLBACKS": (("windows",), "a USO send refused and resent frame by frame; checked only == 0"),
+}
+
+# The rows a builtin transport's receive_drop_totals (sdk/rocketnet_driver_builtin.cpp)
+# does not feed yet, though that transport drops for the reason: (counter,
+# transport) -> the gap. The rows are observed (a builtin that feeds them and
+# the server's fold are checked by value), so they are not OWED above; this
+# list names which transport's contribution is missing, is printed with every
+# verdict, and only shrinks as each transport counts at its site.
+OWED_TRANSPORT_FEEDS = {
 }
 
 
@@ -143,7 +162,8 @@ def library_counters(root):
     counters = {}
     text = (sdk / "rocketnet_counters.h").read_text()
     for name in PUBLIC_ROW.findall(text):
-        counters["ROCKETNET_COUNTER_" + name] = "public"
+        full = "ROCKETNET_COUNTER_" + name
+        counters[full] = next((family for prefix, family in PUBLIC_TRANSPORT_PREFIXES if full.startswith(prefix)), "public")
     problems = []
     for path in sorted(sdk.glob("*.h")) + sorted(sdk.glob("*.cpp")):
         text = code_only(path.read_text(errors="replace"))
@@ -499,8 +519,7 @@ def observed(root, counters, tests, dev):
 
 # the platform whose build runs a transport's counters; a public row is judged on every platform
 FAMILY_PLATFORMS = {
-    "rocketnet_server_gso.h": ("linux",), "rocketnet_server_uring.h": ("linux",), "rocketnet_wire.h": ("linux",),
-    "rocketnet_server_iocp.h": ("windows",), "rocketnet_server_rio.h": ("windows",),
+    "rocketnet_wire.h": ("linux",), "public-linux": ("linux",), "public-windows": ("windows",), "public-macos": ("macos",),
     "public": ("linux", "macos", "windows"),
 }
 
@@ -533,12 +552,12 @@ def check(root, owed, builds, platform):
 def self_test():
     failures = []
 
-    def tree(sdk_extra="", test_text="", written=True):
+    def tree(sdk_extra="", test_text="", written=True, rows_extra=""):
         d = Path(tempfile.mkdtemp(prefix="cco-"))
         (d / "sdk").mkdir()
         (d / "tests").mkdir()
         (d / "sdk" / "rocketnet_counters.h").write_text(
-            "#define ROWS(X) \\\n    X( ALPHA, ARRIVAL, NONE ) \\\n    X( BETA, REFUSAL, NONE )\n"
+            "#define ROWS(X) \\\n" + rows_extra + "    X( ALPHA, ARRIVAL, NONE ) \\\n    X( BETA, REFUSAL, NONE )\n"
             "enum { ROCKETNET_NUM_COUNTERS };\n")
         extra = "rocketnet_server_gso.h" if "GSO" in sdk_extra else "rocketnet_server_rio.h" if "rio" in sdk_extra else "extra.h"
         (d / "sdk" / extra).write_text(sdk_extra)
@@ -593,13 +612,15 @@ def self_test():
     run("new transport counter with no test",
         tree(sdk_extra="#define ROCKETNET_SERVER_GSO_COUNTER_NEW 0\n#define ROCKETNET_SERVER_GSO_NUM_COUNTERS 1\n", test_text=both), {}, True)
     run("new counter family", tree(sdk_extra="enum rocketnet_server_foo_counter_t { FOO_A, FOO_NUM_COUNTERS };\n", test_text=both), {}, True)
-    run("enum family observed", tree(sdk_extra="enum rocketnet_server_rio_counter_t { ROCKETNET_RIO_COUNTER_A, ROCKETNET_RIO_NUM_COUNTERS };\n",
-                                     test_text=both + "void u() { check( counters[ROCKETNET_RIO_COUNTER_A] == 3 ); }\n"), {}, False,
+    run("a private transport enum family, even observed",
+        tree(sdk_extra="enum rocketnet_server_rio_counter_t { ROCKETNET_RIO_COUNTER_A, ROCKETNET_RIO_NUM_COUNTERS };\n",
+             test_text=both + "void u() { check( counters[ROCKETNET_RIO_COUNTER_A] == 3 ); }\n"), {}, True, platform="windows")
+    rio_row = "    X( RIO_A, REFUSAL, NONE ) \\\n"
+    run("a transport's public row observed on its platform",
+        tree(rows_extra=rio_row, test_text=both + "void u() { check( counters[ROCKETNET_COUNTER_RIO_A] == 3 ); }\n"), {}, False,
         platform="windows")
-    run("enum family unobserved on its platform", tree(sdk_extra="enum rocketnet_server_rio_counter_t { ROCKETNET_RIO_COUNTER_A, ROCKETNET_RIO_NUM_COUNTERS };\n",
-                                                      test_text=both), {}, True, platform="windows")
-    run("enum family not judged off its platform", tree(sdk_extra="enum rocketnet_server_rio_counter_t { ROCKETNET_RIO_COUNTER_A, ROCKETNET_RIO_NUM_COUNTERS };\n",
-                                                       test_text=both), {}, False, platform="linux")
+    run("a transport's public row unobserved on its platform", tree(rows_extra=rio_row, test_text=both), {}, True, platform="windows")
+    run("a transport's public row not judged off its platform", tree(rows_extra=rio_row, test_text=both), {}, False, platform="linux")
     run("read into a field a check reads",
         tree(test_text=both.replace("uint64_t beta = c->values[ROCKETNET_COUNTER_BETA];\n    check( beta == 2 );",
                                     "out->beta = c->values[ROCKETNET_COUNTER_BETA]; check( now.beta - start.beta == 1 );")), {}, False)
@@ -667,6 +688,8 @@ def main():
         return 1
     print("ok check_counter_observed: %d of %d counters judged on %s are observed by a test (%d test sources from the build); "
           "the rest owed, each a named gap" % (len(seen), len(counters), args.platform, len(tests)))
+    for (name, transport), gap in sorted(OWED_TRANSPORT_FEEDS.items()):
+        print("owed feed: %s from the %s transport: %s" % (name, transport, gap))
     return 0
 
 

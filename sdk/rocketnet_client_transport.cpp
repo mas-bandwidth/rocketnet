@@ -1458,7 +1458,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     return plan.total_bytes <= SIZE_MAX;
 }
 
-uint64_t rocketnet_client_transport_ladder_allocator_bytes( const rocketnet_client_transport_config_t * config )
+uint64_t rocketnet_client_transport_order_allocator_bytes( const rocketnet_client_transport_config_t * config )
 {
     rocketnet_client_transport_config_t defaults;
 
@@ -1471,8 +1471,8 @@ uint64_t rocketnet_client_transport_ladder_allocator_bytes( const rocketnet_clie
 
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
-    struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available, num_available, &ladder, false ) )
+    struct rocketnet_transport_order_t ladder;
+    if ( !rocketnet_transport_order_parse( config->transport, available, num_available, &ladder, false ) )
     {
         return 0;
     }
@@ -1758,13 +1758,13 @@ void rocketnet_client_transport_mutate_refusal_state_for_test(
 
 // The inputs a client create starts from, resolved before anything is
 // allocated or opened: the layered config (DEFAULT < STRUCT < ENV) validated,
-// the parsed transport ladder, and which candidates the operator memory
+// the parsed transport list, and which candidates the operator memory
 // budget refuses.
 
 struct rocketnet_client_transport_resolved_t
 {
     struct rocketnet_client_transport_config_t config;
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
 };
 
@@ -1861,8 +1861,8 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     int num_available_transports = 0;
     const int * available_transports = rocketnet_client_transport_io_availability( &num_available_transports );
 
-    struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder, false ) )
+    struct rocketnet_transport_order_t ladder;
+    if ( !rocketnet_transport_order_parse( config->transport, available_transports, num_available_transports, &ladder, false ) )
     {
         if ( status )
         {
@@ -1927,12 +1927,12 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
 
     if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
     {
-        rocketnet_error( "client transport ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+        rocketnet_error( "client transport: no transport found: every candidate's memory plan exceeds the %llu byte operator budget",
                          (unsigned long long) memory_budget );
 
         if ( status )
         {
-            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+            *status = ROCKETNET_STATUS_NO_TRANSPORT_FOUND;
         }
 
         return false;
@@ -1995,7 +1995,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     }
 
     config = &resolved.config;
-    const struct rocketnet_transport_ladder_t ladder = resolved.ladder;
+    const struct rocketnet_transport_order_t ladder = resolved.ladder;
     const bool * budget_refused = resolved.budget_refused;
 
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) rocketnet_malloc( context, sizeof( rocketnet_client_transport_t ) );
@@ -2137,7 +2137,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
 
         if ( status )
         {
-            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+            *status = ROCKETNET_STATUS_NO_TRANSPORT_FOUND;
         }
 
         return NULL;
@@ -2402,7 +2402,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
             snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( ladder.skipped[i] ) );
         }
 
-        rocketnet_error( "client transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
+        rocketnet_error( "client transport: no transport found. refused: %s. skipped for platform: %s",
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
 
@@ -2410,7 +2410,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
 
         if ( status )
         {
-            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+            *status = ROCKETNET_STATUS_NO_TRANSPORT_FOUND;
         }
 
         return NULL;
@@ -2529,7 +2529,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
 
     if ( refused_names[0] != '\0' )
     {
-        rocketnet_info( "client transport ladder granted %s after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
+        rocketnet_info( "client transport %s granted after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
     }
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -3591,13 +3591,13 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     }
 
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_client_transport_start_packet( client_transport, packet_bytes, &context );
-    if ( !frame )
+    uint8_t * payload = rocketnet_client_transport_start_packet( client_transport, packet_bytes, &context );
+    if ( !payload )
     {
         return;
     }
 
-    memcpy( frame + context.payload_index, packet_data, (size_t) packet_bytes );
+    memcpy( payload, packet_data, (size_t) packet_bytes );
 
     rocketnet_client_transport_finish_packet( client_transport, &context, packet_bytes );
 
@@ -3686,7 +3686,10 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         return NULL;
     }
 
-    return frame;
+    // the caller's view is the payload, not the frame: the wire header in
+    // front of it is the transport's own (layers.h, the send surface)
+
+    return frame + context->payload_index;
 }
 
 static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context )

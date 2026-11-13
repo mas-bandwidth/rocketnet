@@ -8,6 +8,8 @@
 
 **rocketnet** is a client/server UDP transport and message library for games with thousands of players.
 
+Want to make games servers with thousands of players and bandwidth at line rate? Now you can! [Details here](docs/PERFORMANCE.md).
+
 ## Quick start
 
 Start with [Getting started](docs/GETTING-STARTED.md). It takes you through

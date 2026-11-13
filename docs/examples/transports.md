@@ -6,7 +6,7 @@ a client exchange over the loopback interface, `127.0.0.1`.
 ## What it shows
 
 Three kinds of `transport` setting, each created in turn on a server:
-- **auto** (`NULL`): the platform's recommended ladder from `sdk/rocketnet_drivers.inc`. A Linux server tries
+- **auto** (`NULL`): the platform's recommended transport order from `sdk/rocketnet_drivers.inc`. A Linux server tries
   `xdp`, then `gso`, then `io_uring`, then `portable`; macOS tries `msgx`, then `portable`;
   Windows tries `iocp`, then `rio`, then `portable` in production builds (`portable`, then `iocp`, then `rio` in development builds). Clients on `auto` try `gso`, then `portable` on Linux; `msgx`, then `portable` on macOS; and `iocp`, then `portable` on Windows. The first transport that starts wins.
 - **a pin**: one name available for this endpoint and platform. The server
@@ -44,7 +44,7 @@ failure prints one `FAIL: ...` line and exits 1.
 ```
 warning: server transport xdp refused: a port-zero public address ...
 warning: server transport xdp refused. trying the next candidate
-info: server transport ladder granted gso after refusals: xdp
+info: server transport gso granted after refusals: xdp
 auto chose gso
 pin chose portable
 list chose gso
@@ -74,7 +74,7 @@ ROCKETNET_CLIENT_TRANSPORT=portable ./my_client
 ```
 
 The value is the same candidate list, so a deployment can pin one transport or
-keep the automatic ladder without rebuilding. The create log line names the
+keep the automatic transport order without rebuilding. The create log line names the
 variable and applied value; public accessors report the resolved behavior.
 
 <a id="public-calls-it-uses"></a>
