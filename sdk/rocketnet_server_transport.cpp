@@ -1085,6 +1085,9 @@ static uint64_t rocketnet_server_transport_queue_budget_now( const struct rocket
         return started + ( free_frames > reserve ? free_frames - reserve : 0 );
     }
 }
+static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport );
+
+
 
 // proofs/tla/RNSendReserve.tla OpenFill: main, with no fill running, gives
 // each queue a fill budget of its room less its reserve and zeroes the
