@@ -91,6 +91,17 @@ static uint64_t rocketnet_channel_allocator_calls;
 
 #define ROCKETNET_CHANNEL_CAPTURE_MAX_BYTES     ( 72 * 1024 )
 
+// A unit test includes this harness after tests/test_unit_registry.h. A unit
+// test touches no outside state, so in that build the capture tee, the seed
+// record and the seed variable are compiled out: an inherited
+// ROCKETNET_PCAPNG_CAPTURE_DIR, ROCKETNET_CHANNEL_SEED_RECORD or
+// ROCKETNET_CHANNEL_SEED changes nothing, and /proc/self/cmdline is never read.
+#if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
+#define ROCKETNET_CHANNEL_HARNESS_UNIT 1
+#else // #if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
+#define ROCKETNET_CHANNEL_HARNESS_UNIT 0
+#endif // #if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
+
 struct rocketnet_channel_capture_t
 {
     int active;
@@ -111,7 +122,7 @@ inline rocketnet_channel_capture_t & rocketnet_channel_capture()
 static inline std::string rocketnet_channel_capture_name( void )
 {
     std::string name = "channel";
-#if defined( __linux__ )
+#if defined( __linux__ ) && !ROCKETNET_CHANNEL_HARNESS_UNIT
     FILE * file = fopen( "/proc/self/cmdline", "rb" );
     if ( file )
     {
@@ -145,7 +156,7 @@ static inline std::string rocketnet_channel_capture_name( void )
             }
         }
     }
-#endif // #if defined( __linux__ )
+#endif // #if defined( __linux__ ) && !ROCKETNET_CHANNEL_HARNESS_UNIT
     for ( size_t i = 0; i < name.size(); i++ )
     {
         const char c = name[i];
@@ -177,6 +188,7 @@ static inline void rocketnet_channel_capture_flush( void )
 
 static inline void rocketnet_channel_capture_begin( void )
 {
+#if !ROCKETNET_CHANNEL_HARNESS_UNIT
     rocketnet_channel_capture_t & capture = rocketnet_channel_capture();
 
     char directory[4096];
@@ -197,6 +209,7 @@ static inline void rocketnet_channel_capture_begin( void )
         capture.hook_installed = 1;
         atexit( rocketnet_channel_capture_flush );
     }
+#endif // #if !ROCKETNET_CHANNEL_HARNESS_UNIT
 }
 
 static inline void rocketnet_channel_capture_record( double time, int interface_id, const uint8_t * data, int bytes, const char * comment )
@@ -1039,11 +1052,13 @@ inline rocketnet_channel_seed_state_t & rocketnet_channel_seed_state()
 
 static inline uint64_t rocketnet_channel_seed_from_environment( void )
 {
+#if !ROCKETNET_CHANNEL_HARNESS_UNIT
     char value[256];
     if ( rocketnet_test_getenv( "ROCKETNET_CHANNEL_SEED", value, sizeof( value ) ) && value[0] )
     {
         return (uint64_t) strtoull( value, NULL, 0 );
     }
+#endif // #if !ROCKETNET_CHANNEL_HARNESS_UNIT
     return rocketnet_channel_pinned_seed;
 }
 
@@ -1054,6 +1069,9 @@ static inline uint64_t rocketnet_channel_seed_from_environment( void )
 // otherwise pass every seed of the sweep with the one pinned link.
 static inline void rocketnet_channel_seed_record( uint64_t seed )
 {
+#if ROCKETNET_CHANNEL_HARNESS_UNIT
+    (void) seed;
+#else // #if ROCKETNET_CHANNEL_HARNESS_UNIT
     char path[1024];
     if ( !rocketnet_test_getenv( "ROCKETNET_CHANNEL_SEED_RECORD", path, sizeof( path ) ) || !path[0] )
     {
@@ -1067,10 +1085,18 @@ static inline void rocketnet_channel_seed_record( uint64_t seed )
     }
     fprintf( record, "%llu\n", (unsigned long long) seed );
     fclose( record );
+#endif // #if ROCKETNET_CHANNEL_HARNESS_UNIT
 }
 
 static inline void rocketnet_channel_seed_exit_hook( void )
 {
+#if ROCKETNET_CHANNEL_HARNESS_UNIT
+    if ( rocketnet_channel_seed_state().live )
+    {
+        printf( "channel seed=0x%016llx (pinned in a unit build)\n", (unsigned long long) rocketnet_channel_seed_state().seed );
+        fflush( stdout );
+    }
+#else // #if ROCKETNET_CHANNEL_HARNESS_UNIT
     if ( rocketnet_channel_seed_state().live )
     {
         printf( "channel seed=0x%016llx (replay: ROCKETNET_CHANNEL_SEED=%llu)\n",
@@ -1078,6 +1104,7 @@ static inline void rocketnet_channel_seed_exit_hook( void )
                 (unsigned long long) rocketnet_channel_seed_state().seed );
         fflush( stdout );
     }
+#endif // #if ROCKETNET_CHANNEL_HARNESS_UNIT
 }
 
 // Create both ends over the simulator with a seed from ROCKETNET_CHANNEL_SEED.
