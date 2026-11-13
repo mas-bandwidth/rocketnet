@@ -26,15 +26,20 @@ Functions in `sdk/rocketnet_channel.cpp`.
 | Action | Code |
 |---|---|
 | `Receive(o)` | one record of `rn_ordered_receive`: `rn_receive_delivery_reservation` (one delivery, plus each complete held successor when the record is in turn by its in-turn compare), the deferral when the table lacks that room, then `rn_channels_dispatch_ordered`: `delta = rn_u24(ordering - ordered_read)`, in turn delivered through `rn_channels_reliable_delivery` (which exhausts the region on a full table) and `rn_channels_deliver_ordered`, then `rn_channels_drain` (key `rn_held_key(channel, ordered_read)`, a full table exhausts the region); ahead, held |
+| `ReceiveDuplicate(o)` | a resend whose number layer 3 already took, at ordering `o` in turn or ahead: `rn_receive_delivery_reservation` asks `rn_window_receive_duplicate` first and counts it one, as a record ahead of its turn, never the held run; a table without that one defers the packet, as before, and otherwise `rn_window_receive_accept` drops and counts it |
+| `ReceivePartial` | a fresh code-3 block fragment at the read index that does not complete its block (`rn_channels_dispatch_chunk` collects it and delivers nothing): the reservation finds the block's entry with one lookup and counts the fragment one, as a record ahead of its turn, not the held run |
 | `ReceiveUnreliable` | a code-0 record through `rn_channels_dispatch`: delivered while the update's unreliable deliveries are below `Du` and the table has room |
 | `HoldSequenced` | a future sequenced record taken into the channel's empty hold (`rn_channels_dispatch_sequenced`): code 1 (`"u"`) or code 4 (`"r"`, `RN_SEQUENCED_RELIABLE_HOLD` set) |
 | `EndUpdate` | `rn_channels_end_update`: `deliveries = 0`, `unreliable_delivered = 0` |
 | `Ended` | environment: an exhausted region takes nothing more (`rn_ordered_receive`); a terminal stutter |
 
-Records are honest: layer 3 drops duplicates, and a sender has fewer than `W`
-records numbered at once, so a record reaching the dispatch is fresh and in
-`ordered_read .. ordered_read + W - 1`. Blocks (`used` 2 entries) are left to
-`RNChannel` and `RNChannelTypes`.
+Records are honest: a sender has fewer than `W` records numbered at once, so a
+fresh record reaching the dispatch is in `ordered_read .. ordered_read + W - 1`.
+A duplicate is `ReceiveDuplicate`: it delivers nothing and reserves one.
+Blocks (`used` 2 entries) are left to `RNChannel` and `RNChannelTypes`, but for
+the reservation of an in-turn fragment that cannot complete its block
+(`ReceivePartial`); the block it joins is not a complete hold, so `held` does
+not change.
 
 The channel's one sequenced hold is modelled as the delivery the drain may
 release with the in-turn record's run. `Receive` chooses whether the drain
@@ -59,7 +64,7 @@ and both compares of `rn_channels_drain_sequenced`.
 | `NoExhaust` | a full delivery table defers the packet; the drain never exhausts the region |
 | `CompareAgrees` | the reservation's in-turn test agrees with the comparison modulo the wire |
 | `HeldAhead` | every held ordering is 1 .. `W - 1` ahead of the read index modulo the wire |
-| `NeverDeferWithRoom` | a packet is deferred only when the deliveries its record can make do not fit |
+| `NeverDeferWithRoom` | a packet is deferred only when the deliveries its record can make do not fit, a record that releases nothing (held, a duplicate, a fragment that completes nothing) counted one |
 
 ## Reversed witness
 
@@ -67,6 +72,8 @@ and both compares of `rn_channels_drain_sequenced`.
 |---|---|---|
 | `MCRNOrderingWrapBrokenUnmasked.cfg` | `Masked = FALSE`: `rn_u24(record->ordering) != rx->ordered_read`, an in-turn compare of the 24-bit ordering against the unmasked 32-bit read index | `NoExhaust` |
 | `MCRNOrderingWrapBrokenSeqHold.cfg` | `ExactSeq = FALSE`: `if ( rx->held_sequenced != RN_DESCRIPTOR_NONE ) needed++;`, a code-1 hold counted whatever `Du` has left | `NeverDeferWithRoom` |
+| `MCRNOrderingWrapBrokenDupRun.cfg` | `DupOne = FALSE`: an in-turn duplicate reserves its held run, as v1.1.51's reservation did, which ran before `rn_window_receive_accept` found the duplicate | `NeverDeferWithRoom` |
+| `MCRNOrderingWrapBrokenPartialRun.cfg` | `PartialOne = FALSE`: an in-turn block fragment reserves its held run whether or not it completes its block, as v1.1.51 had it | `NeverDeferWithRoom` |
 
 ### Hand check against the code
 
@@ -97,6 +104,38 @@ one delivery, which fits. Checked against the code by hand:
 reservation now counts a code-1 hold only while `unreliable_delivered` is
 below `Du`. `test_reservation_skips_a_code_1_hold_past_du` in
 `tests/test_unit_channel_reliable_sequenced.cpp` runs it on the code.
+
+`MCRNOrderingWrapBrokenDupRun.cfg`: TLC's trace delivers orderings 0 and 1,
+holds 3, and with one delivery free a duplicate arrives at ordering 2, the read
+index. The broken reservation counts it and the held run, two, and defers the
+packet; the duplicate delivers nothing, and one delivery, the count every
+record that releases nothing reserves, fits. Checked against the code by hand:
+in v1.1.51 `rn_ordered_receive` called `rn_receive_delivery_reservation`
+before `rn_window_receive_accept` found the duplicate, and the reservation
+counted the held run for any code-3 record in turn: one plus orderings 3 and
+on, and `ROCKETNET_CHANNEL_RECEIVE_DEFERRED`. The reservation now asks
+`rn_window_receive_duplicate` first and counts a duplicate one. With no
+delivery free it still defers the packet and withholds its acknowledgement, as
+before (`test_reliable_receive_full_partial_packet_recovers` in
+`tests/functional/channel_reliable.cpp` relies on that). The same order made
+the reservation look up every complete held ordering after the read index for
+every duplicate: a sender holding orderings 1 to `W - 1` and sending payloads
+of 108 duplicates at the read index cost the main thread 153 us a payload at
+`W = 1024` and 38 ms at `W = 65536` (1.9 us after; Release, amd-3).
+`test_duplicates_at_the_read_index_never_scan_the_held_run` in
+`tests/test_unit_channel_ordered.cpp` runs both on the code, counting held
+lookups.
+
+`MCRNOrderingWrapBrokenPartialRun.cfg`: TLC's trace delivers orderings 0 and 1,
+holds 3, and with one delivery free a fragment at ordering 2 arrives that does
+not complete its block. The broken reservation counts it and the held run, two,
+and defers the packet; the fragment delivers nothing. Checked against the code
+by hand: v1.1.51's reservation counted the run for any code-3 record in turn,
+block fragments included; it now finds the block's entry (one lookup) and
+counts a fragment that cannot complete it one. With orderings 1 to `W - 1`
+held, each such fragment cost the main thread 332 us at `W = 65536` (0.08 us
+after). `test_fragments_at_the_read_index_never_scan_the_held_run` runs both on
+the code.
 
 ## Records
 
