@@ -426,7 +426,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
                    "the record rings are one span, before the rtt history" );
 
     memset( (void *) endpoint, 0, offsetof( rocketnet_ack_endpoint_t, sent ) );
-    endpoint->block_memo.valid = 0;
+    memset( &endpoint->block_memo, 0, sizeof( endpoint->block_memo ) );     // whole, so two endpoints with one history compare equal byte for byte
 
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
     {
@@ -2412,6 +2412,7 @@ bool rocketnet_server_acks_defer( struct rocketnet_server_acks_t * acks )
     const int pending = rocketnet_server_acks_pending_capacity( acks->max_clients );
     acks->pending_capacity = pending;
     acks->ranges_capacity = pending * ROCKETNET_SERVER_ACK_PENDING_RANGES_PER_BLOCK;
+    rocketnet_assert( acks->ranges_capacity >= ROCKETNET_ACK_BLOCK_MAX_RANGES );   // one block's ranges always fit an empty store (RNAckApplyPhase MaxRanges <= RangesCap)
     acks->pending = (struct rocketnet_server_ack_pending_t *) rocketnet_malloc( acks->context, (size_t) pending * sizeof( struct rocketnet_server_ack_pending_t ) );
     acks->ranges = (uint16_t *) rocketnet_malloc( acks->context, (size_t) acks->ranges_capacity * 2 * sizeof( uint16_t ) );
     void * clients = rocketnet_malloc( acks->context, (size_t) acks->max_clients * sizeof( struct rocketnet_server_ack_client_t ) );

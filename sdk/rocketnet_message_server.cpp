@@ -725,11 +725,15 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
 
 static void rn_message_object_close_in_place( rn_message_object_t * object )
 {
-    // a start and its finish are fill calls of one fill phase (sdk/rocketnet.h,
-    // the threading contract), so a start still pending at an update or a
-    // flush is aborted, in place or not: the caller's error, counted, and its
-    // later finish asserts in a debug build and returns 0 in a release build.
-    // A finish or abort the fill-phase check refused leaves its start here.
+    // On the server a start and its finish are fill calls of one fill phase
+    // (sdk/rocketnet.h, the threading contract), so a start still pending at
+    // an update or a flush is aborted, in place or not: the caller's error,
+    // counted, and its later finish asserts in a debug build and returns 0 in
+    // a release build. A finish or abort the fill-phase check refused leaves
+    // its start here. The client, and an object with no fill-phase check, is
+    // as it was: only a start written in place in a frame is aborted (the
+    // frame cannot stay open across the flush), and a start that took the
+    // queue stays pending.
 
     if ( rn_message_open_count( object ) == 0 )
     {
@@ -740,6 +744,10 @@ static void rn_message_object_close_in_place( rn_message_object_t * object )
     {
         rn_message_open_t * open = &object->connections[index].open;
         if ( !open->pending )
+        {
+            continue;
+        }
+        if ( !object->fill_phase && open->in_place <= 0 )
         {
             continue;
         }
@@ -921,8 +929,8 @@ static bool rn_message_link_splits_update( const struct rn_message_object_t * ob
 
 void rn_message_object_update_begin( struct rn_message_object_t * object, double time )
 {
-    // measure-only merge: the wide fill's main-thread phase scope covers the
-    // begin of the split update (the end is the main thread's too)
+    // the main thread's call: checked here for the begin of the update (the
+    // end is the main thread's too)
     rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL );
     if ( !phase.entered )
     {
@@ -2682,6 +2690,13 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
+    {
+        return ROCKETNET_UPDATE_OK;
+    }
+    // one main-thread operation, checked before anything is written: a
+    // refused update leaves the transport's update words as they were
+    rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase );
+    if ( !phase.entered )
     {
         return ROCKETNET_UPDATE_OK;
     }

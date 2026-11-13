@@ -489,6 +489,19 @@ static void test_ack_apply_split_update_misuse_is_counted()
     rocketnet_server_transport_update_finish( world.server );                  // nothing open: nothing
     rocketnet_unit_check( rocketnet_api_misuse_count() == before );
 
+    // a stopping transport opens no update: the three calls a game makes
+    // every frame do nothing there and none of them is misuse
+
+    rocketnet_server_transport_stop( world.server );
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_update_receive( world.server, 1000.03 );
+    for ( int c = 0; c < ACK_PHASE_CLIENTS; c++ )
+    {
+        rocketnet_unit_check( rocketnet_server_transport_update_client_acks( world.server, c ) == 0 );
+    }
+    rocketnet_server_transport_update_finish( world.server );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before );
+
     rocketnet_assert_function( NULL );
 
     ack_phase_world_teardown( &world );

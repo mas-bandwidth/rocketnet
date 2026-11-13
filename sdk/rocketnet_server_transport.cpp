@@ -1132,7 +1132,7 @@ static uint64_t rocketnet_server_transport_queue_budget_now( const struct rocket
         return started + ( free_frames > reserve ? free_frames - reserve : 0 );
     }
 }
-static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport );
+static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport, int queues );
 
 
 
@@ -1158,6 +1158,7 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
         rocketnet_assert( queues >= 1 && queues <= ROCKETNET_SERVER_MAX_SEND_QUEUES );
         queues = queues < 1 ? 1 : ( queues > ROCKETNET_SERVER_MAX_SEND_QUEUES ? ROCKETNET_SERVER_MAX_SEND_QUEUES : queues );
     }
+    const int queues_before = server_transport->send_queues;
     server_transport->send_queues = queues;
 
     rocketnet_server_transport_send_reserves( server_transport, server_transport->send_reserve );
@@ -1192,7 +1193,8 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
             smallest_reserve = server_transport->send_reserve[queue];
         }
     }
-    rocketnet_server_transport_return_fill_tails( server_transport );
+    // the tails of the queues claimed since the last open: the count then, or now if it grew
+    rocketnet_server_transport_return_fill_tails( server_transport, queues_before > queues ? queues_before : queues );
 
     for ( int queue = 0; queue < server_transport->send_queues; ++queue )
     {
@@ -1427,12 +1429,12 @@ static void rocketnet_server_transport_fill_refused( struct rocketnet_server_tra
 // Main, with no fill running (RNSendReserve End at the phase's end): every
 // line's tail on every queue goes back to the queue's claims, one add each,
 // and the line's words are zeroed.
-static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport )
+static void rocketnet_server_transport_return_fill_tails( struct rocketnet_server_transport_t * server_transport, int queues )
 {
     for ( int i = 0; i < ROCKETNET_FILL_PHASE_FILL_LINES; ++i )
     {
         struct rocketnet_server_fill_line_t * line = &server_transport->fill_lines[i];
-        for ( int queue = 0; queue < ROCKETNET_SERVER_MAX_SEND_QUEUES; ++queue )
+        for ( int queue = 0; queue < queues; ++queue )
         {
             const uint64_t rest = line->tails[queue] & ROCKETNET_SERVER_FILL_HALF_MASK;
             if ( rest != 0 )
@@ -2321,7 +2323,7 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     return plan.total_bytes <= SIZE_MAX;
 }
 
-uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_server_transport_config_t * config )
+uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_server_transport_config_t * config )
 {
     rocketnet_server_transport_config_t defaults;
 
@@ -2333,8 +2335,8 @@ uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_serv
 
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
-    struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available, num_available, &ladder ) )
+    struct rocketnet_transport_order_t ladder;
+    if ( !rocketnet_transport_order_parse( config->transport, available, num_available, &ladder ) )
     {
         return 0;
     }
@@ -2538,7 +2540,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved
 
 // The inputs a server create starts from, resolved before anything is
 // allocated or opened: the layered config (DEFAULT < STRUCT < ENV) validated,
-// the served addresses and the bind they share, the parsed transport ladder,
+// the served addresses and the bind they share, the parsed transport list,
 // and which candidates the operator memory budget refuses.
 
 struct rocketnet_server_transport_resolved_t
@@ -2550,9 +2552,148 @@ struct rocketnet_server_transport_resolved_t
     rocketnet_address_t bind_address;
     int serves_both;
     int max_clients;
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
 };
+
+// The local address the server binds. Unset, the served family's wildcard on
+// the served port (both families share the IPv6 wildcard). Set
+// (bind_ipv4_address or bind_ipv6_address), that address on the served port:
+// the address clients connect to and the address the server binds differ
+// behind NAT. Refused with INVALID_ADDRESS, one log line each: an address
+// that does not parse, of the other family, with a port (":0" included),
+// multicast, the IPv4 broadcast, IPv4-mapped IPv6 or IPv6 link-local (no
+// scope to carry); a bind address for a family the server does not serve; and
+// any bind address on a server that serves both families, whose one
+// dual-stack socket cannot bind two specific addresses.
+// The environment is ambient: set once for a host or a test run, it cannot
+// know each server's families, so a bind address it sets for a family the
+// server cannot bind specifically (a family it does not serve, or either
+// family on a server that serves both on one dual-stack socket) is dropped
+// with one log line, never refused: the environment never makes a server
+// fail to start for its families. A config field is a statement about this
+// server, so the resolve below still refuses those.
+void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int binds_ipv4,
+                                                     int binds_ipv6 )
+{
+    rocketnet_assert( config && ipv4_before && ipv6_before );
+    if ( !binds_ipv4 && strcmp( config->bind_ipv4_address, ipv4_before ) != 0 )
+    {
+        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV4_ADDRESS=%s: the server binds no specific IPv4 address (it serves IPv6 only, or both families)",
+                        config->bind_ipv4_address );
+        rocketnet_copy_string( config->bind_ipv4_address, ipv4_before, sizeof( config->bind_ipv4_address ) );
+    }
+    if ( !binds_ipv6 && strcmp( config->bind_ipv6_address, ipv6_before ) != 0 )
+    {
+        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV6_ADDRESS=%s: the server binds no specific IPv6 address (it serves IPv4 only, or both families)",
+                        config->bind_ipv6_address );
+        rocketnet_copy_string( config->bind_ipv6_address, ipv6_before, sizeof( config->bind_ipv6_address ) );
+    }
+}
+
+bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_server_transport_config_t * config, const rocketnet_address_t * public_address,
+                                                      int serves_both, rocketnet_address_t * bind_address, int * status )
+{
+    rocketnet_assert( config );
+    rocketnet_assert( public_address );
+    rocketnet_assert( bind_address );
+
+    const bool ipv4_set = config->bind_ipv4_address[0] != '\0';
+    const bool ipv6_set = config->bind_ipv6_address[0] != '\0';
+
+    memset( bind_address, 0, sizeof( *bind_address ) );
+
+    if ( serves_both )
+    {
+        if ( ipv4_set || ipv6_set )
+        {
+            if ( status )
+            {
+                *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            }
+            rocketnet_error( "server bind address refused: a server that serves both families binds the IPv6 wildcard; serve one family to bind a specific address" );
+            return false;
+        }
+
+        // Both families share the IPv6 wildcard on the one port, with
+        // IPV6_V6ONLY off: the bind a "[::]" server takes.
+        bind_address->type = ROCKETNET_ADDRESS_IPV6;
+        bind_address->port = public_address->port;
+        rocketnet_info( "server transport binds [::]:%d, both families", (int) public_address->port );
+        return true;
+    }
+
+    const bool ipv4 = public_address->type == ROCKETNET_ADDRESS_IPV4;
+    const char * field = ipv4 ? "bind_ipv4_address" : "bind_ipv6_address";
+    const char * text = ipv4 ? config->bind_ipv4_address : config->bind_ipv6_address;
+
+    if ( ( ipv4 && ipv6_set ) || ( !ipv4 && ipv4_set ) )
+    {
+        if ( status )
+        {
+            *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+        rocketnet_error( "server bind address refused: %s is set, but the server serves only %s", ipv4 ? "bind_ipv6_address" : "bind_ipv4_address", ipv4 ? "IPv4" : "IPv6" );
+        return false;
+    }
+
+    if ( text[0] == '\0' )
+    {
+        bind_address->type = public_address->type;
+        bind_address->port = public_address->port;
+        rocketnet_info( "server transport binds the %s wildcard, port %d", ipv4 ? "IPv4" : "IPv6", (int) public_address->port );
+        return true;
+    }
+
+    rocketnet_address_t parsed;
+    const char * refusal = NULL;
+    if ( !rocketnet_address_parse( &parsed, text ) )
+    {
+        refusal = "does not parse";
+    }
+    else if ( parsed.type != public_address->type )
+    {
+        refusal = ipv4 ? "is not an IPv4 address" : "is not an IPv6 address";
+    }
+    else if ( parsed.port != 0 || ( ipv4 ? strchr( text, ':' ) != NULL : strstr( text, "]:" ) != NULL ) )
+    {
+        refusal = "carries a port; the port is the served address's";
+    }
+    else if ( ipv4 ? ( parsed.data.ipv4[0] >= 224 && parsed.data.ipv4[0] <= 239 ) : ( parsed.data.ipv6[0] & 0xff00 ) == 0xff00 )
+    {
+        refusal = "is a multicast address";
+    }
+    else if ( ipv4 && parsed.data.ipv4[0] == 255 && parsed.data.ipv4[1] == 255 && parsed.data.ipv4[2] == 255 && parsed.data.ipv4[3] == 255 )
+    {
+        refusal = "is the broadcast address";
+    }
+    else if ( !ipv4 && parsed.data.ipv6[0] == 0 && parsed.data.ipv6[1] == 0 && parsed.data.ipv6[2] == 0 && parsed.data.ipv6[3] == 0 && parsed.data.ipv6[4] == 0 &&
+              parsed.data.ipv6[5] == 0xffff )
+    {
+        refusal = "is an IPv4-mapped address; set bind_ipv4_address and serve IPv4";
+    }
+    else if ( !ipv4 && ( parsed.data.ipv6[0] & 0xffc0 ) == 0xfe80 )
+    {
+        refusal = "is link-local; its bind needs an interface scope, which the field cannot carry";
+    }
+
+    if ( refusal )
+    {
+        if ( status )
+        {
+            *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+        rocketnet_error( "server bind address refused: %s \"%s\" %s", field, text, refusal );
+        return false;
+    }
+
+    *bind_address = parsed;
+    bind_address->port = public_address->port;
+
+    char bound[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "server transport binds %s (%s)", rocketnet_address_to_string( bind_address, bound ), field );
+    return true;
+}
 
 static bool rocketnet_server_transport_resolve_staged( const char * public_address_string,
                                                        const struct rocketnet_server_transport_config_t * config,
@@ -2585,7 +2726,15 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
-    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    // the bind addresses before the environment pass: one the environment
+    // sets for a family this server does not serve is dropped below, once
+    // the served families are known (rocketnet_server_transport_ignore_ambient_bind)
+    const bool env_pass = !resolved_memory_budget;
+    char bind_before[2][ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_copy_string( bind_before[0], effective_config.bind_ipv4_address, sizeof( bind_before[0] ) );
+    rocketnet_copy_string( bind_before[1], effective_config.bind_ipv6_address, sizeof( bind_before[1] ) );
+
+    if ( env_pass && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
         {
@@ -2676,8 +2825,8 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     int num_available_transports = 0;
     const int * available_transports = rocketnet_server_transport_io_availability( &num_available_transports );
 
-    struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder ) )
+    struct rocketnet_transport_order_t ladder;
+    if ( !rocketnet_transport_order_parse( config->transport, available_transports, num_available_transports, &ladder ) )
     {
         if ( status )
         {
@@ -2744,27 +2893,16 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         serves_both = 1;
     }
 
-    rocketnet_address_t bind_address;
-
-    if ( serves_both )
+    if ( env_pass )
     {
-        // Both families share the IPv6 wildcard on the one port, with
-        // IPV6_V6ONLY off: the bind a "[::]" server takes.
-        memset( &bind_address, 0, sizeof( bind_address ) );
-        bind_address.type = ROCKETNET_ADDRESS_IPV6;
-        bind_address.port = public_address.port;
+        const bool ipv4 = public_address.type == ROCKETNET_ADDRESS_IPV4;
+        rocketnet_server_transport_ignore_ambient_bind( &effective_config, bind_before[0], bind_before[1], !serves_both && ipv4, !serves_both && !ipv4 );
     }
-    else
+
+    rocketnet_address_t bind_address;
+    if ( !rocketnet_server_transport_resolve_bind_address( &effective_config, &public_address, serves_both, &bind_address, status ) )
     {
-        bind_address = public_address;
-        if ( bind_address.type == ROCKETNET_ADDRESS_IPV4 )
-        {
-            memset( bind_address.data.ipv4, 0, sizeof( bind_address.data.ipv4 ) );
-        }
-        else
-        {
-            memset( bind_address.data.ipv6, 0, sizeof( bind_address.data.ipv6 ) );
-        }
+        return false;
     }
 
     // the operator memory budget: each candidate's pre-allocation plan
@@ -2822,9 +2960,9 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     {
         if ( status )
         {
-            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+            *status = ROCKETNET_STATUS_NO_TRANSPORT_FOUND;
         }
-        rocketnet_error( "server transport ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+        rocketnet_error( "server transport: no transport found: every candidate's memory plan exceeds the %llu byte operator budget",
                          (unsigned long long) memory_budget );
         return false;
     }
@@ -2863,14 +3001,14 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
 // holding what it bound; -1 when none granted, with *status saying why (an
 // open that ran out of memory ends the ladder rather than falling).
 
-static int rocketnet_server_transport_open_ladder( struct rocketnet_server_transport_t * server_transport, void * context,
-                                                   const struct rocketnet_server_transport_resolved_t * resolved,
-                                                   rocketnet_address_t * bind_address, int * status )
+static int rocketnet_server_transport_open_in_order( struct rocketnet_server_transport_t * server_transport, void * context,
+                                                     const struct rocketnet_server_transport_resolved_t * resolved,
+                                                     rocketnet_address_t * bind_address, int * status )
 {
     const struct rocketnet_server_transport_config_t * config = &resolved->config;
     const char * public_address_string = resolved->public_address_string;
     const rocketnet_address_t * public_address = &resolved->public_address;
-    const struct rocketnet_transport_ladder_t * ladder = &resolved->ladder;
+    const struct rocketnet_transport_order_t * ladder = &resolved->ladder;
     const bool * budget_refused = resolved->budget_refused;
 
     // candidates tried left to right, first grant wins.
@@ -2900,13 +3038,21 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
     bool port_zero_refused_seen[ROCKETNET_NUM_TRANSPORTS];
     memset( port_zero_refused_seen, 0, sizeof( port_zero_refused_seen ) );
 
-    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED and
-    // TRANSPORT_NOT_BUILT are the start status when every open refused for
-    // that reason.
+    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED,
+    // TRANSPORT_NOT_BUILT, TRANSPORT_BIND_REFUSED and INVALID_ADDRESS are the
+    // start status when every open refused for that reason. The xdp transport
+    // binds no datagram socket from the bind address (it serves the interface
+    // that holds the public address), so its refusal says nothing about the
+    // address: BIND_REFUSED is the status when at least one transport was
+    // refused its bind and every other refusal is the xdp transport's (a
+    // candidate skipped for the memory budget is not an open and not counted).
 
     int open_refusals = 0;
     int families_unsupported_refusals = 0;
     int not_built_refusals = 0;
+    int bind_refusals = 0;
+    int xdp_refusals = 0;
+    int invalid_address_refusals = 0;
 
     for ( int i = 0; i < ladder->num_candidates && granted_transport < 0; i++ )
     {
@@ -3012,6 +3158,18 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
                 {
                     not_built_refusals++;
                 }
+                if ( candidate == ROCKETNET_TRANSPORT_XDP && transport_status != ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED )
+                {
+                    xdp_refusals++;
+                }
+                if ( transport_status == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED )
+                {
+                    bind_refusals++;
+                }
+                if ( transport_status == ROCKETNET_STATUS_INVALID_ADDRESS )
+                {
+                    invalid_address_refusals++;
+                }
             }
         }
 
@@ -3047,7 +3205,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
             snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( ladder->skipped[i] ) );
         }
 
-        rocketnet_error( "server transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
+        rocketnet_error( "server transport: no transport found. refused: %s. skipped for platform: %s",
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
 
@@ -3082,9 +3240,17 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
             {
                 *status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
             }
+            else if ( bind_refusals > 0 && bind_refusals + xdp_refusals == open_refusals )
+            {
+                *status = ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED;
+            }
+            else if ( open_refusals > 0 && invalid_address_refusals == open_refusals )
+            {
+                *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            }
             else
             {
-                *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+                *status = ROCKETNET_STATUS_NO_TRANSPORT_FOUND;
             }
         }
 
@@ -3093,7 +3259,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
 
     if ( refused_names[0] != '\0' )
     {
-        rocketnet_info( "server transport ladder granted %s after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
+        rocketnet_info( "server transport %s granted after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
     }
 
     return granted_transport;
@@ -3205,7 +3371,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
 #endif // #if ROCKETNET_DEV
     }
 
-    const int granted_transport = rocketnet_server_transport_open_ladder( server_transport, context, &resolved, &bind_address, status );
+    const int granted_transport = rocketnet_server_transport_open_in_order( server_transport, context, &resolved, &bind_address, status );
     if ( granted_transport < 0 )
     {
         rocketnet_server_transport_abort_create( server_transport );
@@ -3407,6 +3573,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
                                &server_transport->counters.values[ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP],
                                &server_transport->counters.values[ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS] );
 
+    // one thread a client is the rule of a game that sends from game threads:
+    // it is armed by that game's first call that names a client
+    // (sdk/rocketnet_api.cpp), and a game that makes today's calls only is
+    // never refused for it
+    rocketnet_fill_phase_arm_one_filler( &server_transport->fill_phase, false );
+
     if ( server_transport->io.operations->replay_mark )
     {
         server_transport->replay_marks = rocketnet_server_replay_marks_create( context, max_clients );
@@ -3478,13 +3650,6 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     if ( !rocketnet_api_null_guard( server_transport ) )
     {
         return;
-    }
-    {
-        rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
-        if ( !phase.entered )
-        {
-            return;
-        }
     }
     rocketnet_assert( server_transport );
 
@@ -3980,6 +4145,16 @@ int rocketnet_server_transport_update_client_acks( struct rocketnet_server_trans
 
     if ( !server_transport->update_open )
     {
+        // a transport that is stopping or stopped opens no update
+        // (rocketnet_server_transport_update_receive returns before it
+        // receives), so a game that makes its three calls every frame finds
+        // nothing to apply here: not misuse
+
+        if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
+        {
+            return 0;
+        }
+
         rocketnet_api_misuse_record();
         rocketnet_assert( server_transport->update_open && "update_client_acks runs between update_receive and update_finish" );
         return 0;
@@ -4189,7 +4364,7 @@ void rocketnet_server_transport_update_receive( struct rocketnet_server_transpor
 
 static void rocketnet_server_transport_update_finish_body( struct rocketnet_server_transport_t * server_transport );
 
-// measure-only merge: the wide fill opens the fill budget after every update,
+// sending from the game threads opens the send budget after every update,
 // so the split update's finish opens it too
 void rocketnet_server_transport_update_finish( struct rocketnet_server_transport_t * server_transport )
 {

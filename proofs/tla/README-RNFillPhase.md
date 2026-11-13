@@ -104,6 +104,13 @@ The design here:
    honest call in phase 2 would find another thread's claim of its own
    epoch and be refused. The code restores the owner and the word.
 
+The one-filler rule can be disarmed (`rocketnet_fill_phase_arm_one_filler`):
+the server disarms it until the game's first call that names a client, so a
+game on the calls that name none may send to one client from two threads in
+turn. Disarmed, FillDecide takes the client over where this model refuses,
+and OneFiller is not claimed. The model and the trace check are of the armed
+check.
+
 The trace check that binds the code to this model is
 `TraceRNFillPhase.tla`, fed by the `rocketnet_fill_phase_set_trace` hook
 (tests/tla_trace_fill_phase.cpp); its plant is the NoRestore defect.

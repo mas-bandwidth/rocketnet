@@ -201,7 +201,7 @@ refuses the create and the log lists the valid names. A name the registry
 knows but macOS does not build (`gso`, `xdp`, `iocp`, `io_uring`, `rio`) is
 skipped with `transport <name> is not available here. skipped`, and a list
 left with no transport for the endpoint falls to `auto` with a warning
-(`sdk/rocketnet_config.cpp`, `rocketnet_transport_ladder_parse`):
+(`sdk/rocketnet_config.cpp`, `rocketnet_transport_order_parse`):
 
 ```sh
 ROCKETNET_SERVER_TRANSPORT=gso ./bin/example_transports
@@ -221,7 +221,7 @@ pauses `msgx` and runs `portable` rather than failing after create. Pinning
 queued datagram read before the caller does
 (`rocketnet_platform_socket_create_with_pump`).
 
-`./bin/example_transports` prints the transport chosen by the automatic ladder
+`./bin/example_transports` prints the transport chosen by the automatic transport order
 and verifies an explicit portable pin.
 
 Deployment fields have overlays named `ROCKETNET_<ENDPOINT>_<FIELD>` with

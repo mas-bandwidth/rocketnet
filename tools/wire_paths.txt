@@ -89,6 +89,9 @@ sdk/rocketnet_platform.cpp	platform sockets, time and threads
 sdk/rocketnet_platform.h	platform sockets, time and threads
 sdk/rocketnet_rio_layout.h	Windows RIO region layout
 sdk/rocketnet_send_budget.h	per-connection send budget accounting
+sdk/rocketnet_send_gather.cpp	the gather orders staged send slots into one-destination runs; it reads each slot's destination and byte count and writes no packet byte
+sdk/rocketnet_send_gather.h	declarations for send_gather.cpp; writes no byte
+sdk/rocketnet_send_queue.h	the per-queue send arithmetic (queue of a destination, packet id, slot of a pointer, claim); no packet byte
 sdk/rocketnet_server.h	server limits (signature-verify budget, token skew)
 sdk/rocketnet_server_gso.h	Linux UDP segmentation offload for the server socket
 sdk/rocketnet_server_gso_linux.cpp	Linux UDP segmentation offload for the server socket
@@ -114,6 +117,8 @@ sdk/rocketnet_tests.cpp	unit tests
 sdk/rocketnet_token_tables.cpp	server token tables
 sdk/rocketnet_token_tables.h	server token tables
 sdk/rocketnet_uring_codec.h	io_uring completion codec
+sdk/rocketnet_uring_send_queue.cpp	the io_uring per-queue send banks: claims a frame slot and records its destination and byte count; writes no packet byte
+sdk/rocketnet_uring_send_queue.h	declarations for uring_send_queue.cpp; writes no byte
 sdk/rocketnet_xdp_compat.h	XDP program attach compatibility
 sdk/rocketnet_xdp_frame.h	AF_XDP Ethernet, IP and UDP framing: the standard outer headers, not the rocketnet payload
 sdk/rocketnet_xdp_free_list.h	AF_XDP frame free list

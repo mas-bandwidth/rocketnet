@@ -1234,6 +1234,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         // a held port or an address this host cannot bind; a refusal for want
         // of buffers (WSAENOBUFS) reads OUT_OF_MEMORY, which ends the ladder
         rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        if ( rocketnet_platform_bind_refused( WSAGetLastError() ) )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
         goto failed;
     }
     address_bytes = sizeof( address );

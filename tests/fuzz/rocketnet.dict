@@ -69,7 +69,7 @@ transport_portable="portable"
 transport_gso="gso"
 transport_xdp="xdp"
 transport_msgx="msgx"
-transport_ladder="xdp,gso,portable"
+transport_order="xdp,gso,portable"
 
 # --- message records (sdk/rocketnet_message.h, STANDARD.md _Messages_) ---
 
