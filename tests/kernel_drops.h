@@ -30,16 +30,19 @@
 // sockets count. A machine-wide counter does not do here: on a loaded Linux
 // bench (vision, 2026-11-12) Udp InErrors rose by 309 and by 11171 during one
 // case, which would admit a resend for a loss the library made.
-// macOS: two counts added. The datagrams this process's own sockets sent and
-// none of them received, from the kernel's per-socket packet counts (below:
-// a loss under machine load that no drop counter of macOS sees); and
-// net.inet.udp.stats udps_fullsock ("dropped due to full socket buffers"),
-// which is machine-wide: another process's drops raise it too, so on a loaded
-// Mac the gate can admit a resend the case's own datagrams did not need. The
-// printed line names the delta every time. Measured on the studio,
-// 2026-11-12: a 2000-datagram burst to a 127.0.0.1 socket lost 1149, 1947
-// and 1987 datagrams at three receive buffer sizes, and udps_fullsock rose by
-// exactly 1149, 1947 and 1987; idle, it did not move between reads.
+// macOS: only the datagrams this process's own sockets sent and none of them
+// received, from the kernel's per-socket packet counts (below: a loss under
+// machine load that no drop counter of macOS sees). A full receive buffer is
+// NOT excused on macOS, because xnu keeps no per-socket count of it:
+// udp_input and udp_append add a datagram to the socket's receive count
+// before sbappendaddr, so a full-buffer drop reads as received, and the one
+// counter of it, net.inet.udp.stats udps_fullsock, is machine-wide. Another
+// process's drops would raise it and admit a resend that hides a library
+// loss, the reason the Linux path above refuses Udp InErrors. So a case that
+// overruns a receiving socket's buffer on macOS fails; it sizes the burst or
+// the buffer so it does not. (Measured on the studio, 2026-11-12: a
+// 2000-datagram burst to a 127.0.0.1 socket lost 1149, 1947 and 1987
+// datagrams at three receive buffer sizes, every one a full-buffer drop.)
 // Windows: no counter is read; the gate never admits a resend there.
 
 #include <stdint.h>
@@ -51,9 +54,6 @@
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include <netinet/in.h>
-#include <netinet/udp.h>
-#include <netinet/ip_var.h>
-#include <netinet/udp_var.h>
 #endif // #if defined( __APPLE__ )
 
 #define ROCKETNET_LOSS_GATE_WAIT 2.0        // seconds a case waits for what it sent before it asks the gate
@@ -378,19 +378,14 @@ static inline int64_t rocketnet_kernel_own_lost_since( const struct rocketnet_ke
 
 #endif // #if defined( __APPLE__ )
 
-// the kernel's count of UDP datagrams it dropped on receive (per platform above)
+// the kernel's count of UDP datagrams it dropped on receive at this process's
+// own sockets (per platform above; macOS has none, its own-socket loss is
+// rocketnet_kernel_own_lost_since)
 
 static inline uint64_t rocketnet_kernel_udp_receive_drops()
 {
 #if defined( __APPLE__ )
-    struct udpstat stats;
-    size_t bytes = sizeof( stats );
-    memset( &stats, 0, sizeof( stats ) );
-    if ( sysctlbyname( "net.inet.udp.stats", &stats, &bytes, NULL, 0 ) != 0 )
-    {
-        return 0;
-    }
-    return (uint64_t) stats.udps_fullsock;
+    return 0;
 #elif defined( __linux__ )
     static unsigned long inodes[ROCKETNET_KERNEL_DROPS_MAX_SOCKETS];
     const int num_inodes = rocketnet_kernel_drops_own_sockets( inodes, ROCKETNET_KERNEL_DROPS_MAX_SOCKETS );
@@ -403,9 +398,9 @@ static inline uint64_t rocketnet_kernel_udp_receive_drops()
 // what the count covers, printed with every gate decision
 
 #if defined( __APPLE__ )
-#define ROCKETNET_LOSS_GATE_SCOPE                                                                                                   \
-    "the datagrams this process's own sockets sent and none of them received, plus udps_fullsock, which is machine-wide (WEAK: " \
-    "another process's full-buffer drops can permit a resend the case did not need)"
+#define ROCKETNET_LOSS_GATE_SCOPE                                                                   \
+    "the datagrams this process's own sockets sent and none of them received (a full receive " \
+    "buffer is not excused on macOS: its only count, udps_fullsock, is machine-wide)"
 #elif defined( __linux__ )
 #define ROCKETNET_LOSS_GATE_SCOPE "the drops of this process's own sockets"
 #else
