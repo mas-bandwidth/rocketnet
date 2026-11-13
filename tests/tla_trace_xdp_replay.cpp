@@ -45,10 +45,16 @@
 // (ROCKETNET_REPLAY_WINDOW_BITS, a size of the library's structures) stays
 // as the library builds it and is not bound here.
 //
-// The model's ghosts are the walk's: the session ids, the packets in flight,
-// the drops, the failure counts and the replies held and sent. The kernel
-// entry's and the pending mark's session are the session whose mark the
-// sink queued. Every other variable is read from the code after the call:
+// The walk's own bookkeeping, not read from the code, so TraceConsistent
+// compares these against the walk and not against the library: session,
+// nextSession, sent, reached, seenBeforeRelease, greeted (the walk applies
+// rocketnet_xdp_replay_sink_holds_greeting's answer itself), net, dropped,
+// forgetFailures, markFailures, held, heldReplies, heard, sentTo,
+// refusedHeld, pendingMacForget, and the sess field of kmap and of every
+// pending mark (the session whose mark the sink queued). The model's Next
+// reads several of them, so tools/tla_trace_check.py's row cannot list them
+// as ghosts; they are declared here and in the COVERAGE row instead. Every
+// other variable is read from the code after the call:
 // the replay windows' highest_opened, the walk's slot records, the pending
 // buffer, the kernel map and the reply MAC table (the sink drops a queued
 // forget's learned MAC in the walk, and so does the model's Walk). The cfg's
@@ -60,9 +66,12 @@
 // the slot it takes is never another address's owed forget) and none is seen
 // at its address; a session is released only when no forget of its address
 // is pending (a second forget of a pending address coalesces in the buffer,
-// which the model's walk does not describe); and a client connects only when
-// every live session is greeted (a zero mark the buffer refuses holds every
-// keep-alive, the model only that session's).
+// which the model's walk does not describe). So a reconnect before the old
+// slot's forget is queued, and a slot reused at another address while its
+// old forget is owed (the case the model leaves out), are never traced.
+// A zero mark the buffer refuses holds every keep-alive in the code and in
+// the model (ZeroMarkUnqueued), so the walk connects whether or not every
+// live session is greeted.
 //
 // The plant (ROCKETNET_XDP_REPLAY_PLANT, sdk/rocketnet_xdp_replay_sink.h)
 // is the reversed witness MCRNXdpReplayBrokenFailedForgetDropped.cfg: the
@@ -629,18 +638,6 @@ namespace
         return false;
     }
 
-    bool rp_all_greeted()
-    {
-        for ( int a = 0; a < RP_ADDRESSES; a++ )
-        {
-            if ( walk.session[a] != 0 && !walk.greeted[a] )
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
     void rp_reset()
     {
         if ( walk.map )
@@ -774,7 +771,7 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
         {
             // connect: a free slot never another address's owed forget, no
             // slot seen at this address, every live session greeted
-            if ( walk.session[a] != 0 || walk.next_session > RP_SESSIONS || rp_owed_slot() || rp_record( a ).seen || !rp_all_greeted() )
+            if ( walk.session[a] != 0 || walk.next_session > RP_SESSIONS || rp_owed_slot() || rp_record( a ).seen )
             {
                 continue;
             }

@@ -55,9 +55,19 @@ The pending term does not bind in the code. The pending return holds
 `ROCKETNET_XDP_RECV_QUEUE_SIZE` frames, which equals
 `ROCKETNET_XDP_FILL_FRAMES`, and it only ever holds receive frames (a refused
 descriptor is not appended), so its room is never less than the receive frames
-the RX ring can name. The model carries the term at the code's ratio (`PendCap`
-is the frames) and checks `PendingInBounds`; a witness dropping it would pass,
-so there is none.
+the RX ring can name. The design cfg carries the term at the code's ratio
+(`PendCap` is the frames), where `PendingInBounds` cannot fail.
+`MCRNXdpReceiveRingPendBinds.cfg` sets `PendCap` to two, below the three frames
+and the RX ring of three, so the term binds and must keep `PendingInBounds`;
+`MCRNXdpReceiveRingBrokenPeekPastPending.cfg` drops the term on that instance
+and fails it. The pair checks the term as written, not a ratio the code reaches.
+
+A defective descriptor naming a receive-region frame the worker does not hold
+(one on the fill ring, or one already in the RX ring) is left out:
+`rocketnet_xdp_fill_return` tests the region only, so the code hands such a
+frame back and it sits on the fill ring twice. `KernelMisdeliver` names only a
+send-region frame, the trace never posts the other kind, and
+`FrameConservation` says nothing about it.
 
 ## The cancel
 
@@ -77,6 +87,10 @@ it is gone with that path.
 and a pending return of three each (the code's ratio), a fill ring of six
 (twice the frames, `ROCKETNET_XDP_FILL_RING_SIZE`). With two packets staged
 and two descriptors on the ring, the peek is cut to one by the staging room.
+
+`MCRNXdpReceiveRingPendBinds.cfg`: the same with an RX ring of three and a
+pending return of two, so a peek of three is cut to two by the pending room.
+It runs every invariant and `ReceiveNeverStalls`.
 
 ## Reversed witnesses
 
@@ -106,17 +120,26 @@ Each counterexample was checked against the C by hand.
    it, `rocketnet_xdp_receive_descriptor` refuses it, and without
    `rocketnet_xdp_fill_return`'s region test the flush puts the send frame on
    the fill ring.
+4. **`MCRNXdpReceiveRingBrokenPeekPastPending.cfg`**
+   (`PeekPendingRoom <- PeekPendingRoomBroken`, on the `PendBinds` instance):
+   `receive_limit` without `pending_return.available()`. Violates
+   `PendingInBounds` (93 states): the kernel posts frames 1, 2 and 3; the pass
+   asks for the staging room, 3, peeks three and holds all three frames in a
+   pending return of two. With the term the peek asks for 2 and the third
+   descriptor waits for the next pass.
 
 ## Runs
 
-Bench runs of this version (hetzner2, 2026-11-13):
+Bench runs of this version (aws-mut-3, 2026-11-13):
 
 | Case | Result | Distinct | Seconds |
 |---|---|---|---|
-| `MCRNXdpReceiveRing.cfg` | pass | 6,551 | 1.4 |
-| `MCRNXdpReceiveRingBrokenPeekPastStaging.cfg` | `StagingInBounds`, exit 12 | 303 | 0.9 |
-| `MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg` | `FillNeverEmptyWhileFramesFree`, exit 12 | 39 | 0.9 |
-| `MCRNXdpReceiveRingBrokenRefusedRefilled.cfg` | `FillHoldsOnlyReceiveFrames`, exit 12 | 21 | 0.9 |
+| `MCRNXdpReceiveRing.cfg` | pass | 6,551 | 2.0 |
+| `MCRNXdpReceiveRingPendBinds.cfg` | pass | 12,798 | 1.9 |
+| `MCRNXdpReceiveRingBrokenPeekPastStaging.cfg` | `StagingInBounds`, exit 12 | 303 | 1.0 |
+| `MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg` | `FillNeverEmptyWhileFramesFree`, exit 12 | 39 | 0.7 |
+| `MCRNXdpReceiveRingBrokenRefusedRefilled.cfg` | `FillHoldsOnlyReceiveFrames`, exit 12 | 21 | 0.7 |
+| `MCRNXdpReceiveRingBrokenPeekPastPending.cfg` | `PendingInBounds`, exit 12 | 93 | 1.0 |
 
 The records are in `RUNS.tsv` (group `rnxdpreceivering`), made with the pinned
 runner as `proofs/tla/README.md` describes.

@@ -75,7 +75,8 @@ refused-operation retention, queue refusal, greeting and answered-entry rules.
   socket therefore holds every keep-alive to that address at publish
   (`rocketnet_server_socket_hold_greetings`), the keep-alive being how the
   client learns it is connected; a zero mark the buffer could not queue
-  names no key, so that publish holds every keep-alive. Only keep-alives
+  names no key, so that publish holds every keep-alive; the model's `Commit`
+  holds every greeting then too (`ZeroMarkUnqueued`). Only keep-alives
   are held: the client refuses payloads before connected, and a disconnect
   still leaves. The keep-alive is sent again when next due, after the retry
   lands, so the new session's first packet never meets the old entry.
@@ -142,7 +143,8 @@ Actions, each against the design sentence it models:
 
 - `Connect(a)`: a new session; sequences restart at 1 and `highest_opened` is
   0. It may reconnect while an older delete is still owed (not yet queued,
-  or refused): there is no settle guard. The session is not greeted.
+  or refused): the model has no settle guard. The session is not greeted.
+  The trace's walk does guard it (see Reconnect freshness).
 - `ClientSend(a)`: the live session sends its next genuine sequence, once it
   is greeted: the client sends session packets only once the server's first
   keep-alive has reached it.
@@ -239,8 +241,19 @@ below `highest_opened`, so refusing it and opening it leave the same state.
 
 ## Reconnect freshness
 
-A reconnect is allowed before the old delete is queued or lands, with no
-settle guard on `Connect` and no trace suppression. The new session's first
+In the model a reconnect is allowed before the old delete is queued or lands,
+with no settle guard on `Connect`. The trace's walk
+(`tests/tla_trace_xdp_replay.cpp`) is narrower, to keep the code inside the
+model's one-slot-per-address shape: a client connects only when no slot is
+seen with no connection (`rp_owed_slot`: the slot it takes is never another
+address's owed forget, the case the model leaves out under Slots and
+addresses) and no slot is seen at its address (two slots at one address do
+not fit an address-keyed model), and a session is released only while no
+forget of its address is pending (a second forget of a pending address
+coalesces in the buffer, which the model's walk does not describe). So a
+reconnect at the same address before the old slot's forget is queued, and a
+release while a forget of its address is pending, are checked by TLC on the
+model but never traced. The new session's first
 mark, zero included, replaces the old entry in the commit that greets it, so
 `MarkNeverAhead` and `NewSessionNeverDroppedByOldMark` hold in both controls.
 `MCRNXdpReplayBrokenReconnectFreshness.cfg` restores the old walk rule (a
@@ -285,7 +298,9 @@ between start and finish.
 
 - **The 32-bit wrap.** Sequences are naturals and `hw - seq` is integer
   subtraction; the code's `(int32_t)(high_water - sequence)` matches it while
-  the two are within 2^31.
+  the two are within 2^31. The walk also hands the sink `highest_opened`, a
+  64-bit count, cast to the 32-bit mark (`sdk/rocketnet_server_replay_marks.cpp`,
+  `(uint32_t) highest_opened`); the truncation is left out with the wrap.
 - **The byte layout.** The key (family, pad, port, address) and value
   (`high_water`, pad) structs in `sdk/rocketnet_wire.h`, the little-endian
   sequence after the 6-byte prefilter header, and the packet type list are
@@ -296,7 +311,14 @@ between start and finish.
   whose mapping changes address forgets the old address exactly as a release
   does; a reconnect landing in a different slot is a reconnect here (the
   walk sees that slot first, `~seen[a]` after the old slot's forget was
-  queued, and the fake-map regression covers both slots).
+  queued, and the fake-map regression covers both slots). Not covered: a
+  slot reused at another address while its old address's forget is still
+  owed (a full pending buffer refused it). The code's walk skips that slot
+  and takes no mark for the new address, so the new session's greeting is
+  not held by its zero mark and an older entry for the new address can
+  stand. The model cannot express it (slot and address are one here), and
+  the trace's walk steers clear of it (`rp_owed_slot`). The slot-keyed model
+  is `RNServerReplaySlots`.
 - **A disconnect before the first keep-alive.** A client that gives up while
   still sending its connection response sends a disconnect burst, session
   packets, before it is greeted; the kernel may drop that burst against an

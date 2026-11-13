@@ -22,7 +22,13 @@
 (* A client slot is identified with its address here: one live session    *)
 (* per address, a reconnect from the same address being a new session     *)
 (* whose sequences restart at 1.  A slot whose mapping changes address is  *)
-(* the same forget as a release, for the old address.                      *)
+(* the same forget as a release, for the old address.  Left out: a slot    *)
+(* reused at another address while its old address's forget is still owed *)
+(* (refused by a full pending buffer).  The code's walk skips such a slot  *)
+(* and takes no mark for the new address (sdk/rocketnet_server_replay_     *)
+(* marks.cpp, the seen-address test), so the new session's greeting is not *)
+(* held by its zero mark; nothing here can express it.  The slot-keyed     *)
+(* model is RNServerReplaySlots.                                           *)
 (*                                                                         *)
 (* A reconnect may come before the old session's forget is queued or       *)
 (* while the kernel refuses it.  The new session's client sends no session *)
@@ -36,7 +42,10 @@
 (* is left out: a dropped one costs the server a timeout, not the session. *)
 (*                                                                         *)
 (* Sequences are naturals: the 32-bit wrap of (int32_t)(high_water -       *)
-(* sequence) is left out, as are the byte layout of the key and value and  *)
+(* sequence) is left out, and so is the truncation of the 64-bit           *)
+(* highest_opened into the 32-bit mark (sdk/rocketnet_server_replay_       *)
+(* marks.cpp, the (uint32_t) cast the walk hands the sink), as are the     *)
+(* byte layout of the key and value and                                    *)
 (* the map's capacity.  W is the userspace replay window's depth           *)
 (* (ROCKETNET_REPLAY_WINDOW_BITS).  UserOpen opens every genuine packet    *)
 (* of the live session: a genuine packet the userspace window refuses is   *)
@@ -110,8 +119,10 @@ ASSUME /\ Addresses # {}
 (*     rewrite the old session's entry after the forget (the design: TRUE).*)
 (*   HoldGreetingUntilMarked: the commit greets a new session (publishes   *)
 (*     its first keep-alive) only once its first mark, a zero, is applied *)
-(*     in the kernel; a refused or unqueued zero mark holds the greeting  *)
-(*     (the design: TRUE).                                                 *)
+(*     in the kernel; a zero mark the kernel refused, kept pending, holds  *)
+(*     its own session's greeting, and a zero mark the pending buffer      *)
+(*     refused to queue in this update holds every greeting (the code     *)
+(*     cannot tell whose: hold_all_greetings) (the design: TRUE).          *)
 (*   AdvanceOnQueueRefusal: the walk's cache advances even when the       *)
 (*     pending buffer refuses to queue the mark (the design: FALSE: the   *)
 (*     slot owes the mark and the next walk takes it again).               *)
@@ -487,12 +498,22 @@ Walk ==
 (* queues for it replaces it.  Only an applied mark supersedes a refused   *)
 (* forget.  A mark of 0 is an entry that drops nothing.  The update's send *)
 (* flush follows the commit and greets every live session except one whose *)
-(* zero mark is kept after a refusal or still owed by the walk: the socket *)
-(* holds its keep-alive (HoldGreetingUntilMarked), so the client sends no  *)
-(* session packet while the old entry may stand.  A greeted session stays  *)
-(* greeted.                                                                *)
+(* zero mark is kept after a refusal, and none at all when the walk of     *)
+(* this update had a zero mark refused by the pending buffer               *)
+(* (ZeroMarkUnqueued: the socket's hold_all_greetings, since that key is   *)
+(* held nowhere): the socket holds the keep-alive                          *)
+(* (HoldGreetingUntilMarked), so the client sends no session packet while  *)
+(* the old entry may stand.  A greeted session stays greeted.              *)
 (* The broken shape KeepFailedForgets = FALSE drops it; the broken shape   *)
 (* SupersedeStaleForgets = FALSE keeps it over the newer mark.             *)
+(* ZeroMarkUnqueued: the walk of this update had the pending buffer refuse *)
+(* a zero mark (rocketnet_xdp_replay_sink_mark's zero_mark_refused).  The *)
+(* walk retakes every owed mark, so after it markOwed of a live session is *)
+(* a refusal of this walk; an ungreeted session has opened nothing, so its *)
+(* owed mark is a zero and this covers its own hold.                       *)
+ZeroMarkUnqueued ==
+    \E b \in Addresses : markOwed[b] /\ session[b] # NoSession /\ opened[b] = 0
+
 Commit ==
     /\ phase = "flush"
     /\ \E failed \in SUBSET pendingForget, refused \in SUBSET pendingMark :
@@ -519,7 +540,7 @@ Commit ==
                          /\ session[a] # NoSession
                          /\ \/ greeted[a]
                             \/ ~HoldGreetingUntilMarked
-                            \/ /\ ~markOwed[a]
+                            \/ /\ ~ZeroMarkUnqueued
                                /\ ~\E m \in (IF KeepRefusedMarks THEN refused ELSE {}) :
                                       m.addr = a /\ m.hw = 0]
     /\ pendingMacForget' = {}
@@ -634,6 +655,17 @@ ForgetOwedUntilApplied ==
     \A a \in Addresses :
         (kmap[a].hw # 0 /\ session[a] = NoSession)
             => (marked[a] # 0 \/ seen[a] \/ a \in pendingForget)
+
+(* ForgetQueuedAfterWalk: after the walk, an entry the kernel holds for an *)
+(* address with no live session has its forget pending, unless the        *)
+(* pending buffer is full.  ForgetOwedUntilApplied lets the owed forget    *)
+(* wait in the walk's records (marked or seen); this one says the walk     *)
+(* queued it, so a walk that never forgets fails it on the kernel entry.   *)
+ForgetQueuedAfterWalk ==
+    phase = "flush" =>
+        \A a \in Addresses :
+            (kmap[a] # NoEntry /\ session[a] = NoSession)
+                => (a \in pendingForget \/ Cardinality(pendingForget) = ForgetCapacity)
 
 (* RetryNeverDeletesNewerMark: a pending forget is never held over the    *)
 (* entry of the live session at its address.  Commit applies a pending     *)
