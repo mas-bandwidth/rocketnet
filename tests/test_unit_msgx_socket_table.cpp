@@ -677,7 +677,8 @@ static void test_rocketnet_msgx_socket_table_close_all()
 // the clients a full table holds, by worker: the most minus the fewest
 static int msgx_test_spread( const struct msgx_test_t & test, const struct rocketnet_address_t * addresses, int num_addresses, int num_queues )
 {
-    int count[ROCKETNET_MSGX_TABLE_MAX_HOLDERS] = {};
+    int count[16] = {};
+    rocketnet_unit_check( num_queues >= 1 && num_queues <= 16 );
     for ( int i = 0; i < num_addresses; i++ )
     {
         int slot = -1;
@@ -759,15 +760,30 @@ static void test_rocketnet_msgx_socket_table_queue_spread()
 
     // a client leaves and a new one takes its freed slot: still within one
     int retired_fd = -1;
+    const int freed = rocketnet_msgx_socket_table_lookup( test.table, &addresses[17] );
     rocketnet_unit_check( rocketnet_msgx_socket_table_forget( test.table, &addresses[17], &retired_fd ) );
     rocketnet_unit_check( rocketnet_msgx_socket_table_sweep( test.table, NULL, NULL ) == 1 );
     rocketnet_msgx_socket_table_begin_update( test.table, 1 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &addresses[clients] ) );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &addresses[clients] ) == freed );
     addresses[17] = addresses[clients];
     rocketnet_unit_check( msgx_test_spread( test, addresses, clients, 3 ) <= 1 );
+    msgx_test_destroy( &test );
+
+    // a table not full: the first 600 clients take slots 0 to 599, spread within one
+    const int some = 600;
+    struct msgx_test_t part = msgx_test_create( clients, 4, clients, MSGX_TEST_FDS );
+    for ( int i = 0; i < some; i++ )
+    {
+        rocketnet_unit_check( rocketnet_msgx_socket_table_mark( part.table, &addresses[i] ) );
+    }
+    for ( int queues = 1; queues <= 16; queues++ )
+    {
+        rocketnet_unit_check( msgx_test_spread( part, addresses, some, queues ) <= 1 );
+    }
+    msgx_test_destroy( &part );
 
     delete[] addresses;
-    msgx_test_destroy( &test );
 }
 
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_lifecycle );

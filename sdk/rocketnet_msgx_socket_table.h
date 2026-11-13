@@ -299,7 +299,8 @@ inline void rocketnet_msgx_socket_table_index_remove( struct rocketnet_msgx_sock
 // packet to address: the slot and its current
 // generation, or slot -1 for the shared socket. Fill phase only.
 // The stamp of a slot a lookup already found (-1: none): the transport's
-// start, whose worker choice did the lookup (queue_of below).
+// start, whose worker choice did the lookup (queue_of below). stamp is the
+// same with its own lookup.
 inline int rocketnet_msgx_socket_table_stamp_slot( const struct rocketnet_msgx_socket_table_t * table, int slot, uint32_t * generation )
 {
     if ( slot < 0 )
