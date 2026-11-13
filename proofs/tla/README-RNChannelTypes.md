@@ -36,14 +36,20 @@ Channel dispatch composes the models later.
 
 An unreliable send too big for one packet's record is promoted to its
 reliable twin: 0 to 2, 1 to 4, and 5 to the reliable code-2 path (the receipt
-stays with the layer above). `Source(m)` is the API mode and `Code(m)` is the
-wire twin, so every sender and receiver rule runs on the twin. The `promote`
-scenario sends codes 1, 0 and 5 large (`Large(m)`, on the plan 1, 0, 5, 2)
-and also runs the mixed plan 1, 3, 4, 2 with nothing large, so
-`MCRNChannelTypes.cfg` checks both; `PromotedIsTwin` checks
-the mapping and `PromotedNeverUnreliable` checks that a promoted code-0 or
-code-5 send is delivered, never dropped as unreliable. A promoted code-1 send
-follows code-4 sequenced semantics, including their permitted supersession.
+stays with the layer above). `Source(m)` is the API mode, kept in the queue
+entry, and `Code(m)` is the code `Route(k, large)` chose at the send, the
+code's nested conditional in `sdk/rocketnet_endpoint.cpp` (a large 0 or 5 to
+2, a large 1 to 4, else unchanged); every sender and receiver rule runs on
+`Code(m)`. The `promote` scenario sends codes 1, 0 and 5 large (`Large(m)`,
+on the plan 1, 0, 5, 2) and also runs the mixed plan 1, 3, 4, 2 with nothing
+large, so `MCRNChannelTypes.cfg` checks both. `PromotedIsTwin` checks that the
+routed code is the twin and `PromotedNeverUnreliable` that a large send of a
+promotable mode is routed to a reliable code. A promoted code-1 send follows
+code-4 sequenced semantics, including their permitted supersession. Both can
+now fail: `Broken = "NoPromotion"` routes every send unchanged
+(`MCRNChannelBrokenNoPromotion.cfg` fails `PromotedNeverUnreliable`), and
+`Broken = "PromoteSequencedToReliable"` routes a large 1 to 2
+(`MCRNChannelBrokenPromoteSequencedToReliable.cfg` fails `PromotedIsTwin`).
 
 ## Types
 
@@ -89,22 +95,32 @@ turn, that was `Deliverable` when complete and was not delivered.
 `Broken = "BlockInTurnHeld"` is the code-4 dispatch of
 `sdk/rocketnet_channel_sequenced.cpp` before the rule: an in-turn block is
 checked against the watermark, then collected in the future-state slot and
-compared with the held state there. Until that file follows the rule, the
-code is this witness.
+compared with the held state there.
 
-### Drain refusal is counted
+### Every sequenced refusal is counted
 
-When the ordered successor opens an epoch, `Drain` may find a held sequenced
-record the watermark refuses. That branch (`DrainStale`) releases the hold,
-delivers nothing and, after the fix, adds the record to the receiver's
-`released` set; `DroppedCount(r)` is its count. `released` holds every
-sequenced record that left the receiver without a delivery: one superseded
-by a newer record, and one the drain refused. `SequencedArrivedAccounted`
+`released` holds every sequenced record that left the receiver without a
+delivery, and `DroppedCount(r)` is its count. `SequencedArrivedAccounted`
 (m7.4, "nothing is silent") requires every sequenced record that arrived to be
-in the delivered trace, still held, or released. The earlier code released
-the hold without counting it: `Broken = "DrainStaleSilent"` models that
-branch and `MCRNChannelBrokenDrainStaleSilent.cfg` fails
-`SequencedArrivedAccounted`.
+in the delivered trace, still held, or released. The paths into `released`:
+a record superseded by a newer one; an in-turn record older than the
+watermark (`rn_sequenced_in_turn`, SEQUENCED_STALE); a future record refused
+because the hold is full or the record is oversize (HOLD_FULL), checked
+before it is compared with the held record, so a refused newer record leaves
+the older hold in place; and, in `Drain`, a held record the watermark refuses
+(`DrainStale`, the code's `Sequence < watermark` test) and a held code-1
+record meeting a spent unreliable allowance `Du` (UNRELIABLE_DELIVERY_FULL).
+`DrainStale` is not reachable at the model's small indexes: a held record is
+newer than the watermark of the epoch before, and the new epoch's watermark
+starts at zero; the half-range case that reaches it is `RNSequencingWrap`'s
+`OpenEpoch`. Its witness is therefore the in-turn branch:
+`Broken = "InTurnStaleSilent"` drops an in-turn stale record without counting
+it, and `MCRNChannelBrokenInTurnStaleSilent.cfg` fails
+`SequencedArrivedAccounted`. (The former `DrainStaleSilent` witness reached
+the invariant only through another path and is removed.)
+
+`OpenPacket` never ends the connection: every overflow of the receive side is
+dropped and counted, as the code does.
 
 ## Shared delivery and comparison
 
@@ -137,7 +153,7 @@ from its delivered sequenced trace; it detects stale watermark leakage.
 | Ahead-of-epoch sequencing | Keep only newest `(o, s)` per channel | Older ahead-of-epoch values are superseded, never held (CHANNELS §7.3) |
 | Held sequenced delivery | Same `s + 1` watermark as direct delivery | Study item 18's held path uses `s`, admitting a duplicate |
 | Held ordered delivery | Reset watermark to zero on the same delivery path | Study item 19 omits reset and can wrongly discard new-epoch sequenced input |
-| Capacities | Fixed send catalogue and held descriptors; real exhaustion disconnects with `MESSAGE_MEMORY_EXHAUSTED` | Owner exhaustion rule supersedes older CHANNELS wording about refused sends; every hold is bounded |
+| Capacities | Fixed send catalogue and held descriptors; a full send capacity refuses the start (Revision 1.1), a full or oversize sequenced hold drops and counts | Nothing on the send or sequenced receive path ends the connection; every hold is bounded |
 | Packet input | Fresh packet ids; transport replay suppression is a precondition | Repeated packet ids are refused by the transport before reliability dispatch |
 | ACK | Only packet-id notification retires resend state | Same I8/I12 semantic meaning; no new message ACK protocol |
 | Ordering/sequence wrap | Small nonwrapping counters | Wire half-range/wrap arithmetic is outside this model |
@@ -188,11 +204,15 @@ runtime allocation design.
   never delivered: `InTurnDeliveredWhenComplete` fails. Checked by hand
   against the code: the second fragment takes the hold path, `gap` is
   negative against block 4 and it returns STALE with SEQUENCED_SUPERSEDED.
-- `BrokenDrainStaleSilent`: a sequenced record is held ahead of its epoch; the
-  ordered record opens the epoch and the drain releases the held record
-  without delivering or counting it. `SequencedArrivedAccounted` fails.
-  `MCRNChannelBrokenDrainStaleSilent.cfg` is the witness; the fixed
-  `DrainStale` branch adds it to `released`.
+- `BrokenInTurnStaleSilent`: in the backwards scenario the newer sequenced
+  record (sequencing index 1) is delivered, the watermark becomes 2, and the
+  older one (index 0) then arrives in turn and is dropped with no count.
+  `SequencedArrivedAccounted` fails. Checked by hand against the code:
+  `rn_sequenced_in_turn`'s stale branch counts SEQUENCED_STALE.
+- `BrokenNoPromotion`: a large code-1 send is routed unchanged;
+  `PromotedNeverUnreliable` fails at the first send.
+- `BrokenPromoteSequencedToReliable`: a large code-1 send is routed to 2, not
+  its twin 4; `PromotedIsTwin` fails at the first send.
 
 ## Evaluation and measurements
 
@@ -237,8 +257,9 @@ completes the same bounded scenario without restricting its action graph.
 Standard rule: MESSAGES.md m1.7. The action `MemoryExhausted` (the
 application's send finding the send capacity full ended the connection with
 MESSAGE_MEMORY_EXHAUSTED) is replaced by `Refuse`: the start is refused and
-counted and nothing of the connection changes. The receive side's overflow
-in `OpenPacket` keeps its end. `Broken = "SendKick"` is the reversed witness,
+counted and nothing of the connection changes. (The receive side's overflow
+in `OpenPacket` kept its end here until the model followed the code, which
+drops and counts it.) `Broken = "SendKick"` is the reversed witness,
 v1.0's end from the send path; the ghost `sendEnded` records an end a send
 caused. The invariant `SendNeverEnds == ~sendEnded` is added. The code that
 cites this step is the start's refusal in `sdk/rocketnet_endpoint.cpp`

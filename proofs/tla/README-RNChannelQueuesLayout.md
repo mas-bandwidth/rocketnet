@@ -61,6 +61,7 @@ in the instance.
 | `MCRNChannelQueuesLayoutBrokenPopKeepsTail.cfg` | `PopResetsTail = FALSE`: `queue_tail = NONE` after popping the last entry (`rn_channel_queue_pop`) | `NoForeignLink` |
 | `MCRNChannelQueuesLayoutBrokenPushFrontNoTail.cfg` | `PushFrontSetsTail = FALSE`: `queue_tail = d` on an empty FIFO (`rn_channel_queue_push_front`) | `QueueIsList` |
 | `MCRNChannelQueuesLayoutBrokenRemoveKeepsEnds.cfg` | `RemoveUpdatesEnds = FALSE`: the `else` branches that move `ready_head` and `ready_tail` (`rn_ready_remove_named`) | `ReadyIsList` |
+| `MCRNChannelQueuesLayoutBrokenRejoinEmpty.cfg` | `RejoinChecksMore = FALSE`: the `queue_head != NONE` test before the numbered channel rejoins the back of the ready list (`rn_ordered_write`) | `ReadyNonEmpty` |
 
 ### Hand checks against the code
 

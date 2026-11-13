@@ -8,22 +8,27 @@ tag. A slot index never identifies a connection by itself.
 ## Release lifetime
 
 A delivered message is an opaque byte view into the connection's region.
-The application explicitly releases every view before its next object update.
-Calling update while a view remains held enters
-`ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED`; the implementation asserts in debug
-and returns this named error in release. Views cannot survive an update.
-This refines section 11.1's batch lifetime and supersedes the earlier open
-choice between automatic expiry and arbitrary explicit lifetime. `BeginUpdate`
-checks for empty held sets before running the transport; `Observe` retains
-that condition. `RejectUnreleasedUpdate` ends the model on this misuse.
-This is a valid-use model with fail-fast misuse, not a model of release-build
-recovery: the implementation takes back the batch, records the error, and
-continues the update before returning it; Debug also asserts.
-The `updatewithheld` mutation proceeds anyway, violating
-`UpdateRequiresReleasedViews`.
+The application releases every view before its next object update. An update
+called while a view remains held is the application's misuse:
+`rn_message_object_update_begin` counts `MESSAGE_NOT_RELEASED`, asserts in a
+debug build, takes every view back (`held = 0`), runs the update and returns
+`ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED`. Views cannot survive an update. The
+model has both branches: `BeginUpdate` with every held set empty (result
+NONE), and `RejectUnreleasedUpdate` with a view held, which takes the views
+back, records the named result and enters the transport phase like
+`BeginUpdate`; the model continues. The `updatewithheld` mutation carries the
+views into the transport phase instead, violating
+`UpdateRequiresReleasedViews` (a name kept from when the model ended at the
+misuse: it now says no view is carried into an update).
 
-`Release` removes the region charge as well as the application view. A record
-that cannot fit during an update enters `Exhausted` without partial delivery.
+`Release` returns the view only (`rn_message_view_release`: the view marked
+released, the held count down); `ReleaseReturnsView` says a released record is
+no longer held. The region's charge for every delivery of the last update,
+released or taken back, returns when the next update begins
+(`rn_endpoint_begin_update` in `rn_message_object_update_begin`), before the
+transport runs; `ReleasedRecordsReusable` says the region is empty in the
+transport phase. A record that cannot fit during an update enters `Exhausted`
+without partial delivery.
 The next nonstuttering step is `Kick`, with reason
 `MESSAGE_MEMORY_EXHAUSTED`, followed by region reset before reuse. No API
 error lets the application continue an exhausted connection. Messages already
@@ -54,9 +59,9 @@ tickets and different connection tags remain distinct. Admission order is
 nondeterministic, covering both payload and ack orderings.
 
 The safety specification permits arbitrary connection churn, application
-requests, deferred notification subsets and invalid update calls. Terminal
-API errors are the model's fail-fast abstraction; configurations ignore
-terminal deadlock. `NoOwnEntryDropped` is a local consistency invariant,
+requests, deferred notification subsets and invalid update calls (an update
+with views held takes them back and continues, as the code does);
+configurations ignore terminal deadlock. `NoOwnEntryDropped` is a local consistency invariant,
 not a separately declared mutation witness. Safety
 never assumes fairness. The live specification keeps a connection stable,
 submits the next message after previous views are released, publishes deferred
@@ -79,13 +84,14 @@ objects/API cards.
 | `Send` | `rn_endpoint_write_packet` and transport packet submission; retain packet-to-record mapping |
 | `TransportOpen` | Transport payload batch tagged with the connection at receive time |
 | `TransportAck` | `rocketnet_server_transport_acked_packets` feed, including deferred entries |
-| `BeginUpdate` | Entry check in `rocketnet_server_update`, before the transport mutates prior views |
+| `BeginUpdate` | `rn_message_object_update_begin` with no view held: every connection's deliveries of the last update expire and their region charge returns (`rn_endpoint_begin_update`), before the transport runs |
 | `Observe` | `rn_slots_observe`, followed by `rn_endpoint_reset` when the slot is bound to a new connection (`RN_SLOTS_RESET`); a slot going free (`RN_SLOTS_DROP`) is released in O(1) by `rn_message_connection_release`, its region left unreachable until that reset (the lazy reset) |
 | `Admit` | `rn_slots_admit` at apply time, then `rn_endpoint_on_acked` or `rn_endpoint_on_payload` |
 | `Kick` | Object error handling calls `rocketnet_server_transport_disconnect_client` with the exhaustion reason; the transport records SERVER_DISCONNECTED, which no later `Observe` reads (the kicked slot is observed free at reset) |
 | `ResetFree` | `rn_message_connection_release`: the kicked slot freed in O(1), its views released; its region is carved by the `Observe` that binds the slot again |
-| `Release` | Object message-release operation returns the view's region charge |
-| `RejectUnreleasedUpdate` | Entry check in `rocketnet_server_update` before touching the transport or old views |
+| `Release` | `rn_message_object_release` / `rn_message_view_release`: the held view is marked released and the held count drops; the region is untouched |
+| `RejectUnreleasedUpdate` | `rn_message_object_update_begin` with a view held: `MESSAGE_NOT_RELEASED` counted, a debug assert, every view taken back (`held = 0`), the same expiry as `BeginUpdate`, and the update returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` |
+| `StartPending`, `FinishPending` | `rn_message_object_start`, finish and abort: one start pending per connection (`open.pending`); a second start on the same connection is refused, starts on other connections are independent |
 | `EndUpdate` | Return deliveries to the application after processing the current batch |
 
 ## Disconnect reason
@@ -163,18 +169,35 @@ identifiers, not an ordering protocol.
   delivering that record. Mutated `CarryOn` returns to `Connected` instead
   of disconnecting with the named reason. The next-step property
   `ExhaustionOnlyLeadsToDisconnect` fails at state 13.
-- **Ignore release:** in the stable workload, deliver and transport-ack
-  message 2, return its view and release it. The mutant removes the view but
-  retains its region charge. Only after that release is message 1 requested.
-  Its arrival exhausts the supposedly reusable region, triggering `Kick`.
-  The connection cannot deliver message 1; the recorded lasso continues
-  empty updates after reset. `EveryReliableDelivered` fails despite the
-  application obeying release-before-update and release-paced submission.
-- **Update with held views:** deliver one record and return to the
-  application with its view held. Mutated `BeginUpdate` proceeds without a
-  release and sets `badLifetime`, violating `UpdateRequiresReleasedViews`
-  at state 10. The normal action is disabled and the invalid call takes
-  `RejectUnreleasedUpdate` with the canonical named error.
+- **Ignore release** (`MCRNSlotsBrokenReleaseIgnored.cfg`, Broken
+  `"releaseignored"`): deliver one record and return to the application; the
+  mutant's `Release` records the release but leaves the view held, the
+  defect of a `rn_message_view_release` that does not mark the view
+  released. `ReleaseReturnsView` fails. (Before this revision the mutant kept
+  the region charge in `Release`; the code never returned the charge there,
+  so that witness did not reverse the code's release.)
+- **No expiry at the update** (`MCRNSlotsBrokenNoExpire.cfg` and
+  `MCRNSlotsBrokenNoExpireLive.cfg`, Broken `"noexpire"`): the update does
+  not return the last update's region charge, the defect of a
+  `rn_message_object_update_begin` without `rn_endpoint_begin_update`. In
+  the stable workload one record is delivered and released, and the next
+  update enters the transport phase with the region still holding it:
+  `ReleasedRecordsReusable` fails. Under `LiveSpec` the next record's arrival
+  exhausts the region, triggering `Kick`, and that record is never
+  delivered: `EveryReliableDelivered` fails despite the application obeying
+  release-before-update and release-paced submission.
+- **Update with held views** (`MCRNSlotsBrokenUpdateWithHeldViews.cfg`):
+  deliver one record and return to the application with its view held. The
+  update takes `RejectUnreleasedUpdate`; the mutant carries the view into
+  the transport phase instead of taking it back and sets `badLifetime`,
+  violating `UpdateRequiresReleasedViews`.
+- **Pending across reset** (`MCRNSlotsBrokenPendingAcrossReset.cfg`): a start
+  pending on a slot whose connection the update resets is not cancelled;
+  `NoPendingAcrossReset` fails.
+- **Two starts pending** (`MCRNSlotsTwoPending.cfg`, no mutation): a
+  reachability probe. Two slots are bound and a start is pending on each;
+  `NotBothPending` fails, which shows the model allows what the code allows,
+  one pending start per connection rather than one per object.
 
 Each reversed witness declares only its intended failing property. Positive
 controls check the full safety set; `Live` also checks

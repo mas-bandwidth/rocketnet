@@ -252,7 +252,10 @@ loss pattern, with `SendCapacity = 1` so one reliable message is outstanding
 at a time. It passes: 723,930 generated / 281,764 distinct states in 33.015 s,
 exit 0, and is a required case.
 
-The deployed channel window is `reliable_messages_in_flight` per channel, not `W = 4`.
+The deployed window is `reliable_messages_in_flight`, not `W = 4`, and it is
+one window per connection region, shared by every channel of the region
+(`rn_window_send_init( &ordered->send, region, ... )` in
+`sdk/rocketnet_channel.cpp`), not one per channel.
 The checked properties split into two kinds. The ordering, chunk-placement and
 at-most-once rules are local to each accepted message, number and ring slot,
 and their statements do not mention the window size; the mid instance changes

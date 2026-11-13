@@ -327,8 +327,15 @@ BeginUpdate ==
 \* ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. No view is carried into the
 \* transport phase. Stable's application never takes it. Broken
 \* "updatewithheld" carries the views into the transport phase.
+\* Misuse: whether the application may call an update with a view held. Every
+\* safety control explores it but the two larger ones (MCRNSlotsTwoSlots,
+\* MCRNSlotsExhaustion), whose state space the continued update after the
+\* misuse takes past the 110-second budget; they override it to FALSE
+\* (MCNoMisuse), so their application releases before each update, as the
+\* stable one does.
+Misuse == TRUE
 RejectUnreleasedUpdate ==
-    /\ ~Stable
+    /\ ~Stable /\ Misuse
     /\ st.phase = "application" /\ (\E s \in Slots : st.held[s] # {})
     /\ LET keep == "updatewithheld" \in Broken
        IN st' = [st EXCEPT !.phase = "transport",
