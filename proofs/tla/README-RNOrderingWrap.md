@@ -123,8 +123,10 @@ every duplicate: a sender holding orderings 1 to `W - 1` and sending payloads
 of 108 duplicates at the read index cost the main thread 153 us a payload at
 `W = 1024` and 38 ms at `W = 65536` (1.9 us after; Release, amd-3).
 `test_duplicates_at_the_read_index_never_scan_the_held_run` in
-`tests/test_unit_channel_ordered.cpp` runs both on the code, counting held
-lookups.
+`tests/test_unit_channel_ordered.cpp` runs both on the code, counting held-index
+lookups (`rn_held_find` calls). The probe steps inside a call are not
+counted; the index's own rule bounds them (at most `W` entries in `2W` cells,
+so a call meets an empty cell within `W + 1` steps).
 
 `MCRNOrderingWrapBrokenPartialRun.cfg`: TLC's trace delivers orderings 0 and 1,
 holds 3, and with one delivery free a fragment at ordering 2 arrives that does
