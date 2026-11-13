@@ -15,8 +15,14 @@ named without a call) counts too: that is how a bounded wait polls the real
 clock and sleeps on a thread the library started, and the call it makes is
 in examples/shutdown.h, which no unit case should reach.
 
-The scanned code is every tests/test_unit_*.cpp and sdk/rocketnet_tests.cpp
-(the unit-registered cases live there); every tests/*.h helper they include,
+The library's own wrappers count by name: rocketnet_platform_sleep, _time,
+_thread_create, _thread_join, _thread_wait, _thread_sleep, _hostname_resolve,
+and a wake wait (readable or writable) whose timeout is not 0; so do the C
+library's sleep() and Windows' Sleep().
+
+The scanned code is every tests/test_unit_*.cpp, tests/test_channels.cpp and
+sdk/rocketnet_tests.cpp (the unit-registered cases live there: test.cpp
+registers the channels table's rocketnet_channels_test_* cases); every tests/*.h helper they include,
 directly or through another tests/*.h helper; and the body of every sdk DEV
 fixture they call (a function with _test in its name defined in an sdk/*.cpp
 file), where a thread or a timed wait would otherwise hide from this check.
@@ -24,7 +30,9 @@ A thread join, and a wake wait with a timeout other than 0, count as well.
 Comments are stripped before matching, and linker-wrap symbol declarations
 (__real_/__wrap_rocketnet_platform_time) are not calls.
 
-Two helpers are not unit-case code and are not scanned: tests/suite_runner.h
+Three files are not unit-case code and are not scanned: tests/test.cpp is the
+unit binary's main, which clears and restores the process environment around
+the cases it starts and registers no case body of its own; tests/suite_runner.h
 is the runner that starts each case's process, and tests/test_env_source.h
 sets the real environment only in a ROCKETNET_DEV=0 build, which has no
 in-memory overlay (tests/README.md).
@@ -42,7 +50,11 @@ PATTERNS = [
     ("rocketnet_platform_sleep", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_sleep\s*\(')),
     ("rocketnet_platform_time", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_time\s*\(')),
     ("rocketnet_platform_thread_create", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_thread_create\s*\(')),
+    ("rocketnet_platform_thread_wait", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_thread_wait\s*\(')),
+    ("rocketnet_platform_thread_sleep", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_thread_sleep\s*\(')),
+    ("rocketnet_platform_hostname_resolve", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_hostname_resolve\s*\(')),
     ("getaddrinfo", re.compile(r'(?<![A-Za-z0-9_])getaddrinfo\s*\(')),
+    ("sleep(", re.compile(r'(?<![A-Za-z0-9_.>:])(?:sleep|Sleep)\s*\(')),
     ("std::thread", re.compile(r'std::thread')),
     ("time(", re.compile(r'(?<![A-Za-z0-9_])time\s*\(')),
     ("setenv", re.compile(r'(?<![A-Za-z0-9_])setenv\s*\(')),
@@ -71,8 +83,9 @@ PATTERNS = [
         r'(?![A-Za-z0-9_])(?!\s*\()')),
 ]
 
-# a wake wait is a real OS wait unless its timeout is zero (a poll)
-WAKE_WAIT = re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_wake_wait\s*\(([^;]*)\)\s*;')
+# a wake wait (readable or writable) is a real OS wait unless its timeout, the
+# last argument, is zero (a poll)
+WAKE_WAIT = re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_wake_wait(?:_writable)?\s*\(([^;]*)\)\s*;')
 ZERO_TIMEOUT = re.compile(r'^\s*0(?:\.0*)?(?:f)?\s*$')
 
 HELPERS_NOT_SCANNED = {"suite_runner.h", "test_env_source.h"}
@@ -104,10 +117,6 @@ def scan_source(source, first_line=1):
         if not ZERO_TIMEOUT.match(timeout):
             findings.append((first_line + source.count('\n', 0, match.start()), "rocketnet_platform_wake_wait with a timeout"))
     return sorted(findings)
-
-
-def scan_lines(lines, prefix):
-    return scan_source(strip_comments(''.join(lines)))
 
 
 def read(path):
@@ -179,9 +188,9 @@ def check(root):
     for entry in sorted(os.listdir(tests_dir)):
         if entry.startswith("test_unit_") and entry.endswith(".cpp"):
             files.append(os.path.join(tests_dir, entry))
-    sdk_tests = os.path.join(root, "sdk", "rocketnet_tests.cpp")
-    if os.path.exists(sdk_tests):
-        files.append(sdk_tests)
+    for extra in (os.path.join(tests_dir, "test_channels.cpp"), os.path.join(root, "sdk", "rocketnet_tests.cpp")):
+        if os.path.exists(extra):
+            files.append(extra)
     if not files:
         # zero inputs is an error: a tree with no unit source would otherwise pass unread
         return [(tests_dir, 0, "0 unit source files (tests/test_unit_*.cpp, sdk/rocketnet_tests.cpp): nothing was checked")]
@@ -213,7 +222,10 @@ def self_test():
                  "sendto( s, b, n, 0, a, l )", "recvfrom( s, b, n, 0, a, &l )", "sendmmsg( s, m, n, 0 )",
                  "rn_cli_bounded_wait( o, done, NULL, rocketnet_time, NULL, \"o\" )",
                  "rn_cli_bounded_wait( o, done, NULL, NULL, rocketnet_sleep, \"o\" )",
-                 "clock_fn = &rocketnet_platform_time"):
+                 "clock_fn = &rocketnet_platform_time",
+                 "rocketnet_platform_thread_wait( t, 1.0 )", "rocketnet_platform_thread_sleep( t, 0.5 )",
+                 "rocketnet_platform_hostname_resolve( \"h\", \"1\", &a )",
+                 "rocketnet_platform_wake_wait_writable( w, 0.25 )", "sleep( 1 )", "Sleep( 10 )"):
         cases.append(("helper " + call.split("(")[0].strip(), clean_fixture,
                       "static inline int helper_value() { %s; return 1; }\n" % call, 1))
     for label, fixture, helper, expected in cases:
@@ -230,6 +242,20 @@ def self_test():
             found = check(root)
             if len(found) != expected:
                 print("FAIL check_unit_purity self-test: %s: expected %d finding(s), got %r" % (label, expected, found))
+                return 1
+    # tests/test_channels.cpp holds registered unit cases too; a polling
+    # writable wait (timeout 0) is not a timed wait
+    for label, body, expected in (
+            ("channels sleep", "static void c() { rocketnet_platform_sleep( 0.01 ); }\n", 1),
+            ("channels zero writable wait", "static void c() { rocketnet_platform_wake_wait_writable( w, 0.0 ); }\n", 0)):
+        with tempfile.TemporaryDirectory() as root:
+            os.mkdir(os.path.join(root, "tests"))
+            with open(os.path.join(root, "tests", "test_channels.cpp"), "w") as fh:
+                fh.write(body)
+            found = check(root)
+            if len(found) != expected or (expected and not found[0][0].endswith("test_channels.cpp")):
+                print("FAIL check_unit_purity self-test: %s: expected %d finding(s) in test_channels.cpp, got %r"
+                      % (label, expected, found))
                 return 1
     with tempfile.TemporaryDirectory() as root:
         os.mkdir(os.path.join(root, "tests"))
