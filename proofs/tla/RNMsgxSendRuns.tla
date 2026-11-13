@@ -4,31 +4,39 @@
 (* (sdk/rocketnet_msgx_send_runs.h, called by rocketnet_server_msgx_sort,  *)
 (* rocketnet_server_msgx_send_bank and rocketnet_server_msgx_worker in     *)
 (* sdk/rocketnet_server_msgx_darwin.cpp) at the code's layout: the        *)
-(* counting sort's bucket array and its placement loop, the sorted order  *)
-(* array, the cursor, the run builder's scan, the partial send's cursor   *)
-(* walk, the dead run's resend loop and the worker's bounded retries      *)
-(* after quit.                                                             *)
+(* counting sort per fill phase, its bucket array and placement loop, the *)
+(* sorted order array, the cursor, the run builder's scan, the partial    *)
+(* send's cursor walk, the dead run's resend loop and the worker's        *)
+(* bounded retries after quit.  Each action is one call of                *)
+(* rocketnet_msgx_send_runs_step (or the sort, or the worker's give-up    *)
+(* check), so tests/tla_trace_msgx_send_runs.cpp binds the code to it by  *)
+(* a trace check (TraceRNMsgxSendRuns.tla).                               *)
 (*                                                                         *)
 (* The bank is the input: count packets (num_packets clamped at Size),     *)
 (* each with its client (the destination), the stamp the fill thread      *)
-(* gave it (table slot, -1 the shared socket, and the slot's generation)   *)
-(* and whether it is live (packet_bytes > 0; aborted or never finished     *)
-(* otherwise).  The table at send time is which slots are open at which   *)
-(* generation; a slot's socket is connected to the client stamped at      *)
-(* that slot and generation (0: a client outside this bank).  Main may    *)
-(* retire a slot while the worker sends (the resolve then answers no      *)
-(* socket; the quarantine of RNMsgxSocketTable keeps a resolved socket    *)
-(* open and connected to its peer until the pass ends, so a send already  *)
-(* resolved still reaches that peer).  The connected send answers any of *)
-(* all taken, a prefix taken, nothing taken or full, refused, dead or     *)
-(* another error; the shared send sent, full or dropped.  The bank        *)
-(* hand-off is RNBankFifoLayout's and is not modelled here.               *)
+(* gave it (table slot, -1 the shared socket, and the slot's generation),  *)
+(* the fill phase it was staged in (main's update count, advanced only in *)
+(* commit) and whether it is live (packet_bytes > 0; aborted or never     *)
+(* finished otherwise).  The table at send time is which slots are open   *)
+(* at which generation; a slot's socket is connected to the client        *)
+(* stamped at that slot and generation (0: a client outside this bank).  *)
+(* Main may retire a slot while the worker sends (the resolve then        *)
+(* answers no socket; the quarantine of RNMsgxSocketTable keeps a         *)
+(* resolved socket open and connected to its peer until the pass ends, so *)
+(* a send already resolved still reaches that peer).  The connected send  *)
+(* answers any of all taken, a prefix taken, nothing taken or full,       *)
+(* refused, dead or another error; the shared send sent, full or dropped. *)
+(* The bank hand-off is RNBankFifoLayout's and is not modelled here.      *)
 (*                                                                         *)
-(* The input domain is every stamp assignment the header accepts, wider   *)
-(* than the server reaches: within one fill phase a client has one stamp  *)
-(* and a slot's generations rise in staged order.  MultiStamp FALSE keeps *)
-(* one stamp per client (the fill-phase contract); TRUE lets a client     *)
-(* hold two (a bank whose publish was deferred across a table change).    *)
+(* Fill phases rise in staged order (a fill of the next phase runs after  *)
+(* main's commit, after every fill of this one: the fill-phase contract   *)
+(* X0), and within one phase a client has one stamp (the table changes   *)
+(* only in commit).  Across phases a client's stamp may change: a bank    *)
+(* whose publish was deferred across a commit that retired or opened its  *)
+(* socket.  MultiStamp FALSE keeps one stamp per client for the whole     *)
+(* bank (one phase).  The input domain is otherwise every stamp           *)
+(* assignment the header accepts, wider than the server reaches (a slot's *)
+(* generations need not rise).                                             *)
 (*                                                                         *)
 (* History is kept per packet and per client, not as the wire itself:    *)
 (* left[i] counts packet i's departures (sent on either socket, or        *)
@@ -36,9 +44,9 @@
 (* last packet of client c (of that stamp) sent, and a flag records each  *)
 (* send that broke an order or reached another client.                    *)
 (*                                                                         *)
-(* The code has StableSort, GenBreak, PartialSkipsAborted and DeadResends *)
-(* TRUE; each broken config flips one and must fail its named invariant   *)
-(* (README-RNMsgxSendRuns.md).                                             *)
+(* The code has PhaseSort, StableSort, GenBreak, PartialSkipsAborted and  *)
+(* DeadResends TRUE; each broken config flips one and must fail its named *)
+(* invariant (README-RNMsgxSendRuns.md).                                   *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -48,11 +56,13 @@ CONSTANTS
     Cap,                \* the table's capacity: slots 0..Cap-1
     Gens,               \* the generations a stamp or the table holds
     Clients,            \* destinations, ids >= 1 (0: a peer outside the bank)
+    Phases,             \* the fill phases a bank's packets carry (naturals)
     Claims,             \* num_packets at the take (above Size: refused claims)
-    MultiStamp,         \* TRUE: a client may hold two stamps in one bank
+    MultiStamp,         \* TRUE: a client's stamp may change across fill phases
     MaxStalls,          \* bound: answers that keep the bank (the call returns false)
     MaxRetires,         \* bound: slots main retires during the send
     RetriesAfterQuit,   \* ROCKETNET_MSGX_SEND_RETRIES_AFTER_QUIT
+    PhaseSort,          \* TRUE: the sort keeps fill phases in staged order, by slot inside each
     StableSort,         \* TRUE: placement walks the bank forward from each bucket's start
     GenBreak,           \* TRUE: a run ends at a change of generation
     PartialSkipsAborted,\* TRUE: a partial send's cursor counts only live packets as taken
@@ -69,16 +79,17 @@ VARIABLES
     client,     \* info[i].to, as a client id
     slot,       \* info[i].table_slot
     gen,        \* info[i].generation
+    phase,      \* info[i].phase
     live,       \* info[i].packet_bytes > 0
     tOpen,      \* the table: slot s resolves at generation tGen[s] while open
     tGen,
     order,      \* worker->order
-    pc,         \* the worker's place
-    cursor,     \* the cursor of rocketnet_server_msgx_worker
-    hd,         \* the run's head packet (head in the header)
-    scan,       \* the run builder's scan
-    run,        \* run_packets[0..run)
-    attempts,   \* the refusal retry
+    pc,         \* the send's place (state.pc), "sort" before the sort
+    cursor,     \* state.cursor
+    hd,         \* state.head: the run's head packet
+    scan,       \* state.scan: the run builder's scan
+    run,        \* state.run_packets[0..state.run)
+    attempts,   \* state.attempts: the refusal retry
     left,       \* left[i]: departures of packet i, sent or dropped
     lastC,      \* lastC[c]: staged index of client c's last packet sent, -1 none
     lastS,      \* lastS[c, st]: the same per stamp
@@ -90,9 +101,9 @@ VARIABLES
     retires     \* bound counter
 
 hist == << left, lastC, lastS, bad >>
-vars == << count, client, slot, gen, live, tOpen, tGen, order, pc, cursor, hd, scan, run, attempts,
+vars == << count, client, slot, gen, phase, live, tOpen, tGen, order, pc, cursor, hd, scan, run, attempts,
            hist, quit, retries, stalls, retires >>
-bank == << count, client, slot, gen, live, tGen >>
+bank == << count, client, slot, gen, phase, live, tGen >>
 
 Min(a, b) == IF a < b THEN a ELSE b
 
@@ -107,30 +118,40 @@ Resolves(i) == slot[i] >= 0 /\ tOpen[slot[i]] /\ tGen[slot[i]] = gen[i]
 StampOf(i) == << slot[i], gen[i] >>
 
 -----------------------------------------------------------------------------
-(* rocketnet_msgx_send_runs_sort: the code's three loops over bucket[]    *)
-(* (capacity + 2 entries; key 0 the shared socket and any slot outside   *)
-(* the table, key s + 1 slot s).                                          *)
+(* rocketnet_msgx_send_runs_sort: the bank cut into runs of one fill      *)
+(* phase in staged order (PhaseSort FALSE: one run, the whole bank), and  *)
+(* rocketnet_msgx_send_runs_sort_range's three loops over bucket[] on     *)
+(* each (capacity + 2 entries; key 0 the shared socket and any slot       *)
+(* outside the table, key s + 1 slot s).                                  *)
 
 Key(i) == IF slot[i] >= 0 /\ slot[i] < Cap THEN slot[i] + 1 ELSE 0
 
-RECURSIVE CountKeys(_, _)
-CountKeys(i, b) == IF i = count THEN b ELSE CountKeys(i + 1, [b EXCEPT ![Key(i) + 1] = @ + 1])
+\* the end of the phase run that starts at lo
+RECURSIVE RangeEnd(_, _)
+RangeEnd(lo, hi) == IF hi >= count \/ (PhaseSort /\ phase[hi] # phase[lo]) THEN hi ELSE RangeEnd(lo, hi + 1)
+
+RECURSIVE CountKeys(_, _, _)
+CountKeys(i, hi, b) == IF i = hi THEN b ELSE CountKeys(i + 1, hi, [b EXCEPT ![Key(i) + 1] = @ + 1])
 
 RECURSIVE Prefix(_, _)
 Prefix(b, k) == IF k = Cap + 1 THEN b ELSE Prefix([b EXCEPT ![k + 1] = @ + b[k]], k + 1)
 
-\* order[bucket[key]++] = i; the broken form order[--bucket[key + 1]] = i
-RECURSIVE Place(_, _, _)
-Place(i, b, o) ==
-    IF i = count THEN o
+\* order[lo + bucket[key]++] = i; the broken form order[lo + --bucket[key + 1]] = i
+RECURSIVE Place(_, _, _, _, _)
+Place(i, lo, hi, b, o) ==
+    IF i = hi THEN o
     ELSE IF StableSort
-         THEN Place(i + 1, [b EXCEPT ![Key(i)] = @ + 1], [o EXCEPT ![b[Key(i)]] = i])
-         ELSE Place(i + 1, [b EXCEPT ![Key(i) + 1] = @ - 1], [o EXCEPT ![b[Key(i) + 1] - 1] = i])
+         THEN Place(i + 1, lo, hi, [b EXCEPT ![Key(i)] = @ + 1], [o EXCEPT ![lo + b[Key(i)]] = i])
+         ELSE Place(i + 1, lo, hi, [b EXCEPT ![Key(i) + 1] = @ - 1], [o EXCEPT ![lo + b[Key(i) + 1] - 1] = i])
 
-SortedOrder ==
-    LET zero == [k \in 0..(Cap + 1) |-> 0]
-        b == Prefix(CountKeys(0, zero), 0)
-    IN Place(0, b, [q \in Index |-> 0])
+RECURSIVE SortFrom(_, _)
+SortFrom(lo, o) ==
+    IF lo >= count THEN o
+    ELSE LET hi == RangeEnd(lo, lo + 1)
+             b == Prefix(CountKeys(lo, hi, [k \in 0..(Cap + 1) |-> 0]), 0)
+         IN SortFrom(hi, Place(lo, lo, hi, b, o))
+
+SortedOrder == SortFrom(0, [q \in Index |-> 0])
 
 -----------------------------------------------------------------------------
 (* the run builder: from the head, packets of the head's slot and         *)
@@ -178,24 +199,26 @@ SetH(h) == /\ left' = h.left /\ lastC' = h.lastC /\ lastS' = h.lastS /\ bad' = h
 
 -----------------------------------------------------------------------------
 
-\* one staged packet: client, stamp, live
-Packets == [c : Clients, st : Stamps, l : BOOLEAN]
+\* one staged packet: client, stamp, fill phase, live
+Packets == [c : Clients, st : Stamps, ph : Phases, l : BOOLEAN]
 
-Init ==
-    /\ \E claimed \in Claims : count = Min(claimed, Size)
-    \* packets past the count are never read: one value each
-    /\ \E pk \in [0..(count - 1) -> Packets] :
-        /\ client = [i \in Index |-> IF i < count THEN pk[i].c ELSE 0]
-        /\ slot = [i \in Index |-> IF i < count THEN pk[i].st[1] ELSE Shared]
-        /\ gen = [i \in Index |-> IF i < count THEN pk[i].st[2] ELSE 0]
-        /\ live = [i \in Index |-> IF i < count THEN pk[i].l ELSE FALSE]
+\* the bank's rules, over bank variables already given: what the fill
+\* threads can stage (TraceRNMsgxSendRuns.tla checks a record against it)
+BankOK ==
+    \* fill phases rise in staged order
+    /\ \A i \in 0..(count - 2) : phase[i] <= phase[i + 1]
     \* a slot at a generation belongs to one client
     /\ \A i, j \in 0..(count - 1) : (slot[i] >= 0 /\ slot[i] = slot[j] /\ gen[i] = gen[j]) => client[i] = client[j]
-    \* one stamp per client, unless MultiStamp
-    /\ ~MultiStamp => \A i, j \in 0..(count - 1) : client[i] = client[j] => (slot[i] = slot[j] /\ gen[i] = gen[j])
-    \* every slot open at OpenGen(s); stamps at the other generation are
-    \* stale, and Retire closes a slot: generations are only compared, so
-    \* this covers each resolve answer up to renaming
+    \* one stamp per client within a fill phase, and for the whole bank
+    \* unless MultiStamp
+    /\ \A i, j \in 0..(count - 1) :
+        (client[i] = client[j] /\ (phase[i] = phase[j] \/ ~MultiStamp)) => (slot[i] = slot[j] /\ gen[i] = gen[j])
+
+\* the state before the sort, the bank aside: every slot open at
+\* OpenGen(s); stamps at the other generation are stale, and Retire closes
+\* a slot: generations are only compared, so this covers each resolve
+\* answer up to renaming
+InitRest ==
     /\ tOpen = [s \in Slots |-> TRUE]
     /\ tGen = [s \in Slots |-> OpenGen(s)]
     /\ order = [q \in Index |-> 0]
@@ -214,6 +237,18 @@ Init ==
     /\ stalls = 0
     /\ retires = 0
 
+Init ==
+    /\ \E claimed \in Claims : count = Min(claimed, Size)
+    \* packets past the count are never read: one value each
+    /\ \E pk \in [0..(count - 1) -> Packets] :
+        /\ client = [i \in Index |-> IF i < count THEN pk[i].c ELSE 0]
+        /\ slot = [i \in Index |-> IF i < count THEN pk[i].st[1] ELSE Shared]
+        /\ gen = [i \in Index |-> IF i < count THEN pk[i].st[2] ELSE 0]
+        /\ phase = [i \in Index |-> IF i < count THEN pk[i].ph ELSE 0]
+        /\ live = [i \in Index |-> IF i < count THEN pk[i].l ELSE FALSE]
+    /\ BankOK
+    /\ InitRest
+
 \* rocketnet_server_msgx_sort
 Sort ==
     /\ pc = "sort"
@@ -221,9 +256,8 @@ Sort ==
     /\ pc' = "head"
     /\ UNCHANGED << bank, tOpen, cursor, hd, scan, run, attempts, hist, quit, retries, stalls, retires >>
 
-\* the top of rocketnet_msgx_send_runs_send's loop: the bank done, an
-\* aborted head skipped, a head that resolves to no socket sent alone on the
-\* shared socket, or the run built
+\* the step at HEAD: the bank done, an aborted head skipped, a head that
+\* resolves to no socket sent alone on the shared socket, or the run built
 LoopTop ==
     /\ pc = "head"
     /\ IF cursor >= count
@@ -253,7 +287,7 @@ LoopTop ==
                  /\ UNCHANGED << cursor, hist, stalls >>
     /\ UNCHANGED << bank, tOpen, order, quit, retries, retires >>
 
-\* one connected send of the run and what its answer does
+\* the step at SEND: one connected send of the run and what its answer does
 SendAll ==
     /\ pc = "send"
     /\ SetH(SendSeq(H, run, Len(run), Peer(slot[hd])))
@@ -307,7 +341,7 @@ SendError ==
     /\ pc' = "head"
     /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, stalls, retires >>
 
-\* the dead run's resend loop, one packet per step
+\* the step at DEAD: the dead run's resend loop, one packet per step
 Dead ==
     /\ pc = "dead"
     /\ IF cursor >= scan
@@ -329,17 +363,19 @@ Dead ==
                     /\ UNCHANGED << cursor, hist >>
     /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, retires >>
 
-\* rocketnet_server_msgx_worker after a false return: past the retries
-\* after quit, every live packet from the cursor is dropped, counted;
-\* otherwise the next call starts at the same cursor
+\* rocketnet_server_msgx_worker after a false return
+\* (rocketnet_msgx_send_runs_give_up: shutdown && ++retries > limit): past
+\* the retries after quit, every live packet from the cursor is dropped,
+\* counted; otherwise the next call resumes at the same cursor
+\* (rocketnet_msgx_send_runs_resume).  The count rises on every check after
+\* quit, the last one too.
 Kept ==
     /\ pc = "kept"
+    /\ retries' = IF quit THEN retries + 1 ELSE retries
     /\ IF quit /\ retries + 1 > RetriesAfterQuit
        THEN /\ left' = [i \in Index |-> left[i] + (IF live[i] /\ \E q \in cursor..(count - 1) : order[q] = i THEN 1 ELSE 0)]
             /\ pc' = "done"
-            /\ UNCHANGED retries
-       ELSE /\ retries' = IF quit THEN retries + 1 ELSE retries
-            /\ pc' = "head"
+       ELSE /\ pc' = "head"
             /\ UNCHANGED left
     /\ UNCHANGED << bank, tOpen, order, cursor, hd, scan, run, attempts, lastC, lastS, bad, quit, stalls, retires >>
 
@@ -378,6 +414,7 @@ Spec == Init /\ [][Next]_vars
 
 TypeOK ==
     /\ count \in 0..Size
+    /\ phase \in [Index -> Phases \cup {0}]
     /\ order \in [Index -> Index]
     /\ pc \in {"sort", "head", "send", "dead", "kept", "done"}
     /\ cursor \in 0..count
@@ -385,12 +422,14 @@ TypeOK ==
     /\ Len(run) <= Batch
     /\ left \in [Index -> Nat]
 
-\* the sort is a permutation of the bank, the shared socket's packets
-\* first, then by slot
+\* the sort is a permutation of the bank, in fill phase order, the shared
+\* socket's packets first inside each phase, then by slot
 SortPermutation ==
     pc # "sort" =>
         /\ {order[q] : q \in 0..(count - 1)} = 0..(count - 1)
-        /\ \A q \in 0..(count - 2) : Key(order[q]) <= Key(order[q + 1])
+        /\ \A q \in 0..(count - 2) :
+            \/ phase[order[q]] < phase[order[q + 1]]
+            \/ phase[order[q]] = phase[order[q + 1]] /\ Key(order[q]) <= Key(order[q + 1])
 
 \* every finished packet leaves exactly once (sent connected, sent shared or
 \* dropped counted), and an aborted packet never leaves

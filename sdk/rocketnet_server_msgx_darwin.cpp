@@ -17,11 +17,13 @@
 // - main: the socket table (opens, retires, closes), each worker's producer
 //   index and its publish, the receive claim.
 // - fill threads: claim slots in the producer bank of the destination's
-//   worker, stamp each with its client's socket slot and generation.
+//   worker, stamp each with its client's socket slot and generation and the
+//   fill phase (main's update count).
 // - transmit worker w (holder w of the table): takes its published banks in
-//   order, groups each bank by socket slot keeping staged order, sends each
-//   run with one sendmsg_x on the client's connected socket, the rest on the
-//   shared socket, inside one table pass per bank.
+//   order, groups each bank by fill phase, then by socket slot, keeping
+//   staged order, sends each run with one sendmsg_x on the client's
+//   connected socket, the rest on the shared socket, inside one table pass
+//   per bank.
 // - the receive worker (holder num_workers): a kqueue over the shared socket
 //   and every connected socket, recvmsg_x batches, the prefilter before the
 //   bank, one table pass per kevent round.
@@ -76,7 +78,8 @@ struct rocketnet_server_msgx_send_info_t
     int packet_bytes;
     int table_slot;                 // -1: the shared socket
     uint32_t generation;            // the table slot's generation at the stamp
-    uint8_t padding[64 - sizeof( rocketnet_address_t ) - 3 * sizeof( int )];
+    uint32_t phase;                 // the fill phase it was staged in (msgx->update at the stamp)
+    uint8_t padding[64 - sizeof( rocketnet_address_t ) - 4 * sizeof( int )];
 };
 
 static_assert( sizeof( rocketnet_server_msgx_send_info_t ) == 64, "one send info per cache line" );
@@ -478,6 +481,15 @@ uint8_t * rocketnet_server_msgx_start_packet( struct rocketnet_server_msgx_t * m
     info->packet_bytes = 0;
     info->table_slot = rocketnet_msgx_socket_table_stamp( msgx->table, to, &info->generation );
 
+    // The fill phase: the sort keeps phases in staged order, so a client the
+    // table restamped between two fills of one deferred bank still leaves in
+    // order (proofs/tla/RNMsgxSendRuns.tla PhaseSort). A plain read is safe
+    // under the fill-phase contract X0 (sdk/rocketnet_fill_phase.h): main
+    // writes msgx->update only in commit, and fill calls run strictly between
+    // main's operations, so no fill runs while it changes. Only equality of
+    // neighbours in one bank is used, so the low 32 bits are enough.
+    info->phase = (uint32_t) msgx->update;
+
     *packet_id = worker->serial.fetch_add( 1, std::memory_order_relaxed ) * (uint64_t) msgx->num_workers + (uint64_t) w;
     return bank->data[slot];
 }
@@ -669,9 +681,10 @@ static void rocketnet_server_msgx_release( struct rocketnet_server_msgx_worker_t
     rocketnet_platform_mutex_release( &worker->mutex );
 }
 
-// the bank's slots in socket-slot order, staged order kept within a slot:
-// a counting sort, the shared socket's packets (slot -1) first
-// (sdk/rocketnet_msgx_send_runs.h, proofs/tla/RNMsgxSendRuns.tla Sort)
+// the bank's slots by fill phase in staged order, then by socket slot, staged
+// order kept within a slot: a counting sort per phase, the shared socket's
+// packets (slot -1) first (sdk/rocketnet_msgx_send_runs.h,
+// proofs/tla/RNMsgxSendRuns.tla Sort)
 static int rocketnet_server_msgx_sort( struct rocketnet_server_msgx_worker_t * worker, const struct rocketnet_server_msgx_send_bank_t * bank, int count,
                                        int capacity )
 {
@@ -788,12 +801,12 @@ static int rocketnet_server_msgx_run_send_shared( void * user, int i )
     return rocketnet_server_msgx_send_error_kind( errno ) == ROCKETNET_MSGX_SEND_FULL ? ROCKETNET_MSGX_SHARED_FULL : ROCKETNET_MSGX_SHARED_DROPPED;
 }
 
-// Sends the sorted bank from *cursor (sdk/rocketnet_msgx_send_runs.h,
-// proofs/tla/RNMsgxSendRuns.tla). Returns false when a socket is full:
-// *cursor is the first packet not yet taken, the rest kept in order for the
+// Sends the sorted bank from state->cursor (sdk/rocketnet_msgx_send_runs.h,
+// proofs/tla/RNMsgxSendRuns.tla). Returns false when a socket is full: the
+// cursor is the first packet not yet taken, the rest kept in order for the
 // next attempt. Runs inside one table pass (holder worker->index).
 static bool rocketnet_server_msgx_send_bank( struct rocketnet_server_msgx_t * msgx, struct rocketnet_server_msgx_worker_t * worker,
-                                             struct rocketnet_server_msgx_send_bank_t * bank, int count, int * cursor )
+                                             struct rocketnet_server_msgx_send_bank_t * bank, int count, struct rocketnet_msgx_send_runs_state_t * state )
 {
     struct rocketnet_server_msgx_send_context_t context = { msgx, worker, bank };
     struct rocketnet_msgx_send_runs_io_t io;
@@ -803,10 +816,9 @@ static bool rocketnet_server_msgx_send_bank( struct rocketnet_server_msgx_t * ms
     io.send_shared = rocketnet_server_msgx_run_send_shared;
     io.report_dead = rocketnet_server_msgx_run_report_dead;
 
-    int run_packets[ROCKETNET_MSGX_SEND_BATCH];
     struct rocketnet_msgx_send_runs_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
-    const bool sent = rocketnet_msgx_send_runs_send( bank->info, worker->order, count, ROCKETNET_MSGX_SEND_BATCH, run_packets, cursor, &io, &counters );
+    const bool sent = rocketnet_msgx_send_runs_send( bank->info, worker->order, count, ROCKETNET_MSGX_SEND_BATCH, state, &io, &counters );
 
     worker->sent_connected.fetch_add( counters.sent_connected, std::memory_order_relaxed );
     worker->sent_shared.fetch_add( counters.sent_shared, std::memory_order_relaxed );
@@ -842,27 +854,26 @@ static void rocketnet_server_msgx_worker( rocketnet_platform_thread_t *, void * 
         const int count = claimed > ROCKETNET_MSGX_SEND_QUEUE_SIZE ? ROCKETNET_MSGX_SEND_QUEUE_SIZE : (int) claimed;
         rocketnet_server_msgx_sort( worker, bank, count, capacity );
 
-        int cursor = 0;
+        int run_packets[ROCKETNET_MSGX_SEND_BATCH];
+        struct rocketnet_msgx_send_runs_state_t state;
+        rocketnet_msgx_send_runs_start( &state, run_packets );
         int retries_after_quit = 0;
         for ( ;; )
         {
             rocketnet_msgx_socket_table_holder_begin( msgx->table, worker->index );
-            const bool sent = rocketnet_server_msgx_send_bank( msgx, worker, bank, count, &cursor );
+            const bool sent = rocketnet_server_msgx_send_bank( msgx, worker, bank, count, &state );
             rocketnet_msgx_socket_table_holder_end( msgx->table, worker->index );
             if ( sent )
             {
                 break;
             }
             worker->full.store( true, std::memory_order_release );
-            if ( worker->shutdown.load( std::memory_order_acquire ) && ++retries_after_quit > ROCKETNET_MSGX_SEND_RETRIES_AFTER_QUIT )
+            // RNMsgxSendRuns Kept: past the retries after quit, what is still
+            // owed is dropped, counted
+            if ( rocketnet_msgx_send_runs_give_up( worker->shutdown.load( std::memory_order_acquire ), &retries_after_quit, ROCKETNET_MSGX_SEND_RETRIES_AFTER_QUIT ) )
             {
-                for ( int i = cursor; i < count; i++ )
-                {
-                    if ( bank->info[worker->order[i]].packet_bytes > 0 )
-                    {
-                        worker->dropped.fetch_add( 1, std::memory_order_relaxed );
-                    }
-                }
+                const int owed = rocketnet_msgx_send_runs_owed( bank->info, worker->order, count, state.cursor );
+                worker->dropped.fetch_add( (uint64_t) owed, std::memory_order_relaxed );
                 break;
             }
             rocketnet_platform_wake_wait( worker->wake, false, ROCKETNET_MSGX_SEND_RETRY_SECONDS );

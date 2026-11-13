@@ -43,6 +43,12 @@ LAYERS = {
         "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
         "quiet": True,
     },
+    # the plant's condition (a bank whose slot-only sort breaks phase order)
+    # is a property of the input, forced on every seed
+    "msgxsendruns": {
+        "modules": ["RNMsgxSendRuns.tla", "TraceRNMsgxSendRuns.tla"],
+        "quiet": False,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"

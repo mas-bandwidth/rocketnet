@@ -9,16 +9,18 @@
 // shared sends answer from a script and log what they took. No socket, no
 // clock, no thread.
 //
-// Each test pins one rule: the sort (shared socket first, staged order kept
-// within a slot); a run per slot and generation, at most a batch of live
-// packets, aborted packets never sent; every answer of the connected send
-// (all taken, a prefix taken past aborted packets, nothing taken, full,
-// refused once and twice, dead with the shared socket full part way, any other
-// error); a retired stamp leaving through the shared socket and counted once;
-// a stale generation never riding a newer one's run; and a seeded walk of
-// random banks and answers against the rules: every live packet leaves
-// exactly once, each client's packets in staged order, a kept call resuming
-// where it stopped.
+// Each test pins one rule: the sort (fill phases in staged order, inside each
+// the shared socket first, staged order kept within a slot); a run per slot
+// and generation, at most a batch of live packets, aborted packets never
+// sent; every answer of the connected send (all taken, a prefix taken past
+// aborted packets, nothing taken, full, refused once and twice, dead with the
+// shared socket full part way, any other error); a retired stamp leaving
+// through the shared socket and counted once; a stale generation never riding
+// a newer one's run; a client restamped between two fills of one deferred
+// bank leaving in order; and a seeded walk of random banks over several fill
+// phases and answers against the rules: every live packet leaves exactly
+// once, each client's packets in staged order, a kept call resuming where it
+// stopped.
 //
 // ROCKETNET_MSGX_SEND_RUNS_MUTATION (the header) builds a deliberate defect;
 // each one turns at least one of these tests red.
@@ -41,6 +43,7 @@ struct send_runs_test_info_t
     int packet_bytes;
     int table_slot;
     uint32_t generation;
+    uint32_t phase;
     int client;                     // the test's own: the destination
 };
 
@@ -59,7 +62,9 @@ struct send_runs_test_t
     int order[SEND_RUNS_TEST_MAX_PACKETS];
     int run_packets[SEND_RUNS_TEST_MAX_PACKETS];
     int batch;
-    int cursor;
+    int cursor;                     // state.cursor after each call
+    uint32_t phase;                 // the fill phase the next stage is in
+    struct rocketnet_msgx_send_runs_state_t state;
 
     // the table: slot s open at generation slot_generation[s] on fd 100 + s
     bool slot_open[SEND_RUNS_TEST_MAX_SLOTS];
@@ -162,6 +167,7 @@ static void send_runs_test_init( struct send_runs_test_t * test, int capacity, i
     test->io.send = send_runs_test_send;
     test->io.send_shared = send_runs_test_send_shared;
     test->io.report_dead = send_runs_test_report_dead;
+    rocketnet_msgx_send_runs_start( &test->state, test->run_packets );
 }
 
 static void send_runs_test_open( struct send_runs_test_t * test, int slot, uint32_t generation )
@@ -179,6 +185,7 @@ static int send_runs_test_stage( struct send_runs_test_t * test, int client, int
     info->table_slot = slot;
     info->generation = generation;
     info->packet_bytes = bytes;
+    info->phase = test->phase;
     return test->count++;
 }
 
@@ -199,8 +206,9 @@ static void send_runs_test_sort( struct send_runs_test_t * test )
 
 static bool send_runs_test_send_bank( struct send_runs_test_t * test )
 {
-    return rocketnet_msgx_send_runs_send( test->info, test->order, test->count, test->batch, test->run_packets, &test->cursor, &test->io,
-                                          &test->counters );
+    const bool sent = rocketnet_msgx_send_runs_send( test->info, test->order, test->count, test->batch, &test->state, &test->io, &test->counters );
+    test->cursor = test->state.cursor;
+    return sent;
 }
 
 static int send_runs_test_times_on_wire( const struct send_runs_test_t * test, int packet )
@@ -497,6 +505,44 @@ static void test_rocketnet_msgx_send_runs_generation()
     delete test;
 }
 
+static void test_rocketnet_msgx_send_runs_restamp()
+{
+    // A retire between two fills of one deferred bank. Fill phase 0: client 1
+    // stamped on slot 0 at generation 0 (a), client 2 on the shared socket
+    // (b). Main's commit retires slot 0 and opens slot 1 at generation 0 for
+    // client 2. Fill phase 1: client 1 now on the shared socket (c), client 2
+    // on slot 1 (d). Sorted by slot alone, c (shared) went before a, and
+    // client 1's packets left out of order (RNMsgxSendRuns RestampOrder).
+    struct send_runs_test_t * test = new send_runs_test_t();
+    send_runs_test_init( test, 2, 4 );
+    test->phase = 0;
+    const int a = send_runs_test_stage( test, 1, 0, 0, 10 );
+    const int b = send_runs_test_stage( test, 2, -1, 0, 10 );
+    test->phase = 1;
+    const int c = send_runs_test_stage( test, 1, -1, 0, 10 );
+    const int d = send_runs_test_stage( test, 2, 1, 0, 10 );
+    send_runs_test_open( test, 1, 0 );
+    send_runs_test_sort( test );
+
+    // phase 0 first, sorted inside: b (shared) then a; then phase 1: c, d
+    const int expected_order[] = { b, a, c, d };
+    for ( int p = 0; p < test->count; p++ )
+    {
+        rocketnet_unit_check( test->order[p] == expected_order[p] );
+    }
+
+    rocketnet_unit_check( send_runs_test_send_bank( test ) );
+    const struct send_runs_test_wire_t expected[] = { { b, -1 }, { a, -1 }, { c, -1 }, { d, 101 } };
+    rocketnet_unit_check( test->num_wire == 4 );
+    for ( int w = 0; w < test->num_wire; w++ )
+    {
+        rocketnet_unit_check( test->wire[w].packet == expected[w].packet );
+        rocketnet_unit_check( test->wire[w].fd == expected[w].fd );
+    }
+    rocketnet_unit_check( test->counters.retired == 1 && test->counters.sent_shared == 3 && test->counters.sent_connected == 1 );
+    delete test;
+}
+
 // the seeded walk: no clock, no randomness but this generator
 static uint32_t send_runs_test_next( uint32_t * state )
 {
@@ -514,11 +560,11 @@ static void test_rocketnet_msgx_send_runs_walk()
         const int batch = 1 + (int) ( send_runs_test_next( &rng_state ) % 4 );
         send_runs_test_init( test, capacity, batch );
 
-        // the table at send time; clients 0 .. 4, client c's stamp fixed for
-        // the bank (one fill phase), a slot and generation held by at most
-        // one client
-        int stamp_slot[5];
-        uint32_t stamp_generation[5];
+        // the table at send time; clients 0 .. 4 over one to three fill
+        // phases, client c's stamp fixed within a phase and free to change
+        // across one (the table retires and opens between fills); a slot and
+        // generation names one client for the whole bank, as the table's
+        // generations do
         for ( int s = 0; s < capacity; s++ )
         {
             if ( send_runs_test_next( &rng_state ) % 4 != 0 )
@@ -530,32 +576,41 @@ static void test_rocketnet_msgx_send_runs_walk()
                 test->slot_generation[s] = send_runs_test_next( &rng_state ) % 2;
             }
         }
-        for ( int c = 0; c < 5; c++ )
+        int owner[SEND_RUNS_TEST_MAX_SLOTS][2];
+        for ( int s = 0; s < SEND_RUNS_TEST_MAX_SLOTS; s++ )
         {
-            stamp_slot[c] = -1;
-            stamp_generation[c] = 0;
-            const int s = (int) ( send_runs_test_next( &rng_state ) % (uint32_t) ( capacity + 1 ) ) - 1;
-            const uint32_t g = send_runs_test_next( &rng_state ) % 2;
-            bool taken = false;
-            for ( int o = 0; o < c; o++ )
+            owner[s][0] = -1;
+            owner[s][1] = -1;
+        }
+        const int phases = 1 + (int) ( send_runs_test_next( &rng_state ) % 3 );
+        const int count = (int) ( send_runs_test_next( &rng_state ) % 17 );
+        int staged = 0;
+        for ( int phase = 0; phase < phases; phase++ )
+        {
+            int stamp_slot[5];
+            uint32_t stamp_generation[5];
+            for ( int c = 0; c < 5; c++ )
             {
-                if ( stamp_slot[o] == s && stamp_generation[o] == g )
+                stamp_slot[c] = -1;
+                stamp_generation[c] = 0;
+                const int s = (int) ( send_runs_test_next( &rng_state ) % (uint32_t) ( capacity + 1 ) ) - 1;
+                const uint32_t g = send_runs_test_next( &rng_state ) % 2;
+                if ( s >= 0 && ( owner[s][g] < 0 || owner[s][g] == c ) )
                 {
-                    taken = true;
+                    owner[s][g] = c;
+                    stamp_slot[c] = s;
+                    stamp_generation[c] = g;
                 }
             }
-            if ( s >= 0 && !taken )
+            test->phase = (uint32_t) ( 7 + 3 * phase );     // any increasing counts
+            const int in_phase = phase + 1 == phases ? count - staged : (int) ( send_runs_test_next( &rng_state ) % (uint32_t) ( count - staged + 1 ) );
+            for ( int i = 0; i < in_phase; i++ )
             {
-                stamp_slot[c] = s;
-                stamp_generation[c] = g;
+                const int c = (int) ( send_runs_test_next( &rng_state ) % 5 );
+                const int bytes = send_runs_test_next( &rng_state ) % 5 == 0 ? 0 : 10;
+                send_runs_test_stage( test, c, stamp_slot[c], stamp_generation[c], bytes );
             }
-        }
-        const int count = (int) ( send_runs_test_next( &rng_state ) % 17 );
-        for ( int i = 0; i < count; i++ )
-        {
-            const int c = (int) ( send_runs_test_next( &rng_state ) % 5 );
-            const int bytes = send_runs_test_next( &rng_state ) % 5 == 0 ? 0 : 10;
-            send_runs_test_stage( test, c, stamp_slot[c], stamp_generation[c], bytes );
+            staged += in_phase;
         }
         for ( int n = 0; n < SEND_RUNS_TEST_MAX_ANSWERS; n++ )
         {
@@ -662,4 +717,5 @@ REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_error );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_dead );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_retired );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_generation );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_restamp );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_send_runs_walk );
