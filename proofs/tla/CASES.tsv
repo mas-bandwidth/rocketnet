@@ -346,6 +346,7 @@ MCServerSessionBrokenAdmitWhileStopping.cfg	MCServerSession.tla	invariant	NoAdmi
 MCServerSessionBrokenDisconnectAllUnbounded.cfg	MCServerSession.tla	invariant	DisconnectWorkBounded	ignore-terminal	serversession	required	-
 MCServerSessionBrokenConnIdPerRun.cfg	MCServerSession.tla	invariant	ConnIdNeverRepeats	ignore-terminal	serversession	required	-
 MCServerSessionTwoClients.cfg	MCServerSessionTwoClients.tla	pass	-	ignore-terminal	serversession	required	-
+MCServerSessionTwoClientsLive.cfg	MCServerSessionTwoClients.tla	pass	-	ignore-terminal	serversession	required	-
 MCServerSessionTwoClientsReachable.cfg	MCServerSessionTwoClients.tla	invariant	NotTwoConnected	ignore-terminal	serversession	required	-
 MCRNOutgoingBuild.cfg	MCRNOutgoingBuild.tla	pass	-	ignore-terminal	rnoutgoingbuild	required	-
 MCRNOutgoingBuildReversed.cfg	MCRNOutgoingBuild.tla	invariant	NoCopy	ignore-terminal	rnoutgoingbuild	required	-
