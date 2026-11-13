@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-# scripts/live-xdp-fleet-merge
-# Merge live-stress result files (docs/LIVE-XDP.md section 7) into the per
-# bench x direction x mode x channel x size-bucket table, the per-bench
+# scripts/live-xdp-fleet-merge RESULT [RESULT...]
+# Merge the live XDP fleet run's result files (the server's and one per
+# bench, as tests/client_server/server.c and client.c write them) into the
+# per bench x direction x mode x channel x size-bucket table, the per-bench
 # connect, cycle and failure rows, and a pass/fail verdict line. Exits 0
-# only on PASS. Result lines are tab-separated:
-#   cell <bench> <window> <dir> <mode> <channel> <bucket> <sent> <received>
-#        <verified> <failed> <lost> <superseded> <missing> <out-of-order>
-#        <duplicate> <over> <paced>
-#   connect <bench> <cycle> <ok> <ms>
-#   cycle  <bench> <cycle> <kind>
-#   stat   <bench> <cycle> <seconds> <rtt-ms> <jitter-ms> <loss-pct>
-#   bench  <bench> <key> <value> ...
-#   event  <bench> <cycle> <kind> <detail>
-#   fail   <bench> <cycle> <dir> <mode> <channel> <sequence> <reason> <bytes>
-#          <denial> <side> <counters> <excerpt>
-#   counters <bench> <name> <value> <seconds>
-#   rss    <bench> <seconds> <kb>
-#   verdict <PASS|FAIL>
+# only on PASS. Every file given must end with exactly one verdict line.
+# Result lines are tab-separated; the merge reads:
+#   cell     <bench> <window> <dir> <mode> <channel> <bucket> <sent> <received>
+#            <verified> <failed> <lost> <superseded> <missing> <out-of-order>
+#            <duplicate> <over> <paced>                     (client and server)
+#   connect  <bench> <cycle> <ok> <ms>                      (client)
+#   cycle    <bench> <cycle> <kind>                         (client)
+#   stat     <bench> <cycle> <seconds> <rtt-ms> <jitter-ms> <loss-pct>  (client)
+#   bench    <bench> <key> <value> ...                      (client)
+#   event    <bench> <cycle> <kind> <detail>                (client; the server's
+#            event lines are one space-separated field and are not read)
+#   fail     <bench> <cycle> ...                            (client and server)
+#   verdict  <PASS|FAIL>                                    (client and server)
+# and passes over the lines it does not judge: counters (client: <bench>
+# <name> <value> <seconds>; server: <name> <value>), rss (client: <bench>
+# <seconds> <kb>; server: <bytes>), conserved, benchmarks and no-windows.
 import sys
 
 BUCKET_NAMES = ["tiny", "small", "edge", "fragment", "medium", "large", "max", "over"]
@@ -42,7 +45,6 @@ def quantile(values, q):
 def main(paths):
     cells = {}
     labels = set()
-    connects = {}
     connect_total = {}
     connect_ok = {}
     connect_ms = {}
@@ -57,8 +59,6 @@ def main(paths):
     fulls = {}
     failures = []
     verdicts = []
-    counters = {}
-    cons = {}
 
     # every file given is one writer's result (the server's or one bench's)
     # and must carry exactly one verdict line of its own
@@ -87,7 +87,6 @@ def main(paths):
             elif kind == "connect" and len(f) >= 5:
                 label = f[1]
                 labels.add(label)
-                connects[label] = connects.get(label, 0) + 1
                 connect_total[label] = connect_total.get(label, 0) + 1
                 ok = int(num(f[3])) == 1
                 if ok:
@@ -124,12 +123,6 @@ def main(paths):
                 label = f[1]
                 labels.add(label)
                 failures.append((label, line))
-            elif kind == "counters" and len(f) >= 4:
-                label = f[1]
-                counters[(label, f[2])] = int(num(f[3]))
-            elif kind == "conserved" and len(f) >= 5:
-                label = f[1]
-                cons[label] = min(int(num(f[3])), int(num(f[4])))
             elif kind == "verdict" and len(f) >= 2:
                 verdicts.append(f[1])
                 file_verdicts[path].append(f[1])
