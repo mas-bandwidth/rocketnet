@@ -42,6 +42,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <netinet/in.h>
+#include <netinet/udp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -330,6 +331,8 @@ static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_ad
     ok = ok && ( shared || setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof( one ) ) == 0 );
     ok = ok && ( shared || setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) == 0 );
     ok = ok && setsockopt( fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof( one ) ) == 0;
+    // EXPERIMENT (perf/v1.1.x/msgx-nocksum-exp, never merged): IPv4 sends carry no UDP checksum
+    ok = ok && ( ipv6 || setsockopt( fd, IPPROTO_UDP, UDP_NOCKSUM, &one, sizeof( one ) ) == 0 );
     ok = ok && ( !ipv6 || setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) == 0 );
     // Darwin refuses a buffer above kern.ipc.maxsockbuf's share outright: the
     // platform's halving walk takes the most it grants (the shared socket
