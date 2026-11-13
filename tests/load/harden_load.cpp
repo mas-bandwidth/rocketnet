@@ -1214,6 +1214,7 @@ struct harden_frame_window_t
     double world_sum = 0, world_max = 0;           // the main thread's world update, its own share plus the game jobs it waits on
     double task_send_sum = 0, task_update_sum = 0, task_update_max = 0; // --space-net task: the task's send_packets and update (serial part)
     double net_thread[HARDEN_MAX_THREADS] = {};    // rocketnet's work by thread index (0 = the main thread's part in jobs)
+    double range_thread[HARDEN_MAX_THREADS] = {};  // the part of it in range jobs (writes, update_client): no serial walk
 };
 
 static double harden_percentile( std::vector<double> & v, double p )
@@ -1453,6 +1454,7 @@ struct harden_space_t
     // every piece of rocketnet's work (and the packet writing) by thread
     // index, 0 the main thread: the even-spread report
     busy_t net_busy[HARDEN_MAX_THREADS];
+    busy_t range_busy[HARDEN_MAX_THREADS]; // net_busy's range-job part
     struct alignas( 64 ) count_t
     {
         uint64_t count = 0;
@@ -1475,6 +1477,7 @@ static void harden_space_update_clients( platform_task_args_t * args )
         (void) rocketnet_server_update_client( space->server, i );
     }
     space->net_busy[args->thread_index].seconds += harden_now() - began;
+    space->range_busy[args->thread_index].seconds += harden_now() - began;
 }
 
 // the server update, whole or split into receive, the client range jobs and
@@ -1550,6 +1553,7 @@ static void harden_space_write_players( platform_task_args_t * args )
         space->wide_messages[args->thread_index].count += messages;
         space->wide_refused[args->thread_index].count += refused;
         space->net_busy[args->thread_index].seconds += harden_now() - began;
+        space->range_busy[args->thread_index].seconds += harden_now() - began;
         return;
     }
     for ( int k = args->start; k < args->finish; k++ )
@@ -1571,6 +1575,7 @@ static void harden_space_write_players( platform_task_args_t * args )
     }
     space->write_busy[args->thread_index].seconds += harden_now() - began;
     space->net_busy[args->thread_index].seconds += harden_now() - began;
+    space->range_busy[args->thread_index].seconds += harden_now() - began;
 }
 
 // the network task, space's AsyncThreadFunction
@@ -2288,6 +2293,21 @@ static int harden_server_main( const harden_options_t & o )
                         t_now - started, o.space_send_wide ? "wide" : "serial", o.space_update_split ? "split" : "main", o.space_net_in_task ? "task" : "main", main_ms,
                         1e3 * w.net_thread[0] / f, gn ? gmin : 0.0, gmean, gmax, gmean > 0.0 ? main_ms / gmean : 0.0, 1e3 * w.task_send_sum / tf, 1e3 * w.task_update_sum / tf,
                         1e3 * w.task_update_max );
+                // each thread's network ms a frame, by thread index (0 = the
+                // main thread's part in jobs), to see how even the split is
+                printf( "harden_thread_net_ms: t=%.1f", t_now - started );
+                for ( int i = 0; i < o.game_threads && i < HARDEN_MAX_THREADS; i++ )
+                {
+                    printf( " %.3f", 1e3 * w.net_thread[i] / f );
+                }
+                printf( "\n" );
+                // the range jobs' part alone (no serial walk): the even-spread check
+                printf( "harden_thread_range_ms: t=%.1f", t_now - started );
+                for ( int i = 0; i < o.game_threads && i < HARDEN_MAX_THREADS; i++ )
+                {
+                    printf( " %.3f", 1e3 * w.range_thread[i] / f );
+                }
+                printf( "\n" );
             }
             fflush( stdout );
             last_packets_sent = stats.packets_sent;
@@ -2430,6 +2450,8 @@ static int harden_server_main( const harden_options_t & o )
             {
                 w.net_thread[i] += space.net_busy[i].seconds;
                 space.net_busy[i].seconds = 0;
+                w.range_thread[i] += space.range_busy[i].seconds;
+                space.range_busy[i].seconds = 0;
             }
             const double t_joined = harden_now();
             space.pool.Reset();
