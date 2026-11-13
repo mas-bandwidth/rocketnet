@@ -384,13 +384,6 @@ if(ROCKETNET_HARDEN)
     endif()
 endif()
 
-# The warning floor is directory-wide (the add_compile_options above the
-# dependencies), so it reaches every target, named here or not. The function
-# stays as the place a target names the floor it is checked against; it adds
-# nothing the directory scope has not already given the target.
-function(rocketnet_warning_floor target)
-endfunction()
-
 # The public include directory: rocketnet.h alone, copied from sdk/ at
 # configure time (an edit to sdk/rocketnet.h reconfigures). A parent project's
 # add_subdirectory(rocketnet) and RocketNet::rocketnet hand it this directory
@@ -488,7 +481,6 @@ foreach(target IN LISTS rocketnet_static_targets rocketnet_shared_targets)
     add_dependencies(${target} rocketnet_xdp_header)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
-    rocketnet_warning_floor(${target})
     # PUBLIC: a consumer's rocketnet.h must see the value its library was
     # built with, and the header's default is 1.
     if(ROCKETNET_DEV OR target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev")
@@ -635,11 +627,9 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(test_internal_c tools/internal_c/main.c)
     set_target_properties(test_internal_c PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
     target_link_libraries(test_internal_c PRIVATE rocketnet_dev)
-    rocketnet_warning_floor(test_internal_c)
     add_executable(test_sodium tests/test_sodium.c)
     target_link_libraries(test_sodium PRIVATE rocketnet)
     rocketnet_use_sodium(test_sodium)
-    rocketnet_warning_floor(test_sodium)
     # Isolated parity oracle only: never installed or linked into the SDK.
     add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)
     set_target_properties(rocketnet_sodium_oracle PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
@@ -667,8 +657,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
     endif()
     rocketnet_use_sodium(rocketnet_test_support)
-    rocketnet_warning_floor(rocketnet_sodium_oracle)
-    rocketnet_warning_floor(rocketnet_test_support)
     # The message layer's payload copy count (test_unit_unreliable_in_place.cpp)
     # and the other unit seams are ROCKETNET_DEV code: a production rocketnet
     # carries none of it.
@@ -870,11 +858,9 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     set_property( SOURCE tests/source_audit_functional_integrity.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     target_compile_features(source_audit PRIVATE cxx_std_11)
-    rocketnet_warning_floor(source_audit)
     target_link_libraries(source_audit PRIVATE rocketnet_test_support Threads::Threads)
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
-    rocketnet_warning_floor(test)
     # The promotion case exercises the WIDE channel header (an index of 256 or
     # more) on channel 300, past the default build's cap, so this binary
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
@@ -893,7 +879,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_compile_features(test_wide PRIVATE cxx_std_11)
     target_compile_options(test_wide PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
     rocketnet_use_sodium(test_wide)
-    rocketnet_warning_floor(test_wide)
     target_link_libraries(test_wide PRIVATE Threads::Threads)
     # The SDK sources link their platform libraries, as the library targets do.
     if(APPLE)
@@ -932,7 +917,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_features(${rocketnet_stress_target} PRIVATE cxx_std_11)
         target_compile_options(${rocketnet_stress_target} PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
         rocketnet_use_sodium(${rocketnet_stress_target})
-        rocketnet_warning_floor(${rocketnet_stress_target})
         target_link_libraries(${rocketnet_stress_target} PRIVATE Threads::Threads)
         if(APPLE)
             target_link_libraries(${rocketnet_stress_target} PRIVATE "-framework CoreFoundation")
@@ -982,7 +966,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_link_libraries(connect_token_vectors PRIVATE rocketnet_dev)
     target_compile_features(connect_token_vectors PRIVATE cxx_std_11)
     rocketnet_use_sodium(connect_token_vectors)
-    rocketnet_warning_floor(connect_token_vectors)
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
     # which includes <sodium.h>: the vendored header, as the transport's own
     # targets see it (a host with no system libsodium, such as Windows, has no other)
@@ -1019,7 +1002,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_definitions(rocketnet_xdp_filter_host PRIVATE __linux__ __BPF__
             "ROCKETNET_XDP_FILTER_SOURCE=\"${ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH}\"")
         target_compile_options(rocketnet_xdp_filter_host PRIVATE -ffreestanding -ffp-contract=off)
-        rocketnet_warning_floor(rocketnet_xdp_filter_host)
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
     else()
@@ -1038,28 +1020,23 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         add_executable(${test_target} tests/${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE tests)
         target_link_libraries(${test_target} PRIVATE rocketnet)
-        rocketnet_warning_floor(${test_target})
     endforeach()
     if(NOT ROCKETNET_DEV)
         add_executable(test_production_client_lifecycle tests/functional/production_client_lifecycle.cpp)
         target_link_libraries(test_production_client_lifecycle PRIVATE rocketnet)
-        rocketnet_warning_floor(test_production_client_lifecycle)
     endif()
     # Real platform behavior against the selected DEV mode, without test hooks.
     add_executable(test_platform_primitives tests/functional/platform_primitives.cpp)
     target_compile_definitions(test_platform_primitives PRIVATE ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE=1)
     target_link_libraries(test_platform_primitives PRIVATE rocketnet Threads::Threads)
-    rocketnet_warning_floor(test_platform_primitives)
     add_executable(test_transport tests/test_driver.cpp)
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
-    rocketnet_warning_floor(test_transport)
     # Compiles the server transport itself and runs on development keys, so it needs the development library.
     add_executable(test_transport_control tests/test_transport_control.cpp)
     target_include_directories(test_transport_control PRIVATE tests)
     target_link_libraries(test_transport_control PRIVATE rocketnet_dev)
     rocketnet_use_sodium(test_transport_control)
-    rocketnet_warning_floor(test_transport_control)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
         # rocketnet_config.cpp is the one body of rocketnet_config_parse_int_value.
         # ROCKETNET_CONFIG_PARSE_ONLY compiles only that parser out of the file.
@@ -1073,13 +1050,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_options(test_xdp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
         rocketnet_use_sodium(test_xdp)
         target_link_libraries(test_xdp PRIVATE RocketNet::Bpf RocketNet::Xdp Threads::Threads)
-        rocketnet_warning_floor(test_xdp)
         if(ROCKETNET_XDP_LEGACY_LIBBPF)
             add_executable(test_xdp_compat tests/test_xdp_compat.cpp)
             target_include_directories(test_xdp_compat PRIVATE sdk "${ROCKETNET_Bpf_INCLUDE_DIR}")
             target_compile_definitions(test_xdp_compat PRIVATE ROCKETNET_XDP_LEGACY_LIBBPF=1)
             target_compile_features(test_xdp_compat PRIVATE cxx_std_11)
-            rocketnet_warning_floor(test_xdp_compat)
         endif()
         # test_xdp_filter loads server_xdp.o, the object the library embeds
         # (cmake/EmbedXdp.cmake), and runs crafted frames through it with
@@ -1097,7 +1072,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             target_include_directories(test_xdp_filter PRIVATE sdk)
             target_compile_features(test_xdp_filter PRIVATE cxx_std_11)
             target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf RocketNet::Xdp)
-            rocketnet_warning_floor(test_xdp_filter)
         else()
             # The configure message above explains why the object is absent.
         endif()
@@ -1105,7 +1079,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     if(APPLE)
         add_executable(test_msgx tests/test_msgx.cpp)
         target_link_libraries(test_msgx PRIVATE rocketnet_dev)
-        rocketnet_warning_floor(test_msgx)
     endif()
     if(WIN32)
         # Isolate the test-instrumented transports: never link another copy from
@@ -1122,12 +1095,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_options(test_iocp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
         rocketnet_use_sodium(test_iocp)
         target_link_libraries(test_iocp PRIVATE Threads::Threads)
-        rocketnet_warning_floor(test_iocp)
         # Every case fails on purpose, so it never runs as a suite: ci.yml's
         # Windows leg (c) runs each case under a deadline (suite_no_dialogs).
         add_executable(windows_no_dialogs tests/windows_no_dialogs.cpp)
         target_include_directories(windows_no_dialogs PRIVATE tests sdk)
-        rocketnet_warning_floor(windows_no_dialogs)
         if(NOT ROCKETNET_DEV)
             # The same source has a DEV=0-only main that uses ordinary IOCP and
             # RIO constructors, real loopback datagrams and bounded shutdown.
@@ -1136,7 +1107,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             target_include_directories(test_windows_transports_production PRIVATE tests)
             target_link_libraries(test_windows_transports_production PRIVATE rocketnet Threads::Threads)
             target_compile_features(test_windows_transports_production PRIVATE cxx_std_11)
-            rocketnet_warning_floor(test_windows_transports_production)
         endif()
     endif()
     file( GLOB ROCKETNET_CHANNEL_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/channel_*.cpp" )
@@ -1168,7 +1138,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/client_io_threaded.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
-    rocketnet_warning_floor(functional)
     add_dependencies(functional rocketnet_shared rocketnet_shared_dev)
     target_compile_definitions(functional PRIVATE
         "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\""
@@ -1195,7 +1164,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_features(loopback_hub_${side}_module PRIVATE cxx_std_11)
         set_target_properties(loopback_hub_${side}_module PROPERTIES
             C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
-        rocketnet_warning_floor(loopback_hub_${side}_module)
         if(APPLE)
             target_link_options(loopback_hub_${side}_module PRIVATE "LINKER:-exported_symbol,_loopback_hub_${side}_module_*")
         elseif(NOT WIN32)
@@ -1302,7 +1270,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/functional/client_io_threaded.cpp)
         target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
         rocketnet_use_sodium(functional_production)
-        rocketnet_warning_floor(functional_production)
         target_compile_features(functional_production PRIVATE cxx_std_11)
         if(MSVC)
             target_compile_options(functional_production PRIVATE "/FI${ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER}")
@@ -1319,7 +1286,6 @@ if(ROCKETNET_BUILD_TOOLS)
     # functional test of the OS census, run per commit (ci.yml functional leg)
     add_executable(test_load_census tools/test_load_census.c)
     target_link_libraries(test_load_census PRIVATE Threads::Threads)
-    rocketnet_warning_floor(test_load_census)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
@@ -1358,7 +1324,6 @@ if(ROCKETNET_BUILD_TOOLS)
         target_compile_options(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_OPTIONS>)
         target_link_libraries(xdp_packet_blaster PRIVATE rocketnet_dev RocketNet::Bpf RocketNet::Xdp Threads::Threads)
         rocketnet_use_sodium(xdp_packet_blaster)
-        rocketnet_warning_floor(xdp_packet_blaster)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
         add_custom_target(test_xdp_packet_blaster
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_xdp_packet_blaster.py"
