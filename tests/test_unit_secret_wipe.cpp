@@ -12,15 +12,18 @@
 //
 // The oracle plants a 0xA5 canary in each secret buffer, drives one terminal
 // path through the protocol functions (time is an argument; no socket, no
-// clock, no transport), then scans the struct and the scratch for a surviving
-// canary. A wiped field is all zero and cannot hold the canary; an unwiped
-// field is exactly the canary, so the scan is deterministic -- it never
-// depends on a random key happening to contain the byte.
+// clock, no transport), then requires every byte of each buffer to be zero.
+// The canary makes the precondition nonzero; the check is all-zero, not
+// "the canary is gone", so a buffer overwritten with any other nonzero
+// bytes, or left with a single nonzero byte, fails.
 //
 // The client token keys and ephemeral secret are zeroed by the deliberate
 // disconnect (sdk/rocketnet_client_protocol.cpp,
 // rocketnet_client_protocol_disconnect) and by every automatic terminal
 // transition (sdk/rocketnet_client_protocol.cpp, rocketnet_client_set_state).
+// The oracle sees the bytes, not how they were zeroed: the reset's secure
+// wipe and its whole-state zero after it both leave zeros, so which of the
+// two did the work is not visible here.
 
 #include "test_unit_registry.h"
 
@@ -56,13 +59,13 @@ static void plant_canary( uint8_t * bytes, int count )
     memset( bytes, k_canary, (size_t) count );
 }
 
-// 1 when the canary survives anywhere in the region -- i.e. the field was not
-// zeroed after the canary was planted
-static int canary_survives( const uint8_t * bytes, int count )
+// 1 when any byte of the region is nonzero -- i.e. the field was not zeroed
+// after the canary was planted, whatever it was overwritten with
+static int nonzero_left( const uint8_t * bytes, int count )
 {
     for ( int i = 0; i < count; i++ )
     {
-        if ( bytes[i] == k_canary )
+        if ( bytes[i] != 0 )
         {
             return 1;
         }
@@ -141,7 +144,8 @@ static void feed_cookie( struct rocketnet_client_protocol_t * client, double cur
 // The client's parsed token keys and its ephemeral secret: the deliberate
 // disconnect zeroes the whole token (which holds both per-session keys), the
 // four derived keys and the ephemeral secret. Plant the canary after connect
-// and disconnect: every planted byte must be gone.
+// in the whole token, all four derived keys and the ephemeral secret, then
+// disconnect: every byte of each must be zero.
 static void test_client_token_keys_are_wiped_on_disconnect()
 {
     struct rocketnet_counters_t counters;
@@ -150,8 +154,8 @@ static void test_client_token_keys_are_wiped_on_disconnect()
     struct rocketnet_client_protocol_t client;
     connect_live_attempt( &client, &counters, 100.0 );
 
-    plant_canary( &client.token.client_to_server_key[0], ROCKETNET_KEY_BYTES );
-    plant_canary( &client.token.server_to_client_key[0], ROCKETNET_KEY_BYTES );
+    plant_canary( (uint8_t *) &client.token, (int) sizeof( client.token ) );
+    plant_canary( (uint8_t *) &client.keys, (int) sizeof( client.keys ) );
     plant_canary( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES );
 
     uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
@@ -160,9 +164,12 @@ static void test_client_token_keys_are_wiped_on_disconnect()
     rocketnet_client_protocol_disconnect( &client, burst, &burst_count, &burst_bytes );
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-    rocketnet_unit_check( !canary_survives( client.token.client_to_server_key, ROCKETNET_KEY_BYTES ) );
-    rocketnet_unit_check( !canary_survives( client.token.server_to_client_key, ROCKETNET_KEY_BYTES ) );
-    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( (const uint8_t *) &client.token, (int) sizeof( client.token ) ) );
+    rocketnet_unit_check( !nonzero_left( client.keys.handshake_client_to_server, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.keys.handshake_server_to_client, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.keys.session_client_to_server, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.keys.session_server_to_client, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 
     rocketnet_counters_assert_conserved( &counters );
 }
@@ -174,7 +181,9 @@ static void test_client_token_keys_are_wiped_on_disconnect()
 
 // The cookie-request timeout (-2): an attempt that never hears back from the
 // server dies after the token's timeout. The ephemeral secret that sealed the
-// requests MUST be zeroed when the attempt ends this way.
+// requests MUST be zeroed when the attempt ends this way. The attempt is
+// still live just before the timeout (nothing received since connect at
+// 100.0), so a timeout that fires early fails here too.
 static void test_client_ephemeral_secret_wiped_on_cookie_timeout()
 {
     struct rocketnet_counters_t counters;
@@ -187,10 +196,13 @@ static void test_client_ephemeral_secret_wiped_on_cookie_timeout()
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
+    rocketnet_client_protocol_update( &client, 100.0 + ROCKETNET_TEST_TIMEOUT - 0.01, packet, &packet_bytes );
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
     rocketnet_client_protocol_update( &client, 100.0 + ROCKETNET_TEST_TIMEOUT + 1.0, packet, &packet_bytes );
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT );
-    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 
     rocketnet_counters_assert_conserved( &counters );
 }
@@ -213,7 +225,7 @@ static void test_client_ephemeral_secret_wiped_on_token_expired()
     rocketnet_client_protocol_update( &client, 100.0 + deadline, packet, &packet_bytes );
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
-    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 
     rocketnet_counters_assert_conserved( &counters );
 }
@@ -254,14 +266,16 @@ static void test_client_ephemeral_secret_wiped_on_denied()
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, denied, denied_bytes,
                                                                     100.6, payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
-    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 
     rocketnet_counters_assert_conserved( &counters );
 }
 
 // The connection-request timeout (-3): reach sending-connection-request via
 // cookie, plant canary in the still-live ephemeral, let the per-state timeout
-// fire and verify the ephemeral secret is wiped.
+// fire and verify the ephemeral secret is wiped. The cookie is unauthenticated
+// and does not refresh the receive time, so the attempt's last receipt is its
+// start at 100.0: it is still live just before 100.0 + timeout.
 static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 {
     struct rocketnet_counters_t counters;
@@ -275,10 +289,13 @@ static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
+    rocketnet_client_protocol_update( &client, 100.0 + ROCKETNET_TEST_TIMEOUT - 0.01, packet, &packet_bytes );
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+
     rocketnet_client_protocol_update( &client, 100.0 + ROCKETNET_TEST_TIMEOUT + 1.0, packet, &packet_bytes );
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT );
-    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 
     rocketnet_counters_assert_conserved( &counters );
 }
@@ -329,16 +346,20 @@ static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
 
     // zero happened on entry to state 3
 
-    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 
-    // now drive timeout from state 3
+    // now drive timeout from state 3: the challenge at 100.6 was the last
+    // receipt, so the attempt is still live just before 100.6 + timeout
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
+    rocketnet_client_protocol_update( &client, 100.6 + ROCKETNET_TEST_TIMEOUT - 0.01, packet, &packet_bytes );
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
     rocketnet_client_protocol_update( &client, 100.0 + ROCKETNET_TEST_TIMEOUT + 1.0, packet, &packet_bytes );
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
-    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_unit_check( !nonzero_left( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 
     rocketnet_counters_assert_conserved( &counters );
 }

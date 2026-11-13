@@ -4,9 +4,11 @@
 */
 
 // The ack block walk visits only held, unacknowledged sent records, via the
-// sent ring's shadow bitmaps (sent_held, sent_unacked). The three tests pin
-// the walk's shape and the reconcile that keeps the bitmaps equal to the ring
-// (the BitsMatchRing check).
+// sent ring's shadow bitmaps (sent_held, sent_unacked). The first three tests
+// pin the walk's shape and the reconcile that keeps the bitmaps equal to the
+// ring (the BitsMatchRing check); the next pins that only message packets
+// surface ids; the last two pin the block memo against the full apply and
+// its clearing.
 
 #include "test_unit_registry.h"
 

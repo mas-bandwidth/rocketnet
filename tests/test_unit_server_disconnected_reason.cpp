@@ -343,7 +343,7 @@ REGISTER_UNIT_TEST( test_server_disconnect_sets_server_disconnected_reason );
 
 // DONE-WHEN (4): a deliberate client disconnect reads DISCONNECTED, never
 // SERVER_DISCONNECTED, and a connection timeout reads CONNECTION_TIMED_OUT.
-static void test_client_disconnect_and_timeout_read_none()
+static void test_client_disconnect_and_timeout_read_their_own_reasons()
 {
     rocketnet_quiet( 1 );
 
@@ -400,7 +400,7 @@ static void test_client_disconnect_and_timeout_read_none()
     }
 }
 
-REGISTER_UNIT_TEST( test_client_disconnect_and_timeout_read_none );
+REGISTER_UNIT_TEST( test_client_disconnect_and_timeout_read_their_own_reasons );
 
 // The server's side of the same ends (proofs/tla/RNSlots.tla Disconnect, Observe;
 // proofs/tla/ServerSession.tla SlotTimeout, ClientLeaves): a slot the transport

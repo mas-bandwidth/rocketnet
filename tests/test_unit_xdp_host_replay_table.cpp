@@ -131,13 +131,26 @@ static void test_xdp_transport_host_replay_table_set_get_reset()
         rocketnet_unit_check( high_water == i );
     }
 
-    // one more new key is ignored (get returns 0)
+    // one more new key is set on the full table and ignored: get returns 0,
+    // and every entry already in the table still reads its own value
 
     struct rocketnet_address_t extra = replay_table_ipv4_bytes( replay_table_v4, 55555 );
     struct rocketnet_server_xdp_replay_key_t key_extra;
     rocketnet_xdp_replay_key_from_address( &extra, &key_extra );
+    rocketnet_xdp_host_set_replay_entry( &key_extra, 77777 );
     high_water = 0;
     rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key_extra, &high_water ) == 0 );
+    rocketnet_unit_check( high_water == 0 );
+
+    for ( uint32_t i = 1; i <= ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++ )
+    {
+        struct rocketnet_address_t addr = replay_table_ipv4_bytes( replay_table_fill, (uint16_t) i );
+        struct rocketnet_server_xdp_replay_key_t k;
+        rocketnet_xdp_replay_key_from_address( &addr, &k );
+        high_water = 0;
+        rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &k, &high_water ) == 1 );
+        rocketnet_unit_check( high_water == i );
+    }
 
     // an existing key is still overwritten on the full table
 

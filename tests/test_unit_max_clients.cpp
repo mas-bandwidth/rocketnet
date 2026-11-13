@@ -206,31 +206,34 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
 // In the default build the 1000-client plan is the full one, so that check
 // cannot tell the two apart there: a server of half the build's slots holds
 // the default build to it too (0.47 GB against 0.92 GB at 1000), planning at
-// most five eighths of a full server.
+// most five eighths of a full server. The half-server check holds in every
+// build, including one below 1000 clients (ROCKETNET_MAX_CLIENTS may be as low
+// as 512), where the 1000-client checks have no 1000-client server to plan.
 
 static void test_server_plan_follows_configured_max_clients()
 {
-    if ( ROCKETNET_MAX_CLIENTS < 1000 )
-    {
-        return;
-    }
-
     rocketnet_server_config_t config;
     max_clients_server_config( &config );
     config.transport = "portable";
 
     const uint64_t at_max = (uint64_t) rocketnet_server_required_memory( &config );
-    config.max_clients = 1000;
-    const uint64_t at_1000 = (uint64_t) rocketnet_server_required_memory( &config );
-    config.max_clients = 999;
-    const uint64_t at_999 = (uint64_t) rocketnet_server_required_memory( &config );
     config.max_clients = ROCKETNET_MAX_CLIENTS / 2;
     const uint64_t at_half = (uint64_t) rocketnet_server_required_memory( &config );
 
-    check( at_max > 0 && at_1000 > 0 && at_999 > 0 && at_half > 0 );
-    check( at_999 <= at_1000 && at_1000 <= at_max );
-    check( 4 * at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 5 * 1000 * at_max );
+    check( at_max > 0 && at_half > 0 );
     check( 8 * at_half <= 5 * at_max );
+
+    if ( ROCKETNET_MAX_CLIENTS >= 1000 )
+    {
+        config.max_clients = 1000;
+        const uint64_t at_1000 = (uint64_t) rocketnet_server_required_memory( &config );
+        config.max_clients = 999;
+        const uint64_t at_999 = (uint64_t) rocketnet_server_required_memory( &config );
+
+        check( at_1000 > 0 && at_999 > 0 );
+        check( at_999 <= at_1000 && at_1000 <= at_max );
+        check( 4 * at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 5 * 1000 * at_max );
+    }
 }
 
 REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
@@ -311,14 +314,22 @@ static void test_client_slots_hostile_collision_and_stale_generation()
         check( rocketnet_client_slots_test_hash_index( slots, ids[i] ) == wanted );
     }
 
+    // Every id homes at the same cell and the cells after it are empty, so
+    // the counts are exact: the i-th assign and the i-th find probe the i
+    // occupied cells before their own and then the one they stop at (i + 1),
+    // and the middle release locates its id (middle + 1) and then shifts each
+    // of the collision_count - middle - 1 survivors back, ending on the empty
+    // cell after them (collision_count - middle).
+
     struct rocketnet_client_slot_handle_t handles[collision_count];
     const uint64_t probes_before = rocketnet_client_slots_test_total_probes( slots );
+    uint64_t probes_expected = 0;
 
     for ( int i = 0; i < collision_count; ++i )
     {
         check( rocketnet_client_slots_assign( slots, ids[i], i, ids[i], user_data ) == i );
-        check( rocketnet_client_slots_test_last_probes( slots ) >= 1 );
-        check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
+        check( rocketnet_client_slots_test_last_probes( slots ) == (uint64_t) i + 1 );
+        probes_expected += (uint64_t) i + 1;
         check( rocketnet_client_slots_handle( slots, i, &handles[i] ) );
         check( handles[i].client_id == ids[i] );
         check( handles[i].client_index == i );
@@ -327,33 +338,37 @@ static void test_client_slots_hostile_collision_and_stale_generation()
     for ( int i = 0; i < collision_count; ++i )
     {
         check( rocketnet_client_slots_find( slots, ids[i] ) == i );
-        check( rocketnet_client_slots_test_last_probes( slots ) >= 1 );
-        check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
+        check( rocketnet_client_slots_test_last_probes( slots ) == (uint64_t) i + 1 );
+        probes_expected += (uint64_t) i + 1;
     }
 
-    check( rocketnet_client_slots_test_total_probes( slots ) > probes_before );
+    check( rocketnet_client_slots_test_total_probes( slots ) == probes_before + probes_expected );
 
     const int middle = collision_count / 2;
     const struct rocketnet_client_slot_handle_t stale = handles[middle];
     check( rocketnet_client_slots_release_handle( slots, &handles[middle] ) );
-    check( rocketnet_client_slots_test_last_probes( slots ) >= 1 );
-    check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
+    check( rocketnet_client_slots_test_last_probes( slots ) == (uint64_t) ( middle + 1 ) + (uint64_t) ( collision_count - middle ) );
     check( rocketnet_client_slots_find( slots, ids[middle] ) == -1 );
     for ( int i = middle + 1; i < collision_count; ++i )
     {
         check( rocketnet_client_slots_find( slots, ids[i] ) == i );
     }
 
-    const uint64_t replacement = UINT64_C( 0xF0000010A5A5A5A5 );
-    check( rocketnet_client_slots_test_hash_index( slots, replacement ) == wanted );
+    // the replacement reconnects with the released client's own ID under a
+    // new generation, so the stale handle differs from its handle only there
+
+    const uint64_t replacement = ids[middle];
+    const uint64_t replacement_generation = UINT64_C( 0xF0000010A5A5A5A5 );
     rocketnet_client_slots_publish( slots );        // the server update's end
-    check( rocketnet_client_slots_assign( slots, replacement, 99, replacement, user_data ) == middle );
+    check( rocketnet_client_slots_assign( slots, replacement, 99, replacement_generation, user_data ) == middle );
     check( rocketnet_client_slots_handle( slots, middle, &handles[middle] ) );
-    check( handles[middle].client_id == replacement );
+    check( handles[middle].client_id == stale.client_id );
+    check( handles[middle].client_index == stale.client_index );
     check( handles[middle].generation != stale.generation );
 
-    // The stale release names the old full ID and generation. It is refused
-    // without disturbing the replacement or any member behind it.
+    // The stale release names the same full ID and slot and the old
+    // generation. It is refused, by the generation alone, without disturbing
+    // the replacement or any member behind it.
 
     check( !rocketnet_client_slots_release_handle( slots, &stale ) );
     check( rocketnet_client_slots_find( slots, replacement ) == middle );
@@ -362,10 +377,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
 
     for ( int i = 0; i < collision_count; ++i )
     {
-        if ( i != middle )
-        {
-            check( rocketnet_client_slots_find( slots, ids[i] ) == i );
-        }
+        check( rocketnet_client_slots_find( slots, ids[i] ) == i );
     }
 
     for ( int i = 0; i < collision_count; ++i )
