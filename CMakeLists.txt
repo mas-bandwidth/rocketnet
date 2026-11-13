@@ -1324,7 +1324,9 @@ if(ROCKETNET_BUILD_TOOLS)
     rocketnet_warning_floor(test_load_census)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
     # The server transport hardening load (docs/HARDEN_LOAD.md): a bench tool.
-    add_executable(harden_load tests/load/harden_load.cpp)
+    # enkiTS (tests/load/enkiTS/README.md) runs the space frame shape's jobs:
+    # tests only, never linked into the SDK
+    add_executable(harden_load tests/load/harden_load.cpp tests/load/enkiTS/TaskScheduler.cpp)
     target_compile_features(harden_load PRIVATE cxx_std_11)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
