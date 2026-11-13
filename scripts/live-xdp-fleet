@@ -328,7 +328,7 @@ while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
 done < "$tmp/sorted.tsv"
 
 echo
-echo "  merge:  scripts/live-xdp-fleet-merge $run_dir   (writes matrix.tsv, counters.tsv and PASS.md; exits 0 only on PASS)"
+echo "  merge:  scripts/live-xdp-fleet-merge $run_dir/server.tsv $run_dir/<label>.tsv ... > $run_dir/merge.txt   (the table and the verdict; exits 0 only on PASS)"
 
 if [ "$dry_run" -eq 1 ]; then
     echo "dry-run: no host contacted"
@@ -480,16 +480,24 @@ teardown
 teardown_allowed=0
 trap - EXIT INT TERM HUP
 
+result_files=( "$run_dir/server.tsv" )
 while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
     results="~/rocketnet-live/results/$run_id/$label.tsv"
     ssh_run "$ssh_name" "$remote_path" collect "$results" > "$run_dir/$label.tsv" 2>/dev/null \
         || fail "cannot collect $label"
+    result_files+=( "$run_dir/$label.tsv" )
 done < "$tmp/sorted.tsv"
 ssh_run "$server_ssh" "$remote_path" collect "$server_results" > "$run_dir/server.tsv" 2>/dev/null \
     || fail "cannot collect the server"
 
+# the merge reads every result file this run collected, the server's and
+# each client's, and its table and verdict are kept in the run directory
 if [ -x "$here/live-xdp-fleet-merge" ]; then
-    "$here/live-xdp-fleet-merge" "$run_dir" || fail "the merge did not PASS"
+    if ! "$here/live-xdp-fleet-merge" "${result_files[@]}" > "$run_dir/merge.txt" 2>&1; then
+        grep -E '^(fail|verdict|merge|usage)' "$run_dir/merge.txt" >&2
+        fail "the merge did not PASS; see $run_dir/merge.txt"
+    fi
+    grep '^verdict' "$run_dir/merge.txt"
 else
     echo "live-xdp-fleet: scripts/live-xdp-fleet-merge is not present; result files are in $run_dir" >&2
 fi
