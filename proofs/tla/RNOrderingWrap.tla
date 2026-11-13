@@ -19,10 +19,15 @@
 (* when the table is full; ahead it is held.  EndUpdate empties the        *)
 (* delivery table (rn_channels_end_update).                                *)
 (*                                                                         *)
-(* Honest records only: layer 3 drops duplicates, and a sender has fewer   *)
-(* than W records numbered at once, so a record reaching the dispatch is   *)
-(* fresh and in ordered_read .. ordered_read + W - 1.  Blocks are left to  *)
-(* RNChannel and RNChannelTypes.                                           *)
+(* Honest records: a sender has fewer than W records numbered at once, so  *)
+(* a fresh record reaching the dispatch is in ordered_read ..              *)
+(* ordered_read + W - 1.  A resend whose number layer 3 already took is    *)
+(* ReceiveDuplicate: it delivers nothing, and the reservation, asking      *)
+(* rn_window_receive_duplicate first, counts it one (DupOne).  Blocks are  *)
+(* left to RNChannel and RNChannelTypes but for ReceivePartial: an in-turn *)
+(* fragment that does not complete its block delivers nothing, and the     *)
+(* reservation counts it one and not the run (PartialOne).  The block it   *)
+(* joins is not a complete hold, so held does not change.                  *)
 (*                                                                         *)
 (* The channel's one sequenced hold (rx->held_sequenced) is here too, as   *)
 (* the delivery its drain may release: a code-4 hold takes a table slot or *)
@@ -40,6 +45,12 @@
 (* (NoExhaust).  ExactSeq = FALSE counts a code-1 hold whatever Du has     *)
 (* left: with Du spent, an in-turn record whose run fills the table is     *)
 (* deferred although its deliveries fit (NeverDeferWithRoom).              *)
+(* DupOne = FALSE reserves the held run for an in-turn duplicate: deferred *)
+(* although its one delivery fits (NeverDeferWithRoom), and in the code    *)
+(* the run's lookups for every duplicate.  PartialOne = FALSE reserves the *)
+(* run for an in-turn fragment that cannot complete its block: deferred    *)
+(* with room (NeverDeferWithRoom), and in the code the run's lookups per   *)
+(* fragment.                                                               *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -50,9 +61,12 @@ CONSTANTS
     Cap,         \* the delivery table's capacity (delivery_entries)
     Du,          \* the unreliable allowance: delivery_entries - window
     Masked,      \* BOOLEAN: the reservation compares modulo WireMod
-    ExactSeq     \* BOOLEAN: the reservation counts a code-1 hold only when Du has room
+    ExactSeq,    \* BOOLEAN: the reservation counts a code-1 hold only when Du has room
+    DupOne,      \* BOOLEAN: a duplicate reserves one delivery, not the held run
+    PartialOne   \* BOOLEAN: an in-turn fragment that cannot complete its block reserves one
 
 ASSUME CounterMod % WireMod = 0 /\ WireMod >= 2 * W /\ Cap >= 1 /\ Du \in 0..Cap
+ASSUME DupOne \in BOOLEAN /\ PartialOne \in BOOLEAN
 
 VARIABLES
     read,        \* rx->ordered_read
@@ -154,6 +168,33 @@ Receive(o) ==
                    ELSE /\ held' = held \cup {U24(o)}                \* ahead: held (rn_channels_dispatch_ordered)
                         /\ UNCHANGED <<read, deliveries, exhausted, uDelivered, seqHold>>
 
+\* a resend whose number layer 3 has already taken, at ordering o
+\* (rn_ordered_receive): it delivers nothing.  The reservation asks
+\* rn_window_receive_duplicate first and counts it one, as a record ahead of
+\* its turn (Actual 1); a table without that one defers the packet, and
+\* rn_window_receive_accept drops and counts it otherwise.  Counting the held
+\* run (DupOne = FALSE) defers it when the run does not fit although one does.
+ReceiveDuplicate(o) ==
+    /\ ~exhausted
+    /\ LET needed == IF DupOne THEN 1 ELSE Needed(o)
+       IN  IF needed > Cap - deliveries
+             THEN wasted' = (wasted \/ 1 <= Cap - deliveries)        \* DEFERRED
+             ELSE UNCHANGED wasted
+    /\ UNCHANGED <<read, held, deliveries, exhausted, disagree, uDelivered, seqHold>>
+
+\* a fresh code-3 block fragment at the read index that does not complete
+\* its block: rn_channels_dispatch_chunk collects it and delivers nothing.
+\* rn_receive_delivery_reservation counts it one, as a record ahead of its
+\* turn (Actual 1); counting the held run (PartialOne = FALSE) defers it
+\* when the run does not fit although one does.
+ReceivePartial ==
+    /\ ~exhausted
+    /\ LET needed == IF PartialOne THEN 1 ELSE Needed(read)
+       IN  IF needed > Cap - deliveries
+             THEN wasted' = (wasted \/ 1 <= Cap - deliveries)        \* DEFERRED
+             ELSE UNCHANGED wasted
+    /\ UNCHANGED <<read, held, deliveries, exhausted, disagree, uDelivered, seqHold>>
+
 \* a code-0 record (rn_channels_dispatch, code 0): delivered while the
 \* unreliable allowance and the table have room, else dropped and counted
 ReceiveUnreliable ==
@@ -188,6 +229,8 @@ Ended ==
 
 Next ==
     \/ \E o \in Honest : Receive(o)
+    \/ \E o \in {U24(read + k) : k \in 0..W-1} : ReceiveDuplicate(o)
+    \/ ReceivePartial
     \/ ReceiveUnreliable
     \/ HoldSequenced
     \/ EndUpdate
@@ -204,6 +247,7 @@ CompareAgrees == ~disagree
 \* every held ordering is ahead of the read index by 1 .. W-1
 HeldAhead == \A h \in held : U24(h - read) \in 1..W-1
 
-\* a packet is deferred only when the deliveries its record can make do not fit
+\* a packet is deferred only when the deliveries its record can make do not fit,
+\* a record that releases nothing (held, a duplicate, a partial fragment) counted one
 NeverDeferWithRoom == ~wasted
 =============================================================================
