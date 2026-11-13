@@ -84,7 +84,7 @@ LAYERS = {
         "untraced": {
             "Forget": "the first step of a forget call, where holders run before its retire: the walk sees the table between calls and takes the whole call, ForgetCall",
             "Retire": "the second step of a retire inside a forget or a sweep call, which the walk takes whole as ForgetCall or SweepCall",
-            "RetireWordLate": "the broken order of the retire's two steps (SnapshotFirst), which the code does not have and the model's reversed witness keeps",
+            "RetireWordLate": "the broken order of the retire's two steps (PassCopyFirst), which the code does not have and the model's reversed witness keeps",
             "ForgetDereg": "the last step of a forget call, taken whole as ForgetCall",
             "SweepBegin": "the first step of a sweep call, where holders run before its dead-report loop: the walk takes the whole call, SweepCall",
             "RetireDead": "one slot of a sweep call's dead-report loop, taken whole as SweepCall",

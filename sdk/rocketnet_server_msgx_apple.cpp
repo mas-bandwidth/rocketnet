@@ -245,14 +245,8 @@ static socklen_t rocketnet_server_msgx_address_to_sockaddr( const rocketnet_addr
             rocketnet_address_convert_ipv4_to_ipv6( &to );
         }
         struct sockaddr_in6 * addr = (struct sockaddr_in6 *) out;
-        memset( addr, 0, sizeof( struct sockaddr_in6 ) );
-        addr->sin6_family = AF_INET6;
+        rocketnet_platform_address_to_sockaddr_in6( &to, addr );
         addr->sin6_len = sizeof( struct sockaddr_in6 );
-        for ( int i = 0; i < 8; i++ )
-        {
-            ( (uint16_t *) &addr->sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
-        }
-        addr->sin6_port = rocketnet_platform_htons( to.port );
         return sizeof( struct sockaddr_in6 );
     }
     if ( to.type != ROCKETNET_ADDRESS_IPV4 )
@@ -270,11 +264,7 @@ static bool rocketnet_server_msgx_sockaddr_to_address( const struct sockaddr_sto
     {
         const struct sockaddr_in6 * addr = (const struct sockaddr_in6 *) input;
         out->type = ROCKETNET_ADDRESS_IPV6;
-        for ( int i = 0; i < 8; i++ )
-        {
-            out->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t *) &addr->sin6_addr )[i] );
-        }
-        out->port = rocketnet_platform_ntohs( addr->sin6_port );
+        rocketnet_platform_sockaddr_in6_to_address( addr, out );
         return rocketnet_address_accept_received_source( out, socket_ipv6 );
     }
     if ( input->ss_family == AF_INET )
@@ -285,10 +275,15 @@ static bool rocketnet_server_msgx_sockaddr_to_address( const struct sockaddr_sto
     return false;
 }
 
+struct rocketnet_server_msgx_option_socket_t
+{
+    int fd;
+};
+
 static void rocketnet_server_msgx_set_socket_option( void * user, int level, int option_name, int value )
 {
-    const int fd = *(const int *) user;
-    setsockopt( fd, level, option_name, &value, sizeof( value ) );
+    const struct rocketnet_server_msgx_option_socket_t * socket_to_set = (const struct rocketnet_server_msgx_option_socket_t *) user;
+    setsockopt( socket_to_set->fd, level, option_name, &value, sizeof( value ) );
 }
 
 // a non-blocking UDP socket bound to the server's address and port with
@@ -327,8 +322,8 @@ static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_ad
         return -error;
     }
 
-    int fd_copy = fd;
-    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_msgx_set_socket_option, &fd_copy );
+    struct rocketnet_server_msgx_option_socket_t option_socket = { fd };
+    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_msgx_set_socket_option, &option_socket );
     return fd;
 }
 

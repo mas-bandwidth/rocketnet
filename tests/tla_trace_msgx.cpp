@@ -9,7 +9,7 @@
 // proofs/tla/TraceRNMsgxSocketTable.tla. A seeded random walk drives the real
 // table through the calls the model names, over a fake kernel (open hands out
 // the lowest free descriptor of three, refuses a second socket connected to
-// the same peer, and maps each descriptor to its peer; close frees it), a
+// the same remote, and maps each descriptor to its remote; close frees it), a
 // fake receive poller, fake fill threads and fake holders, all stepped on this
 // one thread. Each step is one call of the table or one step of a fake, and
 // writes one record: the op, the model action it took, its arguments, and
@@ -85,7 +85,7 @@ struct msgx_walk_t
 {
     struct rocketnet_msgx_socket_table_t * table;
     struct rocketnet_address_t address[MSGX_ADDRS + 1];    // addresses 1..MSGX_ADDRS
-    int kfd[MSGX_FDS];          // -1 closed, 0 another descriptor of the process, else the peer
+    int kfd[MSGX_FDS];          // -1 closed, 0 another descriptor of the process, else the remote
     bool kdead[MSGX_FDS];
     std::vector<msgx_event_t> poller;
     std::vector<msgx_packet_t> pkts;
@@ -236,7 +236,7 @@ static tla_record_t msgx_state( const msgx_walk_t & walk )
         std::vector<std::string> holder_snap;
         for ( int h = 1; h <= MSGX_HOLDERS; h++ )
         {
-            holder_snap.push_back( tla_int( (int64_t) slot->snapshot[h - 1] ) );
+            holder_snap.push_back( tla_int( (int64_t) slot->passcopy[h - 1] ) );
         }
         snap.push_back( tla_function( holder_keys, holder_snap ) );
         free_slots.push_back( tla_int( table->free_slots[s] ) );
@@ -740,7 +740,7 @@ static int trace_msgx( uint64_t seed, int steps, const char * out )
               "    IS = %d\n    HomeAt = %s\n    CoolEntries = %d\n    CoolAt = %s\n    Cooldown = %d\n"
               "    Budget = %d\n    GenWrap = 1073741824\n    PassLimit = 1000000000\n"
               "    MaxUpdates = 1000000000\n    MaxPackets = 1000000000\n    MaxEnv = %d\n    Icmp = TRUE\n"
-              "    Quarantine = TRUE\n    GenCheck = TRUE\n    SnapshotFirst = FALSE\n    RefusedOpenFree = TRUE\n",
+              "    Quarantine = TRUE\n    GenCheck = TRUE\n    PassCopyFirst = FALSE\n    RefusedOpenFree = TRUE\n",
               MSGX_SLOTS, MSGX_FDS, ROCKETNET_MSGX_TABLE_INDEX_SIZE, home_at.c_str(), ROCKETNET_MSGX_TABLE_COOLDOWN_ENTRIES, cool_at.c_str(),
               ROCKETNET_MSGX_TABLE_DEAD_COOLDOWN_UPDATES, walk.table->opens_per_update, MSGX_MAX_ENV );
     const bool written = tla_write_trace( out, "MCTraceMsgx", seed, "TraceRNMsgxSocketTable", "", constants, records );

@@ -95,6 +95,8 @@ sdk/rocketnet_server_gso.h	Linux UDP segmentation offload for the server socket
 sdk/rocketnet_server_gso_linux.cpp	Linux UDP segmentation offload for the server socket
 sdk/rocketnet_server_iocp.h	Windows IOCP server transport
 sdk/rocketnet_server_iocp_windows.cpp	Windows IOCP server transport
+sdk/rocketnet_server_msgx.h	macOS batched server transport (sendmsg_x, recvmsg_x)
+sdk/rocketnet_server_msgx_apple.cpp	macOS batched server transport (sendmsg_x, recvmsg_x)
 sdk/rocketnet_server_replay_marks.cpp	server replay slot marks for the kernel map
 sdk/rocketnet_server_replay_marks.h	server replay slot marks for the kernel map
 sdk/rocketnet_server_rio.h	Windows RIO server transport

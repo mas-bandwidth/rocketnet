@@ -138,8 +138,8 @@ static int sr_stamp_index( int slot, uint32_t generation )
 }
 
 // the client the slot's socket is connected to: the one stamped at the
-// slot's open generation, 0 none (RNMsgxSendRuns Peer)
-static int sr_peer( const sr_walk_t * walk, int slot )
+// slot's open generation, 0 none (RNMsgxSendRuns Remote)
+static int sr_remote( const sr_walk_t * walk, int slot )
 {
     for ( int i = 0; i < walk->count; i++ )
     {
@@ -220,10 +220,10 @@ static int sr_send( void * user, int fd, const int * packets, int num_packets )
         answer = ROCKETNET_MSGX_SEND_DEAD;
         walk->dead_skip_sent = true;
     }
-    const int peer = sr_peer( walk, slot );
+    const int remote = sr_remote( walk, slot );
     for ( int n = 0; n < answer; n++ )
     {
-        sr_send_one( walk, packets[n], peer );
+        sr_send_one( walk, packets[n], remote );
     }
     walk->sent_answer = answer;
     return answer;

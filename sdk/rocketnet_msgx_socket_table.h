@@ -16,8 +16,8 @@
 // client. The kernel then delivers that client's datagrams to its socket and
 // no longer to the shared one, so the receive worker reads every socket in
 // the table (measured, docs and final record: an inbound datagram from a
-// connected peer arrives only on its connected socket; a close returns it to
-// the shared socket at once; a second socket connected to the same peer is
+// connected remote arrives only on its connected socket; a close returns it to
+// the shared socket at once; a second socket connected to the same remote is
 // refused EADDRINUSE).
 //
 // Pure: no platform call. The socket open and close are the caller's
@@ -100,7 +100,7 @@ struct rocketnet_msgx_socket_slot_t
     int fd;
     uint32_t generation;
     struct rocketnet_address_t address;
-    uint64_t snapshot[ROCKETNET_MSGX_TABLE_MAX_HOLDERS];   // each holder's pass at the retire
+    uint64_t passcopy[ROCKETNET_MSGX_TABLE_MAX_HOLDERS];   // each holder's pass at the retire
 };
 
 // the address of a dead socket and the update it may open again: a small
@@ -214,7 +214,7 @@ inline void rocketnet_msgx_socket_table_init( struct rocketnet_msgx_socket_table
         slot->fd = -1;
         slot->generation = 0;
         memset( &slot->address, 0, sizeof( slot->address ) );
-        memset( slot->snapshot, 0, sizeof( slot->snapshot ) );
+        memset( slot->passcopy, 0, sizeof( slot->passcopy ) );
     }
 }
 
@@ -307,7 +307,7 @@ inline int rocketnet_msgx_socket_table_stamp( const struct rocketnet_msgx_socket
 }
 
 // proofs/tla/RNMsgxSocketTable.tla HolderBegin and HolderEnd: a pass is odd. seq_cst, so a
-// retire's word store and its snapshot of this counter are ordered against
+// retire's word store and its passcopy of this counter are ordered against
 // the pass's own word loads.
 inline void rocketnet_msgx_socket_table_holder_begin( struct rocketnet_msgx_socket_table_t * table, int holder )
 {
@@ -376,8 +376,8 @@ inline int rocketnet_msgx_socket_table_cooldown_entry( const struct rocketnet_ad
 
 // proofs/tla/RNMsgxSocketTable.tla Retire: the word loses its descriptor and advances its
 // generation, the address leaves the index, and each holder's pass is
-// snapshotted. The descriptor stays open until the sweep sees every holder
-// past its snapshot. The sweep's caller deregisters the descriptor from its
+// copied. The descriptor stays open until the sweep sees every holder
+// past its passcopy. The sweep's caller deregisters the descriptor from its
 // receive poller before (retire_hook); forget's caller deregisters it after,
 // from retired_fd. An event the receive holder takes in between resolves
 // through the word, whose generation has already moved, so it is dropped.
@@ -453,14 +453,14 @@ inline bool rocketnet_msgx_socket_table_forget( struct rocketnet_msgx_socket_tab
 }
 
 // a retired slot's quarantine is over when every holder's pass has moved
-// since the snapshot, or the holder was quiescent at it
+// since the passcopy, or the holder was quiescent at it
 inline bool rocketnet_msgx_socket_table_quiescent( const struct rocketnet_msgx_socket_table_t * table, int slot )
 {
     const struct rocketnet_msgx_socket_slot_t * entry = &table->slots[slot];
     for ( int h = 0; h < table->num_holders; h++ )
     {
-        const uint64_t snapshot = entry->snapshot[h];
-        if ( ( snapshot & 1 ) != 0 && table->pass[h].load( std::memory_order_seq_cst ) == snapshot )
+        const uint64_t passcopy = entry->passcopy[h];
+        if ( ( passcopy & 1 ) != 0 && table->pass[h].load( std::memory_order_seq_cst ) == passcopy )
         {
             return false;
         }

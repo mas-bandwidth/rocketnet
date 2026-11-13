@@ -18,8 +18,8 @@
 (* that slot and generation (0: a client outside this bank).  Main may    *)
 (* retire a slot while the worker sends (the resolve then answers no      *)
 (* socket; the quarantine of RNMsgxSocketTable keeps a resolved socket    *)
-(* open and connected to its peer until the pass ends, so a send already  *)
-(* resolved still reaches that peer).  The connected send answers any of *)
+(* open and connected to its remote until the pass ends, so a send already  *)
+(* resolved still reaches that remote).  The connected send answers any of *)
 (* all taken, a prefix taken, nothing taken or full, refused, dead or     *)
 (* another error; the shared send sent, full or dropped.  The bank        *)
 (* hand-off is RNBankFifoLayout's and is not modelled here.               *)
@@ -47,7 +47,7 @@ CONSTANTS
     Batch,              \* ROCKETNET_MSGX_SEND_BATCH
     Cap,                \* the table's capacity: slots 0..Cap-1
     Gens,               \* the generations a stamp or the table holds
-    Clients,            \* destinations, ids >= 1 (0: a peer outside the bank)
+    Clients,            \* destinations, ids >= 1 (0: a remote outside the bank)
     Claims,             \* num_packets at the take (above Size: refused claims)
     MultiStamp,         \* TRUE: a client may hold two stamps in one bank
     MaxStalls,          \* bound: answers that keep the bank (the call returns false)
@@ -110,8 +110,8 @@ bank == << count, client, slot, gen, live, tGen >>
 
 Min(a, b) == IF a < b THEN a ELSE b
 
-\* the slot's socket's peer: the client stamped at its open generation
-Peer(s) == IF \E i \in 0..(count - 1) : slot[i] = s /\ gen[i] = tGen[s]
+\* the slot's socket's remote: the client stamped at its open generation
+Remote(s) == IF \E i \in 0..(count - 1) : slot[i] = s /\ gen[i] = tGen[s]
            THEN client[CHOOSE i \in 0..(count - 1) : slot[i] = s /\ gen[i] = tGen[s]]
            ELSE 0
 
@@ -165,7 +165,7 @@ Advance(c, taken, k) ==
     ELSE Advance(c + 1, IF PartialSkipsAborted /\ ~live[order[c]] THEN taken ELSE taken + 1, k)
 
 -----------------------------------------------------------------------------
-(* the history: one packet onto the wire (via a peer, or Shared), or      *)
+(* the history: one packet onto the wire (via a remote, or Shared), or      *)
 (* dropped counted                                                         *)
 
 SendOne(h, i, via) ==
@@ -324,7 +324,7 @@ HeadRun ==
 \* the step at SEND: one connected send of the run and what its answer does
 SendAll ==
     /\ pc = "send"
-    /\ SetH(SendSeq(H, run, Len(run), Peer(slot[hd])))
+    /\ SetH(SendSeq(H, run, Len(run), Remote(slot[hd])))
     /\ cursor' = scan
     /\ pc' = "head"
     /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, stalls, retires >>
@@ -334,7 +334,7 @@ SendPartial(k) ==
     /\ pc = "send"
     /\ stalls < MaxStalls
     /\ k \in 1..(Len(run) - 1)
-    /\ SetH(SendSeq(H, run, k, Peer(slot[hd])))
+    /\ SetH(SendSeq(H, run, k, Remote(slot[hd])))
     /\ cursor' = Advance(cursor, 0, k)
     /\ stalls' = stalls + 1
     /\ pc' = "kept"

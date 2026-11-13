@@ -75,7 +75,7 @@ Environment: `Quit` (main sets shutdown) and `Retire(s)` (main retires a
 slot). The worker reads shutdown only in `GiveUp` and `Resume` and the table only
 at a resolve at `HeadDone` .. `HeadRun`, so each is taken just before that read; any other
 placement reaches the same reads. A run already resolved still reaches its
-peer: the table's quarantine keeps that socket open and connected until the
+remote: the table's quarantine keeps that socket open and connected until the
 pass ends (RNMsgxSocketTable `NoCrossClient`).
 
 ## Properties

@@ -7,7 +7,7 @@
 // (sdk/rocketnet_msgx_socket_table.h; model proofs/tla/RNMsgxSocketTable.tla
 // and proofs/tla/RNMsgxAddressIndex.tla) over a fake kernel: open hands out
 // the lowest free descriptor, refuses a second socket connected to the same
-// peer (EADDRINUSE, as macOS does) and refuses when none is free (EMFILE);
+// remote (EADDRINUSE, as macOS does) and refuses when none is free (EMFILE);
 // close frees it. Holders are stepped by hand on this thread. No socket, no
 // clock, no thread.
 //
@@ -36,7 +36,7 @@ struct msgx_test_kernel_t
 {
     int num_fds;
     bool open[MSGX_TEST_FDS];
-    struct rocketnet_address_t peer[MSGX_TEST_FDS];
+    struct rocketnet_address_t remote[MSGX_TEST_FDS];
     int opens;
     int closes;
     int refused;
@@ -49,7 +49,7 @@ static int msgx_test_open( void * user, const struct rocketnet_address_t * addre
     struct msgx_test_kernel_t * kernel = (struct msgx_test_kernel_t *) user;
     for ( int f = 0; f < kernel->num_fds; f++ )
     {
-        if ( kernel->open[f] && rocketnet_address_equal( &kernel->peer[f], address ) )
+        if ( kernel->open[f] && rocketnet_address_equal( &kernel->remote[f], address ) )
         {
             kernel->refused++;
             return -EADDRINUSE;
@@ -60,7 +60,7 @@ static int msgx_test_open( void * user, const struct rocketnet_address_t * addre
         if ( !kernel->open[f] )
         {
             kernel->open[f] = true;
-            kernel->peer[f] = *address;
+            kernel->remote[f] = *address;
             kernel->opens++;
             return f;
         }
@@ -236,7 +236,7 @@ static void test_rocketnet_msgx_socket_table_quarantine()
     rocketnet_unit_check( test.table->slots[slot].state == ROCKETNET_MSGX_SLOT_FREE );
     rocketnet_msgx_socket_table_holder_end( test.table, 1 );
 
-    // a holder that begins a new pass after the snapshot does not hold a
+    // a holder that begins a new pass after the passcopy does not hold a
     // retire it was inside a different pass for
     rocketnet_msgx_socket_table_holder_begin( test.table, 0 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_forget( test.table, &b, &retired_fd ) );
@@ -398,7 +398,7 @@ static void test_rocketnet_msgx_socket_table_open_budget()
     msgx_test_destroy( &test );
 }
 
-// a refused open (descriptor exhaustion, or a peer that still has a socket in
+// a refused open (descriptor exhaustion, or a remote that still has a socket in
 // quarantine) is counted and takes no slot; a full table is counted
 static void test_rocketnet_msgx_socket_table_refused_and_full()
 {
@@ -416,7 +416,7 @@ static void test_rocketnet_msgx_socket_table_refused_and_full()
     rocketnet_unit_check( test.table->num_free == 1 && test.table->num_open == 1 );
     rocketnet_unit_check( test.table->opens_left == 6 );
 
-    // a in quarantine (holder inside): its peer's new socket is refused
+    // a in quarantine (holder inside): its remote's new socket is refused
     test.kernel->num_fds = 4;
     rocketnet_msgx_socket_table_holder_begin( test.table, 0 );
     int retired_fd = -1;

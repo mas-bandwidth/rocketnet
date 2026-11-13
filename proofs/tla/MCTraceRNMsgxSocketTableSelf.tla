@@ -53,7 +53,7 @@ V5 == [V4 EXCEPT !.pkts = << Pkt("resolved", 0) >>, !.cur = [h \in 1..2 |-> IF h
 S5 == Rec("resolve", "TxResolve", <<1, 1>>, V5)
 
 \* ForgetCall(1): out of the index, generation 1, the word without a
-\* descriptor, holder 1's pass (1) snapshotted, the slot in quarantine,
+\* descriptor, holder 1's pass (1) copied, the slot in quarantine,
 \* deregistered
 V6 == [V5 EXCEPT !.word = F3(<<1, 0>>, <<0, 0>>, <<0, 0>>), !.gen = F3(1, 0, 0), !.state = F3(2, 0, 0),
                  !.snap = F3(H3(1, 0, 0), Z3, Z3), !.numRetired = 1, !.numOpen = 0, !.index = << >>,

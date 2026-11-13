@@ -24,7 +24,7 @@ receive worker holding a poller event, would then send to or read from the
 next client. The table keeps a retired socket open until every holder that
 was inside a pass at the retire has left that pass, and stamps packets with
 the slot's generation so a stale stamp resolves to the shared socket. The
-model's kernel maps each descriptor to its peer, so that send is the event
+model's kernel maps each descriptor to its remote, so that send is the event
 `crossed`.
 
 ## State
@@ -34,7 +34,7 @@ model's kernel maps each descriptor to its peer, so that send is the event
 | `word[s]`, `<<gen, fd + 1>>` | `slots[s].word`: generation high 32 bits, fd + 1 low |
 | `deadRep[s]` | `slots[s].dead_report`: 0, or the reported generation + 1 |
 | `state`, `fd`, `gen`, `addr` | `slots[s].state`, `.fd`, `.generation`, `.address` |
-| `snap[s][h]` | `slots[s].snapshot[h]` |
+| `snap[s][h]` | `slots[s].passcopy[h]` |
 | `pass[h]` | `pass[h]`: even quiescent, odd inside a pass |
 | `deadReports` | `dead_reports` |
 | `freeSlots`, `numFree` | `free_slots[]`, `num_free` (a stack) |
@@ -44,23 +44,23 @@ model's kernel maps each descriptor to its peer, so that send is the event
 | `coolAddr`, `coolUntil` | `cooldown_address[]`, `cooldown_until[]` |
 | `counters`, `update`, `opensLeft` | `counters[]`, `update`, `opens_left` |
 | `mpc`, `ms`, `mi`, `mk` | main's place inside a call; `"idle"` between calls |
-| `kfd[f]`, `kdead[f]` | the kernel: closed, another descriptor of the process, or the peer; disconnected |
+| `kfd[f]`, `kdead[f]` | the kernel: closed, another descriptor of the process, or the remote; disconnected |
 | `poller` | the caller's receive poller: `<<fd, slot, generation, address>>` |
 | `pkts`, `cur`, `rep`, `rxEv`, `rxFd` | the fill threads' stamped packets and the holders' work |
-| `crossed`, `onClosed`, `attempts` | history: a send or read reached another peer, or a closed descriptor; open calls |
+| `crossed`, `onClosed`, `attempts` | history: a send or read reached another remote, or a closed descriptor; open calls |
 
 ## Actions and the code they mirror
 
 - **`Mark(a)`**: `rocketnet_msgx_socket_table_mark`. Refused by the
   cooldown, a full table or the open budget (each counted); otherwise the
-  open (`table->open`), refused by the kernel for a peer that already has a
+  open (`table->open`), refused by the kernel for a remote that already has a
   connected socket (EADDRINUSE: a retired socket still holds it) or when no
   descriptor is free (counted `OPEN_FAILED`, no slot taken), or the slot
   popped, the word stored, the address inserted and the poller registered.
 - **`Forget(a)`**: `rocketnet_msgx_socket_table_forget`, the lookup and the
   first step of `rocketnet_msgx_socket_table_retire`: index remove, generation
   advance, word store.
-- **`Retire`**: the retire's second step: the snapshot of every holder's
+- **`Retire`**: the retire's second step: the passcopy of every holder's
   pass, the slot in quarantine (the retired list), the counter. On the forget
   path the caller then deregisters (`ForgetDereg`); on the sweep's path its
   dead-report loop goes on.
@@ -80,7 +80,7 @@ model's kernel maps each descriptor to its peer, so that send is the event
 - **`ReportDead(h)`**: `rocketnet_msgx_socket_table_report_dead`.
 
 Environment actions, not code of this header: `TxSend` and `RxRead` (the
-kernel delivers to the descriptor's current peer; a disconnected socket
+kernel delivers to the descriptor's current remote; a disconnected socket
 answers ENOTCONN), `RxPoll` (the poller hands out a registered event),
 `ForgetDereg` (the caller's deregistration after forget returns
 `retired_fd`), `EnvOpen` and `EnvClose` (other descriptors of the process)
@@ -90,8 +90,8 @@ and `Disconnect` (ICMP).
   step inside it: `rocketnet_msgx_socket_table_forget` with the caller's
   deregistration, and `rocketnet_msgx_socket_table_sweep`. The model splits
   those calls into steps so holders interleave inside them (the reversed
-  witness `SnapshotBeforeWord` fails only because a holder runs between the
-  word store and the snapshot); the trace check sees the table between calls.
+  witness `PassCopyBeforeWord` fails only because a holder runs between the
+  word store and the passcopy); the trace check sees the table between calls.
   Each step is a function of a record of main's state (`ForgetF`, `RetireF`,
   `RetireWordLateF`, `DeregF`, `SweepBeginF`, `RetireDeadF`, `CloseF`); the
   fine-grained actions apply one of them and the call-level actions apply
@@ -105,14 +105,14 @@ the walk's records name the entries in use. `Home` and `CoolOf` are read from
 the constants `HomeAt` and `CoolAt`, the sets of `a * IS + home` and
 `a * CoolEntries + entry` (a cfg carries a set of integers, not a function).
 
-The retire's snapshot loop is one step in the model. Each holder's snapshot
+The retire's passcopy loop is one step in the model. Each holder's passcopy
 only decides that holder's quiescence, and the code reads each pass after the
 word store, so any order of the per-holder reads is one of the model's
 interleavings for that holder.
 
 ## Properties
 
-- `NoCrossClient`: no send or read reached a peer other than the one the
+- `NoCrossClient`: no send or read reached a remote other than the one the
   packet or event names.
 - `NoSendOnClosed`: no send or read on a closed descriptor.
 - `Accounting`: every open call is opened or counted refused; between calls,
@@ -149,9 +149,9 @@ The safety configs use `View`, which replaces every value no later step
 reads by a constant (a free slot's address, the free stack above `numFree`, a
 cooldown entry already expired, a finished packet's detail), keeps the
 counters only as the differences `Accounting` reads, and keeps a live
-snapshot only as what `Quiescent` reads: whether the holder is still inside
-the pass snapshotted (a pass only grows, so once it moves on it never equals
-the snapshot again). The liveness configs run without the VIEW and override
+passcopy only as what `Quiescent` reads: whether the holder is still inside
+the pass copied (a pass only grows, so once it moves on it never equals
+the passcopy again). The liveness configs run without the VIEW and override
 `RefusedMarks` to FALSE: a refused mark changes only its counter, which no
 guard reads, and leaving it out makes the state space finite.
 
@@ -159,14 +159,14 @@ Generations wrap at `GenWrap` (8 in the passing configs; 2^32 in the code, 2^30 
 
 ## Reversed witnesses
 
-Each switch is TRUE in the code (`SnapshotFirst` FALSE). Each broken config
+Each switch is TRUE in the code (`PassCopyFirst` FALSE). Each broken config
 sets one and lists only `TypeOK` and the invariant it must fail.
 
 | Config | Change | Fails | The counterexample |
 |---|---|---|---|
 | `MCRNMsgxSocketTableBrokenCloseAtRetire.cfg` | `Quarantine = FALSE`: the retire closes at once | `NoCrossClient` | client 1 on slot 0, fd 0; TX holder 1 begins, resolves fd 0; forget closes fd 0 at the retire; mark client 2 opens the lowest free descriptor, fd 0; the send reaches client 2 |
-| `MCRNMsgxSocketTableBrokenNoGenerationCheck.cfg` | `GenCheck = FALSE`: resolve ignores the stamp's generation | `NoCrossClient` | client 1 on slot 0; forget retires it (snapshot all quiescent); the RX holder begins and takes the event (fd 0, slot 0, generation 0) before the caller deregisters; the sweep closes fd 0; client 2 gets slot 0, generation 1, fd 0; the event resolves to fd 0 and the read is client 2's |
-| `MCRNMsgxSocketTableBrokenSnapshotBeforeWord.cfg` | `SnapshotFirst = TRUE`: the passes are snapshotted before the word store | `NoCrossClient` | forget snapshots (all quiescent); the RX holder begins and resolves the old word, fd 0; the word store; the sweep closes fd 0 (the snapshot showed no pass); client 2 gets fd 0; the read is client 2's |
+| `MCRNMsgxSocketTableBrokenNoGenerationCheck.cfg` | `GenCheck = FALSE`: resolve ignores the stamp's generation | `NoCrossClient` | client 1 on slot 0; forget retires it (passcopy all quiescent); the RX holder begins and takes the event (fd 0, slot 0, generation 0) before the caller deregisters; the sweep closes fd 0; client 2 gets slot 0, generation 1, fd 0; the event resolves to fd 0 and the read is client 2's |
+| `MCRNMsgxSocketTableBrokenPassCopyBeforeWord.cfg` | `PassCopyFirst = TRUE`: the passes are copied before the word store | `NoCrossClient` | forget passcopys (all quiescent); the RX holder begins and resolves the old word, fd 0; the word store; the sweep closes fd 0 (the passcopy showed no pass); client 2 gets fd 0; the read is client 2's |
 | `MCRNMsgxSocketTableBrokenExhaustionTakesSlot.cfg` | `RefusedOpenFree = FALSE`: a refused open takes a slot, uncounted | `NoLeak` | client 1 opened, forgotten, in quarantine; mark client 1 again: the kernel refuses (EADDRINUSE, the retired socket is still connected) and the slot is open with fd -1 |
 | `MCRNMsgxSocketTableBrokenExhaustionTakesSlotAccounting.cfg` | the same | `Accounting` | the same six states: an open call neither opened nor counted refused |
 | `MCRNMsgxSocketTableBrokenGenWrap2.cfg` | `GenWrap = 2`, one slot | `NoCrossClient` | a packet stamped for client 1 at generation 0 stays queued while slot 0 is retired twice (generation 1, then 0 again) and reopened for client 2; the stale stamp resolves to client 2's descriptor. In the code the wrap is 2^32 retires of one slot while one stamp is queued |
@@ -176,7 +176,7 @@ Each counterexample was read state by state against the header: the steps
 are the code's calls in the order shown, and in the code without the change
 each is refused where the model refuses it (the quarantine keeps fd 0 open
 while holder 1 is in its pass; the generation check drops the event; the
-word store before the snapshot makes the RX holder's resolve return -1 or
+word store before the passcopy makes the RX holder's resolve return -1 or
 its pass block the close; `mark` returns with `OPEN_FAILED` counted and no
 slot taken; the backward shift moves key 1 into entry 0).
 
@@ -200,7 +200,7 @@ passing case, 1 for a counterexample), linux-amd64 bench; the records are in
 | `MCRNMsgxSocketTableLivePacket.cfg` | pass | 9,951 | 34,698 | 6.1 |
 | `MCRNMsgxSocketTableBrokenCloseAtRetire.cfg` | `NoCrossClient` | 5,616 | 24,001 | 4.4 |
 | `MCRNMsgxSocketTableBrokenNoGenerationCheck.cfg` | `NoCrossClient` | 26,444 | 101,412 | 7.2 |
-| `MCRNMsgxSocketTableBrokenSnapshotBeforeWord.cfg` | `NoCrossClient` | 82,616 | 342,198 | 8.9 |
+| `MCRNMsgxSocketTableBrokenPassCopyBeforeWord.cfg` | `NoCrossClient` | 82,616 | 342,198 | 8.9 |
 | `MCRNMsgxSocketTableBrokenExhaustionTakesSlot.cfg` | `NoLeak` | 48 | 116 | 1.6 |
 | `MCRNMsgxSocketTableBrokenExhaustionTakesSlotAccounting.cfg` | `Accounting` | 48 | 116 | 1.8 |
 | `MCRNMsgxSocketTableBrokenGenWrap2.cfg` | `NoCrossClient` | 6,987 | 43,430 | 4.0 |

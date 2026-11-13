@@ -12,11 +12,11 @@
 // tests/tla_trace_msgx.cpp in the plant build defines it, and its traces must
 // fail TraceConsistent. The rest of the table stays inline in its header.
 
-// proofs/tla/RNMsgxSocketTable.tla Retire (RetireFirst, then the snapshot and
+// proofs/tla/RNMsgxSocketTable.tla Retire (RetireFirst, then the passcopy and
 // the quarantine): the word loses its descriptor and advances its
 // generation, the address leaves the index, and each holder's pass is
-// snapshotted. The descriptor stays open until the sweep sees every holder
-// past its snapshot. The sweep's caller deregisters the descriptor from its
+// copied. The descriptor stays open until the sweep sees every holder
+// past its passcopy. The sweep's caller deregisters the descriptor from its
 // receive poller before (retire_hook); forget's caller deregisters it after,
 // from retired_fd. An event the receive holder takes in between resolves
 // through the word, whose generation has already moved, so it is dropped.
@@ -30,7 +30,7 @@ void rocketnet_msgx_socket_table_retire( struct rocketnet_msgx_socket_table_t * 
     entry->word.store( rocketnet_msgx_word( entry->generation, -1 ), std::memory_order_seq_cst );
     for ( int h = 0; h < table->num_holders; h++ )
     {
-        entry->snapshot[h] = table->pass[h].load( std::memory_order_seq_cst );
+        entry->passcopy[h] = table->pass[h].load( std::memory_order_seq_cst );
     }
 #if defined( ROCKETNET_MSGX_SOCKET_TABLE_PLANT )
     // the trace check's plant: close at the retire, no quarantine

@@ -3,18 +3,18 @@
 (* The macOS batched server transport's per-client socket table           *)
 (* (sdk/rocketnet_msgx_socket_table.h) at the code's layout: the slot     *)
 (* word (generation, descriptor + 1), the holders' pass counters (even    *)
-(* quiescent, odd inside a pass), the snapshot taken at a retire, the     *)
+(* quiescent, odd inside a pass), the passcopy taken at a retire, the     *)
 (* retired list compacted in place by the sweep, the free stack, the      *)
 (* open-addressing address index with its backward-shift delete, the      *)
 (* direct-mapped cooldown table, the update's open budget and the eight   *)
 (* counters.  The kernel is a pool of NFd descriptors handed out lowest   *)
-(* free first (POSIX), each mapped to the peer its socket is connected    *)
-(* to, refusing a second socket connected to the same peer (EADDRINUSE,   *)
+(* free first (POSIX), each mapped to the remote its socket is connected    *)
+(* to, refusing a second socket connected to the same remote (EADDRINUSE,   *)
 (* measured).  That reuse is what makes a close too early a cross-client  *)
 (* send: the descriptor a holder resolved is reissued to another client.  *)
 (*                                                                         *)
 (* Threads.  Main runs Mark, Forget (its retire in two steps, word then   *)
-(* snapshot, then the caller's poller deregistration), BeginUpdate and    *)
+(* passcopy, then the caller's poller deregistration), BeginUpdate and    *)
 (* the sweep (SweepBegin, then one step per slot of the dead-report loop  *)
 (* and one per entry of the close loop).  Fill threads Stamp a packet     *)
 (* (slot, generation) while main is between calls.  Holders: transmit     *)
@@ -25,7 +25,7 @@
 (* other descriptors of the process and disconnects sockets (ICMP).       *)
 (*                                                                         *)
 (* The code has Quarantine, GenCheck and RefusedOpenFree TRUE and          *)
-(* SnapshotFirst FALSE; each broken config flips one and must fail its     *)
+(* PassCopyFirst FALSE; each broken config flips one and must fail its     *)
 (* named invariant (README-RNMsgxSocketTable.md).                          *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
@@ -50,7 +50,7 @@ CONSTANTS
     Icmp,           \* TRUE: the network may disconnect a socket
     Quarantine,         \* TRUE: a retired socket closes only after the holders' passes
     GenCheck,           \* TRUE: resolve compares the stamp's generation
-    SnapshotFirst,      \* FALSE: the retire stores the word before it snapshots the passes
+    PassCopyFirst,      \* FALSE: the retire stores the word before it passcopys the passes
     RefusedOpenFree     \* TRUE: a refused open takes no slot and is counted
 
 \* every address has exactly one home and one cooldown entry (a cfg carries a
@@ -92,7 +92,7 @@ VARIABLES
     word,           \* <<generation, fd + 1>>; read by holders and fill threads
     deadRep,        \* dead_report: 0 none, else reported generation + 1
     state, fd, gen, addr,
-    snap,           \* snapshot[holder]: each holder's pass at the retire
+    snap,           \* passcopy[holder]: each holder's pass at the retire
     \* the table
     pass,           \* pass[holder]: even quiescent, odd inside a pass
     deadReports,    \* dead_reports
@@ -106,7 +106,7 @@ VARIABLES
     \* main's place inside a call (not code state: "idle" between calls)
     mpc, ms, mi, mk,
     \* the kernel and the caller's receive poller
-    kfd,            \* kfd[f]: KClosed, KEnv or the connected peer
+    kfd,            \* kfd[f]: KClosed, KEnv or the connected remote
     kdead,          \* kdead[f]: the socket was disconnected
     poller,         \* registered events <<fd, slot, generation, address>>
     \* the holders and the packets
@@ -115,7 +115,7 @@ VARIABLES
     rep,            \* rep[holder]: <<slot, generation>> to report dead, or <<>>
     rxEv, rxFd,     \* the receive worker's event and resolved descriptor
     \* history
-    crossed,        \* a holder sent or read on a socket connected to another peer
+    crossed,        \* a holder sent or read on a socket connected to another remote
     onClosed,       \* a holder sent or read on a closed descriptor
     attempts        \* open calls made
 
@@ -193,7 +193,7 @@ Quiescent(R, s) == \A h \in Holders : ~(R.snap[s][h] % 2 = 1 /\ pass[h] = R.snap
 
 Odd(n) == n % 2 = 1
 
-\* the kernel: the lowest free descriptor, refused for a peer that already
+\* the kernel: the lowest free descriptor, refused for a remote that already
 \* has a connected socket (EADDRINUSE) or when none is free
 FreeFds == {f \in Fds : kfd[f] = KClosed}
 KernelOpen(a) ==
@@ -341,13 +341,13 @@ Apply(N) ==
 
 \* the first step of a retire: the address leaves the index, the generation
 \* advances, and (in the code's order) the word loses its descriptor; or,
-\* broken, the passes are snapshotted first
+\* broken, the passes are copied first
 RetireFirstF(R, s, next) ==
     LET ng == (R.gen[s] + 1) % GenWrap
         r1 == [R EXCEPT !.index = IxRemove(R.index, R.addr, s),
                         !.gen = [R.gen EXCEPT ![s] = ng],
                         !.ms = s]
-    IN IF ~SnapshotFirst
+    IN IF ~PassCopyFirst
           THEN [r1 EXCEPT !.word = [R.word EXCEPT ![s] = <<ng, 0>>], !.mpc = next[1]]
           ELSE [r1 EXCEPT !.snap = [R.snap EXCEPT ![s] = pass], !.mpc = next[2]]
 
@@ -378,7 +378,7 @@ ForgetF(R, a) ==
     LET s == LookupFrom(R.index, R.addr, a, Home(a), 0) IN
     IF s < 0 THEN R ELSE RetireFirstF(R, s, <<"fsnap", "fword">>)
 
-\* the retire's second step: the passes snapshotted after the word store,
+\* the retire's second step: the passes copied after the word store,
 \* then the slot in quarantine; on the forget path the caller deregisters
 \* next, on the sweep's path its dead-report loop goes on
 RetireF(R) ==
@@ -387,7 +387,7 @@ RetireF(R) ==
                      IF R.mpc = "fsnap" THEN C_RETIRED_FORGET ELSE C_RETIRED_DEAD)
     IN IF R.mpc = "fsnap" THEN [f EXCEPT !.mpc = "fdereg"] ELSE NextDeadF(f, s)
 
-\* broken (SnapshotFirst): the word store after the snapshot
+\* broken (PassCopyFirst): the word store after the passcopy
 RetireWordLateF(R) ==
     LET s == R.ms
         f == FinishF([R EXCEPT !.word = [R.word EXCEPT ![s] = <<R.gen[s], 0>>]], s,
@@ -466,9 +466,9 @@ Retire ==
     /\ Apply(RetireF(MainV))
     /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
 
-\* broken (SnapshotFirst): the word store after the snapshot
+\* broken (PassCopyFirst): the word store after the passcopy
 RetireWordLate ==
-    /\ SnapshotFirst
+    /\ PassCopyFirst
     /\ mpc \in {"fword", "sword"}
     /\ Apply(RetireWordLateF(MainV))
     /\ UNCHANGED <<update, opensLeft, holdv, ghostv>>
@@ -572,7 +572,7 @@ TxResolve(h, i) ==
                      /\ cur' = [cur EXCEPT ![h] = i]
     /\ UNCHANGED <<slotv, tabv, mainv, kernv, pass, rep, rxEv, rxFd, ghostv>>
 
-\* the send, in the same pass: the kernel sends to the descriptor's peer; a
+\* the send, in the same pass: the kernel sends to the descriptor's remote; a
 \* disconnected socket answers ENOTCONN and the holder will report it
 TxSend(h) ==
     /\ cur[h] # 0
@@ -781,7 +781,7 @@ RetiredClosed == \A s \in Slots : state[s] = RETIRED ~> state[s] = FREE
 -----------------------------------------------------------------------------
 (* The checked configurations use this VIEW: the state with every value    *)
 (* that no later step reads replaced by a constant.  A FREE slot's address *)
-(* and an OPEN slot's snapshot are written before they are read again; the *)
+(* and an OPEN slot's passcopy are written before they are read again; the *)
 (* free stack above numFree and the retired list above numRetired are      *)
 (* written before they are read; a cooldown entry whose update has passed  *)
 (* never matches again (update only grows); a finished packet keeps only   *)
@@ -799,9 +799,9 @@ CounterView ==
 
 LiveSnap(s) == state[s] = RETIRED \/ (mpc \in {"fword", "sword"} /\ ms = s)
 
-\* a live snapshot only as what Quiescent reads of it: whether the holder is
-\* still inside the pass snapshotted.  A pass only grows, so once it moves on
-\* from the snapshot it never equals it again
+\* a live passcopy only as what Quiescent reads of it: whether the holder is
+\* still inside the pass copied.  A pass only grows, so once it moves on
+\* from the passcopy it never equals it again
 Blocks(s) == [h \in Holders |-> LiveSnap(s) /\ Odd(snap[s][h]) /\ pass[h] = snap[s][h]]
 
 View ==
