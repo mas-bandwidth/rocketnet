@@ -211,7 +211,7 @@ struct rn_message_open_t
 {
     int pending;                                // 1 while a start is open here, until its finish, abort or a cancel
     int in_place;                               // the open start: 0 region, 1 whole frame, 2 appended record;
-                                                // -1: an in-place start an update or send_packets closed, whose finish returns 0
+                                                // -1: an in-place start an update or a flush closed, whose finish returns 0
     struct rocketnet_packet_context_t in_place_context;
     uint8_t * in_place_payload;                 // the frame's payload root
 };

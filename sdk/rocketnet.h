@@ -1047,7 +1047,7 @@ struct rocketnet_client_t;
 ///   aborted by the thread that started it. Different clients may be sent to
 ///   from different threads at the same time. The thread that sends to a
 ///   client may change after a main thread call that is checked (below);
-///   packets two threads write to one client between two
+///   messages two threads write to one client between two
 ///   rocketnet_server_send_packets calls may then leave in either order.
 ///
 /// The check. The three calls, and the main thread calls that change the
@@ -1868,8 +1868,9 @@ struct rocketnet_server_config_t
 /// Pass the same game clock to every update, in seconds.
 /// By default run each frame on one thread. Update first, receive until NULL,
 /// simulate, write messages with start and finish, then send packets. A
-/// server may have its messages written by several game threads between its
-/// update and its send packets; see rocketnet_server_t.
+/// server may have its messages written by several game threads between
+/// rocketnet_server_update and rocketnet_server_send_packets; see
+/// rocketnet_server_t.
 ///
 /// Reliable messages wait for send budget. Unreliable messages over budget are
 /// dropped and counted in messages_dropped_over_budget.
