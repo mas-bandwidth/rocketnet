@@ -118,7 +118,7 @@ VARIABLES
     racc,           \* that running sum (grants staged, or tails and chunk claims)
     seenS,          \* the recompute's reads: grants staged,
     seenO,          \*   own frames used,
-    seenR,          \*   room
+    seenR,          \*   room, with ownTaken, every other filler's hold and the lines' tails at that read
     roomy,          \* the decision that refused a filler's single claim read room for it past every filler in flight
     starved,        \* history: a refusal NeverStarved forbids
     unnamed,        \* history: a refusal TailsNamed forbids
@@ -163,13 +163,26 @@ TailsOn(l) == tail[l] + SumOver([g \in Fillers |-> IF LineOf(g) = l THEN ChunkHo
 \* while it is in flight
 Held(g) == IF pc[g] = "idle" THEN 0
            ELSE Max(1, ChunkHold(g) + ret[g] + (IF pc[g] = "counting" THEN 1 ELSE 0))
-OthersHeld(f) == SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE Held(g)], Fillers) + Tails
 
-\* a room of r frames is above what the protocol still needs, with a frame
-\* for f and for every other filler in flight now
-RoomFor(f, r) == r + ownTaken > Reserve + Busy(f)
-\* the same, past every hold the other fillers and the lines have
-RoomPastTails(f, r) == r + ownTaken > Reserve + OthersHeld(f)
+\* the room read (Read2) and, at that same step, the own frames taken, every
+\* other filler's hold and the lines' tails: frames a filler held then are
+\* inside that room, so the ghosts below judge the room against them
+Snap(f) == [r |-> free, o |-> ownTaken, t |-> Tails,
+            h |-> [g \in Fillers |-> IF g = f THEN 0 ELSE Held(g)]]
+NoSnap == [r |-> 0, o |-> 0, t |-> 0, h |-> [g \in Fillers |-> 0]]
+
+\* a decision on the room s.r read with s: that room was above what the
+\* protocol still needed (the reserve less the own frames taken), with a
+\* frame for f and one for every other filler in flight at the read or now
+RoomFor(f, s) ==
+    s.r + s.o > Reserve + Cardinality({g \in Fillers \ {f} : s.h[g] > 0 \/ pc[g] /= "idle"})
+\* the same, past every other filler's hold and the lines' tails, each the
+\* larger of its value at the read and now: a hold taken after the read
+\* (a filler claiming since) is no starvation, nor is one given up since
+\* (its frames were inside the room read)
+RoomPastTails(f, s) ==
+    s.r + s.o > Reserve + SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE Max(s.h[g], Held(g))], Fillers)
+                        + Max(s.t, Tails)
 
 TypeOK ==
     /\ free \in 0..MaxFree
@@ -190,7 +203,7 @@ TypeOK ==
     /\ racc \in [Fillers -> Nat]
     /\ seenS \in [Fillers -> Nat]
     /\ seenO \in [Fillers -> Nat]
-    /\ seenR \in [Fillers -> Nat]
+    /\ seenR \in [Fillers -> [r : Nat, o : Nat, h : [Fillers -> Nat], t : Nat]]
     /\ roomy \in [Fillers -> BOOLEAN]
     /\ starved \in BOOLEAN
     /\ unnamed \in BOOLEAN
@@ -218,7 +231,7 @@ Init ==
     /\ racc = [f \in Fillers |-> 0]
     /\ seenS = [f \in Fillers |-> 0]
     /\ seenO = [f \in Fillers |-> 0]
-    /\ seenR = [f \in Fillers |-> 0]
+    /\ seenR = [f \in Fillers |-> NoSnap]
     /\ roomy = [f \in Fillers |-> FALSE]
     /\ starved = FALSE
     /\ unnamed = FALSE
@@ -367,20 +380,20 @@ Grant(f) ==
     /\ tail' = [tail EXCEPT ![LineOf(f)] = @ + size[f] - 1]
     /\ roomy' = [roomy EXCEPT ![f] = FALSE]
 
-\* the refusal decided, on the room r its recompute read: the claim is
+\* the refusal decided, on the room its recompute read (s): the claim is
 \* still added until its take back, a step of its own.  A single claim
-\* refused is starved if r had a frame for f past the reserve and past
-\* every hold of the other fillers and of the lines; and the decision
-\* remembers whether r had a frame for f past every filler in flight, which
-\* the counter the code picks later must name.  Room that came back after
-\* the read, or that a filler claiming after the read takes, is no
+\* refused is starved if that room had a frame for f past the reserve and
+\* past every hold of the other fillers and of the lines; and the decision
+\* remembers whether it had a frame for f past every filler in flight,
+\* which the counter the code picks later must name.  Room that came back
+\* after the read, or that a filler claiming after the read takes, is no
 \* starvation.
-RefuseAt(f, r) ==
+RefuseAt(f, s) ==
     /\ pc' = [pc EXCEPT ![f] = "refused"]
     /\ IF size[f] > 1 /\ ~NoFallback
           THEN UNCHANGED <<starved, roomy>>
-          ELSE /\ starved' = (starved \/ RoomPastTails(f, r))
-               /\ roomy' = [roomy EXCEPT ![f] = RoomFor(f, r)]
+          ELSE /\ starved' = (starved \/ RoomPastTails(f, s))
+               /\ roomy' = [roomy EXCEPT ![f] = RoomFor(f, s)]
 
 \* the whole claim under the budget loaded now: granted; else the
 \* recompute begins
@@ -390,7 +403,7 @@ Check(f) ==
           THEN /\ Grant(f)
                /\ UNCHANGED <<starved, seenR>>
           ELSE IF NoRefresh
-                  THEN /\ RefuseAt(f, free)
+                  THEN /\ RefuseAt(f, Snap(f))
                        /\ UNCHANGED <<tail, seenR>>
                   ELSE /\ pc' = [pc EXCEPT ![f] = IF RoomFirst THEN "read2" ELSE "read1"]
                        /\ UNCHANGED <<tail, starved, roomy, seenR>>
@@ -419,7 +432,7 @@ Read1(f) ==
 \* the room (RoomFirst: before the counts)
 Read2(f) ==
     /\ pc[f] = "read2"
-    /\ seenR' = [seenR EXCEPT ![f] = free]
+    /\ seenR' = [seenR EXCEPT ![f] = Snap(f)]
     /\ pc' = [pc EXCEPT ![f] = IF RoomFirst THEN "read1" ELSE IF NoReread THEN "raise" ELSE "read3"]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, tail, size,
                    claim, ret, uncounted, ld, rpos, racc, seenS, seenO, roomy, starved,
@@ -452,7 +465,7 @@ Ok(f, b) == IF IndexTest THEN claim[f] + size[f] <= b ELSE claims <= b
 
 Decide(f) ==
     \/ /\ pc[f] = "raise"
-       /\ LET b2 == Max(budget, seenS[f] + Above(seenR[f], seenO[f]))
+       /\ LET b2 == Max(budget, seenS[f] + Above(seenR[f].r, seenO[f]))
           IN /\ budget' = b2
              /\ ld' = [ld EXCEPT ![f] = b2]
        /\ pc' = [pc EXCEPT ![f] = "test"]
@@ -469,7 +482,7 @@ Decide(f) ==
        /\ ld' = [ld EXCEPT ![f] = 0]
        /\ seenS' = [seenS EXCEPT ![f] = 0]
        /\ seenO' = [seenO EXCEPT ![f] = 0]
-       /\ seenR' = [seenR EXCEPT ![f] = 0]
+       /\ seenR' = [seenR EXCEPT ![f] = NoSnap]
        /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, size,
                       claim, ret, uncounted, rpos, racc, unnamed, claimsDone, retired,
                       phases>>
