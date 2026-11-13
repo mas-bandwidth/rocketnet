@@ -1316,10 +1316,12 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
             // rocketnet_coalesce_split writes only positive lengths
 
             const int length = lengths[i];
-            if ( length > ROCKETNET_RECEIVE_CEILING )
+            if ( length < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || length > ROCKETNET_RECEIVE_CEILING )
             {
+                // shorter than any server-bound packet, or past the ceiling:
+                // never takes a bank slot (as gso, io_uring, RIO and XDP)
                 ++batch->tally[ROCKETNET_IOCP_RECEIVE_DROPPED];
-                ++batch->tally[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+                ++batch->tally[length < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES ? ROCKETNET_IOCP_RECEIVE_TOO_SHORT : ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
                 continue;
             }
             rocketnet_iocp_bank_datagram( batch, buffer, from, op->uro_data + base + offsets[i], length );
@@ -1577,7 +1579,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
             {
                 rocketnet_iocp_publish_uro( iocp, &batch, buffer, op, success, receive_error, bytes );
             }
-            else if ( success && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING &&
+            else if ( success && bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES && bytes <= ROCKETNET_RECEIVE_CEILING &&
                       rocketnet_iocp_address_read( &op->address, op->address_bytes, iocp->ipv6, &from ) )
             {
                 rocketnet_iocp_bank_datagram( &batch, buffer, from, op->frame, (int) bytes );
@@ -1585,8 +1587,10 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
             else
             {
                 ++batch.tally[ROCKETNET_IOCP_RECEIVE_DROPPED];
-                if ( success && bytes == 0 )
+                if ( success && bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
                 {
+                    // shorter than any server-bound packet: never takes a
+                    // bank slot (as gso, io_uring, RIO and XDP)
                     ++batch.tally[ROCKETNET_IOCP_RECEIVE_TOO_SHORT];
                 }
                 else if ( receive_error == WSAEMSGSIZE || ( success && bytes > ROCKETNET_RECEIVE_CEILING ) )
@@ -2096,6 +2100,13 @@ static bool rocketnet_iocp_endpoint_processors( void * context, rocketnet_server
         iocp->pins[i] = order[i % count].pin;
         iocp->cores[i] = order[i % count].core;
     }
+    if ( ok && iocp->num_endpoints > count )
+    {
+        // a fallback: named at warn, and each worker's processor is readable
+        // after start (rocketnet_server_iocp_worker_placement)
+        rocketnet_warn( "iocp transport: %d workers asked for %d logical processors; workers %d..%d share processors with workers 0..%d", iocp->num_endpoints,
+                        count, count, iocp->num_endpoints - 1, iocp->num_endpoints - 1 - count );
+    }
     if ( !ok )
     {
         rocketnet_platform_windows_create_status( status, GetLastError() );
@@ -2540,19 +2551,25 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         {
             goto failed;
         }
-        // Match the portable socket's don't-fragment rule, tolerating option refusal.
+        // Match the portable socket's don't-fragment rule, tolerating option
+        // refusal: a refusal is a fallback, so it is named at warn.
 
-        if ( iocp->ipv6 )
+        if ( iocp->ipv6 && setsockopt( socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
         {
-            setsockopt( socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) );
+            rocketnet_warn( "iocp transport: IPV6_DONTFRAG refused (Winsock %d); IPv6 datagrams may be fragmented", WSAGetLastError() );
         }
-        setsockopt( socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
+        if ( setsockopt( socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
+        {
+            rocketnet_warn( "iocp transport: IP_DONTFRAGMENT refused (Winsock %d); IPv4 datagrams may be fragmented", WSAGetLastError() );
+        }
         // both ICMP reset reports off; a refusal is logged once and the receive
         // paths skip the statuses
 
         rocketnet_platform_socket_disable_udp_resets( (uintptr_t) socket );
         if ( bind( socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
         {
+            // a refusal for want of memory reads OUT_OF_MEMORY
+            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
             goto failed;
         }
         if ( e == 0 )
