@@ -101,17 +101,10 @@ REGISTER_UNIT_TEST( test_unguarded_after_literals );
 
 class ShapeTests(unittest.TestCase):
     def test_names_then_passed_line(self):
+        self.assertEqual(checker.check_shape(["commit available 1 MiB of a 2 MiB limit, physical available 3 MiB",
+                                              "test_a", "", checker.PASSED_LINE, ""], "suite"), ["test_a"])
         self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE, ""], "suite"),
                          ["test_a", "test_b"])
-
-    def test_windows_commit_report_lines_pass(self):
-        lines = ["commit available 319373 MiB of a 325500 MiB limit, physical available 123275 MiB", "test_a",
-                 "commit lock: test_a waited 1.8 s for another run's full-capacity case", "", checker.PASSED_LINE, ""]
-        self.assertEqual(checker.check_shape(lines, "suite"), ["test_a"])
-
-    def test_commit_report_lookalike_fails(self):
-        with self.assertRaises(SystemExit):
-            checker.check_shape(["commit available lots", "test_a", "", checker.PASSED_LINE, ""], "suite")
 
     def test_skip_line_fails(self):
         with self.assertRaises(SystemExit):
@@ -161,6 +154,14 @@ class FunctionalLogTests(unittest.TestCase):
     def test_two_keep_going_summaries_are_refused(self):
         line = "keep going: 0 failed; 2 of 2 collected cases ran"
         self.assertTrue(self.check(line, line))
+
+    def test_windows_commit_lines_are_reports(self):
+        self.assertEqual(self.check("commit available 320759 MiB of a 325500 MiB limit, physical available 123419 MiB",
+                                    "commit lock: test_a waited 3.5 s for another run's full-capacity case",
+                                    "commit state unreadable"), [])
+
+    def test_a_commit_line_with_more_text_is_refused(self):
+        self.assertTrue(self.check("commit available 1 MiB of a 2 MiB limit, physical available 3 MiB and then some"))
 
 
 

@@ -75,6 +75,13 @@ enum rocketnet_receive_drop_t
     // ROCKETNET_COUNTER_RECEIVE_FAILED.
     ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED,
 
+    // never returned by the prefilter: counted by the transport itself for a
+    // datagram it received but will never hand to main because it is
+    // stopping (a receive that completed after stop began, or one left in a
+    // receive bank main will not take). Feeds
+    // ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED.
+    ROCKETNET_RECEIVE_DROP_STOPPED,
+
     ROCKETNET_RECEIVE_NUM_DROPS
 };
 
@@ -132,8 +139,9 @@ static inline enum rocketnet_receive_drop_t rocketnet_receive_prefilter( const u
 // how many (at most ROCKETNET_RECEIVE_DROP_MAX_COUNTERS). They are exactly
 // what main's ladder adds for the same datagram: PACKETS_RECEIVED, then the
 // type's RECEIVED where main counts one before its size check, then the
-// reason. BANK_FULL is RECEIVE_DROPPED_FULL alone and RECEIVE_FAILED is
-// RECEIVE_FAILED alone: the datagram was never
+// reason. BANK_FULL is RECEIVE_DROPPED_FULL alone, RECEIVE_FAILED is
+// RECEIVE_FAILED alone and STOPPED is RECEIVE_DROPPED_STOPPED alone: the
+// datagram was never
 // received by the protocol. ACCEPT adds nothing.
 #define ROCKETNET_RECEIVE_DROP_MAX_COUNTERS 3
 
@@ -148,6 +156,9 @@ static inline int rocketnet_receive_drop_counters( enum rocketnet_receive_drop_t
             return 1;
         case ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED:
             counters[0] = ROCKETNET_COUNTER_RECEIVE_FAILED;
+            return 1;
+        case ROCKETNET_RECEIVE_DROP_STOPPED:
+            counters[0] = ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED;
             return 1;
         default:
             break;

@@ -247,6 +247,8 @@ static void test_receive_drop_counters_bank_full_is_its_own()
     check( counters[0] == ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL );
     check( rocketnet_receive_drop_counters( ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED, counters ) == 1 );
     check( counters[0] == ROCKETNET_COUNTER_RECEIVE_FAILED );
+    check( rocketnet_receive_drop_counters( ROCKETNET_RECEIVE_DROP_STOPPED, counters ) == 1 );
+    check( counters[0] == ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED );
     check( rocketnet_receive_drop_counters( ROCKETNET_RECEIVE_ACCEPT, counters ) == 0 );
 }
 
