@@ -568,7 +568,6 @@ static void msgx_enabled( const msgx_walk_t & walk, std::vector<msgx_op_t> & ops
     ops.push_back( { "sweep", 0, 0, 0, 0 } );
     ops.push_back( { "sweep", 0, 0, 0, 0 } );
     ops.push_back( { "stamp", 1 + random.below( MSGX_ADDRS ), 1 + random.below( MSGX_TX ), 0, 0 } );
-    ops.push_back( { "stamp", 1 + random.below( MSGX_ADDRS ), 1 + random.below( MSGX_TX ), 0, 0 } );
 
     for ( int h = 1; h <= MSGX_HOLDERS; h++ )
     {

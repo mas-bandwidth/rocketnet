@@ -97,7 +97,7 @@ LAYERS = {
             "Close": "one entry of a sweep call's close loop, taken whole as SweepCall",
         },
         "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired"],
-        "steps": 800,
+        "steps": 500,
     },
 }
 
