@@ -74,7 +74,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi())
         code, text = run_release(api)
         self.assertEqual(code, 0, text)
-        self.assertIn("VERDICT: PASS v1.1.8", text)
+        self.assertIn("VERDICT: PASS v1.2.0", text)
         self.assertIn("PASS  ci.yml [jobs, push,pull_request, from v1.1.8]", text)
         self.assertIn("'MemorySanitizer': success", text)
         self.assertIn("dry run: nothing tagged", text)
@@ -174,7 +174,7 @@ class Release(unittest.TestCase):
         api.files[("sdk/rocketnet.h", SHA)] = header("v1.1.7")
         code, text = run_release(api)
         self.assertEqual(code, 1)
-        self.assertIn("ROCKETNET_VERSION_FULL is 'v1.1.7', want 'v1.1.8'", text)
+        self.assertIn("ROCKETNET_VERSION_FULL is 'v1.1.7', want 'v1.2.0'", text)
 
     def test_bad_version_refuses(self):
         code, text = run_release(green_release(FakeApi()), version="1.1.8")
@@ -186,7 +186,7 @@ class Release(unittest.TestCase):
         del api.files[(f"docs/RELEASE-NOTES-{VERSION}.md", SHA)]
         code, text = run_release(api)
         self.assertEqual(code, 1)
-        self.assertIn("FAIL  release notes docs/RELEASE-NOTES-v1.1.8.md", text)
+        self.assertIn("FAIL  release notes docs/RELEASE-NOTES-v1.2.0.md", text)
 
     def test_tag_elsewhere_refuses(self):
         api = green_release(FakeApi())
@@ -235,6 +235,36 @@ class Release(unittest.TestCase):
         code, text = run_release(api)
         self.assertEqual(code, 1)
         self.assertIn("FAIL  nightly-soak.yml [jobs, nightly, from v1.1.8]", text)
+
+    def test_point_release_is_gated_by_the_per_commit_tier_only(self):
+        # owner, 2026-11-13: each point release has fast tests only; the nightly tier gates a minor
+        api = green_release(FakeApi(), version="v1.1.8")
+        run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))
+        api.jobs[run["id"]][1] = job("soak per transport (main / 1800 s per cell)", "failure")
+        api.runs = [r for r in api.runs if not r["path"].endswith("/msan.yml")]
+        code, text = run_release(api, version="v1.1.8")
+        self.assertEqual(code, 0, text)
+        self.assertIn("MINOR ONLY nightly-soak.yml [jobs, nightly, from v1.1.8]", text)
+        self.assertIn("MINOR ONLY msan.yml 'MemorySanitizer'", text)
+        self.assertNotIn("FAIL", text)
+        api.jobs[ci_run(api)["id"]][0] = job("linux / Debug / unit", "failure")
+        code, text = run_release(api, version="v1.1.8")
+        self.assertEqual(code, 1, text)
+
+    def test_which_versions_are_point_releases(self):
+        for version in ("v1.1.8", "v1.1.9", "v2.0.1"):
+            self.assertTrue(rg.is_point_release(version), version)
+        for version in ("v1.1.7", "v1.2.0", "v2.0.0", "v1.1.9-rc1", "v2.0.1-preview-1", "v1.2.0-preview-1"):
+            self.assertFalse(rg.is_point_release(version), version)
+
+    def test_minor_release_is_gated_by_the_nightly_tier(self):
+        api = green_release(FakeApi(), version="v1.2.0")
+        run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))
+        api.jobs[run["id"]][1] = job("soak per transport (main / 1800 s per cell)", "failure")
+        code, text = run_release(api, version="v1.2.0")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL  nightly-soak.yml [jobs, nightly, from v1.1.8]", text)
+        self.assertNotIn("MINOR ONLY", text)
 
     def test_nightly_functional_tier_missing_refuses(self):
         api = green_release(FakeApi())
@@ -385,7 +415,7 @@ class Publish(unittest.TestCase):
         code, text = run_release(api, dry_run=False)
         self.assertEqual(code, 1)
         self.assertNotIn(f"/repos/{REPO}/releases", [w[1] for w in api.writes])
-        self.assertIn("not publishing v1.1.8", text)
+        self.assertIn("not publishing v1.2.0", text)
 
     def test_tag_run_that_never_comes_is_not_published(self):
         api = green_release(FakeApi())

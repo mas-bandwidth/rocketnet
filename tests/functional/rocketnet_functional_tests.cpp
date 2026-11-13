@@ -9621,12 +9621,11 @@ static double rocketnet_test_sleep_monotonic()
 void rocketnet_test_sleep_resumes_after_signal()
 {
     struct sigaction action;
-    struct sigaction previous;
     memset( &action, 0, sizeof( action ) );
     action.sa_handler = rocketnet_test_sleep_signal_handler;
     sigemptyset( &action.sa_mask );
     action.sa_flags = 0;
-    rocketnet_check( sigaction( SIGALRM, &action, &previous ) == 0 );
+    rocketnet_check( sigaction( SIGALRM, &action, NULL ) == 0 );
 
     struct itimerval timer;
     timer.it_interval.tv_sec = 0;
@@ -9643,7 +9642,13 @@ void rocketnet_test_sleep_resumes_after_signal()
     struct itimerval off;
     memset( &off, 0, sizeof( off ) );
     rocketnet_check( setitimer( ITIMER_REAL, &off, NULL ) == 0 );
-    rocketnet_check( sigaction( SIGALRM, &previous, NULL ) == 0 );
+
+    // The counting handler stays installed for the rest of the process. On
+    // macOS a timer expiry can still raise SIGALRM after setitimer( off )
+    // returns (for any thread, the suite's watchdog included), and under the
+    // default action that ends the process: "signal 14" in CI 43349573416,
+    // 12 of 800 runs on the studio. Ignoring before the restore cut it to 4 of
+    // 800, so no restore at all: nothing else in the suite uses SIGALRM.
 
     printf( "  slept %.3f seconds through %d signals\n", elapsed, (int) rocketnet_test_sleep_signals );
     fflush( stdout );

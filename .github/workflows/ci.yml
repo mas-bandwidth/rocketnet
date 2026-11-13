@@ -3847,6 +3847,19 @@ jobs:
           python3 tools/check_byte_order.py --self-test
           python3 tools/check_byte_order.py
 
+      # Counters are ABI (owner, 2026-11-13): tools/check_counter_contract.py
+      # exits 1 when sdk/rocketnet_counters.h renumbers, renames, removes,
+      # reuses or reclasses an id of tests/counter_contract.inc, adds a row the
+      # contract does not list, puts the table behind a preprocessor condition,
+      # or changes a row a release froze (the RELEASED lines). The unit case
+      # test_counter_contract_the_built_table_is_the_contract reads the built
+      # table against the same list on every platform and in every build.
+      - name: Every counter keeps its id
+        if: ${{ !cancelled() }}
+        run: |
+          python3 tools/check_counter_contract.py --self-test
+          python3 tools/check_counter_contract.py
+
       # Every check has a planted violation (tools/planted_violations.tsv): every job of every
       # per-commit and scheduled workflow has a row, every row names a real step and carries
       # that step's own command. The plants themselves run nightly (planted-violations.yml);

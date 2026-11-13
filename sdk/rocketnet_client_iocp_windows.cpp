@@ -657,4 +657,12 @@ const rocketnet_client_transport_io_operations_t rocketnet_client_iocp_operation
     rocketnet_client_iocp_close_operation, NULL
 };
 
+// the bytes the iocp client's create allocates for its record, so the client
+// memory plan counts the record itself, never a copy of its layout
+
+uint64_t rocketnet_client_iocp_io_allocation_bytes()
+{
+    return rocketnet_memory_allocations( { sizeof( rocketnet_client_iocp_io_t ) } );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

@@ -16,9 +16,9 @@
 //   RTM_GETROUTE  a dump of the family's routes: the default route
 //                 (destination length 0, unicast, main table, not cloned)
 //                 whose output interface is this interface: its RTA_GATEWAY
-//                 is the gateway. An IPv4 multipath default route answers
-//                 with its first next hop, as /proc/net/route (netstat -rn)
-//                 shows it. A default route that names only a nexthop
+//                 is the gateway. A multipath default route (either
+//                 family) answers with its first next hop on this
+//                 interface. A default route that names only a nexthop
 //                 object (RTA_NH_ID, as the kernel dumps it when
 //                 net.ipv4.nexthop_compat_mode is 0) is answered after the
 //                 dump by an RTM_GETNEXTHOP query for that id (ip nexthop

@@ -906,47 +906,73 @@ static void check_client_memory_budget( allocator_state & state )
     unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
 }
 
-// The plan is the peak the create reaches: a client of a two-family token
-// opens both families' sockets, each with its wake, and the most bytes it
-// holds at once stay within rocketnet_client_transport_required_memory.
-// Functional: it opens real sockets on 127.0.0.1 and ::1.
+// The plan is exactly what create allocates: for each client transport that
+// opens sockets on this platform, a one-family token's create reaches
+// rocketnet_client_transport_required_memory_one_family at its peak, and a
+// two-family token's create, which races both families on two sockets, each
+// with its wake, reaches rocketnet_client_transport_required_memory. Not one
+// byte more, which would break the operator budget, and not one byte less,
+// which would refuse a create that fits. Functional: real sockets on
+// 127.0.0.1 and ::1, and the network thread.
 
-static void check_client_two_family_plan_covers_create( allocator_state & state )
+static void check_client_plan_is_what_create_allocates( allocator_state & state )
 {
-    rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
-    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
-    snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
-
-    // the plan below is portable's: hold an env pin aside, as the server check does
+    // the plans below are per transport: hold an env pin aside, as the server check does
 
     char pinned_transport[64];
     const bool transport_pinned = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", pinned_transport, sizeof( pinned_transport ) ) != 0;
     unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 
-    const uint64_t plan = rocketnet_client_transport_required_memory( &config, "portable" );
-    check( plan > 0 );
+    const char * transports[] = {
+        "portable",
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        "gso",
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        "msgx",
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        "iocp",
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    };
 
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    const uint64_t now = (uint64_t) time( NULL );
-    write_valid_token( token, now - 100, now + 100000, true );
+    for ( const char * transport : transports )
+    {
+        rocketnet_client_transport_config_t config;
+        rocketnet_client_transport_default_config( &config );
+        memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+        snprintf( config.transport, sizeof( config.transport ), "%s", transport );
 
-    const uint64_t live_before = state.live_bytes.load();
-    state.peak_bytes.store( live_before );
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create( &state, token, &config, 0.0 );
-    check( client != NULL );
-    const uint64_t peak = state.peak_bytes.load() - live_before;
-    rn_native_client_transport_stop_and_destroy( client );
+        const uint64_t plans[2] = { rocketnet_client_transport_required_memory_one_family( &config, transport ),
+                                    rocketnet_client_transport_required_memory( &config, transport ) };
+        check( plans[0] > 0 && plans[1] > plans[0] );
+
+        for ( int both_families = 0; both_families < 2; both_families++ )
+        {
+            uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+            const uint64_t now = (uint64_t) time( NULL );
+            write_valid_token( token, now - 100, now + 100000, both_families != 0 );
+
+            const uint64_t live_before = state.live_bytes.load();
+            state.peak_bytes.store( live_before );
+            rocketnet_client_transport_t * client = rocketnet_client_transport_create( &state, token, &config, 0.0 );
+            check( client != NULL );
+            const uint64_t peak = state.peak_bytes.load() - live_before;
+            rn_native_client_transport_stop_and_destroy( client );
+
+            if ( peak != plans[both_families] )
+            {
+                fprintf( stderr, "%s client create (%s) peaked at %llu bytes, plan %llu\n", transport, both_families ? "two families" : "one family",
+                         (unsigned long long) peak, (unsigned long long) plans[both_families] );
+            }
+            check( peak == plans[both_families] );
+        }
+    }
+
     if ( transport_pinned )
     {
         setenv( "ROCKETNET_CLIENT_TRANSPORT", pinned_transport, 1 );
     }
-
-    if ( peak > plan )
-    {
-        fprintf( stderr, "two-family client create peaked at %llu bytes, plan %llu\n", (unsigned long long) peak, (unsigned long long) plan );
-    }
-    check( peak <= plan );
 }
 
 // rocketnet_malloc and rocketnet_free from worker threads while another
@@ -1381,7 +1407,7 @@ int main( int argc, char ** argv )
     check_component_create_sweeps( state );
     check_server_memory_budget( state );
     check_client_memory_budget( state );
-    check_client_two_family_plan_covers_create( state );
+    check_client_plan_is_what_create_allocates( state );
     check_game_clock_client_create( state );
     check( state.live == baseline );
 

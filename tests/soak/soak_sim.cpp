@@ -914,7 +914,10 @@ int main( int argc, char ** argv )
     // Found by running the pinned and 24 random seeds with the table empty, and
     // confirmed one fault at a time: loss alone moves only the history
     // overflow, duplication alone moves only the ALREADY_RECEIVED rows, and
-    // jitter alone moves nothing.
+    // jitter alone moves nothing. The cookie reply limit (t12 rule 7) added
+    // CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD: at the pinned seed it reads 1
+    // on this wire, 0 with duplication off (loss and jitter kept), and 4 with
+    // duplication alone, so it is duplication's row, as dst_checks.h has it.
 
     static const soak_explained_refusal_t soak_explained_refusals[] = {
         { ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW, "loss: a lost keep-alive takes its acks with it, so sent packets age out of the history unacknowledged" },
@@ -923,7 +926,7 @@ int main( int argc, char ** argv )
         { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
         { ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
         { ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
-        { ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD, "duplication: a cookieless request arrives twice in the update its first copy was answered in, and the per-update cookie reply limit withholds the copy (t12 rule 7)" },
+        { ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD, "duplication: the wire delivers a cookieless request twice in one update, the per-update cookie reply limit withholds the copy's reply" },
         { -1, NULL }
     };
 

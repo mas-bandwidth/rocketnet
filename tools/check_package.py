@@ -26,7 +26,7 @@ INSTALLED_FILES = (
     (r"share/rocketnet/sodium/LICENSE", "the vendored sodium's licence"),
     (LIB + r"/cmake/RocketNet/RocketNet(?:Config|ConfigVersion|Dependencies|Targets)\.cmake", "the package files"),
     (LIB + r"/cmake/RocketNet/RocketNetTargets-[a-z]+\.cmake", "the per-configuration targets"),
-    (LIB + r"/(?:lib)?rocketnet(?:_shared)?\.(?:a|lib)", "the static library or the DLL's import library"),
+    (LIB + r"/(?:lib)?rocketnet(?:_shared|_import)?\.(?:a|lib)", "the static library or the DLL's import library (rocketnet_import.lib, CMakeLists.txt ARCHIVE_OUTPUT_NAME)"),
     (LIB + r"/librocketnet(?:_shared)?\.(?:so(?:\.[0-9]+)*|[0-9.]*dylib)", "the shared library and its links"),
     (r"bin/rocketnet(?:_shared)?\.(?:dll|pdb)", "the Windows DLL and its symbols"),
 )

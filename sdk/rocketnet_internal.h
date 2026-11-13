@@ -746,4 +746,9 @@ extern void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t *
 bool rocketnet_crypto_acquire( void );
 void rocketnet_crypto_release( void );
 
+// the client plan less the family race: what a one-family create allocates
+// (sdk/rocketnet_client_transport.cpp); 0 where there is no plan
+struct rocketnet_client_transport_config_t;
+uint64_t rocketnet_client_transport_required_memory_one_family( const struct rocketnet_client_transport_config_t * config, const char * transport );
+
 #endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H
