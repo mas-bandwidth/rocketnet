@@ -330,10 +330,29 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
                 // has passed its look, and no other store of the owner
                 // follows while the claim stands, so a word that shows a
                 // claim is never read with an owner that is not its
-                // claimer's (FillPeek, FillNest). The depth stores below are
-                // relaxed: only the claimer writes them, after its seq_cst
-                // claim store, so a reader that loads one is coherence-ordered
-                // after that store
+                // claimer's (FillPeek, FillNest).
+                //
+                // The depth stores (here and in fill_end) are relaxed, and
+                // that holds under C++20, where a plain store does not
+                // continue a release sequence. The argument is not
+                // synchronizes-with but the single total order S of the
+                // seq_cst operations ([atomics.order]): only the claimer
+                // stores a depth, after its seq_cst claim store C (owner
+                // store O sequenced before C), while its claim stands. A
+                // seq_cst word load L here that reads a depth store D
+                // follows C in modification order (C, then D, same thread),
+                // so C is coherence-ordered before L, and both are seq_cst:
+                // C precedes L in S. O precedes C in S (sequenced before),
+                // and L precedes the owner load L2 below. So O precedes L2
+                // in S, and a seq_cst load preceded in S by a seq_cst store
+                // to the same object cannot read a value from before that
+                // store: L2 reads the claimer, or a later owner (only after
+                // the claim ended, never this thread, which is inside this
+                // call). Either way not this thread, so it is refused.
+                // arm64 gives the same: O and C are stlr, D is a str after C
+                // to the same address (a local write successor), L and L2
+                // are ldar. RNFillPhase is sequentially consistent and
+                // cannot see this; the argument is the evidence
 
                 const uint64_t depth = rn_fill_phase_word_depth( before );
                 if ( depth == 0 )
@@ -470,7 +489,11 @@ void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, 
         rocketnet_assert( depth > 0 );
         if ( depth > 1 )
         {
-            // proofs/tla/RNFillPhase.tla FillUnnest
+            // proofs/tla/RNFillPhase.tla FillUnnest. Relaxed, as the nested
+            // store in fill_begin is: a nested test that loads this word is
+            // ordered after the claim store by the seq_cst order S (the
+            // argument at fill_begin's nested test), not by a release
+            // sequence
             const uint64_t outer = rn_fill_phase_word( rn_fill_phase_word_epoch( held ), depth - 1, true );
             word->store( outer, std::memory_order_relaxed );
             RN_FILL_PHASE_TRACE( "FillUnnest", client_index, outer, false );

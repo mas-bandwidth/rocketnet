@@ -3277,7 +3277,13 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
         rocketnet_error( "rocketnet_server_destroy: the server is not stopped; call rocketnet_server_stop and poll rocketnet_server_stopped before destroy" );
 
         // an update in three calls left open is finished first: the stop
-        // below is refused inside it, and its acks would stay open
+        // below is refused inside it, and its acks would stay open. The
+        // plain read of update_stage races nothing: only the main thread
+        // writes it (rn_message_object_update_begin and _end, under the
+        // update calls' main scope), destroy is a main-thread call, and by
+        // the contract no game thread is inside a server call when the main
+        // thread makes one (rocketnet.h, rocketnet_server_t); update_client,
+        // the one game-thread reader, only reads it
         if ( rn_server( server ) && rn_server( server )->object.update_stage != RN_MESSAGE_UPDATE_CLOSED )
         {
             rocketnet_server_update_finish( server );
