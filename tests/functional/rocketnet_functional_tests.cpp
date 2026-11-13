@@ -11950,6 +11950,7 @@ extern void test_client_destroy_early_threaded_frees();
 extern void test_server_destroy_early_threaded_frees();
 extern void test_client_destroy_early_threaded_keeps_then_frees();
 extern void test_server_destroy_early_threaded_keeps_then_frees();
+extern void test_gaps_r2_st_ladder_stops_at_a_portable_grant();
 #endif // bodies live in destroy_early_keep.cpp, not in the production executable
 extern void rocketnet_test_real_environment_dev_session_sequence_start();
 extern void rocketnet_test_real_environment_log_level_before_init();
@@ -14397,6 +14398,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_destroy_early_threaded_frees", test_server_destroy_early_threaded_frees, NULL },
     { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_server_destroy_early_threaded_keeps_then_frees", test_server_destroy_early_threaded_keeps_then_frees, NULL },
+    { "test_gaps_r2_st_ladder_stops_at_a_portable_grant", test_gaps_r2_st_ladder_stops_at_a_portable_grant, NULL },
     { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
     { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
     { "test_real_environment_config_precedence_and_invalid", rocketnet_test_real_environment_config_precedence_and_invalid, NULL },
