@@ -44,8 +44,10 @@
     kern_return_t of thread_policy_set, or the pthread error).
 */
 
-#ifndef HARDEN_THREAD_POOL_H
-#define HARDEN_THREAD_POOL_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_LOAD_THREAD_POOL_H
+#define ROCKETNET_TESTS_LOAD_THREAD_POOL_H
 
 // a system include (CMakeLists.txt): enkiTS is vendored unmodified and is not held to rocketnet's warning floor
 #if defined( _WIN32 )
@@ -333,4 +335,4 @@ inline void Task::Wait()
     pool->scheduler.WaitforTask( this );
 }
 
-#endif // #ifndef HARDEN_THREAD_POOL_H
+#endif // ROCKETNET_TESTS_LOAD_THREAD_POOL_H

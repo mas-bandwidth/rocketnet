@@ -476,7 +476,7 @@ struct harden_options_t
     uint64_t protocol_id = HARDEN_PROTOCOL_ID;
 };
 
-// space game's real load: snapshot baselines and deltas as unreliable messages
+// space game's real load: the game state as unreliable messages
 // of about one MTU (one message = one packet), 15 a client a tick at the peak
 // (about 10 Mb/s a client, 10 Gb/s server-wide) and 8 on average (5 to 6 Mb/s);
 // no large messages; reliable only as a trickle, one small message a client
@@ -1425,7 +1425,7 @@ static void harden_fill_stop( harden_fill_pool_t * pool )
 //                          the reliable messages and a second send_packets
 //                          (S:678-712), the main thread's own world work
 //                          (--world-ms), the stand-in game jobs it waits on
-//                          (--game-load), the snapshot (S:811-822): the frame's
+//                          (--game-load), the state record (S:811-822): the frame's
 //                          player plan, into its slot of the frame ring
 //   split (S:963-971)      AddTask( the network task, this frame's plan ); the
 //                          main thread carries on to the end of its frame
@@ -1453,7 +1453,7 @@ struct harden_stage_t
     int count = 0;
 };
 
-#define HARDEN_SPACE_RING 2 // the frame ring of plans (space's snapshots: frame % 128, SnapshotManager.h)
+#define HARDEN_SPACE_RING 2 // the frame ring of plans (space's state records: frame % 128)
 
 #if defined( _MSC_VER )
 #pragma warning( push )
@@ -1762,12 +1762,12 @@ static void harden_profile_run( harden_profile_t * p )
     // every thread of this process but the profiler, with its start routine
     std::vector<harden_profile_thread_t> threads;
     HANDLE main_thread = NULL;
-    const HANDLE snapshot = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
-    if ( snapshot != INVALID_HANDLE_VALUE )
+    const HANDLE listing = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
+    if ( listing != INVALID_HANDLE_VALUE )
     {
         THREADENTRY32 entry;
         entry.dwSize = sizeof( entry );
-        for ( BOOL more = Thread32First( snapshot, &entry ); more; more = Thread32Next( snapshot, &entry ) )
+        for ( BOOL more = Thread32First( listing, &entry ); more; more = Thread32Next( listing, &entry ) )
         {
             if ( entry.th32OwnerProcessID != GetCurrentProcessId() || entry.th32ThreadID == GetCurrentThreadId() )
             {
@@ -1797,7 +1797,7 @@ static void harden_profile_run( harden_profile_t * p )
             }
             threads.push_back( t );
         }
-        CloseHandle( snapshot );
+        CloseHandle( listing );
     }
 
     // the main thread's program counter, about once a millisecond, with the
@@ -2355,7 +2355,7 @@ static int harden_server_main( const harden_options_t & o )
         {
             // ---- join (S:588-601): last frame's network task, then the
             // frame's buffers turn over (the plan ring by tick, as space's
-            // snapshots by frame; ClearNewExplosions' A/B has no counterpart
+            // state records by frame; ClearNewExplosions' A/B has no counterpart
             // here)
             const double t_join = harden_now();
             if ( space.task )
@@ -2489,7 +2489,7 @@ static int harden_server_main( const harden_options_t & o )
             w.world_sum += t_world - t_world_began;
             w.world_max = std::max( w.world_max, t_world - t_world_began );
 
-            // ---- the split (S:963-971): the frame's plan is its snapshot
+            // ---- the split (S:963-971): the frame's plan is its state record
             if ( !split_here && !frame_plan.empty() )
             {
                 space.plan = &frame_plan;
