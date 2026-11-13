@@ -10,8 +10,6 @@
 
 Want to make games servers with thousands of players and bandwidth at line rate? Now you can! [Details here](docs/PERFORMANCE.md).
 
-What's not done yet is on the [roadmap](ROADMAP.md).
-
 ## Quick start
 
 Start with [Getting started](docs/GETTING-STARTED.md). It takes you through
