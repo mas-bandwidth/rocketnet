@@ -12,7 +12,7 @@ Want to make games servers with thousands of players and bandwidth at line rate?
 
 ## Quick start
 
-Start with [Getting started](docs/GETTING-STARTED.md). It takes you through
+Start [here](docs/GETTING-STARTED.md). It takes you through
 building the library, sending a message over an in-memory connection, and
 running a client and server in separate processes over UDP.
 
