@@ -81,9 +81,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 40 bytes).
 // The counter union (53 more rows in every counter block) moved every pin:
 // on Linux x86_64 the client by 832 bytes and the server by 896 (bench, gcc,
-// Debug: actual=15186002 and 3111677747); on macOS and Windows the client by
-// 768 and the server by 960 (macOS: the studio, Debug; Windows: the unit job,
-// server actual=1469501759; the Windows client by the macOS figure).
+// Debug: actual=15186002 and 3111677747); on macOS the client by 768 and the
+// server by 960 (the studio, Debug); on Windows the client by 832 and the
+// server by 960 (the unit job: actual=15389868 and 1469501759).
 #define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
@@ -128,7 +128,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453183 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341228 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341292 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
