@@ -676,10 +676,10 @@ static void test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment()
     rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_DONTFRAGMENT && ipv6_options.values[1] == 1 );
 #elif defined( __linux__ )
     rocketnet_unit_check( ipv4_options.count == 1 );
-    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_MTU_DISCOVER && ipv4_options.values[0] == IP_PMTUDISC_DO );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_MTU_DISCOVER && ipv4_options.values[0] == IP_PMTUDISC_PROBE );
     rocketnet_unit_check( ipv6_options.count == 2 );
-    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_DO );
-    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_DO );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_PROBE );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_PROBE );
 #elif defined( __APPLE__ )
     // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
     // IPV6_DONTFRAG keeps its v4-mapped datagrams whole, so it is asked alone
