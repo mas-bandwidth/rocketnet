@@ -122,6 +122,11 @@ The traces TLC printed, checked against the code by hand:
   channels route before it compares `room_refusals` (461-470) and on the
   plain route before any take (480-484); `send_refused` moves only for a
   refusal for no room.
+- **BrokenNoCarve** (5 states): `Connect(s1, c1)`, `Leave(s1)`, `Reuse(s1)`,
+  `Connect(s1, c1)`: the slot goes `Free` to `Connected` with the reason
+  `LEFT` still set. In the code the bind runs `rn_endpoint_reset`, whose
+  `rn_region_reset` carves the region (`sdk/rocketnet_allocator.cpp`
+  `rn_region_carve`) and whose own body zeroes `send_refused`.
 
 ## Records
 
@@ -130,9 +135,15 @@ per case, one shard per case:
 
 | Case | Workers | Generated | Distinct | Seconds | Exit | Outcome |
 |---|---:|---:|---:|---:|---:|---|
-| `MCRNConnectionMemory.cfg` | 2 | 985,441 | 151,849 | 16.628 | 0 | pass |
-| `MCRNConnectionMemoryBrokenNoReset.cfg` | 1 | 167 | 123 | 0.632 | 12 | `ReusedSlotStartsClean` violated, as declared |
-| `MCRNConnectionMemoryBrokenCarryOn.cfg` | 1 | 1,275 | 500 | 0.740 | 13 | `ExhaustionOnlyLeadsToDisconnect` violated, as declared |
+| `MCRNConnectionMemory.cfg` | 2 | 2,387,413 | 313,712 | 36.855 | 0 | pass |
+| `MCRNConnectionMemoryRefuse.cfg` | 2 | 245,341 | 42,676 | 4.088 | 0 | pass |
+| `MCRNConnectionMemoryBrokenNoReset.cfg` | 1 | 1,344 | 637 | 0.817 | 12 | `ReusedSlotStartsClean` violated, as declared |
+| `MCRNConnectionMemoryBrokenCarryOn.cfg` | 1 | 1,347 | 503 | 0.810 | 13 | `ExhaustionOnlyLeadsToDisconnect` violated, as declared |
+| `MCRNConnectionMemoryBrokenCountExhausted.cfg` | 1 | 287 | 157 | 0.746 | 13 | `RefusalLeavesStateUnchanged` violated, as declared |
+| `MCRNConnectionMemoryBrokenNoCarve.cfg` | 1 | 208 | 97 | 0.727 | 13 | `ConnectStartsFresh` violated, as declared |
+
+Measured on aws-mut-3 (linux-amd64), 2026-11-13, at the models fix round's
+lazy-reset model; the full set is in `RUNS.tsv`.
 
 The instance: three slots, three clients (four before the lazy reset was
 modelled, which keeps a free slot's region as state; with three a client

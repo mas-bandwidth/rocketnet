@@ -1,11 +1,13 @@
 # Notes for R and C from package M5b (send-memory)
 
-Base integration/v1.1.54 at 4f2960e5. Line numbers are at the base.
+Base integration/v1.1.54 at 4f2960e5. Each place is named by its file and
+symbol, with its line at the base in words.
 
 ## For C: comment-only re-citations in sdk/ and tests/
 
-MM068, sdk/rocketnet_allocator.cpp:947-950, the RNSendSpans citation block
-names two of the eleven cases. New text for lines 947-950:
+MM068, sdk/rocketnet_allocator.cpp (the comment block above
+rn_span_round16, base lines 947 to 950), the RNSendSpans citation block
+names two of the ten cases. New text for those lines:
 
     // This representation (offsets in 0..SR-1, head/tail, the first..last list)
     // is modelled in proofs/tla/RNSendSpans.tla (proofs/tla/CASES.tsv group
@@ -21,34 +23,37 @@ MM070: RNConnectionMemory's Reuse is now only the O(1) free
 rn_region_reset when the slot is bound). The citations that name Reuse for
 the carve move to Connect:
 
-- sdk/rocketnet_allocator.cpp:591: `// proofs/tla/RNConnectionMemory.tla, Reuse: the slate is carved clean`
+- sdk/rocketnet_allocator.cpp (above rn_region_reset, base line 591): `// proofs/tla/RNConnectionMemory.tla, Reuse: the slate is carved clean`
   becomes `// proofs/tla/RNConnectionMemory.tla, Connect: the slate is carved clean before the slot's next client`
-- sdk/rocketnet_allocator.h:507: `// (RNConnectionMemory Reuse): the carve, so a reused slot starts exactly as`
+- sdk/rocketnet_allocator.h (above the rn_region_reset declaration, base line 507): `// (RNConnectionMemory Reuse): the carve, so a reused slot starts exactly as`
   becomes `// (RNConnectionMemory Connect, after Reuse freed the slot): the carve, so a reused slot starts exactly as`
-- sdk/rocketnet_endpoint.cpp:241: `// proofs/tla/RNEndpoint.tla Reset (RNSlots ResetFree, RNConnectionMemory Reuse):`
+- sdk/rocketnet_endpoint.cpp (rn_endpoint_reset, base line 241): `// proofs/tla/RNEndpoint.tla Reset (RNSlots ResetFree, RNConnectionMemory Reuse):`
   becomes `// proofs/tla/RNEndpoint.tla Reset (RNSlots Observe, RNConnectionMemory Connect):`
   (RNSlots: ResetFree keeps the region, Observe carves it.)
-- sdk/rocketnet_message_server.cpp:181: `// RNSlots ResetFree, and RNConnectionMemory Reuse: the region carved again and`
+- sdk/rocketnet_message_server.cpp (the comment above rn_message_object_connection, base line 181): `// RNSlots ResetFree, and RNConnectionMemory Reuse: the region carved again and`
   becomes `// RNSlots Observe, and RNConnectionMemory Connect: the region carved again and`
-- sdk/rocketnet_message_server.cpp:830: `// proofs/tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):`
+- sdk/rocketnet_message_server.cpp (rn_message_connection_release, base line 830): `// proofs/tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):`
   becomes `// proofs/tla/RNConnectionMemory.tla Reuse, the O(1) free; the carve is the next Connect's):`
-- sdk/rocketnet_message_object.h:462-464: `// R5: ends a connection with `reason`. The transport disconnects it now; its`
+- sdk/rocketnet_message_object.h (above rn_message_object_kick, base lines 462 to 464): `// R5: ends a connection with `reason`. The transport disconnects it now; its`
   `// region is reset at the start of the next update, before the slot can be`
   `// reused (RNConnectionMemory Kick, then Reuse).` becomes
   `// R5: ends a connection with `reason`. The transport disconnects it now; its`
   `// slot is freed in O(1) and its region carved when the slot is bound to its`
   `// next connection (RNConnectionMemory Kick, Reuse, then Connect).`
-- tests/test_unit_connection_memory.cpp:428: `// RNConnectionMemory Reuse and ReusedSlotStartsClean: a slot's region, used`
+- tests/test_unit_connection_memory.cpp (the comment above the reused-slot test, base line 428): `// RNConnectionMemory Reuse and ReusedSlotStartsClean: a slot's region, used`
   becomes `// RNConnectionMemory Connect and ReusedSlotStartsClean: a slot's region, used`
-- tests/test_unit_connection_memory.cpp:907: `// RNConnectionMemory Reuse: the reset clears the sticky state, and the span`
+- tests/test_unit_connection_memory.cpp (the comment above the span-path reset test, base line 907): `// RNConnectionMemory Reuse: the reset clears the sticky state, and the span`
   becomes `// RNConnectionMemory Connect: the carve clears the sticky state, and the span`
-- tests/test_unit_message_objects.cpp:2043: `// RNSlots ResetFree, RNConnectionMemory Reuse: a reused slot starts exactly as`
+- tests/test_unit_message_objects.cpp (the section banner, base line 2043): `// RNSlots ResetFree, RNConnectionMemory Reuse: a reused slot starts exactly as`
   becomes `// RNSlots ResetFree and Observe, RNConnectionMemory Reuse and Connect: a reused slot starts exactly as`
 
 MM065 area (handed up as code-wrong, codewrong/send-memory-MM065.md): if the
 lead takes the claim fix rather than a code fix,
-sdk/rocketnet_server_transport.cpp:4797-4801 and
-tests/test_unit_server_send_reserve.cpp:729-734 narrow "the slots a thread
+sdk/rocketnet_server_transport.cpp (above
+rocketnet_server_payload_ring_take, base lines 4797 to 4801) and
+tests/test_unit_server_send_reserve.cpp (above
+test_server_fill_ring_chunk_lost_install_keeps_start_order, base lines 729
+to 734) narrow "the slots a thread
 takes only rise" to "a lost install never makes a thread's slots fall" and say
 that a chunk claimed before the guard and installed after it can give a thread
 a slot below the single slots it took (the file has the trace).
