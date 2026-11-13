@@ -893,8 +893,8 @@ struct writer_finish_trace_t
     uint64_t packets_sent[WIDE_FILL_MAX_CLIENTS];     // per client, from the session's stats, after connect
     uint64_t bytes_sent[WIDE_FILL_MAX_CLIENTS];
     uint64_t acked[WIDE_FILL_MAX_CLIENTS];            // per client, packet ids the transport surfaced as acked
-    uint64_t acked_id_sum[WIDE_FILL_MAX_CLIENTS];     // per client, the sum of those ids (a block names its ids highest first, so their order is not compared)
-    uint64_t acked_twice;                             // a client's packet id surfaced as acked more than once
+    uint64_t acked_id_sum[WIDE_FILL_MAX_CLIENTS];     // per client, the sum of those ids above the run's lowest (a block names its ids highest first, so their order is not compared)
+    uint64_t acked_twice;                             // a packet id surfaced as acked more than once
     uint32_t received[WIDE_FILL_MAX_CLIENTS][3];      // per client, messages taken by kind
     uint64_t corrupt;
     uint64_t finished;                                // finishes that returned a serial
@@ -1075,17 +1075,30 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
             trace->received[slot][k] = slots[slot].received[k];
         }
         trace->corrupt += slots[slot].corrupt;
-        std::sort( acked_ids[slot].begin(), acked_ids[slot].end() );
-        if ( c == 0 ) { printf( "DBG mode %d threads %d:", (int) mode, num_threads ); for ( size_t i = 0; i < acked_ids[slot].size() && i < 24; i++ ) { printf( " %llu", (unsigned long long) acked_ids[slot][i] ); } printf( "\n" ); }
-        for ( size_t i = 0; i < acked_ids[slot].size(); i++ )
-        {
-            trace->acked_id_sum[slot] += acked_ids[slot][i];
-            if ( i > 0 && acked_ids[slot][i] == acked_ids[slot][i - 1] )
-            {
-                trace->acked_twice++;
-            }
-        }
         check( slots[slot].received[2] == slots[slot].sent[2] );     // every reliable message, once, in order
+    }
+
+    // packet ids come from one counter the whole process shares, so they are
+    // read from the run's lowest acked id; no id is acked twice, on any client
+    std::vector<uint64_t> all_acked;
+    for ( int slot = 0; slot < WIDE_FILL_MAX_CLIENTS; slot++ )
+    {
+        all_acked.insert( all_acked.end(), acked_ids[slot].begin(), acked_ids[slot].end() );
+    }
+    std::sort( all_acked.begin(), all_acked.end() );
+    for ( size_t i = 1; i < all_acked.size(); i++ )
+    {
+        if ( all_acked[i] == all_acked[i - 1] )
+        {
+            trace->acked_twice++;
+        }
+    }
+    for ( int slot = 0; slot < WIDE_FILL_MAX_CLIENTS; slot++ )
+    {
+        for ( const uint64_t id : acked_ids[slot] )
+        {
+            trace->acked_id_sum[slot] += id - all_acked[0];
+        }
     }
 
     trace->no_capacity = wide_fill_counter( world.server, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) - no_capacity;
@@ -1094,7 +1107,11 @@ static void writer_finish_run( writer_finish_mode_t mode, int num_threads, int p
     wide_fill_world_destroy( &world );
 }
 
-static bool writer_finish_same_accounting( const writer_finish_trace_t * a, const writer_finish_trace_t * b )
+// same_ids: the two runs started their packets in the same order (one thread
+// each), so every client's acked ids are the same ids; with several threads
+// the ids interleave between clients as the threads ran, and only how many
+// were acked is compared
+static bool writer_finish_same_accounting( const writer_finish_trace_t * a, const writer_finish_trace_t * b, bool same_ids )
 {
     bool same = true;
     for ( int slot = 0; slot < WIDE_FILL_MAX_CLIENTS; slot++ )
@@ -1102,7 +1119,7 @@ static bool writer_finish_same_accounting( const writer_finish_trace_t * a, cons
         same = same && a->packets_sent[slot] == b->packets_sent[slot];
         same = same && a->bytes_sent[slot] == b->bytes_sent[slot];
         same = same && a->acked[slot] == b->acked[slot];
-        same = same && a->acked_id_sum[slot] == b->acked_id_sum[slot];
+        same = same && ( !same_ids || a->acked_id_sum[slot] == b->acked_id_sum[slot] );
         for ( int k = 0; k < 3; k++ )
         {
             same = same && a->received[slot][k] == b->received[slot][k];
@@ -1148,8 +1165,8 @@ static void test_writer_finish_equals_serial()
         check( t->acked_twice == 0 );
     }
 
-    check( writer_finish_same_accounting( &serial, &one ) );
-    check( writer_finish_same_accounting( &serial, &four ) );
+    check( writer_finish_same_accounting( &serial, &one, true ) );
+    check( writer_finish_same_accounting( &serial, &four, false ) );
 
     uint64_t sent = 0;
     uint64_t acked = 0;
@@ -1195,7 +1212,7 @@ static void test_writer_finish_no_capacity_refused()
         check( t->corrupt == 0 );
         check( t->acked_twice == 0 );
     }
-    check( writer_finish_same_accounting( &writer, &wide ) );
+    check( writer_finish_same_accounting( &writer, &wide, false ) );
     check( writer.refused == wide.refused );
 
     // the serial run's walk built the queued unreliable payloads; the
