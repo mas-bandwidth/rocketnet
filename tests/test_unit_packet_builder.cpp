@@ -331,9 +331,13 @@ static void test_packet_builder_no_allocation_after_create()
 
         const uint64_t packet_id = 5000 + (uint64_t) update;
         rn_packet_builder_commit( &builder, 0, packet_id, now );
+#if ROCKETNET_DEV
         rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 1 );
+#endif // #if ROCKETNET_DEV
         rocketnet_unit_check( rn_channels_feed_acks( &ack, &packet_id, 1, now + 0.01 ) == 1 );
+#if ROCKETNET_DEV
         rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 0 );
+#endif // #if ROCKETNET_DEV
         rocketnet_unit_check( builder_allocs == allocs_before_write );
 
         struct rocketnet_message_record_t record;
