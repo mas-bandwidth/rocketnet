@@ -1872,17 +1872,13 @@ bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_ser
     {
         refusal = "carries a port; the port is the served address's";
     }
-    else if ( ipv4 && parsed.data.ipv4[0] >= 224 && parsed.data.ipv4[0] <= 239 )
+    else if ( ipv4 ? ( parsed.data.ipv4[0] >= 224 && parsed.data.ipv4[0] <= 239 ) : ( parsed.data.ipv6[0] & 0xff00 ) == 0xff00 )
     {
         refusal = "is a multicast address";
     }
     else if ( ipv4 && parsed.data.ipv4[0] == 255 && parsed.data.ipv4[1] == 255 && parsed.data.ipv4[2] == 255 && parsed.data.ipv4[3] == 255 )
     {
         refusal = "is the broadcast address";
-    }
-    else if ( !ipv4 && ( parsed.data.ipv6[0] & 0xff00 ) == 0xff00 )
-    {
-        refusal = "is a multicast address";
     }
     else if ( !ipv4 && parsed.data.ipv6[0] == 0 && parsed.data.ipv6[1] == 0 && parsed.data.ipv6[2] == 0 && parsed.data.ipv6[3] == 0 && parsed.data.ipv6[4] == 0 &&
               parsed.data.ipv6[5] == 0xffff )
