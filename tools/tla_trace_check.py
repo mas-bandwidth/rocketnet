@@ -415,6 +415,205 @@ def arity(params):
     return 0 if not params or not params.strip() else len(params.split(","))
 
 
+# --- Next's domain, carried into Act (README-TraceCheck.md, "Arguments") --------
+#
+# TraceStep is Act(r.act, r.args) /\ Next. Next alone does not bind the record:
+# another disjunct of Next, or the same action with another argument, can make
+# the same state change (RNTraceExample: Claim(0) at count 0 is Drain(0); with
+# count = Limit, Refuse(3) is Refuse(1)). So for the TLC run the checker puts in
+# place of each Act arm the disjuncts of Next that take its action, with Next's
+# binders, the guards beside it and the arguments Next passes, and requires the
+# record's args to be exactly those arguments:
+#   a = "Claim" -> \E k \in 1..MaxClaim : (traceArgs = <<k>> /\ Claim(k))
+# The Trace module in proofs/tla keeps its bare arms (the template); the module
+# TLC reads is written into the run's root. Next is read as TLA+ lays it out:
+# junction lists by their bullets' columns, \E binding to the end of its item.
+# A Next the reader does not know (IF, LET, CASE, \A, CHOOSE around an action, a
+# conjunction of two actions, an action named other than as a call) is refused.
+
+def strip_comments_layout(text):
+    """text with every comment character blanked and every newline kept: offsets and columns stay"""
+    def blank(m):
+        return re.sub(r"[^\n]", " ", m.group(0))
+    text = re.sub(r"\(\*.*?\*\)", blank, text, flags=re.S)
+    return re.sub(r"\\\*[^\n]*", blank, text)
+
+
+TOKEN = re.compile(r'"(?:\\.|[^"\\\n])*"|\\/|/\\|<<|>>|\\[A-Za-z]+|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|\S')
+OPENS = {"(": ")", "[": "]", "{": "}", "<<": ">>"}
+CLOSES = set(OPENS.values())
+BINDS_TO_END = {"\\E", "\\A", "\\EE", "\\AA", "CHOOSE", "LET", "IF", "CASE"}
+# the Act parameters the checker writes; no module of a layer may name them
+BIND_ACT, BIND_ARGS = "traceAct", "traceArgs"
+
+
+class NextShape(Exception):
+    pass
+
+
+def tokens_of(code, start, end):
+    """[(text, offset, line, column)] of code[start:end]"""
+    out = []
+    for m in TOKEN.finditer(code, start, end):
+        line_start = code.rfind("\n", 0, m.start()) + 1
+        out.append((m.group(0), m.start(), code.count("\n", 0, m.start()), m.start() - line_start))
+    return out
+
+
+def tok_text(code, toks):
+    return " ".join(code[toks[0][1]:toks[-1][1] + len(toks[-1][0])].split())
+
+
+def matching(toks, i):
+    """index of the token closing toks[i]"""
+    depth = 0
+    for j in range(i, len(toks)):
+        if toks[j][0] in OPENS:
+            depth += 1
+        elif toks[j][0] in CLOSES:
+            depth -= 1
+            if depth == 0:
+                return j
+    raise NextShape("an unclosed bracket")
+
+
+def parse_next(code, toks, actions):
+    """the tree of Next's body: ("or"|"and", [nodes]), ("exists", binders, node), ("act", name, [args]),
+    ("guard", text)"""
+    if not toks:
+        raise NextShape("an empty item")
+    first = toks[0][0]
+    if first in ("\\/", "/\\"):
+        column = toks[0][3]
+        items, current = [], []
+        for k, t in enumerate(toks):
+            starts_line = k == 0 or toks[k - 1][2] != t[2]
+            if t[0] == first and t[3] == column and (k == 0 or starts_line):
+                if current:
+                    items.append(current)
+                current = []
+                continue
+            if starts_line and t[3] <= column:
+                raise NextShape(f"{t[0]!r} on line {t[2] + 1} sits left of its list's bullet")
+            current.append(t)
+        items.append(current)
+        return node_of("or" if first == "\\/" else "and", [parse_next(code, item, actions) for item in items], code, toks)
+    # infix: parts at depth-0 \/ or /\; a part that starts with a binder takes the rest
+    parts, kinds, current, depth = [], set(), [], 0
+    for k, t in enumerate(toks):
+        if depth == 0 and not current and t[0] in BINDS_TO_END:
+            current = toks[k:]
+            break
+        if depth == 0 and t[0] in ("\\/", "/\\"):
+            if not current:
+                raise NextShape(f"{t[0]} with nothing before it")
+            kinds.add(t[0])
+            parts.append(current)
+            current = []
+            continue
+        if t[0] in OPENS:
+            depth += 1
+        elif t[0] in CLOSES:
+            depth -= 1
+        current.append(t)
+    parts.append(current)
+    if len(kinds) > 1:
+        raise NextShape("\\/ and /\\ mixed in one expression")
+    if len(parts) > 1:
+        return node_of("or" if kinds == {"\\/"} else "and", [parse_next(code, p, actions) for p in parts], code, toks)
+    part = parts[0]
+    if part[0][0] == "\\E":
+        colon = next((k for k in range(1, len(part)) if part[k][0] == ":" and
+                      sum(1 if t[0] in OPENS else -1 if t[0] in CLOSES else 0 for t in part[1:k]) == 0), None)
+        if colon is None or colon == 1 or colon == len(part) - 1:
+            raise NextShape("an \\E without its binders or its body")
+        body = parse_next(code, part[colon + 1:], actions)
+        return ("exists", tok_text(code, part[1:colon]), body) if has_action(body) else ("guard", tok_text(code, part))
+    if part[0][0] == "(" and matching(part, 0) == len(part) - 1:
+        return parse_next(code, part[1:-1], actions)
+    names = {t[0] for t in part}
+    if part[0][0] in actions and (len(part) == 1 or (part[1][0] == "(" and matching(part, 1) == len(part) - 1)):
+        args, current, depth = [], [], 0
+        for t in part[2:-1]:
+            if depth == 0 and t[0] == ",":
+                args.append(current)
+                current = []
+                continue
+            depth += 1 if t[0] in OPENS else -1 if t[0] in CLOSES else 0
+            current.append(t)
+        if current:
+            args.append(current)
+        for a in args:
+            check_flat(code, a)
+        return ("act", part[0][0], [tok_text(code, a) for a in args])
+    if names & actions:
+        raise NextShape(f"{sorted(names & actions)[0]} is named other than as a whole call: {tok_text(code, part)}")
+    check_flat(code, part)
+    return ("guard", tok_text(code, part))
+
+
+def check_flat(code, toks):
+    """a guard or an argument is copied onto one line: a list of both junctions over lines would change meaning"""
+    if {"\\/", "/\\"} <= {t[0] for t in toks} and toks[0][2] != toks[-1][2]:
+        raise NextShape(f"a guard with \\/ and /\\ over several lines: {tok_text(code, toks)}")
+
+
+def has_action(node):
+    if node[0] == "act":
+        return True
+    if node[0] == "exists":
+        return True
+    if node[0] in ("or", "and"):
+        return any(has_action(n) for n in node[1])
+    return False
+
+
+def node_of(kind, children, code, toks):
+    if not any(has_action(n) for n in children):
+        check_flat(code, toks)
+        return ("guard", tok_text(code, toks))
+    if kind == "and" and sum(1 for n in children if has_action(n)) > 1:
+        raise NextShape("a conjunction of two actions")
+    return (kind, children)
+
+
+def occurrences(node, wrap, found):
+    """{action: [the formula of each disjunct of Next that takes it]}"""
+    if node[0] == "act":
+        call = node[1] + (f"({', '.join(node[2])})" if node[2] else "")
+        found.setdefault(node[1], []).append(wrap(f"{BIND_ARGS} = <<{', '.join(node[2])}>> /\\ {call}"))
+    elif node[0] == "or":
+        for n in node[1]:
+            occurrences(n, wrap, found)
+    elif node[0] == "and":
+        k = next(i for i, n in enumerate(node[1]) if has_action(n))
+        texts = [f"({n[1]})" for n in node[1]]
+        occurrences(node[1][k], lambda inner: wrap(" /\\ ".join(texts[:k] + [f"({inner})"] + texts[k + 1:])), found)
+    elif node[0] == "exists":
+        occurrences(node[2], lambda inner: wrap(f"\\E {node[1]} : ({inner})"), found)
+    return found
+
+
+def bound_act(next_code, next_start, next_end, actions, arms):
+    """(the text of Act with each arm bound to Next's disjuncts for its action, or None, [failures])"""
+    try:
+        tree = parse_next(next_code, tokens_of(next_code, next_start, next_end), actions)
+        found = occurrences(tree, lambda inner: inner, {})
+    except NextShape as error:
+        return None, [f"Next has a shape the checker cannot bind arguments to ({error}): write it as \\/ lists "
+                      "of \\E binders, guards and action calls"]
+    failures = [f"Act names {a}, which Next takes nowhere the checker can read" for a in arms if a not in found]
+    if failures:
+        return None, failures
+    lines = [f"\\* Act as {Path(__file__).relative_to(ROOT)} binds it: each arm is the disjuncts of Next that take its "
+             f"action, the record's args their arguments"]
+    for i, a in enumerate(arms):
+        formula = " \\/ ".join(f"({f})" for f in found[a])
+        head = f"Act({BIND_ACT}, {BIND_ARGS}) == CASE " if i == 0 else "               [] "
+        lines.append(f'{head}{BIND_ACT} = "{a}" -> {formula}')
+    return "\n".join(lines) + "\n\n", []
+
+
 def module_facts(name, layer):
     """(facts dict, [failures]) of the layer's modules"""
     failures = []
@@ -422,10 +621,12 @@ def module_facts(name, layer):
     if not modules[-1].startswith("Trace") or any(m.startswith("Trace") for m in modules[:-1]):
         return None, ["the row's modules must end with its one Trace module"]
     try:
-        specs = [units((TLA / m).read_text()) for m in modules[:-1]]
-        trace = units((TLA / modules[-1]).read_text())
+        spec_texts = [(TLA / m).read_text() for m in modules[:-1]]
+        trace_text = (TLA / modules[-1]).read_text()
     except OSError as error:
         return None, [f"a module of the row cannot be read: {error}"]
+    specs = [units(text) for text in spec_texts]
+    trace = units(trace_text)
 
     defined = {}
     bodies = {}
@@ -546,7 +747,33 @@ def module_facts(name, layer):
                 failures.append(f'Act\'s arm "{named}" must pass {taken}({want})')
     for u in sorted(set(layer.get("untraced", {})) - actions):
         failures.append(f"untraced names {u}, which is not an action of the spec's Next")
-    return {"actions": actions, "constants": set(constants), "trace_stem": modules[-1][:-len(".tla")]}, failures
+
+    # the Trace module TLC reads: Act's arms bound to Next's domain (above bound_act)
+    bound = None
+    for text, m in zip(spec_texts + [trace_text], modules):
+        if re.search(r"\b(?:" + BIND_ACT + "|" + BIND_ARGS + r")\b", strip_comments(text)):
+            failures.append(f"{m} names {BIND_ACT} or {BIND_ARGS}, the checker's names for Act's parameters")
+    arms = [named for named, _, _ in re.findall(arm, squash(act[0][1]))] if act and not failures else []
+    if arms:
+        home = next(i for i in reversed(range(len(specs))) if "Next" in specs[i])
+        code = strip_comments_layout(spec_texts[home])
+        heads = list(re.finditer(r"^Next\s*==", code, re.M))
+        end = next((s.start() for s in STOP.finditer(code, heads[0].end()) if s.start() > heads[0].end()), len(code)) \
+            if len(heads) == 1 else None
+        if end is None:
+            failures.append(f"{modules[home]} must define Next once")
+        else:
+            act_text, act_failures = bound_act(code, heads[0].end(), end, actions, arms)
+            failures += act_failures
+            trace_code = strip_comments_layout(trace_text)
+            act_head = list(re.finditer(r"^Act\s*\(", trace_code, re.M))
+            if act_text and len(act_head) == 1:
+                act_end = next((s.start() for s in STOP.finditer(trace_code, act_head[0].end())), len(trace_code))
+                bound = trace_text[:act_head[0].start()] + act_text + trace_text[act_end:]
+            elif act_text:
+                failures.append("the Trace module must define Act once, at column 0")
+    return {"actions": actions, "constants": set(constants), "trace_stem": modules[-1][:-len(".tla")],
+            "bound": bound}, failures
 
 
 def c_tokens(text):
@@ -754,12 +981,16 @@ def same_walk(first, second, a, b):
     return True
 
 
-def tlc(args, name, kind_dir, module, expected, layer, log, source=None):
-    """(exit of the TLC case, its log text) of one module in a root of its own"""
+def tlc(args, name, kind_dir, module, expected, layer, log, source=None, bind=True):
+    """(exit of the TLC case, its log text) of one module in a root of its own; the Trace module there is the
+    one with Act bound to Next's domain (bound_act), or with bind False the source's own (the domain controls'
+    reversed runs)"""
     tla = kind_dir / "root" / "tla"
     tla.mkdir(parents=True)
     for m in layer["modules"]:
         shutil.copy(TLA / m, tla / m)
+    if bind:
+        (tla / layer["modules"][-1]).write_text(args.bound[name])
     for path in (source or kind_dir / "walk").iterdir():
         if path.suffix in (".tla", ".cfg"):
             shutil.copy(path, tla / path.name)
@@ -943,6 +1174,74 @@ def reached(args, name, layer, predicate, log):
     return False
 
 
+# --- the domain controls -----------------------------------------------------
+#
+# Hand-written traces of the example (README-TraceCheck.md, "Arguments"), run in
+# the example's home shard. Each negative record makes the state change of
+# another action, or of its own action with another argument, or carries more
+# arguments than its action takes. TLC must reject it at that record with Act
+# bound to Next's domain, and accept the same trace with the source's bare arms:
+# it is the binding that rejects it. The positive trace must pass bound. The
+# constants are the example's (tests/tla_trace_example.cpp EXAMPLE_LIMIT,
+# EXAMPLE_MAX_CLAIM).
+DOMAIN_CONSTANTS = "    Limit = 3\n    MaxClaim = 2\n"
+# (name, records after init as (op, act, args, count, refused), the record TLC must reject; 0 for none)
+DOMAIN_CONTROLS = [
+    ("Accepted", [("claim", "Claim", "2", 2, 0), ("claim", "Claim", "1", 3, 0), ("claim", "Refuse", "2", 3, 1),
+                  ("claim", "Refuse", "1", 3, 2), ("drain", "Drain", "3", 0, 2), ("drain", "Drain", "0", 0, 2)], 0),
+    # Claim(0) at count 0 changes nothing, as Drain(0) does: another action's transition
+    ("ClaimAsDrain", [("claim", "Claim", "0", 0, 0)], 2),
+    # Refuse(3) at count = Limit is Refuse(1)'s transition, with an argument outside 1..MaxClaim
+    ("RefuseOtherArg", [("claim", "Claim", "2", 2, 0), ("claim", "Claim", "1", 3, 0), ("claim", "Refuse", "3", 3, 1)], 4),
+    # Claim with two arguments, of which a bare arm reads only the first
+    ("ArgsTooLong", [("claim", "Claim", "1, 2", 1, 0)], 2),
+]
+
+
+def domain_control(args, name, records, reject, bind):
+    """[failures] of one control in one binding"""
+    log = []
+    base = args.dir / "example-domain" / name / ("bound" if bind else "unbound")
+    if base.exists():
+        shutil.rmtree(base)
+    src = base / "src"
+    src.mkdir(parents=True)
+    module = f"MCTraceDomain{name}"
+    state = "[count |-> {}, refused |-> {}]"
+    lines = [f'[op |-> "init", act |-> "init", args |-> <<>>, state |-> {state.format(0, 0)}]']
+    lines += [f'[op |-> "{op}", act |-> "{act}", args |-> <<{a}>>, state |-> {state.format(c, r)}]' for op, act, a, c, r in records]
+    (src / f"{module}.tla").write_text(f"---- MODULE {module} ----\nEXTENDS TraceRNTraceExample, TLC\n\nLog == <<\n    "
+                                       + ",\n    ".join(lines) + "\n>>\n\n====\n")
+    (src / f"{module}.cfg").write_text(f"SPECIFICATION TraceSpec\nCONSTANTS\n{DOMAIN_CONSTANTS}    TraceLog <- Log\n"
+                                       "INVARIANT TraceConsistent\n")
+    rejects = bind and reject > 0
+    expected = "invariant\tTraceConsistent" if rejects else "pass\t-"
+    code, text = tlc(args, "example", base / "run-1", module, expected, LAYERS["example"], log, source=src, bind=bind)
+    attempts = 1
+    while rejects and code == 12 and not TI.search(text) and attempts < PLANT_ATTEMPTS:
+        attempts += 1
+        code, text = tlc(args, "example", base / f"run-{attempts}", module, expected, LAYERS["example"], log, source=src,
+                         bind=bind)
+    said = f"domain control {name} ({'bound' if bind else 'bare arms'})"
+    if not rejects:
+        return [] if code == 0 else [f"{said}: TLC exit {code}, not an accepted trace"]
+    if code != 12:
+        return [f"{said}: TLC exit {code}, not a rejection at record {reject}"]
+    values = TI.findall(text)
+    if not values or int(values[-1]) + 1 != reject:
+        return [f"{said}: rejected at record {int(values[-1]) + 1 if values else '?'}, not at record {reject}"]
+    return []
+
+
+def domain_controls(args):
+    """[failures] of every control in both bindings (the positive one bound only)"""
+    runs = [(n, records, reject, bind) for n, records, reject in DOMAIN_CONTROLS for bind in (True, False)
+            if bind or reject > 0]
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        results = list(pool.map(lambda r: domain_control(args, *r), runs))
+    return [f for result in results for f in result]
+
+
 # --- the table ---------------------------------------------------------------
 
 def library_config(path):
@@ -1114,16 +1413,20 @@ def main():
         plants[layers[0]] = path.name
 
     facts = {}
+    args.bound = {}
     for n in names:
         if n not in plants:
             failed.append(f"layer {n}: no plant binary tla_trace_plant_<file> holds it")
             continue
         found, failures = module_facts(n, LAYERS[n])
         failures += source_failures(LAYERS[n], plants[n])
+        if found and found["bound"] is None and not failures:
+            failures.append("Act could not be bound to Next's domain")
         for failure in failures:
             failed.append(f"layer {n}: {failure}")
         if found:
             facts[n] = found
+            args.bound[n] = found["bound"]
 
     if failed:
         for line in failed:
@@ -1185,6 +1488,12 @@ def main():
         if not hit:
             sys.stdout.write("".join(log))
             failed.append(f"layer {n}: reach predicate {predicate} never reached in a clean trace of {span}")
+    # the argument binding's own controls, where the example's coverage runs
+    if "example" in homes:
+        controls = domain_controls(args)
+        failed += [f"layer example: {f}" for f in controls]
+        if not controls:
+            print(f"DOMAIN-CONTROLS OK {len(DOMAIN_CONTROLS)} traces, {len(DOMAIN_CONTROLS) - 1} rejected bound and accepted with bare arms")
 
     for line in failed:
         print(f"TRACE-CHECK FAIL {line}")
