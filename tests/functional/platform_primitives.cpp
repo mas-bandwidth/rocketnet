@@ -591,6 +591,24 @@ void rocketnet_test_platform_wake_wait_writable()
 
 #if defined( ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE )
 
+// The real clock after init: elapsed seconds, never negative, and it moves
+// with a sleep (at least most of the 20 ms, far less than 10 s). Real time,
+// so functional.
+// mutation gap: delta sdk/rocketnet_platform.cpp:1207:71:arithmetic:* (the origin's nanoseconds scaled
+// up, not down: the clock reads about -1e18 s, where a double cannot count
+// seconds, and stands still)
+
+static void rocketnet_platform_primitives_clock_moves()
+{
+    const double before = rocketnet_time();
+    rocketnet_sleep( 0.02 );
+    const double after = rocketnet_time();
+    const bool clock_reads_elapsed_seconds = before >= 0.0;
+    rocketnet_check( clock_reads_elapsed_seconds );
+    const bool clock_moves_with_a_20_ms_sleep = after - before >= 0.015 && after - before < 10.0;
+    rocketnet_check( clock_moves_with_a_20_ms_sleep );
+}
+
 static const char * const rocketnet_platform_environment_probe = "ROCKETNET_PLATFORM_ENVIRONMENT_PROBE";
 
 static void rocketnet_platform_primitives_set_environment( const char * value )
@@ -1221,6 +1239,7 @@ int main()
 
     rocketnet_thread_priority( true );
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_platform_primitives_clock_moves();
     rocketnet_platform_primitives_environment();
     rocketnet_platform_primitives_public_config_environment();
     rocketnet_platform_primitives_key_warning_environment();

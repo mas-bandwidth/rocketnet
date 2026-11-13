@@ -95,4 +95,13 @@ void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, ui
 void rocketnet_loopback_test_first_port( uint16_t port );
 #endif // #if ROCKETNET_DEV
 
+// mutation gaps delta-core begin
+#if ROCKETNET_DEV
+// Ephemeral range read seam; test library only. The first port a hub of
+// max_clients gives a port 0 bind (the range seam above, when set, wins),
+// read without creating the hub.
+uint16_t rocketnet_loopback_test_range_first_port( int max_clients );
+#endif // #if ROCKETNET_DEV
+// mutation gaps delta-core end
+
 #endif // ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H

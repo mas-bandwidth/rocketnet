@@ -903,3 +903,11 @@ int rocketnet_loopback_endpoints_live( rocketnet_loopback_hub_t * hub )
     return hub->registered;
 }
 #endif // #if ROCKETNET_DEV
+
+// mutation gaps delta-core begin
+#if ROCKETNET_DEV
+// the first port of the ephemeral range a hub of max_clients takes, without
+// creating the hub (one of more than 16383 clients is tens of gigabytes)
+uint16_t rocketnet_loopback_test_range_first_port( int max_clients ) { return loopback_first_port( max_clients ); }
+#endif // #if ROCKETNET_DEV
+// mutation gaps delta-core end

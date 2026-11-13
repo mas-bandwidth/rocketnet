@@ -36,7 +36,7 @@ static int gaps_loopback_first_bound_port( int max_clients )
     rocketnet_unit_check( hub != NULL && status == ROCKETNET_STATUS_OK );
 
     rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config( &server_config );
+    rocketnet_server_transport_default_config_current( &server_config );
     server_config.loopback_hub = hub;
     const rocketnet_server_transport_io_config_t setup = { "loopback", &server_config, NULL, NULL };
 
@@ -56,25 +56,47 @@ static int gaps_loopback_first_bound_port( int max_clients )
 // mutation gap: delta sdk/rocketnet_driver_loopback.cpp:96:44:off_by_one:1 (the range seam's initial value)
 // mutation gap: delta sdk/rocketnet_driver_loopback.cpp:115:5:negate_condition
 // mutation gap: delta sdk/rocketnet_driver_loopback.cpp:115:75:relational:>
-// mutation gap: delta sdk/rocketnet_driver_loopback.cpp:114:* , 115:* , 117:* (in a build of ROCKETNET_MAX_CLIENTS above 16384)
 //
-// The hub sizes around the edge where 49152 .. 65535 (16384 ports) stops
-// holding every endpoint (one server and max_clients clients): 16383 clients
-// still fit from 49152; 16384 start one lower; the build's largest hub starts
-// so its last endpoint takes 65535. Sizes above the build's
-// ROCKETNET_MAX_CLIENTS are refused at create, so a default build checks the
-// sizes it can make and a ROCKETNET_MAX_CLIENTS=32768 build checks them all.
+// A real hub, of one client and of 1000 (the default build's largest; a hub
+// past 16383 clients is tens of gigabytes), gives its server 49152.
 
-static void test_gaps_delta_core_loopback_ephemeral_range_holds_every_endpoint()
+static void test_gaps_delta_core_loopback_hub_binds_from_49152()
+{
+    const int sizes[2] = { 1, (int) ROCKETNET_MAX_CLIENTS < 1000 ? (int) ROCKETNET_MAX_CLIENTS : 1000 };
+    for ( int i = 0; i < 2; ++i )
+    {
+        const bool small_hub_binds_its_first_port_0_at_49152 = gaps_loopback_first_bound_port( sizes[i] ) == 49152;
+        rocketnet_unit_check( small_hub_binds_its_first_port_0_at_49152 );
+    }
+}
+
+REGISTER_UNIT_TEST( test_gaps_delta_core_loopback_hub_binds_from_49152 );
+
+#if ROCKETNET_DEV
+
+// mutation gap: delta sdk/rocketnet_driver_loopback.cpp:114:38:delete_plus_minus_one, 114:39:arithmetic:-,
+//   114:41:off_by_one:0, 114:41:off_by_one:2 (the endpoint count)
+// mutation gap: delta sdk/rocketnet_driver_loopback.cpp:115:39:arithmetic:-, 115:41:off_by_one:2,
+//   115:43:arithmetic:+, 115:5:negate_condition, 115:75:relational:> (the range's size)
+// mutation gap: delta sdk/rocketnet_driver_loopback.cpp:117:* (the lowered first port)
+//
+// The range of every hub size around the edge where 49152 .. 65535 (16384
+// ports) stops holding every endpoint (one server and max_clients clients):
+// 16383 clients still fit from 49152; each client past that lowers the first
+// port by one, so the last endpoint always has 65535. Read through the DEV
+// seam, since a hub that large is tens of gigabytes to create.
+
+static void test_gaps_delta_core_loopback_range_holds_every_endpoint()
 {
     struct gaps_range_t
     {
         int max_clients;
-        int first_port;
+        uint16_t first_port;
     };
 
     const gaps_range_t ranges[] = {
         { 1, 49152 },
+        { 1000, 49152 },
         { 16382, 49152 },
         { 16383, 49152 },
         { 16384, 49151 },
@@ -84,26 +106,12 @@ static void test_gaps_delta_core_loopback_ephemeral_range_holds_every_endpoint()
 
     for ( size_t i = 0; i < sizeof( ranges ) / sizeof( ranges[0] ); ++i )
     {
-        if ( ranges[i].max_clients > (int) ROCKETNET_MAX_CLIENTS )
-        {
-            continue;
-        }
-
-        const bool first_ephemeral_port_is_the_range_that_holds_every_endpoint = gaps_loopback_first_bound_port( ranges[i].max_clients ) == ranges[i].first_port;
-        rocketnet_unit_check( first_ephemeral_port_is_the_range_that_holds_every_endpoint );
+        const bool first_port_leaves_one_port_per_endpoint_up_to_65535 = rocketnet_loopback_test_range_first_port( ranges[i].max_clients ) == ranges[i].first_port;
+        rocketnet_unit_check( first_port_leaves_one_port_per_endpoint_up_to_65535 );
     }
-
-    // the build's own largest hub: one port per endpoint, the last at 65535
-
-    const int endpoints = (int) ROCKETNET_MAX_CLIENTS + 1;
-    const int largest_first_port = endpoints > 16384 ? 65536 - endpoints : 49152;
-    const bool largest_hub_starts_where_its_range_ends_at_65535_or_at_49152 = gaps_loopback_first_bound_port( (int) ROCKETNET_MAX_CLIENTS ) == largest_first_port;
-    rocketnet_unit_check( largest_hub_starts_where_its_range_ends_at_65535_or_at_49152 );
 }
 
-REGISTER_UNIT_TEST( test_gaps_delta_core_loopback_ephemeral_range_holds_every_endpoint );
-
-#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_gaps_delta_core_loopback_range_holds_every_endpoint );
 
 // mutation gap: delta sdk/rocketnet_driver_loopback.cpp:765:44:off_by_one:1 (packet_bytes > 1)
 // mutation gap: delta sdk/rocketnet_driver_loopback.cpp:765:73:relational:< (packet_bytes < ROCKETNET_RECEIVE_CEILING)
