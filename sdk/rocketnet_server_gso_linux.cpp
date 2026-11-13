@@ -43,6 +43,7 @@
 // degradation resends the remainder plain and drops nothing.
 
 #include "rocketnet_server_gso.h"
+#include "rocketnet_gso_pin.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
@@ -59,6 +60,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <poll.h>
+#include <pthread.h>
+#include <sched.h>
 #include <sys/eventfd.h>
 #include <string.h>
 #include <stdio.h>
@@ -231,6 +234,11 @@ struct rocketnet_server_gso_queue_t
     struct rocketnet_server_gso_t * gso;
     rocketnet_platform_thread_t * thread;
 
+    // the cpu the worker pinned itself to (rocketnet_gso_pin.h): PENDING until
+    // its thread has run the pin, then the cpu or NONE
+
+    std::atomic<int> pin_cpu{ ROCKETNET_GSO_PIN_PENDING };
+
     uint8_t padding_1[4096];
 
     std::atomic<bool> quit{ 0 };
@@ -330,6 +338,8 @@ struct rocketnet_server_gso_t
 
     struct rocketnet_server_socket_process_packets_t process_packets;
     int max_clients;                    // the server's configured client count: sizes the view and the socket receive buffers
+    int num_os_cpus = 0;                // the server's num_os_cpus: the workers pin to num_os_cpus + queue; 0 pins nothing
+    std::atomic<int> pin_refusals{ 0 }; // pins the workers asked for and the system refused
 
 #if ROCKETNET_DEV
     // the test seam: the next recvmmsg calls on any worker, and the next
@@ -1440,6 +1450,57 @@ static void rocketnet_server_gso_clear_wake( struct rocketnet_server_gso_queue_t
     (void) read_bytes;
 }
 
+// the worker pins itself the way the XDP transport's thread does
+// (rocketnet_server_socket_xdp_thread_function): affinity to cpu num_os_cpus +
+// queue. A refusal is a warning naming the queue and the cpu, counted in
+// pin_refusals (rocketnet_server_gso_pin_refusals), and the queue's pin_cpu
+// stays NONE: a worker is reported pinned only when pthread_setaffinity_np
+// said so. num_os_cpus 0 pins nothing (the transport driven directly). The
+// priority is set by the creator (rocketnet_platform_server_thread_priority).
+
+static void rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t * queue )
+{
+    struct rocketnet_server_gso_t * gso = queue->gso;
+    if ( gso->num_os_cpus <= 0 )
+    {
+        queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
+        return;
+    }
+
+    const int cpu = rocketnet_gso_pin_cpu( queue->index, gso->num_os_cpus );
+    const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    const int check = rocketnet_gso_pin_check( cpu, CPU_SETSIZE, online );
+    if ( check != ROCKETNET_GSO_PIN_OK )
+    {
+        gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+        if ( check == ROCKETNET_GSO_PIN_OUTSIDE_SET )
+        {
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; it runs on any cpu", queue->index, cpu, CPU_SETSIZE - 1 );
+        }
+        else
+        {
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); it runs on any cpu", queue->index, cpu, online - 1 );
+        }
+        queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
+        return;
+    }
+
+    cpu_set_t cpuset;
+    CPU_ZERO( &cpuset );
+    CPU_SET( (size_t) cpu, &cpuset );
+    const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset );
+    if ( result != 0 )
+    {
+        gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on any cpu", queue->index, cpu, strerror( result ) );
+        queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
+        return;
+    }
+
+    rocketnet_info( "gso worker %d pinned to cpu %d", queue->index, cpu );
+    queue->pin_cpu.store( cpu, std::memory_order_release );
+}
+
 // The queue's one worker (layer L3 of the gso push): it sends this queue's
 // banks on this queue's socket and drains the same socket's receives, so the
 // kernel-facing work for a queue stays on one thread and main makes no send
@@ -1455,6 +1516,8 @@ static void rocketnet_server_gso_worker( rocketnet_platform_thread_t *, void * d
     rocketnet_assert( queue );
 
     struct rocketnet_server_gso_t * gso = queue->gso;
+
+    rocketnet_server_gso_pin_worker( queue );
 
     struct pollfd fds[2];
     bool stalled = false;
@@ -1533,6 +1596,25 @@ static void rocketnet_server_gso_abort_create( rocketnet_server_gso_t * gso )
 struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status,
                                                              const uint8_t * packet_filter )
 {
+    return rocketnet_server_gso_create_pinned( context, bind_address, num_queues, max_clients, flags, 0, status, packet_filter );
+}
+
+int rocketnet_server_gso_worker_cpu( struct rocketnet_server_gso_t * gso, int queue )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( queue >= 0 && queue < gso->num_queues );
+    return gso->queues[queue].pin_cpu.load( std::memory_order_acquire );
+}
+
+int rocketnet_server_gso_pin_refusals( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+    return gso->pin_refusals.load( std::memory_order_relaxed );
+}
+
+struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
+                                                                    int * status, const uint8_t * packet_filter )
+{
 #if ROCKETNET_DEV
     flags |= rocketnet_server_gso_test_create_flags.load();
 
@@ -1582,6 +1664,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 
     gso->context = context;
     gso->num_queues = num_queues;
+    gso->num_os_cpus = num_os_cpus;
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     if ( packet_filter )
     {
