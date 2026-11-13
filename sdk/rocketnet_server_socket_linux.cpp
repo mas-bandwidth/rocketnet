@@ -4165,6 +4165,34 @@ bool rocketnet_server_socket_test_replay_marks()
         rocketnet_server_socket_replay_commit( server );
         valid &= !server->replay_hold_all_greetings;
 
+        // proofs/tla/RNServerReplaySlots.tla ZeroMarkWaitsForForgets: a zero
+        // mark waits while the forget array is full, and holds every
+        // keep-alive; a mark of an opened session is still queued
+
+        for ( uint32_t i = 0; i < server->replay_marks->capacity; i++ )
+        {
+            rocketnet_address_t c = a;
+            c.port = (uint16_t) ( 4000 + i );
+            rocketnet_xdp_replay_marks_forget( server->replay_marks, &c );
+        }
+
+        valid &= !rocketnet_server_socket_replay_mark( server, &a, 0 );
+        valid &= server->replay_marks->refused == 1;
+        valid &= rocketnet_server_socket_replay_mark( server, &b, 5 );
+        valid &= server->replay_marks->mark_count == 1;
+        rocketnet_server_socket_replay_commit( server );
+        valid &= server->replay_hold_all_greetings;
+
+        // the kernel refused b's mark and every forget, so both stay kept:
+        // a zero mark of b replaces its kept mark in place, never refused
+
+        valid &= server->replay_marks->forget_count == server->replay_marks->capacity;
+        valid &= rocketnet_server_socket_replay_mark( server, &b, 0 );
+        valid &= server->replay_marks->mark_count == 1 && server->replay_marks->mark_values[0].high_water == 0;
+        rocketnet_xdp_replay_marks_reset( server->replay_marks );
+        rocketnet_server_socket_replay_commit( server );
+        valid &= !server->replay_hold_all_greetings;
+
         server->num_queues = 0;
         server->socket = NULL;
         socket->~rocketnet_server_xdp_socket_t();

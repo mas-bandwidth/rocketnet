@@ -333,8 +333,8 @@ static void test_server_replay_marks_refused_forget_keeps_the_slot()
     rocketnet_unit_check( client_b.slot == client_a.slot );
 
     // the buffer refuses the forget: the slot keeps the old address, and the
-    // new address is marked without taking the record, so its session is
-    // greeted with an entry (proofs/tla/RNServerReplaySlots.tla
+    // new address is marked at zero without taking the record, so its
+    // session is greeted with an entry (proofs/tla/RNServerReplaySlots.tla
     // MarkWhileSkipped, GreetedSlotHasEntry)
 
     memset( &recording, 0, sizeof( recording ) );
@@ -343,7 +343,7 @@ static void test_server_replay_marks_refused_forget_keeps_the_slot()
     rocketnet_unit_check( recording.count == 2 );
 
     server_replay_marks_check_forget( &recording.calls[0], &a );
-    server_replay_marks_check_mark( &recording.calls[1], &b, 9 );
+    server_replay_marks_check_mark( &recording.calls[1], &b, 0 );
 
     // the retry lands the old forget and the slot takes the new address,
     // first seen, so it is marked again
@@ -402,6 +402,122 @@ static void test_server_replay_marks_reused_slot_with_owed_forget_marks_at_zero(
         rocketnet_unit_check( !recording.calls[0].queued );
         server_replay_marks_check_mark( &recording.calls[1], &b, 0 );
     }
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
+// The mark a skipped slot's new address took has an owner: its session ends
+// before the slot's record takes the address, and the next walk forgets it
+// beside the old address, so no kernel entry is left behind
+// (proofs/tla/RNServerReplaySlots.tla RecordSkip, KernelEntryOwned).
+
+static void test_server_replay_marks_skipped_mark_is_forgotten_when_its_session_ends()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 2 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+    const struct rocketnet_address_t b = server_replay_marks_address( "198.51.100.8:50000" );
+
+    const struct server_replay_marks_client_t client_a = server_replay_marks_add_client( &fixture, &a, 100, 5 );
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+
+    rocketnet_client_slots_release( fixture.slots, client_a.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, client_a.mapping );
+
+    const struct server_replay_marks_client_t client_b = server_replay_marks_add_client( &fixture, &b, 200, 0 );
+    rocketnet_unit_check( client_b.slot == client_a.slot );
+
+    // a's forget refused, b marked without taking the record
+
+    memset( &recording, 0, sizeof( recording ) );
+    recording.forget_refusals = 1;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 2 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_mark( &recording.calls[1], &b, 0 );
+    rocketnet_unit_check( recording.calls[1].queued );
+
+    // b's session ends first: both addresses are forgotten
+
+    rocketnet_client_slots_release( fixture.slots, client_b.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, client_b.mapping );
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 2 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_forget( &recording.calls[1], &b );
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 0 );
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
+// A slot reused a second time while both its record's forget and its skip
+// mark's forget are refused is not marked at its third address, so the skip
+// mark keeps its owner; once both forgets are queued the slot is first seen
+// at the third address and marked (proofs/tla/RNServerReplaySlots.tla
+// KeepSkipOwner).
+
+static void test_server_replay_marks_blocked_slot_keeps_its_skip_mark()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 2 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+    const struct rocketnet_address_t b = server_replay_marks_address( "198.51.100.8:50000" );
+    const struct rocketnet_address_t c = server_replay_marks_address( "198.51.100.9:50000" );
+
+    const struct server_replay_marks_client_t client_a = server_replay_marks_add_client( &fixture, &a, 100, 5 );
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+
+    rocketnet_client_slots_release( fixture.slots, client_a.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, client_a.mapping );
+    const struct server_replay_marks_client_t client_b = server_replay_marks_add_client( &fixture, &b, 200, 0 );
+    rocketnet_unit_check( client_b.slot == client_a.slot );
+
+    memset( &recording, 0, sizeof( recording ) );
+    recording.forget_refusals = 1;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 2 );
+
+    rocketnet_client_slots_release( fixture.slots, client_b.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, client_b.mapping );
+    const struct server_replay_marks_client_t client_c = server_replay_marks_add_client( &fixture, &c, 300, 0 );
+    rocketnet_unit_check( client_c.slot == client_a.slot );
+
+    // both forgets refused: c is not marked
+
+    memset( &recording, 0, sizeof( recording ) );
+    recording.forget_refusals = 2;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 2 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_forget( &recording.calls[1], &b );
+
+    // both queued: c is first seen and marked
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 3 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_forget( &recording.calls[1], &b );
+    server_replay_marks_check_mark( &recording.calls[2], &c, 0 );
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 0 );
 
     server_replay_marks_fixture_destroy( &fixture );
 }
@@ -1050,6 +1166,8 @@ REGISTER_UNIT_TEST( test_server_replay_marks_forget_released_slots_first );
 REGISTER_UNIT_TEST( test_server_replay_marks_follow_an_address_change );
 REGISTER_UNIT_TEST( test_server_replay_marks_refused_forget_keeps_the_slot );
 REGISTER_UNIT_TEST( test_server_replay_marks_reused_slot_with_owed_forget_marks_at_zero );
+REGISTER_UNIT_TEST( test_server_replay_marks_skipped_mark_is_forgotten_when_its_session_ends );
+REGISTER_UNIT_TEST( test_server_replay_marks_blocked_slot_keeps_its_skip_mark );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_connected_slot_without_a_mapping );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_released_slot_without_a_mark );
 REGISTER_UNIT_TEST( test_server_replay_marks_queued_mark_supersedes_an_owed_forget );

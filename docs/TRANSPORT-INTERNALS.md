@@ -795,9 +795,14 @@ kernel window is the userspace window, so a reordered packet that every other
 transport accepts is accepted on XDP too. A session packet from a source with
 no entry is dropped and counted as `XDP_KERNEL_DROPPED_NO_SESSION` (expected:
 a client's disconnect burst after its slot is forgotten moves it); a session
-is greeted only once its entry is in the map, and a slot reused at a new
-address while the old address's forget is refused is marked at the new
-address all the same. The transport marks each connected
+is greeted only once its entry is in the map. A new session's zero mark
+waits while the forget list is full (every new session waits while kernel
+deletes keep failing): a slot reused at a new address while the old
+address's forget is refused is held ungreeted until that forget is queued,
+and every slot keeps a record of each address it was marked at until that
+address's forget is queued or another slot's queued mark or forget of it
+supersedes it, so no entry is left behind when a session ends. The
+transport marks each connected
 client after every update. A forget or mark the commit cannot apply is kept,
 applied again at the next commit, and counted as `XDP_REPLAY_COMMIT_FAILED`; a
 keep-alive held because its session's first mark is not yet applied is counted

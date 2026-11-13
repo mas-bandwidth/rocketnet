@@ -334,6 +334,25 @@ static inline bool rocketnet_xdp_replay_marks_holding_greetings( const struct ro
     return false;
 }
 
+// True when a kept mark names the address: a mark of it replaces that one in
+// place (rocketnet_xdp_replay_marks_mark).
+
+static inline bool rocketnet_xdp_replay_marks_keeps( const struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
+{
+    struct rocketnet_server_xdp_replay_key_t key;
+    rocketnet_xdp_replay_key_from_address( address, &key );
+
+    for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
+    {
+        if ( memcmp( &marks->mark_keys[i], &key, sizeof( key ) ) == 0 )
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // True when a kept mark of 0 names the address: its greeting is held.
 
 static inline bool rocketnet_xdp_replay_marks_holds_greeting( const struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )

@@ -314,9 +314,16 @@ between start and finish.
   queued, and the fake-map regression covers both slots). A slot reused at
   another address while its old address's forget is still refused is
   [RNServerReplaySlots](README-RNServerReplaySlots.md): the walk keeps the
-  slot's record at the old address and marks the new one all the same, so
-  the new session is greeted only with an entry (`MarkWhileSkipped`,
-  `GreetedSlotHasEntry`); without that mark this model's
+  slot's record at the old address and asks for a mark of the new one all
+  the same, so the new session is greeted only with an entry
+  (`MarkWhileSkipped`, `GreetedSlotHasEntry`). The XDP sink refuses that zero
+  mark while its forget array is full, which a refused forget means, and
+  holds the greeting until the old forget lands (`ZeroMarkWaitsForForgets`);
+  a mark another sink takes there is recorded in the slot's skip mark and
+  forgotten when the slot leaves the address (`RecordSkip`,
+  `KernelEntryOwned`). Since slots are addresses here, this model's own walk
+  has no slot to lose an owner in, and the witnesses for that are in
+  RNServerReplaySlots. Without that mark this model's
   `LiveSessionNeverDroppedForNoEntry` would not hold for the code, since the
   kernel drops a session packet from a source with no entry. With it, the
   invariant holds for the code outside one accepted error-path window that

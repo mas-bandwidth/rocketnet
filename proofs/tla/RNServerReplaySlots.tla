@@ -63,6 +63,15 @@
 (*   MarkWhileSkipped (a definition, overridden by its witness) the skipped *)
 (*                  slot's address is not marked: its session is greeted   *)
 (*                  with no kernel entry (GreetedSlotHasEntry)              *)
+(*   RecordSkip, KeepSkipOwner (definitions, below) the skipped slot's mark *)
+(*                  loses its owner (KernelEntryOwned)                      *)
+(*   ZeroMarkWaitsForForgets (a definition, below) the XDP sink's rule,    *)
+(*                  without which a slot Blocked at a third address is     *)
+(*                  greeted with no entry (GreetedSlotHasEntry)             *)
+(*                                                                         *)
+(* A slot's skip mark (skip_marked, skip_address) records the address the *)
+(* mark pass marked while the slot was skipped; the forget pass forgets it *)
+(* once the slot has left it, kept on a refusal like the record's forget.  *)
 (*                                                                         *)
 (* ScanWhenOwedOnly FALSE is not a bug: it is the v1.0.0 forget pass, which *)
 (* scanned for every queued forget.  Its control reaches the same states,  *)
@@ -87,7 +96,49 @@ ASSUME MaxHigh \in Nat
 ASSUME \A f \in {SkipWhileOwed, ClearOnAccept, ForgetRefusable, MarkSupersedes, ForgetSupersedes, OweOnRefusal, ScanWhenOwedOnly} : f \in BOOLEAN
 
 Highs == 0..MaxHigh
-Clear == [ seen |-> FALSE, at |-> NONE, has |-> FALSE, marked |-> 0, owes |-> FALSE ]
+Clear == [ seen |-> FALSE, at |-> NONE, has |-> FALSE, marked |-> 0, owes |-> FALSE, skip |-> FALSE, skipAt |-> NONE ]
+
+\* rocketnet_server_replay_marks_clear_record: the seen record cleared, the
+\* skip mark kept (it answers for another address)
+ClearRec(r) == [ r EXCEPT !.seen = FALSE, !.at = NONE, !.has = FALSE, !.marked = 0, !.owes = FALSE ]
+
+\* rocketnet_server_replay_marks_clear_skip
+ClearSkip(r) == [ r EXCEPT !.skip = FALSE, !.skipAt = NONE ]
+
+\* the record seen at a; a skip mark of a is the record's now
+SeenAt(r, a) == IF r.skip /\ r.skipAt = a THEN [ ClearSkip(r) EXCEPT !.seen = TRUE, !.at = a ]
+                ELSE [ r EXCEPT !.seen = TRUE, !.at = a ]
+
+(* RecordSkip: an accepted mark of a skipped slot's address is recorded in *)
+(* the slot's skip mark (skip_marked, skip_address), and the forget pass    *)
+(* forgets that address once the slot is no longer connected at it, kept   *)
+(* until the sink accepts like any forget (the design: TRUE).  FALSE is the *)
+(* walk before it: the mark had no owner, and a session that ended before   *)
+(* its slot's record took the address left the kernel entry for good;       *)
+(* MCRNServerReplaySlotsBrokenSkipNotRecorded.cfg must fail                 *)
+(* KernelEntryOwned.                                                        *)
+RecordSkip == TRUE
+
+(* KeepSkipOwner: a skipped slot whose skip mark still names an address it  *)
+(* has left (that forget refused too) is not marked at its new address, so *)
+(* the skip mark keeps its owner; nothing holds its greeting, and with the *)
+(* XDP sink no slot gets here (ZeroMarkWaitsForForgets) (the design:       *)
+(* TRUE).  FALSE marks it and overwrites                                   *)
+(* the skip mark; MCRNServerReplaySlotsBrokenSkipOverwritten.cfg, three     *)
+(* addresses, must fail KernelEntryOwned.                                   *)
+KeepSkipOwner == TRUE
+
+(* ZeroMarkWaitsForForgets: the XDP sink's rule.  It refuses a zero mark    *)
+(* while its forget array is full (rocketnet_xdp_replay_sink_mark), and a  *)
+(* forget the sink refused in this walk means it is full, so a zero mark   *)
+(* is refused in such a walk and the greeting held.  A skipped slot's mark *)
+(* is asked at zero and a forget was refused in its walk: no skip mark is  *)
+(* taken, and its greeting waits for the record's forget.  FALSE (the default) is any sink, whose answers are free:       *)
+(* RecordSkip and KeepSkipOwner keep every entry owned there, and at three *)
+(* addresses a Blocked slot is greeted with no entry                       *)
+(* (MCRNServerReplaySlotsBrokenZeroMarkTaken.cfg fails GreetedSlotHasEntry; *)
+(* MCRNServerReplaySlotsThreeXdpSink.cfg, TRUE, passes it).                 *)
+ZeroMarkWaitsForForgets == FALSE
 
 (* MarkWhileSkipped: a connected slot the mark pass skips, its record      *)
 (* naming the address whose forget is owed, is still marked at its own     *)
@@ -147,50 +198,85 @@ Release(i) ==
 \* rocketnet_server_replay_marks_walk, then the transport's commit
 Walk ==
     LET F == { i \in Slots : rec[i].seen /\ (~conn[i].on \/ conn[i].at # rec[i].at) }
-    IN \E fAcc \in IF ForgetRefusable THEN SUBSET F ELSE {F} :
+        \* the skip forgets: a slot whose skip mark names an address it is
+        \* no longer connected at
+        G == { i \in Slots : rec[i].skip /\ (~conn[i].on \/ conn[i].at # rec[i].skipAt) }
+    IN \E fAcc \in IF ForgetRefusable THEN SUBSET F ELSE {F},
+          gAcc \in IF ForgetRefusable THEN SUBSET G ELSE {G} :
        LET \* the forgets the sink refused in this walk (refused_forgets > 0)
-           refusedAny == (F \ fAcc) # {}
-           \* the other slots whose record names an address forgotten now:
-           \* the code scans for them only while supersede_owed is set
-           FSup == { k \in Slots : ForgetSupersedes /\ (supOwed \/ ~ScanWhenOwedOnly) /\ rec[k].seen /\
-                                    \E i \in fAcc : i # k /\ rec[i].at = rec[k].at }
-           r1 == [ i \in Slots |->
-                     IF i \in fAcc \/ i \in FSup \/ (i \in F /\ ~ClearOnAccept) THEN Clear ELSE rec[i] ]
-           forgets == { rec[i].at : i \in fAcc }
+           refusedAny == (F \ fAcc) # {} \/ (G \ gAcc) # {}
+           \* the addresses another slot than k forgets now
+           others(k) == { rec[i].at : i \in fAcc \ {k} } \cup { rec[i].skipAt : i \in gAcc \ {k} }
+           \* the other slots whose record or skip mark names an address
+           \* forgotten now: the code scans for them only while
+           \* supersede_owed is set
+           FSup == { k \in Slots : ForgetSupersedes /\ (supOwed \/ ~ScanWhenOwedOnly) /\ rec[k].seen /\ rec[k].at \in others(k) }
+           GSup == { k \in Slots : ForgetSupersedes /\ (supOwed \/ ~ScanWhenOwedOnly) /\ rec[k].skip /\ rec[k].skipAt \in others(k) }
+           r0 == [ i \in Slots |->
+                     IF i \in fAcc \/ i \in FSup \/ (i \in F /\ ~ClearOnAccept) THEN ClearRec(rec[i]) ELSE rec[i] ]
+           r1 == [ i \in Slots |-> IF i \in gAcc \/ i \in GSup THEN ClearSkip(r0[i]) ELSE r0[i] ]
+           forgets == { rec[i].at : i \in fAcc } \cup { rec[i].skipAt : i \in gAcc }
            \* the mark pass's candidates: connected, not skipped
            Cand == { i \in Slots : conn[i].on /\ ~(SkipWhileOwed /\ r1[i].seen /\ r1[i].at # conn[i].at) }
            last(i) == IF r1[i].has THEN r1[i].marked ELSE 0
            Wants == { i \in Cand : ~r1[i].seen \/ r1[i].owes \/ conn[i].high # last(i) }
-           \* the skipped connected slots, marked at their own address
-           \* without taking the record (MarkWhileSkipped)
-           SkipWants == IF MarkWhileSkipped THEN { i \in Slots : conn[i].on /\ i \notin Cand } ELSE {}
-       IN \E mAcc \in SUBSET Wants, sAcc \in SUBSET SkipWants :
-          LET \* the other slots whose record names an address marked now:
-              \* each owes a forget of it, which the queued mark supersedes;
-              \* the code scans for them only when a forget of this walk was refused
-              Sup == { k \in Slots : MarkSupersedes /\ refusedAny /\ k \notin Cand /\ r1[k].seen /\
-                                     \E i \in mAcc \cup sAcc : i # k /\ r1[k].at = conn[i].at }
+           \* the skipped connected slots
+           Skipped == { i \in Slots : conn[i].on /\ i \notin Cand }
+           \* a skipped slot whose skip mark names an address it has left,
+           \* that forget refused: not marked, so the skip mark keeps its
+           \* owner (KeepSkipOwner)
+           Blocked == IF KeepSkipOwner THEN { i \in Skipped : r1[i].skip /\ r1[i].skipAt # conn[i].at } ELSE {}
+           \* the other skipped slots, marked at their own address without
+           \* taking the record (MarkWhileSkipped)
+           SkipWants == IF MarkWhileSkipped THEN Skipped \ Blocked ELSE {}
+           \* the marks the sink may take: a zero mark is refused in a walk
+           \* that refused a forget (ZeroMarkWaitsForForgets); a skipped
+           \* slot's mark is always zero
+           takeable(i) == ~(ZeroMarkWaitsForForgets /\ refusedAny /\ conn[i].high = 0)
+           skipTakeable == ~(ZeroMarkWaitsForForgets /\ refusedAny)
+       IN \E mAcc \in SUBSET { i \in Wants : takeable(i) }, sAcc \in SUBSET { i \in SkipWants : skipTakeable } :
+          LET \* the addresses another slot than k marks now
+              marked(k) == { conn[i].at : i \in (mAcc \cup sAcc) \ {k} }
+              \* the other slots whose record or skip mark names an address
+              \* marked now: each owes a forget of it, which the queued mark
+              \* supersedes; the code scans for them only when a forget of
+              \* this walk was refused
+              Sup == { k \in Slots : MarkSupersedes /\ refusedAny /\ k \notin Cand /\ r1[k].seen /\ r1[k].at \in marked(k) }
+              SkipSup == { k \in Slots : MarkSupersedes /\ refusedAny /\ r1[k].skip /\ r1[k].skipAt \in marked(k) }
               \* the greetings the publish after this commit holds: a slot
               \* not yet greeted whose mark the sink refused (its mark is
               \* the zero of a session that has sent nothing; the code holds
-              \* every keep-alive then, rocketnet_xdp_replay_sink_mark)
+              \* every keep-alive then, rocketnet_xdp_replay_sink_mark). A
+              \* Blocked slot asks for no mark and is not held: with
+              \* ZeroMarkWaitsForForgets no skip mark is ever taken, so no
+              \* slot is Blocked (its witness shows the greeting it costs)
               Held == { i \in (Wants \ mAcc) \cup (SkipWants \ sAcc) : ~greeted[i] }
+              q1 == [ i \in Slots |-> IF i \in Sup THEN ClearRec(r1[i]) ELSE r1[i] ]
+              q2 == [ i \in Slots |-> IF i \in SkipSup THEN ClearSkip(q1[i]) ELSE q1[i] ]
               r2 == [ i \in Slots |->
-                        IF i \in Sup THEN Clear
-                        ELSE IF i \notin Cand THEN r1[i]
-                        ELSE IF i \notin Wants THEN [ r1[i] EXCEPT !.seen = TRUE, !.at = conn[i].at ]
+                        IF i \notin Cand
+                        THEN IF i \in sAcc /\ RecordSkip
+                             THEN [ q2[i] EXCEPT !.skip = TRUE, !.skipAt = conn[i].at ]
+                             ELSE q2[i]
+                        ELSE IF i \notin Wants THEN SeenAt(q2[i], conn[i].at)
                         ELSE IF i \in mAcc
-                             THEN [ seen |-> TRUE, at |-> conn[i].at, has |-> TRUE,
-                                    marked |-> conn[i].high, owes |-> FALSE ]
-                             ELSE [ r1[i] EXCEPT !.seen = TRUE, !.at = conn[i].at, !.owes = TRUE ] ]
-              marks == { <<conn[i].at, conn[i].high>> : i \in mAcc \cup sAcc }
+                             THEN [ SeenAt(q2[i], conn[i].at) EXCEPT !.has = TRUE, !.marked = conn[i].high, !.owes = FALSE ]
+                             ELSE [ SeenAt(q2[i], conn[i].at) EXCEPT !.owes = TRUE ] ]
+              \* a skipped slot's mark is asked at zero (the walk's
+              \* sink->mark( address, 0 ) in the skip)
+              marks == { <<conn[i].at, conn[i].high>> : i \in mAcc } \cup { <<conn[i].at, 0>> : i \in sAcc }
           IN /\ rec' = r2
              /\ kernel' = [ a \in Addrs |->
                               IF \E m \in marks : m[1] = a THEN (CHOOSE m \in marks : m[1] = a)[2]
                               ELSE IF a \in forgets THEN NONE
                               ELSE kernel[a] ]
-             /\ owed' = ((owed \ { <<i, rec[i].at>> : i \in fAcc \cup FSup }) \ { <<k, r1[k].at>> : k \in Sup })
-                          \cup { <<i, conn[i].at>> : i \in Cand }
+             \* the ghost: every address a slot was marked or seen at is owed
+             \* its forget, the skipped slots' marks included
+             /\ owed' = ((((owed \ { <<i, rec[i].at>> : i \in fAcc \cup FSup })
+                                 \ { <<i, rec[i].skipAt>> : i \in gAcc \cup GSup })
+                                 \ { <<k, r1[k].at>> : k \in Sup })
+                                 \ { <<k, r1[k].skipAt>> : k \in SkipSup })
+                          \cup { <<i, conn[i].at>> : i \in Cand \cup sAcc }
              /\ supOwed' = (OweOnRefusal /\ refusedAny)
              /\ greeted' = [ i \in Slots |-> conn[i].on /\ (greeted[i] \/ i \notin Held) ]
     /\ UNCHANGED conn
@@ -206,7 +292,8 @@ Spec == Init /\ [][Next]_vars
 
 TypeOK ==
     /\ conn \in [ Slots -> [ on : BOOLEAN, at : Addrs \cup {NONE}, high : Highs ] ]
-    /\ rec \in [ Slots -> [ seen : BOOLEAN, at : Addrs \cup {NONE}, has : BOOLEAN, marked : Highs, owes : BOOLEAN ] ]
+    /\ rec \in [ Slots -> [ seen : BOOLEAN, at : Addrs \cup {NONE}, has : BOOLEAN, marked : Highs, owes : BOOLEAN,
+                            skip : BOOLEAN, skipAt : Addrs \cup {NONE} ] ]
     /\ kernel \in [ Addrs -> Highs \cup {NONE} ]
     /\ supOwed \in BOOLEAN
     /\ greeted \in [ Slots -> BOOLEAN ]
@@ -226,20 +313,32 @@ GreetedSlotHasEntry ==
                         \/ (rec[i].seen /\ rec[i].at = conn[i].at /\ rec[i].owes)
 
 \* what the forget pass's skipped scan rests on: unless the last walk left a
-\* refused forget, no two slots' records name one address, so a queued
-\* forget has no other record to clear
+\* refused forget, no two slots' records or skip marks name one address, so
+\* a queued forget has no other record or skip mark to clear
+Named(i) == (IF rec[i].seen THEN {rec[i].at} ELSE {}) \cup (IF rec[i].skip THEN {rec[i].skipAt} ELSE {})
+
 DistinctUnlessOwed ==
-    ~supOwed => \A i, k \in Slots :
-                    (i # k /\ rec[i].seen /\ rec[k].seen) => rec[i].at # rec[k].at
+    ~supOwed => \A i, k \in Slots : i # k => Named(i) \cap Named(k) = {}
 
-\* a forget owed for an address a slot was seen at is never lost: the
-\* slot's record keeps naming that address until the sink accepts it
+\* a forget owed for an address a slot was seen or marked at is never lost:
+\* the slot's record or skip mark keeps naming that address until the sink
+\* accepts it
 ForgetNeverLost ==
-    \A p \in owed : rec[p[1]].seen /\ rec[p[1]].at = p[2]
+    \A p \in owed : \/ rec[p[1]].seen /\ rec[p[1]].at = p[2]
+                    \/ rec[p[1]].skip /\ rec[p[1]].skipAt = p[2]
 
-\* a slot's record names one address at a time
+\* a slot answers for two addresses at most: its record's and its skip
+\* mark's
 OneIdentityPerSlot ==
-    \A p, q \in owed : p[1] = q[1] => p[2] = q[2]
+    \A p, q, r \in owed : (p[1] = q[1] /\ q[1] = r[1]) => (p[2] = q[2] \/ q[2] = r[2] \/ p[2] = r[2])
+
+\* every kernel entry has an owner: a slot whose record or skip mark names
+\* its address, whose forget deletes it once the slot leaves.  An entry
+\* without one stays in the map until the transport is recreated
+KernelEntryOwned ==
+    \A a \in Addrs : kernel[a] # NONE =>
+        \E i \in Slots : \/ rec[i].seen /\ rec[i].at = a
+                         \/ rec[i].skip /\ rec[i].skipAt = a
 
 \* a connected slot whose record holds its current mark, owing nothing, has
 \* that mark in the kernel map.  Without MarkSupersedes it fails when the

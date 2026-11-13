@@ -18,4 +18,8 @@ MCSpec == Spec
 \* marked (the walk before MarkWhileSkipped)
 MCMarkWhileSkippedBroken == FALSE
 
+\* MCRNServerReplaySlotsBrokenSkipNotRecorded.cfg: the skipped slot's mark
+\* is not recorded (the walk before RecordSkip)
+MCRecordSkipBroken == FALSE
+
 =============================================================================

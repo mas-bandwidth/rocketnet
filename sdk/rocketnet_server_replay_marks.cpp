@@ -22,7 +22,9 @@
     X( marked_value, uint32_t marked_value )                       \
     X( seen, int seen )                                            \
     X( seen_address, struct rocketnet_address_t seen_address )     \
-    X( mark_owed, int mark_owed )
+    X( mark_owed, int mark_owed )                                  \
+    X( skip_marked, int skip_marked )                              \
+    X( skip_address, struct rocketnet_address_t skip_address )
 
 struct rocketnet_server_replay_slot_mark_t
 {
@@ -112,14 +114,33 @@ bool rocketnet_server_replay_marks_slot_for_test( const struct rocketnet_server_
 }
 #endif // #if ROCKETNET_DEV
 
+// The slot's record of the address it was seen at, cleared; the skip mark
+// (skip_marked, skip_address) is the other address the slot answers for and
+// is cleared only by its own forget or a supersede of that address
+// (proofs/tla/RNServerReplaySlots.tla ClearRecord)
+static void rocketnet_server_replay_marks_clear_record( struct rocketnet_server_replay_slot_mark_t * slot )
+{
+    slot->has_mark = 0;
+    slot->marked_value = 0;
+    slot->seen = 0;
+    memset( &slot->seen_address, 0, sizeof( slot->seen_address ) );
+    slot->mark_owed = 0;
+}
+
+static void rocketnet_server_replay_marks_clear_skip( struct rocketnet_server_replay_slot_mark_t * slot )
+{
+    slot->skip_marked = 0;
+    memset( &slot->skip_address, 0, sizeof( slot->skip_address ) );
+}
+
 // proofs/tla/RNServerReplaySlots.tla Walk (MarkSupersedes, ForgetSupersedes): a
 // queued forget or mark of an address clears every other slot's record of that
-// address. Such a record is a refused forget left by a slot that is no longer
-// there, or a mark the queued forget is about to delete. Kept, the record's
-// later forget would delete the entry of the slot now at the address, or its
-// slot, back at the address, would believe a mark another slot replaced is
-// still in the kernel map (KernelHoldsMark). A slot cleared while connected is
-// first seen again and marked in the same walk.
+// address, and its skip mark of it. Such a record is a refused forget left by
+// a slot that is no longer there, or a mark the queued forget is about to
+// delete. Kept, the record's later forget would delete the entry of the slot
+// now at the address, or its slot, back at the address, would believe a mark
+// another slot replaced is still in the kernel map (KernelHoldsMark). A slot
+// cleared while connected is first seen again and marked in the same walk.
 static void rocketnet_server_replay_marks_supersede( struct rocketnet_server_replay_marks_t * marks,
                                                      int keep,
                                                      const struct rocketnet_address_t * address )
@@ -130,11 +151,36 @@ static void rocketnet_server_replay_marks_supersede( struct rocketnet_server_rep
         marks->comparisons++;
 #endif // #if ROCKETNET_DEV
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
-        if ( i != keep && slot->seen && rocketnet_address_equal( &slot->seen_address, address ) )
+        if ( i == keep )
         {
-            memset( slot, 0, sizeof( *slot ) );
+            continue;
+        }
+        if ( slot->seen && rocketnet_address_equal( &slot->seen_address, address ) )
+        {
+            rocketnet_server_replay_marks_clear_record( slot );
+        }
+        if ( slot->skip_marked && rocketnet_address_equal( &slot->skip_address, address ) )
+        {
+            rocketnet_server_replay_marks_clear_skip( slot );
         }
     }
+}
+
+// the address slot i is connected at now, NULL when it is not connected or
+// has no mapping
+static const struct rocketnet_address_t * rocketnet_server_replay_marks_slot_address( const struct rocketnet_client_slots_t * slots,
+                                                                                      struct rocketnet_encryption_map_t * map, int i )
+{
+    if ( !rocketnet_client_slots_connected( slots, i ) )
+    {
+        return NULL;
+    }
+    const int mapping_index = rocketnet_client_slots_mapping_index( slots, i );
+    if ( mapping_index < 0 )
+    {
+        return NULL;
+    }
+    return rocketnet_encryption_map_address( map, mapping_index );
 }
 
 // proofs/tla/RNServerReplaySlots.tla Walk: the forget pass clears a record only
@@ -162,42 +208,21 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     for ( int i = 0; i < marks->max_clients; i++ )
     {
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
-        if ( !slot->seen )
+        if ( !slot->seen && !slot->skip_marked )
         {
             continue;
         }
 
-        int forget = 0;
+        const struct rocketnet_address_t * current = rocketnet_server_replay_marks_slot_address( slots, map, i );
 
-        if ( !rocketnet_client_slots_connected( slots, i ) )
-        {
-            forget = 1;
-        }
-        else
-        {
-            const int mapping_index = rocketnet_client_slots_mapping_index( slots, i );
-            if ( mapping_index < 0 )
-            {
-                forget = 1;
-            }
-            else
-            {
-                const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
-                if ( !rocketnet_address_equal( address, &slot->seen_address ) )
-                {
-                    forget = 1;
-                }
-            }
-        }
-
-        if ( forget )
+        if ( slot->seen && ( !current || !rocketnet_address_equal( current, &slot->seen_address ) ) )
         {
             // Queue acceptance transfers responsibility to the transport's
             // pending buffer. Until then this slot keeps the old identity.
             const struct rocketnet_address_t forgotten = slot->seen_address;
             if ( sink->forget( sink->context, &forgotten ) )
             {
-                memset( slot, 0, sizeof( *slot ) );
+                rocketnet_server_replay_marks_clear_record( slot );
 
                 // proofs/tla/RNServerReplaySlots.tla Walk (supOwed,
                 // DistinctUnlessOwed): two records name one address only
@@ -207,6 +232,29 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
                 // the scan of every slot is skipped: a mass disconnect reads
                 // each slot once.
 
+                if ( marks->supersede_owed )
+                {
+                    rocketnet_server_replay_marks_supersede( marks, i, &forgotten );
+                }
+            }
+            else
+            {
+                refused_forgets++;
+            }
+        }
+
+        // proofs/tla/RNServerReplaySlots.tla Walk (G, RecordSkip,
+        // KernelEntryOwned): the address the mark pass marked while the
+        // slot was skipped is forgotten once the slot has left it, kept on a
+        // refusal like the record's own forget, so its kernel entry always
+        // has an owner
+
+        if ( slot->skip_marked && ( !current || !rocketnet_address_equal( current, &slot->skip_address ) ) )
+        {
+            const struct rocketnet_address_t forgotten = slot->skip_address;
+            if ( sink->forget( sink->context, &forgotten ) )
+            {
+                rocketnet_server_replay_marks_clear_skip( slot );
                 if ( marks->supersede_owed )
                 {
                     rocketnet_server_replay_marks_supersede( marks, i, &forgotten );
@@ -246,7 +294,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         // A refused forget for an old mapping must be retried before the
         // current mapping replaces its seen or marked identity. The new
-        // address is still marked at its highest_opened, without taking the
+        // address is still marked, at zero, without taking the
         // record (proofs/tla/RNServerReplaySlots.tla MarkWhileSkipped,
         // GreetedSlotHasEntry): its session is greeted after this update's
         // commit, and a session packet from a source with no entry drops in
@@ -255,15 +303,34 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         // greeting as any other does (rocketnet_xdp_replay_sink_mark). The
         // record names the old address until its forget is queued, so the
         // mark is asked for again each walk until then; a queued one
-        // supersedes another slot's record of the address as below.
+        // supersedes another slot's record of the address as below, and is
+        // recorded in the slot's skip mark, which the forget pass forgets
+        // once the slot leaves the address (RecordSkip, KernelEntryOwned).
+        // A slot whose skip mark still names an address it has left is not
+        // marked at all: the skip mark keeps its owner (KeepSkipOwner). With
+        // the XDP sink no skip mark is ever queued (the zero mark waits for
+        // the full forget array), so this is a sink without that rule's case
+        // (msgx), whose session then waits unmarked for its forgets.
 
         if ( slot->seen && !rocketnet_address_equal( address, &slot->seen_address ) )
         {
+            if ( slot->skip_marked && !rocketnet_address_equal( address, &slot->skip_address ) )
+            {
+                continue;
+            }
+
             // the skip follows this slot's own forget refused in this walk,
-            // so a queued mark always supersedes
-            if ( sink->mark( sink->context, address, (uint32_t) highest_opened ) )
+            // so a queued mark always supersedes. It is asked at zero: the
+            // session is not yet greeted, and a zero mark is the one the XDP
+            // sink refuses while its forget array is full, holding every
+            // greeting, whatever the session opened before its greeting
+            // (ZeroMarkWaitsForForgets); the slot's own mark at its
+            // highest_opened follows once its record takes the address.
+            if ( sink->mark( sink->context, address, 0 ) )
             {
                 rocketnet_server_replay_marks_supersede( marks, i, address );
+                slot->skip_marked = 1;
+                slot->skip_address = *address;
             }
             continue;
         }
@@ -279,6 +346,12 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         slot->seen = 1;
         slot->seen_address = *address;
+
+        // a skip mark of this address is the record's now (SeenAt)
+        if ( slot->skip_marked && rocketnet_address_equal( &slot->skip_address, address ) )
+        {
+            rocketnet_server_replay_marks_clear_skip( slot );
+        }
 
         const uint32_t high_water = (uint32_t) highest_opened;
         const uint32_t last_marked = slot->has_mark ? slot->marked_value : 0;
@@ -335,13 +408,16 @@ bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, s
 #undef MARK_MEMBER
 #define MARK_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_server_replay_slot_mark_t, field, #decision[0] == 'R' ),
     // The shared inventory in rocketnet_connection_reset.h lists the mark
-    // record's fields; the walk's seen record and owed flag are three more
-    // members, and their RESET decisions are listed here so that every member
-    // of the struct has one and the inventory covers the whole struct.
+    // record's fields; the walk's seen record, owed flag and skip mark are
+    // five more members, and their RESET decisions are listed here so that
+    // every member of the struct has one and the inventory covers the whole
+    // struct.
     static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION )
                                                               MARK_DECISION( RESET, seen )
                                                                   MARK_DECISION( RESET, seen_address )
-                                                                      MARK_DECISION( RESET, mark_owed ) };
+                                                                      MARK_DECISION( RESET, mark_owed )
+                                                                          MARK_DECISION( RESET, skip_marked )
+                                                                              MARK_DECISION( RESET, skip_address ) };
 #undef MARK_DECISION
     return rocketnet_reset_inventory_matches( "rocketnet_server_replay_slot_mark_t", members, sizeof( members ) / sizeof( members[0] ),
                                               decisions, sizeof( decisions ) / sizeof( decisions[0] ), 0,

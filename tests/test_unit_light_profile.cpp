@@ -71,8 +71,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // it fails; the suite captures a passing case's output.
 // The server figures include the disconnect ring of 2 * ROCKETNET_MAX_CLIENTS
 // bursts (proofs/tla/ServerStopSpread.tla RingSize, 1088 bytes an entry) and,
-// on Linux, the xdp plan's per-slot replay records
-// (rocketnet_server_replay_marks_allocation_bytes).
+// in the plan of a transport that takes replay marks (xdp on Linux, msgx on
+// macOS), the per-slot replay records
+// (rocketnet_server_replay_marks_allocation_bytes); they reach a pin only
+// where that transport's plan is the peak (msgx on macOS; the Linux x86-64
+// figure did not move when the record grew, 2026-11-13, amd-2, gcc, Release,
+// DEV ON).
 // The figures are the planned peak; required_memory adds a fixed 1 MiB of
 // slack on top for the caller's heap (sdk/rocketnet_api.cpp
 // rn_required_memory_slack_bytes), so each check adds it back.
@@ -256,7 +260,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // here (the 72-byte mutex), so the counter PORTABLE_PIN_REFUSALS, 8 bytes in
 // the transport's counters, moves the fill phase by 64: computed from the
 // Linux layout, not measured on macOS.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624545891 )
+// The replay walk's per-slot record gains a skip mark (an int and a 20-byte
+// address: 36 to 60 bytes, sdk/rocketnet_server_replay_marks.cpp), planned
+// for msgx, which takes replay marks: 24 bytes a client, 24000 at 1000
+// clients, on the msgx plan this pin is the peak of: derived, not measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624569891 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
