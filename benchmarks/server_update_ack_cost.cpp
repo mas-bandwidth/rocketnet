@@ -206,13 +206,19 @@ int main( int argc, char ** argv )
 
     const double frame_seconds = 1.0 / 60.0;
 
-    for ( int step = 0; step < 6000 && rocketnet_server_num_connected_clients( server ) < num_clients; step++ )
+    int clients_connected = 0;
+    for ( int step = 0; step < 6000 && ( clients_connected < num_clients || rocketnet_server_num_connected_clients( server ) < num_clients ); step++ )
     {
         ack_cost_now += 0.01;
+        clients_connected = 0;
         for ( int i = 0; i < num_clients; i++ )
         {
             rocketnet_client_update( clients[(size_t) i], ack_cost_now );
             rocketnet_client_send_packets( clients[(size_t) i] );
+            if ( rocketnet_client_state( clients[(size_t) i] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+            {
+                clients_connected++;
+            }
         }
         rocketnet_server_update( server, ack_cost_now );
         rocketnet_server_send_packets( server );
