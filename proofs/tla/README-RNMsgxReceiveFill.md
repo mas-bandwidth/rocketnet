@@ -124,8 +124,8 @@ are the library's, but main's tail count and the exit's count of the worker
 and ready banks are the walk's copies of what `rocketnet_server_msgx_stop` and
 `rocketnet_server_msgx_receive_worker` do, so the trace binds the flag and the
 refused claim to the model, not those two counts in the Apple transport.
-`test_rocketnet_msgx_receive_fill_stop` (tests/test_unit_msgx_receive_fill.cpp)
-covers the pure header only: the stop flag, the refused claim, and a hand copy
+The unit test `test_rocketnet_msgx_receive_fill_stop`, in
+tests/test_unit_msgx_receive_fill.cpp, covers the pure header only: the stop flag, the refused claim, and a hand copy
 of the exit count (`receive_fill_test_exit`). The native paths
 (`rocketnet_server_msgx_stop`, the worker's exit count) run only in the Mac
 functional cases of tests/functional/posix_socket_errors.cpp
