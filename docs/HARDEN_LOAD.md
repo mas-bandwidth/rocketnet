@@ -59,6 +59,9 @@ committed in one walk at the end of the task.
 | `--pin-first-cpu C` | The main thread on cpu C and thread i on C + i (advisory on macOS, a group affinity on Windows). A setting the system refused is printed as `harden_pool_refused:`. |
 | `--world-ms MS` | The main thread's own share of a stand-in world update. |
 | `--game-load F` | Stand-in game jobs that keep each game thread F (0 to 1) of the frame busy. The main thread does its own share while they run. |
+| `--space-send serial\|wide` | Who sends the players' messages. `serial` (the default) is the frame above: the jobs write and stage them and one walk at the end of the task commits them. `wide`: each game thread starts and finishes its own players' messages itself (`rocketnet_server_start_message`, then `rocketnet_server_finish_client_message`), so the packet is built and sealed on the thread that wrote it and no serial commit is left; a refusal ends that player's frame. Not with `--big-every`: large messages are not written from the game threads. |
+| `--space-update main\|split` | The server update. `main` (the default) is one call, `rocketnet_server_update`. `split` is three: `rocketnet_server_update_receive`, `rocketnet_server_update_client` over ranges of client slots as jobs on the game threads, then `rocketnet_server_update_finish`. |
+| `--space-net main\|task` | Where send_packets and the update run. `main` (the default): send_packets and the update at the main thread's frame start, as above. `task`: both run at the end of the split-off task, on whichever thread runs the task (the pool's wait runs queued tasks, so the main thread can take a share: `main_in_jobs_ms` shows it), beside the main thread's frame, so the main thread's first half is only the read of what that update received. `harden_frame:` then gives `input_age_ms`, from the update finishing to the main thread handing its inputs to the world update. |
 | `--space-split bottom\|top` | Where the network task is split off: after the world update (space's order, the default) or before it, so that it runs beside the world update. |
 | `--load peak\|average\|custom` | Space game's real load: 15 (peak) or 8 (average) unreliable 1200-byte messages per client per tick, written by the game threads, one small reliable message per client every 3 seconds, no large messages. Under `--frame-shape space` the default is peak; `custom` keeps `--base`, `--burst` and the rest. |
 | `--input-bytes B` | The message each player sends each tick (256 by default, about 100 to 200 kbps a player). |
@@ -73,8 +76,10 @@ done in jobs, the game threads' minimum, mean and maximum, their ratio, and what
 frame (`leftover_ms`: the frame less its share of the game jobs less its mean network work). `harden_thread_net_ms:`
 lists each thread's network milliseconds a frame by thread index, to see how even the split is.
 
-`scripts/space-frame-row` runs one such row on the XDP transport in the layout the game runs, over two machines, and
-can profile the server with perf (`--profile`).
+With the three flags set, every number a row prints leads with what rocketnet takes from the main thread (`main_rn_ms`). The main thread's wait to join the task at the top of a frame is not in it: it is in `join_ms` and counted in `late`. `rn_core_ms` counts the update's range jobs once, in the threads that run them, and the main thread's own serial calls only. `harden_threads:` names the modes (`send_mode`, `update_mode`, `net_mode`) and prints the task's send and update milliseconds (`task_send_ms`, `task_update_ms`), the serial part that is left. The flags are the owner's layout one step at a time: each changes where one piece of rocketnet's work runs and uses only the public API (`sdk/rocketnet.h`).
+
+`scripts/space-frame-row` runs one such row on the XDP transport in the layout the game runs (all three flags set), over two
+machines, and can profile the server with perf (`--profile`).
 
 The players' input message defaults to 256 bytes (`--input-bytes`, about 100 to 200 kbps a player). It was 64 bytes
 before the frame shape, so every existing row that does not name `--input-bytes` now sends four times the input.
