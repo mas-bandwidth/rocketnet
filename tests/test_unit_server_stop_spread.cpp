@@ -1221,6 +1221,33 @@ static bool stop_spread_frames_dropped_read( const struct rocketnet_server_trans
     return true;
 }
 
+// the replay writer's counts read the same way: through the transport's own
+// counter read with the xdp table in place, so the seam's expected values
+// are checked against XDP_REPLAY_COMMIT_FAILED and XDP_REPLAY_GREETING_HELD
+// themselves, not the dispatch's answer
+static int g_replay_counts_reads;
+
+static bool stop_spread_replay_counts_read( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                            uint64_t * commit_failed, uint64_t * greetings_held )
+{
+    rocketnet_server_transport_t * server = g_frames_dropped_server;
+    const rocketnet_server_transport_io_operations_t * saved_operations = server->io.operations;
+    void * saved_instance = server->io.instance;
+    server->io.operations = operations;
+    server->io.instance = transport;
+
+    const uint64_t failed = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED];
+    const uint64_t held = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD];
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED] == failed );
+
+    server->io.operations = saved_operations;
+    server->io.instance = saved_instance;
+    g_replay_counts_reads++;
+    *commit_failed = failed;
+    *greetings_held = held;
+    return true;
+}
+
 static void test_server_transport_counts_xdp_frames_dropped()
 {
     stop_spread_fixture_t * f = new stop_spread_fixture_t();
@@ -1241,15 +1268,20 @@ static void test_server_transport_counts_xdp_frames_dropped()
     rocketnet_unit_check( xdp && xdp->backend && xdp->backend->server );
     g_frames_dropped_server = server;
     g_frames_dropped_reads = 0;
-    rocketnet_unit_check( rocketnet_server_socket_test_receive_dropped( stop_spread_frames_dropped_read, rocketnet_server_transport_io_replay_counts,
+    g_replay_counts_reads = 0;
+    rocketnet_unit_check( rocketnet_server_socket_test_receive_dropped( stop_spread_frames_dropped_read, stop_spread_replay_counts_read,
                                                                         xdp->backend->server ) );
     rocketnet_unit_check( g_frames_dropped_reads == 9 );
+    rocketnet_unit_check( g_replay_counts_reads == 2 );
     g_frames_dropped_server = NULL;
 
-    // the last total stays until the next xdp read: a read through the fake
+    // the last totals stay until the next xdp read: a read through the fake
     // table assigns nothing
 
-    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] == 63 );
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] == 63 );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED] == 5 );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD] == 3 );
 
     rocketnet_log_level( saved_level );
     rn_test_server_transport_stop_and_destroy( server );
