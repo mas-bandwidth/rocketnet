@@ -18,7 +18,7 @@ running a client and server in separate processes over UDP.
 
 ## Integrate with your game
 
-| Task | Start here |
+| Task | Documentation |
 | --- | --- |
 | Build, install, or embed the SDK | [Building](docs/BUILDING.md) |
 | Update, receive, simulate, queue, and send each frame | [Integration guide](docs/USAGE.md#frame-loop) |
