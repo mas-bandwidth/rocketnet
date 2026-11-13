@@ -122,7 +122,7 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
         bucket[b] = -1;
     }
 
-    // RNSendGatherLayout Scan and Probe: each staged slot finds its
+    // proofs/tla/RNSendGatherLayout.tla Scan and Probe: each staged slot finds its
     // destination's group by linear probing modulo the table, or takes a new
     // group, and counts itself into it
 
@@ -159,7 +159,7 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
         }
     }
 
-    // RNSendGatherLayout Prefix: each group's count becomes its start
+    // proofs/tla/RNSendGatherLayout.tla Prefix: each group's count becomes its start
 
     int sum = 0;
     for ( int g = 0; g < num_groups; g++ )
@@ -169,7 +169,7 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
         sum += n;
     }
 
-    // RNSendGatherLayout Place: each staged slot goes to its group's next
+    // proofs/tla/RNSendGatherLayout.tla Place: each staged slot goes to its group's next
     // position, first to last, so a destination keeps its staged order; each
     // start then ends its group
 
@@ -185,7 +185,7 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
         }
     }
 
-    // RNSendGatherLayout Emit and Walk: each group's range of order, groups
+    // proofs/tla/RNSendGatherLayout.tla Emit and Walk: each group's range of order, groups
     // in order, is cut into runs; a packet joins the open run while the run
     // has room under both caps and the packet is no larger than its first,
     // and a smaller packet closes it
