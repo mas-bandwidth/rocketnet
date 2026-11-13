@@ -3,8 +3,9 @@
 **1000 players at 60 Hz, sending about 900,000 packets/s at peak.** XDP,
 GSO, io_uring, IOCP and RIO reached that rate on the measured machines,
 including with simulated game work. Their main-thread network work averaged
-0.19–0.93 ms across the per-second p99 readings. On macOS, the M5 Pro reached
-peak without game work; its loaded peak and the M3 Ultra's peak fell short.
+0.19–0.93 ms across the per-second p99 readings.
+
+macOS is being measured separately and will be added later.
 
 These are measurements of commits on `main` on November 13, 2026, using
 Release development builds. They qualify the workloads, machines and commits
@@ -18,8 +19,6 @@ production build.
 | io_uring, EPYC 9254 / Intel X710 | 1 worker in the two peak rows; 2 in the four-row set | 900.3k / 900.2k at either count | 0.504–0.671 at 2 workers | All four reach rate at 2; small server queue drops in unloaded peak |
 | IOCP, AWS m7i.16xlarge | 2 completion workers + 2 send threads | 900.3k / 900.3k | 0.189–0.270 | All four reach rate; input delivery 99.973–100% |
 | RIO, AWS m7i.16xlarge | 5 lanes | 900.3k / 900.2k | 0.583–0.899 at 5 lanes | All four reach rate; 100% delivery both ways |
-| macOS `msgx`, M5 Pro | 3 transmit + 1 receive worker, unloaded peak only | 900.4k / 886.7k | 0.134–0.150 | Two peak rows measured; loaded peak misses offered rate |
-| macOS `msgx`, M3 Ultra | Best tested: 2 transmit + 1 receive worker | 694k / 589k | 0.261–0.311 at 2 transmit workers | Average rate reached; peak misses offered rate |
 
 Here and below, **main p99 is the mean of the per-second p99 readings**,
 not a percentile calculated over all frames. It measures elapsed network
@@ -221,55 +220,6 @@ sent. The loaded-peak five-lane and loaded-average six-lane reports record
 0.03 overruns/s. The previous branch's five-lane failure preceded the larger
 send capacity; the measured main result supersedes that limit.
 
-### macOS msgx
-
-The two Macs have different limits. The M5 Pro sends the full peak with
-three transmit workers and no game work. With game work it sends 886.7k
-packets/s and refuses starts. Only those two rows were rerun on the M5 Pro;
-there are no new average-load rows for that machine.
-
-The M3 Ultra peaks near 694k packets/s with two transmit workers. Adding
-workers reduces throughput in this measurement. It maintains about 60
-frames/s and 1000 connected players while refusing unsent messages; that
-does not meet the peak traffic target.
-
-| Server / row | Transmit workers | Load / game work | Packets/s | Frames/s | Main p99 / max | Game min / mean / max | Refused starts/s |
-| --- | ---: | --- | ---: | ---: | --- | --- | ---: |
-| M5 Pro r1 | 3 | Peak / none | 900.4k | 60.57 | 0.150 / 0.189 | 4.75 / 4.83 / 4.92 | 0 |
-| M5 Pro r2 | 3 | Peak / half | 886.7k | 60.70 | 0.134 / 0.303 | 3.93 / 4.66 / 5.42 | 14.8k |
-| M3 Ultra best | 2 | Peak / none | 694k | 60.57 | 0.311 / 0.406 | 6.61 / 6.70 / 6.92 | 222k |
-| M3 Ultra best | 2 | Peak / half | 589k | 59.97 | 0.299 / 0.568 | 2.85 / 3.24 / 3.65 | 327k |
-| M3 Ultra best | 2 | Average / none | 480.3k | 60.63 | 0.261 / 0.321 | 4.23 / 4.31 / 4.50 | 0 |
-| M3 Ultra best | 2 | Average / half | 480.3k | 60.63 | 0.263 / 0.381 | 2.02 / 2.39 / 2.79 | 91 |
-
-M5 Pro r1 delivered 99.971% s2c (20,886 messages lost) and 99.9998% c2s;
-r2 delivered 99.9992% s2c and 100% c2s. Their overrun counts were 18/5205
-frames and 14 respectively. The M3 Ultra's four rows lost 14,705, 5346,
-4926 and 3533 s2c messages, with 100% c2s delivery. Its loaded peak had
-137 overruns; the other three rows had none. Loaded average reaches the
-rounded packet-rate target but still records refused starts, so it is not
-a zero-refusal result.
-
-| M3 Ultra transmit workers | Peak packets/s without game work | Refused starts/s |
-| --- | ---: | ---: |
-| 1 | 678k | 237k |
-| 2 | 694k | 222k |
-| 3 | 660k | 256k |
-| 4 | 610k | 311k |
-| 5 | 541k | 388k |
-| 6 | 492k | 436k |
-
-At two transmit workers, each used about 95% of a core, predominantly in
-the kernel. At one, the worker used 99.5%. The measured send cost rises
-with additional workers. The interface queue also dropped packets in some
-rows; it does not explain the whole throughput curve.
-
-All macOS rows failed chain reconciliation: the Mac side supplies no
-kernel counters and gaps remain unnamed. Player delivery, refusals and
-rate are therefore reported separately. No `CLIENT_PAYLOAD_ALREADY_RECEIVED`
-was counted, but the transport does not count retained/retried batches;
-these observations do not prove that its retry path cannot duplicate sends.
-
 ## Time available for the game
 
 Main-thread network time alone understates networking cost: game threads
@@ -289,8 +239,6 @@ measured remaining game-thread budget.
 | IOCP, 2 completion + 2 send, average | 0.161 | 1.35 | 0.12 | 6.98 | 9.81 |
 | RIO, 5 lanes, peak | 0.457 | 2.66 | 0.17 | 5.67 | 10.89 |
 | RIO, 5 lanes, average | 0.471 | 1.46 | 0.32 | 6.88 | 9.78 |
-| M5 Pro, 3 transmit workers, peak (rate missed) | Not supplied | 4.66 | 0.023 | 3.67 | 13.5 |
-| M3 Ultra, 2 transmit workers, peak (rate missed) | Not supplied | 3.24 | 0.061 | 5.03 | 9.8 |
 
 “Time left” subtracts the measured game work and network work per game
 thread from the frame budget. It is not simply the unused half of a frame.
@@ -299,7 +247,7 @@ frame, and excludes the dedicated network workers. State-to-send latency
 runs from the world state used for the packet to its send call; it is not
 network transit time. Without game work the recorded means are roughly
 18–23 ms; starting the network task alongside world work changes that
-pipeline, giving the loaded rows above roughly 9–14 ms.
+pipeline, giving the loaded rows above roughly 9–11 ms.
 
 ## Machines, placement and source commits
 
@@ -309,8 +257,6 @@ pipeline, giving the loaded rows above roughly 9–14 ms.
 | GSO and io_uring | Same bare-metal X710 server; GCC 15.2; io_uring kernel 7.0.0-43-generic, liburing 2.14 | Same X710 client machine; 32 client threads | OS CPU 0; network worker(s) CPU 1 (and 2); main 3; 20 game workers 4–23 |
 | IOCP | AWS m7i.16xlarge, 64 logical processors, Windows Server 2025, MSVC Release | AWS c8gn.8xlarge, 16 client threads; same subnet in us-east-1d | RSS processors 2,4; completion workers 3,5; send threads 6,8; main 10; 53 game workers 11–63 |
 | RIO | AWS m7i.16xlarge, Windows Server 2025, MSVC Release | AWS c8gn.8xlarge, 32 client threads; same subnet and cluster placement group in us-east-1a | Lane i: RSS processor 2i, worker 2i+1; five lanes: main 10, 53 game workers 11–63; six lanes: main 12, 51 game workers 13–63 |
-| M5 Pro msgx | Mac mini M5 Pro, 18 CPUs, macOS 27.2; Realtek RTL8127 10 GbE | Linux, 16 CPUs, RTL8127A 10 GbE, one receive queue, 12 client threads; direct LAN | 3 transmit + 1 receive worker; pool of 13 including main; advisory affinity and QoS |
-| M3 Ultra msgx | Mac Studio M3 Ultra, 32 CPUs, macOS 27.2; Aquantia AQC113 10 GbE | Same Linux client machine | 2 transmit + 1 receive worker in the best set; pool of 25 including main; advisory affinity and QoS |
 
 The Linux library pins its own network workers. The bare-metal servers
 retain `isolcpus=1-2`; XDP provisioning matches NIC queues to XDP threads.
@@ -326,12 +272,6 @@ processors. IOCP uses the development layout override
 Their results are not evidence that an unconfigured wildcard bind and
 default RSS achieve the same throughput.
 
-macOS affinity is advisory, not CPU isolation. The Linux client's single
-receive queue uses RPS mask `ffff` during these runs. Competing CI runners
-were paused while idle and restored afterward, along with the original RPS
-setting. The two Macs' different NICs, drivers and queue limits are part
-of the result; CPU model alone does not explain the difference.
-
 | Transport | Measured main commit | Evidence row IDs |
 | --- | --- | --- |
 | XDP | [59890655d](https://github.com/mas-bandwidth/rocketnet/commit/59890655d1f35133732073d6b1786a1407a134c7) | R1–R8, `rm-xdp-{peak,avg}-{noload,load}-q{1,2}` |
@@ -339,13 +279,12 @@ of the result; CPU model alone does not explain the difference.
 | io_uring | [3afea2aed](https://github.com/mas-bandwidth/rocketnet/commit/3afea2aed6f010a043ae194760a719f51f9b2380) | U1–U6, `rm-uring-{peak,avg}-{noload,load}-q{1,2}`; U1 repeats `-r2` through `-r4` |
 | IOCP | [3218cf5f6](https://github.com/mas-bandwidth/rocketnet/commit/3218cf5f64dbad2babdd5a2cfc98bb7d9a53884c) | `m1-peak-noload`, `m2-peak-load`, `m3-avg-noload`, `m4-avg-load`, `m5-peak-load-r1` |
 | RIO | [3218cf5f6](https://github.com/mas-bandwidth/rocketnet/commit/3218cf5f64dbad2babdd5a2cfc98bb7d9a53884c) | RIO-R1–R9, `rm-rio-{peak,avg}-{noload,load}-l{4,5,6}` |
-| macOS msgx | [5366e4f13](https://github.com/mas-bandwidth/rocketnet/commit/5366e4f13fd9e131a828731ce5b2859d3647c086) | M5 Pro r1/r2, 15:56/15:59 UTC; M3 Ultra best set, 16:22/16:28/16:32/16:35 UTC |
 
 Server, clients and reconciliation binaries used each row's matching
 commit. The run records are maintained in `REMEASURE-MAIN.md` under the
 measurement archive `review-2026-11-10/final-fable`, with Linux cells in
-`harden-pair-cells` and Windows/macOS cells in the corresponding
-`remeasure-iocp`, `remeasure-rio` and `remeasure-macos` directories.
+`harden-pair-cells` and Windows cells in the corresponding
+`remeasure-iocp` and `remeasure-rio` directories.
 The archive is separate from this repository. The commands below make the
 method repeatable; this page does not substitute for those raw logs.
 
@@ -371,13 +310,12 @@ version you build before using them.
 | RIO | `num_rio_lanes` | `ROCKETNET_SERVER_NUM_RIO_LANES` | 5 | RIO-R5/R7/R8/R9; 4 lanes miss peak |
 | IOCP receive | `num_iocp_completion_workers` | `ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS` | 2 | M1–M4 |
 | IOCP send | `num_iocp_send_threads` | `ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS` | 2 | M1–M4 |
-| msgx transmit | `num_msgx_transmit_workers` | `ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS` | 3 | M5 Pro unloaded peak only; one fixed receive worker is additional |
 
 In that change, zero selects the default and the environment overrides the
 config field. Windows needs a specific bind address for multiple RIO lanes
 or IOCP completion workers: an unspecified count on a wildcard bind falls
-back to one. See [Windows](WINDOWS.md), [Linux](LINUX.md),
-[macOS](MACOS.md) and [Deployment](DEPLOYING.md) for the version's setup.
+back to one. See [Windows](WINDOWS.md), [Linux](LINUX.md)
+and [Deployment](DEPLOYING.md) for the version's setup.
 
 ## Run it yourself
 
@@ -527,71 +465,15 @@ processor 12. For four, set four RSS queues through processor 6 and use
 count 4, pool 56 and main processor 8. Restore the original RSS settings
 after a comparison session.
 
-### macOS rows
+### Read and profile a row
 
-At the measured commit, use the direct server arguments below, with a
-reachable `SERVER_ADDRESS` and a common Unix end timestamp `END_AT`.
-Select `TX=3`, `POOL_THREADS=13` for M5 Pro, or `TX=2`, `POOL_THREADS=25`
-for the M3 Ultra's best set. Match load and game-work variables as above.
-`SERVER_ADDRESS` includes the port, for example `192.168.1.33:40000`.
-Choose one end timestamp on the controller and use that same value on both
-machines, allowing time to start the roles and join 1000 players:
-
-```sh
-END_AT=$(python3 -c 'import time; print(int(time.time()) + 90)')
-printf '%s\n' "$END_AT"
-```
-
-Use idle machines. On the recorded 16-CPU Linux client, enable receive
-steering on its single queue for the session, saving the original mask:
-
-```sh
-RPS_FILE=/sys/class/net/enp173s0/queues/rx-0/rps_cpus
-RPS_BEFORE=$(cat "$RPS_FILE")
-printf '%s\n' ffff | sudo tee "$RPS_FILE"
-cat "$RPS_FILE"
-```
-
-That mask selects the recorded client's 16 CPUs; select a mask appropriate
-to the host when using different hardware. After all rows have drained,
-restore the saved mask in the same shell:
-
-```sh
-printf '%s\n' "$RPS_BEFORE" | sudo tee "$RPS_FILE"
-```
-
-Run the server and clients below in separate sessions, copying `END_AT`
-to both. Redirect their output to separate fresh log files. Start clients
-as soon as the server prints its public key.
-
-```sh
-bin/harden_load server --address "$SERVER_ADDRESS" --transport msgx \
-  --max-clients 1000 --hz 60 --seconds 60 --end-at "$END_AT" --dev en0 \
-  --warm-seconds 20 --sample-seconds 60 --payload copy --num-xdp-queues "$TX" \
-  --frame-shape space --load "$LOAD" --game-threads "$POOL_THREADS" \
-  --pin-first-cpu 3 --game-load "$GAME_LOAD" --world-ms "$WORLD_MS" \
-  --space-send wide --space-update split --space-net task --space-split top
-```
-
-The Linux clients use the public key printed by the server's `harden_ready`
-line. The recorded client interface was `enp173s0`; use the actual interface
-and retain its receive-steering settings with the result.
-
-```sh
-bin/harden_load clients --address "$SERVER_ADDRESS" --key "$SERVER_KEY" \
-  --clients 1000 --threads 12 --hz 60 --seconds 60 --end-at "$END_AT" \
-  --dev enp173s0 --messages 1 --reliable-every 1 --join-rate 100 \
-  --payload copy --input-bytes 256
-```
-
-Capture each role's log and reconcile using the same binary revision:
+The controller saves each role's log and runs reconciliation. To repeat
+that check directly with the matching binary revision:
 
 ```sh
 bin/harden_load reconcile --logs "$SERVER_LOG,$CLIENT_LOG" \
   --min-delivery 99.9 --frame-p99-us 5000
 ```
-
-### Read and profile a row
 
 Keep `server.log`, `clients.log`, `reconcile.txt`, command lines, source
 commits, build configuration, affinity/RSS read-back and host counters.
@@ -679,42 +561,6 @@ unprofiled rate/delivery row beside it; its handle growth and timing changes
 are not evidence of a transport leak or an unprofiled performance result.
 The main-run evidence above supplies elapsed row timings; it does not
 supply a new Windows per-function table.
-
-### macOS profiles: M5 Pro and M3 Ultra
-
-During a separate repeat of the selected row, record thread CPU usage at
-about t=55, matching the method used for the reported worker observations:
-
-```sh
-mkdir -p "$PROFILE_DIR"
-ps -M -p "$SERVER_PID" > "$PROFILE_DIR/threads-cpu.txt"
-```
-
-`SERVER_PID` is the Mac server process, not the Linux clients. Keep its
-startup thread-count lines with the reading. `ps` CPU percentages are an
-observation of thread usage, not exact CPU time integrated over the
-25–55-second summary window.
-
-For stacks, repeat the same load in another fresh output directory. At
-about t=40, run the system sampling tool for ten seconds at a 1 ms interval:
-
-```sh
-/usr/bin/sample "$SERVER_PID" 10 1 -file "$PROFILE_DIR/sample.txt"
-```
-
-Use a build with matching symbols when function names are needed. Check
-that the file names the intended process, contains a nonzero sample count
-and has a complete capture interval. Read each thread's call tree: the
-transmit workers include `sendmsg_x`, the receive worker includes
-`recvmsg_x`/`kevent`, and game workers include message building and crypto.
-Waiting stacks are not busy CPU time; combine stacks with the thread CPU
-reading instead of interpreting every sample as consumed CPU.
-
-Earlier macOS sampling runs measurably disturbed throughput and frame
-rate. Keep their profiles separate from the unprofiled acceptance rows.
-The new main measurements above include thread CPU observations; native
-sampling of the current M3 Ultra send path is still being investigated,
-so no new per-function main profile is claimed here.
 
 The older [function profiles](https://github.com/mas-bandwidth/rocketnet/blob/2da198e234dab41c118f58fa3e0ec263b562c1d4/docs/PERFORMANCE.md#profiles)
 and [hostile-traffic experiment](https://github.com/mas-bandwidth/rocketnet/blob/2da198e234dab41c118f58fa3e0ec263b562c1d4/docs/PERFORMANCE.md#xdp-under-hostile-traffic)
