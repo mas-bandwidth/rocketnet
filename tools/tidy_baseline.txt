@@ -178,7 +178,6 @@ clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	6530bec76cc5
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	6ff7203a027c0e0c
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	7370b1b62544edd5
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	8b58e70149207388
-clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	9428877c43557cae
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	c26c0069cfd1e061
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	d907c3aba1d2e9e8
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	fc0d6d99fb2d6640
@@ -194,6 +193,7 @@ clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	11b7a18d5a126d0f
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	1227694f2b165981
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	1482990a48cf505b
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	1619893eda081868
+clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	18b81223e6e53d2e
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	1b23e6d89b2c0c72
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	1e63eceb78045a14
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	25ab75f4fbc290f9
@@ -215,6 +215,7 @@ clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	7201ef21d7450419
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	74833ba4c7f25ec2
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	778deac003f8a942
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	78f729cca145dda9
+clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	7d46e5b00dc29980
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	848298a4ad21911f
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	8688cdd58e62f36d
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	a0b299e970e58ca3
@@ -252,6 +253,7 @@ clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	8488bf165dcfdea4
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	94d657475a00b5ac
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	9917f1958fd5e5a0
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	b5fb7428a7f586c4
+clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	bc2c1982eb1ebf82
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	c7b324cca4a75d3e
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	cb2c0093f87ecddd
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	e54d5069d5c54adb
