@@ -2345,7 +2345,8 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
         return NULL;
     }
 
-    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, config->status );
+    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, config->status,
+                                          config->transport->packet_filter );
 }
 
 static void io_uring_destroy( void * transport ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t *) transport ); }
@@ -2371,11 +2372,32 @@ static void io_uring_receive_drops( void * transport, uint64_t * too_short, uint
     rocketnet_server_uring_receive_drops( (rocketnet_server_uring_t *) transport, too_short, too_large );
 }
 
+// what the workers' prefilter and bank refused, by reason (rocketnet_driver.h)
+static void io_uring_receive_drop_totals( void * transport, uint64_t * values )
+{
+    rocketnet_server_uring_receive_drop_totals( (rocketnet_server_uring_t *) transport, values );
+}
+
+// per-queue staging: the queue a destination's frames are staged in is the
+// one rocketnet_server_uring_start_packet uses
+static int io_uring_send_queues( void * transport ) { return rocketnet_server_uring_send_queues( (rocketnet_server_uring_t *) transport ); }
+
+static int io_uring_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_uring_send_queue_of( (rocketnet_server_uring_t *) transport, to );
+}
+
+static int io_uring_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_uring_send_room_queue( (rocketnet_server_uring_t *) transport, queue );
+}
+
 static const rocketnet_server_transport_io_operations_t io_uring_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL, io_uring_receive_drop_totals,
+    io_uring_send_queues, io_uring_send_queue_of, io_uring_send_room_queue
 };
 
 extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_uring_operations, NULL };

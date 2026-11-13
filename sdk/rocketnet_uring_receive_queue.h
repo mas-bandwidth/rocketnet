@@ -120,7 +120,7 @@ struct rocketnet_uring_receive_queue_config_t
     bool ipv6;                              // the socket is ipv6 (dual stack)
     bool gro;                               // UDP_GRO is on: a buffer may hold a coalesced receive
     bool socket_drops;                      // SO_RXQ_OVFL is on: each receive carries the socket's drop count
-    const uint8_t * packet_filter;          // the server's packet filter value, ROCKETNET_FILTER_VALUE_BYTES, copied at create
+    const uint8_t * packet_filter;          // the server's packet filter value, ROCKETNET_FILTER_VALUE_BYTES, copied at create; NULL: no prefilter, the size pass alone (a caller driving the transport with raw datagrams, as the gso transport)
 };
 
 struct rocketnet_uring_receive_slot_t
@@ -144,6 +144,7 @@ struct rocketnet_uring_receive_queue_t
     bool ipv6;
     bool socket_drops;
     bool buf_ring_inverted_resv;            // registered through the inverted resv check (rocketnet_uring_receive_buf_ring_setup)
+    bool has_filter;                        // a packet filter was given: every datagram goes through the prefilter
     uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
     struct io_uring_buf_ring * buf_ring;
 #if defined( __linux__ )

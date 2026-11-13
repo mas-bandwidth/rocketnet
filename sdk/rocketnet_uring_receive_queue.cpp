@@ -98,11 +98,11 @@ static bool rocketnet_uring_receive_config_ok( const struct rocketnet_uring_rece
         return false;
     }
 
-    if ( config->queue_index < 0 || config->queue_index > 0xFFFF || config->bgid < 0 || config->bgid > 0xFFFF || !config->packet_filter )
+    if ( config->queue_index < 0 || config->queue_index > 0xFFFF || config->bgid < 0 || config->bgid > 0xFFFF )
     {
         if ( log )
         {
-            rocketnet_error( "io_uring receive queue %d: queue index, buffer group %d or packet filter out of range", config->queue_index, config->bgid );
+            rocketnet_error( "io_uring receive queue %d: queue index, buffer group %d out of range", config->queue_index, config->bgid );
         }
         return false;
     }
@@ -339,7 +339,11 @@ struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( v
     queue->slots = config->slots;
     queue->ipv6 = config->ipv6;
     queue->socket_drops = config->socket_drops;
-    memcpy( queue->packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
+    queue->has_filter = config->packet_filter != NULL;
+    if ( queue->has_filter )
+    {
+        memcpy( queue->packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
+    }
     queue->slot = (struct rocketnet_uring_receive_slot_t *) ( base + layout.slot );
     queue->slot_data = base + layout.slot_data;
     queue->buffer = base + layout.buffer;
@@ -642,7 +646,7 @@ static int rocketnet_uring_receive_queue_buffer( struct rocketnet_uring_receive_
             continue;
         }
 
-        const enum rocketnet_receive_drop_t drop = rocketnet_receive_prefilter( data, bytes, queue->packet_filter );
+        const enum rocketnet_receive_drop_t drop = queue->has_filter ? rocketnet_receive_prefilter( data, bytes, queue->packet_filter ) : ROCKETNET_RECEIVE_ACCEPT;
         if ( drop != ROCKETNET_RECEIVE_ACCEPT )
         {
             rocketnet_receive_drop_tally_count( &queue->tally, drop );

@@ -169,7 +169,13 @@ static void test_uring_receive_queue_create_refuses_bad_sizes()
     check( rocketnet_uring_receive_queue_create( NULL, NULL, &bad_group ) == NULL );
     struct rocketnet_uring_receive_queue_config_t no_filter = config;
     no_filter.packet_filter = NULL;
-    check( rocketnet_uring_receive_queue_create( NULL, NULL, &no_filter ) == NULL );
+    // no filter is the raw-datagram mode (the size pass alone), not a refusal
+    struct rocketnet_uring_receive_queue_t * unfiltered = rocketnet_uring_receive_queue_create( NULL, NULL, &no_filter );
+    check( unfiltered != NULL );
+    if ( unfiltered )
+    {
+        rocketnet_uring_receive_queue_destroy( unfiltered );
+    }
 
     check( rocketnet_uring_receive_queue_allocation_bytes( &config ) > 0 );
     check( rocketnet_uring_receive_queue_mapped_bytes( 0 ) == 0 );

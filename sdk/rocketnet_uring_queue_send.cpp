@@ -93,6 +93,16 @@ static bool rocketnet_uring_queue_send_layout( int num_queues, int slots, rocket
     return !carve.failed && layout->scratch_bytes != 0 && carve.bytes <= SIZE_MAX;
 }
 
+uint64_t rocketnet_uring_queue_send_allocation_bytes( int num_queues, int slots )
+{
+    if ( num_queues < 1 || slots < 1 )
+    {
+        return 0;
+    }
+    rocketnet_uring_queue_send_layout_t layout;
+    return rocketnet_uring_queue_send_layout( num_queues, slots, &layout ) ? layout.bytes : 0;
+}
+
 struct rocketnet_uring_queue_send_t * rocketnet_uring_queue_send_create( void * context, struct rocketnet_uring_send_queues_t * queues, int max_segments, int max_bytes )
 {
     rocketnet_assert( queues );

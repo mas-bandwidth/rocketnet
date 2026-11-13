@@ -147,6 +147,10 @@ struct rocketnet_uring_queue_send_t
 
 struct rocketnet_uring_queue_send_t * rocketnet_uring_queue_send_create( void * context, struct rocketnet_uring_send_queues_t * queues, int max_segments, int max_bytes );
 
+// the bytes create allocates for queues of this count and bank size, 0 out
+// of range
+uint64_t rocketnet_uring_queue_send_allocation_bytes( int num_queues, int slots );
+
 // no worker running
 void rocketnet_uring_queue_send_destroy( struct rocketnet_uring_queue_send_t * send );
 

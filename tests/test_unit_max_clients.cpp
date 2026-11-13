@@ -146,7 +146,7 @@ static void test_max_clients_derived_limits()
         check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES == 1024 );
         check( ROCKETNET_SERVER_PACKET_LEASES == 131072 );
         check( ROCKETNET_GSO_SEND_QUEUE_SIZE == 4096 );
-        check( ROCKETNET_URING_SEND_QUEUE_SIZE == 2048 );
+        check( ROCKETNET_URING_SEND_QUEUE_SIZE == 4096 );
     }
 }
 

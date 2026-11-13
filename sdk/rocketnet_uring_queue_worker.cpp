@@ -136,7 +136,8 @@ static bool rocketnet_uring_queue_worker_cancel( struct rocketnet_uring_queue_wo
 // socket that stays full fires no poll, so a poll must not hold the stop);
 // a segmented run its
 // destination refused comes back as one plain run per packet, and the
-// destination is remembered so its later runs leave plain.
+// destination is remembered so its later runs leave plain
+// (proofs/tla/RNSegmentRefusal.tla Refuse).
 
 static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_worker_t * worker, uint32_t tag, int32_t res )
 {
@@ -283,7 +284,8 @@ static bool rocketnet_uring_queue_worker_drained( const struct rocketnet_uring_q
 
 // RNUringQueueWorker.tla Submit, Split, Drop: the next run of the held bank. A
 // run to a destination known to refuse segmentation is cut plain before any
-// send; one the socket's family cannot name is dropped without one.
+// send; one the socket's family cannot name is dropped without one
+// (proofs/tla/RNSegmentRefusal.tla Run).
 
 static int rocketnet_uring_queue_worker_send_one( struct rocketnet_uring_queue_worker_t * worker, const struct rocketnet_uring_queue_send_run_t * run )
 {

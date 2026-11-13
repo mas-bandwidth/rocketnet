@@ -75,6 +75,10 @@ struct rocketnet_uring_send_queues_t * rocketnet_uring_send_queues_create( void 
 
 void rocketnet_uring_send_queues_destroy( struct rocketnet_uring_send_queues_t * queues );
 
+// the bytes create allocates, 0 for a count or size out of range
+
+uint64_t rocketnet_uring_send_queues_allocation_bytes( int num_queues, int slots );
+
 // any game thread between two turns. NULL when the destination's producer
 // bank is full (counted in refused); packet_id is written either way
 

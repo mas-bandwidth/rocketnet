@@ -8,7 +8,8 @@
 // model RNTraceExample (proofs/tla/RNTraceExample.tla): a claim takes one of
 // EXAMPLE_LIMIT places or is refused and counted, a drain frees them all.
 // The walk drives the code one call per step and writes one record of every
-// model variable after each; TraceRNTraceExample.tla checks the trace.
+// model variable after each; proofs/tla/TraceRNTraceExample.tla checks the
+// trace.
 //
 // A real layer's code lives in sdk/. Its file here includes that .cpp under
 // ROCKETNET_TLA_PLANT with the layer's plant define set, so tla_trace_plant
