@@ -114,6 +114,17 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("verdict=FAIL", report_malformed)
         self.assertNotIn("verdict=PASS", report_malformed)
 
+    def test_line_is_selected_by_the_packets_per_frame_passed(self) -> None:
+        # a packets_per_frame=320 line ahead of the real one is not the line
+        wider = ("client_main_thread_cost transport=portable packets_per_frame=320 frames=2000 "
+                 "total_us_p50=900.000 total_us_p99=999.000 total_us_max=1000.000 received=2000\n")
+        value, line = cfb.parse_p32_total_p99(wider + make_stdout(50.0))
+        self.assertEqual(value, 50.0)
+        self.assertIn("packets_per_frame=32 ", line)
+        # the selector follows the constant passed to the binary
+        self.assertRegex(cfb.SELECT_RE.pattern, r"packets_per_frame=%d\\b" % cfb.PACKETS_PER_FRAME)
+        self.assertRegex(cfb.LINE_RE.pattern, r"packets_per_frame=%d\\b" % cfb.PACKETS_PER_FRAME)
+
     def test_load_above_quarter_cores_voids_and_is_never_pass(self) -> None:
         outputs = [make_stdout(40.0), make_stdout(41.0), make_stdout(42.0)]
         # 16 cores -> threshold is 4.0; load 4.25 exceeds cores/4 on run 1

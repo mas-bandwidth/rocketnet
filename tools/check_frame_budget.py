@@ -33,8 +33,12 @@ FRAMES = 2000
 #   client_main_thread_cost transport=<d> packets_per_frame=32 frames=2000 ... total_us_p99=<float> ...
 # Also accepts synthetic P=32 lines of the form:
 #   ... P=32 ... total_us p99=<float> ... or total_us_p99=<float>
+# Both are built from PACKETS_PER_FRAME, the value passed to the binary, and
+# end at a word boundary, so packets_per_frame=320 is not this line.
+SELECT_RE = re.compile(r"\bpackets_per_frame=%d\b|\bP\s*=\s*%d\b" % (PACKETS_PER_FRAME, PACKETS_PER_FRAME))
 LINE_RE = re.compile(
-    r"(?:packets_per_frame=32\b|\bP\s*=\s*32\b).*?\btotal_us(?:_p99|\s+.*?p99)=([0-9]+(?:\.[0-9]+)?)"
+    r"(?:\bpackets_per_frame=%d\b|\bP\s*=\s*%d\b).*?\btotal_us(?:_p99|\s+.*?p99)=([0-9]+(?:\.[0-9]+)?)"
+    % (PACKETS_PER_FRAME, PACKETS_PER_FRAME)
 )
 
 
@@ -67,7 +71,7 @@ def parse_p32_total_p99(stdout: str) -> Tuple[float, str]:
         raise ValueError("empty stdout from client_main_thread_cost")
     for line in stdout.splitlines():
         stripped = line.strip()
-        if "packets_per_frame=32" in stripped or re.search(r"\bP\s*=\s*32\b", stripped):
+        if SELECT_RE.search(stripped):
             m = LINE_RE.search(stripped)
             if not m:
                 raise ValueError(f"malformed P=32 line (missing total_us_p99): {stripped!r}")
@@ -92,8 +96,9 @@ def evaluate_gate(
     Evaluate the frame-budget gate from pre-collected or synthetic inputs.
     Returns (exit_code, formatted_report).
     Exit codes:
-      0: PASS (or --report-only on PASS/FAIL/VOID)
-      1: FAIL (median > gate_us, or missing/malformed output line)
+      0: PASS (or --report-only on a PASS, FAIL or VOID verdict)
+      1: FAIL (median > gate_us), and with or without --report-only: a benchmark
+         that exits nonzero, no collected run, or a missing or malformed line
       3: VOID (host load > cores / 4)
     """
     lines_out: List[str] = []
@@ -258,7 +263,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--report-only",
         action="store_true",
-        help="Print results and exit 0 on PASS, FAIL, or VOID (for non-quiet or report-only legs).",
+        help="Print results and exit 0 on a PASS, FAIL or VOID verdict (for non-quiet or report-only legs); "
+             "a run that crashes, prints no result or prints a malformed one still exits 1.",
     )
     args = parser.parse_args(argv)
 
