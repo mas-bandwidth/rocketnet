@@ -85,16 +85,24 @@ static void test_iocp_server_creates_one_completion_worker()
 
     rocketnet_server_iocp_set_create_for_test( iocp_create_recorder );
 
-    const int queues[] = { 0, 4, 1024 };
+    // the completion workers are num_xdp_queues when it asks for more than
+    // one, otherwise one; past ROCKETNET_IOCP_MAX_WORKERS the driver refuses
+    // before it calls create
+    const int queues[] = { 0, 1, 4 };
+    const int expected_workers[] = { 1, 1, 4 };
     for ( int i = 0; i < 3; ++i )
     {
         transport.num_xdp_queues = queues[i];
         iocp_create_seen_workers = -1;
         rocketnet_unit_check( rocketnet_iocp_transport.server->create( NULL, &config, &bind ) == NULL );
         rocketnet_unit_check( iocp_create_calls == i + 1 );
-        rocketnet_unit_check( iocp_create_seen_workers == 1 );
+        rocketnet_unit_check( iocp_create_seen_workers == expected_workers[i] );
         rocketnet_unit_check( iocp_create_seen_max_clients == transport.max_clients );
     }
+
+    transport.num_xdp_queues = ROCKETNET_IOCP_MAX_WORKERS + 1;
+    rocketnet_unit_check( rocketnet_iocp_transport.server->create( NULL, &config, &bind ) == NULL );
+    rocketnet_unit_check( iocp_create_calls == 3 );
 
     rocketnet_server_iocp_set_create_for_test( NULL );
 }
