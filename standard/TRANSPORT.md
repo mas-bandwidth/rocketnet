@@ -2407,6 +2407,7 @@ The state numbers:
 
 | Name | Value | Meaning |
 |---|---|---|
+| protocol violation | `-10` | the server sent what the protocol forbids: a challenge carrying a small-order key ([t11.2 Challenge and denial processing order](#t11.2) step 4) |
 | connect token expired | `-7` | the attempt ended at the token's lifetime |
 | invalid connect token | `-6` | the attempt never began: the token failed a pre-send check |
 | connection timed out | `-5` | an established connection received nothing for the timeout |
@@ -2435,7 +2436,7 @@ Each packet MUST be checked in this order:
 1. Its size MUST be the packet's wire size of [t8 Packet formats](#t8). A client MUST refuse a wrong-size packet as WRONG_SIZE before any state, sequence or cryptographic check, MUST NOT count an integrity failure for it, and MUST NOT change its state.
 2. Its sequence MUST be nonzero; a sequence of zero MUST be refused with no state change.
 3. In sending connection request (2), a challenge MUST derive the handshake keys from the carried session nonce and open under them. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
-4. An accepted challenge MUST derive the four connection keys from the ephemeral exchange, MUST erase the ephemeral secret, MUST build the response once, and MUST move to sending connection response (3).
+4. An accepted challenge MUST derive the four connection keys from the ephemeral exchange, MUST erase the ephemeral secret, MUST build the response once, and MUST move to sending connection response (3). When the exchange reports a small-order server ephemeral key ([t7 Key schedule](#t7) rule 5), the challenge opened under the handshake keys, so the server sent what the protocol forbids: the client MUST count `CLIENT_CHALLENGE_SMALL_ORDER_KEY`, MUST NOT derive a session key, MUST release the connection state and MUST move to protocol violation (-10) at once, without waiting for a deadline.
 5. A denial in sending connection request (2) MUST open under handshake keys derived from its carried session nonce; a denial in sending connection response (3) MUST open under the handshake server-to-client key the client already holds. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
 6. An accepted denial MUST release the connection state and MUST move to connection denied (-1).
 
@@ -2463,7 +2464,8 @@ A session packet opens under the session keys from sending connection response (
 | sending connection request (2) | update, send due or early send armed | | send request with the kept cookie, or, once a latest cookie is stored, with the kept and the latest cookie in turn; clear the early send | sending connection request (2) |
 | sending connection request (2) | cookie | size correct, salt matches | replace the latest cookie; the kept cookie stays | sending connection request (2) |
 | sending connection request (2) | cookie | size wrong or salt differs | ignore | sending connection request (2) |
-| sending connection request (2) | challenge | size correct, opens | derive keys; erase the ephemeral secret; build the response; a client that takes the early send of [t11 Handshake: client](#t11) rule 7 arms it | sending connection response (3) |
+| sending connection request (2) | challenge | size correct, opens, server key not small-order | derive keys; erase the ephemeral secret; build the response; a client that takes the early send of [t11 Handshake: client](#t11) rule 7 arms it | sending connection response (3) |
+| sending connection request (2) | challenge | size correct, opens, small-order server key | count CLIENT_CHALLENGE_SMALL_ORDER_KEY; release the connection state | protocol violation (-10) |
 | sending connection request (2) | challenge | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
 | sending connection request (2) | challenge | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
 | sending connection request (2) | denied | size correct, opens | release the connection state | connection denied (-1) |

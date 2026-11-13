@@ -1,5 +1,6 @@
 # The rows of RN-1 t11 (TRANSPORT.md), the client state numbers.
 # Format and rules: standard/STYLE.md section 10.
+protocol violation	ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION	-10
 connect token expired	ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED	-7
 invalid connect token	ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN	-6
 connection timed out	ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT	-5

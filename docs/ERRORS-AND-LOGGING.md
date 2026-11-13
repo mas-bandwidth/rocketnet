@@ -156,6 +156,12 @@ status code and the accompanying `ERROR` log line:
      - `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`): the server explicitly
        rejected the connection because all `max_clients` slots are occupied.
        Check `s.connections_denied_full` in `rocketnet_server_stats_t`.
+     - `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`) before the client
+       connected: the connection challenge, sealed under the token's keys,
+       carried a small-order server ephemeral key, which the protocol
+       forbids, and the client ended the attempt at once (the client counter
+       `CLIENT_CHALLENGE_SMALL_ORDER_KEY` counts it). A conforming server never
+       sends one: check the server's build and who holds the token's keys.
      - `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`): `rocketnet_client_connect`
        refused the decoded token (it also returned
        `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`; see item 2). Request a new token.
