@@ -5280,7 +5280,9 @@ static bool rocketnet_server_socket_receive_lock( rocketnet_server_xdp_socket_t 
 }
 
 // main returns a queue's staged packets in place, from cursor up to end,
-// within the call's budget; false when the budget ended first
+// within the call's budget; false when the budget has ended, including on the
+// range's own last packet: then this queue, not the next one holding packets,
+// is where the budget ended (proofs/tla/RNGsoRecvWalk.tla Receive)
 static bool rocketnet_server_socket_take_range( rocketnet_server_socket_t * server_socket, rocketnet_server_socket_receive_buffer_t * receive_buffer,
                                                 uint32_t * cursor, uint32_t end )
 {
@@ -5300,7 +5302,7 @@ static bool rocketnet_server_socket_take_range( rocketnet_server_socket_t * serv
         rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
         *cursor = i + 1;
     }
-    return true;
+    return server_socket->process_packets.num_packets < server_socket->process_packets.capacity;
 }
 
 // proofs/tla/RNXdpReceiveRing.tla Drain and proofs/tla/RNReceiveHandoff.tla Call
@@ -5381,6 +5383,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     {
         // the budget ended on filled_queue: the next call starts after it.
         // a call that did not fill the budget still advances by one.
+        // proofs/tla/RNGsoRecvWalk.tla Receive and NoQueueStarves.
         const int origin = filled_queue >= 0 ? filled_queue : server_socket->receive_start_queue;
         server_socket->receive_start_queue = rocketnet_xdp_drain_queue( origin, 1, num_queues );
     }

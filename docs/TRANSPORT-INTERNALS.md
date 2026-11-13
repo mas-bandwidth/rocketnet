@@ -349,7 +349,8 @@ receive fails, sleeps 1 ms before the next pass instead of polling again at
 once (`RNGsoHandoff.RxBacksOff`). Each GSO
 `receive_packets` call starts after the queue where the previous call's
 packet budget ran out, as XDP's does, so a full queue cannot starve the
-queues after it (`RNGsoRecvWalk`).
+queues after it (`RNGsoRecvWalk`). The budget runs out on the queue whose
+datagram used its last room, even when that was the queue's last datagram.
 
 ## Creation and shutdown
 
