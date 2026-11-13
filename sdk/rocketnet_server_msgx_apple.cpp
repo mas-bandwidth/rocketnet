@@ -1428,6 +1428,10 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
     msgx->shared_fd = rocketnet_server_msgx_open_bound( bind_address, msgx->ipv6, ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
     if ( msgx->shared_fd < 0 )
     {
+        if ( rocketnet_platform_bind_refused( -msgx->shared_fd ) )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
         rocketnet_error( "msgx transport: failed to open the shared socket: %s", strerror( -msgx->shared_fd ) );
         msgx->shared_fd = -1;
         rocketnet_server_msgx_free( msgx );

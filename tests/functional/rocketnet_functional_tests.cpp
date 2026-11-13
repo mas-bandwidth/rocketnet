@@ -15204,6 +15204,9 @@ extern void rocketnet_test_server_bind_address_not_reached_on_another_address();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 extern void rocketnet_test_server_bind_refused_portable();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_server_bind_refused_msgx();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_server_bind_refused_gso();
 extern void rocketnet_test_server_bind_refused_io_uring();
@@ -15790,6 +15793,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, NULL },
     { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, NULL },

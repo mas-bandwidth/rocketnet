@@ -276,6 +276,36 @@ void rocketnet_test_server_bind_refused_portable()
     bind_refused_ipv6_for( "portable" );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+// msgx opens its sockets with SO_REUSEADDR and SO_REUSEPORT, so every client's
+// connected socket shares the port: macOS lets that bind succeed on a port
+// another process holds with a plain socket, and msgx cannot refuse it. What it
+// refuses is a bind address that is not an address of this host (EADDRNOTAVAIL)
+void rocketnet_test_server_bind_refused_msgx()
+{
+    const int holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    bind_check( holder >= 0 );
+    struct sockaddr_in held;
+    memset( &held, 0, sizeof( held ) );
+    held.sin_family = AF_INET;
+    bind_check( inet_pton( AF_INET, "127.0.0.1", &held.sin_addr ) == 1 );
+    bind_check( bind( holder, (const struct sockaddr *) &held, sizeof( held ) ) == 0 );
+    socklen_t held_bytes = sizeof( held );
+    bind_check( getsockname( holder, (struct sockaddr *) &held, &held_bytes ) == 0 );
+    char held_address[64];
+    snprintf( held_address, sizeof( held_address ), "127.0.0.1:%u", (unsigned) ntohs( held.sin_port ) );
+    close( holder );
+
+    // the port is free: a bind address that is not this host's is refused
+    bind_check( bind_refused_start( "msgx", held_address, "192.0.2.1" ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+
+    // the control: the same port without it starts
+    bind_check( bind_refused_start( "msgx", held_address, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 void rocketnet_test_server_bind_refused_gso()
