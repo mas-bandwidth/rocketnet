@@ -345,6 +345,17 @@ def preprocess_check(database):
     return failures
 
 
+def symbol_command(path):
+    """The symbol-table listing of an object or archive: nm on macOS, readelf
+    elsewhere. The self-test replaces it with a failing command."""
+    if sys.platform == "darwin":
+        return ["nm", "-A", path]
+    return ["readelf", "-W", "-s", path]
+
+
+SYMBOL_COMMAND = symbol_command
+
+
 def objects_check(paths):
     failures = []
     darwin = sys.platform == "darwin"
@@ -364,7 +375,10 @@ def objects_check(paths):
                 m = re.match(r"\s*sectname (__thread_vars|__thread_data|__thread_bss)\s*$", line)
                 if m:
                     failures.append("%s: section %s" % (member, m.group(1)))
-            symbols = subprocess.run(["nm", "-A", path], capture_output=True, text=True)
+            symbols = subprocess.run(SYMBOL_COMMAND(path), capture_output=True, text=True)
+            if symbols.returncode != 0:
+                failures.append("%s: nm -A failed: %s" % (path, symbols.stderr.strip()))
+                continue
             for line in symbols.stdout.splitlines():
                 if "__tlv_bootstrap" in line or "$tlv$init" in line:
                     failures.append(line.strip())
@@ -380,7 +394,10 @@ def objects_check(paths):
                 m = re.search(r"\]\s+(\.tdata|\.tbss)\S*\s", line)
                 if m:
                     failures.append("%s: section %s" % (member, m.group(1)))
-            symbols = subprocess.run(["readelf", "-W", "-s", path], capture_output=True, text=True)
+            symbols = subprocess.run(SYMBOL_COMMAND(path), capture_output=True, text=True)
+            if symbols.returncode != 0:
+                failures.append("%s: readelf -s failed: %s" % (path, symbols.stderr.strip()))
+                continue
             member = path
             for line in symbols.stdout.splitlines():
                 if line.startswith("File: "):
@@ -499,6 +516,22 @@ def self_test():
                     failed += 1
                 print("self-test objects %-41s expected %s, got %s: %s" %
                       (file_name, "red" if expected else "green", "red" if got else "green", verdict))
+
+            # a symbol listing that fails is red, never an empty clean listing
+            clean = sdk / "object_clean.cpp.o"
+            if clean.exists():
+                global SYMBOL_COMMAND
+                SYMBOL_COMMAND = lambda path: [sys.executable, "-c", "import sys; sys.exit(1)", path]
+                try:
+                    findings = objects_check([str(clean)])
+                finally:
+                    SYMBOL_COMMAND = symbol_command
+                got = len([f for f in findings if " failed:" in f])
+                verdict = "ok" if got == 1 else "FAIL"
+                if got != 1:
+                    failed += 1
+                print("self-test objects %-41s expected red, got %s: %s" %
+                      ("a failing symbol listing", "red" if got else "green", verdict))
         finally:
             ROOT = saved
 
