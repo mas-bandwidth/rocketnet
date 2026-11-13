@@ -125,10 +125,10 @@ rio transport: running 1 lane because the bind address is the wildcard or IPv4-m
 A count above 1 asked for on the wildcard (`num_rio_lanes` or
 `num_iocp_completion_workers`) is refused with `INVALID_ADDRESS`, never run on
 one. The server starts whatever the NIC's receive queues are (a flow whose
-processor has no lane reaches the first lane bound), but the rows that measured
-the defaults set the NIC's receive-side scaling (RSS) as the worked example
-below does, and that was the only machine setting they changed. Do the same,
-and check it as "Network adapter setup for rio and iocp" says.
+processor has no lane reaches the first lane bound), but the `rio` rows that
+measured the defaults set the NIC's receive-side scaling (RSS) as the worked
+example below does; the `iocp` row used the setup in "IOCP at 10 Gb/s". Check
+either as "Network adapter setup for rio and iocp" says.
 
 ### Worked example: RIO at 10 Gb/s
 
@@ -160,7 +160,8 @@ and check it as "Network adapter setup for rio and iocp" says.
    `-MaxProcessorNumber 10 -MaxProcessors 6 -NumberOfReceiveQueues 6`.
 4. Start the server. Its log names each lane's processors (socket on `2l`,
    worker on `2l + 1`); check them against the RSS processors read back in
-   step 3.
+   step 3, then run the per-processor check in "Network adapter setup for rio
+   and iocp" at load.
 
 ### Network adapter setup for rio and iocp
 
@@ -177,9 +178,10 @@ see "IOCP at 10 Gb/s" below.
 
 On the measured machines (two logical processors a core), RSS used one logical
 processor a core, the even-numbered ones: put the base and maximum on even
-processors. Every `Set-NetAdapterRss` resets the adapter: the host's network
-dropped for about 15 s each time, and an ssh session to it timed out, so run
-it from a session that survives that. `Get-NetAdapterRss` reads back the RSS
+processors. Every `Set-NetAdapterRss` in these rows reset the adapter: the ssh
+session to the host through it dropped for about 15 s each time, so run it
+from the machine's console or from a session that does not go through that
+adapter. `Get-NetAdapterRss` reads back the RSS
 settings, not where the adapter's interrupts land: in the 6-lane rows below it
 read back exactly what was set while interrupts landed on worker processors.
 So after every change, check where the work lands, on the running server at or
@@ -190,7 +192,7 @@ near its peak load, from PowerShell:
 ```
 
 It lists the processors (instance `0,<processor>`) that spent more than 1% of
-a sample in DPCs or interrupts. The server's log names each worker's processor
+a sample in DPCs or interrupts, once for each such sample and counter. The server's log names each worker's processor
 (`rio transport: lane <l> socket on processor <p> ..., worker pinned to mask
 ...`, `iocp transport: worker <w> socket on processor <p> ..., worker pinned to
 mask ...`); for `rio` no worker's processor should be in the list. In the
@@ -199,11 +201,12 @@ the socket processors 0, 2, 4, 6 and 8 each spent 38 to 47% of their time in
 DPCs (about 40,000 to 47,000 a second each, the `DPCs Queued/sec` counter), and
 the worker processors 1, 3, 5, 7 and 9 spent 0.0% in DPCs and at most 0.7% in
 interrupts. If a worker's processor is in the list, do not trust the other
-numbers until it is not. The only way back these rows saw was to run
-`Set-NetAdapterRss` again and check again: on the host below, the
-falling-behind 5-lane v1.1.53 rows followed one reset to the layout of step 3,
-and passing rows of the same build followed a later reset to the same layout,
-where the counters read clean.
+numbers until it is not. These rows did not measure a way back from that
+state. On the host below, the falling-behind 5-lane rows (v1.1.53 and v1.1.47)
+followed a reset to the layout of step 3; after two more resets (to 6 lanes,
+then back to step 3's layout) rows of the same builds passed, and the rows
+with per-processor counters, taken after later resets to the same layout,
+read clean.
 
 What was measured in 6-lane `rio` rows of this version on one host, after
 `-BaseProcessorNumber 0 -MaxProcessorNumber 10 -MaxProcessors 6
@@ -225,11 +228,12 @@ host whose interrupt placement was not captured) showed, against passing runs:
 
 - the counter `RIO_SEND_WAITS` (flushes that kept a lane's fill phase open
   because its next phase was not yet idle): about 9,900 by 80 s in the 6-lane
-  rows and about 8,100 in the v1.1.53 rows, against 10 or fewer;
+  rows and about 8,100 in the v1.1.53 rows, against 10 or fewer in passing
+  v1.1.53 runs;
 - the counter `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY`: about 1.6 million by
   80 s in the v1.1.53 rows (not read in the 6-lane rows), against 0;
 - the lane workers' thread time (`\Thread(<server process>/*)\% Processor
-  Time`; at this load the lane workers are the server's busiest threads): 59
+  Time`): 59
   to 79% in the 6-lane rows, where interrupts took 22% of two of the workers'
   processors and that time is not the thread's, and 55 to 78% in the v1.1.53
   rows, against 85 to 96%;
@@ -240,18 +244,23 @@ host whose interrupt placement was not captured) showed, against passing runs:
 
 A 3 s stall of every worker, forced with a realtime-class busy loop on each
 `rio` worker processor, cost those 3 s and about one more, and the server was
-then back at 900,000 a second with 0 refused. A run that stays in this state
-is held there by something that lasts; the per-processor check above is the
-first thing to read.
+then back at 900,000 a second with 0 refused. A short stall recovered on its
+own, so a run that stays behind for the whole load points to a cause that
+persists; the per-processor check above is the first thing to read.
 
 ### IOCP at 10 Gb/s
 
-IOCP completion worker `w` sits on the first logical processor of core `w`
-(processor `2w` with two a core), and its send threads take the cores after the
-workers. Each worker's socket is bound to its worker's own processor, so RSS
-queue `w` on that processor brings worker `w` its flows, and the worker shares
-its processor with the network card's DPCs. In a release build at this version
-nothing moves the worker off it. The measured `iocp` row (2 completion
+The rule is the same as for `rio`: keep the RSS processors and the completion
+workers' processors apart, and check with the per-processor list above that no
+worker processor the server logs is in it.
+
+At this version (v1.1.x), IOCP completion worker `w` sits on the first logical
+processor of core `w` (processor `2w` with two a core), and its send threads
+take the cores after the workers. Each worker's socket is bound to its worker's
+own processor, so RSS queue `w` on that processor brings worker `w` its flows,
+and the worker shares its processor with the network card's DPCs. In a release
+build at this version nothing moves the worker off it, and there is no
+measured RSS layout that keeps the DPCs off the completion workers. The measured `iocp` row (2 completion
 workers, 2 send threads, peak load) did keep them apart, with a
 development-only layout (`ROCKETNET_TEST_IOCP_LAYOUT`, a `ROCKETNET_DEV`
 build): RSS on processors 2 and 4, the completion workers on 3 and 5, the send
@@ -263,8 +272,8 @@ Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 2 -MaxProcessorNumber 
 ```
 
 It held 900,000 packets a second with 0 refused, with 54 to 57% DPC time on
-processors 2 and 4. For the built-in placement, the RSS form that follows from
-it, `-BaseProcessorNumber 0 -MaxProcessorNumber 2 -MaxProcessors 2
+processors 2 and 4. At this version, for the built-in placement, the RSS form
+that follows from it, `-BaseProcessorNumber 0 -MaxProcessorNumber 2 -MaxProcessors 2
 -NumberOfReceiveQueues 2`, puts the DPCs on the workers' processors and is not
 a measured row.
 
