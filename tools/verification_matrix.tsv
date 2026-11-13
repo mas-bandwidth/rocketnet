@@ -503,3 +503,5 @@ unit|windows|x86_64|msvc|Release|devON|none|-~-|default	ci.yml	windows-unit	*	te
 windows_no_dialogs|windows|x86_64|msvc|Release|devON|none|-~-|default	ci.yml	build-and-test-windows	Windows failures exit without dialogs	windows_no_dialogs	per-commit	no crash dialogs on Windows
 xdp_packet_blaster|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	xdp_packet_blaster	owed:2026-11-19	XDP blaster tool (tools/test_xdp_packet_blaster.py is its self-test)
 xver(portable,gso,io_uring)|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-xver.yml	xver	*	xver	nightly	cross-version interop
+tla_trace|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	tla-trace	Every trace is a behaviour of its spec	tools/tla_trace_check.py	per-commit	the TLA+ trace check, seeds 1-4 of every layer and every plant (proofs/tla/README-TraceCheck.md)
+tla_trace|linux|x86_64|gcc|Release|devON|none|-~-|seeds=64-rolling	tlc.yml	trace	*	tools/tla_trace_check.py	nightly	the TLA+ trace check, 64 rolling seeds of every layer

@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.1.18 of v1.1.18;
+# CMake's VERSION holds numbers only, so it is the 1.1.23 of v1.1.23;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.1.18 LANGUAGES C CXX)
+project(rocketnet VERSION 1.1.23 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -159,7 +159,7 @@ if(ROCKETNET_MAX_CLIENTS LESS 512 OR ROCKETNET_MAX_CLIENTS GREATER 32768)
     message(FATAL_ERROR "ROCKETNET_MAX_CLIENTS must be 512..32768")
 endif()
 
-set(ROCKETNET_XDP_MEMORY_MIB 4096 CACHE STRING "Maximum XDP queues plus UMEM allocation in MiB")
+set(ROCKETNET_XDP_MEMORY_MIB 8192 CACHE STRING "Maximum XDP queues plus UMEM allocation in MiB")
 set(ROCKETNET_MEMORY_BUDGET_DEFINITIONS ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
 foreach(budget ROCKETNET_XDP_MEMORY_MIB)
     if(NOT ${budget} MATCHES "^[0-9]+$")
@@ -1351,6 +1351,47 @@ if(ROCKETNET_BUILD_TOOLS)
     target_link_libraries(dst PRIVATE rocketnet_dev)
     rocketnet_use_sodium(dst)
     target_compile_features(dst PRIVATE cxx_std_11)
+    # The TLA+ trace harness (proofs/tla/README-TraceCheck.md): a seeded walk
+    # of a layer's code writes its trace for TLC. Each layer is one file,
+    # tests/tla_trace_<layer>.cpp, that registers itself. tla_trace takes
+    # every such file. Each layer also has a plant binary of its own,
+    # tla_trace_plant_<layer>, of that one file compiled with
+    # ROCKETNET_TLA_PLANT: the file then includes its own code with its
+    # plant, in place of the library's, so one layer's plant never touches
+    # another's trace. Every trace target compiles with the library's own
+    # private definitions, include directories and options (ROCKETNET_IO_URING,
+    # ROCKETNET_XDP, generated/, the floating-point floor), so a planted copy
+    # of library code is the code the library builds.
+    function(rocketnet_tla_trace_target target)
+        target_compile_definitions(${target} PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+        target_include_directories(${target} BEFORE PRIVATE $<TARGET_PROPERTY:rocketnet_dev,INCLUDE_DIRECTORIES>)
+        target_compile_options(${target} PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_OPTIONS>)
+        if(TARGET rocketnet_xdp_header)
+            add_dependencies(${target} rocketnet_xdp_header)
+        endif()
+        target_link_libraries(${target} PRIVATE rocketnet_dev)
+        rocketnet_use_sodium(${target})
+        rocketnet_warning_floor(${target})
+        target_compile_features(${target} PRIVATE cxx_std_11)
+    endfunction()
+    file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
+    add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
+    rocketnet_tla_trace_target(tla_trace)
+    set(ROCKETNET_TLA_TRACE_PLANTS "")
+    foreach(layer_file IN LISTS ROCKETNET_TLA_TRACE_LAYERS)
+        get_filename_component(layer_stem "${layer_file}" NAME_WE)
+        string(REPLACE "tla_trace_" "tla_trace_plant_" plant_target "${layer_stem}")
+        add_executable(${plant_target} tests/tla_trace.cpp "${layer_file}")
+        target_compile_definitions(${plant_target} PRIVATE ROCKETNET_TLA_PLANT=1)
+        rocketnet_tla_trace_target(${plant_target})
+        list(APPEND ROCKETNET_TLA_TRACE_PLANTS ${plant_target})
+    endforeach()
+    # the library's own definitions, which tools/tla_trace_check.py compares
+    # with the CONFIG line every trace binary prints
+    file(GENERATE OUTPUT "$<TARGET_FILE_DIR:tla_trace>/tla_trace_config.txt"
+        CONTENT "$<JOIN:$<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>,\n>\n")
+    # cmake --build build --target tla_trace_all builds the harness and every plant
+    add_custom_target(tla_trace_all DEPENDS tla_trace ${ROCKETNET_TLA_TRACE_PLANTS})
     add_executable(keygen tools/keygen.cpp)
     add_executable(transport_memory benchmarks/transport_memory.cpp)
     add_executable(client_main_thread_cost benchmarks/client_main_thread_cost.cpp)
@@ -1494,8 +1535,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.1.18; the label
-# v1.1.18 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.1.23; the label
+# v1.1.23 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)

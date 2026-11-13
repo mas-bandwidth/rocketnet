@@ -55,7 +55,7 @@ static_assert( sizeof( struct rocketnet_receipt_t ) == sizeof( struct rocketnet_
 
 static_assert( ROCKETNET_SEND_BUDGET_MAX_KBPS == ROCKETNET_SEND_KBPS_UNLIMITED - 1, "every budget below the unlimited sentinel is a budget" );
 #if ROCKETNET_XDP
-static_assert( (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE == 192ULL * 1024 * 1024 && ROCKETNET_XDP_UMEM_FRAMES == 49152, "rocketnet.h states the xdp UMEM as 49152 frames, 192 MiB, per queue" );
+static_assert( (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE == 384ULL * 1024 * 1024 && ROCKETNET_XDP_UMEM_FRAMES == 98304, "rocketnet.h states the xdp UMEM as 98304 frames, 384 MiB, per queue" );
 #endif // #if ROCKETNET_XDP
 static_assert( ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS && ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS, "the default budgets are valid budgets" );
 
@@ -3827,6 +3827,10 @@ void rocketnet_client_delivery_capture( struct rocketnet_client_t * client, stru
         rocketnet_message_client_delivery_capture( client->connection, capture );
     }
 }
+#endif // #if ROCKETNET_DEV
+
+// the counter block readers are the same in every build: counters are ABI
+// (tests/counter_contract.inc), and so are the ways to read them
 
 const struct rocketnet_counters_t * rocketnet_server_transport_counter_block( struct rocketnet_server_t * server )
 {
@@ -3853,7 +3857,6 @@ const struct rocketnet_counters_t * rocketnet_client_message_counter_block( stru
     struct rocketnet_message_client_t * connection = client ? client->connection : NULL;
     return connection ? rocketnet_message_client_counters( connection ) : NULL;
 }
-#endif // #if ROCKETNET_DEV
 
 // rocketnet_conditions_t is size-revisioned: fill a full copy, then hand the
 // caller the bytes its build knows; a caller built against a later, larger
