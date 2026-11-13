@@ -20,7 +20,9 @@
 #   restore <commit> <nic>
 #   watchdog <nic> <heartbeat>
 #
-# The server subcommands are root steps of RULINGS (c) and are invoked as
+# The root rule: root is used only to load and unload the program, arm and
+# cancel the dead-man timer, and start and stop the server. Those server
+# subcommands are invoked as
 # `sudo -n <this file> ...` on the host; --preserve-env=<list>, never -E.
 # build and the client steps run as the ordinary user.
 
@@ -61,7 +63,7 @@ EOF
 
 require_root()
 {
-    [ "$( id -u )" -eq 0 ] || fail "$1 is a root step of RULINGS (c); run it with sudo -n"
+    [ "$( id -u )" -eq 0 ] || fail "$1 is a root step of the root rule; run it with sudo -n"
 }
 
 is_number()
@@ -73,7 +75,7 @@ is_number()
 }
 
 # ------------------------------------------------------------------------
-# build: clone from GitHub at the named commit and build (section 12, step 2)
+# build: clone from GitHub at the named commit and build
 # ------------------------------------------------------------------------
 
 cmd_build()
@@ -105,7 +107,7 @@ cmd_build()
 }
 
 # ------------------------------------------------------------------------
-# skew: one wall-clock sample (section 11)
+# skew: one wall-clock sample
 # ------------------------------------------------------------------------
 
 cmd_skew()
@@ -120,8 +122,8 @@ cmd_skew()
 }
 
 # ------------------------------------------------------------------------
-# preflight: read-only checks before anything is attached (section 9, step 1;
-# XDP SAFETY 1 and 4). Mutates nothing.
+# preflight: read-only checks before anything is attached (XDP SAFETY 1
+# and 4). Mutates nothing.
 # ------------------------------------------------------------------------
 
 cmd_preflight()
@@ -170,7 +172,7 @@ cmd_preflight()
         [ -e "$pin" ] && fail "preflight: leftover pin root $pin; run rocketnet-provision sweep as root"
     done
 
-    # RULINGS (c) grants root only for load/unload, the dead-man timer and
+    # the root rule grants root only for load/unload, the dead-man timer and
     # the server. rocketnet-provision verify itself requires root, so the run
     # records it as not run rather than take a root step the ruling does not
     # grant; the read-only checks above are what a user may do.
@@ -178,7 +180,7 @@ cmd_preflight()
     if [ "$( id -u )" -eq 0 ] && [ -x "$provision" ]; then
         "$provision" "$nic" "$queues" verify || fail "preflight: rocketnet-provision verify refused; the owner decides"
     else
-        echo "preflight: rocketnet-provision verify not run (RULINGS (c) grants root only for load/unload, arm/cancel, start/stop server)"
+        echo "preflight: rocketnet-provision verify not run (the root rule grants root only for load/unload, arm/cancel, start/stop server)"
     fi
 
     echo "preflight: ok for $nic ($address, $queues queues)"
@@ -186,7 +188,7 @@ cmd_preflight()
 
 # ------------------------------------------------------------------------
 # arm: the dead-man timer and the watchdog, before anything loads
-# (section 9, steps 2 and 3; XDP SAFETY 2)
+# (XDP SAFETY 2)
 # ------------------------------------------------------------------------
 
 cmd_arm()
@@ -245,7 +247,7 @@ cmd_watchdog()
 }
 
 # ------------------------------------------------------------------------
-# start / stop the server (section 9, step 4 and 7; RULINGS (c))
+# start / stop the server (the root rule)
 # ------------------------------------------------------------------------
 
 cmd_start_server()
@@ -287,7 +289,7 @@ cmd_stop_server()
 }
 
 # ------------------------------------------------------------------------
-# start / stop / alive a client (section 12, step 5)
+# start / stop / alive a client
 # ------------------------------------------------------------------------
 
 cmd_start_client()
@@ -355,7 +357,7 @@ cmd_collect()
 }
 
 # ------------------------------------------------------------------------
-# restore: the teardown of section 9, step 7, for the program and its timers
+# restore: the teardown for the program and its timers
 # (XDP SAFETY 5). The server is stopped separately.
 # ------------------------------------------------------------------------
 

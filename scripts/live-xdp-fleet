@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# live-xdp-fleet -- orchestrate one live XDP fleet run (docs/LIVE-XDP.md
-# sections 6, 9, 11, 12 and 15; RULINGS (a)-(d) of 2026-10-18).
+# live-xdp-fleet -- orchestrate one live XDP fleet run. The rules it keeps
+# (the root rule, the byte budget, the time bound and the XDP safety steps)
+# are stated in this file; it cites no other document for them.
 #
 # The coordinator's machine runs only ssh, scp and this file. Every remote
 # step is a subcommand of scripts/live-xdp-fleet-remote, copied to the host
@@ -11,7 +12,7 @@
 #   scripts/live-xdp-fleet --inventory FILE [--commit SHA] [--seed N] [--run-dir DIR]
 #
 # The dry run prints the plan, every client's cap, the run bound and the
-# studio-uplink bound of RULINGS (d), and every per-host build, start,
+# studio-uplink bound of the byte budget, and every per-host build, start,
 # collect and teardown step with its full command line. It makes no ssh and
 # prints `dry-run: no host contacted`.
 #
@@ -19,12 +20,22 @@
 #   label ssh-name role shape site path cap-kbps nic address queues
 # as described in scripts/live-xdp-fleet.inventory.example.
 #
-# Root on the test server is used only for the steps of RULINGS (c): load
+# The root rule: root on the test server is used only to load
 # and unload the program, arm and cancel the dead-man timer, and start and
 # stop the server. Those run as `sudo -n <script>` on the copied script
 # file; the host's sudo is sudo-rs, so the environment list is passed with
 # --preserve-env=<list> and never -E. `sudo -n true` is proved before the
 # first root step.
+#
+# The byte budget: one run moves at most 20 GB in all, and at most 1 GB
+# across the studio uplink. Every inventory row carries a positive cap in
+# kbps that is the total of both directions and is no higher than its
+# site's cap; a row's bound is its cap held for the worst-case client run,
+# and the plan refuses a run whose rows add up past either budget.
+#
+# The time bound: the worst-case attached time (nine windows with their
+# worst drain, eight waits, the stagger, load/listen and teardown) is at
+# most 13 minutes.
 
 set -u
 
@@ -38,8 +49,9 @@ commit=""
 seed=1
 run_dir=""
 
-# section 6: nine windows, eight waits, the worst-case drain, the stagger,
-# load/listen and teardown. RULINGS (d) uses 621 s for the byte bound.
+# the time bound: nine windows, eight waits, the worst-case drain, the
+# stagger, load/listen and teardown. The byte budget holds each cap for the
+# worst-case client run (621 s with these values).
 window_seconds=35
 worst_drain_seconds=10
 cycles=8
@@ -47,9 +59,9 @@ wait_seconds=20            # 2 x the token timeout
 max_stagger_seconds=56
 load_listen_seconds=30
 teardown_seconds=60
-attached_limit_seconds=780 # 13 minutes, section 6 and 12
+attached_limit_seconds=780 # 13 minutes, the time bound
 
-# RULINGS (d): 20 GB per run in total, at most 1 GB across the studio uplink.
+# the byte budget: 20 GB per run in total, at most 1 GB across the studio uplink.
 run_budget_bytes=20000000000
 studio_budget_bytes=1000000000
 
@@ -123,7 +135,7 @@ cleanup()
 trap cleanup EXIT
 
 # ------------------------------------------------------------------------
-# plan: read and validate the inventory (section 8; RULINGS (d))
+# plan: read and validate the inventory against the byte budget
 # ------------------------------------------------------------------------
 
 : > "$tmp/clients.tsv"
@@ -175,9 +187,9 @@ while IFS= read -r line || [ -n "$line" ]; do
     max_cap=$( site_cap "$site" )
     case "$cap" in
         ''|*[!0-9]*)
-            refuse "inventory row $label: no cap; RULINGS (d) requires a total kbps cap" ;;
+            refuse "inventory row $label: no cap; the byte budget requires a total kbps cap" ;;
     esac
-    [ "$cap" -gt 0 ] || refuse "inventory row $label: cap is 0; RULINGS (d) requires a positive total"
+    [ "$cap" -gt 0 ] || refuse "inventory row $label: cap is 0; the byte budget requires a positive total"
 
     if [ "$role" = "server" ]; then
         server_count=$(( server_count + 1 ))
@@ -189,7 +201,7 @@ while IFS= read -r line || [ -n "$line" ]; do
         esac
         [ "$queues" -gt 0 ] || refuse "inventory row $label: queues is 0"
         [ "$cap" -le "$max_cap" ] || \
-            refuse "inventory row $label: $site-site server cap $cap kbps is above the $max_cap kbps total of RULINGS (d)"
+            refuse "inventory row $label: $site-site server cap $cap kbps is above the $max_cap kbps site cap of the byte budget"
         server_label=$label
         server_ssh=$ssh_name
         server_nic=$nic
@@ -198,9 +210,9 @@ while IFS= read -r line || [ -n "$line" ]; do
     else
         # the server's result and build files are named server.*
         [ "$label" != "server" ] || refuse "inventory row $label: a client may not be labelled server"
-        # RULINGS (d): the cap is a total, both directions combined.
+        # the byte budget: the cap is a total, both directions combined.
         if [ "$cap" -gt "$max_cap" ]; then
-            refuse "inventory row $label: $site-site cap $cap kbps is above the $max_cap kbps total of RULINGS (d)"
+            refuse "inventory row $label: $site-site cap $cap kbps is above the $max_cap kbps site cap of the byte budget"
         fi
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$ssh_name" "$shape" "$site" "$path" "$cap" \
             >> "$tmp/clients.tsv"
@@ -213,14 +225,14 @@ done < "$inventory"
 sort -t $'\t' -k1,1 "$tmp/clients.tsv" > "$tmp/sorted.tsv"
 client_count=$( wc -l < "$tmp/sorted.tsv" | tr -d ' ' )
 
-# section 6: one client's worst window run, then the stagger.
+# the time bound: one client's worst window run, then the stagger.
 one_client_worst=$(( (cycles + 1) * (window_seconds + worst_drain_seconds) + cycles * wait_seconds ))
 run_worst=$(( one_client_worst + max_stagger_seconds ))
 attached_worst=$(( run_worst + load_listen_seconds + teardown_seconds ))
 [ "$attached_worst" -le "$attached_limit_seconds" ] || \
-    refuse "plan: attached-time bound $attached_worst s is over the 13 minute limit of section 6"
+    refuse "plan: attached-time bound $attached_worst s is over the 13 minute time bound"
 
-# RULINGS (d): cap_kbps * 1000 bit/s * 621 s / 8 = cap_kbps * 77625 bytes.
+# the byte budget: cap_kbps * 1000 bit/s * 621 s / 8 = cap_kbps * 77625 bytes.
 bytes_per_kbps=$(( 1000 * run_worst / 8 ))
 run_bytes=0
 studio_bytes=0
@@ -231,7 +243,7 @@ while IFS=$'\t' read -r label ssh_name shape site path cap; do
     each=$(( cap / 2 ))
     plan_total=$(( each * 2 ))
     if [ "$plan_total" -gt "$cap" ]; then
-        refuse "inventory row $label: plan asks $plan_total kbps, above its row's $cap kbps cap of RULINGS (d)"
+        refuse "inventory row $label: plan asks $plan_total kbps, above its row's $cap kbps cap"
     fi
     run_bytes=$(( run_bytes + cap * bytes_per_kbps ))
     if [ "$site" = "studio" ]; then
@@ -249,9 +261,9 @@ done < "$tmp/sorted.tsv"
 mv "$tmp/sorted.tsv.new" "$tmp/sorted.tsv"
 
 [ "$run_bytes" -le "$run_budget_bytes" ] || \
-    refuse "plan: run bound $(gb "$run_bytes") GB is over the 20 GB budget of RULINGS (d)"
+    refuse "plan: run bound $(gb "$run_bytes") GB is over the 20 GB byte budget"
 [ "$studio_bytes" -le "$studio_budget_bytes" ] || \
-    refuse "plan: studio-uplink bound $(gb "$studio_bytes") GB is over the 1 GB budget of RULINGS (d)"
+    refuse "plan: studio-uplink bound $(gb "$studio_bytes") GB is over the 1 GB byte budget"
 
 # ------------------------------------------------------------------------
 # printed plan (the same in a dry run and a real run)
@@ -263,10 +275,10 @@ echo "  commit: $commit"
 echo "  seed: $seed"
 echo "  server: $server_label ($server_ssh) nic $server_nic address $server_address queues $server_queues"
 echo "  clients: $client_count"
-echo "  worst-case client run: $run_worst s = 9 windows x $(( window_seconds + worst_drain_seconds )) s worst + $cycles waits x $wait_seconds s + $max_stagger_seconds s stagger (section 6)"
+echo "  worst-case client run: $run_worst s = 9 windows x $(( window_seconds + worst_drain_seconds )) s worst + $cycles waits x $wait_seconds s + $max_stagger_seconds s stagger"
 echo "  attached-time bound: $attached_worst s of $attached_limit_seconds s"
-echo "  run bound: $(gb "$run_bytes") GB of 20 GB (RULINGS (d))"
-echo "  studio-uplink bound: $(gb "$studio_bytes") GB of 1 GB (RULINGS (d))"
+echo "  run bound: $(gb "$run_bytes") GB of 20 GB (the byte budget)"
+echo "  studio-uplink bound: $(gb "$studio_bytes") GB of 1 GB (the byte budget)"
 echo "  server create send cap: $min_each kbps each way (the lowest slot cap; a HELLO raises a slot to its row's cap)"
 
 while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
@@ -274,7 +286,7 @@ while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
 done < "$tmp/sorted.tsv"
 
 # ------------------------------------------------------------------------
-# the exact per-host command lines (section 12; RULINGS (c),(d))
+# the exact per-host command lines
 # ------------------------------------------------------------------------
 
 remote_path="~/rocketnet-live/live-xdp-fleet-remote"
@@ -301,7 +313,7 @@ print_host_common()
 echo
 echo "== server $server_label ($server_ssh) =="
 print_host_common "$server_ssh"
-echo "  XDP SAFETY 1: sdk/xdp/server_xdp.c returns XDP_PASS for every packet that is not the server's UDP port and address (server_xdp.c:126-128); it is never edited or reloaded by this run"
+echo "  XDP SAFETY 1: sdk/xdp/server_xdp.c returns XDP_PASS for every packet that is not the server's UDP port and address (the program's early returns and its final return XDP_PASS); it is never edited or reloaded by this run"
 echo "  preflight (read-only, before anything is attached): ssh $server_ssh $remote_path preflight $commit $server_nic $server_queues $server_address"
 echo "  root check: ssh $server_ssh sudo -n true   (a failure stops the run with not-done; no password is ever supplied)"
 echo "  XDP SAFETY 2: arm the dead-man timer before load: ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path arm $server_nic"
@@ -339,7 +351,7 @@ if [ "$dry_run" -eq 1 ]; then
 fi
 
 # ------------------------------------------------------------------------
-# the real run: step 12 of section 12, in order
+# the real run, in order
 # ------------------------------------------------------------------------
 
 # Every ssh and scp reads /dev/null, never this script's stdin: most run
@@ -423,7 +435,7 @@ while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
     [ "$head" = "$commit" ] || fail "client $label on $ssh_name reported HEAD '$head', not $commit"
 done < "$tmp/sorted.tsv"
 
-# 3. skew: every bench within 2 s of the test server (section 11). Each
+# 3. skew: every bench within 2 s of the test server. Each
 # host's clock is read with the remote skew step and taken as a signed
 # offset from this machine's; a bench is judged by its offset minus the
 # server's, so this machine's own clock cancels out.
@@ -458,12 +470,12 @@ while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
 done < "$tmp/sorted.tsv"
 
 # 4. server pre-flight, dead-man timer, watchdog, load, ssh check, listen.
-ssh_run "$server_ssh" sudo -n true || fail "sudo -n true failed on $server_ssh; stop with not-done (RULINGS (c))"
+ssh_run "$server_ssh" sudo -n true || fail "sudo -n true failed on $server_ssh; stop with not-done (the root rule)"
 ssh_run "$server_ssh" "$remote_path" preflight "$commit" "$server_nic" "$server_queues" "$server_address" || fail "server pre-flight refused"
 teardown_allowed=1
 ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" arm "$server_nic" || fail "cannot arm the dead-man timer"
 
-# the heartbeat loop the watchdog reads (section 9, step 3). It starts as
+# the heartbeat loop the watchdog reads. It starts as
 # soon as the watchdog is armed: the watchdog fires at a heartbeat 30 s old,
 # and the start, the listen polls and the client starts can take longer.
 ( while [ ! -f "$tmp/stop-heartbeat" ]; do

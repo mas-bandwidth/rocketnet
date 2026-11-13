@@ -8,9 +8,10 @@
 #   ssh-name  the name ssh uses, from the coordinator's machine
 #   role      server or client
 #   shape     linux, windows-interop or macos (the bench's build and start shape)
-#   site      studio or datacenter (RULINGS (d): the path that sets the cap)
+#   site      studio or datacenter (the site that sets the cap)
 #   path      lan or internet; this run is the internet path
-#   cap-kbps  the client's total cap, both directions combined (RULINGS (b),(d)):
+#   cap-kbps  the client's total cap, both directions combined (the byte budget
+#             stated in scripts/live-xdp-fleet):
 #             1000 for a studio-site client, 100000 for a datacenter client.
 #             The server row carries its own site's maximum and is not a
 #             client cap.
@@ -21,10 +22,10 @@
 # The real inventory lives outside the repository and is named by
 # ROCKETNET_LIVE_INVENTORY. Replace every .invalid name before a run.
 #
-# The example is the owner's shape (section 6 of docs/LIVE-XDP.md): seven
+# The example is the owner's shape: seven
 # studio-site clients at 1 Mbit/s total and two datacenter clients at
 # 100 Mbit/s total, which is about 0.54 GB across the studio uplink and
-# about 16.07 GB in all, inside the 1 GB and 20 GB bounds of RULINGS (d).
+# about 16.07 GB in all, inside the 1 GB and 20 GB bounds of the byte budget.
 
 # label            ssh-name                    role    shape            site        path      cap-kbps  nic   address           queues
 test-server      test-server.invalid         server  linux            datacenter  internet  100000    eth0  192.0.2.10:40000  8
