@@ -499,6 +499,12 @@ Done ==
 
 WorkerStep == Busy \/ ArmWake \/ Exit \/ Sleep
 
+\* the step's branches past the reaps (rocketnet_uring_queue_worker_step with
+\* reap false)
+PastReaps ==
+    \/ Retire \/ Claim \/ Submit \/ Split \/ Drop \/ Abandon
+    \/ ArmTimer \/ ArmRecvTimer \/ ArmRecv \/ ArmWake \/ CancelRecv \/ CancelWake
+
 KernelStep ==
     \/ KernelOk \/ KernelAgain \/ KernelRefuse
     \/ KernelTimer \/ KernelRecvEnd \/ KernelRecvEndsItself \/ KernelRecvData \/ KernelRecvTimer
@@ -523,11 +529,21 @@ Spec == Init /\ [][Next]_vars
 \* begin and stop are its own (ShutdownDrains and StopFinishes start from them)
 Fairness ==
     /\ WF_vars(WorkerStep)
-    \* the cancels, whatever is ready: a pass reaps at most
-    \* ROCKETNET_URING_WORKER_CQE_BATCH completions and then goes on to the
-    \* rest of the step (rocketnet_uring_queue_worker_pass), so datagrams that
-    \* keep coming after the stop never hold the cancels off
+    \* the stop seen, whatever is ready: Observe is the first branch of every
+    \* step (rocketnet_uring_queue_worker_step), ahead of any reap
+    /\ WF_vars(Observe)
+    \* what the step does past the reaps, whatever is ready: a pass reaps at
+    \* most ROCKETNET_URING_WORKER_CQE_BATCH completions and then goes on to
+    \* the rest of the step (rocketnet_uring_queue_worker_pass), so datagrams
+    \* that keep coming never hold off a claim, a retire, a submit or, after
+    \* the stop, the cancels
+    /\ WF_vars(PastReaps)
     /\ WF_vars(CancelRecv) /\ WF_vars(CancelWake)
+    \* each completion ready, whatever else comes: the completion queue is a
+    \* FIFO and the step reaps the oldest, so datagrams posted after it never
+    \* hold it off
+    /\ WF_vars(ReapOk) /\ WF_vars(ReapAgain) /\ WF_vars(ReapRefused) /\ WF_vars(ReapTimer)
+    /\ WF_vars(ReapRecvEnd) /\ WF_vars(ReapRecvTimer) /\ WF_vars(ReapWake) /\ WF_vars(ReapCancel)
     /\ WF_vars(KernelOk \/ KernelAgain \/ KernelRefuse)
     /\ WF_vars(KernelTimer) /\ WF_vars(KernelRecvEnd) /\ WF_vars(KernelWakeRead) /\ WF_vars(KernelWakeEnd)
     /\ WF_vars(KernelRecvTimer)
