@@ -531,19 +531,20 @@ static void test_gaps_st_ring_refused_start_zeroes_context()
 // The shared staged start, finish and abort
 // ----------------------------------------------------------------
 
-// Leaves a run of 0xFF bytes in the stack below the caller, where the next
-// call's locals land, so a local read before it is written reads
-// ROCKETNET_TRANSPORT_PACKET_UNREACHABLE rather than a lucky zero. Called
-// through a volatile pointer so it is never inlined away.
-static void st_ring_dirty_stack()
+// Leaves a run of `value` bytes in the stack below the caller, where the
+// next call's locals land, so a local read before it is written reads a
+// known value (0xFF: ROCKETNET_TRANSPORT_PACKET_UNREACHABLE, rather than a
+// lucky zero; 0x00: a NULL pointer an assert names). Called through a
+// volatile pointer so it is never inlined away.
+static void st_ring_fill_stack( uint8_t value )
 {
-    volatile uint8_t junk[4096];
+    volatile uint8_t junk[16384];
     for ( int i = 0; i < (int) sizeof( junk ); i++ )
     {
-        junk[i] = 0xFF;
+        junk[i] = value;
     }
 }
-static void ( * volatile st_ring_dirty_stack_call )() = st_ring_dirty_stack;
+static void ( * volatile st_ring_fill_stack_call )( uint8_t ) = st_ring_fill_stack;
 
 // The packet id a staged start hands the transport starts at 0: a transport
 // that refuses without writing it is counted by the refusal it is (room
@@ -564,7 +565,7 @@ static void test_gaps_st_ring_staged_start_id_starts_at_zero()
     struct rocketnet_packet_context_t context;
 
     f->refuse_without_id = true;
-    st_ring_dirty_stack_call();
+    st_ring_fill_stack_call( 0xFF );
     st_ring_expect( rocketnet_server_transport_start_packet( server, 0, 16, &context ) == NULL, "the refusing transport's start was not refused" );
     st_ring_expect( counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS] == no_link, "a refusal that wrote no id was counted SEND_NO_LINK_ADDRESS (the id was read uninitialised)" );
     st_ring_expect( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full, "a refusal with room left was counted SEND_RING_FULL" );
@@ -572,7 +573,7 @@ static void test_gaps_st_ring_staged_start_id_starts_at_zero()
 
     f->refuse_without_id = false;
     f->start_leaves_id = true;
-    st_ring_dirty_stack_call();
+    st_ring_fill_stack_call( 0xFF );
     uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
     st_ring_expect( frame != NULL, "the staged start was refused" );
     f->last_abort_id = 12345;
@@ -1009,10 +1010,12 @@ static void test_gaps_st_ring_replay_walk_forgets_a_departed_client()
     rocketnet_server_transport_disconnect_client( server, 0 );
     time += 1.0 / 60.0;
 
-    // a sink without the forget is reported by the walk's assert, named here
+    // a sink without the forget is reported by the walk's assert, named here;
+    // the zeroed stack makes an unset forget NULL rather than garbage
     rocketnet_assert_function_t saved = rn_assert_function;
     g_st_ring_asserts = 0;
     rocketnet_assert_function( st_ring_assert_hook );
+    st_ring_fill_stack_call( 0x00 );
     rocketnet_server_transport_update( server, time );
     rocketnet_assert_function( saved );
 
