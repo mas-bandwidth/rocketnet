@@ -335,7 +335,12 @@ static void ack_phase_split_update( ack_phase_world_t * world, double time, uint
         {
             continue;
         }
-        mine[ack_phase_below( deal, num_threads )].push_back( order[i] );
+        const int thread = ack_phase_below( deal, num_threads );
+        mine[thread].push_back( order[i] );
+        if ( ack_phase_below( deal, 8 ) == 0 )
+        {
+            mine[thread].push_back( order[i] );     // a second call, its own thread: nothing applied or taken twice
+        }
     }
 
     int refused[ACK_PHASE_THREADS_MAX] = {};

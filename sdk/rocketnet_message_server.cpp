@@ -991,9 +991,12 @@ bool rn_message_object_update_acks( struct rn_message_object_t * object, int cli
     // were received for, with no internal error (settled), and the slot is
     // bound to it, so Observe leaves it as it is. The connection's own state
     // is all on_acked_ids writes; the counts it adds are atomic sums.
-    // Otherwise the back's drain takes them, as before.
+    // Otherwise the back's drain takes them, as before. A second call for the
+    // client in the same update (its own thread may make one) finds them
+    // taken and hands them on no second time.
 
-    if ( acks.num_acked > 0 && acks.settled && object->hot_connections[client_index].state == RN_MESSAGE_CONNECTION_CONNECTED &&
+    if ( acks.num_acked > 0 && acks.settled && !object->hot_connections[client_index].acks_taken &&
+         object->hot_connections[client_index].state == RN_MESSAGE_CONNECTION_CONNECTED &&
          rn_slots_admit( &object->slots, client_index, acks.connection_id ) == RN_SLOTS_APPLY &&
          object->hot_connections[client_index].connection_id == acks.connection_id )
     {
