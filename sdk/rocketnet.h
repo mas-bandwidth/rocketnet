@@ -2989,6 +2989,54 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
+/// rocketnet_server_update in three calls, so the game's job threads can
+/// apply the clients' acknowledgements. update_begin, then
+/// rocketnet_server_update_acks for any clients, then update_end, leave
+/// exactly what one rocketnet_server_update leaves: the same client state,
+/// counters, receipts and acked order, whichever threads make the ack calls
+/// and in whatever order.
+///
+/// update_begin receives and opens the packets that arrived. It is a
+/// main-thread call, with the same rules and arguments as
+/// rocketnet_server_update. Every update_begin must be followed by
+/// update_end before any other call on the server except the ack calls:
+/// another main-thread call or a fill call in between is refused, counted on
+/// ROCKETNET_COUNTER_FILL_PHASE_OVERLAP, and asserts in a debug build.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param time As rocketnet_server_update.
+
+ROCKETNET_EXPORT void rocketnet_server_update_begin( struct rocketnet_server_t * server, double time );
+
+/// Applies the acknowledgements client_index sent in the packets
+/// update_begin received.
+///
+/// Optional: update_end applies, on its own thread, every client whose call
+/// was not made. A second call for a client does nothing more. Thread: an
+/// ack call. Between update_begin and update_end any number of threads may
+/// make ack calls, each client index from one thread (another thread on the
+/// same client is refused and counted on ROCKETNET_COUNTER_FILL_TWO_FILLERS),
+/// with the handoff both ways a synchronizing operation (a join or a
+/// barrier), as for fill calls; see rocketnet_server_t. Outside that window
+/// it is refused and counted on ROCKETNET_COUNTER_FILL_PHASE_OVERLAP.
+///
+/// @param server The server. NULL counts as API misuse and returns false.
+/// @param client_index The slot, 0 to max_clients - 1. Any other value
+/// returns false.
+/// @return True when the call was taken (a slot with nothing to apply
+/// included), false when refused.
+
+ROCKETNET_EXPORT bool rocketnet_server_update_acks( struct rocketnet_server_t * server, int client_index );
+
+/// Finishes the update update_begin started: connection timeouts,
+/// keep-alives and the messages for every client. A main-thread call; the
+/// one main-thread call taken while an update_begin is open, and refused
+/// (FILL_PHASE_OVERLAP) when none is.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+
+ROCKETNET_EXPORT void rocketnet_server_update_end( struct rocketnet_server_t * server );
+
 /// Sends each client's queued messages in packets under its send budget.
 ///
 /// The gso, io_uring, xdp, iocp and rio server transports hold what they send

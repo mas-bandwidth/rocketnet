@@ -1066,7 +1066,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # (which starts no thread). No socket (the development loopback driver),
     # no real time. CI runs it in the functional legs and under tsan.
     if(ROCKETNET_DEV)
-        add_executable(test_wide_fill tests/test_wide_fill_main.cpp tests/wide_fill_cases.cpp)
+        add_executable(test_wide_fill tests/test_wide_fill_main.cpp tests/wide_fill_cases.cpp tests/server_ack_phase_cases.cpp)
         target_include_directories(test_wide_fill PRIVATE tests)
         target_link_libraries(test_wide_fill PRIVATE rocketnet_dev Threads::Threads)
         rocketnet_use_sodium(test_wide_fill)
@@ -1444,6 +1444,12 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_definitions(server_receive_cost PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
+    # The server's update with the bar's ack shape (benchmarks/server_update_ack_cost.cpp):
+    # public API, loopback, simulated time; counts update's instructions and cycles.
+    add_executable(server_update_ack_cost benchmarks/server_update_ack_cost.cpp)
+    target_link_libraries(server_update_ack_cost PRIVATE rocketnet)
+    target_compile_features(server_update_ack_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(server_update_ack_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
     # One client's per-frame cost on the game thread against a real server
     # (benchmarks/client_frame_time.md). It links the library a game ships,

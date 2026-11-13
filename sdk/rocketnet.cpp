@@ -1088,8 +1088,24 @@ int rocketnet_term_internal()
 
 // ---------------------------------------------------------------
 
+#if ROCKETNET_DEV
+uint64_t * rocketnet_packet_lease_id_test_source = NULL;
+#endif // #if ROCKETNET_DEV
+
 uint64_t rocketnet_next_packet_lease_id()
 {
+#if ROCKETNET_DEV
+    uint64_t * source = rocketnet_packet_lease_id_test_source;
+    if ( source )
+    {
+        if ( *source == UINT64_MAX )
+        {
+            return 0;
+        }
+        return ( *source )++;
+    }
+#endif // #if ROCKETNET_DEV
+
     static std::atomic<uint64_t> next{ 1 };
     uint64_t ticket = next.load( std::memory_order_relaxed );
     while ( ticket != UINT64_MAX )

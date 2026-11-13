@@ -991,6 +991,14 @@ void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, 
     rn_ordered_acks( &endpoint->ordered, &packet_id, 1, now );
 }
 
+void rn_endpoint_on_acked_ids( struct rn_endpoint_t * endpoint, const uint64_t * packet_ids, uint32_t count, double now )
+{
+    // proofs/tla/RNEndpoint.tla OnAcked, once per id in order: rn_window_ack_on_acks
+    // with count ids leaves the state count calls with one id leave
+
+    rn_ordered_acks( &endpoint->ordered, packet_ids, count, now );
+}
+
 bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,
                              rn_delivery_t * out, int out_capacity, int * out_count, double now )
 {

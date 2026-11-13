@@ -1584,22 +1584,34 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
         rocketnet_ack_endpoint_record_received( endpoint, sequence, packet_bytes, current_time );
 
-        int before = server->acks->num_acked;
-        rocketnet_ack_endpoint_process_block( endpoint, &block, current_time,
-                                              server->acks->acked_packet_ids, server->acks->acked_capacity, &server->acks->num_acked,
-                                              &counters[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE],
-                                              &counters[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
         // P9b: each acked id is tagged with the connection it was received
-        // for, beside its client index, as it is appended
+        // for, beside its client index
 
         const uint64_t connection_id = rocketnet_server_protocol_connection_id( server, client_index );
 
-        for ( int i = before; i < server->acks->num_acked; i++ )
+        // the block is deferred to the client's ack call (proofs/tla/RNAckPhase.tla
+        // Defer); with no room left the update spills (RNAckPhase.tla
+        // Spill): every deferred block is applied and gathered here, and this
+        // one and the rest of the update's are applied as they come
+        // (RNAckPhase.tla Inline)
+
+        if ( !rocketnet_server_acks_defer( server->acks, client_index, &block, connection_id ) )
         {
-            server->acks->acked_client_index[i] = client_index;
-            if ( server->acked_connection_ids )
+            rocketnet_server_protocol_ack_gather( server );
+
+            int before = server->acks->num_acked;
+            rocketnet_ack_endpoint_process_block( endpoint, &block, current_time,
+                                                  server->acks->acked_packet_ids, server->acks->acked_capacity, &server->acks->num_acked,
+                                                  &counters[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE],
+                                                  &counters[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
+
+            for ( int i = before; i < server->acks->num_acked; i++ )
             {
-                server->acked_connection_ids[i] = connection_id;
+                server->acks->acked_client_index[i] = client_index;
+                if ( server->acked_connection_ids )
+                {
+                    server->acked_connection_ids[i] = connection_id;
+                }
             }
         }
 
@@ -1657,6 +1669,74 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
 
     return ROCKETNET_SERVER_PROCESS_ACCEPTED;
+}
+
+static inline void rocketnet_server_prefetch( const void * address )
+{
+#if defined( __GNUC__ ) || defined( __clang__ )
+    __builtin_prefetch( address );
+#else
+    (void) address;
+#endif // #if defined( __GNUC__ ) || defined( __clang__ )
+}
+
+void rocketnet_server_protocol_begin_acks( struct rocketnet_server_protocol_t * server, double current_time )
+{
+    rocketnet_assert( server );
+    if ( server->acks )
+    {
+        rocketnet_server_acks_begin_update( server->acks, current_time );
+    }
+}
+
+void rocketnet_server_protocol_apply_acks( struct rocketnet_server_protocol_t * server, int client_index )
+{
+    rocketnet_assert( server );
+    if ( server->acks && client_index >= 0 && client_index < server->acks->max_clients )
+    {
+        rocketnet_server_acks_apply_client( server->acks, client_index );
+    }
+}
+
+void rocketnet_server_protocol_ack_gather( struct rocketnet_server_protocol_t * server )
+{
+    rocketnet_assert( server );
+    if ( server->acks )
+    {
+        rocketnet_server_acks_gather( server->acks, server->acked_connection_ids,
+                                      &server->counters->values[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE],
+                                      &server->counters->values[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
+    }
+}
+
+void rocketnet_server_protocol_prefetch_received( struct rocketnet_server_protocol_t * server,
+                                                  const struct rocketnet_address_t * from,
+                                                  const uint8_t * packet_data,
+                                                  int packet_bytes )
+{
+    if ( packet_bytes < ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES )
+    {
+        return;
+    }
+
+    const int mapping_index = rocketnet_encryption_map_find( server->encryption_map, from );
+    if ( mapping_index < 0 )
+    {
+        return;
+    }
+
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+    rocketnet_server_prefetch( &mapping->keys );
+    rocketnet_server_prefetch( &mapping->replay_session );
+
+    const int client_index = rocketnet_encryption_map_control( server->encryption_map, mapping_index )->client_index;
+    if ( !server->acks || client_index < 0 || client_index >= server->acks->max_clients )
+    {
+        return;
+    }
+
+    const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
+    rocketnet_ack_endpoint_prefetch_receive( &server->acks->endpoints[client_index], rocketnet_read_uint32( &p ) );
 }
 
 int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol_t * server,

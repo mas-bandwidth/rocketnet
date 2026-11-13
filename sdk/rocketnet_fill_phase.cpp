@@ -91,6 +91,7 @@ void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int 
     fill_phase->main_calls.store( 0 );
     fill_phase->epoch.store( 1 );
     fill_phase->main_owner.store( 0 );
+    fill_phase->ack_phase.store( 0 );
     fill_phase->main_depth = 0;
     fill_phase->num_clients = num_clients < 0 ? 0 : ( num_clients > ROCKETNET_MAX_CLIENTS ? ROCKETNET_MAX_CLIENTS : num_clients );
     fill_phase->overlap_counter = overlap_counter;
@@ -106,8 +107,9 @@ void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int 
     }
 }
 
-// proofs/tla/RNFillPhase.tla MainAnnounce, MainLook (one per fills_in line), MainIn
-bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase )
+// RNFillPhase MainAnnounce, MainLook (one per fills_in line), MainIn; then
+// RNAckPhase's kind check: an ack phase takes only the operation that ends it
+bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase, bool ends_ack_phase )
 {
     rocketnet_assert( fill_phase );
 
@@ -148,13 +150,48 @@ bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase
         RN_FILL_PHASE_TRACE( "MainLook", i, fills, false );
     }
 
+    // ack_phase is written only inside a main operation, and this thread is
+    // the only one in a main operation now: the load reads the phase this
+    // operation would end
+
+    if ( fill_phase->ack_phase.load() != ( ends_ack_phase ? 1u : 0u ) )
+    {
+        fill_phase->main_calls.fetch_sub( 1 );
+        rn_fill_phase_count( fill_phase->overlap_counter );
+        if ( ends_ack_phase )
+        {
+            rocketnet_error( "server update_end refused: no update_begin is open" );
+            rocketnet_assert( false && "update_end without update_begin" );
+        }
+        else
+        {
+            rocketnet_error( "server main-thread operation refused: an update is open (update_begin without update_end)" );
+            rocketnet_assert( false && "a main-thread operation between update_begin and update_end" );
+        }
+        return false;
+    }
+
     fill_phase->main_owner.store( me, std::memory_order_relaxed );
     fill_phase->main_depth = 1;
     RN_FILL_PHASE_TRACE( "MainIn", -1, 0, false );
     return true;
 }
 
-// proofs/tla/RNFillPhase.tla MainEpoch, MainDrop: the epoch moves, so the next fill phase begins with every client unclaimed
+void rocketnet_fill_phase_open_ack_phase( struct rocketnet_fill_phase_t * fill_phase )
+{
+    rocketnet_assert( fill_phase );
+    rocketnet_assert( fill_phase->main_owner.load( std::memory_order_relaxed ) == rocketnet_platform_thread_id() );
+    fill_phase->ack_phase.store( 1 );
+}
+
+void rocketnet_fill_phase_close_ack_phase( struct rocketnet_fill_phase_t * fill_phase )
+{
+    rocketnet_assert( fill_phase );
+    rocketnet_assert( fill_phase->main_owner.load( std::memory_order_relaxed ) == rocketnet_platform_thread_id() );
+    fill_phase->ack_phase.store( 0 );
+}
+
+// RNFillPhase MainEpoch, MainDrop: the epoch moves, so the next fill phase begins with every client unclaimed
 void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
 {
     rocketnet_assert( fill_phase );
@@ -174,9 +211,10 @@ void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
     RN_FILL_PHASE_TRACE( "MainDrop", -1, epoch, false );
 }
 
-// proofs/tla/RNFillPhase.tla FillBegin, FillLock, FillDecide, FillCount, FillLook. The lock is one
-// compare-and-swap; the reversed witness LoadStore takes it as a load (FillLoad) and a store (FillStore).
-bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index )
+// RNFillPhase FillBegin, FillLock, FillDecide, FillCount, FillLook; then
+// RNAckPhase's kind check: a fill call only outside an ack phase, an ack call
+// only inside one
+static bool rn_fill_phase_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index, bool ack )
 {
     rocketnet_assert( fill_phase );
 
@@ -264,7 +302,16 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
     // the old phase, which a second filler in the new phase would not see
     // (proofs/tla/RNFillPhase.tla FillLook)
 
-    if ( fill_phase->main_calls.load() != 0 || fill_phase->epoch.load() != epoch )
+    const bool look_refused = fill_phase->main_calls.load() != 0 || fill_phase->epoch.load() != epoch;
+
+    // the look passed: no main operation ran since FillBegin and none can
+    // begin while this call is counted, so ack_phase is the value of this
+    // call's phase (the kind check: RNAckPhase.tla takes it as given, its
+    // ack calls inside the phase and no main operation in it)
+
+    const bool kind_refused = !look_refused && fill_phase->ack_phase.load() != ( ack ? 1u : 0u );
+
+    if ( look_refused || kind_refused )
     {
         // a refused call leaves no claim: the client's next filler in this
         // phase, honest, must not be refused for it (NoFalseAlarm)
@@ -290,9 +337,22 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         }
         fills_in->fetch_sub( 1 );
         rn_fill_phase_count( fill_phase->overlap_counter );
-        RN_FILL_PHASE_TRACE( "FillLook", client_index, before, true );
-        rocketnet_error( "server fill call refused: a main-thread operation is running" );
-        rocketnet_assert( false && "a fill call inside a main-thread operation" );
+        if ( look_refused )
+        {
+            RN_FILL_PHASE_TRACE( "FillLook", client_index, before, true );
+            rocketnet_error( "server fill call refused: a main-thread operation is running" );
+            rocketnet_assert( false && "a fill call inside a main-thread operation" );
+        }
+        else if ( ack )
+        {
+            rocketnet_error( "server ack call refused: no update is open (call it between update_begin and update_end)" );
+            rocketnet_assert( false && "an ack call outside update_begin and update_end" );
+        }
+        else
+        {
+            rocketnet_error( "server fill call refused: an update is open (update_begin without update_end)" );
+            rocketnet_assert( false && "a fill call between update_begin and update_end" );
+        }
         return false;
     }
 
@@ -300,7 +360,17 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
     return true;
 }
 
-// proofs/tla/RNFillPhase.tla FillUnclaim, FillLeave: only this thread writes the word while its in bit is set
+bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index )
+{
+    return rn_fill_phase_begin( fill_phase, client_index, false );
+}
+
+bool rocketnet_fill_phase_ack_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index )
+{
+    return rn_fill_phase_begin( fill_phase, client_index, true );
+}
+
+// RNFillPhase FillUnclaim, FillLeave: only this thread writes the word while its in bit is set
 void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, int client_index )
 {
     rocketnet_assert( fill_phase );
@@ -334,4 +404,9 @@ void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, 
     const int line = rn_fill_phase_line( me );
     fill_phase->lines[line].fills_in.fetch_sub( 1 );
     RN_FILL_PHASE_TRACE( "FillLeave", client_index, (uint64_t) line, false );
+}
+
+void rocketnet_fill_phase_ack_end( struct rocketnet_fill_phase_t * fill_phase, int client_index )
+{
+    rocketnet_fill_phase_fill_end( fill_phase, client_index );
 }
