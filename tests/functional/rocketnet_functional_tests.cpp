@@ -7889,11 +7889,13 @@ void rocketnet_test_server_gso_held_receive_view()
 // room for at ROCKETNET_GSO_RECV_MAX_SEGMENTS (64) segments each, while a
 // local UDP_SEGMENT sender can coalesce 128 on a recent kernel. With the main
 // thread not claiming, one ready buffer is published and the next fills: it
-// holds one plain datagram, then 64 sends of 128 segments arrive (8192
-// segments for 8191 free slots). Every message is read, since the room never
+// holds one plain datagram, then sends of 128 segments arrive until they
+// total ROCKETNET_GSO_RECV_QUEUE_SIZE segments (one more than the free
+// slots), the send count derived from the constant. Every message is read, since the room never
 // falls below one message's 64 before the last; the last segment has no
 // slot and is the one RECEIVE_DROPPED_OVERFLOW. Then every staged datagram
-// surfaces: 2 plain and 8191 segments, 64 GRO batches, no other drop.
+// surfaces: 2 plain and QUEUE_SIZE - 1 segments, one GRO batch a send, no
+// other drop.
 // Needs GRO and a loopback that coalesces UDP_SEGMENT, and a kernel taking
 // 128 segments a send; without them the case says so and checks nothing.
 
@@ -7901,7 +7903,7 @@ void rocketnet_test_server_gso_receive_overflow_counted()
 {
     const int segments = 128;
     const int segment_bytes = 200;
-    const int sends = 64;
+    const int sends = ROCKETNET_GSO_RECV_QUEUE_SIZE / segments;
     rocketnet_check( segments > ROCKETNET_GSO_RECV_MAX_SEGMENTS );
     rocketnet_check( sends * segments == ROCKETNET_GSO_RECV_QUEUE_SIZE );
 
