@@ -2,11 +2,13 @@
 """Check that sdk/rocketnet.h is a clean, self-contained, plain-C public header.
 
 (a) the header alone compiles as C99, C11 and C++11, pedantic, warnings as
-    errors, plain and with ROCKETNET_SHARED and ROCKETNET_DEV defined;
+    errors, plain (ROCKETNET_DEV defaults to 1), with ROCKETNET_SHARED, and
+    with ROCKETNET_DEV=0, the production form;
 (b) every #include names only stdint.h, stddef.h or stdbool.h;
 (c) every function and data declaration carries ROCKETNET_EXPORT and sits
-    inside the one extern "C" block, and no inline (the three default_config
-    inlines excepted, in their one exact form), static, default argument,
+    inside the one extern "C" block, and no inline (five excepted, each in its
+    one exact form: the three default_config inlines and the two light_config
+    inlines), static, default argument,
     overload, namespace, class, template, operator or reference appears;
 (d) a fresh empty directory holding only rocketnet.h and the prebuilt
     development static library builds, links and runs tools/header_alone as C
@@ -159,18 +161,18 @@ def compile_alone(compiler_c, compiler_cxx):
         ("C++11", compiler_cxx, ["-std=c++11", "-pedantic", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", "-x", "c++"]),
     ]
     variants = [("", []), (" with ROCKETNET_SHARED", ["-DROCKETNET_SHARED"]),
-                (" with ROCKETNET_DEV=1", ["-DROCKETNET_DEV=1"])]
+                (" with ROCKETNET_DEV=0", ["-DROCKETNET_DEV=0"])]
     # a translation unit that includes the header, so its static inline
     # default_config calls are an included header's, as in every program
-    unit_directory = tempfile.mkdtemp(prefix="rocketnet-header-alone-")
-    unit = Path(unit_directory) / "include_rocketnet.c"
-    unit.write_text('#include "rocketnet.h"\n')
-    for name, compiler, flags in languages:
-        for suffix, defines in variants:
-            command = [compiler] + flags + defines + ["-ffp-contract=off", "-I", str(HEADER.parent), str(unit)]
-            result = subprocess.run(command, capture_output=True, text=True)
-            detail = "" if result.returncode == 0 else ": " + (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]
-            report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
+    with tempfile.TemporaryDirectory(prefix="rocketnet-header-alone-") as unit_directory:
+        unit = Path(unit_directory) / "include_rocketnet.c"
+        unit.write_text('#include "rocketnet.h"\n')
+        for name, compiler, flags in languages:
+            for suffix, defines in variants:
+                command = [compiler] + flags + defines + ["-ffp-contract=off", "-I", str(HEADER.parent), str(unit)]
+                result = subprocess.run(command, capture_output=True, text=True)
+                detail = "" if result.returncode == 0 else ": " + (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]
+                report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
 
 
 def compile_alone_cl():
@@ -188,17 +190,17 @@ def compile_alone_cl():
         ("C++14 (cl /std:c++14)", ["/std:c++14", "/permissive-"], "/Tp"),
     ]
     variants = [("", []), (" with ROCKETNET_SHARED", ["/DROCKETNET_SHARED"]),
-                (" with ROCKETNET_DEV=1", ["/DROCKETNET_DEV=1"])]
-    for name, flags, source_flag in languages:
-        for suffix, defines in variants:
-            unit_directory = tempfile.mkdtemp(prefix="rocketnet-header-alone-")
-            unit = Path(unit_directory) / "include_rocketnet.c"
-            unit.write_text('#include "rocketnet.h"\n')
-            command = [compiler, "/nologo", "/Zs", "/W4", "/WX", "/I" + str(HEADER.parent)] + flags + defines + [source_flag + str(unit)]
-            result = subprocess.run(command, capture_output=True, text=True, env=environment)
-            lines = [line for line in (result.stdout + result.stderr).strip().splitlines() if line.strip() and line.strip() != HEADER.name]
-            detail = "" if result.returncode == 0 else ": " + (lines or ["exit %d" % result.returncode])[0]
-            report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
+                (" with ROCKETNET_DEV=0", ["/DROCKETNET_DEV=0"])]
+    with tempfile.TemporaryDirectory(prefix="rocketnet-header-alone-") as unit_directory:
+        unit = Path(unit_directory) / "include_rocketnet.c"
+        unit.write_text('#include "rocketnet.h"\n')
+        for name, flags, source_flag in languages:
+            for suffix, defines in variants:
+                command = [compiler, "/nologo", "/Zs", "/W4", "/WX", "/I" + str(HEADER.parent)] + flags + defines + [source_flag + str(unit)]
+                result = subprocess.run(command, capture_output=True, text=True, env=environment)
+                lines = [line for line in (result.stdout + result.stderr).strip().splitlines() if line.strip() and line.strip() != HEADER.name]
+                detail = "" if result.returncode == 0 else ": " + (lines or ["exit %d" % result.returncode])[0]
+                report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
 
 
 def check_channel_bound(compiler_c, compiler_cxx):
@@ -376,7 +378,7 @@ def check_declarations(raw):
         names.setdefault(name, number)
 
     if not any(line.startswith("(c) line") for line in failures):
-        report(num_functions > 0, '(c) %d functions and %d data declarations, each ROCKETNET_EXPORT, each once, all inside the extern "C" block; no inline, static, default argument, overload, namespace, class, template or reference' % (num_functions, num_data))
+        report(num_functions > 0, '(c) %d functions and %d data declarations, each ROCKETNET_EXPORT, each once, all inside the extern "C" block; no inline but the five allowed default_config and light_config forms, no static, default argument, overload, namespace, class, template or reference' % (num_functions, num_data))
     return num_functions, num_data
 
 
@@ -425,8 +427,6 @@ def self_contained(build, config, compiler_c, compiler_cxx):
     if not library.exists():
         report(False, "(d) no prebuilt development static library at %s" % library)
         return
-    directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_"))
-    source_directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_source_"))
     # no include path but the directory: the compiler's environment paths are cleared
     if sys.platform == "win32":
         try:
@@ -439,6 +439,9 @@ def self_contained(build, config, compiler_c, compiler_cxx):
         base_environment = os.environ
     environment = {key: value for key, value in base_environment.items()
                    if key not in ("CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH")}
+    # made after the cl lookup, so a return above leaves no directory behind
+    directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_"))
+    source_directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_source_"))
     try:
         # the sources compile from their own directory, which holds only them,
         # so a quoted include finds nothing beside the source
