@@ -5,9 +5,12 @@
 
 // test_unit_backend_keypair_from_seed.cpp -- the public seed-derived backend
 // keypair in sdk/rocketnet.h, checked against the vendored library and the
-// production token writer. Every case carries its own fixed seed and fixed
-// timestamps: no case reads a clock, opens a socket or touches anything
-// outside the process, and no case prints key material.
+// production token writer. Every key a case makes comes from its own fixed
+// seed, and every token field it chooses is fixed: no case reads a clock,
+// opens a socket or touches anything outside the process, and no case prints
+// key material. The one draw from the crypto source is the production
+// writer's own: it seals each token with fresh private keys and nonce, as
+// every production token is sealed, and the round trip opens what it sealed.
 
 #include "test_unit_registry.h"
 
@@ -49,9 +52,13 @@ void test_backend_keypair_from_seed_round_trip()
     uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
 
+    // the server pair from a fixed seed too, through the vendored library, so
+    // no key in the case is drawn from the crypto source
+    uint8_t server_seed[RN_TEST_BACKEND_SEED_BYTES];
+    backend_seed_fill( server_seed, 0x41 );
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
-    rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( crypto_box_seed_keypair( server_public_key, server_secret_key, server_seed ) == 0 );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
