@@ -272,6 +272,35 @@ static void wait_until( const char * name, Predicate predicate, double seconds =
     }
 }
 
+// The smallest datagram the server's receive paths bank
+// (ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES), its first four bytes a tag the
+// test recognises; anything shorter is dropped at the worker as TOO_SHORT.
+#define IOCP_TAGGED_BYTES ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES
+
+struct iocp_tagged_t
+{
+    char data[IOCP_TAGGED_BYTES];
+};
+
+static iocp_tagged_t iocp_tagged( const char * tag )
+{
+    iocp_tagged_t tagged;
+    memset( tagged.data, 0x2E, sizeof( tagged.data ) );
+    memcpy( tagged.data, tag, 4 );
+    return tagged;
+}
+
+static int iocp_send_tagged( SOCKET client, const sockaddr_in & to, const char * tag )
+{
+    const iocp_tagged_t tagged = iocp_tagged( tag );
+    return sendto( client, tagged.data, IOCP_TAGGED_BYTES, 0, (const sockaddr *) &to, sizeof( to ) );
+}
+
+static bool iocp_is_tagged( const uint8_t * data, int bytes, const char * tag )
+{
+    return bytes == IOCP_TAGGED_BYTES && memcmp( data, tag, 4 ) == 0;
+}
+
 // The TX worker sends published banks off the caller thread. A test that
 // asserts on what one flush did first waits until the producer is published
 // and every published bank is serviced (sends posted, aborted frames freed).
@@ -621,7 +650,7 @@ static void test_datagrams_and_producers()
                                                                              ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 4 * 1024 * 1024, 4 * 1024 * 1024 );
     CHECK( client );
 
-    const uint8_t marker[] = { 9, 8, 7, 6 };
+    const uint8_t marker[IOCP_TAGGED_BYTES] = { 9, 8, 7, 6 };
     rocketnet_platform_socket_send_packet( client, &destination, marker, sizeof( marker ) );
 
     uint8_t * received = NULL;
@@ -648,7 +677,7 @@ static void test_datagrams_and_producers()
     uint64_t before[ROCKETNET_IOCP_NUM_COUNTERS], after[ROCKETNET_IOCP_NUM_COUNTERS];
     rocketnet_server_iocp_counters( transport, before );
 
-    uint8_t extra[32];
+    uint8_t extra[IOCP_TAGGED_BYTES];
     memset( extra, 0x44, sizeof( extra ) );
     for ( int i = 0; i < 100; ++i )
     {
@@ -770,7 +799,9 @@ static void test_receive_publication_never_waits()
     CHECK( client );
 
     const uint8_t marker = 0x5a;
-    rocketnet_platform_socket_send_packet( client, &bind, &marker, 1 );
+    uint8_t marked[IOCP_TAGGED_BYTES];
+    memset( marked, marker, sizeof( marked ) );
+    rocketnet_platform_socket_send_packet( client, &bind, marked, sizeof( marked ) );
 
     uint8_t * view = NULL;
     const double view_deadline = rocketnet_platform_time() + 5.0;
@@ -781,7 +812,7 @@ static void test_receive_publication_never_waits()
         rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
         if ( batch->num_packets == 1 )
         {
-            CHECK( batch->packet_bytes[0] == 1 && batch->packet_data[0][0] == marker );
+            CHECK( batch->packet_bytes[0] == IOCP_TAGGED_BYTES && batch->packet_data[0][0] == marker );
             view = batch->packet_data[0];
         }
 
@@ -847,8 +878,9 @@ static void test_receive_ready_banks_fifo()
 
     for ( int marker = 1; marker <= 2; ++marker )
     {
-        const uint8_t payload = (uint8_t) marker;
-        rocketnet_platform_socket_send_packet( client, &bind, &payload, 1 );
+        uint8_t payload[IOCP_TAGGED_BYTES];
+        memset( payload, marker, sizeof( payload ) );
+        rocketnet_platform_socket_send_packet( client, &bind, payload, sizeof( payload ) );
 
         const double deadline = rocketnet_platform_time() + 5.0;
         while ( rocketnet_server_iocp_test_ready_banks( transport, 0 ) < marker && rocketnet_platform_time() < deadline )
@@ -864,7 +896,7 @@ static void test_receive_ready_banks_fifo()
     CHECK( batch->num_packets == 2 );
     for ( int i = 0; i < 2; ++i )
     {
-        CHECK( batch->packet_bytes[i] == 1 && batch->packet_data[i][0] == i + 1 );
+        CHECK( batch->packet_bytes[i] == IOCP_TAGGED_BYTES && batch->packet_data[i][0] == i + 1 );
     }
     wait_stopped( transport );
     rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
@@ -872,10 +904,12 @@ static void test_receive_ready_banks_fifo()
     printf( "test_iocp_transport_receive_ready_banks_fifo\n" );
 }
 
-// A zero-length datagram and one past the receive ceiling are each dropped
-// and counted once, the first too short and the second too large, on the
-// per-datagram receive path (URO disabled) and on the URO path where the
-// host offers it; the good datagram behind them arrives.
+// Datagrams of 0, 1 and ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1 bytes and
+// one past the receive ceiling are each dropped at the worker and counted
+// once, the first three too short and the last too large, and none takes a
+// bank slot, on the per-datagram receive path (URO disabled) and on the URO
+// path where the host offers it; the good datagram behind them, of exactly
+// ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES, arrives.
 
 static void test_receive_boundaries( int flags )
 {
@@ -895,8 +929,10 @@ static void test_receive_boundaries( int flags )
 
     char oversized[ROCKETNET_RECEIVE_CEILING + 64] = {};
     CHECK( sendto( client, oversized, 0, 0, (sockaddr *) &to, sizeof( to ) ) == 0 );
+    CHECK( sendto( client, oversized, 1, 0, (sockaddr *) &to, sizeof( to ) ) == 1 );
+    CHECK( sendto( client, oversized, IOCP_TAGGED_BYTES - 1, 0, (sockaddr *) &to, sizeof( to ) ) == IOCP_TAGGED_BYTES - 1 );
     CHECK( sendto( client, oversized, sizeof( oversized ), 0, (sockaddr *) &to, sizeof( to ) ) == sizeof( oversized ) );
-    CHECK( sendto( client, "good", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    CHECK( iocp_send_tagged( client, to, "good" ) == IOCP_TAGGED_BYTES );
 
     int received = 0;
     uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS] = {};
@@ -908,12 +944,12 @@ static void test_receive_boundaries( int flags )
         rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
         for ( int i = 0; i < batch->num_packets; ++i )
         {
-            CHECK( batch->packet_bytes[i] == 4 && memcmp( batch->packet_data[i], "good", 4 ) == 0 );
+            CHECK( iocp_is_tagged( batch->packet_data[i], batch->packet_bytes[i], "good" ) );
             ++received;
         }
 
         rocketnet_server_iocp_counters( transport, counters );
-        if ( received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 2 &&
+        if ( received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 4 &&
              rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER )
         {
             break;
@@ -921,8 +957,8 @@ static void test_receive_boundaries( int flags )
         rocketnet_platform_sleep( 0.001 );
     }
 
-    CHECK( received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 2 );
-    CHECK( counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] == 1 );
+    CHECK( received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 4 );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] == 3 );
     CHECK( counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE] == 1 );
     CHECK( counters[ROCKETNET_IOCP_RECEIVE_COMPLETED] == 1 );
     CHECK( counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED] == 0 );
@@ -964,8 +1000,8 @@ static void test_completion_batches_counted( int flags )
 
     for ( int i = 0; i < 3; ++i )
     {
-        char data[4] = { 'b', 'a', 't', (char) ( '0' + i ) };
-        CHECK( sendto( client, data, 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+        char data[5] = { 'b', 'a', 't', (char) ( '0' + i ), 0 };
+        CHECK( iocp_send_tagged( client, to, data ) == IOCP_TAGGED_BYTES );
 
         int received = 0;
         const double deadline = rocketnet_platform_time() + 5.0;
@@ -976,7 +1012,7 @@ static void test_completion_batches_counted( int flags )
             rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
             for ( int j = 0; j < batch->num_packets; ++j )
             {
-                CHECK( batch->packet_bytes[j] == 4 && memcmp( batch->packet_data[j], data, 4 ) == 0 );
+                CHECK( iocp_is_tagged( batch->packet_data[j], batch->packet_bytes[j], data ) );
                 ++received;
             }
             if ( received == 0 )
@@ -1061,7 +1097,7 @@ static void receive_oversize_queued_at_post( int flags )
     rocketnet_server_iocp_test_hold_completions( transport, true );
     for ( int i = 0; i < ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
     {
-        CHECK( sendto( client, "fill", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+        CHECK( iocp_send_tagged( client, to, "fill" ) == IOCP_TAGGED_BYTES );
     }
     for ( int i = 0; i < num_oversized; ++i )
     {
@@ -1070,7 +1106,7 @@ static void receive_oversize_queued_at_post( int flags )
     }
     for ( int i = 0; i < num_after; ++i )
     {
-        CHECK( sendto( client, "good", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+        CHECK( iocp_send_tagged( client, to, "good" ) == IOCP_TAGGED_BYTES );
     }
     rocketnet_server_iocp_test_hold_completions( transport, false );
 
@@ -1085,7 +1121,7 @@ static void receive_oversize_queued_at_post( int flags )
         rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
         for ( int i = 0; i < batch->num_packets; ++i )
         {
-            CHECK( batch->packet_bytes[i] == 4 );
+            CHECK( batch->packet_bytes[i] == IOCP_TAGGED_BYTES );
             if ( memcmp( batch->packet_data[i], "fill", 4 ) == 0 )
             {
                 ++fills;
@@ -2988,6 +3024,17 @@ static void test_rio_create_failure_drains_posted_receives()
         CHECK( live_allocations.load() == baseline );
     }
 
+    // a bind refused for want of buffers (stage 8, WSAENOBUFS) reads
+    // OUT_OF_MEMORY, which ends the transport ladder, and frees everything
+
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        int status = ROCKETNET_STATUS_OK;
+        CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 8, &status ) );
+        CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+        CHECK( live_allocations.load() == baseline );
+    }
+
     printf( "test_rio_transport_create_failure_drains_posted_receives\n" );
 }
 
@@ -3051,6 +3098,9 @@ static void test_windows_create_refused_for_commit_is_out_of_memory()
     status = ROCKETNET_STATUS_OK;
     CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status ) );
     CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    // the create got as far as binding an ephemeral port before the worker was
+    // refused; the failed create hands the caller back the port 0 it asked for
+    CHECK( bind.port == 0 );
     CHECK( live_allocations.load() == baseline );
 
     rocketnet_platform_set_priority_calls_for_testing( saved );
