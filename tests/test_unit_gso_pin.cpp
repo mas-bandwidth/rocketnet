@@ -54,7 +54,7 @@ static void test_gso_pin_never_cpu_zero()
 // num_os_cpus up, never cpu 0
 static void test_gso_pin_refused_worker_never_cpu_zero()
 {
-    unsigned char allowed[16];
+    unsigned char allowed[1024];
     check( rocketnet_gso_pin_fallback( allowed, 16, 8, 1 ) == 7 );
     check( allowed[0] == 0 && allowed[1] == 1 && allowed[7] == 1 && allowed[8] == 0 );
     // two cpus left to the OS
