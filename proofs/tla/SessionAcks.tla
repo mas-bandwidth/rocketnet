@@ -36,6 +36,17 @@
 (*                 unacknowledged bit is set                               *)
 (*   "staleheld"   the reconcile leaves a slot's held bit set after its    *)
 (*                 sequence falls below the retained window                *)
+(*   "skipdeferred" the block memo is kept after an apply that deferred an *)
+(*                 id (the batch was full)                                 *)
+(*                                                                         *)
+(* The block memo.  process_block remembers the last block it applied in   *)
+(* full when nothing was deferred, and a send clears it; the same block    *)
+(* again is RecvAckRepeat, which walks nothing.  Here every block names    *)
+(* only sequences already sent, so the send clear never changes what a     *)
+(* repeat would ack; it keeps the code's unknown-sequence count exact and  *)
+(* covers a block naming an unsent sequence, which the unit test           *)
+(* test_ack_block_memo_matches_the_full_apply drives against the full      *)
+(* apply.  The deferral rule is what this model can break.                 *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -52,7 +63,7 @@ CONSTANTS
     Capacity, MaxDelay, Duplication, Reordering,    \* Link parameters
     BurstStart, BurstLen
 
-Witnesses == {"none", "dropfull", "overclaim", "walkskip", "staleheld"}
+Witnesses == {"none", "dropfull", "overclaim", "walkskip", "staleheld", "skipdeferred"}
 
 ASSUME /\ MaxSeq \in Nat \ {0} /\ SentRing \in Nat \ {0}
        /\ BatchCap \in Nat \ {0} /\ Window \in Nat \ {0} /\ MaxRanges \in Nat
@@ -86,6 +97,11 @@ VARIABLES
     bitsChecked,    \* the highest sequence whose slot the reconcile has checked
     lastExpect,     \* ghost: the named sequences the last block's walk should visit
     lastVisited,    \* ghost: the named sequences the last block's walk did visit
+    \* the block memo (block_memo): the last block applied in full
+    memoValid,      \* valid
+    memoBlock,      \* the block's fields, as the set of sequences it names
+    memoHigh,       \* highest_sequence when it was applied
+    repeatExact,    \* ghost: every skipped repeat left what the full apply would
     \* the receiver: the replay window and the drain
     highestOpened,  \* replay highest_opened
     opened,         \* opened sequences in (highestOpened - Window, highestOpened]
@@ -109,7 +125,8 @@ receiverVars == <<highestOpened, opened, drained>>
 ghostVars    == <<burned, surfacedCount, openedEver, namedEver>>
 d2rVars      == <<d2rWire, d2rSent, d2rPulse>>
 r2dVars      == <<r2dWire, r2dSent, r2dPulse>>
-bitVars      == <<held, unacked, bitsChecked, lastExpect, lastVisited>>
+memoVars     == <<memoValid, memoBlock, memoHigh, repeatExact>>
+bitVars      == <<held, unacked, bitsChecked, lastExpect, lastVisited, memoVars>>
 vars         == <<senderVars, receiverVars, ghostVars, d2rVars, r2dVars, bitVars>>
 
 (***************************************************************************)
@@ -132,6 +149,7 @@ Init ==
     /\ openedEver = {} /\ namedEver = {}
     /\ held = {} /\ unacked = {} /\ bitsChecked = 0
     /\ lastExpect = {} /\ lastVisited = {}
+    /\ memoValid = FALSE /\ memoBlock = {} /\ memoHigh = 0 /\ repeatExact = TRUE
     /\ D2R!Init /\ R2D!Init
 
 (***************************************************************************)
@@ -158,6 +176,8 @@ StartPayload ==
     /\ UNCHANGED batch
     /\ UNCHANGED <<receiverVars, ghostVars, d2rVars, r2dVars>>
     /\ UNCHANGED <<bitsChecked, lastExpect, lastVisited>>
+    /\ memoValid' = FALSE
+    /\ UNCHANGED <<memoBlock, memoHigh, repeatExact>>
 
 \* A sequence spent and never sent: a client start_packet takes it and then
 \* refuses (the client's send ring or lease table), or an already-started
@@ -241,26 +261,67 @@ ApplyNamed(named, st, skip) ==
 \* deliverable, so the receive names it rather than searching AckPackets).
 InWindow(s) == s >= WindowLow /\ s <= highestSent
 
+\* The block memo holds b: the last block applied in full, at the same
+\* high-water mark.
+MemoHit(b) ==
+    /\ memoValid
+    /\ memoBlock = b
+    /\ memoHigh = highestSent
+
+\* the reconcile at the top of process_block, and the full apply of b from it
+ReconciledHeld   == IF Witness = "staleheld" THEN held ELSE held \ ReconcileSlots
+ReconciledUnacked == unacked \ ReconcileSlots
+FullApply(b, skip) ==
+    ApplyNamed(b, [sent |-> sent, batch |-> batch, sc |-> surfacedCount,
+                   unacked |-> ReconciledUnacked, visited |-> {}], skip)
+Expect(b) == {s \in b : InWindow(s) /\ sent[s % SentRing].seq = s /\ ~sent[s % SentRing].acked}
+
+\* process_block's full apply (rocketnet_ack_endpoint_process_block_full,
+\* and process_block when the memo does not hold b): the walk, then the
+\* memo set to b unless an id was deferred (a visited record left
+\* unacknowledged)
 RecvAck ==
     /\ r2dWire # <<>>
     /\ LET b      == Head(r2dWire).pkt
-           h1     == IF Witness = "staleheld" THEN held ELSE held \ ReconcileSlots
-           u1     == unacked \ ReconcileSlots
-           expect == {s \in b : InWindow(s) /\ sent[s % SentRing].seq = s /\ ~sent[s % SentRing].acked}
-           cand   == {s \in b : InWindow(s) /\ s % SentRing \in u1 /\ sent[s % SentRing].seq = s}
+           cand   == {s \in b : InWindow(s) /\ s % SentRing \in ReconciledUnacked /\ sent[s % SentRing].seq = s}
            skip   == IF Witness = "walkskip" /\ cand # {} THEN Min(cand) ELSE 0
        IN
+        /\ ~MemoHit(b)
         /\ R2D!Deliver(b)
-        /\ LET st == ApplyNamed(b, [sent |-> sent, batch |-> batch, sc |-> surfacedCount,
-                                    unacked |-> u1, visited |-> {}], skip)
+        /\ LET st == FullApply(b, skip)
+               deferred == \E s \in st.visited : ~st.sent[s % SentRing].acked
            IN /\ sent' = st.sent
               /\ batch' = st.batch
               /\ surfacedCount' = st.sc
               /\ unacked' = st.unacked
               /\ lastVisited' = st.visited
-        /\ held' = h1
+              /\ memoValid' = (~deferred \/ Witness = "skipdeferred")
+        /\ held' = ReconciledHeld
         /\ bitsChecked' = highestSent
-        /\ lastExpect' = expect
+        /\ lastExpect' = Expect(b)
+        /\ memoBlock' = b
+        /\ memoHigh' = highestSent
+    /\ UNCHANGED <<nextSeq, highestSent, outbox, repeatExact>>
+    /\ UNCHANGED <<receiverVars, burned, openedEver, namedEver, d2rVars>>
+
+\* process_block when the memo holds b: the reconcile, then nothing walked,
+\* nothing acked, nothing surfaced. repeatExact records whether the full
+\* apply would have left the same ring, batch, surfaced counts and bits.
+RecvAckRepeat ==
+    /\ r2dWire # <<>>
+    /\ LET b  == Head(r2dWire).pkt
+           st == FullApply(b, 0)
+       IN
+        /\ MemoHit(b)
+        /\ R2D!Deliver(b)
+        /\ repeatExact' = (repeatExact /\ st.sent = sent /\ st.batch = batch
+                                       /\ st.sc = surfacedCount /\ st.unacked = ReconciledUnacked)
+        /\ lastExpect' = Expect(b)
+    /\ held' = ReconciledHeld
+    /\ unacked' = ReconciledUnacked
+    /\ bitsChecked' = highestSent
+    /\ lastVisited' = {}
+    /\ UNCHANGED <<sent, batch, surfacedCount, memoValid, memoBlock, memoHigh>>
     /\ UNCHANGED <<nextSeq, highestSent, outbox>>
     /\ UNCHANGED <<receiverVars, burned, openedEver, namedEver, d2rVars>>
 
@@ -335,6 +396,7 @@ Next ==
     \/ BurnOne
     \/ Flush
     \/ RecvAck
+    \/ RecvAckRepeat
     \/ SendAck
     \/ RecvData
     \/ Tick
@@ -366,11 +428,11 @@ Fairness ==
     /\ WF_vars(Tick)
     /\ SF_vars(Flush)
     /\ SF_vars(SendAck)
-    /\ SF_vars(RecvAck)
+    /\ SF_vars(RecvAck \/ RecvAckRepeat)
     /\ SF_vars(RecvData)
     /\ WF_d2rVars(D2R!Age) /\ WF_r2dVars(R2D!Age)
     /\ ([]<> <<Flush>>_vars)   => ([]<> <<RecvData>>_vars)
-    /\ ([]<> <<SendAck>>_vars) => ([]<> <<RecvAck /\ Head(r2dWire).pkt = Block>>_vars)
+    /\ ([]<> <<SendAck>>_vars) => ([]<> <<(RecvAck \/ RecvAckRepeat) /\ Head(r2dWire).pkt = Block>>_vars)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
@@ -392,6 +454,8 @@ TypeOK ==
     /\ held \subseteq 0..SentRing-1 /\ unacked \subseteq 0..SentRing-1
     /\ bitsChecked \in 0..MaxSeq
     /\ lastExpect \subseteq Seqs /\ lastVisited \subseteq Seqs
+    /\ memoValid \in BOOLEAN /\ memoBlock \subseteq Seqs /\ memoHigh \in 0..MaxSeq
+    /\ repeatExact \in BOOLEAN
     /\ D2R!TypeOK /\ R2D!TypeOK
 
 \* The acked batch names a packet id at most once, ever (USAGE.md:
@@ -435,6 +499,11 @@ BitsMatchRing ==
 \* The bitmap walk visits exactly the named sequences in the window whose
 \* ring record holds them unacknowledged, read from the ring before the walk.
 WalkVisitsUnacked == lastVisited = lastExpect
+
+\* A block the memo skips leaves exactly the state its full apply would
+\* (sdk/rocketnet_ack.cpp, rocketnet_ack_endpoint_process_block). The
+\* reversed witness "skipdeferred" breaks it.
+RepeatExact == repeatExact
 
 (***************************************************************************)
 (* Liveness.                                                               *)

@@ -1,0 +1,321 @@
+#!/usr/bin/env bash
+# harden-pair: one cell of the server transport hardening matrix on two
+# machines (docs/HARDEN_LOAD.md), the server on one and its players (and the
+# hostile load) on the other, over a real link. A functional/bench tool: real
+# sockets, real time. It runs on a control machine that reaches both by ssh,
+# starts each role there, waits, reads each role's log back over ssh, and
+# judges the cell here with harden_load reconcile.
+#
+#   scripts/harden-pair --server-host DEST --client-host DEST --server-ip ADDR --remote DIR \
+#       --transport NAME --row ROW --out DIR [options]
+#
+# DEST is an ssh destination (user@host); ADDR is the server's address as the
+# client machine reaches it (a private address: no load crosses anything but
+# the link between the two); DIR is the checkout on both machines, built, with
+# DIR/bin/harden_load. The control machine needs a harden_load of its own for
+# the reconcile (--local-bin, default ./bin).
+#
+# Rows are scripts/harden-rows'. A netem row puts netem on the egress of each
+# machine's --server-dev and --client-dev for the run and takes it off after,
+# and needs sudo there; the hostile row's capture needs sudo on the client
+# machine. Each machine's kernel counters are the whole host's, so the
+# machines should carry nothing else while the cell runs.
+#
+# Options:
+#   --server-dev D / --client-dev D   each machine's interface (default ens5)
+#   --seconds S, --clients N, --threads T, --burst-clients K, --hostile-pps P,
+#   --frame-p99-us U, --quiet-seconds Q, --warm-seconds W, --xdp-queues Q
+#                                     as scripts/harden-cell
+#   --fill-jobs J                     the server writes its unreliable messages on J job threads
+#   --payload pattern|copy            the message body: verified pattern, or a pre-built body copied in
+#   --port P                          the server's UDP port (default 40000)
+#   --client-remote DIR               the client machine's checkout (default --remote)
+#   --server-env K=V                  an environment setting for the server (repeatable)
+#   --profile-seconds S [--profile-after A]  a Windows server samples its own main thread
+#                                     for S seconds from A (default 20) seconds in, and names
+#                                     every thread's CPU share; the cell keeps profile.txt
+#   --server-os linux|windows         the server machine's system (default linux). On Windows
+#                                     each server command runs in Git for Windows' bash
+#                                     (C:/Program Files/Git/bin/bash.exe), the tool is
+#                                     DIR/bin/Release/harden_load.exe, the server role runs
+#                                     in the foreground of its ssh session (Windows ends a
+#                                     detached child with the session), netem goes on the
+#                                     client machine only, and the tool reads no kernel
+#                                     counters there, so the chain stands on library terms
+#   --local-bin DIR                   this machine's harden_load (default ./bin)
+#   --ssh "CMD"                       the ssh command (default "ssh -o BatchMode=yes")
+#
+# Exit 0 only on PASS.
+
+set -euo pipefail
+
+server_host=""
+client_host=""
+server_ip=""
+remote=""
+client_remote=""
+server_env=""
+server_os=linux
+profile_after=20
+profile_seconds=""
+transport=""
+row="control"
+out=""
+server_dev=ens5
+client_dev=ens5
+seconds=60
+clients=1000
+threads=8
+burst_clients=""
+hostile_pps=200000
+frame_p99_us=5000
+warm_seconds=""
+xdp_queues=0
+quiet=1.5
+port=40000
+local_bin=./bin
+ssh_command="ssh -o BatchMode=yes"
+
+usage()
+{
+    sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//' >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --server-host) server_host="$2"; shift 2 ;;
+        --client-host) client_host="$2"; shift 2 ;;
+        --server-ip) server_ip="$2"; shift 2 ;;
+        --remote) remote="$2"; shift 2 ;;
+        --client-remote) client_remote="$2"; shift 2 ;;
+        --server-env) server_env="$server_env $(printf '%q' "$2")"; shift 2 ;;
+        --server-os) server_os="$2"; shift 2 ;;
+        --profile-after) profile_after="$2"; shift 2 ;;
+        --profile-seconds) profile_seconds="$2"; shift 2 ;;
+        --transport) transport="$2"; shift 2 ;;
+        --row) row="$2"; shift 2 ;;
+        --out) out="$2"; shift 2 ;;
+        --server-dev) server_dev="$2"; shift 2 ;;
+        --client-dev) client_dev="$2"; shift 2 ;;
+        --seconds) seconds="$2"; shift 2 ;;
+        --clients) clients="$2"; shift 2 ;;
+        --threads) threads="$2"; shift 2 ;;
+        --burst-clients) burst_clients="$2"; shift 2 ;;
+        --fill-jobs) fill_jobs="$2"; shift 2 ;;
+        --payload) payload="$2"; shift 2 ;;
+        --hostile-pps) hostile_pps="$2"; shift 2 ;;
+        --frame-p99-us) frame_p99_us="$2"; shift 2 ;;
+        --warm-seconds) warm_seconds="$2"; shift 2 ;;
+        --xdp-queues) xdp_queues="$2"; shift 2 ;;
+        --quiet-seconds) quiet="$2"; shift 2 ;;
+        --port) port="$2"; shift 2 ;;
+        --local-bin) local_bin="$2"; shift 2 ;;
+        --ssh) ssh_command="$2"; shift 2 ;;
+        *) usage ;;
+    esac
+done
+[ "$server_os" = linux ] || [ "$server_os" = windows ] || usage
+[ -n "$server_host" ] && [ -n "$client_host" ] && [ -n "$server_ip" ] && [ -n "$remote" ] && [ -n "$transport" ] && [ -n "$out" ] || usage
+[ -x "$local_bin/harden_load" ] || { echo "harden-pair: no $local_bin/harden_load here for the reconcile" >&2; exit 2; }
+mkdir -p "$out"
+
+# shellcheck source=scripts/harden-rows
+source "$(dirname "${BASH_SOURCE[0]}")/harden-rows"
+harden_row "$row" || usage
+: "${warm_seconds:=$(( seconds > 120 ? 60 : seconds / 3 ))}"
+
+# on <dest> <command>: one remote command; every argument is quoted here, so
+# the remote shell sees the words as given
+on()
+{
+    local dest=$1
+    shift
+    on_shell "$dest" "$(printf '%q ' "$@")"
+}
+
+# on_shell <dest> <shell text>: a remote shell line, for redirection and &.
+# A Windows server's line goes to its Git bash on stdin, past PowerShell's
+# quoting
+on_shell()
+{
+    if [ "$server_os" = windows ] && [ "$1" = "$server_host" ]; then
+        # shellcheck disable=SC2086
+        $ssh_command "$1" "& 'C:\\Program Files\\Git\\bin\\bash.exe' -s" <<< "$2"
+    else
+        # shellcheck disable=SC2086
+        $ssh_command "$1" "$2"
+    fi
+}
+
+# server_running: how many harden_load processes the server machine runs
+server_running()
+{
+    if [ "$server_os" = windows ]; then
+        on_shell "$server_host" "tasklist //NH //FI 'IMAGENAME eq harden_load.exe' | awk '/harden_load/ { n++ } END { print n + 0 }'"
+    else
+        on_shell "$server_host" "pgrep -x harden_load | wc -l"
+    fi
+}
+
+run_dir="$remote/harden-pair-run"
+tool="$remote/bin/harden_load"
+if [ "$server_os" = windows ]; then
+    tool="$remote/bin/Release/harden_load.exe"
+fi
+client_run_dir="${client_remote:-$remote}/harden-pair-run"
+client_tool="${client_remote:-$remote}/bin/harden_load"
+address="$server_ip:$port"
+
+netem_on=0
+# shellcheck disable=SC2329  # run by the EXIT trap
+cleanup()
+{
+    if [ "$server_os" = windows ]; then
+        on_shell "$server_host" "taskkill //F //IM harden_load.exe > /dev/null 2>&1; true" || true
+    else
+        on_shell "$server_host" "pkill -f '$tool server' 2>/dev/null; true" || true
+    fi
+    on_shell "$client_host" "pkill -f '$client_tool clients' 2>/dev/null; sudo pkill -f '$client_tool hostile' 2>/dev/null; true" || true
+    if [ "$netem_on" = 1 ] && [ "$server_os" = linux ]; then
+        on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
+        on_shell "$client_host" "sudo -n tc qdisc del dev $client_dev root 2>/dev/null; true" || true
+    fi
+}
+trap cleanup EXIT
+
+# ena_shaping: a Windows server's ENA shaping counters (the ENA driver's
+# "ENA Packets Shaping" performance set) as "pps bw_out bw_in conntrack": the
+# instance's own allowances, which drop packets after the transport has sent
+# them, and which the tool cannot read on Windows
+ena_shaping()
+{
+    on_shell "$server_host" "powershell -NoProfile -Command \"(Get-Counter '\\ENA Packets Shaping(_total)\\PPS allowance exceeded','\\ENA Packets Shaping(_total)\\Aggregate outbound BW allowance exceeded','\\ENA Packets Shaping(_total)\\Aggregate inbound BW allowance exceeded','\\ENA Packets Shaping(_total)\\Connection tracking allowance exceeded').CounterSamples | ForEach-Object { \\\$_.RawValue }\" | tr -d '\\r' | tr '\\n' ' '"
+}
+ena_before=""
+if [ "$server_os" = windows ]; then
+    ena_before=$(ena_shaping)
+fi
+
+on "$server_host" rm -rf "$run_dir"
+on "$server_host" mkdir -p "$run_dir"
+on "$client_host" rm -rf "$client_run_dir"
+on "$client_host" mkdir -p "$client_run_dir"
+
+if [ -n "$netem" ]; then
+    # only the cell's UDP is impaired: a prio root whose fourth band holds the
+    # netem, and a filter sending the cell's port to it (the server's source
+    # port on its way out, the players' destination port on theirs). The ssh
+    # that drives the cell rides the other bands untouched, and the root's drop
+    # count (netem's losses) is the cell's alone
+    netem_on=1
+    ends="server client"
+    if [ "$server_os" = windows ]; then
+        ends="client"
+    fi
+    for end in $ends; do
+        if [ "$end" = server ]; then
+            dest=$server_host; dev=$server_dev; match="sport"
+        else
+            dest=$client_host; dev=$client_dev; match="dport"
+        fi
+        on "$dest" sudo -n tc qdisc replace dev "$dev" root handle 1: prio bands 4 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1
+        # shellcheck disable=SC2086
+        on "$dest" sudo -n tc qdisc add dev "$dev" parent 1:4 handle 40: netem $netem
+        on "$dest" sudo -n tc filter add dev "$dev" parent 1:0 protocol ip prio 1 u32 match ip protocol 17 0xff match ip "$match" "$port" 0xffff flowid 1:4
+    done
+fi
+
+{
+    echo "harden_pair: transport=$transport row=$row seconds=$seconds clients=$clients threads=$threads netem=\"$netem\" hostile=$hostile hostile_pps=$hostile_pps server_env=\"${server_env# }\" server_tool=$tool utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "harden_pair: server=$server_host ($(on "$server_host" uname -r), $(on "$server_host" nproc) cpus, dev $server_dev) clients=$client_host ($(on "$client_host" uname -r), $(on "$client_host" nproc) cpus, dev $client_dev) address=$address"
+} | tee "$out/cell.txt"
+
+xdp_args=""
+if [ "$xdp_queues" -gt 0 ]; then
+    xdp_args="--num-xdp-queues $xdp_queues"
+fi
+# the end is a wall time every role shares, on both machines' clocks: joins
+# take clients/100 seconds, then the measured run; 5 s more for the ssh
+# round trips that start the roles
+join_seconds=$(( clients / 100 + 5 ))
+end_at=$(( $(date +%s) + join_seconds + seconds + 8 ))
+
+server_args=$(printf '%q ' "$tool" server --address "$address" --transport "$transport" \
+    --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$server_dev" --warm-seconds "$warm_seconds" --sample-seconds 60 \
+    "${server_shape[@]}")
+if [ -n "$profile_seconds" ]; then
+    server_args="$server_args --profile-after $(printf '%q' "$profile_after") --profile-seconds $(printf '%q' "$profile_seconds")"
+fi
+if [ "$server_os" = windows ]; then
+    # in the foreground of a session this machine holds open in the background
+    on_shell "$server_host" "cd $(printf '%q' "$run_dir") && env $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null" > "$out/ssh-server.txt" 2>&1 &
+else
+    on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup env $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-server.txt" 2>&1 &
+fi
+key=""
+# one remote wait (10 s) for the ready line, not one ssh round trip per look
+key=$(on_shell "$server_host" "for i in \$(seq 1 100); do k=\$(sed -n 's/^harden_ready: .* key=\\([0-9a-f]*\\) .*/\\1/p' $(printf '%q' "$run_dir/server.log") | head -n 1); [ -n \"\$k\" ] && { echo \"\$k\"; break; }; sleep 0.1; done")
+if [ -z "$key" ]; then
+    echo "harden-pair: the server never became ready" >&2
+    on "$server_host" cat "$run_dir/server.log" >&2 || true
+    exit 1
+fi
+
+on_shell "$client_host" "ulimit -n 65536; cd $(printf '%q' "$client_run_dir") && nohup $(printf '%q ' "$client_tool" clients --address "$address" --key "$key" \
+    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
+
+if [ "$hostile" = "1" ]; then
+    # after the players are on: the replay kind needs their packets on the wire
+    sleep "$join_seconds"
+    on_shell "$client_host" "cd $(printf '%q' "$client_run_dir") && sudo -n sh -c 'ulimit -n 65536; nohup $(printf '%q ' "$client_tool" hostile --address "$address" --key "$key" \
+        --end-at "$end_at" --pps "$hostile_pps" --sockets 256 --kinds garbage,prefixed,truncated,badsig,expired,reqreplay,replay --capture-dev "$client_dev") > hostile.log 2>&1 < /dev/null &'" < /dev/null > "$out/ssh-hostile.txt" 2>&1 &
+fi
+
+# every role ends by itself after its last cut (end_at + 3 quiet periods);
+# looked for by process name: a command-line pattern matches the remote shell
+# running pgrep, which carries the same words
+deadline=$(( end_at + 60 ))
+while :; do
+    running=$(server_running)
+    running=$(( running + $(on_shell "$client_host" "pgrep -x harden_load | wc -l") ))
+    [ "$running" -eq 0 ] && break
+    if [ "$(date +%s)" -gt "$deadline" ]; then
+        echo "harden-pair: roles still running 60 s past the end; stopping them" >&2
+        break
+    fi
+    sleep 2
+done
+
+on "$server_host" cat "$run_dir/server.log" > "$out/server.log"
+on "$client_host" cat "$client_run_dir/clients.log" > "$out/clients.log"
+logs="$out/server.log,$out/clients.log"
+if [ -n "$profile_seconds" ] && [ "$server_os" = windows ]; then
+    on "$server_host" cat "$run_dir/profile.txt" > "$out/profile.txt" || echo "harden-pair: the server wrote no profile.txt" >&2
+fi
+if [ "$hostile" = "1" ]; then
+    on "$client_host" cat "$client_run_dir/hostile.log" > "$out/hostile.log"
+    logs="$logs,$out/hostile.log"
+fi
+
+status=0
+"$local_bin/harden_load" reconcile --logs "$logs" --netem-duplicates "$duplicates" --min-delivery "$min_delivery" --frame-p99-us "$frame_p99_us" \
+    | tee "$out/reconcile.txt" || status=1
+# every role prints a verdict; none at all is a role that never ran to its end
+if ! grep -h "harden_verdict" "$out"/*.log | tee -a "$out/reconcile.txt"; then
+    echo "harden-pair: no role printed a verdict" | tee -a "$out/reconcile.txt"
+    status=1
+fi
+if [ "$server_os" = windows ]; then
+    # the cell's own share of each allowance: a nonzero bw_out is packets
+    # the instance shed after send, an unnamed s2c gap's likely home
+    read -r -a before <<< "$ena_before"
+    read -r -a after <<< "$(ena_shaping)"
+    if [ "${#before[@]}" -eq 4 ] && [ "${#after[@]}" -eq 4 ]; then
+        echo "harden_ena: server pps_allowance=$(( after[0] - before[0] )) bw_out_allowance=$(( after[1] - before[1] )) bw_in_allowance=$(( after[2] - before[2] )) conntrack_allowance=$(( after[3] - before[3] ))" | tee -a "$out/reconcile.txt"
+    else
+        echo "harden_ena: server unavailable (no ENA shaping counters)" | tee -a "$out/reconcile.txt"
+    fi
+fi
+echo "harden_pair: transport=$transport row=$row exit=$status utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$out/reconcile.txt"
+exit "$status"

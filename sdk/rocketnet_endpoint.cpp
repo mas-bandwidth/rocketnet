@@ -25,10 +25,13 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_standard_rules.h"
 
-// The region's room refusals so far: a start that moves this was refused for no room (m1.7)
+// The region's room refusals so far: a start that moves this was refused for
+// no room (m1.7). The region's own count, which only this connection's filler
+// writes: the owner's counters are shared by every connection, and another
+// filler's refusal between two reads of them would read as this one's.
 static uint64_t rn_endpoint_room_refusals( const rn_region_t * region )
 {
-    return region->counters ? region->counters->values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] + region->counters->values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] : 0;
+    return region->room_refusals;
 }
 
 static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t amount = 1 )
@@ -985,6 +988,14 @@ void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, 
     // acked packet id is the only ack (R1)
 
     rn_ordered_acks( &endpoint->ordered, &packet_id, 1, now );
+}
+
+void rn_endpoint_on_acked_ids( struct rn_endpoint_t * endpoint, const uint64_t * packet_ids, uint32_t count, double now )
+{
+    // proofs/tla/RNEndpoint.tla OnAcked, once per id in order: rn_window_ack_on_acks
+    // with count ids leaves the state count calls with one id leave
+
+    rn_ordered_acks( &endpoint->ordered, packet_ids, count, now );
 }
 
 bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,

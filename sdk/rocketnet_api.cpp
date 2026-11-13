@@ -24,6 +24,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
+#include "rocketnet_fill_phase.h"
 
 #include <sodium.h>
 
@@ -3048,6 +3049,16 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
         return;
     }
 
+    // one main-thread operation, checked whole before any client is touched:
+    // the kicks and the transport disconnects inside are its own work
+    // (sdk/rocketnet_fill_phase.h)
+
+    rocketnet_fill_phase_main_scope_t phase( rocketnet_server_transport_fill_phase( transport ) );
+    if ( !phase.entered )
+    {
+        return;
+    }
+
     for ( int i = 0; i < server->max_clients; i++ )
     {
         rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
@@ -3078,6 +3089,17 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
 
     struct rocketnet_server_transport_t * transport = rn_server_transport( server );
     rocketnet_assert( transport );
+
+    // one main-thread operation, checked whole before anything stops: the
+    // shutdown disconnects, the kicks and the transport stop inside are its
+    // own work (sdk/rocketnet_fill_phase.h). A refused stop leaves the server
+    // running.
+
+    rocketnet_fill_phase_main_scope_t phase( rocketnet_server_transport_fill_phase( transport ) );
+    if ( !phase.entered )
+    {
+        return;
+    }
 
     for ( int i = 0; i < server->max_clients; i++ )
     {
@@ -3256,6 +3278,48 @@ void rocketnet_server_update( struct rocketnet_server_t * server, double time )
     }
 
     (void) rocketnet_message_server_update( server->running, time );
+}
+
+// proofs/tla/RNAckApplyPhase.tla: rocketnet_server_update in three calls, so
+// the game's jobs apply the received acks client by client
+
+void rocketnet_server_update_receive( struct rocketnet_server_t * server, double time )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+    if ( !server->running )
+    {
+        return;
+    }
+    rocketnet_message_server_update_receive( server->running, time );
+}
+
+int rocketnet_server_update_client( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+    if ( !server->running )
+    {
+        return 0;
+    }
+    return rocketnet_message_server_update_client_acks( server->running, client_index );
+}
+
+void rocketnet_server_update_finish( struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+    if ( !server->running )
+    {
+        return;
+    }
+    (void) rocketnet_message_server_update_finish( server->running );
 }
 
 void rocketnet_server_send_packets( struct rocketnet_server_t * server )
@@ -3498,6 +3562,14 @@ void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int
         return;
     }
 
+    // one main-thread operation: the kick and the transport disconnect are its own work
+
+    rocketnet_fill_phase_main_scope_t phase( rocketnet_server_transport_fill_phase( rn_server_transport( server ) ) );
+    if ( !phase.entered )
+    {
+        return;
+    }
+
     rn_message_object_kick( &server->running->object, slot, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
     rocketnet_server_transport_disconnect_client( rn_server_transport( server ), slot );
@@ -3547,7 +3619,7 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
 
     if ( !server->running )
     {
-        server->lifetime[RN_SERVER_NOT_CONNECTED_DROPS]++;
+        rocketnet_platform_atomic_add_u64( &server->lifetime[RN_SERVER_NOT_CONNECTED_DROPS], 1 );     // fill threads may count it
         return NULL;
     }
 
@@ -3558,11 +3630,14 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
     return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability_value, max_bytes );
 }
 
-// finish and abort act on the one pending start (rn_message_object_t
-// pending_connection), so they take no destination. A finish with no start
-// pending (a dropped start included) asserts in a debug build and returns 0
-// in a release build, counted nowhere; a refused bytes_written aborts the
-// pending start (rn_message_object_finish).
+// finish and abort without a destination act on the server's one open
+// start: the forms for a server used from one thread. With more than one
+// message open (fill threads each holding one on its own client, the
+// _client_message forms) they cannot tell which is meant: a finish asserts in
+// a debug build and returns 0 in a release build, an abort does nothing. A
+// finish with no start pending (a dropped start included) asserts in a debug
+// build and returns 0 in a release build, counted nowhere; a refused
+// bytes_written aborts the pending start (rn_message_object_finish).
 
 static int rn_server_pending_slot( const struct rocketnet_server_t * server )
 {
@@ -3571,7 +3646,59 @@ static int rn_server_pending_slot( const struct rocketnet_server_t * server )
         return -1;
     }
 
-    return server->running->object.pending_connection;
+    const struct rn_message_object_t * object = &server->running->object;
+    if ( rn_message_open_count( object ) != 1 )
+    {
+        return -1;
+    }
+
+    return rn_message_open_last( object );
+}
+
+// finish and abort of the message open on one client: any number of fill
+// threads, each on its own clients (sdk/rocketnet_fill_phase.h)
+
+uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * server, int client_index, int bytes_written )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    if ( client_index < 0 || client_index >= server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return 0;
+    }
+
+    if ( !server->running )
+    {
+        rocketnet_assert( server->running );
+        return 0;
+    }
+
+    return rocketnet_message_server_finish( rn_server( server ), client_index, bytes_written );
+}
+
+void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+
+    if ( client_index < 0 || client_index >= server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
+
+    if ( !server->running )
+    {
+        return;
+    }
+
+    rocketnet_message_server_abort( rn_server( server ), client_index );
 }
 
 uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, int bytes_written )

@@ -7991,6 +7991,9 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_running",
     "rocketnet_server_destroy",
     "rocketnet_server_update",
+    "rocketnet_server_update_receive",
+    "rocketnet_server_update_client",
+    "rocketnet_server_update_finish",
     "rocketnet_server_send_packets",
     "rocketnet_server_port",
     "rocketnet_server_public_key",
@@ -8010,6 +8013,8 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_start_message",
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
+    "rocketnet_server_finish_client_message",
+    "rocketnet_server_abort_client_message",
     "rocketnet_server_can_send_message",
     "rocketnet_server_receive_messages",
     "rocketnet_server_receipts",
@@ -8054,6 +8059,9 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_running",
     "rocketnet_server_destroy",
     "rocketnet_server_update",
+    "rocketnet_server_update_receive",
+    "rocketnet_server_update_client",
+    "rocketnet_server_update_finish",
     "rocketnet_server_send_packets",
     "rocketnet_server_port",
     "rocketnet_server_public_key",
@@ -8072,6 +8080,8 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_start_message",
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
+    "rocketnet_server_finish_client_message",
+    "rocketnet_server_abort_client_message",
     "rocketnet_server_can_send_message",
     "rocketnet_server_receive_messages",
     "rocketnet_server_receipts",
@@ -8522,6 +8532,9 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_running( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_update( NULL, 1000.0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_update_receive( NULL, 1000.0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_update_client( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_update_finish( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_port( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_public_key( NULL, token ) );
@@ -8546,6 +8559,8 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_client_message( NULL, 0, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_abort_client_message( NULL, 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_can_send_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive_messages( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receipts( NULL, 0, receipts, 2 ) == 0 ) );
@@ -12662,9 +12677,9 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 8 );
     rocketnet_check( pointer != NULL );
 
-    rocketnet_check( object->pending_connection == 0 );
+    rocketnet_check( object->connections[0].open.pending );
     rocketnet_check( rn_message_object_finish( object, 0, 0 ) == 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( rn_message_open_count( object ) == 0 );
 
     // a new start is not refused as one already pending; bytes_written past
     // the start's bytes is refused and aborts it too
@@ -12673,7 +12688,7 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     rocketnet_check( pointer != NULL );
 
     rocketnet_check( rn_message_object_finish( object, 0, 9 ) == 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( rn_message_open_count( object ) == 0 );
 
     // a finish with nothing pending asserts in a debug build and returns 0 in a release build
 
@@ -12696,7 +12711,7 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     }
 
     rocketnet_check( rn_message_object_finish( object, 0, 8 ) != 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( rn_message_open_count( object ) == 0 );
 
     rn_message_object_destroy( object );
 }

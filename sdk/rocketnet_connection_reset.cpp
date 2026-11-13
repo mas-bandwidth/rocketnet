@@ -75,6 +75,14 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
         return;
     }
 
+    // the slot's queued ack blocks apply before anything about it changes,
+    // under the connection they arrived for (rocketnet_server_acks_settle)
+
+    if ( server->acks )
+    {
+        rocketnet_server_acks_settle( server->acks, client_index );
+    }
+
     int mapping_index = -1;
     uint64_t mapping_generation = 0;
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )

@@ -461,7 +461,7 @@ static void test_server_send_capacity_reports_staged_room()
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
         rocketnet_unit_check( frame );
-        memset( frame + context.payload_index, i, 16 );
+        memset( frame, i, 16 );
         rocketnet_unit_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) > 0 );
     }
 
@@ -513,7 +513,7 @@ static void test_server_refused_starts_counted_by_cause()
     struct rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
     rocketnet_unit_check( frame );
-    memset( frame + context.payload_index, 1, 16 );
+    memset( frame, 1, 16 );
     rocketnet_unit_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) > 0 );
 
     // the staging is full: a full ring

@@ -130,10 +130,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // operations at 1000 clients, each lane its own pool) then move the server
 // by 23782776, and each lane's send gather scratch
 // (sdk/rocketnet_send_gather.h, 114728 bytes over 4096 slots) by 917824,
-// measured on aws-win-iocp-1 (MSVC, x64, DEV=ON, Release). The client did
+// measured on aws-win-iocp-1 before the ack block memo (48 bytes a connection, +48000 server, +64 client, computed) (MSVC, x64, DEV=ON, Release). The client did
 // not move.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1493157047 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1493205047 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210300 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -176,8 +176,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The two fill-phase counters and the server config's two bind addresses
 // (bind_ipv4_address, bind_ipv6_address) add 512 bytes to the server and
 // nothing to the client (measured); the probe's actual= line is 1469505439.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456863 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
+// Each ack endpoint keeps the last block it applied in full (sdk/rocketnet_ack.h,
+// rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
+// clients, and one 64-byte rounding to the client: computed, not measured
+// on macOS, from the 48000 and the 64 Linux measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468504927 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988042 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -253,9 +257,16 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual=15186146 for the client, 64 above it (the counters cross its
 // object's 64-byte rounding). The two fill-phase counters move the client
 // another 64 (actual=15186210, bench-nyc-6), and they and the two bind
-// addresses move the server 576 (actual=3111681075).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632499ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137634 )
+// addresses move the server 576 (actual=3111681075). The xdp transport's
+// server-wide packet id counter left for per-queue ids (a uint64_t; the
+// per-queue fields sit in the queue sockets), so the server is 8 smaller
+// (actual=3111681067, bench-nyc-3, gcc Debug).
+// Each ack endpoint keeps the last block it applied in full (sdk/rocketnet_ack.h,
+// rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
+// clients, and one 64-byte rounding to the client (measured on its own
+// branch; summed here with the lines above, not re-measured on this merge).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110680491ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137698 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

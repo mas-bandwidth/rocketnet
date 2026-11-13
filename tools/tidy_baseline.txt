@@ -291,7 +291,5 @@ clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	e54d5069d5c54adb
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	f95e25235c6721a4
 clang-tidy	sdk/rocketnet_tests.cpp	concurrency-mt-unsafe	7bf743d95b6fa199
 clang-tidy	sdk/rocketnet_xdp_frame.h	bugprone-branch-clone	b1646f4d7d741ac0
-clang-tidy	sdk/rocketnet_xdp_frame.h	bugprone-implicit-widening-of-multiplication-result	4fb50d03d4c45702
-clang-tidy	sdk/rocketnet_xdp_frame.h	bugprone-implicit-widening-of-multiplication-result	98b1281ef7ae5df0
 clang-tidy	sdk/rocketnet_xdp_frame.h	bugprone-misplaced-widening-cast	541ba55a80fc5393
 clang-tidy	sdk/rocketnet_xdp_replay_marks.h	bugprone-implicit-widening-of-multiplication-result	d7238e8c8f79af1d

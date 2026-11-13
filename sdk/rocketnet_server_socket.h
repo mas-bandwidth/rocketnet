@@ -28,6 +28,36 @@ inline int rocketnet_xdp_send_claim( std::atomic<uint64_t> & num_packets, int li
     return rocketnet_send_queue_claim( num_packets, limit, refused );
 }
 
+// The id of an XDP packet start: unique per queue for the life of the server
+// and naming its queue, ( turn * slots + slot ) * queues + queue, where turn
+// counts the queue's published producer buffers and slot is the claim's slot
+// in the current one. finish and abort recover the queue as id % queues. A
+// fill computes it from its own queue's state, so no counter is shared
+// across queues on the fill path.
+inline uint64_t rocketnet_xdp_send_packet_id( uint64_t turn, int slot, int slots, int queues, int queue )
+{
+    return ( turn * (uint64_t) slots + (uint64_t) slot ) * (uint64_t) queues + (uint64_t) queue;
+}
+
+// How many times main tries a queue's handoff lock before it puts that
+// queue's publish or drain off to its next call. The xdp thread holds the
+// lock only to move buffer indices, and takes it to claim only when a buffer
+// is ready, so a few tries find it free; main never waits on a worker.
+#define ROCKETNET_XDP_HANDOFF_TRIES 64
+
+// Tries a handoff lock up to tries times; true when try_lock succeeded.
+template <typename TryLock> inline bool rocketnet_xdp_handoff_lock( TryLock try_lock, int tries )
+{
+    for ( int i = 0; i < tries; i++ )
+    {
+        if ( try_lock() )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 // An AF_XDP TX wakeup (sendto on the socket fd) fails hard when no retry can
 // clear it: the interface is down (ENETDOWN), the device is gone (ENXIO), or
 // the descriptor is no longer valid (EBADF). A queue whose last wakeup failed
@@ -329,6 +359,13 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 // the fewest free slots of any queue's producer buffer, since a destination
 // hashes to one queue. Main thread.
 int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket );
+
+// the per-queue room for the server's send reserve (rocketnet_driver.h
+// send_queues, send_queue_of, send_room_queue): main, and fill threads during
+// the fill phase; atomics only, no lock, no write
+int rocketnet_server_socket_send_queues( struct rocketnet_server_socket_t * server_socket );
+int rocketnet_server_socket_send_queue_of( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to );
+int rocketnet_server_socket_send_room_queue( struct rocketnet_server_socket_t * server_socket, int queue );
 
 // true once every queue's producer buffer is empty, its worker has copied and
 // recycled every buffer it was handed, and the TX ring's consumer has taken

@@ -636,6 +636,15 @@ if(ROCKETNET_BUILD_TESTS)
     target_link_libraries(test_sodium PRIVATE rocketnet)
     rocketnet_use_sodium(test_sodium)
     rocketnet_warning_floor(test_sodium)
+    # The vendored pair's runtime dispatch: the picks are the best the CPU
+    # runs, and every implementation it contains agrees with the reference.
+    # It compiles sodium.c into itself (tests/sodium_dispatch_seam.c) and links
+    # no library, so the bundled pair only.
+    if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
+        add_executable(test_sodium_dispatch tests/test_sodium_dispatch.cpp tests/sodium_dispatch_seam.c)
+        rocketnet_use_sodium(test_sodium_dispatch)
+        rocketnet_warning_floor(test_sodium_dispatch)
+    endif()
     # Isolated parity oracle only: never installed or linked into the SDK.
     add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)
     set_target_properties(rocketnet_sodium_oracle PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
@@ -703,6 +712,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_unreliable_promotion.cpp
             tests/test_unit_window_sequences.cpp
             tests/test_unit_xdp_replay_marks.cpp
+            tests/test_unit_ack_apply_phase.cpp
             tests/test_unit_ack_block_walk.cpp
             tests/test_unit_ack_span_cost.cpp
             tests/test_unit_ack_stats.cpp
@@ -1024,6 +1034,18 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         rocketnet_warning_floor(rocketnet_xdp_filter_host)
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
+        # the same filter for the xdp-replay trace check, at a replay window of
+        # ROCKETNET_TLA_XDP_REPLAY_WINDOW sequences (sdk/rocketnet_xdp_limits.h),
+        # so a walk of a few hundred steps reaches the drop rule
+        set(ROCKETNET_TLA_XDP_REPLAY_WINDOW 2)
+        add_library(rocketnet_xdp_filter_host_trace STATIC tests/xdp_host/server_xdp_host.c)
+        target_include_directories(rocketnet_xdp_filter_host_trace BEFORE PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/xdp_host" "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+        target_compile_definitions(rocketnet_xdp_filter_host_trace PRIVATE __linux__ __BPF__
+            "ROCKETNET_XDP_FILTER_SOURCE=\"${ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH}\""
+            ROCKETNET_TLA_XDP_REPLAY_WINDOW=${ROCKETNET_TLA_XDP_REPLAY_WINDOW})
+        target_compile_options(rocketnet_xdp_filter_host_trace PRIVATE -ffreestanding -ffp-contract=off)
+        rocketnet_warning_floor(rocketnet_xdp_filter_host_trace)
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a non-Windows host")
     endif()
@@ -1056,6 +1078,18 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
     rocketnet_warning_floor(test_transport)
+    # The wide fill's cases (tests/wide_fill_cases.cpp, run by
+    # tests/test_wide_fill_main.cpp): the game's job threads filling clients
+    # at once, so a functional-tier binary of its own, outside the unit suite
+    # (which starts no thread). No socket (the development loopback driver),
+    # no real time. CI runs it in the functional legs and under tsan.
+    if(ROCKETNET_DEV)
+        add_executable(test_wide_fill tests/test_wide_fill_main.cpp tests/wide_fill_cases.cpp)
+        target_include_directories(test_wide_fill PRIVATE tests)
+        target_link_libraries(test_wide_fill PRIVATE rocketnet_dev Threads::Threads)
+        rocketnet_use_sodium(test_wide_fill)
+        rocketnet_warning_floor(test_wide_fill)
+    endif()
     # Compiles the server transport itself and runs on development keys, so it needs the development library.
     add_executable(test_transport_control tests/test_transport_control.cpp)
     target_include_directories(test_transport_control PRIVATE tests)
@@ -1172,6 +1206,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/disconnect_reasons_real.cpp
         tests/functional/production_paths.cpp
         tests/functional/client_io_threaded.cpp
+        tests/functional/ack_apply_threads.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
@@ -1328,6 +1363,17 @@ if(ROCKETNET_BUILD_TOOLS)
     target_link_libraries(test_load_census PRIVATE Threads::Threads)
     rocketnet_warning_floor(test_load_census)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
+    # The server transport hardening load (docs/HARDEN_LOAD.md): a bench tool.
+    # enkiTS (tests/load/enkiTS/README.md) runs the space frame shape's jobs:
+    # tests only, never linked into the SDK. It is vendored unmodified, so it is
+    # a system include and its one source is built without rocketnet's strict
+    # conversion set (its sign conversions are upstream's, in a test tool)
+    add_executable(harden_load tests/load/harden_load.cpp tests/load/enkiTS/TaskScheduler.cpp)
+    target_compile_features(harden_load PRIVATE cxx_std_11)
+    target_include_directories(harden_load SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/load/enkiTS")
+    if(NOT MSVC)
+        set_source_files_properties(tests/load/enkiTS/TaskScheduler.cpp PROPERTIES COMPILE_OPTIONS "-Wno-sign-conversion;-Wno-conversion")
+    endif()
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
     add_executable(dst tests/dst.cpp)
@@ -1336,20 +1382,50 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(dst PRIVATE cxx_std_11)
     # The TLA+ trace harness (proofs/tla/README-TraceCheck.md): a seeded walk
     # of a layer's code writes its trace for TLC. Each layer is one file,
-    # tests/tla_trace_<layer>.cpp, that registers itself; both binaries take
-    # every such file. tla_trace_plant compiles them with ROCKETNET_TLA_PLANT,
-    # and each layer's file then includes its own code with its plant, in
-    # place of the library's.
+    # tests/tla_trace_<layer>.cpp, that registers itself. tla_trace takes
+    # every such file. Each layer also has a plant binary of its own,
+    # tla_trace_plant_<layer>, of that one file compiled with
+    # ROCKETNET_TLA_PLANT: the file then includes its own code with its
+    # plant, in place of the library's, so one layer's plant never touches
+    # another's trace. Every trace target compiles with the library's own
+    # private definitions, include directories and options (ROCKETNET_IO_URING,
+    # ROCKETNET_XDP, generated/, the floating-point floor), so a planted copy
+    # of library code is the code the library builds.
+    function(rocketnet_tla_trace_target target)
+        target_compile_definitions(${target} PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+        target_include_directories(${target} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_compile_options(${target} PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
+        if(TARGET rocketnet_xdp_header)
+            add_dependencies(${target} rocketnet_xdp_header)
+        endif()
+        target_link_libraries(${target} PRIVATE rocketnet_dev)
+        # the XDP filter as host C, where it is built: the xdp-replay layer
+        # runs its packets through the shipped filter, at the trace's window
+        if(TARGET rocketnet_xdp_filter_host_trace)
+            target_link_libraries(${target} PRIVATE rocketnet_xdp_filter_host_trace)
+            target_compile_definitions(${target} PRIVATE ROCKETNET_XDP_FILTER_HOST=1
+                ROCKETNET_TLA_XDP_REPLAY_WINDOW=${ROCKETNET_TLA_XDP_REPLAY_WINDOW})
+        endif()
+        rocketnet_use_sodium(${target})
+        rocketnet_warning_floor(${target})
+        target_compile_features(${target} PRIVATE cxx_std_11)
+    endfunction()
     file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
     add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
-    target_link_libraries(tla_trace PRIVATE rocketnet_dev)
-    rocketnet_use_sodium(tla_trace)
-    target_compile_features(tla_trace PRIVATE cxx_std_11)
-    add_executable(tla_trace_plant tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
-    target_compile_definitions(tla_trace_plant PRIVATE ROCKETNET_TLA_PLANT=1)
-    target_link_libraries(tla_trace_plant PRIVATE rocketnet_dev)
-    rocketnet_use_sodium(tla_trace_plant)
-    target_compile_features(tla_trace_plant PRIVATE cxx_std_11)
+    rocketnet_tla_trace_target(tla_trace)
+    set(ROCKETNET_TLA_TRACE_PLANTS "")
+    foreach(layer_file IN LISTS ROCKETNET_TLA_TRACE_LAYERS)
+        get_filename_component(layer_stem "${layer_file}" NAME_WE)
+        string(REPLACE "tla_trace_" "tla_trace_plant_" plant_target "${layer_stem}")
+        add_executable(${plant_target} tests/tla_trace.cpp "${layer_file}")
+        target_compile_definitions(${plant_target} PRIVATE ROCKETNET_TLA_PLANT=1)
+        rocketnet_tla_trace_target(${plant_target})
+        list(APPEND ROCKETNET_TLA_TRACE_PLANTS ${plant_target})
+    endforeach()
+    # cmake --build build --target tla_trace_all builds the harness and every plant
+    add_custom_target(tla_trace_all DEPENDS tla_trace ${ROCKETNET_TLA_TRACE_PLANTS})
     add_executable(keygen tools/keygen.cpp)
     add_executable(transport_memory benchmarks/transport_memory.cpp)
     add_executable(client_main_thread_cost benchmarks/client_main_thread_cost.cpp)
@@ -1402,8 +1478,14 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_definitions(server_receive_cost PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
+    # The server's update with the bar's ack shape (benchmarks/server_update_ack_cost.cpp):
+    # public API, loopback, simulated time; counts update's instructions and cycles.
+    add_executable(server_update_ack_cost benchmarks/server_update_ack_cost.cpp)
+    target_link_libraries(server_update_ack_cost PRIVATE rocketnet)
+    target_compile_features(server_update_ack_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(server_update_ack_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost request_lookup_cost)
+    foreach(tool soak load load_split harden_load soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost request_lookup_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(instruction_count PRIVATE rocketnet_dev)
@@ -1462,7 +1544,7 @@ if(TARGET rocketnet_shared)
     list(APPEND rocketnet_install_targets rocketnet_shared)
 endif()
 # Internal harnesses use repository-relative tests/helper includes.
-foreach(harness client server soak load load_split soak_sim test_load_census)
+foreach(harness client server soak load load_split harden_load soak_sim test_load_census)
     if(TARGET ${harness})
         target_include_directories(${harness} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     endif()

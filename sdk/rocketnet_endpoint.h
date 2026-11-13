@@ -201,6 +201,10 @@ void rn_endpoint_in_place_failed( struct rn_endpoint_t * endpoint );
 // The transport acked packet_id (R1: the only ack).
 void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, double now );
 
+// The transport acked these packet ids, in order: the same as one
+// rn_endpoint_on_acked per id.
+void rn_endpoint_on_acked_ids( struct rn_endpoint_t * endpoint, const uint64_t * packet_ids, uint32_t count, double now );
+
 // One payload the transport opened. Its deliveries are appended to the
 // region's delivery table; out, when not NULL, also gets a copy of up to
 // out_capacity of them, and *out_count their number.
