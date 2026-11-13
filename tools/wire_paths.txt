@@ -124,7 +124,9 @@ sdk/rocketnet_xdp_compat.h	XDP program attach compatibility
 sdk/rocketnet_xdp_frame.h	AF_XDP Ethernet, IP and UDP framing: the standard outer headers, not the rocketnet payload
 sdk/rocketnet_xdp_free_list.h	AF_XDP frame free list
 sdk/rocketnet_xdp_limits.h	XDP map sizes
+sdk/rocketnet_xdp_receive_pass.h	the AF_XDP worker's peek, take, end and flush over the RX and fill rings; takes frames through the framing codec, writes no packet byte
 sdk/rocketnet_xdp_replay_marks.h	userspace buffer for the kernel replay map
+sdk/rocketnet_xdp_replay_sink.h	the replay writer's forget, mark and commit into the kernel map; writes no packet byte
 sdk/rocketnet_xdp_socket_config.h	AF_XDP socket bind config
 sdk/xdp/server_xdp.c	the kernel filter: :360-424 read header bytes at the offsets rocketnet_wire.h defines, write none
 sdk/rocketnet_receive_prefilter.h	the receive drop reasons and their counters, and the drop tallies; reads and writes no byte

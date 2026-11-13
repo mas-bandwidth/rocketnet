@@ -35,14 +35,14 @@ freely.
 An update is the walk's forget pass, its mark pass, then the commit; the walk
 forgets and marks each key at most once per update.
 
-- **`Forget(k)`**: `rocketnet_xdp_replay_marks_forget`: a key the kept
+- **`Forget(k, ok)`**: `rocketnet_xdp_replay_marks_forget`: a key the kept
   forgets `[0, kept_forget_count)` hold is coalesced before the capacity
   test (only those are searched: the walk forgets each key at most once per
   update, so a repeat can only be a kept forget); a new key is refused at
   `forget_count >= capacity`, else appended. An accepted forget, including a
   duplicate at capacity, then drops the first kept mark of the key by `rocketnet_xdp_replay_marks_drop_kept`,
   which shifts `[i + 1, mark_count)` down one and decrements both counts.
-- **`Mark(k, v)`**: `rocketnet_xdp_replay_marks_mark`: a kept mark of the key
+- **`Mark(k, v, ok)`**: `rocketnet_xdp_replay_marks_mark`: a kept mark of the key
   is replaced in place; else refused at `mark_count >= MAX`, else appended.
 - **`Commit`**: the transport's commit
   (`rocketnet_server_socket_replay_commit` on Linux) hands
@@ -55,6 +55,16 @@ forgets and marks each key at most once per update.
 - **`CompactMarkStep`**: one iteration of the mark loop (the move of key and
   value to `kept_marks` when `kept_marks != j`), and at the end
   `mark_count = kept_mark_count = kept_marks` and `refused = 0`.
+
+- **`ResetKeeping(fs, as, n)`**: `Commit` and the whole `reset_keeping`
+  call as one step, both loops run to their ends by `ForgetLoop` and
+  `MarkLoop` with the same arithmetic as the two steps above, `n` the
+  refusals the call returns. It is the call the trace check
+  (`TraceRNXdpReplayMarksLayout.tla`) observes, and reaches no state the
+  loop steps do not.
+
+`Forget` and `Mark` take `ok`, what the call returns: `TRUE` exactly when it
+refused nothing.
 
 Each loop iteration is its own step, so a write that lands on an entry the
 loop has not read yet is visible.
