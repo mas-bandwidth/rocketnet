@@ -1,35 +1,30 @@
 # RocketNet code style
 
-RocketNet's C and C++ follow the owner's style as written in the Network Next
-SDK. The owner asked for the code to "uniformly match my coding style in the
-network next SDK", "including my formatting and whitespacing additions between
-different parts of code in a function to make things easier to read, and my
-comment then extra newline code style etc."
+RocketNet's C and C++ follow one house style, set out in this guide. It covers
+the layout of code inside a function as well as its formatting: the blank
+lines that split a function into parts so that it is easy to read, and a
+comment followed by a blank line before the code it introduces.
 
 `.clang-format` (clang-format 18) handles indentation, braces, spaces and
 pointer placement. It does not add or remove the blank lines that split a
 function into parts, it does not move comments, and it does not change names.
 Those rules are applied by hand, and they are the subject of this guide.
 
-**Source.** Every rule and count below is taken from `networknext/next` at
-`main`, commit `b4efefcad40c05d72f43ffa9f5b91b4472033f32`, files
-`sdk/include/*.h` and `sdk/source/*.cpp` (65 files, 28394 lines, 801 function
-bodies). Examples are quoted as `file:line` relative to `sdk/`. Counts come
-from scripts that walk every function body; "N of M" means N cases follow
-the rule out of M cases measured. Where the SDK is split, the guide says so
-with the counts and does not pick a side the SDK does not pick.
+**Examples.** Examples are taken from RocketNet's own sources and quoted as
+`sdk/<file>:<line>` followed by the exact text of that line.
 
-**Names.** Where the SDK writes `next_`, `next_*_t` and `NEXT_`, RocketNet
-writes `rocketnet_`, `rocketnet_*_t` and `ROCKETNET_`.
+**Names.** Functions, variables and macros used like calls use the
+`rocketnet_` prefix, struct types use `rocketnet_*_t`, and constants use
+`ROCKETNET_`.
 
 **Enforced by.** Each rule ends with *clang-format* (and the key that does it)
-or *by hand*. In the configuration in effect (`clang-format-18 --dump-config` with this repository's `.clang-format`), `MaxEmptyLinesToKeep: 4`
-and `ReflowComments: false` are set in `.clang-format`, and
-`KeepEmptyLinesAtTheStartOfBlocks: true`, `SeparateDefinitionBlocks: Leave`,
-`InsertBraces: false` and `RemoveBracesLLVM: false` hold by default (inherited
+or *by hand*. In the configuration in effect (`clang-format-18 --dump-config` with this repository's `.clang-format`), `MaxEmptyLinesToKeep: 4`,
+`ReflowComments: false` and `InsertBraces: true` are set in `.clang-format`, and
+`KeepEmptyLinesAtTheStartOfBlocks: true`, `SeparateDefinitionBlocks: Leave`
+and `RemoveBracesLLVM: false` hold by default (inherited
 from `BasedOnStyle: LLVM`, not written in the file). So clang-format keeps
-whatever blank lines, braces and comment lines a person writes (up to four
-blank lines in a row).
+whatever blank lines and comment lines a person writes (up to four
+blank lines in a row), and braces every control statement body it reaches.
 
 ---
 
@@ -40,252 +35,238 @@ thing and check it, fill a struct, send, clean up, return. One blank line
 separates each part from the next. Several calls of the same kind (a group of
 resets, a list of field assignments) form one part.
 
-- Part size, over 4259 runs of non-blank lines in function bodies: median 2
-  lines, 75% are 5 lines or fewer, 90% are 8 or fewer. 1734 parts (41%) are a
-  single line. Longer runs are almost all one braced block with no blank line
-  inside it, or a list of like statements.
-- A step is a single line when nothing else belongs to it: `next_client_internal_update`
-  puts each of its seven update calls in its own part.
+- Parts are short: most are a few lines, and many are a single line. A longer
+  run is one braced block with no blank line inside it, or a list of like
+  statements.
+- A step is a single line when nothing else belongs to it.
 
 ```
-source/next_client.cpp:2478  next_client_t * client = (next_client_t*) next_malloc( context, sizeof(next_client_t) );
-source/next_client.cpp:2479  if ( !client )
-source/next_client.cpp:2480      return NULL;
-source/next_client.cpp:2481
-source/next_client.cpp:2482  memset( client, 0, sizeof( next_client_t) );
-source/next_client.cpp:2483
-source/next_client.cpp:2484  next_client_initialize_sentinels( client );
-```
-
-```
-include/next_replay_protection.h:41  next_replay_protection_initialize_sentinels( replay_protection );
-include/next_replay_protection.h:42
-include/next_replay_protection.h:43  replay_protection->most_recent_sequence = 0;
-include/next_replay_protection.h:44
-include/next_replay_protection.h:45  memset( replay_protection->received_packet, 0xFF, sizeof( replay_protection->received_packet ) );
-include/next_replay_protection.h:46
-include/next_replay_protection.h:47  next_replay_protection_verify_sentinels( replay_protection );
+sdk/rocketnet_address.cpp:275      const uint8_t a = uint8_t( address->data.ipv4[0] );
+sdk/rocketnet_address.cpp:276      const uint8_t b = uint8_t( address->data.ipv4[1] );
+sdk/rocketnet_address.cpp:277      const uint8_t c = uint8_t( address->data.ipv4[2] );
+sdk/rocketnet_address.cpp:278      const uint8_t d = uint8_t( address->data.ipv4[3] );
+sdk/rocketnet_address.cpp:279  
+sdk/rocketnet_address.cpp:280      address->type = ROCKETNET_ADDRESS_IPV6;
+sdk/rocketnet_address.cpp:281      address->data.ipv6[0] = 0x0000;
 ```
 
 ```
-source/next_client.cpp:2356  next_client_internal_update_direct_pings( client );
-source/next_client.cpp:2357
-source/next_client.cpp:2358  next_client_internal_update_next_pings( client );
+sdk/rocketnet_platform.cpp:4413      s->context = context;
+sdk/rocketnet_platform.cpp:4414      s->send_failures = 0;
+sdk/rocketnet_platform.cpp:4415      s->send_replay_failures = 0;
+sdk/rocketnet_platform.cpp:4416      s->connected = false;
+sdk/rocketnet_platform.cpp:4417  
+sdk/rocketnet_platform.cpp:4418      rocketnet_assert( address );
+sdk/rocketnet_platform.cpp:4419      rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
 ```
 
-Never two blank lines in a row inside a function: 0 in 801 bodies.
+Never two blank lines in a row inside a function.
 
 *By hand* (clang-format keeps up to four blank lines, `MaxEmptyLinesToKeep: 4`,
 and never inserts one).
 
 ## 2. How a function opens and closes
 
-- **No blank line after the opening brace**, in any block: 0 of 2497 `{`
-  lines are followed by a blank line. The first line of a function is code
-  (797 of 797 non-empty bodies).
-- **No blank line before the closing brace**: 2 of 2494 `}` lines follow a
-  blank line (both in console platform stubs).
-- **The opening checks are their own part.** A `verify_sentinels` call is
-  followed by a blank line in 94 of 102 functions that open with one. A run
-  of `next_assert` lines at the top is followed by a blank line in 107 of 149
-  bodies longer than six lines; in bodies of six lines or fewer it runs
-  straight into the code in 83 of 86 (the sentinel helpers).
+- **No blank line after the opening brace**, in any block. The first line of
+  a function is code.
+- **No blank line before the closing brace.**
+- **The opening checks are their own part.** A sentinel check, or a run of
+  `rocketnet_assert` lines at the top, is followed by a blank line. In a body
+  of six lines or fewer the checks may run straight into the code.
 
 ```
-source/next_server.cpp:4511  next_server_verify_sentinels( server );
-source/next_server.cpp:4512
-source/next_server.cpp:4513  next_assert( server->internal );
-source/next_server.cpp:4514
-source/next_server.cpp:4515  next_proxy_session_entry_t * pending_entry = next_proxy_session_manager_find( server->pending_session_manager, address );
+sdk/rocketnet_address.cpp:51      rocketnet_assert( address );
+sdk/rocketnet_address.cpp:52      rocketnet_assert( address_string_in );
+sdk/rocketnet_address.cpp:53  
+sdk/rocketnet_address.cpp:54      if ( !address )
 ```
 
 ```
-source/next_client.cpp:2519  {
-source/next_client.cpp:2520      next_client_verify_sentinels( client );
-source/next_client.cpp:2521
-source/next_client.cpp:2522      return client->bound_port;
-source/next_client.cpp:2523  }
+sdk/rocketnet_address.cpp:310  {
+sdk/rocketnet_address.cpp:311      rocketnet_assert( address );
+sdk/rocketnet_address.cpp:312      uint32_t ipv4;
+sdk/rocketnet_address.cpp:313      memcpy( (char *) &ipv4, address->data.ipv4, 4 );
+sdk/rocketnet_address.cpp:314      return ipv4;
+sdk/rocketnet_address.cpp:315  }
 ```
 
-- **The final return.** Of 364 functions that end in a `return` at body
-  level, 125 have only that line, 120 put a blank line before it, and 119
-  do not. In bodies of four lines or fewer the return is tight 44 times. In
-  longer bodies the SDK is split, 120 blank to 75 tight; the tight cases are
-  a return that completes the part above it: it hands back the value the
-  line above just computed (`source/next_packets.cpp:35-38`), ends a list of
-  `serialize_*` calls (13), or follows a closing `}` of a loop that searched
-  for the result (17). When the return hands back a result built by earlier
-  parts, it is its own part:
+- **The final return.** In a short body the return may sit on the line above
+  it. In a longer body the return sits on the line above only when it
+  completes the part above it: it hands back the value the line above just
+  computed (`sdk/rocketnet_address.cpp:313-314`), ends a list of like calls,
+  or follows the closing `}` of a loop that searched for the result. When the
+  return hands back a result built by earlier parts, it is its own part:
 
 ```
-source/next_client.cpp:2513  next_client_verify_sentinels( client );
-source/next_client.cpp:2514
-source/next_client.cpp:2515  return client;
+sdk/rocketnet_address.cpp:44      port = (uint16_t) value;
+sdk/rocketnet_address.cpp:45  
+sdk/rocketnet_address.cpp:46      return true;
 ```
 
-```
-source/next_packets.cpp:35  int packet_length = p - packet_data;
-source/next_packets.cpp:36  next_generate_pittle( a, from_address, to_address, packet_length );
-source/next_packets.cpp:37  next_generate_chonkle( b, magic, from_address, to_address, packet_length );
-source/next_packets.cpp:38  return packet_length;
-```
+- **An early return sits on the line before it**, usually the
+  `rocketnet_error` that reports the failure and the clean-up after it.
 
-- **An early return sits on the line before it**: 612 of 685 returns inside
-  a nested block follow the line before them directly (usually the
-  `next_printf` that reports the failure); 38 are the first line of their
-  block; 35 have a blank line before.
+```
+sdk/rocketnet_platform.cpp:4439          rocketnet_error( "failed to create socket" );
+sdk/rocketnet_platform.cpp:4440          rocketnet_free( context, s );
+sdk/rocketnet_platform.cpp:4441          return NULL;
+```
 
 *By hand* (`KeepEmptyLinesAtTheStartOfBlocks: true` keeps a blank line after
 `{` rather than removing it, so remove it yourself).
 
 ## 3. A comment introduces its part, then a blank line
 
-The owner's "comment then extra newline": a `//` comment that starts a new
-part stands on its own line, preceded by a blank line (or the opening brace)
-and followed by one blank line, then the code it introduces.
+A comment then an extra newline: a `//` comment that starts a new part stands
+on its own line, preceded by a blank line (or the opening brace) and followed
+by one blank line, then the code it introduces.
 
-- Plain comments in SDK code (not tests) that start a part: 156 of 187 are
-  followed by a blank line. Preceded by a blank line, 131 of 144 are
-  followed by a blank line.
 - The comment names the step, short and lower case: "create socket", "bind
-  to port", "send upgrade session command to internal server".
+  to port", "set ipv6 sockets as dual stack".
 
 ```
-source/next_address.cpp:26  memset( address, 0, sizeof( next_address_t ) );
-source/next_address.cpp:27
-source/next_address.cpp:28  // first try to parse the string as an IPv6 address:
-source/next_address.cpp:29  // 1. if the first character is '[' then it's probably an ipv6 in form "[addr6]:portnum"
-source/next_address.cpp:30  // 2. otherwise try to parse as an IPv6 address using inet_pton
-source/next_address.cpp:31
-source/next_address.cpp:32  char buffer[NEXT_MAX_ADDRESS_STRING_LENGTH + NEXT_ADDRESS_BUFFER_SAFETY*2];
+sdk/rocketnet_platform.cpp:4420  
+sdk/rocketnet_platform.cpp:4421      // create socket
+sdk/rocketnet_platform.cpp:4422  
+sdk/rocketnet_platform.cpp:4423      s->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
 ```
 
 ```
-source/next_platform_linux.cpp:188
-source/next_platform_linux.cpp:189  // create socket
-source/next_platform_linux.cpp:190
-source/next_platform_linux.cpp:191  socket->type = socket_type;
+sdk/rocketnet_platform.cpp:4492  
+sdk/rocketnet_platform.cpp:4493      // bind to port
+sdk/rocketnet_platform.cpp:4494  
+sdk/rocketnet_platform.cpp:4495      if ( address->type == ROCKETNET_ADDRESS_IPV6 )
 ```
 
 ```
-source/next_server.cpp:4463  // send upgrade session command to internal server
-source/next_server.cpp:4464
-source/next_server.cpp:4465  next_server_command_upgrade_session_t * command = (next_server_command_upgrade_session_t*) next_malloc( ... );
+sdk/rocketnet_address.cpp:136      address->port = port;
+sdk/rocketnet_address.cpp:137  
+sdk/rocketnet_address.cpp:138      // inet_pton returns network order, matching the byte-oriented IPv4 storage
+sdk/rocketnet_address.cpp:139  
+sdk/rocketnet_address.cpp:140      memcpy( address->data.ipv4, &addr4, 4 );
 ```
 
 ### When the comment sits directly on its code
 
-Three cases, all counted:
+Three cases:
 
 - **`IMPORTANT:` comments** explain why the next statement is the way it
-  is, and sit on that statement: 30 of 33. (`source/next_client.cpp:776` is
-  one of the two with a blank line after, a three-line explanation.)
-- **A comment that labels a scoped `{ }` block** sits on the `{`: 7 in SDK
-  code, 27 in `next_tests.cpp`, where the sub-cases of a test are labelled
-  blocks (`source/next_tests.cpp:121-122`).
+  is, and sit on that statement.
+- **A comment that labels a scoped `{ }` block** sits on the `{`.
 - **A short label for a small branch body**, as the first line inside the
-  branch. Here the SDK is split: of 52 comments that are the first line of a
-  block, 25 are followed by a blank line, 18 sit on the code, 9 are alone in
-  an empty branch. Either is in style; keep what the surrounding function
-  does, and in new code use the majority, a blank line after.
+  branch. Both forms are accepted: the label followed by a blank line, or
+  the label sitting on the code. Keep what the surrounding function does.
 
 ```
-source/next_client.cpp:424
-source/next_client.cpp:425  // IMPORTANT: for many platforms it's best practice to bind to ipv6 and go dual stack on the client
-source/next_client.cpp:426  if ( next_platform_client_dual_stack() )
-```
-
-```
-source/next_client.cpp:632
-source/next_client.cpp:633  // run packet filters
-source/next_client.cpp:634  {
+sdk/rocketnet_platform.cpp:4446  
+sdk/rocketnet_platform.cpp:4447      // IMPORTANT: tell windows we don't want to receive any connection or network
+sdk/rocketnet_platform.cpp:4448      // reset reports for this socket, otherwise a receive errors out after a remote endpoint
+sdk/rocketnet_platform.cpp:4449      // disconnects hard and its ICMP port unreachable comes back
+sdk/rocketnet_platform.cpp:4450      rocketnet_platform_socket_disable_udp_resets( (uintptr_t) s->handle );
 ```
 
 ```
-source/next_platform_linux.cpp:302  {
-source/next_platform_linux.cpp:303      // non-blocking
-source/next_platform_linux.cpp:304      if ( fcntl( socket->handle, F_SETFL, O_NONBLOCK, 1 ) == -1 )
+sdk/rocketnet_server_transport.cpp:2931  
+sdk/rocketnet_server_transport.cpp:2932      // setup next stats frame
+sdk/rocketnet_server_transport.cpp:2933      {
 ```
 
 ```
-source/next_server.cpp:4706  {
-source/next_server.cpp:4707      // passthrough packet
-source/next_server.cpp:4708
-source/next_server.cpp:4709      next_server_send_packet_direct( server, to_address, packet_data, packet_bytes );
+sdk/rocketnet_endpoint.cpp:811      if ( type == ROCKETNET_RELIABILITY_UNRELIABLE )
+sdk/rocketnet_endpoint.cpp:812      {
+sdk/rocketnet_endpoint.cpp:813          // the SINGLE form: the message at the payload root, the form byte after it
+sdk/rocketnet_endpoint.cpp:814  
+sdk/rocketnet_endpoint.cpp:815          length = rocketnet_message_single_finish( payload, capacity, bytes );
 ```
 
-A comment follows code with no blank line between only 5 times in SDK code.
+```
+sdk/rocketnet_channel.cpp:774      if ( !descriptor )
+sdk/rocketnet_channel.cpp:775      {
+sdk/rocketnet_channel.cpp:776          // the slot is live for another number (check 10, SLOT_COLLISION)
+sdk/rocketnet_channel.cpp:777          rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
+```
+
+A comment does not follow code with no blank line between.
 
 *By hand* (clang-format never inserts or removes blank lines around comments).
 
 ## 4. Comment style
 
 - **`//` only, inside code.** No `/* */` comment appears inside a function
-  body. `/* */` is used for the licence header at the top of each file, and
-  `/** */` for doc blocks in four headers: 71 blocks, 20 in
-  `include/next_bitpacker.h`, 27 in `next_stream.h`, 11 in
-  `next_serialize.h` and 13 in `next_util.h` (its template structs). Every one of the 136 `*/` closers is followed by a blank line.
-- **Lower case, no full stop.** 263 of 298 comments start lower case; of the
-  35 that start upper case, 33 are `IMPORTANT:`. 275 of 305 do not end with
-  a full stop. Comments are phrases ("bind to port", "no port number"), not
-  sentences; `IMPORTANT:` comments may run to full sentences
-  (`source/next_client.cpp:776-778`).
-- **One line, however long.** Comment lines have a median of 37 characters,
-  90% are 102 or fewer, the longest is 159; only 24 of the 305 comments
-  inside functions run over more than one line, and those are lists or
-  multi-sentence `IMPORTANT:` notes. Comments are not wrapped at a column.
-- **Comments on the end of a code line are rare**: 21 in function bodies,
-  short notes on one value or one condition (`include/next_bitpacker.h:37`,
-  `source/next_base64.cpp:26`).
-- **No comment directly above a function definition.** All 691 top-level
-  definitions have a blank line on the line above.
+  body. `/* */` is used for the licence header at the top of each file, whose
+  `*/` is followed by a blank line, and `/** */` for doc blocks in headers,
+  which sit directly on the declaration they document.
+- **Lower case, no full stop.** Comments start lower case; the exception is
+  `IMPORTANT:`. Comments do not end with a full stop. Comments are phrases
+  ("bind to port", "create socket"), not sentences; `IMPORTANT:` comments
+  may run to full sentences.
+- **One line, however long.** A comment inside a function is one line; only
+  lists and multi-sentence `IMPORTANT:` notes run over more than one line.
+  Comments are not wrapped at a column.
+- **Comments on the end of a code line are rare**: short notes on one value
+  or one condition (`sdk/rocketnet_base64.cpp:26`).
+- **No comment directly above a function definition.** A top-level
+  definition has a blank line on the line above.
 - **A group comment names a group of definitions** and sits at column 0, then
-  one blank line, then the first definition of the group: 16 in the platform
-  files (`// init`, `// time`, `// sockets`, `// threads`), 12 above a
-  function and 4 above a struct. None of the 116 top-level separators has a
+  one blank line, then the first definition of the group (`// init`,
+  `// threads`, `// time`, `// sockets`). A top-level separator has no
   comment above it.
 
 ```
-source/next_platform_windows.cpp:53  // init
-source/next_platform_windows.cpp:54
-source/next_platform_windows.cpp:55  int next_platform_init()
+sdk/rocketnet_platform.cpp:3891  // init
+sdk/rocketnet_platform.cpp:3892  
+sdk/rocketnet_platform.cpp:3893  bool rocketnet_platform_init()
 ```
 
 ```
-source/next_platform_switch.cpp:19  // threads
-source/next_platform_switch.cpp:20
-source/next_platform_switch.cpp:21  next_platform_thread_t * next_platform_thread_create( void * context, next_platform_thread_func_t fn, void * arg )
+sdk/rocketnet_platform.cpp:4285  // sockets
+sdk/rocketnet_platform.cpp:4286  
+sdk/rocketnet_platform.cpp:4287  bool rocketnet_platform_client_dual_stack()
 ```
+
 - **`#endif` names its condition, repeating the directive that opened it**:
-  302 of 346 `#endif` lines. Of those, 249 read `#endif // #if NAME`, 44 read
-  `#endif // #ifndef NAME_H` (header guards), and 9 read
-  `#endif // #ifdef NAME`. 4 name the condition another way
-  (`#endif // __cplusplus`, `include/next_platform.h:147`) and 40 are bare.
-  Copy the opening directive as written; do not turn `#ifndef` or `#ifdef`
-  into `#if`.
+  `#endif // #if NAME` and `#endif // #ifdef NAME`. Copy the opening
+  directive as written; do not turn `#ifndef` or `#ifdef` into `#if`. A
+  header guard is the one exception: it closes with the guard's name alone,
+  `#endif // NAME_H` (`#endif // ROCKETNET_SDK_ROCKETNET_ACK_H`).
 
 Examples of the rule:
 
 ```
-source/next_platform_linux.cpp:231
-source/next_platform_linux.cpp:232      // bind to port
-source/next_platform_linux.cpp:233
+sdk/rocketnet_address.cpp:1  /*
+sdk/rocketnet_address.cpp:2      RocketNet. Copyright 2026 Más Bandwidth LLC.  
+sdk/rocketnet_address.cpp:3      Licensed under the GNU Affero General Public License v3.0
+sdk/rocketnet_address.cpp:4  */
+sdk/rocketnet_address.cpp:5  
 ```
 
 ```
-source/next_base64.cpp:26          return -1; // integer overflow
+sdk/rocketnet_layers.h:68  /** @brief Capacity in bytes of transport address strings, including the terminating NUL. */
+sdk/rocketnet_layers.h:69  #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
 ```
 
 ```
-source/next_client.cpp:374  #if !NEXT_DEVELOPMENT
-source/next_client.cpp:375      next_printf( NEXT_LOG_LEVEL_INFO, "client sdk version is %s", NEXT_VERSION_FULL );
-source/next_client.cpp:376  #endif // #if !NEXT_DEVELOPMENT
+sdk/rocketnet_base64.cpp:26          return -1; // integer overflow
 ```
 
 ```
-include/next_platform_gdk.h:52  #endif // #ifdef _GAMING_XBOX
-include/next_platform_gdk.h:53
-include/next_platform_gdk.h:54  #endif // #ifndef NEXT_PLATFORM_GDK_H
+sdk/rocketnet.cpp:37  #else
+sdk/rocketnet.cpp:38  #error "asserts not supported on this platform!"
+sdk/rocketnet.cpp:39  #endif // #if defined( _MSC_VER )
+```
+
+```
+sdk/rocketnet_history.h:16  #ifndef ROCKETNET_HISTORY_PACKETS
+sdk/rocketnet_history.h:17  #define ROCKETNET_HISTORY_PACKETS 4096
+sdk/rocketnet_history.h:18  #endif // #ifndef ROCKETNET_HISTORY_PACKETS
+```
+
+```
+sdk/rocketnet_platform.h:90  #ifdef __cplusplus
+sdk/rocketnet_platform.h:91  #define ROCKETNET_DEFAULT_NULL = NULL
+sdk/rocketnet_platform.h:92  #else // #ifdef __cplusplus
+sdk/rocketnet_platform.h:93  #define ROCKETNET_DEFAULT_NULL
+sdk/rocketnet_platform.h:94  #endif // #ifdef __cplusplus
 ```
 
 *By hand* (`ReflowComments: false` keeps comment lines exactly as written;
@@ -295,105 +276,89 @@ include/next_platform_gdk.h:54  #endif // #ifndef NEXT_PLATFORM_GDK_H
 
 - **A declaration starts a part** and stays on the code that first uses it.
   A run of declarations (locals and struct fields) is preceded by a blank
-  line or `{` in 1327 of 1559 runs. After the run, the next line is blank in 616, and the code that
-  uses the declared names directly in 922: a declaration, its first use and
-  the check of that use are one part.
+  line or `{`. After the run comes either a blank line or the code that uses
+  the declared names directly: a declaration, its first use and the check
+  of that use are one part.
 
 ```
-source/next_address.cpp:96
-source/next_address.cpp:97  uint32_t addr4;
-source/next_address.cpp:98  if ( next_platform_inet_pton4( address_string, &addr4 ) == NEXT_OK )
+sdk/rocketnet_address.cpp:128  
+sdk/rocketnet_address.cpp:129      uint32_t addr4;
+sdk/rocketnet_address.cpp:130      if ( !rocketnet_platform_inet_pton4( host, &addr4 ) )
 ```
 
-- **A braced `if`, `for`, `while` or `switch` block is its own part.**
-  Before it: a blank line 753 times, the enclosing `{` 162, a comment 11, a
-  closing `}` 23, other code 538. The 538 are the exception the rule makes:
-  the block checks or consumes what the line above produced (298 of them
-  test a name assigned on the line above; most of the rest follow the
-  declaration of the variable the condition fills, as above). After a
-  braced block: a blank line 681 times, the enclosing `}` 232, code 173.
+- **A braced `if`, `for`, `while` or `switch` block is its own part**, with
+  a blank line (or the enclosing `{`) before it and a blank line (or the
+  enclosing `}`) after it. The exception: when the block checks or consumes
+  what the line above produced (it tests a name assigned on the line above,
+  or follows the declaration of the variable the condition fills, as above),
+  it sits on that line.
 
 ```
-source/next_server.cpp:4515  next_proxy_session_entry_t * pending_entry = next_proxy_session_manager_find( server->pending_session_manager, address );
-source/next_server.cpp:4516  if ( pending_entry != NULL )
-source/next_server.cpp:4517      return true;
-source/next_server.cpp:4518
-source/next_server.cpp:4519  next_proxy_session_entry_t * entry = next_proxy_session_manager_find( server->session_manager, address );
+sdk/rocketnet_address.cpp:59      memset( address, 0, sizeof( rocketnet_address_t ) );
+sdk/rocketnet_address.cpp:60  
+sdk/rocketnet_address.cpp:61      if ( !address_string_in )
+sdk/rocketnet_address.cpp:62      {
+sdk/rocketnet_address.cpp:63          return false;
+sdk/rocketnet_address.cpp:64      }
+sdk/rocketnet_address.cpp:65  
+sdk/rocketnet_address.cpp:66      char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
 ```
 
 ```
-source/next_server.cpp:4625      }
-source/next_server.cpp:4626
-source/next_server.cpp:4627      if ( multipath )
-source/next_server.cpp:4628      {
-source/next_server.cpp:4629          send_upgraded_direct = true;
-source/next_server.cpp:4630      }
-source/next_server.cpp:4631
+sdk/rocketnet_address.cpp:86          char * close = strchr( host, ']' );
+sdk/rocketnet_address.cpp:87          if ( !close )
 ```
 
-- **Braces on single-statement bodies.** A body that is one `return`,
-  `break` or `continue` goes without braces 211 of 248 times
-  (`source/next_server.cpp:4516-4517`); a body that is one other statement
-  is braced 191 of 216 times (`source/next_server.cpp:4627-4630`). The
-  braced single returns (37) exist, e.g. `include/next_replay_protection.h:67-70`.
+- **Braces on single-statement bodies.** Every `if`, `else`, `for`, `while`
+  and `do` body is braced, including a body that is one `return`, `break` or
+  `continue`.
 
-*By hand* (`InsertBraces: false`, `RemoveBracesLLVM: false`; Allman brace
-placement itself is clang-format, `BreakBeforeBraces: Allman`).
+```
+sdk/rocketnet_address.cpp:23      if ( !*text )
+sdk/rocketnet_address.cpp:24      {
+sdk/rocketnet_address.cpp:25          return false;
+sdk/rocketnet_address.cpp:26      }
+```
+
+*clang-format* for the braces (`InsertBraces: true`; control statements
+inside a `#define` body and the other cases the header of `.clang-format`
+lists are braced by hand), and Allman brace placement
+(`BreakBeforeBraces: Allman`). *By hand* for the blank lines.
 
 ## 6. Between functions, and section separators
 
-- **Exactly one blank line between functions**: 559 of 559 function ends
-  are followed by one blank line and the next definition.
-- **Section separators** split a file into groups (commands, notifications,
-  one struct and its functions). At file level (column 0) a separator is
+- **Exactly one blank line between functions**: a function end is followed
+  by one blank line and the next definition.
+- **Section separators** split a file into groups (one struct and its
+  functions, one area of the code). At file level (column 0) a separator is
   a line of `// ` and dashes alone, with one blank line before and after it,
-  116 of 116, and carries no title (the line after it is always blank). Its
-  width is not fixed: lines of 40 characters (28 lines), 105 (23), 54 (19),
-  66 (18), others.
+  and carries no title (the line after it is always blank). Its width is not
+  fixed.
 - **Titled banners inside a function.** A very long function is split into
   sections by a three-line banner: dashes, an UPPER CASE title, dashes as
-  wide as the title, with one blank line before and after. The SDK has 4,
-  all in the two packet-processing functions:
-  `source/next_client.cpp:1018-1020` and `1331-1333`,
-  `source/next_server.cpp:2388-2390` and `2674-2676`.
+  wide as the title, with one blank line before and after.
 
 ```
-source/next_client.cpp:1018      // -------------------
-source/next_client.cpp:1019      // PACKETS FROM RELAYS
-source/next_client.cpp:1020      // -------------------
-source/next_client.cpp:1021
-source/next_client.cpp:1022      if ( packet_id == NEXT_ROUTE_RESPONSE_PACKET )
+sdk/rocketnet_address.cpp:18      address->port = rocketnet_platform_ntohs( big_endian_port );
+sdk/rocketnet_address.cpp:19  }
+sdk/rocketnet_address.cpp:20  
+sdk/rocketnet_address.cpp:21  static bool rocketnet_address_parse_port( const char * text, uint16_t & port )
 ```
 
 ```
-source/next_server.cpp:2674      // ----------------------------------
-source/next_server.cpp:2675      // ENCRYPTED CLIENT TO SERVER PACKETS
-source/next_server.cpp:2676      // ----------------------------------
-source/next_server.cpp:2677
-source/next_server.cpp:2678      next_session_entry_t * session = NULL;
+sdk/rocketnet.cpp:22  #include <condition_variable>
+sdk/rocketnet.cpp:23  
+sdk/rocketnet.cpp:24  // -------------------------------------------------
+sdk/rocketnet.cpp:25  
+sdk/rocketnet.cpp:26  static void default_assert_function( const char * condition, const char * function, const char * file, int line )
 ```
 
 ```
-source/next_client.cpp:2515      return client;
-source/next_client.cpp:2516  }
-source/next_client.cpp:2517
-source/next_client.cpp:2518  uint16_t next_client_port( next_client_t * client )
-```
-
-```
-source/next_client.cpp:25  #include <stdlib.h>
-source/next_client.cpp:26
-source/next_client.cpp:27  // ---------------------------------------------------------------
-source/next_client.cpp:28
-source/next_client.cpp:29  #define NEXT_CLIENT_COMMAND_OPEN_SESSION            0
-```
-
-```
-source/next.cpp:95  }
-source/next.cpp:96
-source/next.cpp:97  // -------------------------------------------------------------
-source/next.cpp:98
-source/next.cpp:99  static int log_quiet = 0;
+sdk/rocketnet.cpp:54  }
+sdk/rocketnet.cpp:55  
+sdk/rocketnet.cpp:56  // -------------------------------------------------------------
+sdk/rocketnet.cpp:57  
+sdk/rocketnet.cpp:58  static std::atomic<bool> log_quiet{ false };
 ```
 
 *By hand* (`SeparateDefinitionBlocks` is `Leave` by default and not set in
@@ -401,41 +366,36 @@ source/next.cpp:99  static int log_quiet = 0;
 
 ## 7. Names
 
-| What | Next SDK form | Count | RocketNet |
-|---|---|---|---|
-| functions | `next_` + snake_case, `next_client_internal_send_packet_to_server` | 580; plus 93 `test_*` and 17 static helpers, all snake_case | `rocketnet_*` |
-| struct types | snake_case ending `_t`, `next_address_t` | 87, plus 16 typedefs | `rocketnet_*_t` |
-| packet structs | `Next` + PascalCase + `Packet`, `NextUpgradeRequestPacket` | 20 | the same form with `RocketNet`, if such a type is declared |
-| classes (serialization only) | PascalCase, `BitWriter`, methods `WriteBits`, members `m_numBits` | 8 classes, 31 methods, 15 members | the same, inside the serialization classes only |
-| constants | `#define NEXT_` + UPPER_SNAKE, `NEXT_MAX_PACKET_BYTES` | 351 macros | `ROCKETNET_*` |
-| macros used like calls | lower snake_case, `next_assert`, `next_check`, `serialize_int` | 23 (incl. 3 libc aliases) | `rocketnet_*` |
-| locals and fields | snake_case, `packet_bytes`, `from_address_data` | 2545 of 2580 locals; 21 camelCase inside the serialization classes | snake_case |
-| local `const` | snake_case, `const int packet_id` | 199 of 219; 4 UPPER, 16 camelCase in classes | snake_case |
+| What | Form |
+|---|---|
+| functions | `rocketnet_` + snake_case, `rocketnet_address_parse`; static helpers are snake_case too |
+| struct types | `rocketnet_` + snake_case ending `_t`, `rocketnet_address_t` |
+| packet structs | `RocketNet` + PascalCase + `Packet`, if such a type is declared |
+| classes | PascalCase, methods PascalCase, members `m_` + camelCase, if such a type is declared |
+| constants | `#define ROCKETNET_` + UPPER_SNAKE, `ROCKETNET_MAX_ADDRESS_STRING_LENGTH` |
+| macros used like calls | `rocketnet_` + lower snake_case, `rocketnet_assert`, `rocketnet_check` |
+| locals and fields | snake_case, `packet_bytes`, `address_string` |
+| local `const` | snake_case, `const bool bracketed` |
 
-Names spell out their unit: `packet_bytes`, `packet_data`, `num_entries`,
-`packet_receive_time`, `delta_time`; a count is `num_*`, a size in bytes is
-`*_bytes` (observed throughout, not counted).
+Names spell out their unit: `packet_bytes`, `packet_data`, `num_packets`,
+`current_time`; a count is `num_*`, a size in bytes is `*_bytes`.
 
 Examples of the rule:
 
 ```
-source/next_address.cpp:15  int next_address_parse( next_address_t * address, const char * address_string_in )
+sdk/rocketnet_address.cpp:49  bool rocketnet_address_parse( rocketnet_address_t * address, const char * address_string_in )
 ```
 
 ```
-include/next_address.h:15  struct next_address_t
+sdk/rocketnet_layers.h:672  struct rocketnet_address_t
 ```
 
 ```
-include/next.h:17  #define NEXT_ADVANCED_PACKET_FILTER                               0
+sdk/rocketnet_layers.h:69  #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
 ```
 
 ```
-include/next_packets.h:61  struct NextUpgradeRequestPacket
-```
-
-```
-source/next_client.cpp:624      const int packet_id = packet_data[0];
+sdk/rocketnet_address.cpp:81      const bool bracketed = buffer[0] == '[';
 ```
 
 *By hand* (clang-format does not touch names).
@@ -448,8 +408,9 @@ call and control parentheses (`SpacesInParens: Custom`, `Other: true`,
 `InConditionalStatements: true`), `char * p` (`PointerAlignment: Middle`),
 `(int) value` casts (`SpaceAfterCStyleCast: true`), no line length limit
 (`ColumnLimit: 0`), includes left in the order written (`SortIncludes: Never`),
-indented case labels (`IndentCaseLabels: true`). The header of `.clang-format`
-lists what it cannot express.
+indented case labels (`IndentCaseLabels: true`), braces on every control
+statement body (`InsertBraces: true`). The header of `.clang-format` lists
+what it cannot express.
 
 ---
 
@@ -458,7 +419,7 @@ lists what it cannot express.
 Read the function top to bottom and check each line:
 
 1. No blank line after any `{` and none before any `}`.
-2. The opening `verify_sentinels` call and the run of asserts are one part,
+2. The opening checks (a sentinel check, the run of asserts) are one part,
    followed by a blank line (bodies of six lines or fewer may run straight on).
 3. Every step is its own part, one blank line between parts, never two.
    A part longer than about eight lines is either one braced block or a list
@@ -467,8 +428,8 @@ Read the function top to bottom and check each line:
 5. Each braced `if`/`for`/`while`/`switch` has a blank line before it, unless
    it tests or consumes the line directly above, and a blank line after it,
    unless the enclosing block closes.
-6. A single `return`, `break` or `continue` body has no braces; a single other
-   statement is braced.
+6. Every `if`, `else`, `for`, `while` and `do` body is braced, a single
+   `return`, `break` or `continue` too.
 7. An early return sits directly under the line that reports the failure.
 8. The final return has a blank line before it, unless it returns the value
    the line directly above computed.
@@ -478,7 +439,8 @@ Read the function top to bottom and check each line:
 10. Comments are `//`, lower case, no full stop, one line however long; no
     `/* */` inside code; no comment touching the function signature.
 11. Every `#endif` names its condition with the directive that opened it:
-    `#endif // #if NAME`, `#endif // #ifdef NAME` or `#endif // #ifndef NAME_H`.
+    `#endif // #if NAME` or `#endif // #ifdef NAME`; a header guard closes
+    with its name alone, `#endif // NAME_H`.
 12. One blank line after the closing `}` before the next function; a file-level
     separator is an untitled `// ----` line with a blank line on each side; a
     section inside a long function opens with a titled three-line banner

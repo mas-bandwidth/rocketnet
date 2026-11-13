@@ -1,0 +1,366 @@
+soak link simulator: server latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2
+soak transport: server gso
+soak transport: client portable
+soak link simulator: client latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2
+soak send: t=10 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=113 acked_packets=7333 refused_sends=0 iteration_gap_max_ms=4.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 8036 iterations, 1 connects, 14702 payloads verified, 0 failures
+soak send: t=20 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=7959 refused_sends=0 iteration_gap_max_ms=4.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 16415 iterations, 1 connects, 30597 payloads verified, 0 failures
+soak send: t=30 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=8067 refused_sends=0 iteration_gap_max_ms=4.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 24890 iterations, 1 connects, 46712 payloads verified, 0 failures
+soak send: t=40 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7491 refused_sends=0 iteration_gap_max_ms=102.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 33036 iterations, 2 connects, 61706 payloads verified, 0 failures
+soak send: t=50 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=113 acked_packets=7629 refused_sends=0 iteration_gap_max_ms=10.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 41081 iterations, 2 connects, 76968 payloads verified, 0 failures
+soak send: t=60 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=115 acked_packets=7856 refused_sends=0 iteration_gap_max_ms=9.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 49383 iterations, 2 connects, 92706 payloads verified, 0 failures
+soak send: t=70 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=7656 refused_sends=0 iteration_gap_max_ms=72.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 57723 iterations, 3 connects, 108059 payloads verified, 0 failures
+soak send: t=80 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=7899 refused_sends=0 iteration_gap_max_ms=13.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 66061 iterations, 3 connects, 123871 payloads verified, 0 failures
+soak send: t=90 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=7902 refused_sends=0 iteration_gap_max_ms=10.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 74387 iterations, 3 connects, 139656 payloads verified, 0 failures
+soak send: t=100 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=7628 refused_sends=0 iteration_gap_max_ms=74.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 82759 iterations, 4 connects, 154987 payloads verified, 0 failures
+soak send: t=110 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=7904 refused_sends=0 iteration_gap_max_ms=10.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 91062 iterations, 4 connects, 170777 payloads verified, 0 failures
+soak send: t=120 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=7859 refused_sends=0 iteration_gap_max_ms=10.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 99317 iterations, 4 connects, 186486 payloads verified, 0 failures
+soak send: t=130 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=7612 refused_sends=0 iteration_gap_max_ms=72.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 107628 iterations, 5 connects, 201783 payloads verified, 0 failures
+soak send: t=140 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=8017 refused_sends=0 iteration_gap_max_ms=11.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 116068 iterations, 5 connects, 217810 payloads verified, 0 failures
+soak send: t=150 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=115 acked_packets=7945 refused_sends=0 iteration_gap_max_ms=10.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 124453 iterations, 5 connects, 233716 payloads verified, 0 failures
+soak send: t=160 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7790 refused_sends=0 iteration_gap_max_ms=71.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 132929 iterations, 6 connects, 249328 payloads verified, 0 failures
+soak send: t=170 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=8016 refused_sends=0 iteration_gap_max_ms=10.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 141388 iterations, 6 connects, 265362 payloads verified, 0 failures
+soak send: t=180 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7957 refused_sends=0 iteration_gap_max_ms=10.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 149767 iterations, 6 connects, 281279 payloads verified, 0 failures
+soak send: t=190 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7657 refused_sends=0 iteration_gap_max_ms=78.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 158214 iterations, 7 connects, 296605 payloads verified, 0 failures
+soak send: t=200 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7791 refused_sends=0 iteration_gap_max_ms=13.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 166401 iterations, 7 connects, 312132 payloads verified, 0 failures
+soak send: t=210 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=113 acked_packets=7801 refused_sends=0 iteration_gap_max_ms=10.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 174619 iterations, 7 connects, 327719 payloads verified, 0 failures
+soak send: t=220 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7612 refused_sends=0 iteration_gap_max_ms=72.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 182938 iterations, 8 connects, 343002 payloads verified, 0 failures
+soak send: t=230 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=7715 refused_sends=0 iteration_gap_max_ms=9.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 191080 iterations, 8 connects, 358452 payloads verified, 0 failures
+soak send: t=241 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=7962 refused_sends=0 iteration_gap_max_ms=11.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 199466 iterations, 8 connects, 374381 payloads verified, 0 failures
+soak send: t=251 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=7779 refused_sends=0 iteration_gap_max_ms=62.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 207990 iterations, 9 connects, 390007 payloads verified, 0 failures
+soak send: t=261 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=115 acked_packets=7830 refused_sends=0 iteration_gap_max_ms=12.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 216234 iterations, 9 connects, 405637 payloads verified, 0 failures
+soak send: t=271 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=115 acked_packets=7818 refused_sends=0 iteration_gap_max_ms=10.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 224439 iterations, 9 connects, 421236 payloads verified, 0 failures
+soak send: t=281 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7682 refused_sends=0 iteration_gap_max_ms=75.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 232835 iterations, 10 connects, 436678 payloads verified, 0 failures
+soak send: t=291 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7785 refused_sends=0 iteration_gap_max_ms=13.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 241095 iterations, 10 connects, 452284 payloads verified, 0 failures
+soak send: t=301 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=7919 refused_sends=0 iteration_gap_max_ms=10.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 249404 iterations, 10 connects, 468111 payloads verified, 0 failures
+soak send: t=311 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8081 refused_sends=0 iteration_gap_max_ms=70.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 258241 iterations, 11 connects, 484360 payloads verified, 0 failures
+soak send: t=321 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=8359 refused_sends=0 iteration_gap_max_ms=6.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 267023 iterations, 11 connects, 501049 payloads verified, 0 failures
+soak send: t=331 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8329 refused_sends=0 iteration_gap_max_ms=9.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 275761 iterations, 11 connects, 517694 payloads verified, 0 failures
+soak send: t=341 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=7875 refused_sends=0 iteration_gap_max_ms=69.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 284415 iterations, 12 connects, 533548 payloads verified, 0 failures
+soak send: t=351 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=7923 refused_sends=0 iteration_gap_max_ms=12.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 292758 iterations, 12 connects, 549392 payloads verified, 0 failures
+soak send: t=361 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7938 refused_sends=0 iteration_gap_max_ms=12.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 301111 iterations, 12 connects, 565270 payloads verified, 0 failures
+soak send: t=371 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=7724 refused_sends=0 iteration_gap_max_ms=71.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 309567 iterations, 13 connects, 580760 payloads verified, 0 failures
+soak send: t=381 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=8043 refused_sends=0 iteration_gap_max_ms=11.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 318047 iterations, 13 connects, 596869 payloads verified, 0 failures
+soak send: t=391 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8415 refused_sends=0 iteration_gap_max_ms=10.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 326929 iterations, 13 connects, 613706 payloads verified, 0 failures
+soak send: t=401 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=125 acked_packets=8156 refused_sends=0 iteration_gap_max_ms=62.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 335838 iterations, 14 connects, 630065 payloads verified, 0 failures
+soak send: t=411 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8383 refused_sends=0 iteration_gap_max_ms=6.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 344673 iterations, 14 connects, 646857 payloads verified, 0 failures
+soak send: t=421 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=114 acked_packets=7904 refused_sends=0 iteration_gap_max_ms=12.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 353000 iterations, 14 connects, 662687 payloads verified, 0 failures
+soak send: t=431 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7739 refused_sends=0 iteration_gap_max_ms=75.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 361421 iterations, 15 connects, 678199 payloads verified, 0 failures
+soak send: t=441 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7927 refused_sends=0 iteration_gap_max_ms=10.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 369792 iterations, 15 connects, 694085 payloads verified, 0 failures
+soak send: t=451 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=8016 refused_sends=0 iteration_gap_max_ms=11.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 378282 iterations, 15 connects, 710155 payloads verified, 0 failures
+soak send: t=461 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8202 refused_sends=0 iteration_gap_max_ms=71.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 387215 iterations, 16 connects, 726559 payloads verified, 0 failures
+soak send: t=471 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=125 acked_packets=8424 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 396108 iterations, 16 connects, 743364 payloads verified, 0 failures
+soak send: t=481 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=128 acked_packets=8494 refused_sends=0 iteration_gap_max_ms=5.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 405038 iterations, 16 connects, 760321 payloads verified, 0 failures
+soak send: t=491 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8004 refused_sends=0 iteration_gap_max_ms=62.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 413785 iterations, 17 connects, 776353 payloads verified, 0 failures
+soak send: t=501 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8314 refused_sends=0 iteration_gap_max_ms=10.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 422504 iterations, 17 connects, 792995 payloads verified, 0 failures
+soak send: t=511 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8223 refused_sends=0 iteration_gap_max_ms=10.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 431193 iterations, 17 connects, 809466 payloads verified, 0 failures
+soak send: t=521 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=7985 refused_sends=0 iteration_gap_max_ms=71.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 439984 iterations, 18 connects, 825486 payloads verified, 0 failures
+soak send: t=531 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=8340 refused_sends=0 iteration_gap_max_ms=6.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 448731 iterations, 18 connects, 842158 payloads verified, 0 failures
+soak send: t=541 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=8145 refused_sends=0 iteration_gap_max_ms=9.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 457279 iterations, 18 connects, 858451 payloads verified, 0 failures
+soak send: t=551 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7677 refused_sends=0 iteration_gap_max_ms=76.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 465645 iterations, 19 connects, 873827 payloads verified, 0 failures
+soak send: t=561 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=8001 refused_sends=0 iteration_gap_max_ms=10.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 474039 iterations, 19 connects, 889831 payloads verified, 0 failures
+soak send: t=571 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=8089 refused_sends=0 iteration_gap_max_ms=12.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 482573 iterations, 19 connects, 905989 payloads verified, 0 failures
+soak send: t=581 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=7765 refused_sends=0 iteration_gap_max_ms=71.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 491080 iterations, 20 connects, 921612 payloads verified, 0 failures
+soak send: t=591 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7951 refused_sends=0 iteration_gap_max_ms=10.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 499436 iterations, 20 connects, 937483 payloads verified, 0 failures
+soak send: t=601 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=7882 refused_sends=0 iteration_gap_max_ms=13.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 507730 iterations, 20 connects, 953233 payloads verified, 0 failures
+soak send: t=611 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7612 refused_sends=0 iteration_gap_max_ms=77.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 516180 iterations, 21 connects, 968498 payloads verified, 0 failures
+soak send: t=621 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7835 refused_sends=0 iteration_gap_max_ms=13.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 524429 iterations, 21 connects, 984143 payloads verified, 0 failures
+soak send: t=631 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8003 refused_sends=0 iteration_gap_max_ms=12.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 532878 iterations, 21 connects, 1000188 payloads verified, 0 failures
+soak send: t=641 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7609 refused_sends=0 iteration_gap_max_ms=71.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 541192 iterations, 22 connects, 1015457 payloads verified, 0 failures
+soak send: t=651 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=116 acked_packets=7997 refused_sends=0 iteration_gap_max_ms=15.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 549575 iterations, 22 connects, 1031409 payloads verified, 0 failures
+soak send: t=661 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=7903 refused_sends=0 iteration_gap_max_ms=16.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 557869 iterations, 22 connects, 1047173 payloads verified, 0 failures
+soak send: t=671 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=7732 refused_sends=0 iteration_gap_max_ms=69.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 566297 iterations, 23 connects, 1062634 payloads verified, 0 failures
+soak send: t=681 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=119 acked_packets=7945 refused_sends=0 iteration_gap_max_ms=11.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 574649 iterations, 23 connects, 1078511 payloads verified, 0 failures
+soak send: t=691 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=8064 refused_sends=0 iteration_gap_max_ms=11.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 583194 iterations, 23 connects, 1094710 payloads verified, 0 failures
+soak send: t=701 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8007 refused_sends=0 iteration_gap_max_ms=72.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 592012 iterations, 24 connects, 1110834 payloads verified, 0 failures
+soak send: t=711 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8299 refused_sends=0 iteration_gap_max_ms=9.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 600761 iterations, 24 connects, 1127433 payloads verified, 0 failures
+soak send: t=722 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=115 acked_packets=7803 refused_sends=0 iteration_gap_max_ms=12.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 608980 iterations, 24 connects, 1143022 payloads verified, 0 failures
+soak send: t=732 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=7666 refused_sends=0 iteration_gap_max_ms=71.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 617378 iterations, 25 connects, 1158431 payloads verified, 0 failures
+soak send: t=742 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=117 acked_packets=7982 refused_sends=0 iteration_gap_max_ms=10.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 625787 iterations, 25 connects, 1174389 payloads verified, 0 failures
+soak send: t=752 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=8062 refused_sends=0 iteration_gap_max_ms=10.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 634289 iterations, 25 connects, 1190566 payloads verified, 0 failures
+soak send: t=762 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=7725 refused_sends=0 iteration_gap_max_ms=71.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 642742 iterations, 26 connects, 1206078 payloads verified, 0 failures
+soak send: t=772 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=7820 refused_sends=0 iteration_gap_max_ms=10.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 650994 iterations, 26 connects, 1221729 payloads verified, 0 failures
+soak send: t=782 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=7915 refused_sends=0 iteration_gap_max_ms=14.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 659345 iterations, 26 connects, 1237598 payloads verified, 0 failures
+soak send: t=792 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=129 acked_packets=7843 refused_sends=0 iteration_gap_max_ms=74.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 667897 iterations, 27 connects, 1253324 payloads verified, 0 failures
+soak send: t=802 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8293 refused_sends=0 iteration_gap_max_ms=11.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 676648 iterations, 27 connects, 1269918 payloads verified, 0 failures
+soak send: t=812 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8378 refused_sends=0 iteration_gap_max_ms=9.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 685450 iterations, 27 connects, 1286681 payloads verified, 0 failures
+soak send: t=822 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=7974 refused_sends=0 iteration_gap_max_ms=71.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 694203 iterations, 28 connects, 1302737 payloads verified, 0 failures
+soak send: t=832 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8197 refused_sends=0 iteration_gap_max_ms=8.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 702849 iterations, 28 connects, 1319149 payloads verified, 0 failures
+soak send: t=842 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=125 acked_packets=8205 refused_sends=0 iteration_gap_max_ms=9.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 711497 iterations, 28 connects, 1335533 payloads verified, 0 failures
+soak send: t=852 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=118 acked_packets=7784 refused_sends=0 iteration_gap_max_ms=71.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 720044 iterations, 29 connects, 1351189 payloads verified, 0 failures
+soak send: t=862 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8183 refused_sends=0 iteration_gap_max_ms=10.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 728647 iterations, 29 connects, 1367544 payloads verified, 0 failures
+soak send: t=872 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8340 refused_sends=0 iteration_gap_max_ms=14.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 737426 iterations, 29 connects, 1384230 payloads verified, 0 failures
+soak send: t=882 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8037 refused_sends=0 iteration_gap_max_ms=69.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 746311 iterations, 30 connects, 1400398 payloads verified, 0 failures
+soak send: t=892 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=8545 refused_sends=0 iteration_gap_max_ms=10.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 755287 iterations, 30 connects, 1417432 payloads verified, 0 failures
+soak send: t=902 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8457 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 764219 iterations, 30 connects, 1434416 payloads verified, 0 failures
+soak send: t=912 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8135 refused_sends=0 iteration_gap_max_ms=68.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 773185 iterations, 31 connects, 1450718 payloads verified, 0 failures
+soak send: t=922 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8481 refused_sends=0 iteration_gap_max_ms=9.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 782091 iterations, 31 connects, 1467672 payloads verified, 0 failures
+soak send: t=932 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8498 refused_sends=0 iteration_gap_max_ms=11.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 791025 iterations, 31 connects, 1484667 payloads verified, 0 failures
+soak send: t=942 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8093 refused_sends=0 iteration_gap_max_ms=63.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 799961 iterations, 32 connects, 1500911 payloads verified, 0 failures
+soak send: t=952 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8386 refused_sends=0 iteration_gap_max_ms=9.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 808819 iterations, 32 connects, 1517750 payloads verified, 0 failures
+soak send: t=962 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=162 acked_packets=8422 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 817721 iterations, 32 connects, 1534631 payloads verified, 0 failures
+soak send: t=972 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=164 acked_packets=8150 refused_sends=0 iteration_gap_max_ms=68.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 826706 iterations, 33 connects, 1551009 payloads verified, 0 failures
+soak send: t=982 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8482 refused_sends=0 iteration_gap_max_ms=9.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 835638 iterations, 33 connects, 1567975 payloads verified, 0 failures
+soak send: t=992 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8469 refused_sends=0 iteration_gap_max_ms=9.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 844565 iterations, 33 connects, 1584929 payloads verified, 0 failures
+soak send: t=1002 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8076 refused_sends=0 iteration_gap_max_ms=68.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 853484 iterations, 34 connects, 1601133 payloads verified, 0 failures
+soak send: t=1012 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=382 acked_packets=7911 refused_sends=0 iteration_gap_max_ms=170.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 861837 iterations, 34 connects, 1616988 payloads verified, 0 failures
+soak send: t=1022 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=306 acked_packets=8196 refused_sends=0 iteration_gap_max_ms=81.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 870473 iterations, 34 connects, 1633405 payloads verified, 0 failures
+soak send: t=1032 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=283 acked_packets=8122 refused_sends=0 iteration_gap_max_ms=84.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 879355 iterations, 35 connects, 1649701 payloads verified, 0 failures
+soak send: t=1042 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=222 acked_packets=8454 refused_sends=0 iteration_gap_max_ms=6.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 888270 iterations, 35 connects, 1666636 payloads verified, 0 failures
+soak send: t=1052 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8513 refused_sends=0 iteration_gap_max_ms=5.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 897213 iterations, 35 connects, 1683646 payloads verified, 0 failures
+soak send: t=1062 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=366 acked_packets=8276 refused_sends=0 iteration_gap_max_ms=59.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 906219 iterations, 36 connects, 1700266 payloads verified, 0 failures
+soak send: t=1072 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=329 acked_packets=8568 refused_sends=0 iteration_gap_max_ms=4.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 915200 iterations, 36 connects, 1717366 payloads verified, 0 failures
+soak send: t=1082 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8469 refused_sends=0 iteration_gap_max_ms=5.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 924103 iterations, 36 connects, 1734309 payloads verified, 0 failures
+soak send: t=1092 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8209 refused_sends=0 iteration_gap_max_ms=60.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 933078 iterations, 37 connects, 1750772 payloads verified, 0 failures
+soak send: t=1102 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=8495 refused_sends=0 iteration_gap_max_ms=5.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 942044 iterations, 37 connects, 1767826 payloads verified, 0 failures
+soak send: t=1112 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=8460 refused_sends=0 iteration_gap_max_ms=5.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 950977 iterations, 37 connects, 1784776 payloads verified, 0 failures
+soak send: t=1122 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8237 refused_sends=0 iteration_gap_max_ms=61.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 959999 iterations, 38 connects, 1801305 payloads verified, 0 failures
+soak send: t=1132 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8561 refused_sends=0 iteration_gap_max_ms=5.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 969008 iterations, 38 connects, 1818408 payloads verified, 0 failures
+soak send: t=1142 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=125 acked_packets=8489 refused_sends=0 iteration_gap_max_ms=4.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 977978 iterations, 38 connects, 1835443 payloads verified, 0 failures
+soak send: t=1152 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=365 acked_packets=8151 refused_sends=0 iteration_gap_max_ms=60.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 986891 iterations, 39 connects, 1851800 payloads verified, 0 failures
+soak send: t=1162 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=176 acked_packets=8468 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 995820 iterations, 39 connects, 1868725 payloads verified, 0 failures
+soak send: t=1172 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=482 acked_packets=8476 refused_sends=0 iteration_gap_max_ms=5.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1004736 iterations, 39 connects, 1885623 payloads verified, 0 failures
+soak send: t=1182 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=212 acked_packets=8103 refused_sends=0 iteration_gap_max_ms=62.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1013628 iterations, 40 connects, 1901956 payloads verified, 0 failures
+soak send: t=1192 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=120 acked_packets=8308 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1022379 iterations, 40 connects, 1918613 payloads verified, 0 failures
+soak send: t=1202 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=145 acked_packets=8399 refused_sends=0 iteration_gap_max_ms=6.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1031199 iterations, 40 connects, 1935419 payloads verified, 0 failures
+soak send: t=1212 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8186 refused_sends=0 iteration_gap_max_ms=62.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1040136 iterations, 41 connects, 1951845 payloads verified, 0 failures
+soak send: t=1222 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=8404 refused_sends=0 iteration_gap_max_ms=6.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1049004 iterations, 41 connects, 1968682 payloads verified, 0 failures
+soak send: t=1233 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8427 refused_sends=0 iteration_gap_max_ms=5.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1057889 iterations, 41 connects, 1985554 payloads verified, 0 failures
+soak send: t=1243 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8151 refused_sends=0 iteration_gap_max_ms=62.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1066805 iterations, 42 connects, 2001958 payloads verified, 0 failures
+soak send: t=1253 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=8463 refused_sends=0 iteration_gap_max_ms=4.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1075710 iterations, 42 connects, 2018898 payloads verified, 0 failures
+soak send: t=1263 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8406 refused_sends=0 iteration_gap_max_ms=6.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1084583 iterations, 42 connects, 2035758 payloads verified, 0 failures
+soak send: t=1273 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8068 refused_sends=0 iteration_gap_max_ms=62.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1093522 iterations, 43 connects, 2051966 payloads verified, 0 failures
+soak send: t=1283 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8474 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1102455 iterations, 43 connects, 2068936 payloads verified, 0 failures
+soak send: t=1293 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=121 acked_packets=8508 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1111381 iterations, 43 connects, 2085939 payloads verified, 0 failures
+soak send: t=1303 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=252 acked_packets=8058 refused_sends=0 iteration_gap_max_ms=62.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1120276 iterations, 44 connects, 2102112 payloads verified, 0 failures
+soak send: t=1313 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=1852 acked_packets=8082 refused_sends=0 iteration_gap_max_ms=544.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1128744 iterations, 44 connects, 2117680 payloads verified, 0 failures
+soak send: t=1323 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8472 refused_sends=0 iteration_gap_max_ms=5.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1137683 iterations, 44 connects, 2134665 payloads verified, 0 failures
+soak send: t=1333 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8251 refused_sends=0 iteration_gap_max_ms=60.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1146725 iterations, 45 connects, 2151269 payloads verified, 0 failures
+soak send: t=1343 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8510 refused_sends=0 iteration_gap_max_ms=4.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1155712 iterations, 45 connects, 2168345 payloads verified, 0 failures
+soak send: t=1353 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8549 refused_sends=0 iteration_gap_max_ms=4.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1164711 iterations, 45 connects, 2185466 payloads verified, 0 failures
+soak send: t=1363 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=341 acked_packets=8148 refused_sends=0 iteration_gap_max_ms=69.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1173692 iterations, 46 connects, 2201792 payloads verified, 0 failures
+soak send: t=1373 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=330 acked_packets=8541 refused_sends=0 iteration_gap_max_ms=5.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1182693 iterations, 46 connects, 2218855 payloads verified, 0 failures
+soak send: t=1383 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=510 acked_packets=8507 refused_sends=0 iteration_gap_max_ms=6.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1191657 iterations, 46 connects, 2235873 payloads verified, 0 failures
+soak send: t=1393 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=140 acked_packets=8197 refused_sends=0 iteration_gap_max_ms=59.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1200652 iterations, 47 connects, 2252333 payloads verified, 0 failures
+soak send: t=1403 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8484 refused_sends=0 iteration_gap_max_ms=5.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1209596 iterations, 47 connects, 2269330 payloads verified, 0 failures
+soak send: t=1413 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8518 refused_sends=0 iteration_gap_max_ms=5.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1218571 iterations, 47 connects, 2286358 payloads verified, 0 failures
+soak send: t=1423 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8254 refused_sends=0 iteration_gap_max_ms=59.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1227598 iterations, 48 connects, 2302937 payloads verified, 0 failures
+soak send: t=1433 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=160 acked_packets=8562 refused_sends=0 iteration_gap_max_ms=5.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1236593 iterations, 48 connects, 2320057 payloads verified, 0 failures
+soak send: t=1443 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=361 acked_packets=8554 refused_sends=0 iteration_gap_max_ms=5.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1245595 iterations, 48 connects, 2337150 payloads verified, 0 failures
+soak send: t=1453 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=178 acked_packets=8262 refused_sends=0 iteration_gap_max_ms=157.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1254637 iterations, 49 connects, 2353717 payloads verified, 0 failures
+soak send: t=1463 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8494 refused_sends=0 iteration_gap_max_ms=5.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1263600 iterations, 49 connects, 2370729 payloads verified, 0 failures
+soak send: t=1473 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=133 acked_packets=8531 refused_sends=0 iteration_gap_max_ms=5.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1272569 iterations, 49 connects, 2387764 payloads verified, 0 failures
+soak send: t=1483 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=493 acked_packets=8209 refused_sends=0 iteration_gap_max_ms=62.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1281548 iterations, 50 connects, 2404253 payloads verified, 0 failures
+soak send: t=1493 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=276 acked_packets=8186 refused_sends=0 iteration_gap_max_ms=250.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1290175 iterations, 50 connects, 2420588 payloads verified, 0 failures
+soak send: t=1503 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=2009 acked_packets=8236 refused_sends=0 iteration_gap_max_ms=30.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1298856 iterations, 50 connects, 2436450 payloads verified, 0 failures
+soak send: t=1513 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=278 acked_packets=8068 refused_sends=0 iteration_gap_max_ms=60.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1307885 iterations, 51 connects, 2452668 payloads verified, 0 failures
+soak send: t=1523 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=225 acked_packets=8591 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1316894 iterations, 51 connects, 2469806 payloads verified, 0 failures
+soak send: t=1533 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=1223 acked_packets=8579 refused_sends=0 iteration_gap_max_ms=19.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1325888 iterations, 51 connects, 2486954 payloads verified, 0 failures
+soak send: t=1543 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=125 acked_packets=8270 refused_sends=0 iteration_gap_max_ms=61.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1334900 iterations, 52 connects, 2503545 payloads verified, 0 failures
+soak send: t=1553 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=8528 refused_sends=0 iteration_gap_max_ms=5.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1343910 iterations, 52 connects, 2520661 payloads verified, 0 failures
+soak send: t=1564 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=782 acked_packets=8310 refused_sends=0 iteration_gap_max_ms=152.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1352674 iterations, 52 connects, 2537322 payloads verified, 0 failures
+soak send: t=1574 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=442 acked_packets=8124 refused_sends=0 iteration_gap_max_ms=311.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1361660 iterations, 53 connects, 2553635 payloads verified, 0 failures
+soak send: t=1584 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=1231 acked_packets=8544 refused_sends=0 iteration_gap_max_ms=5.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1370691 iterations, 53 connects, 2570788 payloads verified, 0 failures
+soak send: t=1594 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=125 acked_packets=8529 refused_sends=0 iteration_gap_max_ms=4.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1379656 iterations, 53 connects, 2587863 payloads verified, 0 failures
+soak send: t=1604 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=122 acked_packets=8171 refused_sends=0 iteration_gap_max_ms=64.1 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1388599 iterations, 54 connects, 2604250 payloads verified, 0 failures
+soak send: t=1614 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=212 acked_packets=8548 refused_sends=0 iteration_gap_max_ms=5.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1397592 iterations, 54 connects, 2621351 payloads verified, 0 failures
+soak send: t=1624 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=453 acked_packets=8581 refused_sends=0 iteration_gap_max_ms=4.4 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1406589 iterations, 54 connects, 2638497 payloads verified, 0 failures
+soak send: t=1634 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8245 refused_sends=0 iteration_gap_max_ms=62.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1415587 iterations, 55 connects, 2655043 payloads verified, 0 failures
+soak send: t=1644 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8534 refused_sends=0 iteration_gap_max_ms=4.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1424512 iterations, 55 connects, 2672054 payloads verified, 0 failures
+soak send: t=1654 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8469 refused_sends=0 iteration_gap_max_ms=6.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1433409 iterations, 55 connects, 2688944 payloads verified, 0 failures
+soak send: t=1664 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=8224 refused_sends=0 iteration_gap_max_ms=60.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1442386 iterations, 56 connects, 2705461 payloads verified, 0 failures
+soak send: t=1674 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=2205 acked_packets=8469 refused_sends=0 iteration_gap_max_ms=36.5 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1451329 iterations, 56 connects, 2722109 payloads verified, 0 failures
+soak send: t=1684 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=230 acked_packets=8428 refused_sends=0 iteration_gap_max_ms=39.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1460324 iterations, 56 connects, 2739120 payloads verified, 0 failures
+soak send: t=1694 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=337 acked_packets=7864 refused_sends=0 iteration_gap_max_ms=81.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1468890 iterations, 57 connects, 2754877 payloads verified, 0 failures
+soak send: t=1704 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8367 refused_sends=0 iteration_gap_max_ms=6.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1477721 iterations, 57 connects, 2771653 payloads verified, 0 failures
+soak send: t=1714 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=125 acked_packets=8461 refused_sends=0 iteration_gap_max_ms=5.9 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1486645 iterations, 57 connects, 2788577 payloads verified, 0 failures
+soak send: t=1724 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=125 acked_packets=8081 refused_sends=0 iteration_gap_max_ms=63.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1495631 iterations, 58 connects, 2804816 payloads verified, 0 failures
+soak send: t=1734 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8527 refused_sends=0 iteration_gap_max_ms=5.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1504621 iterations, 58 connects, 2821903 payloads verified, 0 failures
+soak send: t=1744 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=123 acked_packets=8521 refused_sends=0 iteration_gap_max_ms=6.6 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1513569 iterations, 58 connects, 2838912 payloads verified, 0 failures
+soak send: t=1754 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=143 acked_packets=8105 refused_sends=0 iteration_gap_max_ms=59.8 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1522585 iterations, 59 connects, 2855160 payloads verified, 0 failures
+soak send: t=1764 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=124 acked_packets=8327 refused_sends=0 iteration_gap_max_ms=7.0 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1531340 iterations, 59 connects, 2871818 payloads verified, 0 failures
+soak send: t=1774 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=126 acked_packets=8445 refused_sends=0 iteration_gap_max_ms=6.3 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1540212 iterations, 59 connects, 2888668 payloads verified, 0 failures
+soak send: t=1784 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=555 acked_packets=7244 refused_sends=0 iteration_gap_max_ms=213.2 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1548359 iterations, 60 connects, 2903288 payloads verified, 0 failures
+soak send: t=1794 staged_proxy_max=1 deferred_run_max=0 deferred_iterations=0 unacked_span_max=1430 acked_packets=7589 refused_sends=0 iteration_gap_max_ms=109.7 client_lifetime_send_deferred=0 client_lifetime_send_ring_full=0 library_bytes=239820502
+soak: 1557194 iterations, 60 connects, 2919277 payloads verified, 0 failures
+soak: REFUSAL on a clean run at server: SEND_RING_FULL = 1560
+soak summary: verified 2929182
+soak summary: server_transport_io gso
+soak summary: client_transport_io portable

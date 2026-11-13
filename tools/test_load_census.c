@@ -1,11 +1,10 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 
 /* The load harness resource census (tests/load/load_census.h) finds the thread and the
-   handle a cycle leaves behind, and nothing when it leaves nothing. Build and
-   run beside the harness, from the repository root:
-
-       cc -std=c11 -I. tools/test_load_census.c -o test_load_census -lpthread && ./test_load_census
-       cl /W4 /WX /I. tools\test_load_census.c && test_load_census.exe
+   handle a cycle leaves behind, and nothing when it leaves nothing. CMake builds it
+   as bin/test_load_census beside the harness (ROCKETNET_BUILD_TOOLS); the ci.yml
+   functional leg runs it from the repository root on Linux and macOS. It opens
+   files and starts a thread, so it is a functional test, not a unit test.
 */
 
 #if !defined( _WIN32 )
@@ -16,9 +15,21 @@
 #include "tests/load/load_census.h"
 #include "tests/portable_crt.h"
 
-#include <assert.h>
+
 #include <stdio.h>
 #include <stdlib.h>
+
+// a check that stays in every build (a Release build compiles assert out, and
+// several checks below take the census inside the check)
+#define CENSUS_CHECK( condition ) \
+    do \
+    { \
+        if ( !( condition ) ) \
+        { \
+            fprintf( stderr, "test_load_census: check failed: %s (line %d)\n", #condition, __LINE__ ); \
+            exit( 1 ); \
+        } \
+    } while ( 0 )
 
 #if defined( _WIN32 )
 static HANDLE test_release;
@@ -46,8 +57,8 @@ static struct load_census_survivors_t test_survivors( void )
 {
     struct load_census_survivors_t survivors;
 
-    assert( load_census_take( &test_after ) );
-    assert( load_census_survivors( NULL, NULL, 0, &test_before, &test_after, &survivors ) );
+    CENSUS_CHECK( load_census_take( &test_after ) );
+    CENSUS_CHECK( load_census_survivors( NULL, NULL, 0, &test_before, &test_after, &survivors ) );
     return survivors;
 }
 
@@ -55,66 +66,66 @@ int main( void )
 {
 #if defined( _WIN32 )
     test_release = CreateEventA( NULL, TRUE, FALSE, NULL );
-    assert( test_release );
+    CENSUS_CHECK( test_release );
 #endif // #if defined( _WIN32 )
 
     // nothing taken: nothing survives
-    assert( load_census_take( &test_before ) );
+    CENSUS_CHECK( load_census_take( &test_before ) );
 
     struct load_census_survivors_t survivors = test_survivors();
-    assert( survivors.threads == 0 && survivors.handles == 0 );
+    CENSUS_CHECK( survivors.threads == 0 && survivors.handles == 0 );
 
     // a file left open survives; closed, it does not
     FILE * file = rocketnet_test_fopen( "test_load_census.tmp", "w" );
-    assert( file );
+    CENSUS_CHECK( file );
     survivors = test_survivors();
-    assert( survivors.handles == 1 && survivors.threads == 0 );
+    CENSUS_CHECK( survivors.handles == 1 && survivors.threads == 0 );
     fclose( file );
     survivors = test_survivors();
-    assert( survivors.handles == 0 );
+    CENSUS_CHECK( survivors.handles == 0 );
 
 #if !defined( _WIN32 )
     /* a closed descriptor's number reused by another file is a different
        object: identity, not number, decides (posix census only) */
     FILE * first = rocketnet_test_fopen( "test_load_census.tmp", "w" );
-    assert( first );
-    assert( load_census_take( &test_before ) );
+    CENSUS_CHECK( first );
+    CENSUS_CHECK( load_census_take( &test_before ) );
 
     const int number = fileno( first );
 
     fclose( first );
 
     FILE * second = rocketnet_test_fopen( "test_load_census_other.tmp", "w" );
-    assert( second && fileno( second ) == number );
+    CENSUS_CHECK( second && fileno( second ) == number );
     survivors = test_survivors();
-    assert( survivors.handles == 1 );
+    CENSUS_CHECK( survivors.handles == 1 );
     fclose( second );
     remove( "test_load_census_other.tmp" );
-    assert( load_census_take( &test_before ) );
+    CENSUS_CHECK( load_census_take( &test_before ) );
 #endif // #if !defined( _WIN32 )
 
 #if !defined( _WIN32 )
     /* the random device is init-scope state: a pair that ends before term
        reports it without counting it; the pair through term counts it */
     FILE * device = rocketnet_test_fopen( "/dev/urandom", "r" );
-    assert( device );
-    assert( load_census_take( &test_after ) );
-    assert( load_census_survivors( NULL, NULL, 1, &test_before, &test_after, &survivors ) );
-    assert( survivors.handles == 0 && survivors.init_scope_handles == 1 );
-    assert( load_census_survivors( NULL, NULL, 0, &test_before, &test_after, &survivors ) );
-    assert( survivors.handles == 1 );
+    CENSUS_CHECK( device );
+    CENSUS_CHECK( load_census_take( &test_after ) );
+    CENSUS_CHECK( load_census_survivors( NULL, NULL, 1, &test_before, &test_after, &survivors ) );
+    CENSUS_CHECK( survivors.handles == 0 && survivors.init_scope_handles == 1 );
+    CENSUS_CHECK( load_census_survivors( NULL, NULL, 0, &test_before, &test_after, &survivors ) );
+    CENSUS_CHECK( survivors.handles == 1 );
     fclose( device );
-    assert( load_census_take( &test_before ) );
+    CENSUS_CHECK( load_census_take( &test_before ) );
 #endif // #if !defined( _WIN32 )
 
     /* a thread left running survives, a joined one does not: this process
        created it, so it is never an operating-system pool worker */
 #if defined( _WIN32 )
     HANDLE thread = CreateThread( NULL, 0, test_thread_main, NULL, 0, NULL );
-    assert( thread );
+    CENSUS_CHECK( thread );
     survivors = test_survivors();
-    assert( survivors.threads == 1 && survivors.os_pool_threads == 0 );
-    assert( survivors.handles >= 1 );
+    CENSUS_CHECK( survivors.threads == 1 && survivors.os_pool_threads == 0 );
+    CENSUS_CHECK( survivors.handles >= 1 );
     SetEvent( test_release );
     WaitForSingleObject( thread, INFINITE );
     CloseHandle( thread );
@@ -122,14 +133,14 @@ int main( void )
     pthread_mutex_lock( &test_mutex );
 
     pthread_t thread;
-    assert( pthread_create( &thread, NULL, test_thread_main, NULL ) == 0 );
+    CENSUS_CHECK( pthread_create( &thread, NULL, test_thread_main, NULL ) == 0 );
     survivors = test_survivors();
-    assert( survivors.threads == 1 && survivors.os_pool_threads == 0 );
+    CENSUS_CHECK( survivors.threads == 1 && survivors.os_pool_threads == 0 );
     pthread_mutex_unlock( &test_mutex );
-    assert( pthread_join( thread, NULL ) == 0 );
+    CENSUS_CHECK( pthread_join( thread, NULL ) == 0 );
 #endif // #if defined( _WIN32 )
     survivors = test_survivors();
-    assert( survivors.threads == 0 && survivors.handles == 0 );
+    CENSUS_CHECK( survivors.threads == 0 && survivors.handles == 0 );
 
     remove( "test_load_census.tmp" );
     printf( "test_load_census\n" );

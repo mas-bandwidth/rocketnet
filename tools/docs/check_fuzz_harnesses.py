@@ -2,9 +2,8 @@
 """Check that every fuzz harness and corpus is named by the lists that run it.
 
 tests/fuzz/Makefile's TARGETS is the owner of the harnesses (each builds on
-every host; LINUX_ONLY_TARGETS names those that are a no-op off Linux);
-rocketnet_fuzz_differential (it needs the pinned netcode checkout) is fuzzed
-by fuzz-nightly.yml only. The check fails on:
+every host; LINUX_ONLY_TARGETS names those that are a no-op off Linux).
+The check fails on:
 
   - a tracked tests/fuzz/rocketnet_fuzz*.cpp harness source, or a tracked
     tests/fuzz/corpus* directory, whose harness no list names (a corpus that
@@ -17,12 +16,10 @@ by fuzz-nightly.yml only. The check fails on:
     source reads ROCKETNET_FUZZ_SEED_DIR (a seed generator);
   - a fuzz-smoke job with no harnesses= replay list, or one that replays a
     libFuzzer binary or runs a time-boxed mutation pass;
-  - fuzz-nightly.yml's matrices: the Linux job must fuzz TARGETS and the
-    differential; the NDEBUG job TARGETS and the differential; the
-    macOS and Windows jobs TARGETS less LINUX_ONLY_TARGETS (no-ops off Linux,
-    each guarded to Linux in its source), the MSan job TARGETS;
-    tools/fuzz_ndebug.sh's ALL_TARGETS
-    TARGETS and the differential;
+  - fuzz-nightly.yml's matrices: the Linux, NDEBUG and MSan jobs must fuzz
+    TARGETS; the macOS and Windows jobs TARGETS less LINUX_ONLY_TARGETS
+    (no-ops off Linux, each guarded to Linux in its source);
+    tools/fuzz_ndebug.sh's ALL_TARGETS must be TARGETS;
   - a count in the guides ("the fourteen harnesses") other than |TARGETS|.
 
   python3 tools/docs/check_fuzz_harnesses.py
@@ -41,7 +38,6 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-NIGHTLY_ONLY = {"rocketnet_fuzz_differential"}
 NUMBERS = {
     "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
     "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
@@ -114,7 +110,7 @@ def check(root):
     if not targets:
         report.fail("tests/fuzz/Makefile: no TARGETS")
         return report
-    known = targets | NIGHTLY_ONLY
+    known = targets
 
     # the Linux-only TARGETS: a subset of TARGETS, each source guarded to Linux
     linux_only = makefile_list(root, "LINUX_ONLY_TARGETS")
@@ -135,7 +131,7 @@ def check(root):
         report.fail("tests/fuzz: git lists no harness source or no corpus directory")
     for name in sorted(sources):
         if name not in known:
-            report.fail(f"tests/fuzz/{name}.cpp: a harness source no list names (TARGETS, the differential)")
+            report.fail(f"tests/fuzz/{name}.cpp: a harness source no list names (TARGETS)")
     for corpus in corpora:
         harness = "rocketnet_fuzz" + corpus[len("corpus"):]
         if harness not in known:
@@ -192,7 +188,7 @@ def check(root):
         report.same("CMakeLists.txt fuzz_replay_ targets", names, targets)
 
     nightly = read(root, ".github/workflows/fuzz-nightly.yml")
-    for job, want in (("fuzz", targets | NIGHTLY_ONLY),("fuzz-ndebug", targets | NIGHTLY_ONLY),
+    for job, want in (("fuzz", targets), ("fuzz-ndebug", targets),
                       ("fuzz-macos", targets - linux_only), ("fuzz-windows", targets - linux_only),
                       ("fuzz-msan", targets)):
         block = job_block(nightly, job)
@@ -206,7 +202,7 @@ def check(root):
     if array is None:
         report.fail("tools/fuzz_ndebug.sh: no ALL_TARGETS=( ... )")
     else:
-        report.same("tools/fuzz_ndebug.sh ALL_TARGETS", HARNESS.findall(array.group(1)), targets | NIGHTLY_ONLY)
+        report.same("tools/fuzz_ndebug.sh ALL_TARGETS", HARNESS.findall(array.group(1)), targets)
 
     for guide in ("docs/BUILD-REFERENCE.md", "docs/MACOS.md"):
         text = read(root, guide)
@@ -303,7 +299,7 @@ def self_test():
               "    rocketnet_fuzz_endpoint\n", "")
         plant("macOS loop loses a harness", "docs/MACOS.md",
               "rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter; do", "rocketnet_fuzz_endpoint; do")
-        plant("guide count wrong", "docs/BUILD-REFERENCE.md", "the fifteen harnesses", "the fourteen harnesses")
+        plant("guide count wrong", "docs/BUILD-REFERENCE.md", "the sixteen harnesses", "the fifteen harnesses")
         plant("the XDP filter fuzzed on macOS, where it is a no-op", "tests/fuzz/Makefile",
               "                     rocketnet_fuzz_gateway_netlink \\\n                     rocketnet_fuzz_xdp_filter",
               "                     rocketnet_fuzz_gateway_netlink")
