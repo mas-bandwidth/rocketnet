@@ -10,6 +10,7 @@
 #include "../../sdk/rocketnet.h"
 #include "../../sdk/rocketnet_base64.h"
 #include "../../sdk/rocketnet_connect_token.h"
+#include "../../sdk/rocketnet_counters.h"
 #include "../../sdk/rocketnet_layers.h"
 
 #include <stdio.h>
