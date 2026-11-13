@@ -768,4 +768,21 @@
    :title "The Linux pin helpers take the online cpu count as a dense range of cpu ids"
    :text "rocketnet_gso_pin_check and rocketnet_gso_pin_fallback (sdk/rocketnet_gso_pin.h) treat sysconf(_SC_NPROCESSORS_ONLN) as the ids 0 .. online - 1, and gso, io_uring, portable and the uring helpers inherit it. With cpus taken offline (hotplug) the ids are sparse: a pin to an online cpu whose id is at or past the count is refused as offline, and the fallback can name offline ids and leave out online ones, so a confinement that could hold fails. The placement takes the online and allowed cpus as a mask (sched_getaffinity, /sys/devices/system/cpu/online) instead of a count, with unit cases on sparse layouts through the fake affinity calls. The functional placement cases read the allowed mask (rocketnet_test_placement_host) but take ids as dense the same way, and move with the helpers."
    :date "2026-11-13" :origin "Linux thread placement fix (v1.1.x point release), first review (static), advisory: inherited, not changed in a point release")
+
+   :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
+
+  (item "in-place-start-per-queue-capacity" :group "review-v1-2" :area "sdk"
+   :title "The message server's in-place start checks still read the fewest room of any queue"
+   :text "The send pass, the sweep and the stop now judge capacity by the destination's own send queue (rocketnet_server_transport_send_capacity_to). The in-place start checks in sdk/rocketnet_message_server.cpp (about 1543 and 1597) still read rocketnet_server_transport_send_capacity_available, the fewest room of any queue, so with one queue full a send in place to a client on another queue is refused or deferred to the pass. A start that falls back to the queue is accepted work and is not lost: the pass serves it. A writer's start that falls back with no capacity (not held behind the queue, not on a buffered transport) is still refused visibly: its finish returns 0 and the message is cancelled (about 1661 and 1816, MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY), even when only an unrelated queue has no room. That refusal is what this entry removes. Move them to the per-destination answer, outside the send-capacity fix's lines."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix")
+
+  (item "own-frames-smallest-queue-reserve" :group "review-v1-2" :area "sdk"
+   :title "Own frames are bounded by the smallest reserve of any send queue"
+   :text "The own frames handed out when the budgets open (fill_own_frames_left) are server-wide and capped by the smallest queue reserve (RNSendReserveCalls Open: OwnCap of the least reserve). With uneven queues, a queue whose reserve is cut by a small room seen caps the own frames of clients on every queue. Make own frames per queue, with the model's Open changed alongside."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix")
+
+  (item "send-capacity-any-queue-per-queue" :group "review-v1-2" :area "sdk"
+   :title "The any-queue capacity can be above 0 while no queue has both room and budget"
+   :text "rocketnet_server_transport_send_capacity_to( -1 ) answers the room summed over the queues, within the whole budget left. With room on one queue and budget only on another, it is above 0 while no start can be granted, so the send pass holds every connection to the end instead of cutting: bounded (one walk, two capacity reads a connection), never a hang. Answer it per queue (the sum of each queue's room within its own budget, and the own frames), with RNSendReserveCalls CapacityAll and RNServerSendFair's cut changed alongside."
+   :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix, cold read")
  ))

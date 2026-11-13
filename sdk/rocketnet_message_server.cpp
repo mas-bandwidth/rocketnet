@@ -2174,6 +2174,29 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
     }
 }
 
+// proofs/tla/RNServerSendFair.tla, the queues (Hold, Cut): 1 when a frame to
+// connection i may start; 0 when no send queue takes one, which ends the
+// pass; -1 when i's own queue is full while another queue has room, so i is
+// held and the pass goes on. The second question is asked only when the
+// first says no. A link without send_capacity_to has one capacity for every
+// connection.
+static int rn_message_send_admit( const struct rn_message_object_t * object, int i )
+{
+    if ( object->link.send_capacity_to )
+    {
+        if ( object->link.send_capacity_to( object->link.transport, i ) > 0 )
+        {
+            return 1;
+        }
+        return object->link.send_capacity_to( object->link.transport, -1 ) > 0 ? -1 : 0;
+    }
+    if ( object->link.send_capacity_available && object->link.send_capacity_available( object->link.transport ) <= 0 )
+    {
+        return 0;
+    }
+    return 1;
+}
+
 // proofs/tla/RNSendRotation.tla BeginFlush and Visit: the first round over every connection, later rounds over the last round's writers, the capacity test, the cursor at i + 1.
 // proofs/tla/RNServerSendFair.tla BeginFlush, FirstVisit and LaterVisit: the same rounds at this loop's index arithmetic (send_writers, count, kept, previous, the stored cursors).
 // proofs/tla/RNWriterFinish.tla SendPackets: the main thread's walk finds no packet a writer left open, and takes what the writers queued or held as far as the capacity carries.
@@ -2220,12 +2243,29 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
     // visited, at a capacity cut to the cursor held before the cut
     // connection's visit, and at the end past the last connected connection.
 
+    //
+    // With several send queues the capacity tested is the connection's own
+    // queue's (rn_message_send_admit): a connection whose queue is full while
+    // another queue has room is held, its sends left for the next update,
+    // and the pass goes on to the rest; only no room in any queue cuts the
+    // pass. The cursor then names the first connection held after the pass's
+    // first frame, as the walk would hold it at a cut there, at a cut and at
+    // the end alike: every connection before it in the first round was
+    // visited, and every one after it either written or held too, so it is
+    // the first left unserved this update, and is served first next update.
+    // One full queue delays no connection of another queue and starves none
+    // of its own. A connection held before any frame was
+    // written does not hold the cursor: a queue full for many updates would
+    // pin the rotation there, and the clients of the other queues would be
+    // served in the same order every update.
+
     const int num_connections = object->num_connections;
     const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
     int32_t one_connection[2] = { 0, 0 };
     int32_t * writers = object->send_writers ? object->send_writers : one_connection;
     int count = 0;
     int previous = -1;                                          // the connected connection visited last in the first round
+    int held = -1;                                              // the cursor before the first connection held for its queue, or -1
 
     for ( int offset = 0; offset < num_connections; offset++ )
     {
@@ -2242,10 +2282,24 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
         {
             continue;
         }
-        if ( object->link.send_capacity_available &&
-             object->link.send_capacity_available( object->link.transport ) <= 0 )
+        const int admit = rn_message_send_admit( object, i );
+        if ( admit == 0 )
         {
+            if ( held >= 0 )
+            {
+                object->send_next_connection = held;
+            }
             goto flush;
+        }
+        if ( admit < 0 )
+        {
+            if ( held < 0 && count > 0 )
+            {
+                held = object->send_next_connection % num_connections;
+            }
+            object->send_next_connection = ( i + 1 ) % num_connections;
+            previous = i;
+            continue;
         }
 
         if ( rn_message_connection_write( object, i ) )
@@ -2272,11 +2326,18 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
             {
                 continue;
             }
-            if ( object->link.send_capacity_available &&
-                 object->link.send_capacity_available( object->link.transport ) <= 0 )
+            const int admit = rn_message_send_admit( object, i );
+            if ( admit == 0 )
             {
-                object->send_next_connection = cursor;
+                object->send_next_connection = held >= 0 ? held : cursor;
                 goto flush;
+            }
+            if ( admit < 0 )
+            {
+                // served once this pass already: its queue is full now, so
+                // its pass ends here and the cursor stays where it is
+                object->send_next_connection = ( i + 1 ) % num_connections;
+                continue;
             }
 
             if ( rn_message_connection_write( object, i ) )
@@ -2295,6 +2356,10 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
     if ( previous >= 0 )
     {
         object->send_next_connection = ( previous + 1 ) % num_connections;
+    }
+    if ( held >= 0 )
+    {
+        object->send_next_connection = held;
     }
 flush:
     object->link.send_packets( object->link.transport );
@@ -2619,6 +2684,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->abort_packet = RN_LINK_FORWARD( rocketnet_server_transport_abort_packet )::call;
     link->send_packets = RN_LINK_FORWARD( rocketnet_server_transport_send_packets )::call;
     link->send_capacity_available = RN_LINK_FORWARD( rocketnet_server_transport_send_capacity_available )::call;
+    link->send_capacity_to = RN_LINK_FORWARD( rocketnet_server_transport_send_capacity_to )::call;
     link->send_connected_count = RN_LINK_FORWARD( rocketnet_server_transport_num_connected_clients )::call;
     link->send_buffered = RN_LINK_FORWARD( rocketnet_server_transport_send_buffered )::call_const;
     // P9a: the transport's id of the connection in the slot, 0 while it is

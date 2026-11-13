@@ -603,6 +603,8 @@ void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transp
 /** @brief The budget and the protocol reserve main's last opening gave a send queue, for a unit test (RNSendReserve). */
 uint64_t rocketnet_server_transport_fill_budget_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
 uint64_t rocketnet_server_transport_send_reserve_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+/** @brief The largest room a send queue has shown at an opening, for the trace check (RNSendReserveCalls seen). */
+uint64_t rocketnet_server_transport_send_room_seen_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
 /** @brief Marks a client's keep-alive acknowledged or not, so a unit test reaches the own-frame rule of the send reserve (RNSendReserve). */
 void rocketnet_server_transport_set_keep_alive_acked_for_test( struct rocketnet_server_transport_t * server_transport, int client_index, int acked );
 /** @brief The own frames (RNSendReserve) not yet taken since the budget opened, for a test. */
@@ -1566,6 +1568,14 @@ int rocketnet_server_transport_send_capacity( const struct rocketnet_server_tran
  * transport does not report it). The send staging is server-wide.
  */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
+/** @brief Returns the frames the next start to one client may still take:
+ * with several send queues, its own queue's room and budget, so a full queue
+ * answers 0 for its own clients only; a client_index below 0 asks whether any
+ * queue may still take one (every queue's room summed). With one queue, or a
+ * buffered transport, it is rocketnet_server_transport_send_capacity_available
+ * for a client, and 0 below 0 (no other queue to take a frame).
+ */
+int rocketnet_server_transport_send_capacity_to( const struct rocketnet_server_transport_t * server_transport, int client_index );
 
 // -----------------------------------------
 //                           messages
