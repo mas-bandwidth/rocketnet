@@ -123,9 +123,11 @@ handwritten in the walk: `rocketnet_msgx_receive_stop` and the claim's refusal
 are the library's, but main's tail count and the exit's count of the worker
 and ready banks are the walk's copies of what `rocketnet_server_msgx_stop` and
 `rocketnet_server_msgx_receive_worker` do, so the trace binds the flag and the
-refused claim to the model, not those two counts in the Apple transport
-(`test_rocketnet_msgx_receive_fill_stop` and the functional cases check the
-counts there). The plant
+refused claim to the model, not those two counts in the Apple transport.
+`test_rocketnet_msgx_receive_fill_stop` runs the same pure header with the
+same hand copy of the exit count, so it does not check them either; no test
+pins the transport's own stop counts by value (the Mac functional legs only
+run the transport's stop). The plant
 (`ROCKETNET_MSGX_RECEIVE_FILL_PLANT`, `rocketnet_msgx_receive_want` in
 `sdk/rocketnet_msgx_receive_fill.cpp` asking for a whole batch) must be
 rejected at the first read that takes past the room. The reach predicates
