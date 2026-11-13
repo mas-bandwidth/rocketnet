@@ -3075,15 +3075,22 @@ packet always fits an idle bucket and a stalled update releases at most 100 ms
 of budget at once. An update at or before the last refill time MUST NOT add
 tokens and MUST NOT move the refill time backwards.
 
-Within one update the sender MUST offer its items in this order: retransmits
+Within one update the sender MUST fill its packets in this order: retransmits
 and ordered progress first, then new reliable records, then unreliable
-records. A reliable item that does not fit MUST wait for a later update and
-MUST NOT be dropped. Once a reliable item waits, every later item in that
-update MUST NOT spend the bucket. An unreliable item that does not fit MUST be
-dropped and counted as MESSAGE_UNRELIABLE_OVER_BUDGET. An item offered after a
-lower-priority class in the same update MUST be counted as an order refusal; a
-reliable item among them waits rather than spending bytes promised to the
-earlier class.
+records. A packet MUST NOT carry both reliable and unreliable records. The
+budget MUST admit or refuse each packet whole, at the class of its first
+record. Before the packet is sealed, the sender MUST charge the most wire
+bytes its payload can take with the largest acknowledgement block that fits
+beside it; once the packet is sealed, the sender MUST return the difference
+between that charge and the sealed packet's wire bytes to the bucket, up to
+its depth. A reliable packet that does not fit MUST wait whole for a later
+update, and none of its records may be dropped. When an unreliable packet
+does not fit, it and every unreliable record still queued in that update
+MUST be dropped, each message counted as MESSAGE_UNRELIABLE_OVER_BUDGET.
+Once a packet does not fit, a later packet in that update MUST NOT spend
+the bucket. A packet offered after a lower-priority class in the same update
+MUST be counted as an order refusal; a reliable one waits rather than
+spending bytes promised to the earlier class.
 
 The sender MUST decide that the budget refuses a packet before it takes a
 transport frame for the packet, so a refused packet takes no frame of the
@@ -3119,13 +3126,13 @@ depth. The budget change is visible when the setter returns success.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
-| Open | a reliable item is offered | it fits and no reliable item waits | spend its bytes | Open |
-| Open | a reliable item is offered | it does not fit, or a reliable item waits | keep it for a later update | Waiting |
-| Open | an unreliable item is offered | it fits and no reliable item waits | spend its bytes | Open |
-| Open | an unreliable item is offered | it does not fit, or a reliable item waits | drop it and count it | Open |
-| Waiting | any item is offered | | an unreliable item is dropped and counted; a reliable item waits | Waiting |
+| Open | a reliable packet is offered | it fits and no reliable packet waits | spend its bytes | Open |
+| Open | a reliable packet is offered | it does not fit, or a reliable packet waits | keep it whole for a later update | Waiting |
+| Open | an unreliable packet is offered | it fits and no reliable packet waits | spend its bytes | Open |
+| Open | an unreliable packet is offered | it does not fit, or a reliable packet waits | drop it and every unreliable record still queued in the update, and count each message | Open |
+| Waiting | any packet is offered | | an unreliable packet is dropped with every unreliable record still queued in the update, each message counted; a reliable packet waits | Waiting |
 | Waiting | the update ends | | | Open |
-| Any | an item is offered after a lower-priority class | | count the order refusal; a reliable item waits | Waiting |
+| Any | a packet is offered after a lower-priority class | | count the order refusal; a reliable packet waits | Waiting |
 
 <a id="m9.5"></a>
 ### m9.5. Vectors
@@ -3144,21 +3151,21 @@ last four are the long path's resend counts.
 ```vector m9.budget-trace
 clock: 1000.0
 rate: the client default
-trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 2147483647 (no send budget), then one 13000-byte unreliable sequenced item is offered, promoted to reliable sequenced and its first packet written
+trace: a reliable 1452-byte packet, seven unreliable 1452-byte packets, then one more unreliable packet; no time passes, a reliable 1452-byte packet waits and an unreliable 100-byte packet is dropped; 100 ms of refill, a reliable 1452-byte packet; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte packet; the budget is set to 2147483647 (no send budget), then one 13000-byte unreliable sequenced message is offered, promoted to reliable sequenced and its first packet written
 00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
 00 01 01 01
 ```
 
 The first fourteen bytes are the decision for each offer in order: SEND,
-WAIT, DROP and REFUSED are 0, 1, 2 and 3; the setter's success is 1. They are
-the reliable item, the seven unreliable items that fit, the unreliable item
-that is dropped, the reliable item that waits, the unreliable item behind it
-that is dropped, the refill's reliable item, the setter and the new-rate
-reliable item. The last six bytes are, in order, the setter to 2147483647 returning
+WAIT, DROP and REFUSED are 0, 1, 2 and 3; the setter's success is 1. They are the reliable packet, the seven unreliable packets that fit, the
+unreliable packet that is dropped, the reliable packet that waits, the
+unreliable packet behind it that is dropped, the refill's reliable packet,
+the setter and the new-rate reliable packet. Each wire size in the trace is
+the charge for one whole packet. The last six bytes are, in order, the setter to 2147483647 returning
 success, a packet request of more than zero, the first packet written larger
-than one maximum packet (0: the promoted item is a reliable block, sent one
-maximum packet at a time), the unreliable queue empty, no bytes charged to the
-budget and no unreliable item dropped.
+than one maximum packet (0: the promoted message is a reliable block, sent one maximum packet at a
+time), the unreliable queue empty, no bytes charged to the budget and no unreliable
+message dropped.
 
 <a id="m10"></a>
 ## m10. Channels and priorities
