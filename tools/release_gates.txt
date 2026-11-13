@@ -33,7 +33,8 @@
 #           pull_request  the pull request's head commit (tools/land.py)
 #           nightly       any run whose head is the commit (schedule or dispatch);
 #                         minor-only: from v1.1.8 a point release (vX.Y.Z, Z
-#                         not 0) skips these rows, printed as MINOR ONLY, and a
+#                         not 0, no pre-release suffix) skips these rows, printed
+#                         as MINOR ONLY; a pre-release or a
 #                         minor or major release (Z = 0) is judged by them
 #                         (owner, 2026-11-13: point releases have fast tests only)
 #           tag           the push of the release tag

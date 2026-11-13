@@ -251,6 +251,12 @@ class Release(unittest.TestCase):
         code, text = run_release(api, version="v1.1.8")
         self.assertEqual(code, 1, text)
 
+    def test_which_versions_are_point_releases(self):
+        for version in ("v1.1.8", "v1.1.9", "v2.0.1"):
+            self.assertTrue(rg.is_point_release(version), version)
+        for version in ("v1.1.7", "v1.2.0", "v2.0.0", "v1.1.9-rc1", "v2.0.1-preview-1", "v1.2.0-preview-1"):
+            self.assertFalse(rg.is_point_release(version), version)
+
     def test_minor_release_is_gated_by_the_nightly_tier(self):
         api = green_release(FakeApi(), version="v1.2.0")
         run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))

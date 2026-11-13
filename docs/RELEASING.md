@@ -130,9 +130,10 @@ In outline, from v1.1.8:
 
 Which tiers gate which release (the owner, 2026-11-13: "I want each point
 release to have fast tests only"): from v1.1.8 a point release (vX.Y.Z with
-Z not 0) is gated by the per-commit tier and the tag push only. A minor or
-major release (Z is 0) is gated by every tier. The rows whose events are
-`nightly` are the minor-only rows: both `tools/release.py` and the second
+Z not 0 and no pre-release suffix) is gated by the per-commit tier and the
+tag push only. A minor or major release (Z is 0), and every pre-release, is
+gated by every tier. The rows whose events are `nightly` are the minor-only
+rows: both `tools/release.py` and the second
 check on the tag skip them for a point release and print each as `MINOR ONLY`.
 The nightly tier still runs on `main`'s schedule; none of it is deleted or
 muted, and a red in it is fixed in the next point release.

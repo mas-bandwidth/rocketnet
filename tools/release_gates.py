@@ -72,8 +72,10 @@ POINT_RELEASE_RULE_FROM = "v1.1.8"
 
 
 def is_point_release(version):
-    """True for vX.Y.Z with Z > 0, from POINT_RELEASE_RULE_FROM on."""
-    return version_key(version)[2] > 0 and version_key(version) >= version_key(POINT_RELEASE_RULE_FROM)
+    """True for vX.Y.Z with Z > 0 and no pre-release suffix, from
+    POINT_RELEASE_RULE_FROM on; a pre-release is judged by every tier."""
+    key = version_key(version)
+    return key[2] > 0 and key[3] == 1 and key >= version_key(POINT_RELEASE_RULE_FROM)
 
 
 # ---------------------------------------------------------------- the list
