@@ -158,9 +158,90 @@ def stub_worker(status):
         def test(self, timeout):
             return 0, 1.0, ""
 
+        def record_unmutated(self):
+            pass
+
         def mutant(self, mutant, timeout):
             mutant["status"] = status
     return Stub
+
+
+class WorkerTreeTests(unittest.TestCase):
+    """The worker's tree and its build verdicts, on fixture trees: no build."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        self.source, self.dest = base / "source", base / "dest"
+        for root in (self.source, self.dest):
+            (root / "sdk").mkdir(parents=True)
+            (root / "tests").mkdir()
+        (self.dest / "build").mkdir()
+        (self.dest / "build" / "CMakeCache.txt").write_text("reused\n")
+        self.saved_root = run_mutants.ROOT
+
+    def tearDown(self):
+        run_mutants.ROOT = self.saved_root
+        self.dir.cleanup()
+
+    def test_a_reused_tree_gets_back_every_file_that_differs(self):
+        # a run killed mid-mutant leaves its mutant in a file the next run does not target
+        (self.source / "sdk" / "a.cpp").write_text("int a = 1 + 2;\n")
+        (self.dest / "sdk" / "a.cpp").write_text("int a = 1 - 2;\n")
+        (self.source / "tests" / "t.cpp").write_text("same\n")
+        (self.dest / "tests" / "t.cpp").write_text("same\n")
+        os.utime(self.dest / "tests" / "t.cpp", (1000, 1000))
+        (self.source / "sdk" / "b.cpp").write_text("int b;\n")
+        (self.dest / "sdk" / "b.cpp").write_text("int b;\n")
+        os.utime(self.dest / "sdk" / "b.cpp", (1000, 1000))
+        (self.source / "sdk" / "new.cpp").write_text("int n;\n")
+        changed = run_mutants.sync_tree(self.source, self.dest, ["sdk/a.cpp", "tests/t.cpp", "sdk/b.cpp", "sdk/new.cpp"],
+                                        ["sdk/b.cpp"])
+        self.assertEqual(sorted(changed), ["sdk/a.cpp", "sdk/new.cpp"])
+        self.assertEqual((self.dest / "sdk" / "a.cpp").read_text(), "int a = 1 + 2;\n")
+        self.assertEqual((self.dest / "sdk" / "new.cpp").read_text(), "int n;\n")
+        # an identical non-target keeps its mtime (no needless rebuild); a target gets a fresh one
+        self.assertEqual((self.dest / "tests" / "t.cpp").stat().st_mtime, 1000)
+        self.assertGreater((self.dest / "sdk" / "b.cpp").stat().st_mtime, 1000)
+
+    def worker(self, build):
+        (self.source / "sdk" / "x.cpp").write_text("int f( int a ) { return a + 1; }\n")
+        (self.dest / "sdk" / "x.cpp").write_text("int f( int a ) { return a + 1; }\n")
+        (self.dest / "bin").mkdir()
+        (self.dest / "bin" / "test").write_bytes(b"unmutated test binary")
+        run_mutants.ROOT = self.source
+        worker = run_mutants.Worker.__new__(run_mutants.Worker)
+        worker.dir = self.dest
+        worker.record_unmutated()
+        worker.build = build
+        worker.ran = []
+        worker.test = lambda timeout: worker.ran.append(timeout) or (0, 0.5, "")
+        mutant = next(m for m in run_mutants.generate("sdk/x.cpp", (self.source / "sdk" / "x.cpp").read_text())
+                      if m["operator"] == "arithmetic")
+        return worker, mutant
+
+    def test_a_mutant_that_leaves_the_test_binary_unchanged_is_not_compiled_here(self):
+        worker, mutant = self.worker(lambda: (0, 1.0, ""))
+        worker.mutant(mutant, 30)
+        self.assertEqual(mutant["status"], "not_compiled_here")
+        self.assertEqual(worker.ran, [])
+        self.assertIsNone(run_mutants.verdict(mutant, set()))
+        self.assertEqual((self.dest / "sdk" / "x.cpp").read_text(), "int f( int a ) { return a + 1; }\n")
+
+    def test_a_mutant_that_changes_the_test_binary_is_tested(self):
+        def build():
+            (self.dest / "bin" / "test").write_bytes((self.dest / "sdk" / "x.cpp").read_bytes())
+            return 0, 1.0, ""
+        worker, mutant = self.worker(build)
+        worker.mutant(mutant, 30)
+        self.assertEqual(mutant["status"], "survived")
+        self.assertEqual(worker.ran, [30])
+
+    def test_a_not_compiled_mutant_never_makes_a_baseline_entry_stale(self):
+        mutant = dict(run_mutants.generate(SMALL, (run_mutants.ROOT / SMALL).read_text())[0], status="not_compiled_here")
+        key = run_mutants.baseline_key(mutant)
+        failures = run_mutants.judge_with_baseline([mutant], {key}, {SMALL}, {key: ("equivalent", "reason")})
+        self.assertEqual(failures, {"new": [], "stale": [], "killed_gap": [], "gone": []})
 
 
 class JudgementTests(unittest.TestCase):

@@ -10,6 +10,12 @@ the oracle:
   timed_out       ./bin/test runs past the timeout (counted as detected, listed apart)
   survived        ./bin/test exits zero
   did_not_compile the build fails (a text mutator has no type awareness)
+  not_compiled_here
+                  the build succeeds and ./bin/test is byte-identical to the
+                  unmutated build: the change sits in code this build does not
+                  compile (an inactive #if region, a Windows or Apple file whose
+                  body is under its platform's #if) or compiles to the same
+                  machine code, so no test can see it; not run, never survival
   not_run         the time budget ran out first
 
 Every operator this generator emits is risk-class, except a mutation inside a
@@ -25,9 +31,12 @@ added above) is K modulo N. Slices 0 .. N-1 together are every mutant, so N
 runs, one per slice, cover the whole list with the same exit rule. The nightly
 runs the day's slice (.github/workflows/nightly.yml, docs/TESTING.md).
 
---platform linux leaves out the files a Linux build does not compile (the
-WINDOWS and APPLE lists of cmake/RocketnetSources.cmake and the headers only
-they include; whole files, not #if regions) and sets AF_XDP files apart: they
+--platform linux leaves out the files whose code a Linux build does not
+compile (the WINDOWS and APPLE lists of cmake/RocketnetSources.cmake, which
+the Linux build compiles to empty bodies under their platform's #if, and the
+headers only they include; whole files: a Windows or macOS #if region inside
+a common file is still mutated, and its mutants come out not_compiled_here)
+and sets AF_XDP files apart: they
 are mutated, but Linux reaches them only in a guest and ./bin/test runs none,
 so their survivors are listed as not judged here, never failing. Both lists
 are printed.
@@ -467,7 +476,8 @@ def exit_code(counts, verdicts, chosen, rule):
     judged = counts["detected"] + counts["timed_out"] + counts["survived"]
     if judged == 0:
         return 1, (f"MUTATION-NONE-JUDGED: {chosen} mutants chosen, 0 judged "
-                   f"(did_not_compile {counts['did_not_compile']}, not_run {counts['not_run']}); "
+                   f"(did_not_compile {counts['did_not_compile']}, not_compiled_here {counts.get('not_compiled_here', 0)}, "
+                   f"not_run {counts['not_run']}); "
                    "a campaign that judged nothing is not a pass")
     return 0, (f"no survivor fails the rule ({rule}); judged {judged} of {chosen}, reported {verdicts['report']}, "
                f"not judged here {verdicts['not_judged_here']}")
@@ -751,19 +761,59 @@ def run(cmd, cwd, timeout, env=None):
     return code, time.monotonic() - start, tail
 
 
+def sync_tree(source, dest, files, targets):
+    """Make dest hold source's copy of every file in files.
+
+    A fresh tree is copied whole. A reused tree (one with a build) may hold
+    files from an older checkout, and a mutant left by a run that was killed
+    (the signal path exits without restoring it): every file whose bytes differ
+    is rewritten, and every target is rewritten with a fresh mtime, since it
+    may match the source while the build still holds a mutant's object (copy2
+    would keep the older mtime and make would skip the rebuild). Returns the
+    files rewritten because they differed."""
+    reused = (dest / "build" / "CMakeCache.txt").exists()
+    changed = []
+    for rel in files:
+        target = dest / rel
+        if not reused:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / rel, target)
+            continue
+        data = (source / rel).read_bytes()
+        try:
+            same = target.read_bytes() == data
+        except OSError:
+            same = False
+        if not same:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            changed.append(rel)
+    for rel in targets:
+        (dest / rel).write_bytes((source / rel).read_bytes())
+    return changed
+
+
+def file_digest(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 class Worker:
     def __init__(self, index, args, files):
         self.dir = Path(args.work_dir).resolve() / f"w{index}"
         self.args = args
         self.env = dict(os.environ, ROCKETNET_TEST_JOBS=str(args.test_jobs))
-        if not (self.dir / "build" / "CMakeCache.txt").exists():
-            for rel in files:
-                (self.dir / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(ROOT / rel, self.dir / rel)
-        # a reused tree may hold a mutant's binary: rewrite each target with a fresh
-        # mtime (copy2 would keep the older one and make would skip the rebuild)
-        for rel in args.files:
-            (self.dir / rel).write_text((ROOT / rel).read_text())
+        self.unmutated_test = None
+        changed = sync_tree(ROOT, self.dir, files, args.files)
+        if changed:
+            print(f"worker {index}: reused tree {self.dir} differed from the source in {len(changed)} files; "
+                  f"rewrote them (first: {', '.join(changed[:3])})", flush=True)
+
+    def record_unmutated(self):
+        """The unmutated ./bin/test's digest: a mutant whose build leaves it unchanged was not compiled here."""
+        self.unmutated_test = file_digest(self.dir / "bin" / "test")
 
     def build(self):
         cfg = ["cmake", "-S", ".", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"] + self.args.cmake_arg
@@ -788,6 +838,9 @@ class Worker:
             code, m["build_seconds"], tail = self.build()
             if code != 0:
                 m["status"], m["detail"] = "did_not_compile", tail
+                return
+            if self.unmutated_test and file_digest(self.dir / "bin" / "test") == self.unmutated_test:
+                m["status"], m["detail"] = "not_compiled_here", "./bin/test is byte-identical to the unmutated build"
                 return
             code, m["test_seconds"], tail = self.test(timeout)
             m["status"] = "timed_out" if code is None else "survived" if code == 0 else "detected"
@@ -1174,6 +1227,7 @@ def main():
         if code != 0:
             setup[i] = f"unmutated build failed in {workers[i].dir}:\n{tail}"
             return
+        workers[i].record_unmutated()
         code, seconds, tail = workers[i].test(args.build_timeout)
         setup[i] = seconds if code == 0 else f"unmutated ./bin/test failed in {workers[i].dir}:\n{tail}"
 
@@ -1215,7 +1269,8 @@ def main():
     for t in threads:
         t.join()
 
-    counts = {s: sum(m["status"] == s for m in chosen) for s in ("detected", "timed_out", "survived", "did_not_compile", "not_run")}
+    counts = {s: sum(m["status"] == s for m in chosen)
+              for s in ("detected", "timed_out", "survived", "did_not_compile", "not_compiled_here", "not_run")}
     judged = counts["detected"] + counts["timed_out"] + counts["survived"]
     score = (counts["detected"] + counts["timed_out"]) / judged if judged else 0.0
     wall = time.monotonic() - started
