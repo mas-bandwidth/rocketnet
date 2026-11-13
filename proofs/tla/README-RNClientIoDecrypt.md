@@ -43,9 +43,14 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   and in that step `OpenPayloads` stores `payloadsOpen`: the payloads word
   the transport stores (relaxed, `rocketnet_client_io_open_payloads`) in
   `rocketnet_client_process_packet` right after the record that connected
-  the client. A late
-  read of the word on the I/O thread is a payload that passes raw, which
-  the model covers by interleaving.
+  the client. The I/O thread does not read `payloadsOpen` itself: it reads
+  its own view `ioPayloads`, which `IoSeePayloads` sets once the store is
+  visible to it. The relaxed load may read 0 for a while after the store,
+  since nothing orders the two, so `ioPayloads` may lag `payloadsOpen` by
+  any number of steps; weak fairness on `IoSeePayloads` is the eventual
+  visibility of the store (`PayloadsEventuallySeen`). A payload checked
+  while the view lags passes raw after the store (`lateRaw`, the reach
+  witness below).
   `RetireKeys` is disconnect, destroy or a timeout, from sending the
   connection response or connected (`rocketnet_client_protocol_disconnect`
   and every terminal `rocketnet_client_set_state` run the connection reset,
@@ -59,8 +64,8 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   before that read.
 - **The I/O thread's rungs.** `IoCheck` runs the cheap rungs in the reading
   order, the replay check on `ioWin` last: a handshake datagram, any
-  datagram while the thread holds no live copy, or a payload while it reads
-  `payloadsOpen` false (TRANSPORT.md t11.3), passes through with the
+  datagram while the thread holds no live copy, or a payload while its view
+  `ioPayloads` is false (TRANSPORT.md t11.3), passes through with the
   verdict raw; a short datagram gets wrong size; sequence zero gets zero
   sequence; a sequence `ioWin` refuses gets the verdict replay; anything else
   is checked. `IoOpen` is the AEAD on a checked record: a genuine datagram
@@ -132,8 +137,8 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   marked a payload `update` then refused by the state check, and a later copy
   of it was dropped as already received once connected (the PayloadMark
   witness). The other direction does not hold: a payload that passed raw
-  just before the I/O thread read `payloadsOpen` is accepted by `update`
-  alone (`rawAccepted`), so `ioWin` never marks it; a later copy of it opens
+  while the I/O thread's view `ioPayloads` still read 0 is accepted by
+  `update` alone (`rawAccepted`), so `ioWin` never marks it; a later copy of it opens
   on the I/O thread and `update` refuses it as already received.
 - **`PayloadOpenedOnlyConnected`**: the I/O thread opens a payload only once
   the session is connected (or ended), TRANSPORT.md t11.3.
@@ -151,7 +156,7 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
 
 Checked under weak fairness (`SpecFair`) of the I/O thread's `IoReceive`,
 `IoPublish`, `IoOwe`, `IoWake`, `IoClearWake`, `IoTakeKeys`, `IoDropKeys`,
-`IoKeepKeys`, `IoCheck` and `IoOpen`, and of `update`'s `Expose`, `Return`,
+`IoKeepKeys`, `IoSeePayloads`, `IoCheck` and `IoOpen`, and of `update`'s `Expose`, `Return`,
 `UpdateConsume` and `PublishKeys`: RNClientIo's fairness on the receive half,
 and the same for the steps this model adds. `IoClearWake` carries no fairness in
 RNClientIo; here it does, which makes this fairness stronger than RNClientIo's. `Arrive`, `RetireKeys` and
@@ -164,6 +169,10 @@ which `Next` sets after the step.
   ends first.
 - **`RetiredEventuallyZeroed`**: after the retire the I/O thread eventually
   reads retired and holds no copy.
+- **`PayloadsEventuallySeen`**: once `update` has stored the payloads word,
+  the I/O thread's view eventually reads it. This is the only bound the model
+  proves on the raw transient: it ends, after finitely many steps, but the
+  model sets no number on the payloads that pass raw before it does.
 
 ## How to run it
 
@@ -178,10 +187,11 @@ java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup 
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenCountOnIo.cfg MCRNClientIoDecrypt
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenPayloadGate.cfg MCRNClientIoDecrypt
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenPayloadMark.cfg MCRNClientIoDecrypt
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptReachLateView.cfg MCRNClientIoDecrypt
 ```
 
 The records come from `tlacheck run` as `proofs/tla/README.md` describes (group
-`rnclientiodecrypt`, eight cases, one shard each). The small instance:
+`rnclientiodecrypt`, nine cases, one shard each). The small instance:
 
 | Constant | Value |
 |---|---|
@@ -203,15 +213,16 @@ the copy of sequence 1 is a duplicate after sequence 1 has opened and too old
 after sequence 2 has. An integrity limit of 1 makes the forged datagram end
 the session.
 
-The full instance (`MCRNClientIoDecrypt.cfg`) generates 3,525,290 states and
-finds 1,417,580 distinct states, depth 42, with no error: the nine invariants
-hold, and `GenuineEventuallyAccepted` and `RetiredEventuallyZeroed` hold under
-the fairness above (a run with no time limit, four workers, on a Linux bench).
+The full instance (`MCRNClientIoDecrypt.cfg`) generates 5,818,951 states and
+finds 2,146,403 distinct states, depth 43, with no error: the nine invariants
+hold, and `GenuineEventuallyAccepted`, `RetiredEventuallyZeroed` and
+`PayloadsEventuallySeen` hold under
+the fairness above (a run with no time limit, two workers, 620 s on a Linux bench).
 That is over the 110-second case budget at two workers, so it is declared bench
 debt in `CASES.tsv` (`full-instance-over-budget`), its record is the timeout
 (exit 124), and `MCRNClientIoDecryptReduced.cfg` is the required control: the
-same rules and properties with three datagrams in a behaviour, 172,608 states
-generated, 75,404 distinct, depth 34, no error. In the reduced instance every
+same rules and properties with three datagrams in a behaviour, 219,480 states
+generated, 90,632 distinct, depth 35, no error. In the reduced instance every
 path of the list below is reachable except the too-old replay, which needs
 sequences 1 and 2 and a copy of 1 (scratch runs of the reduced constants, one
 negated predicate each: the duplicate, the integrity limit, sequences 1 and 2
@@ -385,6 +396,29 @@ exits 12: **`Invariant IoWindowWithinMain is violated`** (111,436 states generat
   marked 1). This is the second red unit test,
   `test_client_io_decrypt_payload_duplicate_after_connect_delivered`.
 
+### `MCRNClientIoDecryptReachLateView.cfg` (a reach witness)
+
+Every rule on, with `NoLateRawPayload` added last to the list: it shows that
+the lagging view is a behaviour the model explores, not a defect. TLC exits
+12: **`Invariant NoLateRawPayload is violated`** (358,461 states generated,
+141,014 distinct), with every other invariant holding on the way.
+
+- **The trace:**
+  1. The challenge, `PublishKeys`, and the I/O thread takes its copy.
+  2. Genuine keep-alive 1 arrives, opens on the I/O thread and is
+     published; `update` consumes it, the session moves to connected and
+     `OpenPayloads` stores `payloadsOpen`.
+  3. Genuine payload 2 arrives; the I/O thread checks it while its view
+     `ioPayloads` still reads false, and gives it the verdict raw after the
+     store.
+- **Against the code, by hand:** the store in
+  `rocketnet_client_process_packet` is relaxed and the load in
+  `rocketnet_client_io_decrypt_datagram` is relaxed, with nothing between
+  them that orders the store first, so the load may read 0 here. The record
+  reaches `update` raw, and `update`, now connected, runs the state check,
+  the size and zero-sequence rungs, its replay check and the AEAD, and
+  accepts it (`rawAccepted`), as BASE does with every payload.
+
 ## Findings for the implementation
 
 - **The retire must reach a blocked I/O thread.** The design reads the epoch
@@ -407,16 +441,23 @@ exits 12: **`Invariant IoWindowWithinMain is violated`** (111,436 states generat
   response is handed off and the I/O thread reads the epoch at the top of
   the drain that sends it. The implementation keeps that order: publish,
   then commit the response. A payload can: one the I/O thread passed raw
-  before it read `payloadsOpen` is opened by `update` once connected
-  (`rawAccepted`). That is bounded by the payloads in flight when the client
-  connects, once per connection, and each costs the AEAD on the main thread
-  that BASE spent on every payload. A later copy of such a payload opens on
+  while its relaxed load still read 0 is opened by `update` once connected
+  (`rawAccepted`), and each costs the AEAD on the main thread that BASE spent
+  on every payload. It happens only in the window after the client connects,
+  once per connection, but the code bounds that window by no count of
+  payloads: the store is relaxed, and what orders it before the I/O thread's
+  load is only a later release by `update` after the store that the I/O
+  thread then acquires (an end-of-update handoff can skip or lose its
+  try-lock, so the next one is not certain to be it). Past that, only the
+  eventual visibility of a store bounds it, which is what the model proves
+  (`PayloadsEventuallySeen`). The raw fallback is sound however long it
+  lasts. A later copy of such a payload opens on
   the I/O thread, since its window never marked it, and `update` refuses it
   as already received, the counter BASE gives it.
 
 ## Runs
 
-The eight rows are in `proofs/tla/RUNS.tsv` from `tlacheck run` on a Linux bench
+The nine rows are in `proofs/tla/RUNS.tsv` from `tlacheck run` on a Linux bench
 (TLC 2.19, the pinned JAR): the reduced control passes with exit 0, the full
-instance is the declared bench-debt timeout (exit 124), and each witness
-exits 12 naming its declared invariant.
+instance is the declared bench-debt timeout (exit 124), and each reversed
+witness and the reach witness exit 12 naming the declared invariant.

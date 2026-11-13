@@ -1,4 +1,4 @@
 config	budget_s	measured_s	host	generated	distinct
 MCReplayWindowMid.cfg	900	335.6	hetzner1	69206063	3145729
 MCClientConnectionLCrash.cfg	900	380.3	hetzner1	2837306	474351
-MCRNClientIoDecrypt.cfg	900	262.0	aws-mut-2	3525290	1417580
+MCRNClientIoDecrypt.cfg	900	620.0	aws-mut-2	5818951	2146403

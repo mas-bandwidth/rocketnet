@@ -16,9 +16,11 @@ it has the live session keys, but a payload only once the client is
 connected: until update stores the payloads word on entering connected, a
 payload passes the I/O thread unopened and unmarked, and update counts it
 wrong state before any open (TRANSPORT.md t11.3). The I/O thread's replay
-window marks only sequences update accepts or has accepted. A payload that
-passed raw just before the I/O thread read the word is opened and accepted
-by update alone, once per connection; a later copy of it opens on the I/O
+window marks only sequences update accepts or has accepted. The store is relaxed, so
+the I/O thread may still read 0 for a while after it: a payload it passes raw
+then is opened and accepted by update alone, in a window after each connect
+that the code bounds by no count of payloads, only by the store becoming
+visible; a later copy of it opens on the I/O
 thread and update refuses it as already received.
 
 A packet that fails any check produces no application message. Queue pressure
