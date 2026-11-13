@@ -80,7 +80,7 @@ From the repository root, after the normal build:
 ./bin/example_game_loop --game-threads 4          # the second half split off, 4 game threads
 ./bin/example_game_loop --wrong-order             # clients call send_packets before queuing
 ./bin/example_game_loop --clients 1000 --seconds 30                  # one thread
-./bin/example_game_loop --clients 128 --game-threads 8
+./bin/example_game_loop --clients 1000 --seconds 30 --game-threads 8
 ```
 
 The 1000-client command holds all clients in one process over loopback and
@@ -88,11 +88,7 @@ can require substantial memory. It is a profiling example, not qualification
 of 1000 clients under every workload; see [Testing](../TESTING.md) and
 [Memory](../MEMORY.md). `--clients` accepts `1..ROCKETNET_MAX_CLIENTS` (1000
 in the default build) and `--game-threads` accepts `1..64`; values outside
-those ranges are refused. With more than one game thread the example takes
-at most 128 clients: a message a game thread finishes leaves in its packet
-from that call, and the loopback transport's send room (one place per client
-slot, at least 256) gives a start a place only while the room left exceeds
-the connected clients. A real transport's send room is far larger. On Windows the binary is `bin\Release\example_game_loop.exe`. The default
+those ranges are refused. On Windows the binary is `bin\Release\example_game_loop.exe`. The default
 run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
 ## What the output means

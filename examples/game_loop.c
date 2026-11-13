@@ -40,14 +40,6 @@
 #define FRAME_DT        ( 1.0 / 60.0 )
 #define BUDGET_US       100.0
 #define BINS            10000       // 0.1 us bins up to 1 ms, then one overflow bin
-// A message a game thread finishes leaves in its packet from that call, and
-// the loopback transport's send room is one place per client slot (at least
-// 256): a start is given a place only while the room left exceeds the
-// connected clients, so with game threads this example holds the loopback
-// run to this many clients, all of whose state updates are given a place. A
-// real transport's send room is far larger.
-#define MAX_SPLIT_CLIENTS 128
-
 #define MESSAGE_BYTES   12          // the frame it was queued in, and a position (two floats)
 
 struct latency_t
@@ -253,9 +245,9 @@ int main( int argc, char ** argv )
         }
     }
 
-    if ( num_clients < 1 || num_clients > ROCKETNET_MAX_CLIENTS || seconds < 1 || seconds > 3600 || game_threads < 1 || game_threads > RN_CLI_MAX_GAME_THREADS || ( game_threads > 1 && num_clients > MAX_SPLIT_CLIENTS ) )
+    if ( num_clients < 1 || num_clients > ROCKETNET_MAX_CLIENTS || seconds < 1 || seconds > 3600 || game_threads < 1 || game_threads > RN_CLI_MAX_GAME_THREADS )
     {
-        printf( "usage: example_game_loop [--clients <1..1000>] [--seconds <1..3600>] [--game-threads <1..64>] [--wrong-order]\n       (more than 1 game thread: at most %d clients)\n", MAX_SPLIT_CLIENTS );
+        printf( "usage: example_game_loop [--clients <1..1000>] [--seconds <1..3600>] [--game-threads <1..64>] [--wrong-order]\n" );
         return 1;
     }
 
