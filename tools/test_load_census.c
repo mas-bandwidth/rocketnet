@@ -3,8 +3,9 @@
 /* The load harness resource census (tests/load/load_census.h) finds the thread and the
    handle a cycle leaves behind, and nothing when it leaves nothing. CMake builds it
    as bin/test_load_census beside the harness (ROCKETNET_BUILD_TOOLS); the ci.yml
-   functional leg runs it from the repository root on Linux and macOS. It opens
-   files and starts a thread, so it is a functional test, not a unit test.
+   functional leg runs it from the repository root on Linux and macOS, and the
+   Windows job runs it there too. It opens files and starts a thread, so it is
+   a functional test, not a unit test.
 */
 
 #if !defined( _WIN32 )
@@ -112,6 +113,33 @@ int main( void )
     remove( "test_load_census_other.tmp" );
     CENSUS_CHECK( load_census_take( &test_before ) );
 #endif // #if !defined( _WIN32 )
+
+#if defined( _WIN32 )
+    /* a closed handle's number reused by a new object of the same type (an
+       SDK handle taking a baseline handle's slot) is a different object:
+       the census's held duplicate, not number and type, decides */
+    HANDLE first_event = CreateEventA( NULL, TRUE, FALSE, NULL );
+    CENSUS_CHECK( first_event );
+    CENSUS_CHECK( load_census_take( &test_before ) );
+    CloseHandle( first_event );
+
+    HANDLE second_event = CreateEventA( NULL, TRUE, FALSE, NULL );
+    CENSUS_CHECK( second_event && second_event == first_event );
+    survivors = test_survivors();
+    CENSUS_CHECK( survivors.handles == 1 );
+    CloseHandle( second_event );
+    CENSUS_CHECK( load_census_take( &test_before ) );
+
+    /* and a handle the census took is the same object at the next census:
+       nothing survives */
+    HANDLE kept_event = CreateEventA( NULL, TRUE, FALSE, NULL );
+    CENSUS_CHECK( kept_event );
+    CENSUS_CHECK( load_census_take( &test_before ) );
+    survivors = test_survivors();
+    CENSUS_CHECK( survivors.handles == 0 );
+    CloseHandle( kept_event );
+    CENSUS_CHECK( load_census_take( &test_before ) );
+#endif // #if defined( _WIN32 )
 
 #if !defined( _WIN32 )
     /* the random device is init-scope state: a pair that ends before term

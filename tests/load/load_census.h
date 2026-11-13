@@ -60,12 +60,23 @@
 
 /* One thread or handle. id is the thread id, or the handle value (fd
    number); kind is the object type index on Windows, the file identity
-   elsewhere, so a closed and reused fd number is a different object. */
+   elsewhere, so a closed and reused fd number is a different object. On
+   Windows a handle number and type index are reused too, and the handle
+   snapshot's kernel object address reads 0 to a process without
+   SeDebugPrivilege (the CI runners' NETWORK SERVICE): so the census holds
+   a duplicate of each handle it lists (held), and a later handle with the
+   same number and type is the same object only when CompareObjectHandles
+   says so. A File handle (a socket or a file) is not held, since a held
+   duplicate would keep the socket open past its close: a file's identity is
+   its volume and file id (file_id); a socket has none, and its number and
+   type decide. */
 struct load_census_entry_t
 {
     uint64_t id;
     uint64_t kind;
-    int os_pool; /* windows: a process thread pool worker, the OS's */
+    uint64_t held;    /* windows: the census's duplicate of the handle, 0 when none */
+    uint64_t file_id; /* windows: a file's volume and file id folded, 0 when none */
+    int os_pool;      /* windows: a process thread pool worker, the OS's */
     int rng;     /* posix: the system random device, which the SDK's bundled
                     sodium opens on the first random draw after an init and
                     closes at term (rocketnet_term): init-scope state */
@@ -187,8 +198,103 @@ static void load_census_type_name( uint64_t handle, char * name, size_t bytes )
     name[written > 0 ? written : 0] = '\0';
 }
 
+/* The duplicates every census holds (load_census_entry_t held): never listed
+   by a census, since they are the census's own handles. */
+#define LOAD_CENSUS_HELD_MAX 65536
+static uint64_t load_census_held_handles[LOAD_CENSUS_HELD_MAX];
+static int load_census_num_held;
+
+static int load_census_is_held( uint64_t handle )
+{
+    for ( int i = 0; i < load_census_num_held; ++i )
+    {
+        if ( load_census_held_handles[i] == handle )
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/* Closes the duplicates a census held, before it is taken again. */
+static void load_census_release( struct load_census_t * census )
+{
+    for ( int i = 0; i < census->handles; ++i )
+    {
+        const uint64_t held = census->handle[i].held;
+        if ( !held )
+        {
+            continue;
+        }
+
+        for ( int j = 0; j < load_census_num_held; ++j )
+        {
+            if ( load_census_held_handles[j] == held )
+            {
+                load_census_held_handles[j] = load_census_held_handles[--load_census_num_held];
+                break;
+            }
+        }
+        CloseHandle( (HANDLE) (uintptr_t) held );
+        census->handle[i].held = 0;
+    }
+}
+
+typedef BOOL( WINAPI * load_census_compare_t )( HANDLE, HANDLE );
+
+/* CompareObjectHandles (Windows 10 and later, kernelbase): nonzero when the
+   two handles name one kernel object */
+static int load_census_same_object( uint64_t first, uint64_t second )
+{
+    static load_census_compare_t compare = NULL;
+    if ( !compare )
+    {
+        HMODULE kernelbase = GetModuleHandleA( "kernelbase.dll" );
+        compare = kernelbase ? (load_census_compare_t) (void ( * )( void )) GetProcAddress( kernelbase, "CompareObjectHandles" ) : NULL;
+    }
+
+    return compare && compare( (HANDLE) (uintptr_t) first, (HANDLE) (uintptr_t) second );
+}
+
+/* A handle's identity beyond its number and type (load_census_entry_t): a
+   held duplicate, or a file's volume and file id */
+static void load_census_identify( struct load_census_entry_t * handle )
+{
+    handle->held = 0;
+    handle->file_id = 0;
+
+    char type[128];
+    load_census_type_name( handle->id, type, sizeof( type ) );
+    if ( strcmp( type, "File" ) == 0 )
+    {
+        FILE_ID_INFO info;
+        if ( GetFileType( (HANDLE) (uintptr_t) handle->id ) == FILE_TYPE_DISK &&
+             GetFileInformationByHandleEx( (HANDLE) (uintptr_t) handle->id, FileIdInfo, &info, sizeof( info ) ) )
+        {
+            uint64_t hash = 14695981039346656037ull;
+            const uint8_t * bytes = (const uint8_t *) &info;
+            for ( size_t i = 0; i < sizeof( info ); ++i )
+            {
+                hash = ( hash ^ bytes[i] ) * 1099511628211ull;
+            }
+            handle->file_id = hash ? hash : 1;
+        }
+        return;
+    }
+
+    HANDLE held = NULL;
+    if ( load_census_num_held < LOAD_CENSUS_HELD_MAX &&
+         DuplicateHandle( GetCurrentProcess(), (HANDLE) (uintptr_t) handle->id, GetCurrentProcess(), &held, 0, FALSE, DUPLICATE_SAME_ACCESS ) )
+    {
+        handle->held = (uint64_t) (uintptr_t) held;
+        load_census_held_handles[load_census_num_held++] = handle->held;
+    }
+}
+
 static int load_census_take( struct load_census_t * census )
 {
+    load_census_release( census );
     census->valid = 0;
     census->threads = 0;
     census->handles = 0;
@@ -222,6 +328,8 @@ static int load_census_take( struct load_census_t * census )
             struct load_census_entry_t * thread = &census->thread[census->threads++];
             thread->id = entry.th32ThreadID;
             thread->kind = 0;
+            thread->held = 0;
+            thread->file_id = 0;
             thread->os_pool = load_census_thread_is_os_pool( entry.th32ThreadID );
             thread->rng = 0;
         } while ( Thread32Next( thread_list, &entry ) );
@@ -267,7 +375,7 @@ static int load_census_take( struct load_census_t * census )
     const ULONG_PTR pid = (ULONG_PTR) self;
     for ( ULONG_PTR i = 0; i < info->NumberOfHandles; ++i )
     {
-        if ( info->Handles[i].UniqueProcessId != pid )
+        if ( info->Handles[i].UniqueProcessId != pid || load_census_is_held( (uint64_t) info->Handles[i].HandleValue ) )
         {
             continue;
         }
@@ -283,6 +391,7 @@ static int load_census_take( struct load_census_t * census )
         handle->kind = info->Handles[i].ObjectTypeIndex;
         handle->os_pool = 0;
         handle->rng = 0;
+        load_census_identify( handle );
     }
 
     free( buffer );
@@ -568,12 +677,51 @@ static int load_census_holds( const struct load_census_entry_t * entries, int co
     {
         if ( entries[i].id == wanted->id && entries[i].kind == wanted->kind )
         {
+#if defined( _WIN32 )
+            // a reused handle number and type: the same object only when the
+            // earlier census's duplicate names it (or the file id agrees).
+            // The later census's own duplicate stands for its handle, since
+            // a harness compares phases after term, when the number itself
+            // may be closed or name something else (aws-win-ci-2: load's
+            // operational pair, compared after term, read four OS handles
+            // closed at term as new objects through their numbers)
+            const uint64_t later = wanted->held ? wanted->held : wanted->id;
+            if ( entries[i].file_id != wanted->file_id || ( entries[i].held && !load_census_same_object( entries[i].held, later ) ) )
+            {
+                continue;
+            }
+#endif // #if defined( _WIN32 )
             return 1;
         }
     }
 
     return 0;
 }
+
+#if defined( _WIN32 )
+/* A Thread handle to a process thread pool worker that is new since before:
+   the OS's (load_census_survivors) */
+static int load_census_is_pool_thread_handle( const struct load_census_t * before, const struct load_census_t * after, uint64_t handle )
+{
+    char type[128];
+    load_census_type_name( handle, type, sizeof( type ) );
+    if ( strcmp( type, "Thread" ) != 0 )
+    {
+        return 0;
+    }
+
+    const DWORD tid = GetThreadId( (HANDLE) (uintptr_t) handle );
+    for ( int j = 0; j < after->threads; ++j )
+    {
+        if ( after->thread[j].id == tid && after->thread[j].os_pool && !load_census_holds( before->thread, before->threads, &after->thread[j] ) )
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+#endif // #if defined( _WIN32 )
 
 /* The survivors from before to after. label names the pair in the printed
    survivor lines (prefix "<prefix>: census=<label>"), so a failing receipt
@@ -614,7 +762,19 @@ static int load_census_survivors( const char * prefix, const char * label, int i
         }
     }
 #if defined( _WIN32 )
-    // each OS pool worker brings one Thread handle (to itself) and one Event
+    // an OS pool worker that brings handles brings one Thread handle (to
+    // itself, attributed by its thread id) and one Event (captain under
+    // load, 2026-10-22). Nothing names an Event's owner, so a new Event is
+    // the OS's only while the new pool Thread handles outnumber the Events
+    // already exempted: a worker that brought no Thread handle (the default
+    // pool's QueueUserWorkItem workers bring none, aws-win-ci-2 2026-11-13)
+    // lets no Event through, and each exempted Event is printed
+    long pool_thread_handles = 0;
+    for ( int i = 0; i < after->handles; ++i )
+    {
+        const struct load_census_entry_t * handle = &after->handle[i];
+        pool_thread_handles += !load_census_holds( before->handle, before->handles, handle ) && load_census_is_pool_thread_handle( before, after, handle->id );
+    }
     long pool_events = 0;
 #endif // #if defined( _WIN32 )
     for ( int i = 0; i < after->handles; ++i )
@@ -633,26 +793,19 @@ static int load_census_survivors( const char * prefix, const char * label, int i
 #if defined( _WIN32 )
         char type[128];
         load_census_type_name( handle->id, type, sizeof( type ) );
-        if ( strcmp( type, "Thread" ) == 0 )
+        if ( strcmp( type, "Thread" ) == 0 && load_census_is_pool_thread_handle( before, after, handle->id ) )
         {
-            const DWORD tid = GetThreadId( (HANDLE) (uintptr_t) handle->id );
-            int pool = 0;
-            for ( int j = 0; j < after->threads && !pool; ++j )
-            {
-                pool = after->thread[j].id == tid && after->thread[j].os_pool &&
-                       !load_census_holds( before->thread, before->threads, &after->thread[j] );
-            }
-
-            if ( pool )
-            {
-                survivors->os_pool_handles++;
-                continue;
-            }
+            survivors->os_pool_handles++;
+            continue;
         }
-        else if ( strcmp( type, "Event" ) == 0 && pool_events < survivors->os_pool_threads )
+        else if ( strcmp( type, "Event" ) == 0 && pool_events < pool_thread_handles )
         {
             pool_events++;
             survivors->os_pool_handles++;
+            if ( prefix )
+            {
+                printf( "%s: census=%s exempt=pool_event value=0x%llx (one of %ld new pool Thread handles)\n", prefix, label, (unsigned long long) handle->id, pool_thread_handles );
+            }
             continue;
         }
 
