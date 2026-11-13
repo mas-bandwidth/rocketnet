@@ -71,12 +71,12 @@ run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
 ```
 32 clients, server transport loopback
-[end] client frame p50 7.1 us, p99 24.3 us, max 313.6 us (budget 100 us)
-server main thread in rocketnet mean 120.4 us, max 380.2 us; split-off half mean 61.0 us, max 140.7 us
+[end] client frame p50 8.7 us, p99 21.6 us, max 62.2 us (budget 100 us)
+server main thread in rocketnet mean 356.4 us, max 491.4 us; split-off half mean 25.8 us, max 111.6 us
 client frame budget held at p99 (informational, never a failure)
-latency client->server frames: min 0 mean 0.00 max 0
+latency client->server frames: min 0 mean 0.73 max 1
 latency server->client frames: min 2 mean 2.00 max 2
-latency: 0 extra frame(s) (correct order)
+latency: 1 extra frame(s) (correct order)
 PASS
 ```
 
