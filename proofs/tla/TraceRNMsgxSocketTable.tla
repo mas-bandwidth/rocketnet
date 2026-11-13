@@ -12,8 +12,8 @@
 (* level actions built from the same step operators as the fine-grained    *)
 (* Forget, Retire, ForgetDereg, SweepBegin, RetireDead and Close, which    *)
 (* the model keeps so holders interleave inside a call, and which no walk  *)
-(* takes (the row's untraced list).  The index is logged as the entries in *)
-(* use, the variable the model keeps.                                      *)
+(* takes (the row's untraced list).  The index and the cooldown table are *)
+(* logged as the entries in use, the variables the model keeps.            *)
 (***************************************************************************)
 EXTENDS RNMsgxSocketTable, Sequences
 
