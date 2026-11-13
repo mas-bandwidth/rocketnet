@@ -95,6 +95,23 @@ def ensure_compile_db():
     return os.path.exists(COMPILE_DB)
 
 
+def build_generated_headers():
+    """The xdp server transport includes a header the build generates
+    (build/generated/rocketnet_server_xdp.h; its include path is in the
+    compile command); a configure alone does not write it, and a translation
+    unit that includes it and rocketnet_read_write.h cannot be analyzed
+    without it. As tools/run_tidy.py does, build its target first (an empty
+    target when the build has no xdp)."""
+    result = subprocess.run(
+        ["cmake", "--build", BUILD, "--target", "rocketnet_xdp_header"],
+        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    if result.returncode != 0:
+        print(result.stdout[-2000:])
+        return False
+    return True
+
+
 def load_compile_db():
     with open(COMPILE_DB, "r", encoding="utf-8") as handle:
         entries = json.load(handle)
@@ -269,6 +286,11 @@ def main():
         return 1
 
     ensure_compile_db()
+    if not build_generated_headers():
+        print("static gate FAILED: the analyzer run is incomplete, so no "
+              "report or baseline is written")
+        print("building the generated headers (target rocketnet_xdp_header) failed")
+        return 1
     try:
         findings = current_findings()
     except IncompleteRun as incomplete:

@@ -51,10 +51,13 @@ class RunStaticGateTest(unittest.TestCase):
             "BUILD": run_static.BUILD,
             "COMPILE_DB": run_static.COMPILE_DB,
             "parser_files": run_static.parser_files,
+            "build_generated_headers": run_static.build_generated_headers,
         }
         run_static.BUILD = str(tmp)
         run_static.COMPILE_DB = str(self.compile_db)
         run_static.parser_files = lambda: [TU]
+        self.headers_built = []
+        run_static.build_generated_headers = lambda: self.headers_built.append(True) or True
         self.saved_env = dict(os.environ)
         os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
         self.write_db([TU])
@@ -90,6 +93,17 @@ class RunStaticGateTest(unittest.TestCase):
         code, out = self.gate("", 0)
         self.assertEqual(code, 0, out)
         self.assertIn("static gate passed", out)
+        self.assertEqual(self.headers_built, [True], out)
+
+    def test_generated_headers_failing_to_build_fails(self):
+        # the xdp transport's generated header is built before any unit is
+        # analyzed; a build that cannot write it is an incomplete run
+        run_static.build_generated_headers = lambda: False
+        code, out = self.gate("", 0, "--report", str(self.report))
+        self.assertEqual(code, 1, out)
+        self.assertIn("incomplete", out)
+        self.assertIn("rocketnet_xdp_header", out)
+        self.assertFalse(self.report.exists(), out)
 
     def test_warning_finding_fails(self):
         code, out = self.gate(diagnostic("warning", "-Wanalyzer-malloc-leak"), 0)
