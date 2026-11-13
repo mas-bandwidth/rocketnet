@@ -1,5 +1,7 @@
-// seedgen writes seed corpora for the two new fuzz targets.
-// usage: go run . <xdp_out_dir> <endpoint_out_dir>
+// seedgen writes the seed corpora for two fuzz targets: rocketnet_fuzz_xdp_filter
+// (tests/fuzz/corpus_xdp_filter) and rocketnet_fuzz_endpoint
+// (tests/fuzz/corpus_endpoint).
+// usage: go run . <xdp_filter_out_dir> <endpoint_out_dir>
 package main
 
 import (
@@ -138,7 +140,10 @@ func endpoint(dir string) {
 					}
 					s = append(s, update...)
 				}
-				// a reordered pass: deliver last first
+				// a reordered pass: the index bytes run 200 down to 189 and the
+				// harness takes index % (packets in flight), so the delivery
+				// order is a rotation that depends on how many are in flight,
+				// not a fixed last-first
 				s = append(s, send(rel, 1, size)...)
 				s = append(s, write2...)
 				for j := 0; j < 12; j++ {
@@ -158,8 +163,16 @@ func endpoint(dir string) {
 }
 
 func main() {
-	os.MkdirAll(os.Args[1], 0o755)
-	os.MkdirAll(os.Args[2], 0o755)
+	if len(os.Args) != 3 {
+		fmt.Fprintln(os.Stderr, "usage: go run . <xdp_filter_out_dir> <endpoint_out_dir>")
+		os.Exit(2)
+	}
+	for _, dir := range os.Args[1:] {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "seedgen:", err)
+			os.Exit(1)
+		}
+	}
 	xdp(os.Args[1])
 	endpoint(os.Args[2])
 }

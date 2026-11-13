@@ -159,6 +159,14 @@ printf '%s\n' "$lib_commands" | awk '!shown && /\/sdk\/rocketnet\.cpp"/ { sub(/^
 # nm on its own line: an unreadable library stops here instead of reading as
 # "no reference"; grep exits 1 when nothing references the callback
 symbols=$(nm -A "$LIB")
+# the positive control: rocketnet.cpp defines the callback variable in every
+# build, so an nm that reads the library sees the definition; without it the
+# empty "no reference" below would prove nothing
+defining=$(printf '%s\n' "$symbols" | grep -E ' [DdSsBb] _?rn_assert_function$') || [ $? -eq 1 ]
+if [ -z "$defining" ]; then
+    echo "NDEBUG-LIBRARY FAIL: nm does not show the rn_assert_function definition in $(basename "$LIB"); cannot judge its references" >&2
+    exit 1
+fi
 referencing=$(printf '%s\n' "$symbols" | grep -E ' U .*rn_assert_function') || [ $? -eq 1 ]
 if [ -n "$referencing" ]; then
     echo "NDEBUG-LIBRARY FAIL: library objects still reference rn_assert_function:" >&2

@@ -121,20 +121,22 @@ UPSTREAM_ADAPTATIONS = {
 # unsigned char outputs through the implicit narrowing conversion. Inside each
 # named function body, every `out[k] = expr;` store is written with the cast
 # that conversion already performs, `(type) (expr)`: the same value, by
-# definition of the conversion. (function, output array, its element type)
+# definition of the conversion. (function, output array, its element type,
+# the stored value's pattern, the number of stores cast: a re-vendor that
+# changes the count fails, as a conversion does)
 NARROWING_STORES = {
-    'crypto_core/ed25519/ref10/fe_25_5/fe.h': [('fe25519_tobytes(', 's', 'unsigned char', r'.*>>.*')],
+    'crypto_core/ed25519/ref10/fe_25_5/fe.h': [('fe25519_tobytes(', 's', 'unsigned char', r'.*>>.*', 0)],
     'crypto_core/ed25519/ref10/ed25519_ref10.c': [
-        ('sc25519_mul(', 's', 'unsigned char', r'.*>>.*'), ('sc25519_muladd(', 's', 'unsigned char', r'.*>>.*'),
-        ('sc25519_reduce(', 's', 'unsigned char', r'.*>>.*'), ('slide_vartime(', 'r', 'signed char', r'cmp')],
+        ('sc25519_mul(', 's', 'unsigned char', r'.*>>.*', 0), ('sc25519_muladd(', 's', 'unsigned char', r'.*>>.*', 0),
+        ('sc25519_reduce(', 's', 'unsigned char', r'.*>>.*', 0), ('slide_vartime(', 'r', 'signed char', r'cmp', 0)],
     'crypto_stream/salsa20/ref/salsa20_ref.c': [
-        ('stream_ref(', 'in', 'unsigned char', r'u'), ('stream_ref_xor_ic(', 'in', 'unsigned char', r'u')],
+        ('stream_ref(', 'in', 'unsigned char', r'u', 0), ('stream_ref_xor_ic(', 'in', 'unsigned char', r'u', 0)],
 }
 
 
 def cast_narrowing_stores(text, stores, where):
     """Casts each `array[k] = value;` store whose value matches the pattern, in the function's body."""
-    for function, array, element, value in stores:
+    for function, array, element, value, expected in stores:
         if text.count('\n' + function) != 1:
             raise SystemExit(f"narrowing-store function does not match once in {where}: {function}")
         start = text.index('\n' + function)
@@ -142,8 +144,8 @@ def cast_narrowing_stores(text, stores, where):
         body = text[start:end]
         store = re.compile(r'^(\s+' + re.escape(array) + r'\[[^\]]+\]\s*= )(' + value + r');$', re.M)
         cast, count = store.subn(lambda m: f'{m[1]}({element}) ({m[2]});', body)
-        if count == 0:
-            raise SystemExit(f"no narrowing store in {where}: {function}")
+        if count != expected:
+            raise SystemExit(f"narrowing stores cast {count} times, not {expected}, in {where}: {function}")
         text = text[:start] + cast + text[end:]
     return text
 
@@ -343,6 +345,14 @@ def adapt(text, replacements, where):
     return text
 
 
+def replace_counted(text, old, new, expected, where):
+    """A structural replacement: the anchor must occur the recorded number of times."""
+    count = text.count(old)
+    if count != expected:
+        raise SystemExit(f"structural anchor occurs {count} times, not {expected}, in {where}: {old[:60]!r}")
+    return text.replace(old, new)
+
+
 def checked(path, digest):
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != digest:
@@ -457,27 +467,31 @@ int _crypto_generichash_blake2b_pick_best_implementation(void);
 int _crypto_scalarmult_curve25519_pick_best_implementation(void);
 int _crypto_stream_salsa20_pick_best_implementation(void);
 '''
-    header = baseline['sodium.h'].replace('#endif /* SODIUM_AMALGAM_H */',
-                                       extension_header + '\n#endif /* SODIUM_AMALGAM_H */')
+    header = replace_counted(baseline['sodium.h'], '#endif /* SODIUM_AMALGAM_H */',
+                             extension_header + '\n#endif /* SODIUM_AMALGAM_H */', 1, 'sodium.h')
     anchor = '    _crypto_stream_chacha20_pick_best_implementation();'
-    assert baseline['sodium.c'].count(anchor) == 1
-    source = baseline['sodium.c'].replace(anchor, anchor + '''
+    source = replace_counted(baseline['sodium.c'], anchor, anchor + '''
     _crypto_generichash_blake2b_pick_best_implementation();
     _crypto_scalarmult_curve25519_pick_best_implementation();
-    _crypto_stream_salsa20_pick_best_implementation();''')
+    _crypto_stream_salsa20_pick_best_implementation();''', 1, 'sodium.c')
     # GCC's target pragma persists across concatenated C files. Preserve
     # the baseline's architecture dispatch while restoring options at every
     # original translation-unit boundary, just as a separate build would.
     push = '#if defined(__GNUC__) && !defined(__clang__)\n#pragma GCC push_options\n#endif\n'
     pop = '\n#if defined(__GNUC__) && !defined(__clang__)\n#pragma GCC pop_options\n#endif\n'
-    source = source.replace('#include "sodium.h"', '#include "sodium.h"\n#if defined(HAVE_AVXINTRIN_H)\n#include <immintrin.h>\n#endif')
+    source = replace_counted(source, '#include "sodium.h"', '#include "sodium.h"\n#if defined(HAVE_AVXINTRIN_H)\n#include <immintrin.h>\n#endif', -1, 'sodium.c')
     sections = re.split(r'(?=/\* =+ sodium_[^\n]+\.c =+ \*/)', source)
     source = sections[0] + ''.join(push + unit + pop for unit in sections[1:])
     # This standard feature-test macro belongs to the whole translation
     # unit; undefining it is itself diagnosed by GCC.
-    source = source.replace('#undef __STDC_WANT_LIB_EXT1__\n', '')
+    source = replace_counted(source, '#undef __STDC_WANT_LIB_EXT1__\n', '', -1, 'sodium.c')
     for path in manifest['sources']:
         names = manifest['renames'].get(path, [])
+        # a rename is a #define over the file's text: one whose identifier
+        # the file no longer has would rename nothing, so it is refused
+        for name in names:
+            if not re.search(r'\b' + re.escape(name) + r'\b', files[path]):
+                raise SystemExit(f"rename does not occur in {path}: {name}")
         tag = re.sub(r'\W', '_', path)
         disabled = manifest.get('disabled_features', {}).get(path, [])
         source += ''.join(f'#pragma push_macro("{name}")\n#undef {name}\n' for name in disabled)
@@ -494,14 +508,16 @@ int _crypto_stream_salsa20_pick_best_implementation(void);
 
     # Namespace both public and internal symbols so a static consumer may
     # link its own libsodium. Constants and function-like macros stay as
-    # upstream wrote them; all algorithm source text remains unchanged.
+    # upstream wrote them. Values and arithmetic are unchanged; the source
+    # text is adapted only as the adaptation, conversion and narrowing-store
+    # tables above record.
     macro_names = set(DEFINE.findall(header + source))
     symbols = sorted(set(re.findall(
         r'\b(?:(?:_?crypto_|_?sodium_|randombytes_|blake2b_|fe25519_|ge25519_|sc25519_|ristretto255_|chacha20_dolbeau_|poly1305_sse2_)[a-z0-9_]+|randombytes|blake2b)\b',
         header + source)) - macro_names)
     namespace = '/* Private RocketNet namespace; do not combine with a system sodium header. */\n'
     namespace += ''.join(f'#define {name} rocketnet_sodium_{name}\n' for name in symbols)
-    header = header.replace('#define SODIUM_AMALGAM_H', '#define SODIUM_AMALGAM_H\n\n' + namespace)
+    header = replace_counted(header, '#define SODIUM_AMALGAM_H', '#define SODIUM_AMALGAM_H\n\n' + namespace, 1, 'sodium.h')
     banner = ('/* Generated by tools/generate_sodium.py; pinned inputs and source list\n'
               ' * are in sodium/manifest.json. See sodium/README.md for provenance. */\n')
     outputs = {'sodium.h': banner + header, 'sodium.c': banner + source}

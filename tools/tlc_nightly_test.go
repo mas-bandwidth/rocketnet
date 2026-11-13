@@ -164,6 +164,24 @@ func TestSourceMismatchRefusesVerdict(t *testing.T) {
 	}
 }
 
+// The source tree stays as it was while the frozen copy TLC reads (o.out/work)
+// changes under it: only the frozen-inputs check can refuse that.
+func TestFrozenCopyMismatchRefusesVerdict(t *testing.T) {
+	o := fixture(t, "pass", "-", "INVARIANT Safe")
+	h := hooks{execute: func(ctx context.Context, r tlc.Run, log string) int {
+		code := tlc.Execute(ctx, r, log)
+		path := filepath.Join(o.out, "work", "MCNightly.tla")
+		if err := os.WriteFile(path, []byte(tinyModel+"\n\\* frozen copy changed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return code
+	}}
+	rec, err := runCase(context.Background(), o, h)
+	if err == nil || rec.Result != "FAIL" || rec.InputsCurrent || !strings.Contains(err.Error(), "frozen inputs changed during execution") {
+		t.Fatalf("frozen copy mismatch accepted: %+v %v", rec, err)
+	}
+}
+
 func TestCancellationIsIncomplete(t *testing.T) {
 	o := fixture(t, "pass", "-", "INVARIANT Safe")
 	ctx, cancel := context.WithCancel(context.Background())

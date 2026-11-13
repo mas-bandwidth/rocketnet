@@ -110,10 +110,15 @@ if [ "$(uname -s)" = "Linux" ]; then
     XDP=ON
 fi
 # a build directory configured with other flags would build without the
-# define or the relocation flag and report wrong numbers; refuse it
-if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -q '^CMAKE_CXX_FLAGS:.*-DROCKETNET_FUZZ_COVERAGE_BUILD=1' "$BUILD/CMakeCache.txt"; then
-    echo "fuzz_coverage: $BUILD was configured without the current coverage flags; delete it and rerun" >&2
-    exit 1
+# define or the relocation flag and report wrong numbers; refuse it: both the
+# C and the C++ flags must be exactly the COVFLAGS this run would configure
+if [ -f "$BUILD/CMakeCache.txt" ]; then
+    for lang in C CXX; do
+        if ! grep -qxF "CMAKE_${lang}_FLAGS:STRING=$COVFLAGS" "$BUILD/CMakeCache.txt"; then
+            echo "fuzz_coverage: $BUILD was configured without the current coverage flags (CMAKE_${lang}_FLAGS); delete it and rerun" >&2
+            exit 1
+        fi
+    done
 fi
 if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -q "^ROCKETNET_XDP:BOOL=$XDP\$" "$BUILD/CMakeCache.txt"; then
     echo "fuzz_coverage: $BUILD was configured with ROCKETNET_XDP other than $XDP; delete it and rerun" >&2
