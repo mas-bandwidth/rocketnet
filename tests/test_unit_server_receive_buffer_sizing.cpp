@@ -125,7 +125,12 @@ static void test_server_host_estimate_charges_the_receive_request()
                 struct rocketnet_server_transport_config_t config;
                 rocketnet_server_transport_default_config( &config );
                 config.max_clients = max_clients;
-                config.num_xdp_queues = queues;
+                config.num_xdp_threads = queues;
+                config.num_gso_workers = queues;
+                config.num_io_uring_workers = queues;
+                config.num_rio_lanes = queues;
+                config.num_iocp_completion_workers = queues;
+                config.num_msgx_transmit_workers = queues;
 
                 struct rocketnet_host_memory_estimate_t estimate;
                 if ( !rocketnet_server_transport_host_memory_estimate( &config, transport, &estimate ) )
@@ -152,7 +157,7 @@ static void test_server_host_estimate_charges_the_receive_request()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
     config.max_clients = 1000;
-    config.num_xdp_queues = 4;
+    config.num_gso_workers = 4;
 
     struct rocketnet_host_memory_estimate_t estimate;
     check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );

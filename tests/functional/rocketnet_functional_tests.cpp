@@ -7894,7 +7894,7 @@ void rocketnet_test_server_gso_pin_refusals_reach_server_counters()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
-    server_config.num_xdp_queues = 2;
+    server_config.num_gso_workers = 2;
     server_config.num_os_cpus = 256; // the config's largest: no machine here has that many cpus online, so every pin is refused
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
@@ -9526,7 +9526,7 @@ void rocketnet_test_server_uring_rows_reach_the_server()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 4;
-    config.num_xdp_queues = queues;
+    config.num_io_uring_workers = queues;
     config.num_os_cpus = 200;
     snprintf( config.transport, sizeof( config.transport ), "io_uring" );
 
@@ -11678,7 +11678,7 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
-    server_config.num_xdp_queues = veth_queues;
+    server_config.num_xdp_threads = veth_queues;
     server_config.num_os_cpus = 1;
     snprintf( server_config.transport, sizeof( server_config.transport ), "xdp" );
     if ( rocketnet_xdp_veth_both )
@@ -12619,7 +12619,9 @@ static struct rocketnet_server_transport_t * rocketnet_xdp_link_create( const ch
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 4;
-    config.num_xdp_queues = 1;
+    config.num_xdp_threads = 1;
+    config.num_gso_workers = 1;
+    config.num_io_uring_workers = 1;
     config.num_os_cpus = 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
 

@@ -43,7 +43,7 @@
                  UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp)
       io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring, where
                  /proc/sys/kernel/io_uring_disabled reads 0
-      xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=1
+      xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_THREADS=1
                  ROCKETNET_SERVER_NUM_OS_CPUS=1, run as root inside a virtme-ng
                  guest booted with irqaffinity=0 isolcpus=1 nohz_full=1, on a
                  veth pair whose far end sits in its own namespace:

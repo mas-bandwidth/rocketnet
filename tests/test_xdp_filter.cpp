@@ -1670,7 +1670,7 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     if ( xdp_server )
     {
         setenv( "ROCKETNET_SERVER_TRANSPORT", "xdp", 1 );
-        setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "1", 1 );
+        setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "1", 1 );
         setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 );
     }
 
@@ -2159,7 +2159,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
             }
 
             setenv( "ROCKETNET_SERVER_TRANSPORT", "xdp", 1 );
-            setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
+            setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "2", 1 );
             setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2", 1 );
             setenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", "1", 1 );
             execl( server_path, server_path, TEARDOWN_SERVER_ADDRESS, "--max-clients", ONLINK_MAX_CLIENTS, (char *) NULL );

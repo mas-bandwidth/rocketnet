@@ -148,7 +148,7 @@ jobs:
           # the guest is need * 5/4 + 1 GiB for the guest kernel, rounded up
           # to whole GiB: 27G. A runner with less MemAvailable than that
           # fails the cell by name.
-          xdp_env="ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1"
+          xdp_env="ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_SERVER_NUM_XDP_THREADS=1 ROCKETNET_SERVER_NUM_OS_CPUS=1"
           plan_out=$(mktemp)
           plan_status=0
           env $xdp_env LOAD_PLAN_ONLY=1 ./bin/load 1000 60 > "$plan_out" || plan_status=$?
@@ -194,7 +194,7 @@ jobs:
           timed=""
           [ -x /usr/bin/time ] && timed="/usr/bin/time -v -o $1/xdp.time"
           $timed env ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable \
-              ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 \
+              ROCKETNET_SERVER_NUM_XDP_THREADS=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 \
               LOAD_SERVER_ADDRESS=10.77.3.1:40411 LOAD_CLIENT_NETNS=/var/run/netns/rnxdpload \
               ./bin/load 1000 60 > "$1/xdp.out" 2> "$1/xdp.err"
           status=$?

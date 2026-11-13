@@ -71,7 +71,10 @@ static void usage( void )
         "  --max-clients N         max_clients, set explicitly (the run uses 1000)\n"
         "  --max-packets-per-update N  the message config's packets_per_update\n"
         "  --update-hz H           update rate of the main loop\n"
-        "  --num-xdp-queues N      the transport config's num_xdp_queues (0 is the transport default; xdp thread k pins to cpu 1 + k)\n"
+        "  --num-xdp-threads N     the transport config's num_xdp_threads (0 is the transport default; xdp thread k pins to cpu num_os_cpus + k)\n"
+        "  --num-gso-workers N, --num-io-uring-workers N, --num-rio-lanes N, --num-iocp-completion-workers N,\n"
+        "  --num-iocp-send-threads N, --num-msgx-transmit-workers N\n"
+        "                          each transport's own network thread count, the config field of that name (0 is its default)\n"
         "  --duration S            stop after S seconds (default 0: run until SIGINT or a watched stdin closes)\n"
         "  --simulator L,J,P,D     the development link simulator on the server's sends: latency ms, jitter ms, loss %%, duplicate %%\n"
         "  --counters-every S      print counters, RSS and transport stats every S seconds\n"
@@ -1385,6 +1388,26 @@ static int run_self_test( const char * path, const char * label, uint32_t seed )
     return failures ? 1 : 0;
 }
 
+// each transport's network thread count flag, one per config field
+#define SERVER_NUM_THREAD_FLAGS 7
+
+static const char * const server_thread_flags[SERVER_NUM_THREAD_FLAGS] = { "--num-xdp-threads",           "--num-gso-workers",
+                                                                           "--num-io-uring-workers",      "--num-rio-lanes",
+                                                                           "--num-iocp-completion-workers", "--num-iocp-send-threads",
+                                                                           "--num-msgx-transmit-workers" };
+
+// the flag's index in server_thread_flags, -1 when a is none of them
+static int server_thread_flag( const char * a )
+{
+    for ( int i = 0; i < SERVER_NUM_THREAD_FLAGS; ++i )
+    {
+        if ( strcmp( a, server_thread_flags[i] ) == 0 )
+        {
+            return i;
+        }
+    }
+    return -1;
+}
 
 int main( int argc, char ** argv )
 {
@@ -1403,7 +1426,8 @@ int main( int argc, char ** argv )
     double counters_every = 60.0;
     double update_hz = 1000.0;
     double duration = 0.0;
-    int num_xdp_queues = 0;
+    // the network thread counts, in server_thread_flags order
+    int thread_counts[SERVER_NUM_THREAD_FLAGS] = { 0, 0, 0, 0, 0, 0, 0 };
     int simulator[4] = { 0, 0, 0, 0 };
     int update_hz_given = 0;
     uint32_t seed = 0;
@@ -1455,9 +1479,10 @@ int main( int argc, char ** argv )
             }
             update_hz_given = 1;
         }
-        else if ( strcmp( a, "--num-xdp-queues" ) == 0 && i + 1 < argc )
+        else if ( server_thread_flag( a ) >= 0 && i + 1 < argc )
         {
-            num_xdp_queues = (int) strtol( argv[++i], NULL, 10 );
+            const int flag = server_thread_flag( a );
+            thread_counts[flag] = (int) strtol( argv[++i], NULL, 10 );
         }
         else if ( strcmp( a, "--simulator" ) == 0 && i + 1 < argc )
         {
@@ -1545,7 +1570,13 @@ int main( int argc, char ** argv )
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
-    config.num_xdp_queues = num_xdp_queues;
+    config.num_xdp_threads = thread_counts[0];
+    config.num_gso_workers = thread_counts[1];
+    config.num_io_uring_workers = thread_counts[2];
+    config.num_rio_lanes = thread_counts[3];
+    config.num_iocp_completion_workers = thread_counts[4];
+    config.num_iocp_send_threads = thread_counts[5];
+    config.num_msgx_transmit_workers = thread_counts[6];
     config.simulated_latency_ms = simulator[0];
     config.simulated_jitter_ms = simulator[1];
     config.simulated_loss_percent = simulator[2];

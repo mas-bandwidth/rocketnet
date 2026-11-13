@@ -310,8 +310,15 @@ static std::vector<std::string> env_names_set_candidates()
     const char * dummy32_base64 = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
     env_names_setenv( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY", dummy32_base64 );
     set.push_back( "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" );
-    env_names_setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "4" );
-    set.push_back( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
+    env_names_setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "4" );
+    set.push_back( "ROCKETNET_SERVER_NUM_XDP_THREADS" );
+    for ( const char * name : { "ROCKETNET_SERVER_NUM_GSO_WORKERS", "ROCKETNET_SERVER_NUM_IO_URING_WORKERS", "ROCKETNET_SERVER_NUM_RIO_LANES",
+                                "ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS", "ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS",
+                                "ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS" } )
+    {
+        env_names_setenv( name, "2" );
+        set.push_back( name );
+    }
     env_names_setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2" );
     set.push_back( "ROCKETNET_SERVER_NUM_OS_CPUS" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "1200" );

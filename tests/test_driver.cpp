@@ -100,7 +100,7 @@ static void test_transport_registry()
     bool found_queues = false;
     for ( int i = 0; i < field_count; ++i )
     {
-        if ( strcmp( fields[i].name, "num_xdp_queues" ) == 0 )
+        if ( strcmp( fields[i].name, "num_xdp_threads" ) == 0 )
         {
             CHECK( fields[i].max_value == ROCKETNET_XDP_MAX_QUEUES );
             found_queues = true;

@@ -97,6 +97,29 @@ static int number( const char * text )
     return (int) value;
 }
 
+// the queues argument: each transport's own network thread count (each reads
+// only its own; the IOCP send threads keep their default, sized by the lanes)
+template <typename config_t> static void set_network_threads( config_t & config, int threads )
+{
+    config.num_xdp_threads = threads;
+    config.num_gso_workers = threads;
+    config.num_io_uring_workers = threads;
+    config.num_rio_lanes = threads;
+    config.num_iocp_completion_workers = threads;
+    config.num_msgx_transmit_workers = threads;
+}
+
+template <typename to_t, typename from_t> static void copy_network_threads( to_t & to, const from_t & from )
+{
+    to.num_xdp_threads = from.num_xdp_threads;
+    to.num_gso_workers = from.num_gso_workers;
+    to.num_io_uring_workers = from.num_io_uring_workers;
+    to.num_rio_lanes = from.num_rio_lanes;
+    to.num_iocp_completion_workers = from.num_iocp_completion_workers;
+    to.num_iocp_send_threads = from.num_iocp_send_threads;
+    to.num_msgx_transmit_workers = from.num_msgx_transmit_workers;
+}
+
 // The public endpoint and transport each resolve environment settings. A pure
 // inventory cannot promise their equality while the process environment may
 // change between planning and start. Development server impairment overrides
@@ -181,7 +204,7 @@ static int lifecycle( const rocketnet_server_transport_config_t & transport_conf
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = transport;
     server_config.max_clients = transport_config.max_clients;
-    server_config.num_xdp_queues = transport_config.num_xdp_queues;
+    copy_network_threads( server_config, transport_config );
 
     const size_t server_required = rocketnet_server_required_memory( &server_config );
     const size_t base = live.load();
@@ -790,7 +813,7 @@ int main( int argc, char ** argv )
     }
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
     config.max_clients = number( argv[1] );
-    config.num_xdp_queues = argc >= 5 ? number( argv[4] ) : 0;
+    set_network_threads( config, argc >= 5 ? number( argv[4] ) : 0 );
 
     rocketnet_server_memory_plan_t plan;
     if ( !rocketnet_server_transport_memory_plan( &config, transport, plan ) )
@@ -814,7 +837,7 @@ int main( int argc, char ** argv )
         }
         endpoint.transport = transport;
         endpoint.max_clients = config.max_clients;
-        endpoint.num_xdp_queues = config.num_xdp_queues;
+        copy_network_threads( endpoint, config );
 
         const size_t endpoint_payload = rocketnet_server_required_memory( &endpoint );
         rocketnet_host_memory_estimate_t host = {};
