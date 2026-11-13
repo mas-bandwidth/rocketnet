@@ -450,8 +450,9 @@ classes ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS
 and EINTR as weather: it reads past them, counts them (EINTR uncounted) and
 keeps draining, each spending one read of the socket's budget. ENOTCONN,
 EPIPE and EDESTADDRREQ on a client's socket report that socket dead to the
-socket table, and any other errno ends that socket's drain for the round;
-both count `RECEIVE_FAILED`. The platform receive arms in
+socket table, and any other errno but EAGAIN ends that socket's drain for
+the round; both count `RECEIVE_FAILED`. EAGAIN (or EWOULDBLOCK: nothing left
+to read) ends that socket's drain with no failure and no count. The platform receive arms in
 `sdk/rocketnet_platform.cpp`, which the portable server and the clients use
 (not the msgx server), treat the same errnos as weather
 (`rocketnet_platform_receive_weather`): the single-packet arm
