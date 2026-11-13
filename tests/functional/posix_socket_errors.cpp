@@ -2469,6 +2469,22 @@ void rocketnet_test_posix_msgx_shared_receive_buffer_granted()
     posix_check( getsockopt( plain, SOL_SOCKET, SO_RCVBUF, &plain_granted, &length ) == 0 );
     close( plain );
 
+    // what the halving walk is granted on this host, on a second plain
+    // socket: the request, then halves until the kernel takes one. The
+    // expectation is this host's grant, not a fixed size, so a host with a
+    // low kern.ipc.maxsockbuf checks the same walk against its own limit
+    const int control = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( control >= 0 );
+    int halved = request;
+    while ( halved > 1 && setsockopt( control, SOL_SOCKET, SO_RCVBUF, &halved, sizeof( halved ) ) != 0 )
+    {
+        halved /= 2;
+    }
+    int control_granted = 0;
+    length = sizeof( control_granted );
+    posix_check( getsockopt( control, SOL_SOCKET, SO_RCVBUF, &control_granted, &length ) == 0 );
+    close( control );
+
     rocketnet_address_t bind_address;
     posix_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
     uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
@@ -2479,23 +2495,21 @@ void rocketnet_test_posix_msgx_shared_receive_buffer_granted()
 
     struct rocketnet_server_msgx_stats_t stats;
     rocketnet_server_msgx_stats( msgx, &stats );
-    printf( "  msgx shared SO_RCVBUF at %d clients: requested %d; one setsockopt %s (%s), left at %d; the transport was granted %llu\n",
-            max_clients, request, set == 0 ? "took it" : "refused", set == 0 ? "-" : strerror( set_error ), plain_granted,
-            (unsigned long long) stats.shared_receive_buffer );
+    printf( "  msgx shared SO_RCVBUF at %d clients: requested %d; one setsockopt %s (%s), left at %d; the halving walk on a plain socket "
+            "took %d, granted %d; the transport was granted %llu\n",
+            max_clients, request, set == 0 ? "took it" : "refused", set == 0 ? "-" : strerror( set_error ), plain_granted, halved,
+            control_granted, (unsigned long long) stats.shared_receive_buffer );
     fflush( stdout );
 
-    // granted what the kernel allows: the whole request where it fits, and
-    // otherwise at least half of a request the kernel refused, never the
-    // default a single refused request leaves
+    // granted what the kernel allows: at least what the same walk is granted
+    // on a plain socket of this host (the whole request where it fits)
     posix_check( stats.shared_receive_buffer > 0 );
-    if ( set == 0 )
+    posix_check( stats.shared_receive_buffer >= (uint64_t) control_granted );
+    if ( set != 0 && control_granted > plain_granted )
     {
-        posix_check( stats.shared_receive_buffer >= (uint64_t) plain_granted );
-    }
-    else
-    {
+        // a refused request leaves the default; the walk does better than
+        // that wherever this host grants more than the default
         posix_check( stats.shared_receive_buffer > (uint64_t) plain_granted );
-        posix_check( stats.shared_receive_buffer >= (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
     }
 
     rocketnet_server_msgx_stop( msgx );
