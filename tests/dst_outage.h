@@ -202,6 +202,36 @@ static inline int dst_outage_mode_receipt( int mode )
     return mode >= 5;
 }
 
+// rocketnet_message_batch_t: the channel is the send's for an ordered or
+// sequenced mode and zero for the others
+static inline int dst_outage_mode_has_channel( int mode )
+{
+    return mode == 1 || mode == 3 || mode == 4 || mode == 7;
+}
+
+// rocketnet_message_batch_t: a receipt mode arrives as its base mode, and an
+// unreliable message larger than one packet (it became reliable) as its
+// reliable twin (CHANNELS.md: UNRELIABLE and UNRELIABLE_WITH_ACK_RECEIPT to
+// RELIABLE, UNRELIABLE_SEQUENCED to RELIABLE_SEQUENCED)
+static inline int dst_outage_reliability_expected( int mode, int channel, int bytes )
+{
+    const int promoted = bytes > rocketnet_max_unfragmented_message_bytes( (enum rocketnet_reliability_t) mode, channel );
+    switch ( mode )
+    {
+        case 0:
+        case 5:
+            return promoted ? ROCKETNET_RELIABILITY_RELIABLE : ROCKETNET_RELIABILITY_UNRELIABLE;
+        case 1:
+            return promoted ? ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED : ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED;
+        case 6:
+            return ROCKETNET_RELIABILITY_RELIABLE;
+        case 7:
+            return ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
+        default:
+            return mode;
+    }
+}
+
 static inline uint8_t dst_outage_fill_byte( uint32_t id, uint32_t i )
 {
     return (uint8_t) ( ( id * 31u + i * 7u ) & 0xFFu );
@@ -340,6 +370,18 @@ static inline void dst_outage_take( dst_outage_world_t * w, const rocketnet_mess
             dst_outage_fail( w, "a delivered message differs from the send it names" );
             continue;
         }
+        // what the batch says about the message, against the send it names:
+        // the one client's index (slot 0, and 0 on the client), the send's
+        // channel for an ordered or sequenced mode and zero for the others,
+        // and the received reliability
+        const int channel_expected = dst_outage_mode_has_channel( m->mode ) ? (int) m->channel : 0;
+        if ( batch->client_index[i] != 0 || batch->channel[i] != channel_expected ||
+             (int) batch->reliability[i] != dst_outage_reliability_expected( m->mode, (int) m->channel, (int) m->bytes ) )
+        {
+            w->result->corrupt++;
+            dst_outage_fail( w, "a delivered message's index, channel or reliability differs from its send" );
+            continue;
+        }
         for ( int b = DST_OUTAGE_HEADER_BYTES; b < bytes; b++ )
         {
             if ( p[b] != dst_outage_fill_byte( id, (uint32_t) b ) )
@@ -382,10 +424,21 @@ static inline void dst_outage_receipts( dst_outage_world_t * w, int dir, const r
 {
     for ( int r = 0; r < count; r++ )
     {
+        // the harness reads each side's list once after each update, and the
+        // list holds what that update surfaced: every entry names a
+        // receipt-mode send of this side, has a terminal status, and is the
+        // send's first and only outcome
         std::map<uint32_t, uint32_t>::iterator it = w->serials[dir].find( receipts[r].serial );
         if ( it == w->serials[dir].end() )
         {
-            // read again before the next update: the list is not consumed by a read
+            w->result->receipts_bad++;
+            dst_outage_fail( w, "a receipt names no receipt-mode send of this side" );
+            continue;
+        }
+        if ( receipts[r].status != ROCKETNET_RECEIPT_STATUS_ACKED && receipts[r].status != ROCKETNET_RECEIPT_STATUS_LOSS )
+        {
+            w->result->receipts_bad++;
+            dst_outage_fail( w, "a receipt's status is neither ACKED nor LOSS" );
             continue;
         }
         dst_outage_message_t * m = &w->messages[it->second];
@@ -394,6 +447,11 @@ static inline void dst_outage_receipts( dst_outage_world_t * w, int dir, const r
         {
             w->result->receipts_bad++;
             dst_outage_fail( w, "a send has two receipt outcomes" );
+        }
+        else if ( m->outcome != 0 )
+        {
+            w->result->receipts_bad++;
+            dst_outage_fail( w, "a send's receipt was reported twice" );
         }
         if ( outcome == 2 && m->mode != 5 )
         {
