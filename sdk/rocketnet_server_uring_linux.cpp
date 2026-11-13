@@ -549,8 +549,8 @@ static bool rocketnet_server_uring_receive_armed( void * context )
 // (rocketnet_server_socket_xdp_thread_function): affinity to cpu num_os_cpus +
 // queue, then SCHED_RR at the minimum unless the priority switch is off. A
 // refusal is a warning naming the queue and the cpu, counted in pin_refusals
-// (rocketnet_server_uring_pin_refusals) and in the platform's priority
-// refusals, and the queue's pin_cpu stays NONE: a worker is reported pinned
+// (rocketnet_server_uring_pin_refusals; a refused priority is counted in the
+// platform's priority refusals instead), and the queue's pin_cpu stays NONE: a worker is reported pinned
 // only when pthread_setaffinity_np said so. num_os_cpus 0 pins nothing (the
 // transport driven directly).
 
@@ -605,7 +605,6 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
         const int result = pthread_setschedparam( pthread_self(), SCHED_RR, &param );
         if ( result != 0 )
         {
-            uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
             char call[64];
             snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", param.sched_priority );
             rocketnet_warn( "io_uring worker %d priority not set: %s refused (%s); it runs at its default priority", queue->index, call, strerror( result ) );

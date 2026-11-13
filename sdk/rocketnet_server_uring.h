@@ -228,7 +228,8 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
 int rocketnet_server_uring_worker_cpu( struct rocketnet_server_uring_t * uring, int queue );
 
-// the pins and priorities the workers asked for and the system refused
+// the pins the workers asked for and the system refused (a refused priority is
+// rocketnet_platform_thread_priority_refusals)
 
 int rocketnet_server_uring_pin_refusals( struct rocketnet_server_uring_t * uring );
 
