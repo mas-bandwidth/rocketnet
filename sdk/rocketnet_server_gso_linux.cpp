@@ -1895,7 +1895,8 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     // claim is still counted.
 
     // every row of the gso range (GSO_PACKETS_SENT .. GSO_GRO_CMSG_FAULTS) is
-    // written below; nothing else. The server copies the range
+    // written below, and GSO_PIN_REFUSALS, which sits after the other
+    // transports' rows; nothing else. The server copies both
     // (rocketnet_server_transport_counters)
 
     uint64_t packets_sent = 0;
@@ -1923,6 +1924,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
     counters[ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS] = gso->counter_receive_errors;
     counters[ROCKETNET_COUNTER_GSO_GRO_CMSG_FAULTS] = gso->counter_gro_cmsg_faults;
+    counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] = (uint64_t) gso->pin_refusals.load( std::memory_order_relaxed );
 }
 
 // the segments the workers' prefilter refused for a reason other than size
@@ -2875,7 +2877,7 @@ int rocketnet_server_gso_test_send_slot( struct rocketnet_server_gso_t * gso, ui
     return rocketnet_server_gso_send_slot( gso, packet_id, packet_data, &bank );
 }
 
-// a refused pin as the worker records it: counted in pin_refusals, the
+// a refused pin as the worker records it: counted in GSO_PIN_REFUSALS, the
 // queue left unpinned. No system call is made and no thread's affinity is
 // changed (the real refusal and its confinement run on a worker thread, in
 // the functional cases)
