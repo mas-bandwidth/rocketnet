@@ -772,6 +772,14 @@ static bool rocketnet_crypto_open = false;
 static bool rocketnet_crypto_closing = false;
 static int rocketnet_crypto_holders = 0;
 
+// mutation gaps hangs begin
+#if ROCKETNET_DEV
+// set by rocketnet_crypto_fail_acquire_for_test: acquire fails as a
+// sodium_init failure would, holding nothing. Changes under the mutex.
+static bool rocketnet_crypto_acquire_fault = false;
+#endif // #if ROCKETNET_DEV
+// mutation gaps hangs end
+
 // proofs/tla/RNCryptoSource.tla StirCheck, StirOpen: sodium_init opens the
 // source only the first time it runs, so the stir reopens it after a term
 // closed it. Called with the mutex held.
@@ -803,6 +811,14 @@ bool rocketnet_crypto_acquire()
     std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
     rocketnet_crypto_changed.wait( lock, []()
                                    { return !rocketnet_crypto_closing; } );
+    // mutation gaps hangs begin
+#if ROCKETNET_DEV
+    if ( rocketnet_crypto_acquire_fault )
+    {
+        return false;
+    }
+#endif // #if ROCKETNET_DEV
+    // mutation gaps hangs end
     if ( !rocketnet_crypto_open_locked() )
     {
         return false;
@@ -1102,3 +1118,34 @@ uint64_t rocketnet_next_packet_lease_id()
 
     return 0;
 }
+
+// mutation gaps hangs begin
+#if ROCKETNET_DEV
+
+// The crypto source's holder count and closing flag, read under the mutex:
+// a generator's acquire and release leave the count where it found it, and
+// a term waiting for the last holder has closing set.
+
+int rocketnet_crypto_holders_for_test()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
+    return rocketnet_crypto_holders;
+}
+
+bool rocketnet_crypto_closing_for_test()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
+    return rocketnet_crypto_closing;
+}
+
+// fail every rocketnet_crypto_acquire as a sodium_init failure would (true),
+// or acquire normally again (false)
+
+void rocketnet_crypto_fail_acquire_for_test( bool fail )
+{
+    std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
+    rocketnet_crypto_acquire_fault = fail;
+}
+
+#endif // #if ROCKETNET_DEV
+// mutation gaps hangs end

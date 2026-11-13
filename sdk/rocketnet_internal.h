@@ -725,4 +725,14 @@ extern void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t *
 bool rocketnet_crypto_acquire( void );
 void rocketnet_crypto_release( void );
 
+// mutation gaps hangs begin
+#if ROCKETNET_DEV
+// the crypto source's holder count and closing flag, and a fault that fails
+// every acquire as a sodium_init failure would (sdk/rocketnet.cpp)
+int rocketnet_crypto_holders_for_test( void );
+bool rocketnet_crypto_closing_for_test( void );
+void rocketnet_crypto_fail_acquire_for_test( bool fail );
+#endif // #if ROCKETNET_DEV
+// mutation gaps hangs end
+
 #endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

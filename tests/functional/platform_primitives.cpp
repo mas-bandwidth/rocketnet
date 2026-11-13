@@ -273,6 +273,63 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
+// The last holder's release wakes a term that is waiting for it. This
+// thread holds the crypto source, another thread calls term, and term sets
+// closing and waits in the same hold of the crypto mutex, so once closing
+// reads set term is waiting (no timing decides it). Then the hold is
+// released: term must return. A release that does not notify when the count
+// reaches zero leaves term waiting forever; the 10 s bound only limits how
+// long a lost wakeup is given before the case says so. The closing flag and
+// holder count are DEV accessors, so this case runs in DEV builds (the
+// macOS Debug functional leg).
+// mutation gap: me rocketnet.cpp:819 holders == 0 -> holders != 0 (lost wakeup)
+
+#if ROCKETNET_DEV
+void rocketnet_test_bundled_rng_term_wakes_when_the_last_holder_releases_on_mac()
+{
+    const bool crypto_holders_start_at_zero = rocketnet_crypto_holders_for_test() == 0;
+    rocketnet_check( crypto_holders_start_at_zero );
+    rocketnet_check( rocketnet_crypto_acquire() );
+
+    std::atomic<bool> term_returned{ false };
+    std::atomic<int> term_status{ 1 };
+    std::thread terminator( [&term_returned, &term_status]()
+                            {
+        term_status.store( (int) rocketnet_term() );
+        term_returned.store( true, std::memory_order_release ); } );
+
+    while ( !rocketnet_crypto_closing_for_test() )
+    {
+        std::this_thread::yield();
+    }
+    const bool term_waits_while_a_holder_holds = !term_returned.load( std::memory_order_acquire );
+    rocketnet_check( term_waits_while_a_holder_holds );
+
+    rocketnet_crypto_release();
+
+    const std::chrono::steady_clock::time_point release_time = std::chrono::steady_clock::now();
+    while ( !term_returned.load( std::memory_order_acquire ) &&
+            std::chrono::steady_clock::now() - release_time < std::chrono::seconds( 10 ) )
+    {
+        std::this_thread::yield();
+    }
+
+    const bool term_woke_when_the_last_holder_released = term_returned.load( std::memory_order_acquire );
+    if ( !term_woke_when_the_last_holder_released )
+    {
+        terminator.detach();
+    }
+    rocketnet_check( term_woke_when_the_last_holder_released );
+    terminator.join();
+    rocketnet_check( term_status.load() == (int) ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_crypto_holders_for_test() == 0 );
+
+    // restore the worker's initialized state for its ordinary final term
+
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+#endif // #if ROCKETNET_DEV
+
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 
 static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
@@ -512,6 +569,108 @@ void rocketnet_test_platform_spin_lock_acquire_release_under_contention()
         threads[i].join();
     }
 
+    rocketnet_check( guarded == (uint64_t) THREADS * ITERATIONS );
+    rocketnet_check( lock == 0 );
+}
+
+// rocketnet_platform_spin_lock_u64 excludes a second holder. First, a lock
+// held by this thread is not taken by another: the other thread announces
+// it is about to lock, then this thread watches for up to 200 ms while it
+// still holds the word (a retry that compares against the held value takes
+// the word within a few spins; a correct lock never takes it while held, so
+// the bound only limits how long a broken lock is given to show itself).
+// Then four threads contend, each checking on entry that nobody else is
+// inside: any overlap is a second holder, seen as it happens rather than as
+// a lost update in a count. A thread sanitizer reports the same overlap as a
+// race on the plain counter.
+// mutation gap: me rocketnet_platform.h:949 expected = 0 -> expected = 1
+
+void rocketnet_test_platform_spin_lock_excludes_a_second_holder()
+{
+    volatile uint64_t lock = 0;
+    rocketnet_platform_spin_lock_u64( &lock );
+
+    std::atomic<bool> trying{ false };
+    std::atomic<bool> taken{ false };
+    std::thread second( [&lock, &trying, &taken]()
+                        {
+        trying.store( true, std::memory_order_release );
+        rocketnet_platform_spin_lock_u64( &lock );
+        taken.store( true, std::memory_order_release );
+        rocketnet_platform_spin_unlock_u64( &lock ); } );
+
+    while ( !trying.load( std::memory_order_acquire ) )
+    {
+    }
+
+    const std::chrono::steady_clock::time_point watch_start = std::chrono::steady_clock::now();
+    bool taken_while_held = false;
+    while ( std::chrono::steady_clock::now() - watch_start < std::chrono::milliseconds( 200 ) )
+    {
+        if ( taken.load( std::memory_order_acquire ) )
+        {
+            taken_while_held = true;
+            break;
+        }
+        std::this_thread::yield();
+    }
+
+    rocketnet_platform_spin_unlock_u64( &lock );
+    second.join();
+
+    const bool second_thread_stayed_out_while_the_lock_was_held = !taken_while_held;
+    rocketnet_check( second_thread_stayed_out_while_the_lock_was_held );
+    const bool second_thread_took_the_lock_once_released = taken.load();
+    rocketnet_check( second_thread_took_the_lock_once_released );
+    rocketnet_check( lock == 0 );
+
+    enum
+    {
+        THREADS = 4,
+        ITERATIONS = 20000
+    };
+
+    uint64_t guarded = 0;               // ordered by the lock alone, not atomic
+    std::atomic<int> inside{ 0 };
+    std::atomic<int> overlaps{ 0 };
+    std::atomic<int> ready{ 0 };
+    std::atomic<bool> go{ false };
+
+    std::thread threads[THREADS];
+    for ( int i = 0; i < THREADS; i++ )
+    {
+        threads[i] = std::thread( [&lock, &guarded, &inside, &overlaps, &ready, &go]()
+                                  {
+            ready.fetch_add( 1, std::memory_order_release );
+            while ( !go.load( std::memory_order_acquire ) )
+            {
+            }
+
+            for ( int n = 0; n < ITERATIONS; n++ )
+            {
+                rocketnet_platform_spin_lock_u64( &lock );
+                if ( inside.fetch_add( 1, std::memory_order_relaxed ) != 0 )
+                {
+                    overlaps.fetch_add( 1, std::memory_order_relaxed );
+                }
+                guarded++;
+                inside.fetch_sub( 1, std::memory_order_relaxed );
+                rocketnet_platform_spin_unlock_u64( &lock );
+            } } );
+    }
+
+    while ( ready.load( std::memory_order_acquire ) != THREADS )
+    {
+    }
+    go.store( true, std::memory_order_release );
+
+    for ( int i = 0; i < THREADS; i++ )
+    {
+        threads[i].join();
+    }
+
+    const bool no_two_threads_held_the_spin_lock_at_once = overlaps.load() == 0;
+    rocketnet_check( no_two_threads_held_the_spin_lock_at_once );
     rocketnet_check( guarded == (uint64_t) THREADS * ITERATIONS );
     rocketnet_check( lock == 0 );
 }
