@@ -3660,6 +3660,9 @@ jobs:
           python3 tools/test_run_backend_examples.py -v
           python3 tools/test_run_examples.py -v
           bash scripts/lan-proof-selftest
+          bash scripts/live-xdp-fleet-selftest
+          bash scripts/netem-pair-soak-selftest
+          bash scripts/outage-pair-real-selftest
           SUITES
           logs="$RUNNER_TEMP/checker-selftests"
           mkdir -p "$logs"
