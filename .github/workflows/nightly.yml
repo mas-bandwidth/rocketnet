@@ -70,7 +70,9 @@
 #                           of the six core table and ring files and the SDK
 #                           files changed in the last 91 days, one slice of
 #                           90 a night (about 60 minutes), so the whole list
-#                           every 90 nights, less test code and Windows sources. A
+#                           every 90 nights, less test code and Windows sources
+#                           (a dispatch with mutation_full runs every SDK
+#                           source's mutants in one run instead). A
 #                           survivor not in the reviewed baseline
 #                           tools/mutation/survivors.tsv fails the job, and so
 #                           do stale entries and a gap count above or below its
@@ -982,7 +984,7 @@ jobs:
           grep -q 'AA64 machine (ARM64)' arm64-headers.txt
           python tools/check_exports.py build-arm64/bin/Release/rocketnet.dll build-arm64/Release/rocketnet.lib
 
-  # THE MUTATION GATE, ONE SLICE A NIGHT. The list is every mutant the
+  # THE MUTATION GATE, ONE SLICE A NIGHT. The night's list is every mutant the
   # generator emits (--max-mutants 0, never a sample) over the six core table
   # and ring files and every SDK source committed in the last 91 days. The
   # whole list does not fit a night: run 43151301540 (main ee94e6fbf,
@@ -1020,9 +1022,11 @@ jobs:
   # cover the whole list every 90 nights, and the 91-day window keeps a
   # changed file in the list for all 90 of them. 90 is also the repository's
   # artifact retention in days, so the slice records of one whole cycle are
-  # always there to audit. workflow_dispatch with mutation_full runs the
-  # whole list in one run under the same baseline rule (every file but test
-  # code and the Windows sources), about 99 hours with 4 workers. --self-test
+  # always there to audit. workflow_dispatch with mutation_full runs, in one
+  # run under the same baseline rule, the core files and every SDK source
+  # (git ls-files sdk, the same extensions, whatever the date of its last
+  # commit) but test code and the Windows sources, about 99 hours with 4
+  # workers; the 91-day window is the nightly slice's only. --self-test
   # does not build; this step is the campaign,
   # which is why it is not on the per-commit gate. The tool is exec'd so a
   # cancelled step's signal reaches it; it then kills every test process it
@@ -1085,9 +1089,14 @@ jobs:
               exit 1
             fi
           done
-          # one more day than there are slices: a file changed today is in the
-          # list for every slice of the next cycle
-          changed="$(git log --since="$((slices + 1)) days ago" --name-only --pretty=format: -- sdk | sed '/^$/d' | sort -u)"
+          if [[ "$MUTATION_FULL" == 1 ]]; then
+            # every SDK source, however long since its last commit
+            candidates="$(git ls-files sdk)"
+          else
+            # one more day than there are slices: a file changed today is in the
+            # list for every slice of the next cycle
+            candidates="$(git log --since="$((slices + 1)) days ago" --name-only --pretty=format: -- sdk | sed '/^$/d' | sort -u)"
+          fi
           files=("${core[@]}")
           while IFS= read -r f; do
             [[ "$f" =~ ^sdk/.+\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inc)$ ]] || continue
@@ -1102,7 +1111,7 @@ jobs:
             if [[ "$skip" -eq 0 ]]; then
               files+=("$f")
             fi
-          done <<< "$changed"
+          done <<< "$candidates"
           mkdir -p build/mutation
           {
             echo "date_utc=$(date -u +%Y-%m-%d)"
