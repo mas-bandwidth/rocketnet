@@ -126,12 +126,17 @@ tar -xjf "$work/$valgrind_tarball" -C "$work"
     make install
 )
 
-got_gcc=$("$prefix/bin/g++" -dumpfullversion 2>&1 || true)
+# a query that fails reports through the same message, never a bare exit
+if ! got_gcc=$("$prefix/bin/g++" -dumpfullversion); then
+    got_gcc="no answer"
+fi
 if [ "$got_gcc" != "$gcc_version" ]; then
     echo "build_pinned_toolchain: built g++ reports '$got_gcc', not $gcc_version" >&2
     exit 1
 fi
-got_valgrind=$(VALGRIND_LIB="$prefix/libexec/valgrind" "$prefix/bin/valgrind" --version 2>&1 || true)
+if ! got_valgrind=$(VALGRIND_LIB="$prefix/libexec/valgrind" "$prefix/bin/valgrind" --version); then
+    got_valgrind="no answer"
+fi
 if [ "$got_valgrind" != "valgrind-$valgrind_version" ]; then
     echo "build_pinned_toolchain: built valgrind reports '$got_valgrind', not valgrind-$valgrind_version" >&2
     exit 1
