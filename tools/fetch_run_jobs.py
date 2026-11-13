@@ -18,7 +18,9 @@ a per-operation timeout:
   that keeps trickling) is abandoned and counts as a timeout.
 - The body is read in chunks of CHUNK bytes. Before each chunk the socket's
   timeout is set to the time left, and after each chunk the clock is checked,
-  so a body that arrives slowly ends at the deadline.
+  so a body that arrives slowly ends at the deadline. Once the response is
+  closed (http.client closes it after the last byte) the socket is not
+  touched again.
 - A list that arrives past the deadline is refused (red), never published.
 
 A try is retried on HTTP 5xx, 429 or a rate-limit 403, on a failure before any
@@ -136,10 +138,23 @@ def socket_timeout_setter(response):
 def read_body(response, left, set_timeout):
     """The whole body, CHUNK bytes at a time: before each chunk the socket's timeout is the time
     left, and after each chunk the clock is checked, so a body that keeps trickling ends at the
-    request's deadline (left() raises TimeoutError once it has passed)."""
+    request's deadline (left() raises TimeoutError once it has passed). The socket is never
+    touched once the body is whole: http.client closes the connection after the last byte, so the
+    loop ends when the response is closed, and an OSError from settimeout after a chunk was read
+    (the socket closed under it) ends the body too; the body is then judged whole or short by the
+    page checks, as any other."""
+    closed = getattr(response, "isclosed", lambda: False)
     chunks = []
     while True:
-        set_timeout(left())
+        if closed():
+            break
+        remaining = left()
+        try:
+            set_timeout(remaining)
+        except OSError:
+            if not chunks:
+                raise
+            break
         chunk = response.read(CHUNK)
         if not chunk:
             break
@@ -298,9 +313,44 @@ def fetch_jobs(env, out, fetch=http_fetch, sleep=time.sleep, clock=time.monotoni
     return 1
 
 
+def loopback_server(body, mode):
+    """A server on 127.0.0.1 (an ephemeral port, on its own thread) that answers every GET with
+    body, as Content-Length (mode "length") or chunked (mode "chunked"), and closes the connection
+    after it: the shape of a GitHub API answer to urllib, which asks for Connection: close."""
+    import http.server
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):  # noqa: N802 -- the http.server name
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Connection", "close")
+            if mode == "chunked":
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                half = len(body) // 2
+                for part in (body[:half], body[half:], b""):
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part))
+            else:
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            self.close_connection = True
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 def self_test():
-    """Fakes only: no socket, no clock, no sleep. Each case is a list of answers, one per request
-    (bytes, or an exception to raise); the shard checker reads what was written."""
+    """Fakes for the schedule: no clock, no sleep. Each case is a list of answers, one per request
+    (bytes, or an exception to raise); the shard checker reads what was written. Two cases then
+    run the real request path (http_fetch, urlopen, read_body) against a loopback server on
+    127.0.0.1, with no network."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import check_debug_unit_shards as checker
 
@@ -444,6 +494,43 @@ def self_test():
                bool(socket_timeouts) and max(socket_timeouts) <= REQUEST_TIMEOUT)
         expect("trickle: the stale file was left", not out.exists())
 
+        # the socket closed under the read: after a chunk, settimeout's OSError ends the body;
+        # before any chunk it is the request's failure. A closed response is never touched
+        class Parts:
+            def __init__(self, parts, closes=False):
+                self.parts, self.closes = list(parts), closes
+
+            def read(self, size):
+                return self.parts.pop(0) if self.parts else b""
+
+            def isclosed(self):
+                return self.closes and not self.parts
+
+        def settimeout_after(good):
+            calls = [0]
+
+            def set_timeout(seconds):
+                calls[0] += 1
+                if calls[0] > good:
+                    raise OSError(9, "Bad file descriptor")
+            return set_timeout
+
+        def no_touch(seconds):
+            raise AssertionError("the socket was touched after the response closed")
+
+        forever = lambda: 1.0  # noqa: E731
+        expect("closed after a chunk: the body", read_body(Parts([b"ab", b"cd"]), forever, settimeout_after(2)) == b"abcd")
+        try:
+            read_body(Parts([b"ab"]), forever, settimeout_after(0))
+            expect("closed before any chunk: not raised", False)
+        except OSError:
+            pass
+        expect("a closed response: the body", read_body(Parts([b"ab", b"cd"], closes=True), forever,
+                                                         settimeout_after(2)) == b"abcd")
+        closed_parts = Parts([b"ab"], closes=True)
+        expect("a closed response: touched", read_body(closed_parts, forever,
+                                                       lambda s: (closed_parts.parts or no_touch(s))) == b"ab")
+
         # a whole, valid list that arrives after the deadline is refused, not published
         out = Path(tmp) / "late.json"
         now = [0.0]
@@ -507,6 +594,27 @@ def self_test():
         missing = fetch_jobs({}, Path(tmp) / "none.json", log=lambda line: None)
         expect("no environment: not red", missing == 1)
         expect("no environment: a file was written", not (Path(tmp) / "none.json").exists())
+
+        # the real request path, end to end: http_fetch, urlopen and read_body against a loopback
+        # server whose response closes once its body is read, with Content-Length and chunked.
+        # The fakes above never reach the socket; in CI the read closed the connection and the
+        # next chunk's settimeout raised EBADF on every try (PR #1126)
+        for mode in ("length", "chunked"):
+            loopback = loopback_server(green, mode)
+            try:
+                port = loopback.server_address[1]
+                out = Path(tmp) / f"loopback-{mode}.json"
+                lines = []
+                code = fetch_jobs(dict(env, GITHUB_API_URL=f"http://127.0.0.1:{port}"), out,
+                                  sleep=lambda s: None, log=lines.append)
+                expect(f"loopback {mode}: exit {code} {lines}", code == 0)
+                expect(f"loopback {mode}: one try {lines}", lines == ["JOB-LIST=OK 4 jobs (try 1/4)"])
+                if code == 0:
+                    ok, why = checker.verdict(out.read_text(encoding="utf-8"))
+                    expect(f"loopback {mode}: checker {why}", ok)
+            finally:
+                loopback.shutdown()
+                loopback.server_close()
     if bad:
         return 1
     print("fetch_run_jobs: self-test ok")

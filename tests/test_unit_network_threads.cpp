@@ -23,6 +23,7 @@
 #include "rocketnet_layers.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_network_threads.h"
+#include "rocketnet_server_iocp.h"
 #if ROCKETNET_DEV
 #include "test_env_source.h"
 #endif // #if ROCKETNET_DEV
@@ -447,18 +448,30 @@ static void test_network_threads_plan_per_transport()
     rocketnet_test_env_restore();
 #endif // #if ROCKETNET_DEV
 
-    // send threads past the send lanes (max_clients 64 has one): the iocp plan
-    // does not compute, and a list of iocp alone has no size
+    // the iocp send threads against the send lanes. max_clients 64 is sized
+    // as ROCKETNET_SERVER_MIN_SIZED_CLIENTS (512): 4 send lanes, so 2 send
+    // threads are legal and the plan counts them beside the completion
+    // workers; one more thread than there are lanes is refused (a thread with
+    // no lane would never post), the plan does not compute, and a list of
+    // iocp alone has no size
     config.max_clients = 64;
+    const int iocp_lanes = rocketnet_server_iocp_send_lanes( config.max_clients );
+    check( iocp_lanes == 4 );
     config.num_iocp_send_threads = 2;
     rocketnet_server_memory_plan_t iocp_plan;
+    check( rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
+    check( iocp_plan.worker_threads == iocp_plan.sockets + 2 );
+    config.num_iocp_send_threads = iocp_lanes;
+    check( rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
+    check( iocp_plan.worker_threads == iocp_plan.sockets + iocp_lanes );
+    config.num_iocp_send_threads = iocp_lanes + 1;
     check( !rocketnet_builtin_server_memory_plan( &config, "iocp", iocp_plan ) );
     snprintf( config.transport, sizeof( config.transport ), "%s", "iocp" );
     check( rocketnet_server_transport_order_allocator_bytes( &config ) == 0 );
     config.num_iocp_send_threads = 0;
 
     // and the public size of that config is 0 (start refuses it), never the
-    // size without its transport
+    // size without its transport; the legal count has a size
     struct rocketnet_server_config_t server_config;
     check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
     server_config.transport = "iocp";
@@ -467,6 +480,8 @@ static void test_network_threads_plan_per_transport()
     memcpy( server_config.packet_filter, filter, sizeof( server_config.packet_filter ) );   // a production build refuses the test filter
     check( rocketnet_server_required_memory( &server_config ) > 0 );
     server_config.num_iocp_send_threads = 2;
+    check( rocketnet_server_required_memory( &server_config ) > 0 );
+    server_config.num_iocp_send_threads = iocp_lanes + 1;
     check( rocketnet_server_required_memory( &server_config ) == 0 );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 }

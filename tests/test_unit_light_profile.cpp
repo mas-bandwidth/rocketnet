@@ -248,7 +248,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (ROCKETNET_MSGX_RECV_QUEUE_SIZE, 16000 at 1000 clients, was 8192; review
 // E3): three banks of 7808 more entries add 35042248 to the server: actual=
 // 1660619243 (mini-m5, Apple clang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1659570667 )
+// The msgx server counts its refused send finishes (finish_refused, a
+// std::atomic<uint64_t> after the int shared_receive_buffer): 4 bytes of
+// padding and the 8-byte counter where the DEV atomics began, 8 bytes more:
+// actual=1660619251 (PR #1126, macos Debug unit, DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1659570675 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).

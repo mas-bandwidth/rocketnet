@@ -80,5 +80,28 @@ Nine fix branches and the flaky-test repair, at these commits:
 - `fix/v1.1.x/flaky-disconnect-delivery`: `0ceee9e847f783e71fc198f9e89adfadeef8402e` (tests only)
 - `fix/v1.1.x/summary-api-retry`: `624e206663ac75a14eefbb402bbff298d835a7a8` (CI only)
 
+The first CI run of the release pull request found faults the branches
+carried on their own, repaired forward on the integration branch, one
+commit each:
+
+- summary-api-retry: the job-list read set a socket timeout on the
+  connection http.client had already closed after the body, so every
+  summary job failed; the read no longer touches a closed response, and
+  its self-test now runs the real request path against a loopback server.
+- token-clock: a `rocketnet_time` comment in `sdk/rocketnet.h` used the
+  transport word the client/server source audit refuses; reworded.
+- server-lifecycle-and-plan: the iocp plan test took 64 clients to have
+  one send lane; they are sized as 512, four lanes. The test now checks
+  that 2 and 4 send threads plan, and that 5 is refused.
+- msgx-residue: the macOS light memory pin takes the 8 bytes of the msgx
+  server's refused-finish counter.
+- receive-handoff-latency, repaired on its own branch
+  `fix/v1.1.x/gso-handoff-ci-repair` at
+  `005ee4e6aaa72d7a8f2cc34cbaa466e69555e7c3` (merged): the gso receive
+  overflow functional case now waits for the worker's full buffer and
+  reads the counters once its tallies are folded (the counter was right,
+  the test was not), and two new static findings in the gso receive test
+  seams are gone (a dead store and a sockaddr cast).
+
 - Tag: `v1.1.54`, on the merged `main` commit.
 - Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.1.54).

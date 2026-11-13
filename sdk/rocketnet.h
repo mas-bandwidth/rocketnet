@@ -1325,7 +1325,7 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// After a suspend the clock jumps forward by the time slept. The update
 /// functions take any forward step as elapsed time: it behaves as an outage
 /// of that length. A connection whose other end went silent meanwhile times
-/// out within one timeout of resume (packets already queued for this end are
+/// out within one timeout of resume (what had already arrived for this end is
 /// still taken first). A connect attempt still requesting a cookie or sending
 /// connection requests whose token lifetime has passed ends as expired; from
 /// sending the connection response on, the timeout alone ends it (TRANSPORT.md
