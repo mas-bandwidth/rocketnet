@@ -264,7 +264,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (measured on bench-nyc-4, gcc, Debug, DEV ON, as 3111676851 to 3111677363
 // before the send queue change above; the pin below holds both).
 // The xdp transport's server-wide packet id counter and two put-off counts left
-// the queue sockets (per-queue packet ids): the pin below is measured without them.
+// the queue sockets (per-queue packet ids): the pin below is main's less 8 (actual=5610449451, bench, gcc Debug, DEV ON).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -272,9 +272,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400939ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400931ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400883ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400875ULL )
 #endif // #if defined( __aarch64__ )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137426 )
 #endif // #if defined( _WIN32 )
