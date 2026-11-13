@@ -130,7 +130,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client: computed, not measured
 // on Windows, from the 48000 and the 64 Linux measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468504511 )
+// The per-update receive budget at 64 a client (it was 16; the XDP send
+// queue fix, so the receive budget holds twice the send) grows the process
+// views, the payload batch and the cookie reply bitmap, adding 354722304
+// bytes (measured on the Windows CI runner, MSVC, x64, Release, on the v1.1.9
+// fix branch: the probe's actual= line there is 1824223039). On this tree the pin is the one above plus that 354722304: computed, not
+// read here.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1823226815 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210300 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
