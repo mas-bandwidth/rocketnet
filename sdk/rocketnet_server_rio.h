@@ -29,8 +29,9 @@
 // lane takes a processor (the first logical processor of core i for lane i,
 // the processor Windows' default RSS layout gives receive queue i), its socket
 // is given that processor with SIO_CPU_AFFINITY before bind, every lane socket
-// binds the same address and port, and the lane's worker is pinned to that
-// processor. The adapter's RSS then delivers each flow to the lane on the
+// binds the same address and port, and the lane's worker is pinned to the
+// other logical processors of that processor's core (the RSS processor keeps
+// the receive DPCs). The adapter's RSS then delivers each flow to the lane on the
 // flow's RSS processor (measured on ENA: 256 flows spread over 8 lanes); a
 // flow whose RSS processor has no lane goes to the first lane bound. A
 // refused SIO_CPU_AFFINITY refuses create (TRANSPORT_BIND_REFUSED, named in
