@@ -198,12 +198,15 @@ def finding_key(stack):
 # its process with MSan's exitcode, which is 0 here, so the suite reads the
 # case as passed though it stopped where the error was raised. Up to clang 18
 # every 1000-slot case died that way at its server create and was never
-# checked. Any ERROR line fails the gate, naming the case from its stack.
+# checked. Any ERROR line ("ERROR: MemorySanitizer: ..." and the runtime's
+# "ERROR: MemorySanitizer failed to allocate/map ...") and any
+# "MemorySanitizer: CHECK failed" line fails the gate, naming the case from
+# its stack.
 fatal = []
 for path in sorted(glob.glob(os.path.join(reports, "msan.*"))):
     data = open(path, errors="replace").read()
     for line in data.splitlines():
-        if re.match(r"^==\d+==ERROR: MemorySanitizer:", line):
+        if re.match(r"^==\d+==(?:ERROR: MemorySanitizer\b|MemorySanitizer: CHECK failed)", line):
             case = re.search(r"\bin (test_[a-z0-9_]+)\b", data)
             fatal.append("%s: %s" % (case.group(1) if case else os.path.basename(path), shorten(re.sub(r"^==\d+==", "", line))))
             break

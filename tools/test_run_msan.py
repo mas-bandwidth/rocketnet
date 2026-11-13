@@ -51,6 +51,8 @@ def warning_text(top):
         return ""
     if top == "fatal":
         return FATAL_TEXT
+    if isinstance(top, tuple) and top[0] == "raw":
+        return top[1]
     frames = top if isinstance(top, list) else [top, "main tools/fixture.cpp:1:1"]
     stack = "".join(
         "    #%d 0x%x in %s\n" % (i, 0x1000 * (i + 1), entry)
@@ -153,6 +155,43 @@ class RunMsanGateTest(unittest.TestCase):
             "MSan: fatal error: test_server_stats_current_every_update: "
             "ERROR: MemorySanitizer: requested allocation size",
             output,
+        )
+
+    def fatal_case(self, first_line, expected):
+        # compiler-rt's other fatal forms end in Die() with the same exitcode
+        # 0: the text is the runtime's format string with the tool name in
+        text = (
+            first_line + "\n"
+            "    #0 0x1000 in malloc\n"
+            "    #1 0x2000 in test_server_stats_current_every_update tools/fixture.cpp:3:1\n"
+        )
+        stdout = "test_server_stats_current_every_update\n*** ALL TESTS PASSED ***\n"
+        code, output = self.run_gate(stdout, 0, ("raw", text))
+        self.assertEqual(code, 1, output)
+        self.assertIn(
+            "MSan: fatal error: test_server_stats_current_every_update: " + expected,
+            output,
+        )
+
+    def test_check_failed_with_zero_exit_fails_naming_the_case(self):
+        self.fatal_case(
+            '==1==MemorySanitizer: CHECK failed: msan_allocator.cpp:200 "((x)) != (0)"'
+            " (0x0, 0x0) (tid=1)",
+            "MemorySanitizer: CHECK failed: msan_allocator.cpp:200",
+        )
+
+    def test_allocation_failure_with_zero_exit_fails_naming_the_case(self):
+        self.fatal_case(
+            "==1==ERROR: MemorySanitizer failed to allocate 0x10000 (65536) bytes"
+            " at address 0x700000000000 (errno: 12)",
+            "ERROR: MemorySanitizer failed to allocate 0x10000",
+        )
+
+    def test_map_failure_with_zero_exit_fails_naming_the_case(self):
+        self.fatal_case(
+            "==1==ERROR: MemorySanitizer failed to deallocate 0x10000 (65536) bytes"
+            " at address 0x700000000000 (error code: 22)",
+            "ERROR: MemorySanitizer failed to deallocate 0x10000",
         )
 
     def test_clean_run_passes(self):
