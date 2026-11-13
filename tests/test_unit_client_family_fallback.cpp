@@ -278,7 +278,7 @@ static void test_client_family_fallback_both_refused_exhausts()
 
         family_fallback_create( &c, family_fallback_both, NULL );
         rocketnet_unit_check( c.transport == NULL );
-        rocketnet_unit_check( c.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         rocketnet_unit_check( c.fake->create_calls >= 2 && c.fake->create_calls % 2 == 0 );
         rocketnet_unit_check( c.fake->connect_calls == c.fake->create_calls );
         rocketnet_unit_check( c.fake->destroy_calls == c.fake->create_calls );
@@ -294,7 +294,7 @@ static void test_client_family_fallback_both_refused_exhausts()
 
         family_fallback_create( &c, family_fallback_both, NULL );
         rocketnet_unit_check( c.transport == NULL );
-        rocketnet_unit_check( c.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         rocketnet_unit_check( c.fake->connect_calls == 0 );
         rocketnet_unit_check( c.fake->destroy_calls == 0 );
         delete c.fake;
@@ -310,7 +310,7 @@ static void test_client_family_fallback_both_refused_exhausts()
 
         family_fallback_create( &c, ROCKETNET_ADDRESS_FLAG_IPV6, NULL );
         rocketnet_unit_check( c.transport == NULL );
-        rocketnet_unit_check( c.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         rocketnet_unit_check( c.fake->last_bind_family == ROCKETNET_ADDRESS_IPV6 );
         rocketnet_unit_check( rocketnet_address_equal( &c.fake->connected_to, &ipv6_server ) );
         rocketnet_unit_check( c.fake->connect_calls == c.fake->create_calls );
@@ -410,7 +410,7 @@ static void test_client_family_fallback_race_ends_without_cookie()
 // "IPv6 available" (tests/test.cpp), so no other unit case reaches the
 // client's no-IPv6 branches (VERIFY-4 W7, sdk/rocketnet_client_transport.cpp
 // bind_family NONE and the IPv4-because-no-IPv6 bind). A token naming only
-// IPv6 is refused before any socket opens, LADDER_EXHAUSTED; a token naming
+// IPv6 is refused before any socket opens, NO_TRANSPORT_FOUND; a token naming
 // both connects over IPv4 and never opens an IPv6 socket. The lookup is put
 // back to the suite's answer, true, before the case returns.
 
@@ -439,7 +439,7 @@ static void test_client_family_fallback_host_without_ipv6()
         c.fake = new rocketnet_fake_client_transport_io_t();
         family_fallback_create( &c, ROCKETNET_ADDRESS_FLAG_IPV6, NULL );
         rocketnet_unit_check( c.transport == NULL );
-        rocketnet_unit_check( c.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+        rocketnet_unit_check( c.status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
         rocketnet_unit_check( c.fake->create_calls == 0 );
         rocketnet_unit_check( c.fake->connect_calls == 0 );
         delete c.fake;

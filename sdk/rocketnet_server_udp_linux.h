@@ -30,9 +30,13 @@
 // back through bound_port, non-blocking, don't-fragment, close-on-exec.
 // transport names the transport in every log line and in the receive buffer
 // request ("gso", "io_uring"). Returns the descriptor, or -1 with the socket
-// closed and the reason logged.
+// closed and the reason logged. A bind the platform refused (another socket
+// holds the address and port, the address is not this host's, or the process
+// may not bind it) is also written to status as
+// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED (rocketnet_create_status; NULL: not
+// asked).
 int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t * bind_address, int queue_index,
-                               int max_clients, uint16_t * bound_port );
+                               int max_clients, uint16_t * bound_port, int * status );
 
 // The signature of setsockopt(2): the probe's one system call, a parameter so
 // a unit case can answer it without a socket.

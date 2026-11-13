@@ -99,6 +99,19 @@ LAYERS = {
         "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
         "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],
     },
+    "bank": {
+        "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
+        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
+                             "under MaxFlush, so it never gets there"},
+        "reach": ["LastSlot"],
+    },
+    "gather": {
+        "modules": ["RNSendGatherCall.tla", "TraceRNSendGatherCall.tla"],
+        "untraced": {},
+        "reach": ["SegCapEdge", "ByteCapEdge"],
+        # seven steps a bank (six stages and the call): 100 calls a seed
+        "steps": 700,
+    },
 }
 
 STEPS = 400

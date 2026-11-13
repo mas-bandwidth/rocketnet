@@ -180,7 +180,7 @@ static void test_dev_keys_warn_on_every_start()
     // the server, development keys: a warning on create, and in a production
     // build (the unit suite's build) the published keys are refused.
     // The create pins the loopback transport on port 0: the development-keys
-    // warn is raised before the transport ladder
+    // warn is raised before the transport list
     // (sdk/rocketnet_server_transport.cpp), so the WARN line, level and
     // DEV_KEY_WARN_PHRASE checks are unaffected by the transport choice, and
     // the unit suite stays free of any real socket bind.

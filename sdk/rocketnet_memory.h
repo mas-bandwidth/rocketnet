@@ -154,10 +154,10 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 // transport list, the one start may grant: the transport generation start
 // creates, which stop retires and the next start frees before it creates the
 // next. A candidate with no plan (a custom transport) adds nothing.
-uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_server_transport_config_t * config );
+uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_server_transport_config_t * config );
 
 struct rocketnet_client_transport_config_t;
-uint64_t rocketnet_client_transport_ladder_allocator_bytes( const rocketnet_client_transport_config_t * config );
+uint64_t rocketnet_client_transport_order_allocator_bytes( const rocketnet_client_transport_config_t * config );
 
 // Zero an object's raw storage before it is constructed, except its buffers:
 // skip lists them as (offset, bytes) spans, ascending and disjoint. A buffer

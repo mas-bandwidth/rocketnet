@@ -139,8 +139,9 @@ struct rocketnet_client_transport_config_table_t
 
 struct rocketnet_server_transport_config_table_t
 {
-    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V1( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     struct rocketnet_loopback_hub_t * loopback_hub;
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
 
 struct rocketnet_message_config_table_t
@@ -985,7 +986,7 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 }
 
 // ----------------------------------------------------------------
-//                        the transport ladder
+//                        the transport list
 // ----------------------------------------------------------------
 
 static int rocketnet_transport_id_from_name( const char * name, int name_length )
@@ -1001,14 +1002,14 @@ static int rocketnet_transport_id_from_name( const char * name, int name_length 
     return -1;
 }
 
-bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server )
+bool rocketnet_transport_order_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_order_t * ladder, bool server )
 {
     rocketnet_assert( available );
     rocketnet_assert( num_available > 0 );
     rocketnet_assert( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
     rocketnet_assert( ladder );
 
-    memset( ladder, 0, sizeof( struct rocketnet_transport_ladder_t ) );
+    memset( ladder, 0, sizeof( struct rocketnet_transport_order_t ) );
 
     // auto -- explicitly, or as the zero value -- expands to the
     // platform's recommended order for this endpoint

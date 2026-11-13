@@ -91,7 +91,7 @@ IMPAIRMENT = {
 # (cell label, server transport, client transport, ROCKETNET_PUMP). The
 # degraded cell forces the portable pump: the server ladder absorbs it as an
 # msgx refusal (a pinned msgx is refused loudly, never falls), so the server
-# runs the auto ladder and lands on its degraded grant; the client ladder
+# runs the automatic transport order and lands on its degraded grant; the client ladder
 # does the same, so the client runs auto too.
 TRANSPORTS = [
     ("portable", "portable", "portable", None),
