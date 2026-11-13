@@ -9979,6 +9979,57 @@ void rocketnet_test_ack_debt()
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
+// TRANSPORT.md t13 state table, connected: "any session packet sent | stamp
+// the send clock". A standalone ack is a session packet, so it stamps the
+// client's send clock as a payload or a keep-alive does, and the scheduled
+// keep-alive is due a whole interval after it, not after the last packet
+// before it.
+void rocketnet_test_client_standalone_ack_stamps_send_clock()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    struct rocketnet_client_protocol_t client;
+    rocketnet_test_ack_connect( &test, &client, &client_counters, 0x5E17DULL );
+    client.ack.ack_debt = 0;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+
+    const double interval = 1.0 / client.send_rate;
+    const double ack_time = client.last_send_time + 0.25 * interval;        // inside the rate gate: no scheduled send is due
+
+    for ( int i = 0; i < ROCKETNET_ACK_DEBT_THRESHOLD; i++ )
+    {
+        const int ka_bytes = rocketnet_server_write_keep_alive( &test.server, 0, ack_time, packet );
+        rocketnet_check( ka_bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+        rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, ka_bytes, ack_time, payload, sizeof( payload ), &payload_bytes ) );
+    }
+
+    int out_bytes = 0;
+    rocketnet_client_protocol_update( &client, ack_time, packet, &out_bytes );
+    rocketnet_check( out_bytes >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES );
+    rocketnet_check( packet[0] == ROCKETNET_CONNECTION_ACK_PACKET );
+    rocketnet_check( client.last_send_time == ack_time );
+
+    // one interval after the earlier packet, but not after the ack: nothing is due
+
+    out_bytes = 12345;
+    rocketnet_client_protocol_update( &client, ack_time + 0.85 * interval, packet, &out_bytes );
+    rocketnet_check( out_bytes == 0 );
+
+    // a whole interval after the ack: the keep-alive
+
+    rocketnet_client_protocol_update( &client, ack_time + interval, packet, &out_bytes );
+    rocketnet_check( out_bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+    rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+
+    rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
+}
+
 void rocketnet_test_ack_non_elicitation()
 {
     struct rocketnet_test_server_t test;
@@ -14735,6 +14786,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_ack_apply_skips_acked_range", rocketnet_test_ack_apply_skips_acked_range },
     { "test_ack_apply_counts_unknown_in_acked_run", rocketnet_test_ack_apply_counts_unknown_in_acked_run },
     { "test_ack_debt", rocketnet_test_ack_debt },
+    { "test_client_standalone_ack_stamps_send_clock", rocketnet_test_client_standalone_ack_stamps_send_clock },
     { "test_ack_non_elicitation", rocketnet_test_ack_non_elicitation },
     { "test_ack_replay_protection", rocketnet_test_ack_replay_protection },
     { "test_ack_bad_block_refusals", rocketnet_test_ack_bad_block_refusals },
