@@ -176,7 +176,7 @@ static void wide_fill_connect_all( wide_fill_world_t * world )
         const char * addresses[] = { address };
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         check( rn_test_server_token_string( world->backend_secret, world->server, WIDE_FILL_PROTOCOL, addresses, 1,
-                                            0x5100ULL + (uint64_t) c, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+                                            (uint64_t) ( 0x5100u + (unsigned) c ), 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
         check( rn_test_client_connect_after_completion( world->clients[c], token ) == ROCKETNET_STATUS_OK );
     }
 
@@ -483,9 +483,11 @@ static void test_wide_fill_check_steps()
     {
         bool a = false;
         bool b = false;
-        std::thread ta( [&] { a = rocketnet_fill_phase_fill_begin( &phase, 0 ); rocketnet_fill_phase_fill_end( &phase, 0 ); } );
+        std::thread ta( [&]
+                        { a = rocketnet_fill_phase_fill_begin( &phase, 0 ); rocketnet_fill_phase_fill_end( &phase, 0 ); } );
         ta.join();
-        std::thread tb( [&] { b = rocketnet_fill_phase_fill_begin( &phase, 1 ); rocketnet_fill_phase_fill_end( &phase, 1 ); } );
+        std::thread tb( [&]
+                        { b = rocketnet_fill_phase_fill_begin( &phase, 1 ); rocketnet_fill_phase_fill_end( &phase, 1 ); } );
         tb.join();
         check( a && b );
     }
@@ -495,7 +497,8 @@ static void test_wide_fill_check_steps()
 
     {
         bool second = true;
-        std::thread tc( [&] { second = rocketnet_fill_phase_fill_begin( &phase, 0 ); } );
+        std::thread tc( [&]
+                        { second = rocketnet_fill_phase_fill_begin( &phase, 0 ); } );
         tc.join();
         check( !second );
         check( two == 1 );
@@ -514,7 +517,8 @@ static void test_wide_fill_check_steps()
     rocketnet_fill_phase_main_end( &phase );
     {
         bool moved = false;
-        std::thread td( [&] { moved = rocketnet_fill_phase_fill_begin( &phase, 0 ); rocketnet_fill_phase_fill_end( &phase, 0 ); } );
+        std::thread td( [&]
+                        { moved = rocketnet_fill_phase_fill_begin( &phase, 0 ); rocketnet_fill_phase_fill_end( &phase, 0 ); } );
         td.join();
         check( moved );
         check( two == 1 && overlap == 0 );
@@ -526,7 +530,8 @@ static void test_wide_fill_check_steps()
     check( rocketnet_fill_phase_fill_begin( &phase, 3 ) );          // this thread is inside a fill call for client 3
     {
         bool entered = true;
-        std::thread tm( [&] { entered = rocketnet_fill_phase_main_begin( &phase ); } );
+        std::thread tm( [&]
+                        { entered = rocketnet_fill_phase_main_begin( &phase ); } );
         tm.join();
         check( !entered );
         check( overlap == 1 );
@@ -545,7 +550,8 @@ static void test_wide_fill_check_steps()
     check( rocketnet_fill_phase_main_begin( &phase ) );
     {
         bool entered = true;
-        std::thread tf( [&] { entered = rocketnet_fill_phase_fill_begin( &phase, 1 ); } );
+        std::thread tf( [&]
+                        { entered = rocketnet_fill_phase_fill_begin( &phase, 1 ); } );
         tf.join();
         check( !entered );
         check( overlap == 3 );
@@ -555,7 +561,8 @@ static void test_wide_fill_check_steps()
 
     {
         bool entered = true;
-        std::thread tn( [&] { entered = rocketnet_fill_phase_main_begin( &phase ); } );
+        std::thread tn( [&]
+                        { entered = rocketnet_fill_phase_main_begin( &phase ); } );
         tn.join();
         check( !entered );
         check( overlap == 4 );
@@ -601,29 +608,29 @@ static void test_wide_fill_check_public()
 
     {
         uint32_t serial = 0;
-        std::thread ta( [&] {
+        std::thread ta( [&]
+                        {
             uint8_t * p = rocketnet_server_start_message( world.server, (uint64_t) slot0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
             check( p != NULL );
             if ( p )
             {
                 memset( p, 0x41, 8 );
                 serial = rocketnet_server_finish_client_message( world.server, slot0, 8 );
-            }
-        } );
+            } } );
         ta.join();
         check( serial != 0 );
 
         uint8_t * refused = (uint8_t *) 1;
         uint8_t * accepted = NULL;
-        std::thread tb( [&] {
+        std::thread tb( [&]
+                        {
             refused = rocketnet_server_start_message( world.server, (uint64_t) slot0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
             accepted = rocketnet_server_start_message( world.server, (uint64_t) slot1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
             if ( accepted )
             {
                 memset( accepted, 0x42, 8 );
                 check( rocketnet_server_finish_client_message( world.server, slot1, 8 ) != 0 );
-            }
-        } );
+            } } );
         tb.join();
         check( refused == NULL );
         check( accepted != NULL );
@@ -636,14 +643,14 @@ static void test_wide_fill_check_public()
     wide_fill_pump( &world );
     {
         uint8_t * p = NULL;
-        std::thread tb( [&] {
+        std::thread tb( [&]
+                        {
             p = rocketnet_server_start_message( world.server, (uint64_t) slot0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
             if ( p )
             {
                 memset( p, 0x43, 8 );
                 check( rocketnet_server_finish_client_message( world.server, slot0, 8 ) != 0 );
-            }
-        } );
+            } } );
         tb.join();
         check( p != NULL );
         check( wide_fill_counter( world.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS ) == two + 1 );
