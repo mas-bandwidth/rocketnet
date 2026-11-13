@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.1.37 of v1.1.37;
+# CMake's VERSION holds numbers only, so it is the 1.1.38 of v1.1.38;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.1.37 LANGUAGES C CXX)
+project(rocketnet VERSION 1.1.38 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -1029,6 +1029,18 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         rocketnet_warning_floor(rocketnet_xdp_filter_host)
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
+        # the same filter for the xdp-replay trace check, at a replay window of
+        # ROCKETNET_TLA_XDP_REPLAY_WINDOW sequences (sdk/rocketnet_xdp_limits.h),
+        # so a walk of a few hundred steps reaches the drop rule
+        set(ROCKETNET_TLA_XDP_REPLAY_WINDOW 2)
+        add_library(rocketnet_xdp_filter_host_trace STATIC tests/xdp_host/server_xdp_host.c)
+        target_include_directories(rocketnet_xdp_filter_host_trace BEFORE PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/xdp_host" "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+        target_compile_definitions(rocketnet_xdp_filter_host_trace PRIVATE __linux__ __BPF__
+            "ROCKETNET_XDP_FILTER_SOURCE=\"${ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH}\""
+            ROCKETNET_TLA_XDP_REPLAY_WINDOW=${ROCKETNET_TLA_XDP_REPLAY_WINDOW})
+        target_compile_options(rocketnet_xdp_filter_host_trace PRIVATE -ffreestanding -ffp-contract=off)
+        rocketnet_warning_floor(rocketnet_xdp_filter_host_trace)
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a non-Windows host")
     endif()
@@ -1388,6 +1400,13 @@ if(ROCKETNET_BUILD_TOOLS)
             add_dependencies(${target} rocketnet_xdp_header)
         endif()
         target_link_libraries(${target} PRIVATE rocketnet_dev)
+        # the XDP filter as host C, where it is built: the xdp-replay layer
+        # runs its packets through the shipped filter, at the trace's window
+        if(TARGET rocketnet_xdp_filter_host_trace)
+            target_link_libraries(${target} PRIVATE rocketnet_xdp_filter_host_trace)
+            target_compile_definitions(${target} PRIVATE ROCKETNET_XDP_FILTER_HOST=1
+                ROCKETNET_TLA_XDP_REPLAY_WINDOW=${ROCKETNET_TLA_XDP_REPLAY_WINDOW})
+        endif()
         rocketnet_use_sodium(${target})
         rocketnet_warning_floor(${target})
         target_compile_features(${target} PRIVATE cxx_std_11)
@@ -1559,8 +1578,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.1.37; the label
-# v1.1.37 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.1.38; the label
+# v1.1.38 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)

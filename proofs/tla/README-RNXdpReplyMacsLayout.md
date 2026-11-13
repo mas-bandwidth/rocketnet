@@ -19,7 +19,11 @@ evictions.
 
 `home` is chosen at `Init` from every map of addresses to slots, so every
 collision pattern is checked. Probe `i` of address `a` is slot
-`(home[a] + i) % N`, for `i < P`.
+`(home[a] + i) % N`, for `i < P`. Under `HomesGiven` (the trace check,
+`TraceRNXdpReplyMacsLayout.tla`) the addresses are numbers and each one's home
+is its value modulo `N`: the walk names each address by the code's hash slot of
+it plus a multiple of `N`. A never-used slot's address and MAC are the model
+values `NOADDR` and `NOMAC`, the zero bytes the reset leaves.
 
 The table has no tombstone state: a forget turns a `LIVE` entry into an
 `ANSWERED` one in place, and nothing returns a used slot to `EMPTY` but a reset
@@ -49,6 +53,11 @@ MAC, else none).
 - **`Forget(a)`**: `rocketnet_xdp_reply_macs_forget`: the `LIVE` entry
   becomes `ANSWERED` in place.
 - **`Reset`**: `rocketnet_xdp_reply_macs_reset` with no gateway.
+- **`Ignore(a)`**, **`ReplyLearned(a, m)`**, **`ReplyAnswered(a, m)`**,
+  **`Refuse(a, framed)`**: calls that change nothing, actions so the trace
+  check names each one: a learn of a zero or multicast MAC; a reply giving the
+  learned MAC `m`; a reply with no frame's MAC giving the answered entry's MAC
+  `m`; a reply giving none (`framed`: the frame's MAC was zero or multicast).
 
 The lookups are `rocketnet_xdp_reply_macs_find_state`: from the home slot,
 stop at the first `EMPTY` slot, return the first slot of the state sought
