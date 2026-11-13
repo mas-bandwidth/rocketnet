@@ -112,9 +112,11 @@ LAYERS = {
     },
     "msgxreceivefill": {
         "modules": ["RNMsgxReceiveFill.tla", "TraceRNMsgxReceiveFill.tla"],
-        "untraced": {"Done": "the model's end once the worker has exited and the arrivals bound is spent, a stutter; "
-                             "the walk's bound is one past its own arrivals, so it never gets there"},
-        "reach": ["ShortRoom", "Held", "BudgetCaps"],
+        "untraced": {"Done": "the model's end once the stop is counted and the arrivals bound is spent, a stutter; "
+                             "the walk's bound is one past its own arrivals, so it never gets there",
+                    "RoundKeep": "a round that read nothing (kevent reports no ready socket); the model's Poll visits "
+                                 "every socket and every visit reads or holds, so neither the model nor the walk takes it"},
+        "reach": ["ShortRoom", "Held", "BudgetCaps", "ReadsShared", "CallCut"],
     },
     "iocp-admit": {
         "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],

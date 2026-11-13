@@ -6,9 +6,9 @@
 (* sdk/rocketnet_msgx_receive_fill.h with a fake kernel: one record per    *)
 (* step, with the operation the walk called (op: "step", one call of       *)
 (* rocketnet_msgx_receive_drain_step; "poll", "round" and "sleep", the     *)
-(* worker loop around it; "consume" and "claim", main, the claim through   *)
-(* rocketnet_msgx_receive_claim; "stop", main's stop through             *)
-(* rocketnet_msgx_receive_stop; "exit", the worker's exit; "arrive" and    *)
+(* worker loop around it; "call", one rocketnet_msgx_receive_call of main  *)
+(* with its busy flag and capacity; "stop", main's stop; "exit", the       *)
+(* worker's exit; "count", rocketnet_msgx_receive_stop_count; "arrive" and *)
 (* "error", the kernel), its                                               *)
 (* arguments (the socket, the error's kind, the count a read took), the    *)
 (* action the code's result names (act) and every model variable after it *)
@@ -36,23 +36,26 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable by the field name the harness writes
-VarsRec == [kq |-> kq, errs |-> errs, cnt |-> cnt, worker |-> worker, ready |-> ready,
-            main |-> main, free |-> free, pc |-> pc, cur |-> cur, reads |-> reads,
+VarsRec == [kq |-> kq, errs |-> errs, cnt |-> cnt, committed |-> committed, worker |-> worker,
+            main |-> main, tail |-> tail, free |-> free, mainCursor |-> mainCursor,
+            mainLimit |-> mainLimit, tailCursor |-> tailCursor, tailEnd |-> tailEnd,
+            pc |-> pc, cur |-> cur, reads |-> reads, roundRead |-> roundRead,
             arrived |-> arrived, kdrops |-> kdrops, consumed |-> consumed,
             fullDrops |-> fullDrops, errors |-> errors, stopping |-> stopping,
-            exited |-> exited, stopped |-> stopped]
+            exited |-> exited, counted |-> counted, stopped |-> stopped,
+            committedTop |-> committedTop, late |-> late]
 
 \* the actions each operation of the code can be
 OpActs == [arrive |-> {"Arrive", "KernelDrop"},
            error |-> {"Error"},
            poll |-> {"Poll"},
-           step |-> {"PublishFull", "HoldFull", "BudgetSpent", "Read", "ReadEmpty", "ReadWeather", "ReadFailed"},
-           round |-> {"RoundPublish", "RoundKeep"},
+           step |-> {"MoveFull", "HoldFull", "BudgetSpent", "Read", "ReadEmpty", "ReadWeather", "ReadFailed"},
+           round |-> {"RoundCommit", "RoundKeep"},
            sleep |-> {"Sleep"},
-           consume |-> {"Consume"},
-           claim |-> {"Claim"},
+           call |-> {"Call"},
            stop |-> {"MainStop"},
-           exit |-> {"Exit"}]
+           exit |-> {"Exit"},
+           count |-> {"StopCount"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
@@ -60,20 +63,20 @@ Act(a, x) == CASE a = "Arrive" -> Arrive(x[1])
                [] a = "KernelDrop" -> KernelDrop(x[1])
                [] a = "Error" -> Error(x[1], x[2])
                [] a = "Poll" -> Poll
-               [] a = "PublishFull" -> PublishFull
+               [] a = "MoveFull" -> MoveFull
                [] a = "HoldFull" -> HoldFull
                [] a = "BudgetSpent" -> BudgetSpent
                [] a = "Read" -> Read(x[1])
                [] a = "ReadEmpty" -> ReadEmpty
                [] a = "ReadWeather" -> ReadWeather
                [] a = "ReadFailed" -> ReadFailed
-               [] a = "RoundPublish" -> RoundPublish
+               [] a = "RoundCommit" -> RoundCommit
                [] a = "RoundKeep" -> RoundKeep
                [] a = "Sleep" -> Sleep
-               [] a = "Consume" -> Consume
-               [] a = "Claim" -> Claim
+               [] a = "Call" -> Call(x[1], x[2])
                [] a = "MainStop" -> MainStop
                [] a = "Exit" -> Exit
+               [] a = "StopCount" -> StopCount
 
 TraceInit ==
     /\ Init
@@ -127,5 +130,11 @@ BudgetCaps == /\ pc = "read"
               /\ Budget - reads < Batch
               /\ Budget - reads < Capacity - cnt[worker]
               /\ kq[cur] > Budget - reads
+
+\* and some clean trace has main read the bank the worker is still filling
+\* (the handoff's point: committed datagrams returned before the worker
+\* leaves the bank), and some call is cut by its capacity
+ReadsShared == main = worker /\ mainCursor > 0
+CallCut == tailCursor < tailEnd \/ mainCursor < mainLimit
 
 =============================================================================

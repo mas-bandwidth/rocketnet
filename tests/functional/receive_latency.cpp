@@ -86,6 +86,7 @@ struct receive_latency_row_t
 static const struct receive_latency_row_t receive_latency_rows[] = {
     { "server_gso", "gso", "portable", RECEIVE_LATENCY_SERVER },
     { "server_io_uring", "io_uring", "portable", RECEIVE_LATENCY_SERVER },
+    { "server_msgx", "msgx", "portable", RECEIVE_LATENCY_SERVER },
 };
 
 // the phase of each send in the frame
@@ -484,4 +485,11 @@ void rocketnet_test_receive_latency_server_gso()
 void rocketnet_test_receive_latency_server_io_uring()
 {
     receive_latency_run_named( "server_io_uring" );
+}
+
+void rocketnet_test_receive_latency_server_msgx();
+
+void rocketnet_test_receive_latency_server_msgx()
+{
+    receive_latency_run_named( "server_msgx" );
 }

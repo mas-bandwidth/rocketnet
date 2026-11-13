@@ -13,90 +13,132 @@
 // the worker's bank, and the bank handoff to main.
 //
 // Pure: no socket, no clock, no lock. The read, the banking of one datagram,
-// the publish under the receive mutex and the counting of a failed read are
+// the commit under the receive mutex, the counting of a failed read and, on
+// main's side, the mutex try and the handing of a datagram to the server are
 // the caller's functions, so the unit tests run the real path over a fake
 // kernel. proofs/tla/RNMsgxReceiveFill.tla models it.
 //
-// The rule (the gso transport's, proofs/tla/RNGsoHandoff.tla RxFill and
-// RxPublish): a datagram is read only into room. The drain asks the kernel
-// for no more datagrams than the bank has room for; a full bank is handed to
-// main at once when main has taken the last one (no ready bank waits and a
-// free bank exists), and otherwise the drain stops and the socket keeps the
-// rest. The kernel's receive buffer is the queue, and nothing read is ever
-// dropped for want of room.
+// The rule (the gso transport's, proofs/tla/RNGsoHandoff.tla RxFill): a
+// datagram is read only into room. The drain asks the kernel for no more
+// datagrams than the bank has room for; a full bank is left for an empty one
+// at once when main has started on it, and otherwise the drain stops and the
+// socket keeps the rest. The kernel's receive buffer is the queue, and nothing
+// read is ever dropped for want of room.
 //
-// The banks are indices 0 to 2 (ROCKETNET_MSGX_RECEIVE_NO_BANK for none):
-// the worker fills one, at most one is ready for main, main holds one, and
-// the last is free.
+// The handoff of the banks to main is the shared receive handoff
+// (sdk/rocketnet_receive_handoff.h, proofs/tla/RNReceiveHandoff.tla): the
+// worker commits its bank's count under the receive mutex at the end of each
+// round and when its bank is full; main, at each receive call, tries the
+// mutex once and reads the worker's bank in place up to the committed count,
+// after the unread tail of the bank the worker left. A datagram the worker
+// committed before main's call took the mutex is returned by that call
+// (DeliveredByNextCall).
 //
 // proofs/tla/RNMsgxReceiveFill.tla actions: rocketnet_msgx_receive_drain_step
-// is PublishFull, HoldFull, BudgetSpent, Read, ReadEmpty, ReadWeather and
-// ReadFailed by its result; the worker loop around it is Poll, RoundPublish,
-// RoundKeep and Sleep; main is Consume and Claim
-// (rocketnet_msgx_receive_claim).
+// is MoveFull, HoldFull, BudgetSpent, Read, ReadEmpty, ReadWeather and
+// ReadFailed by its result; the worker loop around it is Poll, RoundCommit,
+// RoundKeep and Sleep; main is Call (rocketnet_msgx_receive_call) and, after
+// the stop, StopCount (rocketnet_msgx_receive_stop_count).
+
+#include "rocketnet_receive_handoff.h"
 
 #include <stdint.h>
 
-#define ROCKETNET_MSGX_RECEIVE_NO_BANK                     ( -1 )
-
-struct rocketnet_msgx_receive_banks_t
+// main's side of one receive call (rocketnet_msgx_receive_call)
+struct rocketnet_msgx_receive_call_io_t
 {
-    int worker;                     // the bank the receive worker fills
-    int ready;                      // published, waiting for main, or NO_BANK
-    int main;                       // main's view
-    int free;                       // nobody's, or NO_BANK
-    bool stopped;                   // main stopped: it claims nothing more (main's alone)
+    void * user;
+
+    // the receive mutex: one try, never a wait (the main thread never blocks)
+    bool ( *try_lock )( void * user );
+    void ( *unlock )( void * user );
+
+    // bank b emptied: main's finished tail, before a begin may free it for the
+    // worker (its view expired when this call began)
+    void ( *reset )( void * user, int bank );
+
+    // the worker has left bank b: its count and the tallies in it are final,
+    // so they are folded into main's totals, once
+    void ( *fold )( void * user, int bank );
+
+    // datagram index of bank b handed to the server this update; false when
+    // the call has no room left (the update's capacity)
+    bool ( *take )( void * user, int bank, uint32_t index );
 };
 
-// worker 0, main 1, free 2, none ready
-inline void rocketnet_msgx_receive_banks_init( struct rocketnet_msgx_receive_banks_t * banks )
+// RNMsgxReceiveFill Call (RNReceiveHandoff Call), main's, at each receive
+// call: a finished tail is emptied; one try of the mutex brings main up to
+// what the worker has committed (rocketnet_receive_handoff_begin); then main
+// hands the server the unread tail of the bank the worker left and its own
+// bank up to the committed count, as room allows. A busy mutex leaves main
+// with what it already held: the next call catches up. Returns the datagrams
+// main saw for the first time in this call (each is counted received once);
+// *busy says the mutex was busy
+inline uint64_t rocketnet_msgx_receive_call( struct rocketnet_receive_handoff_t * handoff, const struct rocketnet_msgx_receive_call_io_t * io, bool * busy )
 {
-    banks->worker = 0;
-    banks->main = 1;
-    banks->free = 2;
-    banks->ready = ROCKETNET_MSGX_RECEIVE_NO_BANK;
-    banks->stopped = false;
-}
+    uint64_t received = 0;
+    *busy = false;
 
-// MainStop, main's, at rocketnet_server_msgx_stop: the tail of main's own
-// bank is counted stopped by the caller, and from here main claims nothing.
-// A bank ready now or published later stays the worker's to count at its
-// exit (RNMsgxReceiveFill Exit), so every datagram read is counted once.
-// Only main reads or writes the flag: no lock
-inline void rocketnet_msgx_receive_stop( struct rocketnet_msgx_receive_banks_t * banks )
-{
-    banks->stopped = true;
-}
-
-// RxPublish, under the receive mutex: the worker's bank becomes ready and the
-// worker takes the free bank, only when none is ready and one is free;
-// otherwise nothing moves and the worker keeps its bank
-inline bool rocketnet_msgx_receive_publish( struct rocketnet_msgx_receive_banks_t * banks )
-{
-    if ( banks->ready != ROCKETNET_MSGX_RECEIVE_NO_BANK || banks->free == ROCKETNET_MSGX_RECEIVE_NO_BANK )
+    if ( rocketnet_receive_handoff_tail_finished( handoff ) )
     {
-        return false;
+        io->reset( io->user, handoff->tail );
     }
-    banks->ready = banks->worker;
-    banks->worker = banks->free;
-    banks->free = ROCKETNET_MSGX_RECEIVE_NO_BANK;
-    return true;
+
+    if ( io->try_lock( io->user ) )
+    {
+        const uint32_t seen = handoff->main_limit;
+        const int left = rocketnet_receive_handoff_begin( handoff );
+        io->unlock( io->user );
+        if ( left >= 0 )
+        {
+            received = (uint64_t) ( handoff->tail_end - seen ) + handoff->main_limit;
+            io->fold( io->user, left );
+        }
+        else
+        {
+            received = (uint64_t) ( handoff->main_limit - seen );
+        }
+    }
+    else
+    {
+        *busy = true;
+    }
+
+    while ( handoff->tail_cursor < handoff->tail_end && io->take( io->user, handoff->tail, handoff->tail_cursor ) )
+    {
+        handoff->tail_cursor++;
+    }
+    while ( handoff->main_cursor < handoff->main_limit && io->take( io->user, handoff->main, handoff->main_cursor ) )
+    {
+        handoff->main_cursor++;
+    }
+
+    return received;
 }
 
-// RxClaim, under the receive mutex, once main has consumed its whole bank:
-// the ready bank becomes main's and main's old bank is free. False with
-// nothing ready, and always false once main has stopped (R69: a bank claimed
-// after the stop holds a tail no later update reads and nobody counts)
-inline bool rocketnet_msgx_receive_claim( struct rocketnet_msgx_receive_banks_t * banks )
+// RNMsgxReceiveFill StopCount, main's, once, when it first finds the worker
+// exited after the stop (main calls nothing after the stop): every datagram
+// the worker banked that main never handed the server, the unread tail of the
+// bank the worker left, main's bank past its cursor (committed or not) and the
+// worker's bank when it had moved on, is returned to be counted
+// RECEIVE_DROP_STOPPED. count[b] is bank b's count. The caller empties main's
+// and the worker's banks and folds their tallies (the tail's were folded when
+// the worker left it)
+inline uint64_t rocketnet_msgx_receive_stop_count( struct rocketnet_receive_handoff_t * handoff, const uint32_t * count )
 {
-    if ( banks->stopped || banks->ready == ROCKETNET_MSGX_RECEIVE_NO_BANK )
+    uint64_t left = (uint64_t) ( handoff->tail_end - handoff->tail_cursor );
+    handoff->tail_cursor = handoff->tail_end;
+    if ( handoff->main_cursor < count[handoff->main] )
     {
-        return false;
+        left += (uint64_t) ( count[handoff->main] - handoff->main_cursor );
     }
-    banks->free = banks->main;
-    banks->main = banks->ready;
-    banks->ready = ROCKETNET_MSGX_RECEIVE_NO_BANK;
-    return true;
+    handoff->main_cursor = 0;
+    handoff->main_limit = 0;
+    if ( handoff->worker != handoff->main )
+    {
+        left += (uint64_t) count[handoff->worker];
+    }
+    return left;
 }
 
 // what a failed read's errno means (rocketnet_msgx_receive_error_kind)
@@ -129,9 +171,10 @@ struct rocketnet_msgx_receive_io_t
     // reason (the prefilter's, an unreadable source). There is always room
     void ( *take )( void * user, int i );
 
-    // the publish exchange (rocketnet_msgx_receive_publish) under the
-    // receive mutex: true when the worker now fills an empty bank
-    bool ( *publish )( void * user );
+    // the commit of the worker's bank count under the receive mutex
+    // (rocketnet_receive_handoff_commit): true when the worker moved to an
+    // empty bank (main had started on its bank)
+    bool ( *commit )( void * user );
 
     // a failed read on fd, of a kind above but EMPTY, counted; DEAD reports
     // the socket to the table
@@ -141,10 +184,10 @@ struct rocketnet_msgx_receive_io_t
 // the drain's place (RNMsgxReceiveFill pc)
 #define ROCKETNET_MSGX_DRAIN_READ                            0  // reading the socket
 #define ROCKETNET_MSGX_DRAIN_DONE                            1  // the socket is done for this round
-#define ROCKETNET_MSGX_DRAIN_HELD                            2  // the bank is full and main has not taken the last: stop the round
+#define ROCKETNET_MSGX_DRAIN_HELD                            2  // the bank is full and main has not started on it: stop the round
 
 // what one step did (the model action it is)
-#define ROCKETNET_MSGX_DRAIN_STEP_PUBLISH_FULL               0  // PublishFull: a full bank handed over
+#define ROCKETNET_MSGX_DRAIN_STEP_MOVE_FULL                  0  // MoveFull: a full bank committed and left for an empty one
 #define ROCKETNET_MSGX_DRAIN_STEP_HOLD_FULL                  1  // HoldFull: a full bank kept, the socket keeps the rest
 #define ROCKETNET_MSGX_DRAIN_STEP_BUDGET                     2  // BudgetSpent: this socket's reads for the round are spent
 #define ROCKETNET_MSGX_DRAIN_STEP_READ                       3  // Read(n): n datagrams read and taken
@@ -180,9 +223,9 @@ inline int rocketnet_msgx_receive_drain_step( struct rocketnet_msgx_receive_drai
     const int banked = io->banked( io->user );
     if ( banked >= capacity )
     {
-        if ( io->publish( io->user ) )
+        if ( io->commit( io->user ) )
         {
-            return ROCKETNET_MSGX_DRAIN_STEP_PUBLISH_FULL;
+            return ROCKETNET_MSGX_DRAIN_STEP_MOVE_FULL;
         }
         drain->pc = ROCKETNET_MSGX_DRAIN_HELD;
         return ROCKETNET_MSGX_DRAIN_STEP_HOLD_FULL;
@@ -237,8 +280,8 @@ inline int rocketnet_msgx_receive_drain_step( struct rocketnet_msgx_receive_drai
 }
 
 // The drain of one ready socket, step by step until it is done or held:
-// true when it is done, false when the bank is full and main has not taken
-// the last one, so the round stops and every socket keeps what it holds
+// true when it is done, false when the bank is full and main has not started
+// on it, so the round stops and every socket keeps what it holds
 inline bool rocketnet_msgx_receive_drain( const struct rocketnet_msgx_receive_io_t * io, int fd, int capacity, int batch, int budget )
 {
     struct rocketnet_msgx_receive_drain_t drain;
