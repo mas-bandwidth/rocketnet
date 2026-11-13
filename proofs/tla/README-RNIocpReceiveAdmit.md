@@ -33,7 +33,7 @@ prefilter, and which only main's keyed rungs refuse.
 
 | Action | Code |
 |---|---|
-| `Arrive(k)`: `Refuse`, or `Bank`, or `Full` | `rocketnet_iocp_receive_admit`, then `rocketnet_iocp_bank_datagram` banks the datagram or counts it |
+| `Refuse(k)`, `Bank(k)` or `Full(k)`, by the verdict | `rocketnet_iocp_receive_admit`, then `rocketnet_iocp_bank_datagram` banks the datagram or counts it |
 | `Drain` | `rocketnet_server_iocp_receive_packets`. The RNBankFifoLayout hand-off, which [RNBankFifoLayout](README-RNBankFifoLayout.md) checks at its layout, is one step here. |
 
 ## Invariants

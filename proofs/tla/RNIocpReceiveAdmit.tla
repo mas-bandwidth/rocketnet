@@ -5,7 +5,8 @@
 (* (sdk/rocketnet_server_iocp_windows.cpp, rocketnet_iocp_receive_admit   *)
 (* and rocketnet_iocp_bank_datagram).  A bank is Capacity slots filled    *)
 (* in order at num_packets (rocketnet_server_iocp_receive_queue_size).    *)
-(* Each completed datagram is one Arrive step of the worker: the worker   *)
+(* Each completed datagram is one step of the worker (Refuse, Bank or    *)
+(* Full, by the verdict): the worker                                       *)
 (* prefilter first (rocketnet_receive_prefilter, the stateless rungs main *)
 (* would refuse it on), then the capacity check num_packets < capacity.   *)
 (* A datagram the prefilter refuses is counted by its reason and never    *)
@@ -84,30 +85,41 @@ HasRoom == IF CheckPastEnd THEN Len( bank ) <= Capacity ELSE Len( bank ) < Capac
 
 HoldsGarbage == \E i \in 1 .. Len( bank ) : bank[i] = "garbage"
 
+\* the worker prefilter refuses it: the filter is on, checked first, and the
+\* datagram fails a stateless rung
+Prefiltered( k ) == FilterOn /\ ~BankFirst /\ ~PassesPrefilter( k )
+
+\* One completed datagram is one of three actions, by the verdict
+\* rocketnet_iocp_receive_admit returns, then rocketnet_iocp_bank_datagram's
+\* bank or count: Refuse (a prefilter reason), Bank (ACCEPT, banked at
+\* num_packets) or Full (BANK_FULL).  Each is guarded by the state that
+\* makes it the verdict, so the trace check binds the code's verdict to it.
+Arrived( k ) ==
+    /\ Arrivals < MaxArrivals
+    /\ arrived' = [ arrived EXCEPT ![k] = @ + 1 ]
+
 Refuse( k ) ==
+    /\ Prefiltered( k )
+    /\ Arrived( k )
     /\ refused' = [ refused EXCEPT ![k] = @ + 1 ]
     /\ counted' = [ counted EXCEPT ![k] = @ + 1 ]
-    /\ UNCHANGED << bank, full, evicted >>
+    /\ UNCHANGED << bank, full, delivered, evicted >>
 
 Bank( k ) ==
+    /\ ~Prefiltered( k )
+    /\ HasRoom
+    /\ Arrived( k )
     /\ bank' = Append( bank, k )
-    /\ UNCHANGED << refused, full, counted, evicted >>
+    /\ UNCHANGED << refused, full, counted, delivered, evicted >>
 
 Full( k ) ==
+    /\ ~Prefiltered( k )
+    /\ ~HasRoom
+    /\ Arrived( k )
     /\ full' = [ full EXCEPT ![k] = @ + 1 ]
     /\ counted' = IF UncountedFull THEN counted ELSE [ counted EXCEPT ![k] = @ + 1 ]
     /\ evicted' = ( evicted \/ ( k = "player" /\ HoldsGarbage ) )
-    /\ UNCHANGED << bank, refused >>
-
-\* One completed datagram: rocketnet_iocp_receive_admit, then
-\* rocketnet_iocp_bank_datagram's bank or count.
-Arrive( k ) ==
-    /\ Arrivals < MaxArrivals
-    /\ arrived' = [ arrived EXCEPT ![k] = @ + 1 ]
-    /\ IF FilterOn /\ ~BankFirst /\ ~PassesPrefilter( k )
-       THEN Refuse( k )
-       ELSE IF HasRoom THEN Bank( k ) ELSE Full( k )
-    /\ UNCHANGED delivered
+    /\ UNCHANGED << bank, refused, delivered >>
 
 \* The main thread takes the bank: every datagram in it is delivered to the
 \* protocol (which, under BankFirst, is where garbage is refused).
@@ -117,7 +129,10 @@ Drain ==
     /\ bank' = << >>
     /\ UNCHANGED << arrived, refused, full, counted, evicted >>
 
-Next == ( \E k \in Kinds : Arrive( k ) ) \/ Drain
+Next == \/ \E k \in Kinds : Refuse( k )
+        \/ \E k \in Kinds : Bank( k )
+        \/ \E k \in Kinds : Full( k )
+        \/ Drain
 
 Spec == Init /\ [][ Next ]_vars
 

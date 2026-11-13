@@ -82,6 +82,7 @@ LAYERS = {
     "iocp-admit": {
         "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
         "untraced": {},
+        "reach": ["BankFull"],
     },
     "iocp-lanes": {
         "modules": ["RNIocpSendLanes.tla", "TraceRNIocpSendLanes.tla"],
