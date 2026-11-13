@@ -126,11 +126,22 @@ enum rocketnet_stack_secret_site_t
     ROCKETNET_STACK_SECRET_REQUEST_KEYS_SMALL_ORDER = 8,    // the opened request, the small-order refusal
     ROCKETNET_STACK_SECRET_REQUEST_EPHEMERAL = 9,           // the opened request, once the keys are derived
     ROCKETNET_STACK_SECRET_REQUEST_KEYS = 10,               // the opened request, once the mapping holds the keys
+    ROCKETNET_STACK_SECRET_REQUEST_KEYS_NOT_MAPPED = 11,     // the opened request, when the encryption map refused the add
 };
 
 extern void ( *rocketnet_stack_secret_hook )( int site, const void * staging, int bytes );
 
 #define ROCKETNET_STACK_SECRET_SEEN( site, staging, bytes ) do { if ( rocketnet_stack_secret_hook ) { rocketnet_stack_secret_hook( site, staging, bytes ); } } while ( 0 )
+
+// The encryption map add failure seam: while this thread's count is positive,
+// the next rocketnet_encryption_map_add refuses (returns -1) without touching
+// the map, and the count falls by one. It reaches the server's add-failure
+// exit, which a single thread cannot reach otherwise: the capacity rung
+// refuses a full table first (tests/test_unit_gaps_secrets_stack.cpp).
+// Zero, the default, leaves every add alone. Defined in
+// sdk/rocketnet_encryption_map.cpp.
+
+void rocketnet_dev_fail_encryption_map_adds( int count );
 
 #else // #if ROCKETNET_DEV
 

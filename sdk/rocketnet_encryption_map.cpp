@@ -394,6 +394,18 @@ int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map
     return map->num_free == 0 || map->next_generation == 0;
 }
 
+// mutation gaps secrets begin
+// See rocketnet_dev_fail_encryption_map_adds in rocketnet_test_seams.h.
+#if ROCKETNET_DEV
+static thread_local int rocketnet_dev_encryption_map_add_fails = 0;
+
+void rocketnet_dev_fail_encryption_map_adds( int count )
+{
+    rocketnet_dev_encryption_map_add_fails = count > 0 ? count : 0;
+}
+#endif // #if ROCKETNET_DEV
+// mutation gaps secrets end
+
 // proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
 // empty one, wrapping at the end of the index
 // proofs/tla/RNFreeStackLayout.tla TakeMap: the pop of free_indices[--num_free] and the generation that steps to the exhausted 0
@@ -405,6 +417,14 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
 
     rocketnet_assert( map );
     rocketnet_assert( address );
+
+#if ROCKETNET_DEV
+    if ( rocketnet_dev_encryption_map_add_fails > 0 )       // mutation gaps secrets (sdk/rocketnet_test_seams.h)
+    {
+        rocketnet_dev_encryption_map_add_fails--;
+        return -1;
+    }
+#endif // #if ROCKETNET_DEV
 
     if ( rocketnet_encryption_map_full( map ) )
     {

@@ -55,7 +55,7 @@ do                                                                              
     rocketnet_unit_check( condition );                                                                            \
 } while ( 0 )
 
-#define GAPS_STACK_SITES 11
+#define GAPS_STACK_SITES 12
 
 static int gaps_stack_seen[GAPS_STACK_SITES];
 static int gaps_stack_left[GAPS_STACK_SITES];      // nonzero bytes the staging still held, summed over the calls
@@ -357,5 +357,36 @@ static void test_gaps_secrets_stack_request_small_order()
 }
 
 REGISTER_UNIT_TEST( test_gaps_secrets_stack_request_small_order );
+
+// mutation gap: hunt 2/1443
+// The add-failure exit: the request passes every rung, the keys are derived,
+// and the encryption map refuses the add (the DEV add failure seam), so the
+// server ignores the request and must leave no keys on its stack.
+static void test_gaps_secrets_stack_request_not_mapped()
+{
+    struct gaps_stack_server_t * test = &gaps_stack_test;
+    gaps_stack_server_setup( test, 4 );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    gaps_stack_request( test, request, 0x51AC0104ULL, rocketnet_test_client_eph_public );
+
+    rocketnet_dev_fail_encryption_map_adds( 1 );
+    const int result = gaps_stack_process( test, request );
+    rocketnet_dev_fail_encryption_map_adds( 0 );
+
+    const uint64_t could_not_add = test->counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING];
+    const int num_mappings = rocketnet_encryption_map_num_mappings( test->server.encryption_map );
+
+    gaps_stack_server_teardown( test );
+
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED && could_not_add == 1 && num_mappings == 0 );
+    rocketnet_unit_check( gaps_stack_seen[ROCKETNET_STACK_SECRET_REQUEST_KEYS_NOT_MAPPED] == 1 );
+    rocketnet_unit_check( gaps_stack_seen[ROCKETNET_STACK_SECRET_REQUEST_KEYS] == 0 );
+    gaps_stack_check( gaps_stack_left[ROCKETNET_STACK_SECRET_REQUEST_KEYS_NOT_MAPPED] == 0, "a request the encryption map could not take left the connection keys on the server's stack" );
+    gaps_stack_check( gaps_stack_left[ROCKETNET_STACK_SECRET_REQUEST_EPHEMERAL] == 0, "a request the encryption map could not take left the server's ephemeral secret on its stack" );
+    gaps_stack_check( gaps_stack_left[ROCKETNET_STACK_SECRET_REQUEST_PRIVATE_DATA] == 0, "a request the encryption map could not take left the opened private data on its stack" );
+}
+
+REGISTER_UNIT_TEST( test_gaps_secrets_stack_request_not_mapped );
 
 #endif // #if ROCKETNET_DEV

@@ -1032,6 +1032,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         if ( index == -1 )
         {
             sodium_memzero( &keys, sizeof( keys ) );
+            ROCKETNET_STACK_SECRET_SEEN( ROCKETNET_STACK_SECRET_REQUEST_KEYS_NOT_MAPPED, &keys, (int) sizeof( keys ) );
             rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
             counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
