@@ -195,6 +195,7 @@ struct pc_endpoint_t
     int starts;
     int aborts;
     int finishes;
+    int guard_violations;
 };
 
 static int pc_max_payload_bytes( void * transport )
@@ -235,6 +236,14 @@ static int pc_finish_packet( void * transport, rocketnet_packet_context_t * cont
 
     end->used = false;
     end->finishes++;
+
+    for ( int i = PC_CAPACITY; i < PC_FRAME_BYTES - PC_PAYLOAD_INDEX; i++ )
+    {
+        if ( end->frame[PC_PAYLOAD_INDEX + i] != PC_GUARD )
+        {
+            end->guard_violations++;
+        }
+    }
 
     return payload_bytes > 0 ? payload_bytes + 64 : 0;
 }
@@ -307,6 +316,7 @@ static void test_write_pass_honours_transport_payload_capacity()
     const int starts_before = endpoint.starts;
     rn_message_object_send_packets( object );
     rocketnet_unit_check( endpoint.starts > starts_before );
+    rocketnet_unit_check( endpoint.guard_violations == 0 );
 
     // the frame reports 64 bytes, less than the requested 1,415: the write
     // pass must not write at or past the reported capacity

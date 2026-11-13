@@ -836,14 +836,15 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // the scan compares the first 8 bytes as one word, which takes the same
     // time whatever they hold, and only a word match pays the full
     // constant-time compare, so a table at the largest budget costs about a
-    // nanosecond an entry
+    // nanosecond an entry. Both words are read in the wire's byte order, as
+    // every integer read here is: only their equality matters
 
-    uint64_t token_word;
-    memcpy( &token_word, token_identifier, sizeof( token_word ) );
+    const uint8_t * token_bytes = token_identifier;
+    const uint64_t token_word = rocketnet_read_uint64( &token_bytes );
     for ( int i = 0; i < server->num_repeat_tokens; i++ )
     {
-        uint64_t entry_word;
-        memcpy( &entry_word, server->repeat_tokens[i], sizeof( entry_word ) );
+        const uint8_t * entry_bytes = server->repeat_tokens[i];
+        const uint64_t entry_word = rocketnet_read_uint64( &entry_bytes );
         if ( entry_word == token_word && sodium_memcmp( server->repeat_tokens[i], token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 )
         {
             if ( server->repeat_reasons[i] == ROCKETNET_SERVER_REPEAT_NO_SLOTS )
