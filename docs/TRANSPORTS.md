@@ -21,7 +21,7 @@ does not have the transport.
 | `msgx` | macOS | 10 | 10 | the Darwin `sendmsg_x`/`recvmsg_x` batch calls; see [docs/MACOS.md](MACOS.md) |
 | `portable` | every platform | development 30, production 50 | 30 | UDP sockets only |
 | `iocp` | Windows | 40 | 10 | Winsock overlapped I/O; uses UDP send and receive offload where the stack has them; see [docs/WINDOWS.md](WINDOWS.md) |
-| `rio` | Windows | 45 | - | the Winsock Registered I/O extension, and one registered memory region; see [docs/WINDOWS.md](WINDOWS.md) |
+| `rio` | Windows | 45 | - | the Winsock Registered I/O extension, and one registered memory region per lane; see [docs/WINDOWS.md](WINDOWS.md) |
 | `loopback` | every platform | pin only | pin only | nothing: both ends in one process, no socket; for tests and tools |
 
 So `auto` resolves to:
