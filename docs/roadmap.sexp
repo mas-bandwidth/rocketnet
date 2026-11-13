@@ -556,6 +556,36 @@
    :text "Since 2026-11-13 the gso drain counts the kernel's drops at a full queue socket (SO_RXQ_OVFL) in GSO_RECEIVE_DROPPED_OVERFLOW, so that row no longer aliases RECEIVE_DROPPED_FULL exactly (standard/TRANSPORT.md says so). io_uring keeps the same drops in its own URING_RECEIVE_DROPPED_SOCKET. A GSO_RECEIVE_DROPPED_SOCKET row would restore the alias and match io_uring; counter rows are ABI, so it waits for a release that may append rows."
    :date "2026-11-13" :origin "gso flood drops counted by no counter (W2-121); the existing row was chosen for the point release")
 
+  (item "xdp-receive-dropped-stopped" :group "after-v1-1-landing" :area "sdk"
+   :title "The xdp server counts no RECEIVE_DROPPED_STOPPED"
+   :text "The xdp operations table has no receive_drop_totals (sdk/rocketnet_driver_builtin.cpp, the NULL after xdp_begin_shutdown), so datagrams the xdp worker staged that main never took when the server stops are counted by no row, where gso and io_uring count them in RECEIVE_DROPPED_STOPPED. Since 2026-11-13 the xdp server uses the receive handoff (sdk/rocketnet_receive_handoff.h), so the count is the gso one: the tail's unread rest, main's buffer past its cursor, committed or not, and, when the worker moved on, the worker's buffer (rocketnet_server_gso_count_stopped), once the worker has exited. An expected-class counter, so it waits past the critical-and-high fix round."
+   :date "2026-11-13" :origin "2026-11-13 review round; low severity, moved off the fix round")
+
+  (item "xdp-receive-lock-busy-row" :group "after-v1-1-landing" :area "sdk"
+   :title "A counter for xdp receive calls that found the receive lock held"
+   :text "An xdp receive call whose few tries of a queue's receive mutex all fail reads only what it already holds and catches up at a later call; nothing counts it. Before 2026-11-13 a comment said such a put-off drain was counted; the comment now says nothing counts it. A count needs a counter row, and counter rows are ABI, so it waits for a release that may append rows."
+   :date "2026-11-13" :origin "2026-11-13 review round; needs a new counter row")
+
+  (item "portable-server-receive-latency" :group "after-v1-1-landing" :area "sdk"
+   :title "The portable server's receive handoff holds datagrams an extra update"
+   :text "Measured 2026-11-13 on amd-2 over loopback at 60 Hz: the portable server returns a datagram a mean 1.481 updates (24.7 ms) after its send, against 0.51 to 0.52 updates (8.5 to 8.7 ms) for io_uring, and for gso and xdp once their handoffs were fixed: the worker publishes a filled bank and main takes it only at a later call (portable_rx_publish and the rx_bank FIFO in sdk/rocketnet_driver_builtin.cpp). The shared receive handoff (sdk/rocketnet_receive_handoff.h) and the delivery check (sdk/rocketnet_receive_delivery_check.h) would fix and test it. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
+   :date "2026-11-13" :origin "Receive handoff latency review, 2026-11-13; moved off the fix round by the owner")
+
+  (item "portable-server-receive-prefilter" :group "after-v1-1-landing" :area "sdk"
+   :title "The portable server's worker does not run the shared receive prefilter"
+   :text "Reported in the 2026-11-13 review round: the gso and io_uring workers screen each datagram with the server's stateless prefilter (sdk/rocketnet_receive_prefilter.h) before it takes a bank slot, and the portable worker does not, so garbage can take its slots. Not reproduced on this branch. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
+   :date "2026-11-13" :origin "2026-11-13 review round; moved off the fix round by the owner")
+
+  (item "portable-server-receive-stop-count" :group "after-v1-1-landing" :area "sdk"
+   :title "The portable server counts no RECEIVE_DROPPED_STOPPED"
+   :text "Reported in the 2026-11-13 review round: datagrams the portable worker banked that main never took when the server stops are counted by no row, where gso counts them in RECEIVE_DROPPED_STOPPED; its operations table has no receive_drop_totals. Not reproduced on this branch. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
+   :date "2026-11-13" :origin "2026-11-13 review round; moved off the fix round by the owner")
+
+  (item "portable-server-recvmmsg-error-spin" :group "after-v1-1-landing" :area "sdk"
+   :title "The portable server's receive retries a failing recvmmsg at once"
+   :text "Reported in the 2026-11-13 review round as an error spin: the platform receive loop (sdk/rocketnet_platform.cpp, the recvmmsg call and its receive-weather retry) retries an error it reads as weather in the same pass, with no back-off. Not reproduced on this branch. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
+   :date "2026-11-13" :origin "2026-11-13 review round; moved off the fix round by the owner")
+
   (item "client-fill-sequence-order" :group "review-v1-2" :area "sdk"
    :title "Two client fill threads can stage their sequences out of slot order"
    :text "rocketnet_client_transport_start_packet (sdk/rocketnet_client_transport.cpp) claims a payload ring slot with one atomic add and takes the session sequence with another (rocketnet_client_protocol_start_payload, sdk/rocketnet_client_protocol.cpp). Two game threads starting at once can take slots i and i+1 and then the sequences in the other order, so the ring holds [seq+1, seq] and the I/O thread sends them in that order. The server sees what a one-packet network reorder gives it: the replay window takes both, and acks name sequences, not slots. Not changed for the point release: binding slot and sequence would need one atomic for both (a sequence derived from the slot breaks across rings, burns and the stop's final ring) or a lock on the fill path, which adds contention to every start. Decide whether wire order equal to sequence order is a property the client should keep, and measure the cost of keeping it, before any change."

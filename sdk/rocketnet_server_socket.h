@@ -431,6 +431,37 @@ bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_tra
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();
 bool rocketnet_server_socket_test_worker_stack();
+
+// the receive handoff on a one-queue fixture with no kernel resources
+// (sdk/rocketnet_receive_handoff.h): the receive delivery check, and the
+// steps the trace check's walk takes (tests/tla_trace_receive_handoff_xdp.cpp)
+bool rocketnet_server_socket_test_receive_delivery();
+bool rocketnet_server_socket_test_receive_budget_spent();
+bool rocketnet_server_socket_test_receive_budget_exact();
+struct rocketnet_server_socket_test_receive_t;
+struct rocketnet_server_socket_test_receive_state_t
+{
+    int worker;
+    int main;
+    int tail;
+    int free;
+    uint32_t committed[3];
+    uint32_t main_cursor;
+    uint32_t main_limit;
+    uint32_t tail_cursor;
+    uint32_t tail_end;
+    uint32_t count[3];  // each buffer's num_packets
+    uint32_t first[3];  // the id of each buffer's first datagram, 0 when it holds none
+    bool consecutive;   // every buffer's ids run on from its first
+    int capacity;       // the per-update budget of a call that cuts none
+};
+struct rocketnet_server_socket_test_receive_t * rocketnet_server_socket_test_receive_open();
+void rocketnet_server_socket_test_receive_close( struct rocketnet_server_socket_test_receive_t * fixture );
+bool rocketnet_server_socket_test_receive_bank( struct rocketnet_server_socket_test_receive_t * fixture, uint32_t first, int count );
+bool rocketnet_server_socket_test_receive_end_pass( struct rocketnet_server_socket_test_receive_t * fixture );
+int rocketnet_server_socket_test_receive_call( struct rocketnet_server_socket_test_receive_t * fixture, int budget, bool busy, uint32_t * first );
+void rocketnet_server_socket_test_receive_state( struct rocketnet_server_socket_test_receive_t * fixture,
+                                                 struct rocketnet_server_socket_test_receive_state_t * state );
 #endif // #if ROCKETNET_DEV
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
