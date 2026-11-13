@@ -66,7 +66,8 @@ expect zero 1 'memlock: FAIL: 0 of 2 per-case need defines' "$tmp/empty"
 
 # a measured per-server need over the per-case need: stale with one runner,
 # a user-wide upper bound (reported, not judged) with two
-export FAKE_NEED=$((limit / 2))
+FAKE_NEED=$((limit / 2))
+export FAKE_NEED
 FAKE_RUNNERS=1 expect stale-one-runner 1 "memlock: FAIL: measure the io_uring cases on this kernel" "$tmp/stale" "$tmp/probe"
 FAKE_RUNNERS=2 expect stale-two-runners 0 "but user-wide: 2 runners of this user may hold rings now" "$tmp/stale" "$tmp/probe"
 grep -qF -- "memlock: $limit KiB covers $((2 * (limit / 4))) KiB: PASS" "$tmp/stale-two-runners.log" \
