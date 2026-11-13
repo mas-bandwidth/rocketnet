@@ -1219,7 +1219,7 @@ static void ip_harness_quiet_begin( ip_harness_quiet_t * quiet )
     {
         quiet->had[i] = rocketnet_test_getenv( ip_harness_quiet_names[i], quiet->value[i], sizeof( quiet->value[i] ) );
         ip_process_env_unset( ip_harness_quiet_names[i] );
-        char probe[8];
+        char probe[IP_HARNESS_QUIET_VALUE_BYTES];
         check( !rocketnet_test_getenv( ip_harness_quiet_names[i], probe, sizeof( probe ) ) );
     }
 }

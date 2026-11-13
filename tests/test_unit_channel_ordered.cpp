@@ -2922,7 +2922,7 @@ static void test_rnchannel_witness_replays_ordered()
         {
             if ( again[p].bytes > 0 )
             {
-                open_packet( m.b, &again[p] );
+                check( open_packet( m.b, &again[p] ) );
             }
         }
         check( counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > duplicates );
@@ -3146,21 +3146,22 @@ static void test_ordered_record_sent_at_zero_waits_for_its_resend()
     check( write_packets( a, delay + 1.0 / 60.0, first, 4 ) == 0 );
 
     // the first send is recorded once, at 0.0, and the reliable timeout runs
-    // from it: at the default (no reliable timeout) it never fires; opted in
-    // (test_channel_ordered_cases_opted_in), it fires exactly one timeout
-    // after 0.0, not after the resend
+    // from it: it fires exactly one timeout after 0.0, not after the resend.
+    // Opted in (test_channel_ordered_cases_opted_in) the timeout is the
+    // config's; at the default there is none, so this run sets one second on
+    // the window, past the resend, to check the same boundary
 
     check( a->ordered.ack.oldest_first_send == 0.0 );
-    if ( g_node_reliable_timeout_ms > 0 )
+    double timeout = (double) g_node_reliable_timeout_ms / 1000.0;
+    if ( g_node_reliable_timeout_ms <= 0 )
     {
-        const double timeout = (double) g_node_reliable_timeout_ms / 1000.0;
-        check( rn_window_ack_check_timeout( &a->ordered.ack, timeout - 1.0 / 60.0 ) == 0 );
-        check( rn_window_ack_check_timeout( &a->ordered.ack, timeout ) == 1 );
+        check( a->ordered.ack.reliable_timeout == 0.0 );
+        timeout = 1.0;
+        a->ordered.ack.reliable_timeout = timeout;
     }
-    else
-    {
-        check( rn_window_ack_check_timeout( &a->ordered.ack, delay + 1.0e6 ) == 0 );
-    }
+    check( timeout > delay + 1.0 / 60.0 );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, timeout - 1.0 / 60.0 ) == 0 );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, timeout ) == 1 );
 
     node_free( a );
 }
