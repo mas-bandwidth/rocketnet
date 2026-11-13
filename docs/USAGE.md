@@ -546,12 +546,19 @@ out-parameter. Either address may be NULL, but not both. Each address is the
 advertised address: the one clients reach the server at, which a connect token
 must name exactly, port included. It is not the bind address: by default every
 transport except `xdp` binds the wildcard address of the family on the given
-port, the config's `bind_ipv4_address` and `bind_ipv6_address` bind one local
-address instead (behind NAT, the private address the public one reaches), and
-`xdp` attaches to the interface that carries the address. A server
+port, and `xdp` attaches to the interface that carries the address. On a
+server that serves one family, the config's `bind_ipv4_address` or
+`bind_ipv6_address` for that family binds one local address instead (behind
+NAT, the private address the public one reaches). A server that serves both
+families binds one dual-stack socket on the IPv6 wildcard, and start refuses
+either bind field with `ROCKETNET_STATUS_INVALID_ADDRESS` (the environment
+forms are ignored there, with a log line). A server
 created at `0.0.0.0:40000` advertises `0.0.0.0:40000` and accepts only tokens
-that name that address, so pass the address your clients reach, and mint
-tokens with it. It returns a stopped server
+that name that address, so pass the address your clients reach. With port 0
+the advertised port is the one start binds, so mint tokens with the address
+the running server reports (`rocketnet_server_ipv4_address`,
+`rocketnet_server_ipv6_address`, or `rocketnet_server_port`), not the create
+argument. It returns a stopped server
 with `ROCKETNET_STATUS_OK`, or NULL with the specific refusal status, and binds
 nothing. `rocketnet_server_start` binds the
 transport and accepts clients; `rocketnet_server_stop` disconnects every
