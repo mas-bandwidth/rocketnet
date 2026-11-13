@@ -215,9 +215,10 @@ them send staging (`sdk/rocketnet_server_gso_linux.cpp`,
 
 Every built-in server transport but loopback reports the frames it takes before its next
 flush through the optional `send_room` operation (`sdk/rocketnet_driver.h`):
-the free slots of the fullest queue's producer bank for gso, io_uring and
-XDP, of the fullest lane for IOCP (at most its free send operations) and RIO
-(its open fill phase), and the portable producer bank. A frame the transport
+the free slots of the fullest queue's producer bank for gso, io_uring, XDP
+and msgx (its fullest transmit worker), of the fullest RIO lane (its open
+fill phase), every IOCP lane's room summed (each lane at most its free send
+operations), and the portable producer bank. A frame the transport
 still holds from an earlier flush is not room.
 `rocketnet_server_transport_send_capacity_available` returns it for the
 staged transports. With one send queue the message layer's rotation stops at
@@ -348,8 +349,8 @@ A datagram committed before main's call is returned by that call unless the
 mutex was busy (on XDP, through every one of a few tries), the per-update
 budget cut the call, or the call began with datagrams left from a cut call:
 main then reads the tail and its own buffer but moves on to the worker's
-only at its next call, so those datagrams wait one more update (16.7 ms at
-60 Hz) (`RNReceiveHandoff.DeliveredByNextCall`, bound to the
+only at its next call, so those datagrams wait at least one more update
+(16.7 ms at 60 Hz) (`RNReceiveHandoff.DeliveredByNextCall`, bound to the
 code by the `receive-handoff` and `receive-handoff-xdp` trace checks; `RNGsoHandoff.RxFill` and `RxCall` are
 the same exchange beside the send side and the stop count). A GSO worker
 pass that finds its buffer full while main has not started on it, or whose
@@ -537,8 +538,8 @@ its sends complete, and its received datagrams reach main through the shared
 receive handoff (`sdk/rocketnet_receive_handoff.h`, three banks): main reads
 the bank the worker is filling up to its committed count, so a datagram banked
 before a receive call is returned by that call, unless main's one try of the
-lane's mutex fails or the process view is full: then it is returned at the
-next call, one update (16.7 ms at 60 Hz) later.
+lane's mutex fails or the process view is full: then a later call returns
+it, at the earliest the next, one update (16.7 ms at 60 Hz) later.
 Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_COUNTER_RIO_*` counters (public rows, sdk/rocketnet_counters.h) report sent and received packets, full send
@@ -690,8 +691,9 @@ Each part is modelled per queue in `proofs/tla/`: the send staging
 (`RNUringQueueBankLayout`), the send handoff (`RNUringQueueSend`), the
 grouping of a bank into runs (`RNSendGatherLayout`), the worker loop
 (`RNUringQueueWorker`) and the receive bank (`RNUringQueueReceive`,
-`RNUringQueueReceiveLayout`); `proofs/tla/COVERAGE.tsv` lists the trace
-checks that bind them to the code.
+`RNUringQueueReceiveLayout`). The bank layout, the handoff, the worker loop,
+the receive bank's layout and the gather's calls (`RNSendGatherCall`) are
+bound to the code by trace checks (`proofs/tla/COVERAGE.tsv`).
 
 ## The XDP receive filter
 
@@ -810,8 +812,9 @@ address the server binds is the server config's `bind_ipv4_address` or
 that family's wildcard (`0.0.0.0` or `[::]`) on the given port, even when the
 given address names a specific IP. Set, a server of one family binds that
 local address on the given port, so a datagram to any other address of the
-machine does not reach it; behind NAT it is the private address that reaches
-the given public one. Start refuses with `INVALID_ADDRESS` a bind address
+machine does not reach it. Behind NAT the two differ: clients reach the
+given public address, which arrives at the machine's private address, the
+one to bind. Start refuses with `INVALID_ADDRESS` a bind address
 for the family the server does not serve, and any bind address on a server
 of both families, whose one dual-stack socket binds `[::]`. Every transport
 except `xdp` opens its sockets on that bind address: `xdp` alone carries
