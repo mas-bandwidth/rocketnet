@@ -12,6 +12,7 @@
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_server_uring.h"
+#include "../sdk/rocketnet_memory.h"
 
 #define check rocketnet_unit_check
 
@@ -40,4 +41,32 @@ static void test_uring_send_slots()
     check( rocketnet_server_uring_send_slots( 1000, 0 ) == ROCKETNET_URING_SEND_QUEUE_SIZE );
 }
 
+// the memory plan's bound of one ring's kernel mappings covers what the kernel
+// maps for ROCKETNET_URING_ENTRIES (64 bytes a submission entry, 4 an index,
+// 16 a completion entry and twice as many completion entries), in whole pages
+
+static void test_uring_ring_mapped_bound_covers_the_rings()
+{
+    const uint64_t entries = (uint64_t) ROCKETNET_URING_ENTRIES;
+    const uint64_t needed = entries * 64 + entries * 4 + entries * 2 * 16;
+    const uint64_t bound = rocketnet_server_uring_ring_mapped_bound( ROCKETNET_URING_ENTRIES );
+    check( bound >= needed );
+    check( bound % 4096 == 0 );
+    check( bound < needed + 8 * 4096 );
+    check( bound > 400000 && bound < 440000 );
+    check( rocketnet_server_uring_ring_mapped_bound( 0 ) == 0 );
+    check( rocketnet_server_uring_ring_mapped_bound( -1 ) == 0 );
+    // more entries, more bytes
+    check( rocketnet_server_uring_ring_mapped_bound( 8192 ) > bound );
+
+#if defined( ROCKETNET_IO_URING )
+    // the plan: every queue's buffer ring and its ring mappings
+    const uint64_t one = rocketnet_server_uring_mapped_bytes( 1 );
+    check( one > bound );
+    check( rocketnet_server_uring_mapped_bytes( 3 ) == 3 * one );
+    check( rocketnet_server_uring_mapped_bytes( 0 ) == 0 );
+#endif // #if defined( ROCKETNET_IO_URING )
+}
+
 REGISTER_UNIT_TEST( test_uring_send_slots );
+REGISTER_UNIT_TEST( test_uring_ring_mapped_bound_covers_the_rings );

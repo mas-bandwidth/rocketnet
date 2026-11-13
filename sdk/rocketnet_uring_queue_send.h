@@ -189,6 +189,18 @@ int rocketnet_uring_queue_send_complete( struct rocketnet_uring_queue_send_t * s
 // FAILED
 int rocketnet_uring_queue_send_result( int res, bool segmented );
 
+// the model's name for a send completion (RNUringQueueWorker.tla ReapOk,
+// ReapAgain, ReapRefused): res as the kernel answered and packets the run
+// held. A segmented run its destination refused (more than one packet) is
+// split; a refused one-packet run is a plain failure and reads as OK to the
+// model (the packet is done, counted dropped by complete)
+
+#define ROCKETNET_URING_QUEUE_SEND_CLASS_OK                                  1
+#define ROCKETNET_URING_QUEUE_SEND_CLASS_AGAIN                               2
+#define ROCKETNET_URING_QUEUE_SEND_CLASS_SPLIT                               3
+
+int rocketnet_uring_queue_send_class( int res, int packets );
+
 // a segmented run next handed out, to a destination the worker knows
 // refuses segmentation: taken back before any send, as one plain run per
 // packet waiting to be submitted (complete's REFUSED hand-back, counted

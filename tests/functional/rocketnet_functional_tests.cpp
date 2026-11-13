@@ -8894,7 +8894,9 @@ void rocketnet_test_server_uring_worker_pin()
     const int queues = 2;
     const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
 
-    // not asked for: unpinned, nothing refused
+    // num_os_cpus 0 reads as 1: cpu 0 is the OS's, so the workers pin to cpus 1 + q
+    // where the machine has them, and nothing is refused
+    if ( online >= 1 + queues )
     {
         rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
@@ -8903,7 +8905,7 @@ void rocketnet_test_server_uring_worker_pin()
         rocketnet_check( rocketnet_test_uring_wait_pins( uring, queues ) );
         for ( int q = 0; q < queues; q++ )
         {
-            rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_NONE );
+            rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == 1 + q );
         }
         rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == 0 );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
@@ -8920,7 +8922,7 @@ void rocketnet_test_server_uring_worker_pin()
         {
             rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_NONE );
         }
-        rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) >= (uint64_t) queues );
+        rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == (uint64_t) queues );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
     }
 
@@ -9012,6 +9014,91 @@ void rocketnet_test_server_uring_receive_left_at_stop_counted()
 
     rocketnet_platform_socket_destroy( client_socket );
     rocketnet_server_uring_destroy( uring );
+}
+
+// the transport's rows reach the SERVER's public counters
+// (rocketnet_server_transport_counters copies them from the transport): a
+// server on io_uring with the OS keeping more cpus than the machine has, so
+// every worker's pin is refused (URING_PIN_REFUSALS, exactly one a queue), and
+// datagrams that pass the prefilter, banked and never taken by main, counted
+// RECEIVE_DROPPED_STOPPED once the transport stops
+
+void rocketnet_test_server_uring_rows_reach_the_server()
+{
+    const int queues = 2;
+    const int datagrams = 8;
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 4;
+    config.num_xdp_queues = queues;
+    config.num_os_cpus = 200;
+    snprintf( config.transport, sizeof( config.transport ), "io_uring" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &config );
+    rocketnet_check( server );
+
+    // every worker asks to pin and is refused: the row reads one a queue
+    uint64_t refusals = 0;
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        refusals = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_URING_PIN_REFUSALS );
+        if ( refusals >= (uint64_t) queues )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( refusals == (uint64_t) queues );
+
+    // datagrams that pass the prefilter (a connection request's size and
+    // header) are banked by the workers; the server takes none of them
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                           ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( client_socket );
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
+    server_address.port = rocketnet_server_transport_port( server );
+
+    uint8_t packet[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    memset( packet, 0x37, sizeof( packet ) );
+    uint8_t * at = packet;
+    rocketnet_write_prefilter_header( &at, ROCKETNET_CONNECTION_REQUEST_PACKET, config.packet_filter );
+    for ( int i = 0; i < datagrams; i++ )
+    {
+        rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, (int) sizeof( packet ) );
+    }
+
+    uint64_t received = 0;
+    const double wait_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - wait_start < 5.0 )
+    {
+        received = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_URING_PACKETS_RECEIVED );
+        if ( received >= (uint64_t) datagrams )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == (uint64_t) datagrams );
+
+    rocketnet_platform_socket_destroy( client_socket );
+
+    // stopped without an update that takes them: left in the banks, counted
+    rocketnet_server_transport_stop( server );
+    const double stop_start = rocketnet_platform_time();
+    while ( rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED && rocketnet_platform_time() - stop_start < 5.0 )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+    rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED ) == (uint64_t) datagrams );
+    rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_URING_PIN_REFUSALS ) == (uint64_t) queues );
+    rn_native_server_transport_stop_and_destroy( server );
 }
 
 void rocketnet_test_server_uring_send_wrong_family()
@@ -15870,6 +15957,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_wrong_family", rocketnet_test_server_uring_send_wrong_family, rocketnet_server_uring_available },
     { "test_io_uring_transport_worker_pin", rocketnet_test_server_uring_worker_pin, rocketnet_server_uring_available },
+    { "test_io_uring_transport_rows_reach_the_server", rocketnet_test_server_uring_rows_reach_the_server, rocketnet_server_uring_available },
     { "test_io_uring_transport_receive_left_at_stop_counted", rocketnet_test_server_uring_receive_left_at_stop_counted, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

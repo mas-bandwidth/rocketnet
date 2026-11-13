@@ -321,19 +321,19 @@ static void qwork_signal( qwork_walk_t & walk )
     }
 }
 
-// what a send completion is to the model: "ok", "again" or "ref"
+// what a send completion is to the model: "ok", "again" or "ref", the
+// library's own classification (rocketnet_uring_queue_send_class)
 static const char * qwork_class( int32_t res, int count )
 {
-    const int result = rocketnet_uring_queue_send_result( res, true );
-    if ( result == ROCKETNET_URING_QUEUE_SEND_AGAIN )
+    switch ( rocketnet_uring_queue_send_class( res, count ) )
     {
-        return "again";
+        case ROCKETNET_URING_QUEUE_SEND_CLASS_AGAIN:
+            return "again";
+        case ROCKETNET_URING_QUEUE_SEND_CLASS_SPLIT:
+            return "ref";
+        default:
+            return "ok";
     }
-    if ( result == ROCKETNET_URING_QUEUE_SEND_REFUSED && count > 1 )
-    {
-        return "ref";
-    }
-    return "ok";
 }
 
 static bool qwork_cq_has( const qwork_walk_t & walk, int kind, int32_t * res = NULL )
@@ -412,18 +412,21 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
         c_ref += strcmp( c, "ref" ) == 0 ? 1 : 0;
     }
 
-    // the kernel's: the runs it holds, unanswered, and what it holds or has
-    // posted of the poll, the receive and the wake read
-    const int k = (int) walk.sends.size();
+    // the worker's own view, read from the library's struct: the runs it has
+    // in the kernel (submitted and not yet reaped, so the posted ones among
+    // them are counted apart), and what it holds of the poll, the receive and
+    // the wake read (poll_armed, wake_armed, the receive's armed word and the
+    // cancelled_* flags); the kernel's completion queue says what is posted
+    const int k = worker->in_kernel - c_ok - c_again - c_ref;
 
     const char * poll = "none";
     if ( qwork_cq_has( walk, ROCKETNET_URING_TAG_POLL ) )
     {
         poll = "posted";
     }
-    else if ( walk.poll_in )
+    else if ( worker->poll_armed )
     {
-        poll = walk.poll_cancel ? "cancelling" : "armed";
+        poll = worker->cancelled_poll ? "cancelling" : "armed";
     }
 
     const char * recv = "ended";
@@ -431,9 +434,9 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     {
         recv = "posted";
     }
-    else if ( walk.recv_in )
+    else if ( worker->config.receive.armed( worker->config.receive.context ) )
     {
-        recv = walk.recv_cancel ? "cancelling" : "armed";
+        recv = worker->cancelled_recv ? "cancelling" : "armed";
     }
 
     const char * wake = "none";
@@ -441,9 +444,9 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     {
         wake = "posted";
     }
-    else if ( walk.wake_in )
+    else if ( worker->wake_armed )
     {
-        wake = walk.wake_cancel ? "cancelling" : "armed";
+        wake = worker->cancelled_wake ? "cancelling" : "armed";
     }
 
     tla_record_t record;
@@ -621,14 +624,9 @@ static const char * qwork_reap_act( const qwork_walk_t & walk )
     switch ( rocketnet_uring_tag_kind( walk.cq[0].user_data ) )
     {
         case ROCKETNET_URING_TAG_SEND:
-        {
-            const char * c = qwork_class( walk.cq[0].res, walk.cq_count[0] );
-            if ( strcmp( c, "again" ) == 0 )
-            {
-                return "ReapAgain";
-            }
-            return strcmp( c, "ref" ) == 0 ? "ReapRefused" : "ReapOk";
-        }
+            // the class is the worker's own report after the step
+            // (last_send_class), see qwork_reap_class
+            return "ReapSend";
         case ROCKETNET_URING_TAG_POLL:
             return "ReapPoll";
         case ROCKETNET_URING_TAG_RECV:
@@ -726,8 +724,25 @@ static const char * qwork_act( qwork_walk_t & walk, tla_random_t & random, int a
         {
             const char * reaped = qwork_reap_act( walk );
             const bool exited = strcmp( walk.st, "exited" ) == 0;
+            walk.worker.last_send_class = 0;
             const int did = rocketnet_uring_queue_worker_step( &walk.worker, true );
             qwork_take_sqes( walk );
+            if ( strcmp( reaped, "ReapSend" ) == 0 )
+            {
+                // the library says which of the three completions it reaped
+                switch ( walk.worker.last_send_class )
+                {
+                    case ROCKETNET_URING_QUEUE_SEND_CLASS_AGAIN:
+                        reaped = "ReapAgain";
+                        break;
+                    case ROCKETNET_URING_QUEUE_SEND_CLASS_SPLIT:
+                        reaped = "ReapRefused";
+                        break;
+                    default:
+                        reaped = "ReapOk";
+                        break;
+                }
+            }
             *act = qwork_step_act( did, reaped, exited );
             if ( did == ROCKETNET_URING_WORKER_STEP_NONE )
             {

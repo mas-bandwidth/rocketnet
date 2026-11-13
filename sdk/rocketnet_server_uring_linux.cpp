@@ -138,8 +138,9 @@ struct rocketnet_server_uring_t
     void * context = NULL;
 
     int num_queues = 0;
-    int num_os_cpus = 0;                        // the server's num_os_cpus: the workers pin to num_os_cpus + queue; 0 pins nothing
+    int num_os_cpus = 1;                        // the server's num_os_cpus, never below 1: the workers pin to num_os_cpus + queue
     std::atomic<int> pin_refusals{ 0 };         // pins and priorities the workers asked for and the system refused
+    std::atomic<uint64_t> send_finish_refused{ 0 }; // finish_packet calls whose pointer named no slot of the producer bank: each one packet lost, counted into SEND_DROPPED
     bool ipv6 = false;
     int features = 0;                           // ROCKETNET_SERVER_URING_FEATURE_*: what the create probe found
     int max_clients = 0;
@@ -365,7 +366,7 @@ static bool rocketnet_server_uring_receive_armed( void * context )
 // refusal is a warning naming the queue and the cpu, counted in pin_refusals
 // (rocketnet_server_uring_pin_refusals; a refused priority is counted in the
 // platform's priority refusals instead), and the queue's pin_cpu stays NONE: a worker is reported pinned
-// only when pthread_setaffinity_np said so. num_os_cpus 0 pins nothing (the
+// only when pthread_setaffinity_np said so. num_os_cpus below 1 reads as 1 (the
 // transport driven directly).
 
 // a refused pin leaves the worker on the mask it inherited, which may include
@@ -373,7 +374,7 @@ static bool rocketnet_server_uring_receive_armed( void * context )
 // (rocketnet_uring_pin_fallback_allows), where that is itself allowed; the
 // pin state stays NONE either way
 
-static void rocketnet_server_uring_confine_worker( const struct rocketnet_server_uring_t * uring, int queue_index, int online )
+static void rocketnet_server_uring_confine_worker( struct rocketnet_server_uring_t * uring, int queue_index, int online )
 {
     if ( !rocketnet_uring_pin_fallback_possible( uring->num_os_cpus, online ) )
     {
@@ -393,20 +394,15 @@ static void rocketnet_server_uring_confine_worker( const struct rocketnet_server
     const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset );
     if ( result != 0 )
     {
-        rocketnet_warn( "io_uring worker %d: confining it to cpus %d .. %d refused (%s); it keeps its inherited cpus", queue_index, uring->num_os_cpus, online - 1,
-                        rocketnet_platform_socket_error_text( result ).text );
+        uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+        rocketnet_warn( "io_uring worker %d: confining it to cpus %d .. %d refused (%s); it keeps its inherited cpus", queue_index,
+                        rocketnet_uring_pin_fallback_first( uring->num_os_cpus, online ), online - 1, rocketnet_platform_socket_error_text( result ).text );
     }
 }
 
 static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_queue_t * queue )
 {
     struct rocketnet_server_uring_t * uring = queue->uring;
-    if ( uring->num_os_cpus <= 0 )
-    {
-        queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
-        return;
-    }
-
     const int cpu = rocketnet_uring_pin_cpu( queue->index, uring->num_os_cpus );
     const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
     const int check = rocketnet_uring_pin_check( cpu, CPU_SETSIZE, online );
@@ -530,8 +526,8 @@ int rocketnet_server_uring_send_queue_size( const struct rocketnet_server_uring_
 }
 
 // each queue's provided buffer ring, mapped outside the allocator, whole
-// pages; the submission and completion rings are the kernel's and are not
-// counted in the pre-create memory plan
+// pages, and an upper bound of the queue's submission and completion ring
+// mappings (rocketnet_server_uring_ring_mapped_bound)
 
 uint64_t rocketnet_server_uring_mapped_bytes( int queues )
 {
@@ -539,7 +535,7 @@ uint64_t rocketnet_server_uring_mapped_bytes( int queues )
     {
         return 0;
     }
-    return (uint64_t) queues * rocketnet_uring_receive_queue_mapped_bytes( ROCKETNET_URING_RECV_BUFFERS );
+    return (uint64_t) queues * ( rocketnet_uring_receive_queue_mapped_bytes( ROCKETNET_URING_RECV_BUFFERS ) + rocketnet_server_uring_ring_mapped_bound( ROCKETNET_URING_ENTRIES ) );
 }
 
 // ---------------------------------------------------------------------------
@@ -715,11 +711,18 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
     uring->context = context;
     uring->num_queues = num_queues;
-    uring->num_os_cpus = num_os_cpus;
+    uring->num_os_cpus = num_os_cpus < 1 ? 1 : num_os_cpus; // cpu 0 is the OS's whatever the caller says
     uring->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     uring->max_clients = max_clients;
     uring->bank_size = rocketnet_server_uring_bank_packets( max_clients );
     uring->send_slots = rocketnet_server_uring_send_slots( max_clients, num_queues );
+
+    // the send modules refuse only arguments outside their ranges (the queue
+    // count is checked above against ROCKETNET_URING_MAX_QUEUES, which
+    // ROCKETNET_URING_SEND_MAX_QUEUES holds, and send_slots is clamped to
+    // 1 .. ROCKETNET_URING_SEND_MAX_BANK_SLOTS), so a refusal below is the
+    // allocation or its layout overflowing: OUT_OF_MEMORY is the real status
+    rocketnet_assert( uring->send_slots >= 1 && uring->send_slots <= ROCKETNET_URING_SEND_MAX_BANK_SLOTS );
 
     uring->queues = (struct rocketnet_server_uring_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
     uring->banks = rocketnet_uring_send_queues_create( context, num_queues, uring->send_slots );
@@ -755,6 +758,35 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
     }
 
     bind_address->port = bound_port;
+
+    // the io_uring transport's own buffer step after the shared open: when the
+    // open's grant is short, ask once more past the sysctl limit with the
+    // force option (rocketnet_socket_buffer_request, shared with the gso
+    // transport) and name a short grant at start with the sysctl to set
+    // (rocketnet_socket_buffer_log). a short grant is a fact about the host,
+    // not an error
+
+    const int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
+    const int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", max_clients );
+
+    for ( int i = 0; i < num_queues; i++ )
+    {
+        struct rocketnet_socket_buffer_grant_t send_grant;
+        struct rocketnet_socket_buffer_grant_t receive_grant;
+        if ( !rocketnet_socket_buffer_request( uring->queues[i].fd, false, send_buffer_size, &send_grant ) ||
+             !rocketnet_socket_buffer_request( uring->queues[i].fd, true, receive_buffer_size, &receive_grant ) )
+        {
+            rocketnet_error( "io_uring transport: failed to set socket buffer size on queue %d: %s", i, rocketnet_platform_socket_error_text( errno ).text );
+            rocketnet_server_uring_free( uring );
+            return NULL;
+        }
+
+        if ( i == 0 )
+        {
+            rocketnet_socket_buffer_log( "io_uring", false, send_buffer_size, &send_grant );
+            rocketnet_socket_buffer_log( "io_uring", true, receive_buffer_size, &receive_grant );
+        }
+    }
 
     // the UDP_SEGMENT and UDP_GRO probes, the gso transport's, each all or
     // nothing over the group (rocketnet_server_udp_probe_offloads). with
@@ -887,6 +919,13 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
     return uring;
 }
 
+// no bank is published or kept after the workers exit: the server stops this
+// transport only after its final flush and send_idle (the driver's stop
+// follows begin_shutdown, sdk/rocketnet_driver.h), starts no packet after the
+// stop, and rocketnet_server_uring_send_packets runs on main only in an
+// update, never after stop. What the workers still hold at the stop they
+// send within bounded retries or count abandoned (SEND_DROPPED).
+//
 // proofs/tla/RNUringQueueWorker.tla Stop, for every queue: quit, then the
 // wake. Each worker keeps sending what was published, cancels its receive
 // and exits once nothing of its is in the kernel.
@@ -995,6 +1034,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 
     memset( counters + ROCKETNET_SERVER_URING_FIRST_COUNTER, 0, ROCKETNET_SERVER_URING_COUNTER_ROWS * sizeof( uint64_t ) );
     counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS] = (uint64_t) uring->pin_refusals.load( std::memory_order_relaxed );
+    counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] = 0;
 
     for ( int i = 0; i < uring->num_queues; i++ )
     {
@@ -1020,6 +1060,8 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
         // already counted its packets in the send module's DROPPED, so the
         // worker's own SEND_DROPPED is not added again
     }
+
+    rocketnet_uring_counters_add_finish_refused( counters, uring->send_finish_refused.load( std::memory_order_relaxed ) );
 }
 
 // the builtin transport's receive_drops hook: the size drops of every
@@ -1090,7 +1132,10 @@ void rocketnet_server_uring_finish_packet( struct rocketnet_server_uring_t * uri
 
     // a pointer that names no slot of the id's producer bank is refused and
     // counted (refused_pointer); nothing is written
-    rocketnet_uring_send_queues_finish( uring->banks, packet_id, packet_data, packet_bytes );
+    if ( !rocketnet_uring_send_queues_finish( uring->banks, packet_id, packet_data, packet_bytes ) )
+    {
+        uring->send_finish_refused.fetch_add( 1, std::memory_order_relaxed );
+    }
 }
 
 void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * uring, uint64_t packet_id, uint8_t * packet_data )
@@ -1398,6 +1443,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
     {
         memset( counters + ROCKETNET_SERVER_URING_FIRST_COUNTER, 0, ROCKETNET_SERVER_URING_COUNTER_ROWS * sizeof( uint64_t ) );
         counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS] = 0;
+        counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] = 0;
     }
 }
 

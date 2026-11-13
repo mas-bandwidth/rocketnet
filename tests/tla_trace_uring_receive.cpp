@@ -208,11 +208,27 @@ static tla_record_t receive_record( const receive_walk_t & walk )
     std::vector<std::string> buffer_keys;
     std::vector<std::string> entries;
     std::vector<std::string> owner;
+
+    // a buffer is the ring's when the library's buffer ring holds it between
+    // the kernel's head and the library's tail (read through the library's
+    // own take, on a copy of the head), the completion queue's otherwise
+    bool in_ring[RECEIVE_BUFFERS] = {};
+    {
+        uint16_t head = walk.br_head;
+        for ( int bid = rocketnet_uring_receive_queue_test_take( queue, &head ); bid >= 0; bid = rocketnet_uring_receive_queue_test_take( queue, &head ) )
+        {
+            if ( bid < RECEIVE_BUFFERS )
+            {
+                in_ring[bid] = true;
+            }
+        }
+    }
+
     for ( int b = 0; b < RECEIVE_BUFFERS; b++ )
     {
         buffer_keys.push_back( tla_int( b ) );
         entries.push_back( tla_int( bufs[b].bid ) );
-        owner.push_back( walk.owner_ring[b] ? "\"ring\"" : "\"cq\"" );
+        owner.push_back( in_ring[b] ? "\"ring\"" : "\"cq\"" );
     }
 
     std::vector<std::string> slot_keys;

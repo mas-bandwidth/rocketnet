@@ -26,11 +26,19 @@
 #define ROCKETNET_URING_PIN_OUTSIDE_SET 1 // the cpu is outside the cpu_set_t (0 .. set_size - 1)
 #define ROCKETNET_URING_PIN_OFFLINE 2     // the cpu is not online (0 .. online - 1)
 
+// the cpus the OS keeps: the server's num_os_cpus, never fewer than 1 (cpu 0
+// is the OS's, whatever the config says)
+
+static inline int rocketnet_uring_pin_os_cpus( int num_os_cpus )
+{
+    return num_os_cpus < 1 ? 1 : num_os_cpus;
+}
+
 // queue q's cpu: num_os_cpus + q, the XDP transport's own rule
 
 static inline int rocketnet_uring_pin_cpu( int queue, int num_os_cpus )
 {
-    return num_os_cpus + queue;
+    return rocketnet_uring_pin_os_cpus( num_os_cpus ) + queue;
 }
 
 // whether the cpu can be pinned to: in the set and online. The refusal is
@@ -50,21 +58,33 @@ static inline int rocketnet_uring_pin_check( int cpu, int set_size, int online )
     return ROCKETNET_URING_PIN_OK;
 }
 
-// where a worker whose pin was refused may run: the cpus the OS leaves to
-// the server, num_os_cpus .. online - 1, never cpu 0 (the OS's core). The
-// refused worker would otherwise keep the mask it inherited, which includes
-// cpu 0. A machine with no cpu past the OS's (online <= num_os_cpus) has
-// nothing to confine to: the mask stays as it was. num_os_cpus 0 pins
-// nothing and confines nothing.
+// where a worker whose pin was refused may run: the first cpu it may use, or
+// -1 for none to confine to. The cpus the OS leaves to the server,
+// num_os_cpus .. online - 1, and when there is none past the OS's but the
+// machine has more than one cpu (online <= num_os_cpus), 1 .. online - 1:
+// never cpu 0, the OS's core. The refused worker would otherwise keep the
+// mask it inherited, which includes cpu 0. Only a one cpu machine has nothing
+// to confine to: the mask stays as it was.
+
+static inline int rocketnet_uring_pin_fallback_first( int num_os_cpus, int online )
+{
+    const int os_cpus = rocketnet_uring_pin_os_cpus( num_os_cpus );
+    if ( online > os_cpus )
+    {
+        return os_cpus;
+    }
+    return online > 1 ? 1 : -1;
+}
 
 static inline bool rocketnet_uring_pin_fallback_allows( int cpu, int num_os_cpus, int online )
 {
-    return num_os_cpus > 0 && cpu >= num_os_cpus && cpu < online;
+    const int first = rocketnet_uring_pin_fallback_first( num_os_cpus, online );
+    return first >= 0 && cpu >= first && cpu < online;
 }
 
 static inline bool rocketnet_uring_pin_fallback_possible( int num_os_cpus, int online )
 {
-    return num_os_cpus > 0 && online > num_os_cpus;
+    return rocketnet_uring_pin_fallback_first( num_os_cpus, online ) >= 0;
 }
 
 #endif // ROCKETNET_SDK_ROCKETNET_URING_PIN_H

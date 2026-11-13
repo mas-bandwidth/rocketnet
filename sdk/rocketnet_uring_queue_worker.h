@@ -187,6 +187,7 @@ struct rocketnet_uring_queue_worker_t
     bool cancelled_wake;
     bool cancelled_poll;
     int in_kernel;                                  // k
+    int last_send_class;                            // the class (ROCKETNET_URING_QUEUE_SEND_CLASS_*) of the last send completion reaped, 0 before one: what the trace check reads, never its own rule
     int cancels;                                    // cancels in the kernel
     int agains;                                     // agains, up to max_retry
     uint64_t wake_value;                            // the READ's destination

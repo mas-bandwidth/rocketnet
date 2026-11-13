@@ -62,6 +62,7 @@ bool rocketnet_uring_queue_worker_init( struct rocketnet_uring_queue_worker_t * 
     worker->agains = 0;
     worker->wake_value = 0;
     memset( &worker->refused, 0, sizeof( worker->refused ) );
+    worker->last_send_class = 0;
     for ( int i = 0; i < ROCKETNET_URING_WORKER_NUM_COUNTERS; i++ )
     {
         worker->counters[i].store( 0, std::memory_order_relaxed );
@@ -158,6 +159,7 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
 
     rocketnet_assert( worker->in_kernel > 0 );
     worker->in_kernel--;
+    worker->last_send_class = rocketnet_uring_queue_send_class( res, packets );
 
     if ( result == ROCKETNET_URING_QUEUE_SEND_OK && packets > 1 )
     {
@@ -599,6 +601,13 @@ int rocketnet_uring_queue_worker_pass( struct rocketnet_uring_queue_worker_t * w
 {
     (void) worker;
     return ROCKETNET_URING_WORKER_EXIT;
+}
+
+int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * worker, bool reap )
+{
+    (void) worker;
+    (void) reap;
+    return ROCKETNET_URING_WORKER_STEP_EXIT;
 }
 
 void rocketnet_uring_queue_worker_run( struct rocketnet_uring_queue_worker_t * worker )

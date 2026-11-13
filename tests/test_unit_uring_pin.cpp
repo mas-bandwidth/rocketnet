@@ -60,35 +60,49 @@ static void test_uring_pin_check_refusals()
     check( rocketnet_uring_pin_check( 1, 1024, 1 ) == ROCKETNET_URING_PIN_OFFLINE );
 }
 
-// a refused worker is confined to the cpus past the OS's, never cpu 0
+// a refused worker is confined to the cpus past the OS's, or to 1 .. online - 1
+// when there is none past them; never cpu 0 on a machine with more than one
+// cpu, and the mask is left alone only on a one cpu machine. Pure: the unit
+// suite never sets an affinity (the confine itself is a functional case)
 
 static void test_uring_pin_fallback_never_allows_core_zero()
 {
-    for ( int num_os_cpus = 1; num_os_cpus <= 4; num_os_cpus++ )
+    for ( int num_os_cpus = -1; num_os_cpus <= 40; num_os_cpus++ )
     {
         for ( int online = 1; online <= 16; online++ )
         {
-            check( !rocketnet_uring_pin_fallback_allows( 0, num_os_cpus, online ) );
-            check( rocketnet_uring_pin_fallback_possible( num_os_cpus, online ) == ( online > num_os_cpus ) );
+            if ( online > 1 )
+            {
+                check( !rocketnet_uring_pin_fallback_allows( 0, num_os_cpus, online ) );
+                check( rocketnet_uring_pin_fallback_possible( num_os_cpus, online ) );
+            }
+            else
+            {
+                check( !rocketnet_uring_pin_fallback_possible( num_os_cpus, online ) );
+            }
 
+            const int os_cpus = num_os_cpus < 1 ? 1 : num_os_cpus;
             int allowed = 0;
             for ( int cpu = 0; cpu < online; cpu++ )
             {
                 if ( rocketnet_uring_pin_fallback_allows( cpu, num_os_cpus, online ) )
                 {
-                    check( cpu >= num_os_cpus );
+                    check( cpu >= 1 );
                     allowed++;
                 }
             }
-            check( allowed == ( online > num_os_cpus ? online - num_os_cpus : 0 ) );
+            const int expected = online > os_cpus ? online - os_cpus : ( online > 1 ? online - 1 : 0 );
+            check( allowed == expected );
         }
     }
 
-    // num_os_cpus 0 pins nothing and confines nothing
-    check( !rocketnet_uring_pin_fallback_possible( 0, 16 ) );
-    check( !rocketnet_uring_pin_fallback_allows( 3, 0, 16 ) );
     // a cpu past the online ones is never allowed
     check( !rocketnet_uring_pin_fallback_allows( 16, 1, 16 ) );
+    // the OS keeps at least cpu 0, whatever the config says
+    check( rocketnet_uring_pin_os_cpus( 0 ) == 1 );
+    check( rocketnet_uring_pin_os_cpus( -5 ) == 1 );
+    check( rocketnet_uring_pin_os_cpus( 3 ) == 3 );
+    check( rocketnet_uring_pin_cpu( 0, 0 ) == 1 );
 }
 
 REGISTER_UNIT_TEST( test_uring_pin_cpu_placement );

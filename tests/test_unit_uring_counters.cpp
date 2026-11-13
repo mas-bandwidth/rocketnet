@@ -53,15 +53,30 @@ static void test_uring_counters_every_row_reads_its_module_count()
     check( counters[ROCKETNET_COUNTER_URING_GSO_FALLBACKS] == 2 * ( 2000 + ROCKETNET_URING_WORKER_COUNTER_GSO_FALLBACKS ) );
     check( counters[ROCKETNET_COUNTER_URING_GRO_BATCHES] == 2 * ( 1000 + ROCKETNET_URING_RECEIVE_COUNTER_GRO_BATCHES ) );
     check( counters[ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS] == 2 * ( 1000 + ROCKETNET_URING_RECEIVE_COUNTER_GRO_CMSG_FAULTS ) );
+    check( counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] == 2 * ( 1000 + ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOCKET ) );
 
     // no other row moved
     for ( int row = 0; row < ROCKETNET_NUM_COUNTERS; row++ )
     {
-        if ( row < ROCKETNET_COUNTER_URING_PACKETS_SENT || row > ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS )
+        if ( ( row < ROCKETNET_COUNTER_URING_PACKETS_SENT || row > ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS ) && row != ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET )
         {
             check( counters[row] == 0 );
         }
     }
 }
 
+// a refused finish is a send drop
+
+static void test_uring_counters_a_refused_finish_is_a_send_drop()
+{
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    memset( counters, 0, sizeof( counters ) );
+    rocketnet_uring_counters_add_finish_refused( counters, 0 );
+    check( counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 0 );
+    rocketnet_uring_counters_add_finish_refused( counters, 3 );
+    check( counters[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 3 );
+    check( counters[ROCKETNET_COUNTER_URING_PACKETS_SENT] == 0 );
+}
+
 REGISTER_UNIT_TEST( test_uring_counters_every_row_reads_its_module_count );
+REGISTER_UNIT_TEST( test_uring_counters_a_refused_finish_is_a_send_drop );

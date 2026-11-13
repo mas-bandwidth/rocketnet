@@ -437,6 +437,20 @@ int rocketnet_uring_queue_send_result( int res, bool segmented )
     return ROCKETNET_URING_QUEUE_SEND_FAILED;
 }
 
+int rocketnet_uring_queue_send_class( int res, int packets )
+{
+    const int result = rocketnet_uring_queue_send_result( res, true );
+    if ( result == ROCKETNET_URING_QUEUE_SEND_AGAIN )
+    {
+        return ROCKETNET_URING_QUEUE_SEND_CLASS_AGAIN;
+    }
+    if ( result == ROCKETNET_URING_QUEUE_SEND_REFUSED && packets > 1 )
+    {
+        return ROCKETNET_URING_QUEUE_SEND_CLASS_SPLIT;
+    }
+    return ROCKETNET_URING_QUEUE_SEND_CLASS_OK;
+}
+
 // a run's slots handed back as one plain run per packet, each waiting to be
 // submitted again from its own order position: the refusal's hand-back
 // (RNUringQueueSend WorkerReap, the eagain hand-back)

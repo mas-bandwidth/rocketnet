@@ -241,6 +241,12 @@ static void test_uring_receive_queue_arm_and_rearm()
     check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_ERRORS ) == 1 );
     check( rocketnet_uring_receive_queue_armed( queue ) );
 
+    // the refused receive reaches the server's RECEIVE_FAILED through the drop totals
+    uint64_t drops[ROCKETNET_RECEIVE_NUM_DROPS];
+    memset( drops, 0, sizeof( drops ) );
+    rocketnet_uring_receive_queue_drops( queue, drops );
+    check( drops[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] == 1 );
+
     // ENOBUFS ends it: counted, needs an arm
     check( rocketnet_uring_receive_queue_cqe( queue, -ENOBUFS, 0 ) == 0 );
     check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_NO_BUFFERS ) == 1 );

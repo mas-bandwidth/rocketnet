@@ -793,6 +793,11 @@ void rocketnet_uring_receive_queue_drops( const struct rocketnet_uring_receive_q
     rocketnet_assert( queue );
     rocketnet_assert( totals );
     rocketnet_receive_drop_tally_sum( &queue->tally, 1, totals );
+
+    // a completion the kernel refused (a negative result other than ENOBUFS
+    // or ECANCELED) is a receive the transport could not complete: the
+    // server's RECEIVE_FAILED, so a refused receive never reads as silence
+    totals[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] += queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_ERRORS].load( std::memory_order_relaxed );
 }
 
 #if ROCKETNET_DEV

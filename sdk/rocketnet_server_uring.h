@@ -62,6 +62,26 @@ struct rocketnet_server_uring_t;
 
 #define ROCKETNET_URING_ENTRIES                                           4096
 
+// an upper bound of the kernel's mappings of one ring of this many submission
+// entries, for the memory plan (the completion queue is twice that): the
+// submission entries 64 bytes each, the submission ring's header and index
+// array 4 bytes an entry, the completion ring's header and 16-byte entries,
+// each mapping rounded up to whole pages plus a page of header room
+// (about 0.39 MB for ROCKETNET_URING_ENTRIES)
+
+static inline uint64_t rocketnet_server_uring_ring_mapped_bound( int entries )
+{
+    if ( entries < 1 )
+    {
+        return 0;
+    }
+    const uint64_t page = 4096;
+    const uint64_t sqes = (uint64_t) entries * 64;
+    const uint64_t sq_ring = (uint64_t) entries * 4 + 128;
+    const uint64_t cq_ring = (uint64_t) entries * 2 * 16 + 128;
+    return ( ( sqes + page - 1 ) / page + ( sq_ring + page - 1 ) / page + ( cq_ring + page - 1 ) / page + 3 ) * page;
+}
+
 // send staging: per queue, a producer bank of this many frame-stride slots
 // (and two more banks the worker sends from while the game threads use the
 // producer). A destination always stages in its own queue, so the fullest
@@ -117,10 +137,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES <= ROCKETNET_URING_SEND_MAX_
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
 #define ROCKETNET_URING_RECV_BUFFER_BYTES                          ( 67584 ) // 66 KiB
 
-// the floor of a receive bank: each queue's bank, and the process view, hold
-// at least this many datagrams whatever the client count
+// the floor of a receive bank (not a send budget): each queue's receive bank,
+// and the process view, hold at least this many datagrams whatever the client
+// count (2048 and two completions a ring entry)
 
-#define ROCKETNET_URING_SEND_BUDGET    ( 2048 + ROCKETNET_URING_ENTRIES * 2 )
+#define ROCKETNET_URING_RECEIVE_BANK_FLOOR    ( 2048 + ROCKETNET_URING_ENTRIES * 2 )
 
 // the most datagrams one coalesced receive is taken with (NIC GRO's limit,
 // the gso transport's bound); each datagram past them is counted in
@@ -137,10 +158,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES <= ROCKETNET_URING_SEND_MAX_
 static inline int rocketnet_server_uring_bank_packets( int max_clients )
 {
     const int budget = rocketnet_server_receive_packets_per_update( max_clients );
-    return budget > ROCKETNET_URING_SEND_BUDGET ? budget : ROCKETNET_URING_SEND_BUDGET;
+    return budget > ROCKETNET_URING_RECEIVE_BANK_FLOOR ? budget : ROCKETNET_URING_RECEIVE_BANK_FLOOR;
 }
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGMENTS,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BANK_FLOOR > ROCKETNET_URING_MAX_SEGMENTS,
                          "the receive bank holds more than one coalesced receive" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS,
                          "one io_uring queue stages two packets for every client of the default configuration" );
@@ -191,9 +212,12 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
 // create with flags and the placement of the queue workers: queue q's worker
 // pins itself to cpu num_os_cpus + q and sets SCHED_RR at the minimum, as the
-// XDP transport's thread does (rocketnet_uring_pin.h); num_os_cpus 0 pins
-// nothing, which is what create and create_flags do. The server's config
-// num_os_cpus (default 1) reaches this through the builtin driver.
+// XDP transport's thread does (rocketnet_uring_pin.h); num_os_cpus below 1
+// reads as 1 (cpu 0 is the OS's), which is what create and create_flags use.
+// A worker whose pin is refused is confined to the cpus past the OS's where
+// the machine has any (never cpu 0 on a machine with more than one cpu). The
+// server's config num_os_cpus (default 1) reaches this through the builtin
+// driver.
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
                                                                         int * status = NULL, const uint8_t * packet_filter = NULL );
@@ -262,8 +286,10 @@ int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring )
 // ROCKETNET_COUNTER_URING_PACKETS_SENT. Any thread: writes those rows of
 // counters, an array of ROCKETNET_NUM_COUNTERS values indexed by public
 // counter, every queue's counts summed, cumulative for the transport's life;
-// every other value is left as it was, except ROCKETNET_COUNTER_URING_PIN_REFUSALS,
-// which is not in that run and is written too (rocketnet_server_uring_pin_refusals).
+// every other value is left as it was, except ROCKETNET_COUNTER_URING_PIN_REFUSALS
+// and ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET, which are not in that run
+// and are written too (rocketnet_server_uring_pin_refusals; the datagrams the
+// kernel dropped at a queue socket, SO_RXQ_OVFL).
 #define ROCKETNET_SERVER_URING_FIRST_COUNTER ROCKETNET_COUNTER_URING_PACKETS_SENT
 #define ROCKETNET_SERVER_URING_COUNTER_ROWS  ( ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS - ROCKETNET_COUNTER_URING_PACKETS_SENT + 1 )
 void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, uint64_t * counters );

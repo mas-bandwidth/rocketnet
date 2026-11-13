@@ -344,6 +344,7 @@ static const char * const counters_appended_names[] = {
     "MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY",
     "RECEIVE_DROPPED_STOPPED",
     "URING_PIN_REFUSALS",
+    "URING_RECEIVE_DROPPED_SOCKET",
 };
 #endif // #if ROCKETNET_DEV
 
@@ -547,6 +548,7 @@ static void test_counters_every_counter_has_a_class()
         { "MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RECEIVE_DROPPED_STOPPED", ROCKETNET_COUNTER_CLASS_EXPECTED },
         { "URING_PIN_REFUSALS", ROCKETNET_COUNTER_CLASS_REFUSAL },
+        { "URING_RECEIVE_DROPPED_SOCKET", ROCKETNET_COUNTER_CLASS_REFUSAL },
     };
     for ( size_t row = 0; row < sizeof( counter_classes_by_name ) / sizeof( counter_classes_by_name[0] ); ++row )
     {

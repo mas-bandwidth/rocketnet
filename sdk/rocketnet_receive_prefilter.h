@@ -15,9 +15,11 @@
 #include "rocketnet_wire.h"
 
 #include <atomic>
+#if ROCKETNET_DEV
 #include <string>
 #include <stdio.h>
 #include <string.h>
+#endif // #if ROCKETNET_DEV
 
 // The worker-side prefilter: the stateless first rungs of the server's
 // receive ladder, run by a transport's own receive worker before a datagram
