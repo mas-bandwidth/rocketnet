@@ -1118,6 +1118,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     int granted_length = sizeof( granted_receive_bytes );
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
+    int bind_result = 0;
     RIO_NOTIFICATION_COMPLETION notification;
     memset( &notification, 0, sizeof( notification ) );
 
@@ -1220,8 +1221,19 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     // path skips the statuses
 
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
-    if ( bind( rio->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
+    bind_result = bind( rio->socket, (sockaddr *) &address, address_bytes );
+#if ROCKETNET_DEV
+    if ( fail_stage == 8 )
     {
+        bind_result = SOCKET_ERROR;
+        WSASetLastError( WSAENOBUFS );
+    }
+#endif // #if ROCKETNET_DEV
+    if ( bind_result == SOCKET_ERROR )
+    {
+        // a held port or an address this host cannot bind; a refusal for want
+        // of buffers (WSAENOBUFS) reads OUT_OF_MEMORY, which ends the ladder
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         goto failed;
     }
     address_bytes = sizeof( address );
