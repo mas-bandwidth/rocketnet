@@ -28,6 +28,19 @@ functions.
 - `TxInOrder`, `RxInOrder`: packets are sent and consumed in order; a gap
   below a sent packet is a counted drop.
 - `MainNeverWaits`: main only try-acquires the queue's send lane mutex.
+- `RxAccounted`: every datagram the receive worker staged was consumed by
+  main or is still banked (main's unread tail, the ready buffer, the
+  worker's buffer), and after `Join` every one not consumed is in
+  `rxStopped`, the `RECEIVE_DROP_STOPPED` count. `StopCount` is that count,
+  made in the code by the first `rocketnet_server_gso_stopped` call that
+  finds the worker exited (`rocketnet_server_gso_count_stopped`); destroy
+  calls stopped before it joins, and nothing moves a receive buffer once
+  both workers exited and main stopped, so the model makes it in `Join`:
+  the same value, without the interleavings of a separate step against
+  `SocketFills` and `SocketDrains` (a separate step took the main case past
+  the 110-second budget). Main claims and consumes nothing once stop is
+  asked (`RxClaim`, `RxConsume`; `rocketnet_server_gso_receive_packets`
+  returns at `stopping`), so nothing is counted twice.
 - `RefusalsBounded`, `StopJoinsBeforeFree`, and the liveness properties
   `StopCompletes` and `ShutdownCompletes`.
 
@@ -60,13 +73,13 @@ every place a hard error can land.
 
 ## Cases
 
-The 2026-11-11 run on amd-2 (native Linux), the pinned `tlacheck` and TLC
-jar, one shard per case, two workers, four cases at a time.
+The 2026-11-13 run on amd-1 (native Linux, shared with other work), the
+pinned `tlacheck` and TLC jar, one shard per case, two workers.
 
 | Config | Expected | Distinct states | Seconds | What it shows |
 |---|---|---|---|---|
-| `MCRNGsoHandoff.cfg` | pass | 4762152 | 48.8 | Every invariant, five datagrams, four staged packets. |
-| `MCRNGsoHandoffLive.cfg` | pass | 12430 | 15.2 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
+| `MCRNGsoHandoff.cfg` | pass | 4762152 | 77.7 | Every invariant, five datagrams, four staged packets. |
+| `MCRNGsoHandoffLive.cfg` | pass | 12430 | 17.2 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
 | `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 3 | 0.8 | `PublishWhileHeld = TRUE`. |
 | `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 2502 | 1.9 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
 | `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 45970 | 7.8 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
@@ -75,7 +88,8 @@ jar, one shard per case, two workers, four cases at a time.
 | `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 12600 | 4.1 | `BoundOnQuitOnly <- TRUE`. |
 | `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 0.9 | `MainBlocks = TRUE`: main waits on the lane mutex. |
 | `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 571 | 0.8 | Reachability: a counted hard-error drop before shutdown. |
-| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 571 | 0.9 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
+| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 571 | 1.3 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
+| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 1572 | 1.4 | `CountTail <- FALSE`: the stop count forgets the unread tail of main's buffer. |
 
 ## Counterexamples checked against the code (2026-11-11)
 
