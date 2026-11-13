@@ -7,15 +7,16 @@
 # and the loss given), bin/outage_pair server in one and bin/outage_pair client
 # in the other. An outage is `tc qdisc change ... netem ... loss 100%` on the
 # egress of one veth end or both, held, then changed back. T is the
-# development connect token timeout, 10 s.
+# connect token timeout the client mints its token with, read from its
+# `outage_pair client token timeout T s` line (10 s today).
 #
-#   survive: three outages of T - 1 = 9 s, 5 s apart: client->server dark,
+#   survive: three outages of T - 1 s, 5 s apart: client->server dark,
 #            then server->client dark, then both dark. Both sides send
 #            RELIABLE_ORDERED and UNRELIABLE messages throughout through
 #            can_send_message / start_message / finish_message and count
 #            refusals. Passes when neither side's connection ends and every
 #            accepted reliable message is delivered exactly once, in order.
-#   timeout: one outage of T + 2 = 12 s, both dark. Passes when, before the
+#   timeout: one outage of T + 2 s, both dark. Passes when, before the
 #            path comes back, the server's one end is TIMED_OUT and the
 #            client's one end is CONNECTION_TIMED_OUT, and nothing else.
 #
@@ -56,12 +57,15 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SCRIPT="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 BIN_DIR="$SCRIPT_DIR/../bin"
 
-TIMEOUT_SECONDS=10
-SURVIVE_OUTAGE_SECONDS=$((TIMEOUT_SECONDS - 1))
-TIMEOUT_OUTAGE_SECONDS=$((TIMEOUT_SECONDS + 2))
+# T is read from the first client's printed token timeout (read_timeout);
+# the outages are T - 1 and T + 2
+TIMEOUT_SECONDS=
+SURVIVE_OUTAGE_SECONDS=
+TIMEOUT_OUTAGE_SECONDS=
 GAP_SECONDS=5
 # the client sends for this long after it connects: past the three outages
-# (3 x (5 + 9) = 42 s) with time to recover before its STOP
+# (3 x (5 + T - 1) = 42 s at T = 10) with time to recover before its STOP;
+# read_timeout refuses a T whose outages do not end 10 s before it
 SEND_SECONDS=60
 
 fail()
@@ -276,7 +280,29 @@ start_pair()
     CLIENT_PID=$!
     PIDS+=("$CLIENT_PID")
     wait_for_line "$client_log" "outage_pair client connected" 15 || fail "$case_name: the client did not connect"
+    read_timeout "$case_name" "$client_log"
     stamp "$case_name: connected"
+}
+
+# $1 = case name, $2 = client log: read T from the client's token timeout
+# line (it prints it before it connects). The first pair sets T and the
+# outages; every later pair must print the same T.
+read_timeout()
+{
+    local case_name=$1 seconds
+    seconds=$(sed -n 's/^outage_pair client token timeout \([0-9][0-9]*\) s$/\1/p' "$2" | head -n 1)
+    [ -n "$seconds" ] || fail "$case_name: the client printed no 'outage_pair client token timeout T s' line"
+    if [ -z "$TIMEOUT_SECONDS" ]; then
+        [ "$seconds" -ge 2 ] || fail "$case_name: token timeout $seconds s is under 2 s, so T - 1 is no outage"
+        TIMEOUT_SECONDS=$seconds
+        SURVIVE_OUTAGE_SECONDS=$((TIMEOUT_SECONDS - 1))
+        TIMEOUT_OUTAGE_SECONDS=$((TIMEOUT_SECONDS + 2))
+        [ $((3 * (GAP_SECONDS + SURVIVE_OUTAGE_SECONDS) + 10)) -le "$SEND_SECONDS" ] \
+            || fail "$case_name: T = $TIMEOUT_SECONDS s: three outages of T - 1 do not end 10 s before the client's $SEND_SECONDS s of sending"
+        echo "$NAME: T=${TIMEOUT_SECONDS}s (the client's token timeout) survive_outage=${SURVIVE_OUTAGE_SECONDS}s timeout_outage=${TIMEOUT_OUTAGE_SECONDS}s"
+    elif [ "$seconds" -ne "$TIMEOUT_SECONDS" ]; then
+        fail "$case_name: the client's token timeout is $seconds s, not the $TIMEOUT_SECONDS s of the first pair"
+    fi
 }
 
 # $1 = case name: wait for both programs and require both to pass
@@ -293,7 +319,7 @@ finish_pair()
     stamp "$case_name: PASS"
 }
 
-echo "$NAME: delay_ms=$DELAY_MS (each way) loss=$LOSS (each way) T=${TIMEOUT_SECONDS}s survive_outage=${SURVIVE_OUTAGE_SECONDS}s timeout_outage=${TIMEOUT_OUTAGE_SECONDS}s"
+echo "$NAME: delay_ms=$DELAY_MS (each way) loss=$LOSS (each way); T is read from the first client"
 ip netns exec "$NS_SERVER" tc qdisc show dev "$VETH_SERVER"
 ip netns exec "$NS_CLIENT" tc qdisc show dev "$VETH_CLIENT"
 

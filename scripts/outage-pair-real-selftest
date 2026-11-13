@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Selftest for scripts/outage-pair-real's timing: T comes from the client.
+#
+# Runs the script end to end against fakes on PATH (ip, tc, id, uname and
+# sleep) and a fake bin/outage_pair that prints the lines the real program
+# prints, with a token timeout the case chooses. The fake sleep records each
+# hold instead of waiting, so the case reads the outages the script would
+# hold: three of T - 1 and one of T + 2, with T read from the client's
+# `outage_pair client token timeout T s` line. A client that prints no T,
+# a second pair with another T, and a T whose outages do not fit the send
+# time are each refused by name. No namespace, socket, root or real wait is
+# used; every case runs, and the selftest exits non-zero if any failed.
+# Uses $TMPDIR only.
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script="$here/outage-pair-real"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/outage-pair-real-selftest.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+
+failures=0
+fail_case()
+{
+    echo "SELFTEST FAIL: $*" >&2
+    failures=$(( failures + 1 ))
+}
+
+fake="$tmp/fake"
+bin="$tmp/bin"
+mkdir -p "$fake" "$bin"
+
+# ip: `ip netns exec NS CMD...` runs CMD here; anything else succeeds
+cat > "$fake/ip" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = netns ] && [ "${2:-}" = exec ]; then
+    shift 3
+    exec "$@"
+fi
+exit 0
+EOF
+printf '#!/bin/sh\nexit 0\n' > "$fake/tc"
+printf '#!/bin/sh\necho 0\n' > "$fake/id"
+printf '#!/bin/sh\necho Linux\n' > "$fake/uname"
+# sleep: record the hold, do not wait
+printf '#!/bin/sh\necho "$*" >> "$FAKE_SLEEP_LOG"\nexit 0\n' > "$fake/sleep"
+
+# outage_pair: server prints its key; client prints its token timeout
+# (FAKE_T_<mode>, none when empty) and connects. Both pass at once.
+cat > "$bin/outage_pair" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    server)
+        echo "outage_pair server public key 0000000000000000000000000000000000000000000000000000000000000000"
+        echo "outage_pair server PASS"
+        ;;
+    client)
+        name="FAKE_T_$4"
+        t="${!name:-}"
+        if [ -n "$t" ]; then
+            echo "outage_pair client token timeout $t s"
+        fi
+        echo "outage_pair client connected"
+        echo "outage_pair client PASS"
+        ;;
+esac
+exit 0
+EOF
+chmod +x "$fake/ip" "$fake/tc" "$fake/id" "$fake/uname" "$fake/sleep" "$bin/outage_pair"
+
+# run_case NAME SURVIVE_T TIMEOUT_T: run the script; sets rc, out and holds
+# (the sleeps longer than the wait_for_line poll, space separated)
+run_case()
+{
+    local name=$1
+    mkdir -p "$tmp/$name"
+    : > "$tmp/$name/sleep.log"
+    out=$(PATH="$fake:$PATH" FAKE_SLEEP_LOG="$tmp/$name/sleep.log" FAKE_T_survive="$2" FAKE_T_timeout="$3" \
+        bash "$script" --bin-dir "$bin" --log-dir "$tmp/$name/logs" --neighbours dynamic 2>&1)
+    rc=$?
+    holds=$(grep -v '^0\.1$' "$tmp/$name/sleep.log" | tr '\n' ' ')
+}
+
+# T read from the client: 12 s gives outages of 11 s and 14 s
+run_case t12 12 12
+if [ "$rc" -ne 0 ]; then
+    fail_case "a client with T = 12 s did not pass (exit $rc): $out"
+fi
+if [ "$holds" != "5 11 5 11 5 11 5 14 " ]; then
+    fail_case "with T = 12 s the holds were '$holds', not three outages of 11 s and one of 14 s"
+fi
+
+# the default T, 10 s: outages of 9 s and 12 s
+run_case t10 10 10
+if [ "$rc" -ne 0 ] || [ "$holds" != "5 9 5 9 5 9 5 12 " ]; then
+    fail_case "with T = 10 s: exit $rc, holds '$holds'"
+fi
+
+# a client that prints no T is refused by name
+run_case none "" ""
+if [ "$rc" -eq 0 ] || ! printf '%s' "$out" | grep -q "printed no 'outage_pair client token timeout T s' line"; then
+    fail_case "a client with no token timeout line was not refused by name (exit $rc)"
+fi
+
+# the second pair must print the first pair's T
+run_case differ 12 11
+if [ "$rc" -eq 0 ] || ! printf '%s' "$out" | grep -q "token timeout is 11 s, not the 12 s of the first pair"; then
+    fail_case "a second pair with another T was not refused by name (exit $rc)"
+fi
+
+# a T whose three outages do not end 10 s before the send time is refused
+run_case long 30 30
+if [ "$rc" -eq 0 ] || ! printf '%s' "$out" | grep -q "do not end 10 s before"; then
+    fail_case "a T of 30 s against 60 s of sending was not refused (exit $rc)"
+fi
+
+if [ "$failures" -ne 0 ]; then
+    echo "outage-pair-real-selftest: $failures case(s) failed" >&2
+    exit 1
+fi
+echo "outage-pair-real-selftest: ok"

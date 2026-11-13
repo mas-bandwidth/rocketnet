@@ -90,3 +90,4 @@ tools/format/check_format.sh	sh tools/format/test_check_format.sh	cd {empty} && 
 tools/check_run_shell.py	python3 tools/check_run_shell.py --self-test	python3 tools/check_run_shell.py --root {empty}	ci.yml	lint	Every run step stops on its first failure
 scripts/live-xdp-fleet-selftest	bash scripts/live-xdp-fleet-selftest	-	ci.yml	lint	Self-tests of the registered checkers
 scripts/netem-pair-soak-selftest	bash scripts/netem-pair-soak-selftest	-	ci.yml	lint	Self-tests of the registered checkers
+scripts/outage-pair-real-selftest	bash scripts/outage-pair-real-selftest	-	ci.yml	lint	Self-tests of the registered checkers
