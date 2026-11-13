@@ -212,7 +212,7 @@ static void test_token_time_game_clock_refuses_after_expire()
 // the token clock stops at the largest timestamp: an epoch five seconds short
 // of it at time 1000.0 reads as UINT64_MAX and refuses the token as expired,
 // and a time of 1e20 seconds reads as UINT64_MAX in rocketnet_platform_token_clock.
-// The client transport never hands it such a time: a create time above
+// The client transport's create never hands it such a time: a create time above
 // ROCKETNET_UPDATE_TIME_MAX_SECONDS (2^52 seconds) is refused before the
 // clock reads it, like a negative one, counted as misuse, and the clock
 // starts at 0.0, so the token is read at the epoch and admitted (a

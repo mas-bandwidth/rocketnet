@@ -100,7 +100,7 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
-    link->update = RN_LINK_FORWARD( rocketnet_client_transport_update )::call;
+    link->update = RN_LINK_FORWARD( rocketnet_client_transport_update_from_layer )::call;
     link->payloads = rn_client_link_payloads;
     link->accept_payload = RN_LINK_FORWARD( rocketnet_client_transport_accept_payload )::call;
 

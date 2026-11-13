@@ -4303,7 +4303,9 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
 // nobody took, publishes the acked batch and does the rest of update.
 // update is the three in a row with no client taken: the same result.
 
-void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
+static void rocketnet_server_transport_update_receive_body( struct rocketnet_server_transport_t * server_transport, double time, bool from_layer );
+
+static void rocketnet_server_transport_update_body( struct rocketnet_server_transport_t * server_transport, double time, bool from_layer )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
     {
@@ -4314,8 +4316,26 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     {
         return;
     }
-    rocketnet_server_transport_update_receive( server_transport, time );
+    rocketnet_server_transport_update_receive_body( server_transport, time, from_layer );
     rocketnet_server_transport_update_finish( server_transport );
+}
+
+void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    rocketnet_server_transport_update_body( server_transport, time, false );
+}
+
+// the message server's updates: the time is its object's clock, already
+// advanced from the caller's samples (rocketnet_update_clock_follow)
+
+void rocketnet_server_transport_update_from_layer( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    rocketnet_server_transport_update_body( server_transport, time, true );
+}
+
+void rocketnet_server_transport_update_receive_from_layer( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    rocketnet_server_transport_update_receive_body( server_transport, time, true );
 }
 
 int rocketnet_server_transport_update_client_acks( struct rocketnet_server_transport_t * server_transport, int client_index )
@@ -4359,6 +4379,11 @@ int rocketnet_server_transport_update_client_acks( struct rocketnet_server_trans
 
 void rocketnet_server_transport_update_receive( struct rocketnet_server_transport_t * server_transport, double time )
 {
+    rocketnet_server_transport_update_receive_body( server_transport, time, false );
+}
+
+static void rocketnet_server_transport_update_receive_body( struct rocketnet_server_transport_t * server_transport, double time, bool from_layer )
+{
     if ( !rocketnet_api_null_guard( server_transport ) )
     {
         return;
@@ -4385,13 +4410,21 @@ void rocketnet_server_transport_update_receive( struct rocketnet_server_transpor
     }
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
-    // an infinity, a negative time, a time above
+    // an infinity, a negative time, a caller's time above
     // ROCKETNET_UPDATE_TIME_MAX_SECONDS or a step backwards becomes the last good
-    // time, counted and loud in a debug build. the last good time starts at
-    // zero, the value a value-initialized transport carries.
+    // time, counted and loud in a debug build. The message server's clock is
+    // not held to the ceiling: its raw samples were. the last good time
+    // starts at zero, the value a value-initialized transport carries.
 
     bool time_clamped = false;
-    time = rocketnet_update_clock_advance( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
+    if ( from_layer )
+    {
+        time = rocketnet_update_clock_follow( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
+    }
+    else
+    {
+        time = rocketnet_update_clock_advance( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
+    }
 
     // proofs/tla/RNDriverSendStaging.tla ResetLeases: update bumps the lease epoch
     // before it reads. A fill still open here was not joined.
@@ -5664,6 +5697,14 @@ uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_
 {
     rocketnet_assert( server_transport );
     return server_transport->disconnect_seals;
+}
+
+// the transport's own clamped clock, for the test that the message server's
+// clock reaches it (tests/test_unit_client_server_lifecycle.cpp)
+double rocketnet_server_transport_time_for_test( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->time;
 }
 
 // The burst key lives at a ring index, the same index drain wipes

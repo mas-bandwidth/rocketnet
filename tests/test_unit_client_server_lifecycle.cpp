@@ -4698,6 +4698,82 @@ static void test_server_slot_freed_in_an_update_reports_its_end_before_reuse()
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_server_slot_freed_in_an_update_reports_its_end_before_reuse );
+
+// The ceiling (ROCKETNET_UPDATE_TIME_MAX_SECONDS) bounds the caller's raw
+// times; the message object's clock passes it after a backwards step, and the
+// object hands its clock to its transport, which follows it
+// (proofs/tla/RNUpdateClock.tla LowerFollows). Raw times C, 0 (backwards: one
+// misuse per object), then 2000 and 2001 move each object's clock to C + 2000
+// and C + 2001, and each transport keeps pace and counts nothing: no time the
+// caller passed is above C. Before, the transport refused the object's clock
+// as above the ceiling, stood still (at C on the server, at C less the
+// origin on the client) and counted a misuse per update.
+
+double rocketnet_server_transport_time_for_test( const struct rocketnet_server_transport_t * server_transport );
+double rocketnet_client_transport_time_for_test( const struct rocketnet_client_transport_t * client_transport );
+
+static void test_message_server_clock_past_the_ceiling_reaches_its_transport()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 0 );
+    lifecycle_pump( &world );
+
+    const double ceiling = ROCKETNET_UPDATE_TIME_MAX_SECONDS;
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) );
+    check( transport != NULL );
+
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+    rocketnet_server_update( world.server, ceiling );
+    check( rocketnet_server_transport_time_for_test( transport ) == ceiling );
+    rocketnet_server_update( world.server, 0.0 );
+    check( rocketnet_api_misuse_count() == misuse_before + 1 );
+    check( rocketnet_server_transport_time_for_test( transport ) == ceiling );
+    rocketnet_server_update( world.server, 2000.0 );
+    check( rocketnet_server_transport_time_for_test( transport ) == ceiling + 2000.0 );
+    rocketnet_server_update( world.server, 2001.0 );
+    check( rocketnet_server_transport_time_for_test( transport ) == ceiling + 2001.0 );
+    check( rocketnet_api_misuse_count() == misuse_before + 1 );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_message_server_clock_past_the_ceiling_reaches_its_transport );
+
+// the client: its message clock starts at its first update (about 1000.0),
+// so its transport reads the object's clock less that origin: C + 2000 less
+// about 1000 is still above C
+
+static void test_message_client_clock_past_the_ceiling_reaches_its_transport()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    lifecycle_connect( &world, 0, 0x5301 );
+
+    const double ceiling = ROCKETNET_UPDATE_TIME_MAX_SECONDS;
+    rocketnet_client_t * client = world.clients[0];
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
+    check( transport != NULL );
+
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+    rocketnet_client_update( client, ceiling );
+    const double at_ceiling = rocketnet_client_transport_time_for_test( transport );
+    check( at_ceiling > ceiling - 1001.0 && at_ceiling < ceiling - 999.0 );
+    rocketnet_client_update( client, 0.0 );
+    check( rocketnet_api_misuse_count() == misuse_before + 1 );
+    check( rocketnet_client_transport_time_for_test( transport ) == at_ceiling );
+    rocketnet_client_update( client, 2000.0 );
+    const double past = rocketnet_client_transport_time_for_test( transport );
+    // near 2^52 a double is a multiple of 0.5 below it and of 1 above it, so
+    // the object's clock less the origin rounds within a second
+    check( past > ceiling );
+    check( past >= at_ceiling + 1999.0 && past <= at_ceiling + 2001.0 );
+    rocketnet_client_update( client, 2001.0 );
+    const double next = rocketnet_client_transport_time_for_test( transport );
+    check( next > past && next <= past + 2.0 );
+    check( rocketnet_api_misuse_count() == misuse_before + 1 );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_message_client_clock_past_the_ceiling_reaches_its_transport );
 #endif // #if ROCKETNET_DEV
 
 #if !ROCKETNET_DEV

@@ -335,6 +335,24 @@ void rocketnet_default_free_function( void * context, void * p );
  */
 double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
 
+/**
+ * @brief Advances a transport's clock by the time its message object hands
+ * down: the object's clock, already advanced from the caller's samples.
+ *
+ * As rocketnet_update_clock_advance, but a time above
+ * ROCKETNET_UPDATE_TIME_MAX_SECONDS is taken: the ceiling bounds the caller's
+ * raw samples, and the object's clock can pass it after a backwards step.
+ */
+double rocketnet_update_clock_follow( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
+
+// the transports' updates as the message links call them
+// (rn_message_client_link, rn_message_server_link): the time is the object's
+// clock, so the transport takes it through rocketnet_update_clock_follow. A
+// caller of the transport layer itself calls the public updates.
+void rocketnet_client_transport_update_from_layer( struct rocketnet_client_transport_t * client_transport, double time );
+void rocketnet_server_transport_update_from_layer( struct rocketnet_server_transport_t * server_transport, double time );
+void rocketnet_server_transport_update_receive_from_layer( struct rocketnet_server_transport_t * server_transport, double time );
+
 #ifdef __cplusplus
 
 /** @brief Converts a 16-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */

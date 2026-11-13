@@ -513,6 +513,7 @@ MCLoopbackQueueBrokenNoRestart.cfg	MCLoopbackQueue.tla	invariant	TouchedWithinBa
 MCRNUpdateClock.cfg	MCRNUpdateClock.tla	pass	-	check	rnupdateclock	required	-
 MCRNUpdateClockBrokenStall.cfg	MCRNUpdateClock.tla	invariant	ResumeAdvances	check	rnupdateclock	required	-
 MCRNUpdateClockBrokenNoCeiling.cfg	MCRNUpdateClock.tla	invariant	ClampedStepBounded	check	rnupdateclock	required	-
+MCRNUpdateClockBrokenLowCeiling.cfg	MCRNUpdateClock.tla	invariant	LowerKeepsPace	check	rnupdateclock	required	-
 MCReceiveOrderBrokenClaimOutlivesBinding.cfg	MCReceiveOrder.tla	invariant	BoundHasNoOwnClaim	check	receiveorder	required	-
 MCReceiveOrderBrokenWorkBudgetAtCookie.cfg	MCReceiveOrder.tla	invariant	WorkBudgetOnlyForVerify	check	receiveorder	required	-
 MCReceiveOrderBrokenReplaceKeepsClaim.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-

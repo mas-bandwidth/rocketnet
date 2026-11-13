@@ -4,12 +4,14 @@
 */
 
 // The token clock, token_epoch_unix_seconds plus the whole seconds of the
-// caller's time, stops at the largest timestamp: an epoch so near it that
-// the sum would pass it, or a finite time of 2^64 seconds or more, reads as
-// UINT64_MAX, and every token has expired. The update refuses a time above
-// 2^52 seconds, so only the epoch can push a public update past the largest
-// timestamp. The server's check reads it at each update, and public
-// connect's at connect. Time is an argument, step driven over the in-memory
+// update clock's time, stops at the largest timestamp: an epoch so near it
+// that the sum would pass it, or a finite time of 2^64 seconds or more, reads
+// as UINT64_MAX, and every token has expired. The update refuses a raw time
+// above 2^52 seconds, so no single time the caller passes reaches 2^64
+// seconds on the token clock; a clock that runs ahead of the caller's raw time after
+// backwards steps can still pass 2^64 seconds, so the saturation itself is
+// checked on rocketnet_platform_token_clock. The server's check reads it at
+// each update, and public connect's at connect. Time is an argument, step driven over the in-memory
 // loopback transport, with no socket, sleep or thread.
 
 #include "unit_shutdown.h"

@@ -38,6 +38,16 @@ or the slots.
   most about 2^52, the step rounded once), and the clock stays finite for
   any number of calls. Before the ceiling a finite sample of any size was a
   step: DBL_MAX, then 0, then 0.75 * DBL_MAX left the clock at +inf.
+- **LowerFollows(t).** The second layer. After each sample the message
+  object hands its clamped time to its transport (less a fixed origin, 0 in
+  the model), and the transport's clock (`low`, `lowRaw`) takes it by the same
+  rule but not against the ceiling (`rocketnet_update_clock_follow`, the
+  transport updates the message links call). The ceiling bounds the caller's
+  raw samples; the object's clamped time passes it after a backwards step
+  (raw 4, 0, 1 at `MaxTime = 4` gives 5), and the transport still takes it.
+  The broken variant `lowceiling` holds the handed-down time to the ceiling,
+  the code before the repair: the transport stood still at the ceiling and
+  counted a misuse for a time the library made.
 - **Done.** The step budget is spent; the model stops.
 
 ## Properties
@@ -53,6 +63,9 @@ or the slots.
   values alone.
 - `ClampedStepBounded`: no call moves the clamped time by more than the
   ceiling.
+- `LowerKeepsPace`: the transport's clock is the object's clock.
+- `LowerCountsNothing`: the transport counts no misuse; every misuse is a
+  caller's sample, counted once by the object.
 
 ## Cases
 
@@ -64,7 +77,11 @@ or the slots.
 - `proofs/tla/MCRNUpdateClockBrokenNoCeiling.cfg` violates
   `ClampedStepBounded`: the clock before the ceiling, which takes a sample
   above `MaxTime` as a forward step.
+- `proofs/tla/MCRNUpdateClockBrokenLowCeiling.cfg` violates `LowerKeepsPace`:
+  the transport held to the caller's ceiling, which stands still behind the
+  object's clock once that clock passes it.
 
 The model bounds the caller's clock to `MaxTime` and the run to `MaxSteps`
-samples; it does not model the transports, the channels or the deadlines that
-read the clamped time.
+samples, and takes the message object's origin as 0. It models one message
+object's clock and its transport's clock that follows it; it does not model
+the packets, the channels or the deadlines that read the clamped time.
