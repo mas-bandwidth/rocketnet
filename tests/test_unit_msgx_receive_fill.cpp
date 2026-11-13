@@ -22,6 +22,7 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_msgx_receive_fill.h"
+#include "rocketnet_receive_delivery_check.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -52,6 +53,7 @@ struct receive_fill_test_t
     int bank_count[3];
     struct rocketnet_msgx_receive_banks_t hand;
     int capacity;
+    int main_cursor;                           // main's place in its bank (the delivery rig's calls)
 
     uint32_t last_read[RECEIVE_FILL_TEST_MAX_BATCH];
     int last_count;
@@ -399,6 +401,63 @@ static void test_rocketnet_msgx_receive_fill_delivered_by_next_call()
     }
 }
 
+// the shared receive delivery check (sdk/rocketnet_receive_delivery_check.h,
+// proofs/tla/RNReceiveHandoff.tla DeliveredByNextCall) over this fake: a
+// worker pass is the given datagrams arriving on one socket and one round of
+// the worker (rocketnet_server_msgx_receive_worker's loop); a receive call is
+// main's (rocketnet_server_msgx_receive_packets): once its bank is consumed it
+// claims, then it takes what its bank holds, up to the call's capacity
+
+static bool receive_fill_delivery_reset( void * user )
+{
+    struct receive_fill_test_t * test = (struct receive_fill_test_t *) user;
+    memset( test, 0, sizeof( *test ) );
+    test->num_sockets = 1;
+    test->capacity = 64;
+    rocketnet_msgx_receive_banks_init( &test->hand );
+    return true;
+}
+
+static bool receive_fill_delivery_worker_pass( void * user, uint32_t first, int count )
+{
+    struct receive_fill_test_t * test = (struct receive_fill_test_t *) user;
+    test->next_id = first;
+    receive_fill_test_arrive( test, 0, count, RECEIVE_FILL_TEST_MAX_QUEUE );
+    return !receive_fill_test_round( test, 32, 256 ) && receive_fill_test_in_kernel( test ) == 0;
+}
+
+static int receive_fill_delivery_main_call( void * user, uint32_t * ids, int capacity )
+{
+    struct receive_fill_test_t * test = (struct receive_fill_test_t *) user;
+    if ( test->main_cursor >= test->bank_count[test->hand.main] )
+    {
+        test->consumed += (uint64_t) test->bank_count[test->hand.main];
+        test->bank_count[test->hand.main] = 0;
+        test->main_cursor = 0;
+        if ( !rocketnet_msgx_receive_claim( &test->hand ) )
+        {
+            return 0;
+        }
+    }
+    int returned = 0;
+    while ( test->main_cursor < test->bank_count[test->hand.main] && returned < capacity )
+    {
+        ids[returned++] = test->banks[test->hand.main][test->main_cursor++];
+    }
+    return returned;
+}
+
+static void test_rocketnet_msgx_receive_fill_delivery()
+{
+    struct receive_fill_test_t * test = new receive_fill_test_t;
+    struct rocketnet_receive_delivery_rig_t rig;
+    rig.user = test;
+    rig.worker_pass = receive_fill_delivery_worker_pass;
+    rig.main_call = receive_fill_delivery_main_call;
+    rocketnet_unit_check( rocketnet_receive_delivery_check_all( &rig, "msgx", receive_fill_delivery_reset ) );
+    delete test;
+}
+
 // a bank of 40 and a batch of 32 over a socket of 100: the second read asks
 // for 8, the full bank is handed over, the next bank fills to 40, main has
 // not taken the last, and the drain holds with 20 left in the socket
@@ -671,6 +730,7 @@ REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_error_kinds );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_handoff );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_stop );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_delivered_by_next_call );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_delivery );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_hold );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_receive_fill_weather_bounded );
