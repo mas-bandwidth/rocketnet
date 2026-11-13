@@ -9,5 +9,3 @@ probe_darwin
 bench_msgx
 bench_kqueue
 bench_nw
-bench_msgx_poll
-bench_portable_poll
