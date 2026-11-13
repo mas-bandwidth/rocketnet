@@ -57,12 +57,26 @@ CONSTANTS
     GenBreak,           \* TRUE: a run ends at a change of generation
     PartialSkipsAborted,\* TRUE: a partial send's cursor counts only live packets as taken
     DeadResends,        \* TRUE: a dead run leaves through the shared socket
-    OpenGen(_)          \* the generation each slot is open at when the send starts
+    OpenGenAt,          \* the generation each slot is open at when the send starts:
+                        \* s * GenSpan + g for slot s open at generation g
+    Bank                \* {}: every bank Init admits; else the one bank, as the set
+                        \* of BankCode(i, packet) over its packets (a trace's input)
 
 Shared == -1
 Slots == 0..(Cap - 1)
 Stamps == {<< Shared, 0 >>} \cup (Slots \X Gens)
 Index == 0..(Size - 1)
+
+ASSUME Gens \subseteq 0..9 /\ Gens # {}
+ASSUME Clients \subseteq 1..9 /\ Cap <= 8
+
+\* the base of OpenGenAt's code: one more than the highest generation
+GenSpan == 1 + (CHOOSE m \in Gens : \A x \in Gens : x <= m)
+
+\* every slot is open at exactly one generation
+ASSUME \A s \in Slots : Cardinality({g \in Gens : s * GenSpan + g \in OpenGenAt}) = 1
+
+OpenGen(s) == CHOOSE g \in Gens : s * GenSpan + g \in OpenGenAt
 
 VARIABLES
     count,      \* num_packets clamped: rocketnet_server_msgx_worker's count
@@ -181,21 +195,41 @@ SetH(h) == /\ left' = h.left /\ lastC' = h.lastC /\ lastS' = h.lastS /\ bad' = h
 \* one staged packet: client, stamp, live
 Packets == [c : Clients, st : Stamps, l : BOOLEAN]
 
-Init ==
-    /\ \E claimed \in Claims : count = Min(claimed, Size)
-    \* packets past the count are never read: one value each
-    /\ \E pk \in [0..(count - 1) -> Packets] :
-        /\ client = [i \in Index |-> IF i < count THEN pk[i].c ELSE 0]
-        /\ slot = [i \in Index |-> IF i < count THEN pk[i].st[1] ELSE Shared]
-        /\ gen = [i \in Index |-> IF i < count THEN pk[i].st[2] ELSE 0]
-        /\ live = [i \in Index |-> IF i < count THEN pk[i].l ELSE FALSE]
+\* Bank's code of packet i: one decimal digit per field below the index
+BankCode(i, p) ==
+    i * 10000 + p.c * 1000 + (p.st[1] + 1) * 100 + p.st[2] * 10 + (IF p.l THEN 1 ELSE 0)
+
+\* the packets Bank gives, by index
+BankPacket(i) ==
+    LET x == CHOOSE y \in Bank : y \div 10000 = i
+    IN [c |-> (x \div 1000) % 10, st |-> << ((x \div 100) % 10) - 1, (x \div 10) % 10 >>, l |-> x % 10 = 1]
+
+\* Bank is count packets, one per index, each a packet of the domain
+BankGiven ==
+    /\ Cardinality(Bank) = count
+    /\ \A i \in 0..(count - 1) : \E y \in Bank : y \div 10000 = i
+    /\ \A i \in 0..(count - 1) : BankPacket(i) \in Packets /\ BankCode(i, BankPacket(i)) \in Bank
+
+\* the bank variables from the packets pk
+LoadBank(pk) ==
+    /\ client = [i \in Index |-> IF i < count THEN pk[i].c ELSE 0]
+    /\ slot = [i \in Index |-> IF i < count THEN pk[i].st[1] ELSE Shared]
+    /\ gen = [i \in Index |-> IF i < count THEN pk[i].st[2] ELSE 0]
+    /\ live = [i \in Index |-> IF i < count THEN pk[i].l ELSE FALSE]
+
+\* the bank's rules, over bank variables already given: what the fill
+\* threads can stage (TraceRNMsgxSendRuns.tla checks a record against it)
+BankOK ==
     \* a slot at a generation belongs to one client
     /\ \A i, j \in 0..(count - 1) : (slot[i] >= 0 /\ slot[i] = slot[j] /\ gen[i] = gen[j]) => client[i] = client[j]
     \* one stamp per client, unless MultiStamp
     /\ ~MultiStamp => \A i, j \in 0..(count - 1) : client[i] = client[j] => (slot[i] = slot[j] /\ gen[i] = gen[j])
-    \* every slot open at OpenGen(s); stamps at the other generation are
-    \* stale, and Retire closes a slot: generations are only compared, so
-    \* this covers each resolve answer up to renaming
+
+\* the state before the sort, the bank aside: every slot open at
+\* OpenGen(s); stamps at the other generation are stale, and Retire closes
+\* a slot: generations are only compared, so this covers each resolve
+\* answer up to renaming
+InitRest ==
     /\ tOpen = [s \in Slots |-> TRUE]
     /\ tGen = [s \in Slots |-> OpenGen(s)]
     /\ order = [q \in Index |-> 0]
@@ -214,6 +248,17 @@ Init ==
     /\ stalls = 0
     /\ retires = 0
 
+\* every bank the fill threads can stage, or (a trace) the one Bank gives
+Init ==
+    /\ \E claimed \in Claims : count = Min(claimed, Size)
+    \* packets past the count are never read: one value each
+    /\ IF Bank = {}
+       THEN \E pk \in [0..(count - 1) -> Packets] : LoadBank(pk)
+       ELSE /\ BankGiven
+            /\ LoadBank([i \in 0..(count - 1) |-> BankPacket(i)])
+    /\ BankOK
+    /\ InitRest
+
 \* rocketnet_server_msgx_sort
 Sort ==
     /\ pc = "sort"
@@ -221,39 +266,62 @@ Sort ==
     /\ pc' = "head"
     /\ UNCHANGED << bank, tOpen, cursor, hd, scan, run, attempts, hist, quit, retries, stalls, retires >>
 
-\* the top of rocketnet_msgx_send_runs_send's loop: the bank done, an
-\* aborted head skipped, a head that resolves to no socket sent alone on the
-\* shared socket, or the run built
-LoopTop ==
-    /\ pc = "head"
-    /\ IF cursor >= count
-       THEN /\ pc' = "done"
-            /\ UNCHANGED << cursor, hd, scan, run, attempts, hist, stalls >>
-       ELSE LET h == order[cursor] IN
-            IF ~live[h]
-            THEN /\ cursor' = cursor + 1
-                 /\ UNCHANGED << pc, hd, scan, run, attempts, hist, stalls >>
-            ELSE IF ~Resolves(h)
-            THEN \/ /\ SetH(SendOne(H, h, Shared))
-                    /\ cursor' = cursor + 1
-                    /\ UNCHANGED << pc, hd, scan, run, attempts, stalls >>
-                 \/ /\ SetH(DropOne(H, h))
-                    /\ cursor' = cursor + 1
-                    /\ UNCHANGED << pc, hd, scan, run, attempts, stalls >>
-                 \/ /\ stalls < MaxStalls
-                    /\ stalls' = stalls + 1
-                    /\ pc' = "kept"
-                    /\ UNCHANGED << cursor, hd, scan, run, attempts, hist >>
-            ELSE LET b == Build(cursor, << >>, h) IN
-                 /\ hd' = h
-                 /\ scan' = b[1]
-                 /\ run' = b[2]
-                 /\ attempts' = 0
-                 /\ pc' = "send"
-                 /\ UNCHANGED << cursor, hist, stalls >>
-    /\ UNCHANGED << bank, tOpen, order, quit, retries, retires >>
+\* The step at HEAD, one action per outcome: the bank done, an aborted head
+\* skipped, a head that resolves to no socket sent alone on the shared
+\* socket (sent, dropped, or full and kept), or the run built.
 
-\* one connected send of the run and what its answer does
+\* the head packet, at a cursor inside the bank
+HeadPacket == order[cursor]
+
+\* a live head that resolves to no socket: the shared socket's packet
+SharedHead == pc = "head" /\ cursor < count /\ live[HeadPacket] /\ ~Resolves(HeadPacket)
+
+HeadDone ==
+    /\ pc = "head"
+    /\ cursor >= count
+    /\ pc' = "done"
+    /\ UNCHANGED << bank, tOpen, order, cursor, hd, scan, run, attempts, hist, quit, retries, stalls, retires >>
+
+HeadSkip ==
+    /\ pc = "head"
+    /\ cursor < count
+    /\ ~live[HeadPacket]
+    /\ cursor' = cursor + 1
+    /\ UNCHANGED << bank, tOpen, order, pc, hd, scan, run, attempts, hist, quit, retries, stalls, retires >>
+
+HeadShared ==
+    /\ SharedHead
+    /\ SetH(SendOne(H, HeadPacket, Shared))
+    /\ cursor' = cursor + 1
+    /\ UNCHANGED << bank, tOpen, order, pc, hd, scan, run, attempts, quit, retries, stalls, retires >>
+
+HeadDropped ==
+    /\ SharedHead
+    /\ SetH(DropOne(H, HeadPacket))
+    /\ cursor' = cursor + 1
+    /\ UNCHANGED << bank, tOpen, order, pc, hd, scan, run, attempts, quit, retries, stalls, retires >>
+
+HeadKept ==
+    /\ SharedHead
+    /\ stalls < MaxStalls
+    /\ stalls' = stalls + 1
+    /\ pc' = "kept"
+    /\ UNCHANGED << bank, tOpen, order, cursor, hd, scan, run, attempts, hist, quit, retries, retires >>
+
+HeadRun ==
+    /\ pc = "head"
+    /\ cursor < count
+    /\ live[HeadPacket]
+    /\ Resolves(HeadPacket)
+    /\ LET b == Build(cursor, << >>, HeadPacket) IN
+       /\ hd' = HeadPacket
+       /\ scan' = b[1]
+       /\ run' = b[2]
+    /\ attempts' = 0
+    /\ pc' = "send"
+    /\ UNCHANGED << bank, tOpen, order, cursor, hist, quit, retries, stalls, retires >>
+
+\* the step at SEND: one connected send of the run and what its answer does
 SendAll ==
     /\ pc = "send"
     /\ SetH(SendSeq(H, run, Len(run), Peer(slot[hd])))
@@ -261,12 +329,13 @@ SendAll ==
     /\ pc' = "head"
     /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, stalls, retires >>
 
-SendPartial ==
+\* a prefix of k taken: k is the send's answer
+SendPartial(k) ==
     /\ pc = "send"
     /\ stalls < MaxStalls
-    /\ \E k \in 1..(Len(run) - 1) :
-        /\ SetH(SendSeq(H, run, k, Peer(slot[hd])))
-        /\ cursor' = Advance(cursor, 0, k)
+    /\ k \in 1..(Len(run) - 1)
+    /\ SetH(SendSeq(H, run, k, Peer(slot[hd])))
+    /\ cursor' = Advance(cursor, 0, k)
     /\ stalls' = stalls + 1
     /\ pc' = "kept"
     /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, retires >>
@@ -307,41 +376,65 @@ SendError ==
     /\ pc' = "head"
     /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, stalls, retires >>
 
-\* the dead run's resend loop, one packet per step
-Dead ==
-    /\ pc = "dead"
-    /\ IF cursor >= scan
-       THEN /\ pc' = "head"
-            /\ UNCHANGED << cursor, hist, stalls >>
-       ELSE LET i == order[cursor] IN
-            IF ~live[i]
-            THEN /\ cursor' = cursor + 1
-                 /\ UNCHANGED << pc, hist, stalls >>
-            ELSE \/ /\ SetH(SendOne(H, i, Shared))
-                    /\ cursor' = cursor + 1
-                    /\ UNCHANGED << pc, stalls >>
-                 \/ /\ SetH(DropOne(H, i))
-                    /\ cursor' = cursor + 1
-                    /\ UNCHANGED << pc, stalls >>
-                 \/ /\ stalls < MaxStalls
-                    /\ stalls' = stalls + 1
-                    /\ pc' = "kept"
-                    /\ UNCHANGED << cursor, hist >>
-    /\ UNCHANGED << bank, tOpen, order, hd, scan, run, attempts, quit, retries, retires >>
+\* The step at DEAD, the dead run's resend loop, one packet per step, one
+\* action per outcome: the run done, an aborted packet skipped, a packet
+\* sent on the shared socket, dropped, or full and kept.
 
-\* rocketnet_server_msgx_worker after a false return: past the retries
-\* after quit, every live packet from the cursor is dropped, counted;
-\* otherwise the next call starts at the same cursor
-Kept ==
+\* a live packet of the dead run at the cursor
+DeadLive == pc = "dead" /\ cursor < scan /\ live[order[cursor]]
+
+DeadDone ==
+    /\ pc = "dead"
+    /\ cursor >= scan
+    /\ pc' = "head"
+    /\ UNCHANGED << bank, tOpen, order, cursor, hd, scan, run, attempts, hist, quit, retries, stalls, retires >>
+
+DeadSkip ==
+    /\ pc = "dead"
+    /\ cursor < scan
+    /\ ~live[order[cursor]]
+    /\ cursor' = cursor + 1
+    /\ UNCHANGED << bank, tOpen, order, pc, hd, scan, run, attempts, hist, quit, retries, stalls, retires >>
+
+DeadShared ==
+    /\ DeadLive
+    /\ SetH(SendOne(H, order[cursor], Shared))
+    /\ cursor' = cursor + 1
+    /\ UNCHANGED << bank, tOpen, order, pc, hd, scan, run, attempts, quit, retries, stalls, retires >>
+
+DeadDropped ==
+    /\ DeadLive
+    /\ SetH(DropOne(H, order[cursor]))
+    /\ cursor' = cursor + 1
+    /\ UNCHANGED << bank, tOpen, order, pc, hd, scan, run, attempts, quit, retries, stalls, retires >>
+
+DeadKept ==
+    /\ DeadLive
+    /\ stalls < MaxStalls
+    /\ stalls' = stalls + 1
+    /\ pc' = "kept"
+    /\ UNCHANGED << bank, tOpen, order, cursor, hd, scan, run, attempts, hist, quit, retries, retires >>
+
+\* rocketnet_server_msgx_worker after a false return
+\* (rocketnet_msgx_send_runs_give_up: shutdown && ++retries > limit): past
+\* the retries after quit it gives up (GiveUp), every live packet from the
+\* cursor dropped, counted; otherwise the next call resumes at the same
+\* cursor (Resume, rocketnet_msgx_send_runs_resume).  The count rises on
+\* every check after quit, the last one too.
+GiveUp ==
     /\ pc = "kept"
-    /\ IF quit /\ retries + 1 > RetriesAfterQuit
-       THEN /\ left' = [i \in Index |-> left[i] + (IF live[i] /\ \E q \in cursor..(count - 1) : order[q] = i THEN 1 ELSE 0)]
-            /\ pc' = "done"
-            /\ UNCHANGED retries
-       ELSE /\ retries' = IF quit THEN retries + 1 ELSE retries
-            /\ pc' = "head"
-            /\ UNCHANGED left
+    /\ quit /\ retries + 1 > RetriesAfterQuit
+    /\ retries' = retries + 1
+    /\ left' = [i \in Index |-> left[i] + (IF live[i] /\ \E q \in cursor..(count - 1) : order[q] = i THEN 1 ELSE 0)]
+    /\ pc' = "done"
     /\ UNCHANGED << bank, tOpen, order, cursor, hd, scan, run, attempts, lastC, lastS, bad, quit, stalls, retires >>
+
+Resume ==
+    /\ pc = "kept"
+    /\ ~(quit /\ retries + 1 > RetriesAfterQuit)
+    /\ retries' = IF quit THEN retries + 1 ELSE retries
+    /\ pc' = "head"
+    /\ UNCHANGED << bank, tOpen, order, cursor, hd, scan, run, attempts, hist, quit, stalls, retires >>
 
 Done ==
     /\ pc = "done"
@@ -349,9 +442,9 @@ Done ==
 
 \* the environment: main sets shutdown; main retires a slot (on a forget or
 \* a dead report) while the worker sends.  The worker reads shutdown only in
-\* Kept and the table only at a resolve in LoopTop, so each environment step
-\* is taken only just before that read: every other placement reaches the
-\* same reads.
+\* GiveUp and Resume and the table only at a resolve at HEAD, so each step
+\* of the environment is taken only just before that read: every other
+\* placement reaches the same reads.
 Quit ==
     /\ pc = "kept"
     /\ ~quit
@@ -367,8 +460,12 @@ Retire(s) ==
     /\ UNCHANGED << bank, order, pc, cursor, hd, scan, run, attempts, hist, quit, retries, stalls >>
 
 Next ==
-    \/ Sort \/ LoopTop \/ SendAll \/ SendPartial \/ SendFull \/ SendRefused \/ SendDead \/ SendError
-    \/ Dead \/ Kept \/ Done \/ Quit
+    \/ Sort
+    \/ HeadDone \/ HeadSkip \/ HeadShared \/ HeadDropped \/ HeadKept \/ HeadRun
+    \/ SendAll \/ \E k \in 1..(Batch - 1) : SendPartial(k)
+    \/ SendFull \/ SendRefused \/ SendDead \/ SendError
+    \/ DeadDone \/ DeadSkip \/ DeadShared \/ DeadDropped \/ DeadKept
+    \/ GiveUp \/ Resume \/ Done \/ Quit
     \/ \E s \in Slots : Retire(s)
 
 Spec == Init /\ [][Next]_vars

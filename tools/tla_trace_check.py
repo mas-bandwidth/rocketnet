@@ -99,6 +99,14 @@ LAYERS = {
         "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired"],
         "steps": 500,
     },
+    "msgxsendruns": {
+        "modules": ["RNMsgxSendRuns.tla", "TraceRNMsgxSendRuns.tla"],
+        "untraced": {},
+        # one bank of 16 to 24 packets leaves in about 60 steps; the rest
+        # of a 400-step walk would be Done records, each paid for by the
+        # template's ASSUME
+        "steps": 150,
+    },
     "bank": {
         "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
         "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
