@@ -11,7 +11,7 @@
 (* byte before a bank is inside its neighbour (the worst case for a slot   *)
 (* computed from a pointer).                                               *)
 (*                                                                         *)
-(* A fill thread's start_packet picks the destination's queue (QueueOf,    *)
+(* A game thread's start_packet picks the destination's queue (QueueOf,    *)
 (* the address-and-port hash the XDP transport uses) and claims the next  *)
 (* index of the queue's producer bank with a compare-and-swap that never   *)
 (* moves the counter past S: an index at S is refused (NULL, counted).     *)
@@ -33,7 +33,7 @@
 (* another thread's claim can fall between them; the CAS then fails and    *)
 (* the thread loads again.                                                 *)
 (*                                                                         *)
-(* Flush is send_packets with the fill threads joined (the fill phase      *)
+(* Flush is send_packets with the game threads joined (the game threads' call  *)
 (* contract): each queue that staged anything hands its producer to its   *)
 (* worker and takes a free bank as the new producer, its counter reset by  *)
 (* the worker when it returned it.  A queue with no free bank keeps its    *)
@@ -75,7 +75,7 @@ CONSTANTS Q,            \* queues (num_queues)
           NB,           \* banks per queue (ROCKETNET_GSO_TX_BANKS)
           S,            \* slots per bank (the transport's send_slots: ROCKETNET_GSO_SEND_QUEUE_SIZE, fewer on the test fixture)
           Stride,       \* bytes per slot (ROCKETNET_FRAME_STRIDE)
-          Threads,      \* fill threads
+          Threads,      \* game threads
           Dests,        \* destinations the fill sends to: d is on queue QueueOf(d)
           Demand,      \* start_packet calls one thread makes in one fill
           MaxFlush,     \* bound on flushes

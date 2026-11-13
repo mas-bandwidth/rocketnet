@@ -70,7 +70,7 @@
 #include "tla_trace_record.h"
 
 // the instance: two queues of the code's banks, each handing out three slots,
-// two fill threads making four starts each per fill so claims run past a
+// two game threads making four starts each per frame so claims run past a
 // bank, and three destinations: destination d is an address the code's hash
 // puts on queue d % 2 (the model's QueueOf), so two on queue 1 and one on
 // queue 0. Flushes are bounded by the walk's length, so the walk takes a step
@@ -483,7 +483,7 @@ static int gso_finish( gso_walk_t & walk, int t, int k, bool abort )
     return foreign_writes;
 }
 
-// RNGsoQueueBankLayout Flush: the code's send_packets with the fill joined;
+// RNGsoQueueBankLayout Flush: the code's send_packets with the game threads joined;
 // each queue that turned over starts its new producer with no slot handed out
 static void gso_flush( gso_walk_t & walk )
 {

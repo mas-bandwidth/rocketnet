@@ -134,7 +134,7 @@ struct rocketnet_server_gso_recv_buffer_t
 };
 
 // One queue's send side (layer L2 of the gso push): its own staging banks,
-// filled by the game's fill threads with one compare-and-swap claim per
+// filled by the game threads with one compare-and-swap claim per
 // packet, handed to the queue's own worker by main at the frame boundary, and
 // sent by that worker on the queue's own socket. A destination always maps to
 // one queue (rocketnet_server_gso_send_queue), so every packet to one client
@@ -154,8 +154,8 @@ struct rocketnet_server_gso_send_lane_t
 {
     uint8_t padding_0[4096];
 
-    // written by main only while no fill runs (the fill phase contract), read
-    // by the fill threads: the producer bank and its turn-over count, the
+    // written by main only while no game thread is staging (the game threads' call contract), read
+    // by the game threads: the producer bank and its turn-over count, the
     // packet id's high part
     int producer = 0;
     uint64_t turn = 0;
@@ -310,7 +310,7 @@ struct rocketnet_server_gso_t
 
     // finishes rocketnet_server_gso_send_slot refused (a pointer or id that
     // names no slot of its queue's producer, or a finish after stop): the
-    // packet was never staged and is counted here. Any fill thread adds.
+    // packet was never staged and is counted here. Any game thread adds.
     std::atomic<uint64_t> counter_send_finish_refused{ 0 };
 
     // the server's packet filter value, copied at create, read by every
@@ -819,6 +819,93 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
 
     return false;
 }
+// the grant of one buffer in the bytes requested: linux reports double its
+// grant for its own bookkeeping, so this halves it. 0 when unreadable
+static int rocketnet_server_gso_buffer_granted( int fd, int option )
+{
+    int granted = 0;
+    socklen_t optlen = sizeof( granted );
+    if ( getsockopt( fd, SOL_SOCKET, option, &granted, &optlen ) != 0 )
+    {
+        return 0;
+    }
+    return granted / 2;
+}
+
+// one buffer after the shared open's plain request (rocketnet_server_udp_open):
+// the grant read back, and when short the force option once
+// (rocketnet_server_gso_buffer_step). A refused force is a fact for the start
+// line, kept in force_error
+static void rocketnet_server_gso_force_buffer( int fd, bool receive, int requested_bytes, int * granted_bytes, bool * force_tried, int * force_error )
+{
+    const int option = receive ? SO_RCVBUF : SO_SNDBUF;
+    const int force_option = receive ? SO_RCVBUFFORCE : SO_SNDBUFFORCE;
+
+    *force_tried = false;
+    *force_error = 0;
+    *granted_bytes = rocketnet_server_gso_buffer_granted( fd, option );
+
+    if ( rocketnet_server_gso_buffer_step( requested_bytes, *granted_bytes, false ) == ROCKETNET_SERVER_GSO_BUFFER_FORCE )
+    {
+        *force_tried = true;
+        int size = requested_bytes;
+        if ( setsockopt( fd, SOL_SOCKET, force_option, &size, sizeof( size ) ) != 0 )
+        {
+            *force_error = errno;
+        }
+        *granted_bytes = rocketnet_server_gso_buffer_granted( fd, option );
+    }
+}
+
+bool rocketnet_server_gso_buffer_note( char * line, int line_bytes, bool receive, int requested_bytes, int granted_bytes, bool force_tried, int force_error )
+{
+    rocketnet_assert( line );
+    rocketnet_assert( line_bytes > 0 );
+
+    const char * direction = receive ? "receive" : "send";
+    const char * force_name = receive ? "SO_RCVBUFFORCE" : "SO_SNDBUFFORCE";
+    const char * limit = receive ? "net.core.rmem_max" : "net.core.wmem_max";
+
+    if ( rocketnet_server_gso_buffer_step( requested_bytes, granted_bytes, true ) == ROCKETNET_SERVER_GSO_BUFFER_GRANTED )
+    {
+        if ( force_tried )
+        {
+            snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d (past %s with %s)", direction, requested_bytes,
+                      granted_bytes, limit, force_name );
+        }
+        else
+        {
+            snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d", direction, requested_bytes, granted_bytes );
+        }
+        return false;
+    }
+
+    char force_text[96];
+    if ( !force_tried )
+    {
+        snprintf( force_text, sizeof( force_text ), "%s not tried", force_name );
+    }
+    else if ( force_error == EPERM )
+    {
+        snprintf( force_text, sizeof( force_text ), "%s refused: the process lacks CAP_NET_ADMIN", force_name );
+    }
+    else if ( force_error != 0 )
+    {
+        snprintf( force_text, sizeof( force_text ), "%s refused: errno %d", force_name, force_error );
+    }
+    else
+    {
+        snprintf( force_text, sizeof( force_text ), "%s taken and still short", force_name );
+    }
+
+    const char * consequence =
+        receive ? "the kernel drops datagrams that arrive past the grant between updates" : "sends wait on a full socket";
+
+    snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d (%s); %s: set sysctl %s=%d", direction, requested_bytes,
+              granted_bytes, force_text, consequence, limit, requested_bytes );
+    return true;
+}
+
 
 // ---------------------------------------------------------------------------
 
@@ -1453,6 +1540,47 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
             rocketnet_server_gso_abort_create( gso );
             return NULL;
         }
+
+        // a grant short of the request on any socket is asked again past the
+        // sysctl limit with the force option, which the kernel takes from a
+        // process with CAP_NET_ADMIN and refuses from any other; the first
+        // queue's start lines say what was asked, what was got and, when
+        // still short, why and which sysctl to set
+        // (rocketnet_server_gso_buffer_note)
+
+        {
+            const int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
+            const int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "gso", max_clients );
+            int granted_send = 0;
+            int granted_receive = 0;
+            bool send_force_tried = false;
+            bool receive_force_tried = false;
+            int send_force_error = 0;
+            int receive_force_error = 0;
+            rocketnet_server_gso_force_buffer( queue->fd, false, send_buffer_size, &granted_send, &send_force_tried, &send_force_error );
+            rocketnet_server_gso_force_buffer( queue->fd, true, receive_buffer_size, &granted_receive, &receive_force_tried, &receive_force_error );
+            if ( i == 0 )
+            {
+                char line[512];
+                if ( rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), false, send_buffer_size, granted_send, send_force_tried, send_force_error ) )
+                {
+                    rocketnet_warn( "%s", line );
+                }
+                else
+                {
+                    rocketnet_info( "%s", line );
+                }
+                if ( rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), true, receive_buffer_size, granted_receive, receive_force_tried,
+                                                       receive_force_error ) )
+                {
+                    rocketnet_warn( "%s", line );
+                }
+                else
+                {
+                    rocketnet_info( "%s", line );
+                }
+            }
+        }
     }
 
     bind_address->port = bound_port;
@@ -1885,7 +2013,7 @@ bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso )
 }
 
 // proofs/tla/RNGsoHandoff.tla TxStage and proofs/tla/RNGsoQueueBankLayout.tla
-// Claim: a fill thread stages one packet into its destination queue's producer
+// Claim: a game thread stages one packet into its destination queue's producer
 // bank, outside the ownership mutex, with one compare-and-swap on that queue's
 // count. The packet id is ( turn * slots + slot ) * queues + queue: unique
 // across queues and turn-overs with no shared counter, and finish and abort

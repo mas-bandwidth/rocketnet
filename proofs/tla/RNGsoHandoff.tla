@@ -171,7 +171,7 @@ VARIABLES
     arrived,     \* datagrams arrived: the next is arrived + 1
     rxConsumed,  \* packets main consumed, in order
     rxStopped,   \* datagrams counted RECEIVE_DROP_STOPPED at stop
-    txProducer,  \* the TX bank main's fill threads stage into, or NONE
+    txProducer,  \* the TX bank main's game threads stage into, or NONE
     txFree,      \* the free TX banks, oldest first
     txReady,     \* the published TX banks, oldest first
     txHeld,      \* the TX bank the worker holds, or NONE
@@ -315,7 +315,7 @@ RxConsume ==
                     txHeld, txFinal, txContent, staged, txSent, txDropped, txErrDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
 
-(* a fill thread stages one packet into the producer bank, outside the    *)
+(* a game thread stages one packet into the producer bank, outside the    *)
 (* mutex                                                                  *)
 TxStage ==
     /\ pc["main"] = "run" /\ ~quit

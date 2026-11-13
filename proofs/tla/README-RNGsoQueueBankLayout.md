@@ -18,7 +18,7 @@ producer turn-over in `rocketnet_server_gso_publish_send` share:
   and inside the bank, all tested before the division. A caller may hand finish
   a pointer a byte off the one start returned (a contract violation), and it
   must fail closed;
-- the turn-over at the frame boundary (`Flush`, send_packets with the fill
+- the turn-over at the frame boundary (`Flush`, send_packets with the game threads
   joined): a queue that staged anything hands its producer to its worker and
   takes a free bank, whose count the worker reset when it gave it back
   (`WorkerReturn`); a queue with no free bank keeps its producer, and main
@@ -50,7 +50,7 @@ first finish or abort that writes another claim's slot.
 
 - `Q` = 2 queues, each with `NB` = 3 banks (`ROCKETNET_GSO_TX_BANKS`) of `S` = 3
   slots; `Stride` = 4.
-- 2 fill threads, each making 2 starts per fill (`Demand`), one destination on
+- 2 game threads, each making 2 starts per frame (`Demand`), one destination on
   each queue (`Dests` = {0, 1}: destination `d` is on queue `QueueOf(d)` =
   `d % Q`; the trace walk picks addresses the code's hash puts there).
 - A caller may hand finish a pointer 1 byte early, exact, or 1 byte late
@@ -111,7 +111,7 @@ Each was checked by hand against the broken rule.
 - **OpenFlush.** Thread 2 has loaded index 1 of queue 0's bank 0 when the flush
   turns queue 0 over while the claim is in flight; bank 0 is now its worker's,
   and thread 2's claim writes slot 1 of it. The code turns over only in
-  send_packets, after the fill threads joined, and only onto a free bank.
+  send_packets, after the game threads joined, and only onto a free bank.
 
 ## The trace check
 
@@ -126,7 +126,7 @@ After each step the walk reads every model variable from the lanes as the
 library holds them (`rocketnet_server_gso_test_send_lane`: `own` from the
 producer and the free FIFO, `cnt` from each bank's `num_packets`, `turn` from
 the lane), the environment's choices with them. The trace instance is 2
-queues, 2 threads making 4 starts each per fill, 3 destinations (destination
+queues, 2 threads making 4 starts each per frame, 3 destinations (destination
 `d` an address the code's hash puts on queue `d % 2`), a pointer up to a byte
 off either way, and flushes bounded by the walk's length.
 
