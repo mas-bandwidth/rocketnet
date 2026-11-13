@@ -70,8 +70,9 @@ keeping the hub; destroy it after the server and clients, before
 `proofs/tla/LoopbackHub.tla` and the queue ring arithmetic in
 `proofs/tla/LoopbackHubLayout.tla`.
 
-The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
-and `rocketnet_server_uring_leaked_transports` are internal transport helpers
+The names `rocketnet_server_uring_available`,
+`rocketnet_server_uring_allocation_bytes` and the other functions there are
+internal transport helpers
 (`sdk/rocketnet_server_uring.h`); a game uses `rocketnet_server_create`,
 `rocketnet_server_required_memory` and the other server entry points in
 `sdk/rocketnet.h`.
@@ -173,7 +174,11 @@ kernel dataplane. A transport with it implements `replay_forget`,
 `replay_mark` and `replay_commit` together, all three or none; the transport
 calls them on the main thread once per update, after packet processing, and
 nothing else writes the transport's replay map. XDP is the only built-in backend
-that reports it.
+with a kernel replay map. The msgx server implements the same three calls for
+another purpose, its per-client socket table: the walk's mark of a connected
+client opens that client's socket, forget retires it, and commit sweeps the
+retired sockets and readies the next update's open budget
+(`sdk/rocketnet_server_msgx.h`).
 
 ## Per-update send and receive budgets
 
@@ -439,13 +444,21 @@ portable or msgx socket is connected to its one server
 other source), and the kernel routes these errors to it. Server sockets are
 not connected, except the msgx server's per-client sockets: each is
 connected to its one client (`sdk/rocketnet_server_msgx.h`), so the kernel
-reports that client's errors on that socket, and the msgx receive worker
-reads past them, counts them and keeps draining. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
-ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
-(`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
-portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm
-(`rocketnet_platform_socket_receive_packets`) skip the error and keep
-draining. These errors are nonfatal and do not pause the msgx pump. Each call
+reports that client's errors on that socket. The msgx server's receive worker
+(`sdk/rocketnet_server_msgx_apple.cpp`, `sdk/rocketnet_msgx_receive_fill.h`)
+classes ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS
+and EINTR as weather: it reads past them, counts them (EINTR uncounted) and
+keeps draining, each spending one read of the socket's budget. ENOTCONN,
+EPIPE and EDESTADDRREQ on a client's socket report that socket dead to the
+socket table, and any other errno ends that socket's drain for the round;
+both count `RECEIVE_FAILED`. The platform receive arms in
+`sdk/rocketnet_platform.cpp`, which the portable server and the clients use
+(not the msgx server), treat the same errnos as weather
+(`rocketnet_platform_receive_weather`): the single-packet arm
+(`rocketnet_platform_socket_receive_packet`) and the batch arm
+(`rocketnet_platform_socket_receive_packets`, the Darwin msgx pump on the
+msgx client's socket) skip the error and keep draining. These errors are
+nonfatal and do not pause the msgx pump. Each call
 has one read budget (`max_packets` for a batch, 64 for the single-packet call),
 and every read spends one unit of it: a datagram kept, a zero-length datagram
 or refused source skipped, a weather error skipped. A spent budget ends the
@@ -720,13 +733,13 @@ number of times: once the stop has begun, the worker counts the retryable
 answers to the bank it holds, one count per wait, in one count shared by that
 bank's runs and reset by a successful send or a new bank; when the count
 reaches the bound, the worker abandons every run of that bank not yet
-submitted, all at once, and counts them in `SEND_DROPPED`
+submitted, all at once, and adds their packets to `SEND_DROPPED` (a count
+of datagrams)
 (`sdk/rocketnet_uring_queue_worker.cpp`, `proofs/tla/RNUringQueueWorker.tla`
 `Abandoning`).
 Stopped is true once every worker has exited;
 neither call waits. Destroy requires stopped, joins the workers, then frees.
-Existing leak counters remain diagnostic compatibility surfaces;
-completion, not a timeout, authorizes reclamation.
+Completion, not a timeout, authorizes reclamation.
 Each part is modelled per queue in `proofs/tla/`: the send staging
 (`RNUringQueueBankLayout`), the send handoff (`RNUringQueueSend`), the
 grouping of a bank into runs (`RNSendGatherLayout`), the worker loop
@@ -832,7 +845,8 @@ address not of its family, on another port, or that does not parse is one
 log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp`).
 The two addresses share the IPv6 wildcard on the one port, with `IPV6_V6ONLY`
 off. `portable`
-(`sdk/rocketnet_platform.cpp`), `msgx` through that same socket, `gso`
+(`sdk/rocketnet_platform.cpp`), `msgx` (its shared socket and each client's
+socket, `sdk/rocketnet_server_msgx_apple.cpp`), `gso`
 (`sdk/rocketnet_server_gso_linux.cpp`), `io_uring`
 (`sdk/rocketnet_server_uring_linux.cpp`), `iocp`
 (`sdk/rocketnet_server_iocp_windows.cpp`) and `rio`
