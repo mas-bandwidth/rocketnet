@@ -3075,11 +3075,15 @@ packet always fits an idle bucket and a stalled update releases at most 100 ms
 of budget at once. An update at or before the last refill time MUST NOT add
 tokens and MUST NOT move the refill time backwards.
 
-The sender writes its queued messages in send passes. A send pass starts at
-an update, or at a send_packets call, when no pass is open, and ends when it
-can write nothing more. At its start the bucket refills, which adds nothing
-at an unchanged time, and the class order and the reliable wait below start
-over.
+The sender writes its queued messages in send passes. Every update starts a
+new pass, whatever state the previous one was left in. A send_packets call
+starts a new pass only when the previous pass ended, by writing everything
+it could or by a refusal below. A pass that the transport's send capacity
+pauses ([m9.3 Resend classes and the reliable timeout](#m9.3)) has not
+ended: it stays open, and the next send_packets call resumes it with its
+class order and reliable wait as they were. At the start of a new pass the
+bucket refills, which adds nothing at an unchanged time, and the class order
+and the reliable wait below start over.
 
 Within one send pass the sender MUST fill its packets in this order:
 retransmits and ordered progress first, then new reliable records, then
