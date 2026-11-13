@@ -30,7 +30,8 @@
 #ifndef HARDEN_THREAD_POOL_H
 #define HARDEN_THREAD_POOL_H
 
-#include "tests/load/enkiTS/TaskScheduler.h"
+// a system include (CMakeLists.txt): enkiTS is vendored unmodified and is not held to rocketnet's warning floor
+#include <TaskScheduler.h>
 
 #include <atomic>
 #include <cassert>
@@ -91,7 +92,8 @@ static void harden_pin_this_thread( int cpu )
 #if defined( __linux__ )
     cpu_set_t set;
     CPU_ZERO( &set );
-    CPU_SET( cpu, &set );
+    const size_t core = (size_t) cpu;
+    CPU_SET( core, &set );
     if ( pthread_setaffinity_np( pthread_self(), sizeof( set ), &set ) == 0 )
     {
         harden_pin.pinned.fetch_add( 1 );

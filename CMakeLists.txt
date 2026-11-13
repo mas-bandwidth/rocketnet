@@ -1351,9 +1351,15 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
     # The server transport hardening load (docs/HARDEN_LOAD.md): a bench tool.
     # enkiTS (tests/load/enkiTS/README.md) runs the space frame shape's jobs:
-    # tests only, never linked into the SDK
+    # tests only, never linked into the SDK. It is vendored unmodified, so it is
+    # a system include and its one source is built without rocketnet's strict
+    # conversion set (its sign conversions are upstream's, in a test tool)
     add_executable(harden_load tests/load/harden_load.cpp tests/load/enkiTS/TaskScheduler.cpp)
     target_compile_features(harden_load PRIVATE cxx_std_11)
+    target_include_directories(harden_load SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/load/enkiTS")
+    if(NOT MSVC)
+        set_source_files_properties(tests/load/enkiTS/TaskScheduler.cpp PROPERTIES COMPILE_OPTIONS "-Wno-sign-conversion;-Wno-conversion")
+    endif()
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
     add_executable(dst tests/dst.cpp)
