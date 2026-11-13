@@ -9,3 +9,4 @@ MCServerStopSpreadBrokenNoAbandon.cfg	150	69.749	72.586	bench-xdp-9
 MCRNSendReserveChunkNoGuard.cfg	240	85.301	105.241	vision
 MCRNUringQueueSendLive.cfg	200	81.711	84.272	bench-xdp-8
 MCRNUringQueueSend.cfg	160	72.584	72.584	amd-3
+MCSessionAcks.cfg	240	83.790	83.790	record
