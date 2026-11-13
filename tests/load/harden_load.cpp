@@ -693,6 +693,32 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         {
             o->game_load = atof( v );
         }
+#if defined( __APPLE__ )
+        // EXPERIMENT (perf/v1.1.x/msgx-qos-exp): the game threads' QoS class
+        else if ( strcmp( a, "--game-qos" ) == 0 )
+        {
+            if ( strcmp( v, "interactive" ) == 0 )
+            {
+                harden_pin.game_qos.store( (int) QOS_CLASS_USER_INTERACTIVE );
+            }
+            else if ( strcmp( v, "initiated" ) == 0 )
+            {
+                harden_pin.game_qos.store( (int) QOS_CLASS_USER_INITIATED );
+            }
+            else if ( strcmp( v, "default" ) == 0 )
+            {
+                harden_pin.game_qos.store( (int) QOS_CLASS_DEFAULT );
+            }
+            else if ( strcmp( v, "utility" ) == 0 )
+            {
+                harden_pin.game_qos.store( (int) QOS_CLASS_UTILITY );
+            }
+            else
+            {
+                return false;
+            }
+        }
+#endif // #if defined( __APPLE__ )
         else if ( strcmp( a, "--space-send" ) == 0 )
         {
             o->space_send_wide = strcmp( v, "wide" ) == 0;

@@ -60,6 +60,9 @@
 #include <mach/thread_policy.h>
 #include <pthread.h>
 #include <pthread/qos.h>
+#define QOS_CLASS_USER_INTERACTIVE_OR_ZERO QOS_CLASS_USER_INTERACTIVE
+#else // #if defined( __APPLE__ )
+#define QOS_CLASS_USER_INTERACTIVE_OR_ZERO 0
 #endif // #if defined( __APPLE__ )
 
 #include <TaskScheduler.h>
@@ -122,6 +125,9 @@ struct harden_pin_t
     std::atomic<int> realtime_refused{ 0 }; // raising the priority the system refused
     std::atomic<int> pin_error{ 0 };        // first refusal's error code (errno, Windows GetLastError), 0 if none
     std::atomic<int> realtime_error{ 0 };
+    // macOS: the QoS class of the game threads (enkiTS thread i >= 1); the
+    // main thread keeps QOS_CLASS_USER_INTERACTIVE (--game-qos)
+    std::atomic<int> game_qos{ (int) QOS_CLASS_USER_INTERACTIVE_OR_ZERO };
 };
 
 static harden_pin_t harden_pin;
@@ -222,7 +228,8 @@ static void harden_pin_this_thread( int cpu )
         harden_pin.pin_error.compare_exchange_strong( none, (int) pin_result );
         harden_pin.pin_refused.fetch_add( 1 );
     }
-    const int realtime_result = pthread_set_qos_class_self_np( QOS_CLASS_USER_INTERACTIVE, 0 );
+    const qos_class_t qos = cpu == harden_pin.first_cpu.load() ? QOS_CLASS_USER_INTERACTIVE : (qos_class_t) harden_pin.game_qos.load();
+    const int realtime_result = pthread_set_qos_class_self_np( qos, 0 );
     if ( realtime_result == 0 )
     {
         harden_pin.realtime.fetch_add( 1 );

@@ -44,6 +44,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <dlfcn.h>
@@ -875,8 +876,22 @@ static bool rocketnet_server_msgx_send_bank( struct rocketnet_server_msgx_t * ms
     return sent;
 }
 
+// EXPERIMENT (perf/v1.1.x/msgx-qos-exp, never merged as is): the msgx workers
+// take the user-interactive QoS class instead of SCHED_RR (a thread whose
+// policy was set by pthread_setschedparam has opted out of QoS), so that a
+// process's game threads at a lower class do not take the performance cores
+// from them. rocketnet_server_msgx_qos_result is what the call answered.
+static std::atomic<int> rocketnet_server_msgx_qos_result{ -1 };
+
+static void rocketnet_server_msgx_set_qos()
+{
+    const int result = pthread_set_qos_class_self_np( QOS_CLASS_USER_INTERACTIVE, 0 );
+    rocketnet_server_msgx_qos_result.store( result, std::memory_order_relaxed );
+}
+
 static void rocketnet_server_msgx_worker( rocketnet_platform_thread_t *, void * context )
 {
+    rocketnet_server_msgx_set_qos();
     struct rocketnet_server_msgx_worker_t * worker = (struct rocketnet_server_msgx_worker_t *) context;
     struct rocketnet_server_msgx_t * msgx = worker->msgx;
     const int capacity = msgx->table->capacity;
@@ -1106,6 +1121,8 @@ static bool rocketnet_server_msgx_drain( struct rocketnet_server_msgx_t * msgx, 
 
 static void rocketnet_server_msgx_receive_worker( rocketnet_platform_thread_t *, void * context )
 {
+    rocketnet_server_msgx_set_qos();
+    rocketnet_info( "msgx experiment: receive worker pthread_set_qos_class_self_np answered %d", rocketnet_server_msgx_qos_result.load( std::memory_order_relaxed ) );
     struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) context;
     struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
     const int holder = msgx->num_workers;
@@ -1670,7 +1687,7 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
             rocketnet_server_msgx_abort_create( msgx );
             return NULL;
         }
-        rocketnet_platform_server_thread_priority( worker->thread );
+        // EXPERIMENT: no SCHED_RR; the worker sets its own QoS class
     }
 
     struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
@@ -1687,7 +1704,7 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
         rocketnet_server_msgx_abort_create( msgx );
         return NULL;
     }
-    rocketnet_platform_server_thread_priority( receiver->thread );
+    // EXPERIMENT: no SCHED_RR; the receive worker sets its own QoS class
 
     rocketnet_info( "msgx transport: port %d, %d transmit workers, a connected socket per client (up to %d)",
                     msgx->bind.port, num_workers, max_clients );
