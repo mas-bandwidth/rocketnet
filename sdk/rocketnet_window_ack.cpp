@@ -325,11 +325,25 @@ static inline void rn_window_ack_prefetch( const void * address )
 #endif // #if defined( __GNUC__ ) || defined( __clang__ )
 }
 
+// the home cell: h % cap, taken as a mask when cap is a power of two (the
+// default index, 2 * 1024 cells), where the two are equal and the mask
+// avoids a 64-bit division per lookup
 static uint32_t rn_sent_index_hash( uint64_t packet_id, uint32_t cap )
 {
     uint64_t h = packet_id * 0x9E3779B97F4A7C15ULL;
     h ^= h >> 32;
+    if ( ( cap & ( cap - 1 ) ) == 0 )
+    {
+        return (uint32_t) ( h & ( cap - 1 ) );
+    }
     return (uint32_t) ( h % cap );
+}
+
+// the next cell of a probe, wrapping at the end: ( slot + 1 ) % cap for any
+// slot < cap, without the division
+static inline uint32_t rn_sent_index_next( uint32_t slot, uint32_t cap )
+{
+    return slot + 1 == cap ? 0 : slot + 1;
 }
 
 static bool rn_sent_index_find( const rn_region_t * region, uint64_t packet_id, uint32_t * out_slot )
@@ -355,7 +369,7 @@ static bool rn_sent_index_find( const rn_region_t * region, uint64_t packet_id, 
             return true;
         }
 
-        slot = ( slot + 1 ) % cap;
+        slot = rn_sent_index_next( slot, cap );
     }
 
     return false;
@@ -380,7 +394,7 @@ static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint
             return;
         }
 
-        slot = ( slot + 1 ) % cap;
+        slot = rn_sent_index_next( slot, cap );
     }
 
     rocketnet_assert( false && "sent_index 2P table exhausted" );
@@ -397,7 +411,7 @@ static void rn_sent_index_remove_at( rn_window_ack_t * ack, uint32_t slot )
     rn_region_t * region = ack->region;
     const uint32_t cap = region->sent_index_entries;
     uint32_t empty = slot;
-    uint32_t j = ( empty + 1 ) % cap;
+    uint32_t j = rn_sent_index_next( empty, cap );
     uint32_t steps = 0;
     while ( region->sent_index[j].used )
     {
@@ -418,7 +432,7 @@ static void rn_sent_index_remove_at( rn_window_ack_t * ack, uint32_t slot )
             empty = j;
         }
 
-        j = ( j + 1 ) % cap;
+        j = rn_sent_index_next( j, cap );
     }
 
     region->sent_index[empty].packet_id = 0;

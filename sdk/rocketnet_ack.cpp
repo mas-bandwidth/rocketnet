@@ -1466,12 +1466,17 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
 // set extension, used where the compiler offers no popcount builtin and the
 // target is not x64 (MSVC for ARM64 has no __popcnt64)
 
-int rocketnet_ack_popcount64_portable( uint64_t v )
+static inline int rn_popcount64_sum( uint64_t v )
 {
     v = v - ( ( v >> 1 ) & 0x5555555555555555ull );
     v = ( v & 0x3333333333333333ull ) + ( ( v >> 2 ) & 0x3333333333333333ull );
     v = ( v + ( v >> 4 ) ) & 0x0f0f0f0f0f0f0f0full;
     return (int) ( ( v * 0x0101010101010101ull ) >> 56 );
+}
+
+int rocketnet_ack_popcount64_portable( uint64_t v )
+{
+    return rn_popcount64_sum( v );
 }
 
 // gcc and clang inline __builtin_popcountll on arm64 (cnt) and on x86 when
@@ -1482,13 +1487,13 @@ int rocketnet_ack_popcount64_portable( uint64_t v )
 static inline int rn_popcount64( uint64_t v )
 {
 #if ( defined( __GNUC__ ) || defined( __clang__ ) ) && ( defined( __x86_64__ ) || defined( __i386__ ) ) && !defined( __POPCNT__ )
-    return rocketnet_ack_popcount64_portable( v );
+    return rn_popcount64_sum( v );
 #elif defined( __GNUC__ ) || defined( __clang__ )
     return __builtin_popcountll( v );
 #elif defined( _MSC_VER ) && defined( _M_X64 )
     return (int) __popcnt64( v );
 #else
-    return rocketnet_ack_popcount64_portable( v );
+    return rn_popcount64_sum( v );
 #endif // #if ( defined( __GNUC__ ) || defined( __clang__ ) ) && ( defined( __x86_64__ ) || defined( __i386__ ) ) && !defined( __POPCNT__ )
 }
 
@@ -1686,6 +1691,13 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
     *unknown_sequence_counter += window_len - (uint64_t) held;
 
+    // the stats window and its loss-eligible top, read once: the walk never
+    // moves highest_sequence (only a recorded send does)
+
+    const uint64_t stats_base = rocketnet_ack_stats_window_base( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+    const uint64_t stats_top = rocketnet_ack_stats_window_top( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+    const uint64_t eligible_top = rocketnet_ack_stats_eligible_top( endpoint->highest_sequence );
+
     auto visit = [&]( uint64_t sequence )
     {
 #if ROCKETNET_DEV
@@ -1715,11 +1727,10 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
         else
         {
             record->acked = 1;
-            if ( sequence >= rocketnet_ack_stats_window_base( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE ) &&
-                 sequence <= rocketnet_ack_stats_window_top( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE ) )
+            if ( sequence >= stats_base && sequence <= stats_top )
             {
                 rocketnet_ack_stats_sent_add_acked( endpoint, sequence, record );
-                if ( sequence <= rocketnet_ack_stats_eligible_top( endpoint->highest_sequence ) )
+                if ( sequence <= eligible_top )
                 {
                     endpoint->stats_eligible_unacked--;
                 }
