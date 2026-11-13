@@ -391,11 +391,13 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    // proofs/tla/RNChannelTypes.tla SupersederKept: a newer record releases the
-    // in-turn block only once nothing can refuse it, so a record dropped as
-    // stale or by the allowance leaves the block (accepted, acked) as it was
-    // (standard/MESSAGES.md m6.3). Releasing first is the reversed witness
-    // MCRNChannelBrokenReleaseBeforeRefuse.cfg.
+    // A newer record releases the in-turn block only once nothing can refuse
+    // it, so a record dropped as stale or by the allowance leaves the block
+    // (accepted, acked) as it was (standard/MESSAGES.md m6.3). The allowance
+    // is proofs/tla/RNChannelTypes.tla SupersederKept, with the reversed
+    // witness MCRNChannelBrokenReleaseBeforeRefuse.cfg releasing first; the
+    // stale drop at the half range is not in the model (its indexes are
+    // small) and is test_stale_code_1_at_the_half_range_keeps_the_in_turn_block.
 
     bool supersedes = false;
     if ( current != RN_DESCRIPTOR_NONE )

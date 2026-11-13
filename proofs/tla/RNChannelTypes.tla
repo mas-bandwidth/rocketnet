@@ -587,6 +587,14 @@ SequencedArrivedAccounted == connected =>
 \* (an accepted, acked code-4 message among them) is never one refused.
 \* Reversed by Broken = "ReleaseBeforeRefuse".
 SupersederKept == receiver.superseders \cap receiver.refused = {}
+\* The same rule on the channel's state itself: a step that refuses a record
+\* changes no hold, in-turn block, release or delivery.
+RefusalLeavesChannelUnchanged ==
+    [][receiver'.refused # receiver.refused =>
+          /\ receiver'.heldSequenced = receiver.heldSequenced
+          /\ receiver'.inTurn = receiver.inTurn
+          /\ receiver'.released = receiver.released
+          /\ receiver'.trace = receiver.trace]_vars
 TransportAckClearsResend == connected => resend=Values(numbers) \ acked
 AckedImpliesTransportArrival == \A m \in acked : \E pid \in opened : PacketMessage(pid)=m
 EveryReliableAckedAndDelivered == <> (~connected \/ (Len(queue)=MaxMessages /\

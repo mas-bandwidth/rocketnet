@@ -344,6 +344,15 @@ the allowance are not modelled), so no configuration could reach it.
   `SequencedArrivedAccounted` counts a refused record as accounted.
 - `SupersederKept`: no superseder is refused. Reversed by
   `Broken = "ReleaseBeforeRefuse"`, the code before the fix.
+  `RefusalLeavesChannelUnchanged` (an action property, in the passing
+  configuration) states m6.3 on the channel's own state: a refusing step
+  changes no hold, in-turn block, release or delivery.
+- Out of reach here: the stale drop at the 24-bit half range (the model's
+  indexes are small; `RNSequencingWrap` owns the widths), covered by
+  `test_stale_code_1_at_the_half_range_keeps_the_in_turn_block`; a refused
+  record meeting a code-1 hold (each plan has one code-1 message), covered by
+  the code's unchanged slot return; and the later delivery of the kept hold,
+  covered by the unit tests in `tests/test_unit_channel_reliable_sequenced.cpp`.
 
 | Case | Expected | Exit | Generated | Distinct | Seconds (2 workers, bench-xdp-9) |
 |---|---|---:|---:|---:|---:|
