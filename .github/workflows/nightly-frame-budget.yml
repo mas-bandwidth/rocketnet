@@ -98,32 +98,17 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
-            for tool in cmake clang c++ xxd python3; do
-              if ! command -v "$tool" >/dev/null 2>&1; then
-                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
-                missing=1
-              fi
-            done
-            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
-              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
-              missing=1
-            fi
-            exit "$missing"
-          fi
-          for tool in cmake gcc g++ clang xxd pkg-config; do
+          # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+          for tool in cmake clang c++ xxd python3; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
             fi
           done
-          for lib in libbpf libxdp libsodium liburing; do
-            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
-              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
-              missing=1
-            fi
-          done
+          if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+            echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+            missing=1
+          fi
           exit "$missing"
 
       - name: Configure and build client_main_thread_cost (Release)
