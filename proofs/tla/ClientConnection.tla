@@ -481,8 +481,8 @@ ClientRecvDeniedKeepsKeys(p) ==
 \* rocketnet_client_open_session then the per-type action: states 3
 \* and 4, the session keys, the replay window; an accepted packet refreshes
 \* the timeout; a keep-alive in 3 sets the index and connects; a disconnect
-\* is state 0 immediately. A payload is accepted only in 4, as netcode.io's
-\* client (rocketnet_client_session_state_accepts): the server's first
+\* is state 0 immediately. A payload is accepted only in 4 (TRANSPORT.md t11.3;
+\* rocketnet_client_session_state_accepts): the server's first
 \* payloads can reach the client ahead of the keep-alive that connects it,
 \* by loss or reorder of that keep-alive, and one delivered in 3 let the
 \* application reply on a connection that could not yet send. An accepted

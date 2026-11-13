@@ -16,15 +16,12 @@ void dispatch_fixture_finish( void * instance, uint64_t id, uint8_t * frame, int
 }
 void dispatch_fixture_init( dispatch_fixture * f )
 {
-    // Named members on a zeroed table, so an operation added to the driver later stays NULL here instead of breaking this build.
-    static const rocketnet_server_transport_io_operations_t ops = []
-    {
-        rocketnet_server_transport_io_operations_t o = {};
-        o.flags = ROCKETNET_TRANSPORT_STAGED;
-        o.start_packet = dispatch_fixture_start;
-        o.finish_packet = dispatch_fixture_finish;
-        return o;
-    }();
+    // zeroed, then the three members the fixture uses set by name: a member
+    // appended to the operations struct needs no edit here
+    static rocketnet_server_transport_io_operations_t ops;
+    ops.flags = ROCKETNET_TRANSPORT_STAGED;
+    ops.start_packet = dispatch_fixture_start;
+    ops.finish_packet = dispatch_fixture_finish;
     memset( f, 0, sizeof( *f ) );
     f->transport.operations = &ops;
     f->transport.instance = f;

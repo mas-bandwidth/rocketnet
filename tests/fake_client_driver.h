@@ -58,10 +58,11 @@ struct rocketnet_fake_client_transport_io_t
     bool wake;
     double last_wait_timeout;
     bool last_wait_readable;
-    // create by family: the calls, the family of the last bind, and which
+    // create by family: the calls, the IPv6 binds among them, the family of the last bind, and which
     // bind families it refuses; a refusal reports OUT_OF_MEMORY when
     // open_out_of_memory is set
     int create_calls;
+    int create_calls_ipv6;
     int last_bind_family;
     bool refuse_open_ipv4, refuse_open_ipv6;
     bool open_out_of_memory;
@@ -98,6 +99,10 @@ static inline void * rocketnet_fake_client_create_by_family( void * context, con
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) context;
     fake->create_calls++;
     fake->last_bind_family = bind->type;
+    if ( bind->type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        fake->create_calls_ipv6++;
+    }
 
     const bool refused = ( bind->type == ROCKETNET_ADDRESS_IPV4 && fake->refuse_open_ipv4 ) ||
                          ( bind->type == ROCKETNET_ADDRESS_IPV6 && fake->refuse_open_ipv6 );

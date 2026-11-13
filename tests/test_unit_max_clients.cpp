@@ -704,6 +704,14 @@ static void test_client_slots_erase_index_full_table_terminates()
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0x3C, sizeof( user_data ) );
 
+    // the seam takes -1 (no forcing) through the last bucket, never one past
+    // it or below -1
+
+    check( !rocketnet_client_slots_test_force_hash_index( slots, num_buckets ) );
+    check( !rocketnet_client_slots_test_force_hash_index( slots, -2 ) );
+    check( rocketnet_client_slots_test_force_hash_index( slots, num_buckets - 1 ) );
+    check( rocketnet_client_slots_test_force_hash_index( slots, -1 ) );
+
     check( rocketnet_client_slots_test_force_hash_index( slots, num_buckets - 3 ) );
     check( rocketnet_client_slots_assign( slots, 1001, 0, 1, user_data ) == 0 );
 

@@ -823,6 +823,72 @@ static void test_xdp_transport_mac_address_parse_is_strict()
     }
 }
 
+// cpu 0 is a cpu: a list entry may start with it, and a range may end on it
+static void test_xdp_cpu_list_entry_takes_cpu_zero()
+{
+    const char * cursor = "0,0-3,0-0\n";
+    int first = -1;
+    int last = -1;
+
+    rocketnet_unit_check( rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+    rocketnet_unit_check( first == 0 && last == 0 );
+    rocketnet_unit_check( rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+    rocketnet_unit_check( first == 0 && last == 3 );
+    rocketnet_unit_check( rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+    rocketnet_unit_check( first == 0 && last == 0 );
+    rocketnet_unit_check( *cursor == '\0' );
+
+    cursor = "a";
+    rocketnet_unit_check( !rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+    cursor = "1-";
+    rocketnet_unit_check( !rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) );
+}
+
+// one NAT address, many clients: ports that differ only in their high byte
+// each keep a learned reply MAC. One more client than a probe window holds,
+// so a slot hash blind to the port's high byte puts them all in one window
+// and the learn evicts the first.
+static struct rocketnet_xdp_reply_mac_entry_t port_high_byte_entries[ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES];
+
+static void test_xdp_reply_macs_ports_differing_in_the_high_byte_spread()
+{
+    struct rocketnet_xdp_reply_macs_t table;
+    memset( &table, 0, sizeof( table ) );
+    rocketnet_unit_check( rocketnet_xdp_reply_macs_bind( &table, port_high_byte_entries, ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES ) );
+    rocketnet_xdp_reply_macs_reset( &table, NULL );
+
+    const int clients = ROCKETNET_XDP_REPLY_MAC_PROBES + 1;
+
+    for ( int i = 0; i < clients; i++ )
+    {
+        rocketnet_address_t client;
+        memset( &client, 0, sizeof( client ) );
+        client.type = ROCKETNET_ADDRESS_IPV4;
+        client.data.ipv4[0] = 203;
+        client.data.ipv4[1] = 0;
+        client.data.ipv4[2] = 113;
+        client.data.ipv4[3] = 9;
+        client.port = (uint16_t) ( ( i + 1 ) << 8 );
+        const uint8_t mac[6] = { 0x02, 0, 0, 0, 0, (uint8_t) ( i + 1 ) };
+        rocketnet_xdp_reply_macs_learn( &table, &client, mac );
+    }
+
+    for ( int i = 0; i < clients; i++ )
+    {
+        rocketnet_address_t client;
+        memset( &client, 0, sizeof( client ) );
+        client.type = ROCKETNET_ADDRESS_IPV4;
+        client.data.ipv4[0] = 203;
+        client.data.ipv4[1] = 0;
+        client.data.ipv4[2] = 113;
+        client.data.ipv4[3] = 9;
+        client.port = (uint16_t) ( ( i + 1 ) << 8 );
+        const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( &table, &client );
+        rocketnet_unit_check( entry != NULL );
+        rocketnet_unit_check( entry && entry->mac[5] == (uint8_t) ( i + 1 ) );
+    }
+}
+
 // A server create that pins xdp with an IPv6 address is not refused for its
 // family: the ladder hands it to the xdp transport, whose create meets this
 // process's commit barrier (the unit suite forbids an XDP data plane) and
@@ -902,6 +968,10 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 
     rocketnet_unit_check( server == NULL );
     rocketnet_unit_check( status != ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
+
+    // the barrier's refusal is neither "not built" nor "families": the
+    // ladder is exhausted
+    rocketnet_unit_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     rocketnet_unit_check( xdp_ipv6_family_refusals == 0 );
     rocketnet_unit_check( xdp_ipv6_barrier_lines == 1 );
 }
@@ -957,6 +1027,8 @@ REGISTER_UNIT_TEST( test_xdp_transport_frame_ipv4_unchanged );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_dispatches_both_families_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
 REGISTER_UNIT_TEST( test_xdp_transport_mac_address_parse_is_strict );
+REGISTER_UNIT_TEST( test_xdp_cpu_list_entry_takes_cpu_zero );
+REGISTER_UNIT_TEST( test_xdp_reply_macs_ports_differing_in_the_high_byte_spread );
 #if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create );
 #endif // #if ROCKETNET_XDP

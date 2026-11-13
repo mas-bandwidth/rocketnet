@@ -191,6 +191,10 @@ static void priority_check_one_thread_call( struct rocketnet_platform_thread_t *
 // minimum on Linux, 32 on macOS, where the range is 15 to 47 and an ordinary
 // thread 31; never the maximum there, which outranks the game's threads
 
+// POSIX only, and registered only there: Windows has no SCHED_RR, so the body
+// would be empty and the case would pass having checked nothing
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 static void test_thread_priority_rr_above_ordinary_threads()
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -199,10 +203,11 @@ static void test_thread_priority_rr_above_ordinary_threads()
     rocketnet_unit_check( sched_get_priority_min( SCHED_RR ) == 15 );
     rocketnet_unit_check( sched_get_priority_max( SCHED_RR ) == 47 );
     rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() == 32 );
-#elif ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#else
     rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() >= sched_get_priority_min( SCHED_RR ) );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 }
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 static void test_thread_priority_default_is_on()
 {
@@ -362,7 +367,9 @@ REGISTER_UNIT_TEST( test_thread_priority_windows_timer_refusal_counts_and_logs_o
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 REGISTER_UNIT_TEST( test_thread_priority_default_is_on );
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 REGISTER_UNIT_TEST( test_thread_priority_rr_above_ordinary_threads );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 REGISTER_UNIT_TEST( test_thread_priority_client_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_server_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_off_makes_no_calls );

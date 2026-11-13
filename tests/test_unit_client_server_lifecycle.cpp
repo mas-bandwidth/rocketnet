@@ -476,6 +476,11 @@ static void test_client_reconnects_with_a_second_token()
     lifecycle_connect( &world, 0, 0x1001 );
     lifecycle_exchange( &world, 0, 0xA1, 3 );
 
+    // while connected the client names the transport its connection runs on
+
+    const char * transport_name = rocketnet_client_transport_name( client );
+    check( transport_name != NULL && strcmp( transport_name, "loopback" ) == 0 );
+
     const uint64_t sent_first = rn_client_stats_of( client ).packets_sent;
     const uint64_t payloads_first = rn_client_stats_of( client ).payloads_received;
     check( sent_first > 0 );
@@ -1116,6 +1121,79 @@ static void test_server_send_dropped_to_slot_not_connected()
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_server_send_dropped_to_slot_not_connected );
+
+// an in-place start left open across the server's update is aborted there
+// and counted once, whichever slot it was on: the update after it finds no
+// start open and counts nothing more
+static void test_server_start_open_across_update_counts_once_on_any_slot()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 3, 3 );
+    lifecycle_connect( &world, 0, 0x1510 );
+    lifecycle_connect( &world, 1, 0x1511 );
+    lifecycle_connect( &world, 2, 0x1512 );
+
+    rocketnet_server_t * server = world.server;
+
+    for ( int slot = 0; slot < 3; slot++ )
+    {
+        check( rocketnet_server_client_connected( server, slot ) != 0 );
+
+        const uint64_t misuse = rocketnet_api_misuse_count();
+        uint8_t * out = rocketnet_server_start_message( server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 );
+        check( out != NULL );
+        if ( out )
+        {
+            out[0] = 0xC1;
+            out[1] = (uint8_t) slot;
+        }
+
+        lifecycle_pump( &world );
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+
+        lifecycle_pump( &world );
+        lifecycle_pump( &world );
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+    }
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_start_open_across_update_counts_once_on_any_slot );
+
+// the server's trailing-second rates: a server with no client sends and
+// receives nothing, so every rate is exactly zero; once a client exchanges
+// messages its packets are counted received, and the bytes sent stay within
+// what a few hundred small packets a second can carry
+static void test_server_rates_are_zero_idle_and_count_traffic()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+
+    for ( int i = 0; i < 20; i++ )
+    {
+        lifecycle_pump( &world );
+    }
+
+    rocketnet_server_stats_t idle = rn_server_stats_of( world.server );
+    check( idle.packets_sent_per_second == 0.0 );
+    check( idle.packets_received_per_second == 0.0 );
+    check( idle.bandwidth_sent_kbps == 0.0 );
+    check( idle.bandwidth_received_kbps == 0.0 );
+
+    lifecycle_connect( &world, 0, 0x1520 );
+    lifecycle_exchange( &world, 0, 0xD1, 4 );
+    lifecycle_pump( &world );
+
+    rocketnet_server_stats_t busy = rn_server_stats_of( world.server );
+    check( busy.packets_received_per_second > 0.0 );
+    check( busy.packets_sent_per_second > 0.0 );
+    check( busy.bandwidth_sent_kbps > 0.0 );
+    check( busy.bandwidth_sent_kbps < 10000.0 );
+    check( busy.bandwidth_received_kbps > 0.0 );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_rates_are_zero_idle_and_count_traffic );
 
 // set_send_kbps follows the same rule: a connection that is not CONNECTED has
 // no rate to set. The call returns INVALID_ARGUMENT, changes nothing and is

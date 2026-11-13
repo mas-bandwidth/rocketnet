@@ -1044,7 +1044,7 @@ static void test_session_end_races_move_only_expected_counters()
 
 REGISTER_UNIT_TEST( test_session_end_races_move_only_expected_counters );
 
-// netcode.io's client: a payload is processed only once connected. The
+// TRANSPORT.md t11.3: a payload is processed only once connected. The
 // server's first payloads to a newly connected client can beat the
 // keep-alive that connects it (the xdp server sent CONFIG and ARM ahead of
 // it in 4 of 5 runs); delivered in sending connection response, the

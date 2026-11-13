@@ -115,7 +115,7 @@ on:
   # direct land commits with no pull request to run them, so naming that branch
   # is what puts this gate on the landing. workflow_dispatch keeps a deliberate
   # way to run it on any other branch, which is the capability the filter would
-  # otherwise silently remove. (serialize's ci.yml, same reasoning.)
+  # otherwise silently remove.
   workflow_dispatch:
     inputs:
       full:
@@ -470,9 +470,9 @@ jobs:
       - name: Replay the fuzz corpora without libFuzzer
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         run: |
-          # the fifteen harnesses build in one parallel build and replay at once;
+          # the sixteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --target $targets --parallel 8
@@ -526,12 +526,17 @@ jobs:
           done
           exit $failed
 
-      # The cases this configuration compiles, for the unit-case-coverage job
+      # The cases this configuration runs, for the unit-case-coverage job
       # (tools/check_unit_case_coverage.py): every registered case must run in
       # at least one CI configuration. Nightly tier only, where every
-      # configuration runs.
+      # configuration runs. `--list` names what a run in the same environment
+      # starts (suite_list_cases), so the list and the run below both take
+      # ROCKETNET_TEST_NIGHTLY from the tier: the nightly tier's unit cases
+      # (the 1000-client per-client isolation case) run here, Debug included.
       - name: Save the registered unit cases
         if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/${{ runner.os }}-${{ matrix.build_type }}.txt"
 
       - name: Upload the registered unit cases
@@ -545,6 +550,8 @@ jobs:
       # On Linux the strace run below is this run: one suite run, not two.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: runner.os != 'Linux' && matrix.leg == 'unit'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: ./bin/test
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
@@ -562,6 +569,8 @@ jobs:
       # On the Linux Release leg each shard row runs its shard of the suite.
       - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
         if: runner.os == 'Linux' && matrix.leg == 'unit'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: |
           bash tools/test_check_unit_no_sockets.sh
           bash tools/check_unit_no_sockets.sh ./bin/test ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }}
@@ -647,6 +656,38 @@ jobs:
       - name: "Functional: production client lifecycle"
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
         run: ./bin/test_production_client_lifecycle
+
+      # tests/functional/platform_primitives.cpp built standalone: the real
+      # environment readers, the production library's status, simulator and
+      # filter environment refusals (DEV=OFF), localhost lookup (DEV=ON), the
+      # platform thread and its priority, the wake/wait pair. Nothing else
+      # runs these checks. Both DEV settings run it: Debug rows build ON,
+      # Release rows OFF, and the line it prints must name the DEV setting
+      # this row built.
+      - name: "Functional: platform primitives (standalone, both DEV settings)"
+        if: matrix.leg == 'functional'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/test_platform_primitives | tee platform-primitives.log
+          want=0
+          if [ "${{ matrix.dev }}" = ON ]; then want=1; fi
+          if ! grep -q "^platform primitives OK: DEV=$want," platform-primitives.log; then
+            echo "test_platform_primitives did not report DEV=$want (this row builds ROCKETNET_DEV=${{ matrix.dev }})"
+            exit 1
+          fi
+
+      # The load harness's resource census (tests/load/load_census.h) is the
+      # oracle behind load's and load_split's resource_baseline verdict; its
+      # self-test plants a file left open, a reused descriptor number, the
+      # random device and a thread left running.
+      - name: "Functional: load harness census self-test"
+        if: matrix.leg == 'functional'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/test_load_census | tee load-census.log
+          grep -qx 'test_load_census' load-census.log
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
@@ -969,6 +1010,18 @@ jobs:
       - name: Run the source audit
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: ./bin/source_audit
+
+      # The config-env audit (tests/source_audit_config_env_names.cpp) reads
+      # ROCKETNET_DEV code, so the Release (DEV=OFF) checks leg above compiles
+      # it out. The Linux Debug unit leg builds DEV=ON on every commit: it runs
+      # the audit there, and the case must have run.
+      - name: Run the source audit in the development build (config-env names)
+        if: runner.os == 'Linux' && matrix.leg == 'unit' && matrix.dev == 'ON'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/source_audit | tee source-audit-dev.log
+          grep -qx test_config_env_every_name_read_is_documented source-audit-dev.log
 
       - name: Check export source gate
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
@@ -1504,9 +1557,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # the fifteen harnesses build in one parallel build and replay at once;
+          # the sixteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --config Release --target $targets --parallel 8
@@ -1525,6 +1578,8 @@ jobs:
       - name: Save the registered unit cases
         if: matrix.leg != 'c'
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && matrix.leg == 'a' && '1' || '0' }}
         run: |
           set -euo pipefail
           mkdir -p unit-cases && ./bin/Release/test.exe --list > "unit-cases/Windows-${{ matrix.leg }}.txt"
@@ -1542,10 +1597,39 @@ jobs:
       - name: Run tests
         if: matrix.leg == 'a'
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: |
           set -euo pipefail
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
+
+      # The shipped Windows sockets keep datagrams whole: each create (portable,
+      # iocp, rio) sets IP_DONTFRAGMENT, and IPV6_DONTFRAG on IPv6, inline. The
+      # unit case of the shared helper cannot see that, so the options are read
+      # back from real loopback sockets here (tests/test_iocp.cpp; the whole
+      # test_iocp run is nightly).
+      - name: Windows sockets set don't-fragment (real sockets)
+        if: matrix.leg == 'a'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_iocp.exe test_platform_socket_sets_dont_fragment test_iocp_transport_socket_sets_dont_fragment test_rio_transport_socket_sets_dont_fragment
+
+      # MSVC Debug with ROCKETNET_DEV=ON: the only MSVC build with the library's
+      # asserts and the debug CRT's heap checks on for the DEV-only Windows
+      # cases (the Debug runs elsewhere here are DEV=OFF or leg (c)'s dialog
+      # cases). The whole unit suite with the nightly tier; a debug-CRT report
+      # fails its case (suite_crt_report_fails). Measured on captain: 169 s.
+      - name: Unit suite, MSVC Debug, ROCKETNET_DEV=ON (nightly tier)
+        if: matrix.leg == 'a'
+        shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: '1'
+        run: |
+          set -euo pipefail
+          cmake --build build --config Debug --target test --parallel 8
+          ./bin/Debug/test.exe
 
       # Leg (c): a Windows test child that fails exits at once and never waits
       # on a window (suite_no_dialogs, tests/suite_runner.h; #201). Each
@@ -1583,10 +1667,13 @@ jobs:
           }
           failed=0
           for config in Release Debug; do
-            for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation; do
+            for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation test_no_dialogs_heap_overrun; do
               read -r state code seconds <<< "$(run_case "$config" "$case" 30)"
               stderr=$(head -n 3 "$RUNNER_TEMP/no-dialogs-$config-$case.err" 2>/dev/null | tr -d '\r' | tr '\n' '|')
-              if [ "$config/$case" = Debug/test_no_dialogs_assert ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
+              if [ "$config/$case" = Debug/test_no_dialogs_heap_overrun ] && ! grep -q "the debug CRT reported an error" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
+                echo "FAIL $config $case: the debug heap report did not end the case red"
+                failed=1
+              elif [ "$config/$case" = Debug/test_no_dialogs_assert ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
                 echo "FAIL $config $case: the assertion report did not reach stderr"
                 failed=1
               elif [ "$state" = exited ] && [ "$code" != 0 ]; then
@@ -2051,9 +2138,11 @@ jobs:
 
       - name: Run the unit suite (Windows, shard ${{ matrix.shard }} of 2)
         shell: bash
+        # --enforce-rss: a case over its memory bound fails here; a plain run
+        # only prints it, and per commit no other Windows job enforces it
         run: |
           set -euo pipefail
-          ./bin/Release/test.exe --shard ${{ matrix.shard }}/2
+          ./bin/Release/test.exe --enforce-rss --shard ${{ matrix.shard }}/2
 
       - name: Enforce combined unit and functional timing
         shell: bash
@@ -2065,7 +2154,7 @@ jobs:
         uses: ./.github/actions/ccache-stats
 
   # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint
-  # connect tokens, as yojimbo's matcher does. Their unit tests mint every token
+  # connect tokens. Their unit tests mint every token
   # in standard/vectors/connect_token_v1.json from its fixed inputs and compare byte for
   # byte, so a change to the token format that the vectors record and the
   # backends do not follow goes red here. No sockets and no real time, so no C
@@ -2262,6 +2351,8 @@ jobs:
 
       - name: Save the registered unit cases
         if: inputs.full && matrix.shard == '0/2'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/Linux-asan.txt"
 
       - name: Upload the registered unit cases
@@ -2277,6 +2368,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: ./bin/test --shard ${{ matrix.shard }}
 
       # the same locked-memory check as build-and-test; this leg does not
@@ -2397,6 +2489,7 @@ jobs:
         run: >
           cmake -B build-fuzz
           -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           -DCMAKE_C_COMPILER=clang
           -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
@@ -2412,10 +2505,12 @@ jobs:
 
       # the build is a toolchain step and carries a deadline at five times its
       # normal length; the replay is a test step and carries none
-      - name: Build the fifteen replay drivers
+      - name: Build the sixteen replay drivers
         timeout-minutes: 3
         run: |
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
+          # the sixteen harnesses, the Linux-only XDP filter harness among them, build in one parallel build and replay at once;
+          # each replay's exit status is checked
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           mkdir -p bin
@@ -2425,9 +2520,9 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          # the fifteen harnesses replay at once; each replay's exit status is
+          # the sixteen harnesses replay at once; each replay's exit status is
           # checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter rocketnet_fuzz_session_raw"
           pids=""
           for harness in $harnesses; do
             corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
@@ -2442,6 +2537,15 @@ jobs:
 
       - name: Exact-field oracle rejects memory-safe truncation
         run: python3 tools/check_fuzz_oracle.py build-fuzz
+
+      # The replay and AEAD checks against the committed corpora
+      # (tools/check_fuzz_mutants.py): each mutant removes one check from the
+      # packet-open path, is linked ahead of the library and replayed; a
+      # mutant no input tells from the library is a red, unless the tool
+      # marks it EQUIVALENT or UNCOVERED with its reason (and a mark an
+      # input now kills is red too). About 17 s at four jobs.
+      - name: The committed corpora kill the replay and AEAD mutants
+        run: python3 tools/check_fuzz_mutants.py --build build-fuzz --jobs 4
 
       - name: Upload crash reproducers
         if: failure()
@@ -2525,9 +2629,7 @@ jobs:
       - name: Build every fuzzer with NDEBUG
         timeout-minutes: 2
         run: |
-          # the replay step below replays exactly this list; the XDP filter
-          # harness links the filter as host C and is built after the loop
-          harnesses="rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           echo "NDEBUG_HARNESSES=$harnesses" >> "$GITHUB_ENV"
           for src in $harnesses; do
             if [ "$src" = rocketnet_fuzz_xdp_filter ]; then continue; fi
@@ -2539,18 +2641,16 @@ jobs:
               -lbpf -lxdp -luring -lpthread \
               -o "bin/${src}_ndebug"
           done
-          # the XDP filter target links the filter as host C (tests/xdp_host/), instrumented like the library
-          clang -g -O1 -std=gnu11 -ffreestanding -ffp-contract=off -D__linux__ -D__BPF__ -DNDEBUG \
-            -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Itests/xdp_host -Isdk "-DROCKETNET_XDP_FILTER_SOURCE=\"$PWD/sdk/xdp/server_xdp.c\"" \
-            -c tests/xdp_host/server_xdp_host.c -o bin/xdp_host_fuzz_ndebug.o
-          clang++ -g -O1 -std=c++17 \
-            -ffp-contract=off \
-            -DROCKETNET_DEV=1 -DNDEBUG -DROCKETNET_FUZZ_XDP_FILTER_HOST=1 \
+          # Every fuzzer means this one as well, built as fuzz-nightly.yml
+          # builds it: the XDP filter harness links the filter program as
+          # host C (CMake's rocketnet_xdp_filter_host).
+          cmake --build build-fuzz --target rocketnet_xdp_filter_host --parallel 8
+          xdp_host="$(find build-fuzz -name librocketnet_xdp_filter_host.a | head -n 1)"
+          [ -n "$xdp_host" ] || { echo "librocketnet_xdp_filter_host.a was not built"; exit 1; }
+          clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1 -DNDEBUG \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isodium -Isdk -Itests tests/fuzz/rocketnet_fuzz_xdp_filter.cpp bin/xdp_host_fuzz_ndebug.o build-fuzz/librocketnet_dev.a \
-            -lbpf -lxdp -luring -lpthread \
-            -o bin/rocketnet_fuzz_xdp_filter_ndebug
+            -Isodium -Isdk -Itests tests/fuzz/rocketnet_fuzz_xdp_filter.cpp "$xdp_host" build-fuzz/librocketnet_dev.a \
+            -lbpf -lxdp -luring -lpthread -o bin/rocketnet_fuzz_xdp_filter_ndebug
 
       - name: Replay all corpora under NDEBUG
         env:
@@ -2620,7 +2720,7 @@ jobs:
   # htons swapping unconditionally, corrupting every port and every IPv6
   # group). It went red on each and green after each.
   #
-  # serialize's pattern, deliberately: cross-compile with the s390x toolchain
+  # Deliberately: cross-compile with the s390x toolchain
   # at native compiler speed and run under qemu-user, on real s390x
   # instructions against real big-endian memory. Compiling inside an emulated
   # s390x container would put the whole sdk build under emulation and cost the
@@ -2836,8 +2936,7 @@ jobs:
       - if: always()
         uses: ./.github/actions/ccache-stats
 
-  # The standard in standard/ (RN-1, RN-2, RN-R), per serialize's
-  # tools/conformance. The checker reads each document as a DOCUMENT -- its
+  # The standard in standard/ (RN-1, RN-2, RN-R). The checker reads each document as a DOCUMENT -- its
   # published tables, parsed as markdown, with no reference to the source tree
   # -- and compares every pinned row against the same constants as the
   # compiler expands them. A row deleted from the document fails as loudly as
@@ -3088,6 +3187,8 @@ jobs:
         run: *start_unit_functional_timing
 
       - name: Save the registered unit cases
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test --list > "unit-cases/Linux-sodium-pinned.txt"
 
       - name: Upload the registered unit cases
@@ -3098,6 +3199,8 @@ jobs:
           if-no-files-found: error
 
       - name: Run tests (auto ladder) against the pinned sodium
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test
 
       - name: Vendor parity against the pinned backend
@@ -3280,6 +3383,15 @@ jobs:
       - name: soak argument and summary selftest
         run: bash scripts/soak-args-selftest
 
+      # scripts/soak-per-transport's verdicts on logs it did not run (the
+      # nightly gso red of 2026-11-12, cut and edited): a failure a stall can
+      # cause on a stalled run is UNMEASURED with the watch's annotation; a
+      # refusal with no stall, a verify or conservation failure, or a mixed
+      # run stays red. Under a second, no build.
+
+      - name: soak per transport verdict selftest
+        run: bash scripts/soak-per-transport-selftest
+
       # scripts/vm-boot-guard on fake guests: a guest that never writes its
       # started marker is killed at a 2 s deadline with its whole process
       # group and booted again, three attempts, then fails by name; a guest
@@ -3343,12 +3455,14 @@ jobs:
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
 
-      # the whole commit graph without trees or blobs past HEAD: the gate
-      # refuses a baseline whose recorded commit is not an ancestor of HEAD
+      # the whole commit graph: the gate refuses a baseline whose recorded
+      # commit is not an ancestor of HEAD. A plain full clone, no partial-clone
+      # filter: with filter: tree:0 the checkout's unshallow fetch died in
+      # pack-objects (signal 6) on hetzner2 runner 3 and amd-3 runner 2 and
+      # left the runner's clone damaged.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0
-          filter: tree:0
 
       - name: Check the fleet's build dependencies are present
         run: |
@@ -3667,6 +3781,15 @@ jobs:
           python3 tools/test_check_client_server_words.py
           python3 tools/check_client_server_words.py
 
+      # tools/check_other_libraries.py exits 1 when a tracked file's path or
+      # text names another network library, outside the dated records it
+      # lists (RECORDS_ALLOWED): rocketnet stands on its own. Its tests hold
+      # the red controls. It reads files only, so the lint job runs it.
+      - name: Check rocketnet stands on its own
+        run: |
+          python3 tools/test_check_other_libraries.py
+          python3 tools/check_other_libraries.py
+
       # tools/check_no_owned_linked_lists.py exits 1 when RocketNet owns a
       # pointer-linked or index-linked list: it lexes every tracked C/C++
       # source outside sodium/ and refuses a self-pointer member, a cursor
@@ -3740,6 +3863,15 @@ jobs:
           output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      # Every refusal of the split-load merger is one its self-test notices:
+      # each `raise ValueError(` turned into a no-op must turn the suite red
+      # (review 5 O7: 68 of 104 could be deleted with every test green).
+      # About 6 s at 4 jobs.
+      - name: Every split-load refusal is tested
+        run: |
+          python3 tools/check_refusal_mutants.py --self-test
+          python3 tools/check_refusal_mutants.py -j 4 tools/check_split_load.py tools/test_check_split_load.py
 
       - name: Test the test-environment checker's inventory
         run: |
@@ -3830,6 +3962,15 @@ jobs:
           python3 tools/check_fuzz_regressions.py --selftest
           python3 tools/check_fuzz_regressions.py
 
+      # The prefilter and message seeds generated from tests/pcapng: the
+      # committed set must be exactly what the captures give (a renamed or
+      # re-recorded capture left 119 seeds under old names from 2026-10-22
+      # with no check to say so).
+      - name: Test and check the pcapng fuzz seeds
+        run: |
+          python3 tools/pcapng_fuzz_seeds.py --selftest
+          python3 tools/pcapng_fuzz_seeds.py --check
+
       - name: Test the unit-case coverage checker's verdicts
         run: |
           set -euo pipefail
@@ -3843,6 +3984,47 @@ jobs:
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      # tools/check_msvc_crt.py: no bare call MSVC deprecates (C4996, an error
+      # under /WX) in a test, tool or example source MSVC compiles; three
+      # reached Windows CI on 2026-11-12. --self-test plants each of the 218
+      # names, the guard forms and an empty tree.
+      - name: No CRT call MSVC deprecates where MSVC compiles it
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_msvc_crt.py --self-test
+          python3 tools/check_msvc_crt.py
+
+      # tools/check_fuzz_stats.py and tools/check_fuzz_coverage.py hold
+      # fuzz-nightly.yml's legs and coverage jobs to their floor tables; their
+      # self-tests plant each refusal and check the committed tables give
+      # every harness a row, so a new harness without one fails here, per
+      # commit, not on the night.
+      - name: Test the fuzz floor checkers' verdicts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/check_fuzz_stats.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^check_fuzz_stats self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
+          output="$(python3 tools/check_fuzz_coverage.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^check_fuzz_coverage self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
+
+      # scripts/transport-cells-repeat drives nightly.yml's fifty-times cells:
+      # a case list of blanks, a skipped io_uring cell and a failing case must
+      # each fail it (fake ci.yml, fake functional binary, fake io_uring switch)
+      - name: Test the transport cells repeat's verdicts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(bash tools/test_transport_cells_repeat.sh 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^ok: transport-cells-repeat self-test, [1-9][0-9]* cases$' <<<"$output"
 
       # tools/check_make_jobs.py: every make -j, cmake --build --parallel
       # and cmake --build -j in every tracked Makefile, workflow, shell,
@@ -3899,13 +4081,28 @@ jobs:
           bash tools/test_run_functional.sh
           python3 tools/check_skips.py --lint
 
-      - name: Test the mutation runner's generator and process cleanup
+      - name: Test the mutation runner's generator and process cleanup; check the survivor baseline
+        shell: bash
         run: |
           set -euo pipefail
           python3 tools/mutation/run_mutants.py --self-test
+          # the nightly's reviewed survivor baseline: it parses, its gap count is its
+          # gap-ratchet, and every entry is still a mutant of the source as it is now
+          python3 tools/mutation/run_mutants.py --check-baseline tools/mutation/survivors.tsv
           output="$(python3 tools/mutation/test_run_mutants.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      # The nightly tier runs its suites with ROCKETNET_TEST_KEEP_GOING=1
+      # (nightly.yml): a failure no longer stops the run, so the summary must
+      # name every failed case and the run must still exit 1.
+      - name: Test the suite runner's keep-going mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_suite_keep_going.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran 3 tests' <<<"$output"
 
       - if: always()
         uses: ./.github/actions/ccache-stats
