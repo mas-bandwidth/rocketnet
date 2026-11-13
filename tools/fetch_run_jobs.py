@@ -13,9 +13,14 @@ inside the summary job's two-minute bound. The deadline is a real bound, not
 a per-operation timeout:
 
 - Each request runs on a worker thread that the caller joins for at most the
-  request's time left (the smaller of REQUEST_TIMEOUT and the time to the
-  deadline). A request still running then (DNS, connect, headers or a body
-  that keeps trickling) is abandoned and counts as a timeout.
+  time left to the deadline: a GitHub answer that is slow but arrives (ten
+  seconds for one page is seen in practice) is taken, not cut off at a
+  per-request bound. A request still running at the deadline (DNS, connect,
+  headers or a body that keeps trickling) is abandoned and counts as a
+  timeout.
+- A try starts only while at least REQUEST_FLOOR seconds are left before the
+  deadline; with less, the read ends there, red, rather than send a request
+  that has no time to be answered.
 - The body is read in chunks of CHUNK bytes. Before each chunk the socket's
   timeout is set to the time left, and after each chunk the clock is checked,
   so a body that arrives slowly ends at the deadline. Once the response is
@@ -69,7 +74,7 @@ from pathlib import Path
 
 TRIES = 4
 BACKOFF = (2, 4, 8)
-REQUEST_TIMEOUT = 10
+REQUEST_FLOOR = 10
 DEADLINE = 45
 SECONDARY_WAIT = 60
 PER_PAGE = 100
@@ -261,14 +266,14 @@ def fetch_jobs(env, out, fetch=http_fetch, sleep=time.sleep, clock=time.monotoni
     end = clock() + DEADLINE
 
     def request_left():
-        """A left() for one request: the seconds until the earlier of its own REQUEST_TIMEOUT and
-        the deadline, raising TimeoutError once that has passed."""
-        stop = min(end, clock() + REQUEST_TIMEOUT)
+        """A left() for one request: the seconds until the deadline, raising TimeoutError once
+        that has passed. A slow answer may use all of it."""
+        stop = end
 
         def left():
             remaining = stop - clock()
             if remaining <= 0:
-                raise TimeoutError(f"past the request's deadline ({DEADLINE} s in all)")
+                raise TimeoutError(f"past the {DEADLINE} s deadline")
             return remaining
         return left
 
@@ -292,12 +297,13 @@ def fetch_jobs(env, out, fetch=http_fetch, sleep=time.sleep, clock=time.monotoni
             asked = server_wait(error, wall)
             wait = BACKOFF[attempt] if attempt < len(BACKOFF) else None
             if asked is not None:
-                if clock() + asked >= end:
+                if clock() + asked + REQUEST_FLOOR > end:
                     log(f"JOB-LIST=FAIL no verdict: {why}, the server asks for {asked} s, past the "
                         f"{DEADLINE} s deadline: not asked again early")
                     return 1
                 wait = max(asked, wait or 0)
-            if wait is None or clock() + wait >= end:
+            if wait is None or clock() + wait + REQUEST_FLOOR > end:
+                why += f", and fewer than {REQUEST_FLOOR} s would be left for another try"
                 break
             log(f"JOB-LIST try {attempt + 1}/{TRIES}: {why}; again in {wait} s")
             sleep(wait)
@@ -430,7 +436,7 @@ def self_test():
                 if not queue:
                     raise AssertionError("more requests than answers")
                 timeout = left()
-                if not (0 < timeout <= REQUEST_TIMEOUT) or headers.get("Authorization") != "Bearer t":
+                if not (0 < timeout <= DEADLINE) or headers.get("Authorization") != "Bearer t":
                     raise AssertionError(f"request timeout {timeout} or headers {headers}")
                 if "/repos/o/r/actions/runs/7/attempts/1/jobs?per_page=100&page=" not in url:
                     raise AssertionError(f"url {url}")
@@ -454,8 +460,8 @@ def self_test():
             else:
                 expect(f"{label}: a failed read left {out.name} behind", not out.exists())
 
-        # the deadline: a server that hangs each request for its whole timeout gets no try that
-        # starts after DEADLINE, and no wait past it
+        # the deadline: a server that hangs a request for all its time uses the whole deadline in
+        # one try; nothing starts after DEADLINE, and nothing waits past it
         out = Path(tmp) / "slow.json"
         now, slept, timeouts = [0.0], [], []
 
@@ -469,7 +475,48 @@ def self_test():
                           lambda: now[0], log=lambda line: None)
         expect(f"deadline: exit {code}", code == 1)
         expect(f"deadline: ended at {now[0]} s, past {DEADLINE} s", now[0] <= DEADLINE)
-        expect(f"deadline: {len(timeouts)} tries", 1 < len(timeouts) <= TRIES)
+        expect(f"deadline: {len(timeouts)} tries, want 1", len(timeouts) == 1)
+        expect(f"deadline: the request was given {timeouts}, want the whole {DEADLINE} s",
+               timeouts == [DEADLINE])
+
+        # slow but working: GitHub has taken ten seconds for one page. A reply that takes 20 s is
+        # taken on the first try (a flat 10 s request bound turned it into four timeouts, PR #1126
+        # attempt 2), and after a fast 502 it is still taken
+        for label, answers, want_sleeps in (("slow reply", [20], []), ("a 502, then a slow reply", ["502", 20], [2])):
+            out = Path(tmp) / "slow-ok.json"
+            now, slept, queue = [0.0], [], list(answers)
+
+            def slow_ok(url, headers, left):
+                answer = queue.pop(0)
+                if answer == "502":
+                    raise status(502)
+                if left() < answer:
+                    now[0] += left()
+                    raise TimeoutError("timed out")
+                now[0] += answer
+                return green
+
+            lines = []
+            code = fetch_jobs(env, out, slow_ok, lambda s: (slept.append(s), now.__setitem__(0, now[0] + s)),
+                              lambda: now[0], log=lines.append)
+            expect(f"{label}: exit {code} {lines}", code == 0)
+            expect(f"{label}: slept {slept}, want {want_sleeps}", slept == want_sleeps)
+
+        # the floor: a try that failed after using most of the time is not followed by one that
+        # would have under REQUEST_FLOOR seconds; the log says why it stopped
+        out = Path(tmp) / "floor.json"
+        now, slept = [0.0], []
+
+        def reset_late(url, headers, left):
+            now[0] += DEADLINE - REQUEST_FLOOR - 1
+            raise ConnectionResetError("reset")
+
+        lines = []
+        code = fetch_jobs(env, out, reset_late, lambda s: (slept.append(s), now.__setitem__(0, now[0] + s)),
+                          lambda: now[0], log=lines.append)
+        expect(f"floor: exit {code}", code == 1)
+        expect(f"floor: slept {slept}", slept == [])
+        expect(f"floor: the log does not say why {lines}", bool(lines) and "would be left for another try" in lines[-1])
 
         # a body that keeps trickling: one byte a second, never ending. The chunked read checks the
         # clock after every chunk and sets each chunk's socket timeout to the time left, so each try
@@ -490,8 +537,8 @@ def self_test():
                           lambda: now[0], log=lambda line: None)
         expect(f"trickle: exit {code}", code == 1)
         expect(f"trickle: ended at {now[0]} s, past {DEADLINE} s", now[0] <= DEADLINE)
-        expect(f"trickle: a socket timeout past {REQUEST_TIMEOUT} s",
-               bool(socket_timeouts) and max(socket_timeouts) <= REQUEST_TIMEOUT)
+        expect(f"trickle: a socket timeout past {DEADLINE} s",
+               bool(socket_timeouts) and max(socket_timeouts) <= DEADLINE)
         expect("trickle: the stale file was left", not out.exists())
 
         # the socket closed under the read: after a chunk, settimeout's OSError ends the body;
