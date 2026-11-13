@@ -2800,6 +2800,11 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     rocketnet_copy_string( bind_before[0], effective_config.bind_ipv4_address, sizeof( bind_before[0] ) );
     rocketnet_copy_string( bind_before[1], effective_config.bind_ipv6_address, sizeof( bind_before[1] ) );
 
+    if ( env_pass )
+    {
+        rocketnet_config_warn_retired_server_env();
+    }
+
     if ( env_pass && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )

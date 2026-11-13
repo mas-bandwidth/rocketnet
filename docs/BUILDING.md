@@ -413,6 +413,7 @@ in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS
 * Environment: ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS
 * Environment: ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS
+* Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES (retired: not read; a warning at server create when set)
 * Environment: ROCKETNET_SERVER_NUM_OS_CPUS
 * Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
 * Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS

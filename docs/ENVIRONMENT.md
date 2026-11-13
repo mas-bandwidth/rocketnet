@@ -96,6 +96,13 @@ create (`CONFIG_OUT_OF_RANGE` or `CONFIG_ENV_INVALID`), never clamped.
 `portable` and `loopback` have no count to choose: `portable` runs two fixed
 threads, `loopback` none.
 
+The one variable these replace is retired: it is not read, and a server create
+that finds it set logs one warning naming the variables above.
+
+| Variable | Status |
+| --- | --- |
+| `ROCKETNET_SERVER_NUM_XDP_QUEUES` | retired, no effect: a warning at server create when set |
+
 The machine must match on one transport only: `xdp` runs one thread per NIC
 queue, and refuses to start when the NIC's combined queue count is not
 `num_xdp_threads` (`scripts/rocketnet-provision` sets it; see

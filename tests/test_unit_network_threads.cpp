@@ -221,6 +221,78 @@ static void test_network_threads_config_and_environment()
 
 REGISTER_UNIT_TEST( test_network_threads_config_and_environment );
 
+struct network_threads_log_t
+{
+    int warnings_naming_retired;
+    int lines;
+};
+
+static void network_threads_log_capture( void * context, rocketnet_log_level_t level, const char * message, size_t length )
+{
+    network_threads_log_t * log = (network_threads_log_t *) context;
+    log->lines++;
+    char line[1024];
+    const size_t bytes = length < sizeof( line ) - 1 ? length : sizeof( line ) - 1;
+    memcpy( line, message, bytes );
+    line[bytes] = '\0';
+    if ( level == ROCKETNET_LOG_LEVEL_WARN && strstr( line, "ROCKETNET_SERVER_NUM_XDP_QUEUES is no longer read" ) &&
+         strstr( line, "ROCKETNET_SERVER_NUM_XDP_THREADS" ) && strstr( line, "ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS" ) )
+    {
+        log->warnings_naming_retired++;
+    }
+}
+
+// the retired ROCKETNET_SERVER_NUM_XDP_QUEUES: unset, the resolve logs no
+// warning about it; set, the resolve logs one warning naming the variables
+// that replace it, and resolves exactly what it resolves without it
+static void network_threads_resolve_logged( network_threads_log_t * log, struct rocketnet_server_transport_config_t * transport )
+{
+    struct rocketnet_server_config_t config;
+    check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+
+    const rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_quiet( 0 );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_log_function( network_threads_log_capture, log );
+    check( network_threads_resolve( &config, transport ) );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+    rocketnet_quiet( 1 );
+}
+
+static void test_network_threads_retired_variable_warns()
+{
+    for ( int j = 0; j < network_threads_num_rows; ++j )
+    {
+        check( rocketnet_test_env_unsetenv( network_threads_rows[j].variable ) == 0 );
+    }
+    check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES" ) == 0 );
+
+    network_threads_log_t unset_log = { 0, 0 };
+    struct rocketnet_server_transport_config_t unset_transport;
+    network_threads_resolve_logged( &unset_log, &unset_transport );
+
+    check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "7", 1 ) == 0 );
+    network_threads_log_t set_log = { 0, 0 };
+    struct rocketnet_server_transport_config_t set_transport;
+    network_threads_resolve_logged( &set_log, &set_transport );
+
+    rocketnet_test_env_restore();
+
+    check( unset_log.warnings_naming_retired == 0 );
+    check( set_log.warnings_naming_retired == 1 );
+    check( set_log.lines == unset_log.lines + 1 );
+
+    // no behaviour change: every count resolves as it does without it
+    for ( int j = 0; j < network_threads_num_rows; ++j )
+    {
+        check( set_transport.*network_threads_rows[j].transport_field == unset_transport.*network_threads_rows[j].transport_field );
+        check( set_transport.*network_threads_rows[j].transport_field == 0 );
+    }
+}
+
+REGISTER_UNIT_TEST( test_network_threads_retired_variable_warns );
+
 #endif // #if ROCKETNET_DEV
 
 // the plan counts the threads each transport's create starts: its default

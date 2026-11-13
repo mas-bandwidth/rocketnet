@@ -271,6 +271,11 @@ static bool rn_transport_env( const char * side, void * transport, const struct 
                               uint64_t * memory_budget, enum rocketnet_status_t * failure )
 {
     uint64_t budget = 0;
+    if ( strcmp( side, "server" ) == 0 )
+    {
+        rocketnet_config_warn_retired_server_env();
+    }
+
     if ( !rocketnet_config_apply_env( side, transport, fields, num_fields ) ||
          !rocketnet_config_apply_env_uint64( side, "memory_budget_bytes", &budget ) )
     {
