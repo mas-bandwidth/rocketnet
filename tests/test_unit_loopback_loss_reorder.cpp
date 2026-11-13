@@ -316,9 +316,10 @@ static void loopback_drop_take( const uint8_t * data, int bytes, int * delivered
     delivered[seq]++;
 }
 
-// what one update delivered: the server's payload list, and every payload the
-// client has queued
-static void loopback_drop_collect( struct loopback_transport_pair_t * pair, int * server_delivered, int * client_delivered )
+// what one server update delivered: its payload list, which holds that
+// update's payloads until the next server update, so it is read once per
+// server update
+static void loopback_drop_collect_server( struct loopback_transport_pair_t * pair, int * server_delivered )
 {
     const int * indices = NULL;
     uint8_t * const * data = NULL;
@@ -329,7 +330,11 @@ static void loopback_drop_collect( struct loopback_transport_pair_t * pair, int 
         check( indices[i] == 0 );
         loopback_drop_take( data[i], bytes[i], server_delivered );
     }
+}
 
+// what one client update delivered: every payload it queued, drained
+static void loopback_drop_collect_client( struct loopback_transport_pair_t * pair, int * client_delivered )
+{
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     for ( ;; )
     {
@@ -404,9 +409,9 @@ static void test_loopback_transport_drop_every_nth()
         for ( int pass = 0; pass < 2; pass++ )
         {
             rocketnet_client_transport_update( pair.client, pair.time );
-            loopback_drop_collect( &pair, server_delivered, client_delivered );
+            loopback_drop_collect_client( &pair, client_delivered );
             rocketnet_server_transport_update( pair.server, pair.time );
-            loopback_drop_collect( &pair, server_delivered, client_delivered );
+            loopback_drop_collect_server( &pair, server_delivered );
         }
     }
 
@@ -414,9 +419,9 @@ static void test_loopback_transport_drop_every_nth()
     // checking the exact periodic-drop accounting for every transport send
 
     rocketnet_client_transport_update( pair.client, pair.time );
-    loopback_drop_collect( &pair, server_delivered, client_delivered );
+    loopback_drop_collect_client( &pair, client_delivered );
     rocketnet_server_transport_update( pair.server, pair.time );
-    loopback_drop_collect( &pair, server_delivered, client_delivered );
+    loopback_drop_collect_server( &pair, server_delivered );
     rocketnet_client_transport_stats( pair.client, &cstats );
     rocketnet_server_transport_stats( pair.server, &sstats );
     check( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 );
