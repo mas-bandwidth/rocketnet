@@ -1600,7 +1600,7 @@ def main():
         required = facts[n]["actions"] - set(LAYERS[n]["untraced"])
         for act in sorted(required):
             if taken[n].get(act, 0) == 0:
-                failed.append(f"layer {n}: {act} never reached in a clean trace of {span}")
+                failed.append(f"layer {n}: {act} never reached in an accepted clean trace of {span}")
         for act in sorted(set(taken[n]) - facts[n]["actions"]):
             failed.append(f"layer {n}: the trace records {act}, which is not an action of the spec's Next")
     # each reach predicate tries the seeds in turn, the predicates at once
