@@ -20,17 +20,25 @@
 // eventfd's count and completes the next read at once, so a wake is never
 // lost and the worker never spins.
 //
-// A run answered -EAGAIN (the socket full) goes back to be submitted again.
-// Before the stop, no run is submitted until a POLLOUT poll on the socket
-// fires: no spinning. Stop sets quit and wakes the worker: it cancels its
-// receive, its wake read and any poll, keeps sending what is published, and
-// retries a run answered -EAGAIN at once, with no poll, so a socket that
-// stays full cannot hold the stop. Once -EAGAIN has answered
-// ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT times since it saw the stop (each
-// answer counts, a burst of them too) it abandons what still waits
-// (counted). It exits only when nothing of its is in the kernel: no run, no
-// receive, no wake read, no poll (a cancel itself holds nothing: its
-// completion may come after, and the ring is torn down after the join).
+// A run answered full (-EAGAIN, and -EINTR, -ENOBUFS, -ENOMEM: the socket or
+// the device queue behind it had no room) goes back to be submitted again.
+// No run is submitted until the worker's retry timer (a
+// ROCKETNET_URING_SEND_RETRY_SECONDS timeout on its ring) fires or, before
+// the stop, main wakes it: the gso worker's wait. Never a POLLOUT poll: a
+// UDP socket reports room while the device queue behind it still refuses
+// (-ENOBUFS), and the poll would fire at once, again and again.
+//
+// begin_shutdown (the server's stop, before its last disconnect batches)
+// stores shutdown and wakes the worker. From then on each wait a full answer
+// starts counts; a run done (sent or failed) or a new bank claimed starts
+// the count again, and past ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT waits
+// what still waits of the bank is abandoned (counted), so a socket that
+// stays full cannot keep send_idle false: the server asks the stop only once
+// it is true. Stop stores shutdown and quit and wakes the worker: it cancels
+// its receive and its wake read, keeps sending what is published with the
+// same bounded waits, and exits only when nothing of its is in the kernel:
+// no run, no receive, no wake read, no timer (a cancel itself holds nothing:
+// its completion may come after, and the ring is torn down after the join).
 // Main joins it after.
 //
 // SENDMSG goes with MSG_DONTWAIT: without it io_uring waits inside the
@@ -65,16 +73,19 @@ struct rocketnet_uring_queue_send_t;
 // the kinds of the worker's own submissions, beside ROCKETNET_URING_TAG_SEND,
 // _RECV and _CANCEL (rocketnet_uring_codec.h)
 #define ROCKETNET_URING_TAG_WAKE                                             4      // the eventfd READ
-#define ROCKETNET_URING_TAG_POLL                                             5      // the POLLOUT poll after -EAGAIN
+#define ROCKETNET_URING_TAG_TIMER                                            5      // the retry timer after a full answer
 
 // what a cancel names, its tag's index
 #define ROCKETNET_URING_CANCEL_RECV                                          0
 #define ROCKETNET_URING_CANCEL_WAKE                                          1
-#define ROCKETNET_URING_CANCEL_POLL                                          2
 
-// -EAGAIN answers after the stop is seen before the worker abandons what
+// waits after shutdown with no run done before the worker abandons what
 // waits: the gso worker's bound (unmeasured there too: chosen)
 #define ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT          ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT
+
+// the retry timer: how long a run answered full waits before it goes again,
+// unless main's wake comes first (before the stop): the gso worker's wait
+#define ROCKETNET_URING_SEND_RETRY_SECONDS                     ROCKETNET_GSO_SEND_RETRY_SECONDS
 
 // completions taken per pass
 #define ROCKETNET_URING_WORKER_CQE_BATCH                                   256
@@ -95,12 +106,11 @@ struct rocketnet_uring_queue_send_t;
 #define ROCKETNET_URING_WORKER_STEP_SUBMIT                                   7
 #define ROCKETNET_URING_WORKER_STEP_SPLIT                                    8
 #define ROCKETNET_URING_WORKER_STEP_DROP                                     9
-#define ROCKETNET_URING_WORKER_STEP_ARM_POLL                                10
+#define ROCKETNET_URING_WORKER_STEP_ARM_TIMER                               10
 #define ROCKETNET_URING_WORKER_STEP_ARM_RECV                                11
 #define ROCKETNET_URING_WORKER_STEP_ARM_WAKE                                12
 #define ROCKETNET_URING_WORKER_STEP_CANCEL_RECV                             13
 #define ROCKETNET_URING_WORKER_STEP_CANCEL_WAKE                             14
-#define ROCKETNET_URING_WORKER_STEP_CANCEL_POLL                             15
 
 // the worker's counters, one writer, the worker
 #define ROCKETNET_URING_WORKER_COUNTER_SUBMITS                               0      // io_uring_enter calls: submits and waits
@@ -108,7 +118,7 @@ struct rocketnet_uring_queue_send_t;
 #define ROCKETNET_URING_WORKER_COUNTER_GSO_SENDS                             2      // segmented SENDMSGs submitted
 #define ROCKETNET_URING_WORKER_COUNTER_GSO_FALLBACKS                         3      // segmentation turned off for the queue (rocketnet_server_gso.h's refusal threshold)
 #define ROCKETNET_URING_WORKER_COUNTER_SEND_DROPPED                          4      // runs that could not be sent: a destination the socket family cannot carry (packets)
-#define ROCKETNET_URING_WORKER_COUNTER_SOCKET_FULL                           5      // -EAGAIN answers: the socket was full
+#define ROCKETNET_URING_WORKER_COUNTER_SOCKET_FULL                           5      // full answers: -EAGAIN, -EINTR, -ENOBUFS, -ENOMEM
 #define ROCKETNET_URING_WORKER_COUNTER_STRAY                                 6      // completions that named nothing of the worker's
 #define ROCKETNET_URING_WORKER_NUM_COUNTERS                                  7
 
@@ -159,7 +169,7 @@ struct rocketnet_uring_queue_worker_config_t
     bool ipv6;                                      // the socket is ipv6 (dual stack)
     int wake_fd;                                    // the eventfd main writes, -1 for none (the unit suite posts wake completions itself)
     int max_in_kernel;                              // runs in the kernel at once: the ring's room for them
-    int max_retry;                                  // ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT, smaller in the unit suite
+    int max_retry;                                  // ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT, smaller in the unit suite: waits after shutdown
     bool segment;                                   // UDP_SEGMENT is on: runs may carry more than one packet
     struct rocketnet_uring_queue_send_t * send;     // the banks' handoff; not owned
     struct rocketnet_uring_queue_worker_receive_t receive;  // context NULL: no receive
@@ -177,25 +187,27 @@ struct rocketnet_uring_queue_worker_t
 
     struct rocketnet_uring_queue_worker_config_t config;
 
-    // main's: stop stores quit (release), the worker loads it (acquire)
+    // main's: begin_shutdown stores shutdown, stop stores shutdown then quit
+    // (release); the worker loads them (acquire)
 
-    alignas( 64 ) std::atomic<bool> quit;
+    alignas( 64 ) std::atomic<bool> shutdown;       // shutdown
+    std::atomic<bool> quit;                         // quit
 
     // the worker's (RNUringQueueWorker's variables)
 
     alignas( 64 ) bool seen;                        // seen
-    bool blocked;                                   // blocked: a run came back -EAGAIN before the stop, no submit until the poll fires
+    bool blocked;                                   // blocked: a run came back full, no submit until the timer fires (or main's wake, before the stop)
     bool starved;                                   // this pass found the submission queue full (not a model variable)
-    bool poll_armed;                                // poll # "none"
+    bool timer_armed;                               // timer # "none"
     bool wake_armed;                                // wakeRead # "none"
     bool cancelled_recv;
     bool cancelled_wake;
-    bool cancelled_poll;
     int in_kernel;                                  // k
     int last_send_class;                            // the class (ROCKETNET_URING_QUEUE_SEND_CLASS_*) of the last send completion reaped, 0 before one: what the trace check reads, never its own rule
     int cancels;                                    // cancels in the kernel
-    int agains;                                     // agains, up to max_retry
+    int agains;                                     // agains: waits after shutdown since a run was done or a bank claimed, up to max_retry
     uint64_t wake_value;                            // the READ's destination
+    alignas( 8 ) int64_t timer_spec[2];             // the timer's __kernel_timespec (seconds, nanoseconds), read by the kernel at submit
     struct rocketnet_segment_refused_t refused;     // the destinations that refused a segmented send
     std::atomic<uint64_t> counters[ROCKETNET_URING_WORKER_NUM_COUNTERS];
 };
@@ -217,7 +229,7 @@ int rocketnet_uring_queue_worker_pass( struct rocketnet_uring_queue_worker_t * w
 // one step of the loop: one of RNUringQueueWorker's worker actions (a
 // ROCKETNET_URING_WORKER_STEP_* naming it), taken in a fixed order: observe
 // the stop, reap the oldest ready completion (when reap), retire, claim,
-// abandon, send one run, arm the poll, arm the receive and the wake read
+// abandon, send one run, arm the timer, arm the receive and the wake read
 // before the stop or cancel them after it, exit. NONE: nothing to do
 // without the kernel (RNUringQueueWorker Sleep). The trace walk drives it
 // one step a record.
@@ -231,7 +243,11 @@ void rocketnet_uring_queue_worker_run( struct rocketnet_uring_queue_worker_t * w
 // main's: wakes the worker (a write to its eventfd). RNUringQueueWorker Signal.
 void rocketnet_uring_queue_worker_wake( struct rocketnet_uring_queue_worker_t * worker );
 
-// main's: RNUringQueueWorker Stop. quit, then the wake.
+// main's: RNUringQueueWorker BeginStop (the driver's begin_shutdown).
+// shutdown, then the wake: from here a full socket's waits are counted.
+void rocketnet_uring_queue_worker_begin_shutdown( struct rocketnet_uring_queue_worker_t * worker );
+
+// main's: RNUringQueueWorker Stop. shutdown and quit, then the wake.
 void rocketnet_uring_queue_worker_stop( struct rocketnet_uring_queue_worker_t * worker );
 
 // any thread: one counter, relaxed

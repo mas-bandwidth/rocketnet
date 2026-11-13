@@ -393,7 +393,7 @@
 
   (item "uring-send-deferred-row-text" :group "after-v1-1-landing" :area "sdk"
    :title "URING_SEND_DEFERRED: the row text says something other than what is counted"
-   :text "sdk/rocketnet_counters.h says the row counts send calls that returned with sends not yet completed or staged slots not yet submitted. The code adds the worker's SOCKET_FULL to it (sdk/rocketnet_uring_counters.h), which sdk/rocketnet_uring_queue_worker.cpp counts once per send completion that came back -EAGAIN (send buffer full; the run is sent again after POLLOUT); in every re-measure row it equals the kernel's SndbufErrors exactly. Make the text say what is counted, or count what the text says."
+   :text "sdk/rocketnet_counters.h says the row counts send calls that returned with sends not yet completed or staged slots not yet submitted. The code adds the worker's SOCKET_FULL to it (sdk/rocketnet_uring_counters.h), which sdk/rocketnet_uring_queue_worker.cpp counts once per send completion that came back full (-EAGAIN, -EINTR, -ENOBUFS or -ENOMEM; the run is sent again after its retry wait); in every re-measure row it equals the kernel's SndbufErrors exactly. Make the text say what is counted, or count what the text says."
    :date "2026-11-13" :origin "io_uring re-measure on main 3afea2aed")
 
   (item "uring-prefilter-wrong-value-once" :group "after-v1-1-landing" :area "sdk"

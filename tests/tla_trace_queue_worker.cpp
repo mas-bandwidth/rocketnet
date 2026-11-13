@@ -12,8 +12,9 @@
 // the kernel, one call per step. The worker takes one
 // rocketnet_uring_queue_worker_step a step. The kernel is a fake: every
 // submission entry the worker prepares is in it at once, and each of its
-// answers is a step of its own, in any order: a run sent, failed, -EAGAIN
-// or refused; the poll firing or cancelled; the eventfd READ taking a wake
+// answers is a step of its own, in any order: a run sent, failed, full
+// (-EAGAIN, -EINTR, -ENOBUFS, -ENOMEM) or refused; the retry timer firing
+// (-ETIME); the eventfd READ taking a wake
 // or cancelled; the receive ending on its own or cancelled. A cancel's own
 // completion comes with its target's and changes no model variable. The
 // receive is a fake that is armed from the start, as the transport arms it,
@@ -29,20 +30,27 @@
 // the completion it took (the oldest the fake kernel holds: a run's by what
 // rocketnet_uring_queue_send_result makes of its res, a cancel's own as
 // ReapCancel); a publish (main stages one to three packets, then publishes)
-// is Publish when publish returned true; a stop is Stop; each of the fake
-// kernel's answers is the Kernel action it is, and the wait returning is
-// KernelWakesWorker. Main publishes until the stop, which comes in the last
-// third of the walk while a poll is in the kernel, else QWORK_DRAIN_STEPS
-// before its end; before the stop the kernel answers -EAGAIN only in that
-// last third, so a poll may be in the kernel there, and after it the poll
-// completes only once cancelled (the socket stays full); once the
-// worker has exited, a step is still taken, and its EXIT is Done (the
-// exited worker does nothing).
+// is Publish when publish returned true; begin_shutdown is BeginStop and a
+// stop is Stop; each of the fake kernel's answers is the Kernel action it
+// is, and the wait returning is KernelWakesWorker. Main publishes until the
+// stop. It begins the server's stop (begin_shutdown) in the last third of
+// the walk while the retry timer is in the kernel, else QWORK_DRAIN_STEPS
+// before its end, and then stops the worker once nothing waits (the
+// driver's send_idle), else QWORK_DRAIN_STEPS / 2 before the end; in the
+// last third it may also stop the worker at once, with no begin (the
+// transport's free). Before the server is stopping the kernel answers full
+// only in that last third, so the timer may be in the kernel there; once it
+// is stopping the socket stays full more often than not. Once the worker
+// has exited, a step is still taken, and its EXIT is Done (the exited
+// worker does nothing).
 //
-// After the recorded steps, a worker that has not exited is driven with the
-// kernel, unrecorded, until it exits; a worker that can do nothing with
-// nothing of the kernel's left to come, or that does not exit within the
-// bound, fails the walk (a hang is no trace prefix's failure). pass() and
+// After the recorded steps, a server that is stopping and has not stopped
+// the worker is driven with the worker and the kernel, unrecorded and with
+// no publish, until nothing waits (ShutdownDrains: the stop the driver asks
+// only then is reached); then a worker that has not exited is driven,
+// unrecorded, until it exits. A worker that can do nothing with nothing of
+// the kernel's left to come, or that does not get there within the bound,
+// fails the walk (a hang is no trace prefix's failure). pass() and
 // its batch limit (step with reap false) are the unit suite's
 // (tests/test_unit_uring_queue_worker.cpp).
 //
@@ -79,13 +87,12 @@
 
 #if defined( __linux__ ) && defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT )
 
-#include <poll.h>
-
 // the instance: one queue, as many banks published as the walk has steps
 // (the model's U, never reached), each of three slots (so at most three
 // runs), runs of at most two packets, two runs in the kernel at
-// once, two -EAGAIN answers before the stop and two after it before the
-// worker abandons, one segment refusal, one receive that ends on its own;
+// once, two full answers before the server is stopping and two waits after
+// shutdown, with no run done, before the worker abandons, one segment
+// refusal, one receive that ends on its own;
 // two destinations the socket names and one it cannot
 
 #define QWORK_SLOTS 3
@@ -126,10 +133,9 @@ struct qwork_walk_t
 
     // in the kernel, not yet answered
     std::vector<qwork_send_t> sends;
-    bool poll_in;
+    bool timer_in;
     bool wake_in;
     bool recv_in;
-    bool poll_cancel;
     bool wake_cancel;
     bool recv_cancel;
 
@@ -139,6 +145,8 @@ struct qwork_walk_t
     int recv_ends;
 
     bool wake_count;
+    // main has begun the server's stop (the model's stopping)
+    bool stopping;
     const char * st;
     int handed;
     int agains_before;
@@ -262,9 +270,8 @@ static void qwork_take_sqes( qwork_walk_t & walk )
                 walk.sends.push_back( send );
                 break;
             }
-            case IORING_OP_POLL_ADD:
-                walk.poll_in = true;
-                walk.poll_cancel = false;
+            case IORING_OP_TIMEOUT:
+                walk.timer_in = true;
                 break;
             case IORING_OP_RECVMSG:
                 walk.recv_in = true;
@@ -279,11 +286,7 @@ static void qwork_take_sqes( qwork_walk_t & walk )
                 // a cancel of a target no longer in the kernel completes at once
                 const int kind = rocketnet_uring_tag_kind( sqe->addr );
                 const int what = rocketnet_uring_tag_index( sqe->user_data );
-                if ( kind == ROCKETNET_URING_TAG_POLL && walk.poll_in )
-                {
-                    walk.poll_cancel = true;
-                }
-                else if ( kind == ROCKETNET_URING_TAG_WAKE && walk.wake_in )
+                if ( kind == ROCKETNET_URING_TAG_WAKE && walk.wake_in )
                 {
                     walk.wake_cancel = true;
                 }
@@ -415,19 +418,20 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
 
     // the worker's own view, read from the library's struct: the runs it has
     // in the kernel (submitted and not yet reaped, so the posted ones among
-    // them are counted apart), and what it holds of the poll, the receive and
-    // the wake read (poll_armed, wake_armed, the receive's armed word and the
-    // cancelled_* flags); the kernel's completion queue says what is posted
+    // them are counted apart), and what it holds of the timer, the receive
+    // and the wake read (timer_armed, wake_armed, the receive's armed word
+    // and the cancelled_* flags); the kernel's completion queue says what is
+    // posted
     const int k = worker->in_kernel - c_ok - c_again - c_ref;
 
-    const char * poll = "none";
-    if ( qwork_cq_has( walk, ROCKETNET_URING_TAG_POLL ) )
+    const char * timer = "none";
+    if ( qwork_cq_has( walk, ROCKETNET_URING_TAG_TIMER ) )
     {
-        poll = "posted";
+        timer = "posted";
     }
-    else if ( worker->poll_armed )
+    else if ( worker->timer_armed )
     {
-        poll = worker->cancelled_poll ? "cancelling" : "armed";
+        timer = "armed";
     }
 
     const char * recv = "ended";
@@ -451,6 +455,8 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     }
 
     tla_record_t record;
+    record.add( "stopping", tla_bool( walk.stopping ) );
+    record.add( "shutdown", tla_bool( worker->shutdown.load() ) );
     record.add( "quit", tla_bool( worker->quit.load() ) );
     record.add( "seen", tla_bool( worker->seen ) );
     record.add( "st", qwork_string( walk.st ) );
@@ -463,7 +469,7 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     record.add( "cAgain", tla_int( c_again ) );
     record.add( "cRef", tla_int( c_ref ) );
     record.add( "blocked", tla_bool( worker->blocked ) );
-    record.add( "poll", qwork_string( poll ) );
+    record.add( "timer", qwork_string( timer ) );
     record.add( "recv", qwork_string( recv ) );
     record.add( "wakeRead", qwork_string( wake ) );
     record.add( "wakeCount", tla_bool( walk.wake_count ) );
@@ -475,27 +481,33 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     return record;
 }
 
-// the kernel answers one run: sent (whole), failed, -EAGAIN or a segment
-// refusal, as the model's guards allow; before the stop, -EAGAIN only when
-// late, so the poll it asks for may be in the kernel when main stops
+// the full answers: the socket's buffer, a signal, the device queue behind
+// it, memory (rocketnet_uring_queue_send_result's SOCKET_FULL)
+static const int32_t qwork_full[] = { -EAGAIN, -EINTR, -ENOBUFS, -ENOMEM };
+
+// the kernel answers one run: sent (whole), failed, full or a segment
+// refusal, as the model's guards allow; before the server is stopping, full
+// only when late, so the timer it asks for may be in the kernel when main
+// begins the stop
 static const char * qwork_answer( qwork_walk_t & walk, tla_random_t & random, bool late )
 {
     const size_t i = (size_t) random.below( (int) walk.sends.size() );
     const qwork_send_t send = walk.sends[i];
     walk.sends.erase( walk.sends.begin() + (long) i );
 
+    const int32_t full = qwork_full[random.below( 4 )];
     std::vector<int32_t> results;
     results.push_back( 100 * send.count );
     results.push_back( -EPERM );
-    if ( walk.worker.seen || ( late && walk.agains_before < QWORK_MAX_AGAIN ) )
+    if ( walk.stopping || ( late && walk.agains_before < QWORK_MAX_AGAIN ) )
     {
-        results.push_back( -EAGAIN );
+        results.push_back( full );
     }
-    // after the stop the socket stays full more often than not: the worker's
-    // bound on retries is reached (Abandon)
-    for ( int extra = 0; walk.worker.seen && extra < 5; extra++ )
+    // once stopping the socket stays full more often than not: the worker's
+    // bound on waits is reached (Abandon)
+    for ( int extra = 0; walk.stopping && extra < 5; extra++ )
     {
-        results.push_back( -EAGAIN );
+        results.push_back( full );
     }
     if ( send.count > 1 && walk.refusals < QWORK_MAX_REFUSE )
     {
@@ -507,7 +519,7 @@ static const char * qwork_answer( qwork_walk_t & walk, tla_random_t & random, bo
     }
 
     const int32_t res = results[(size_t) random.below( (int) results.size() )];
-    if ( res == -EAGAIN && !walk.worker.seen )
+    if ( res == full && !walk.stopping )
     {
         walk.agains_before++;
     }
@@ -528,18 +540,26 @@ static const char * qwork_answer( qwork_walk_t & walk, tla_random_t & random, bo
 static bool qwork_undrained( const qwork_walk_t & walk )
 {
     const struct rocketnet_uring_queue_send_queue_t * queue = &walk.send->queue[0];
-    return !walk.sends.empty() || walk.poll_in || walk.wake_in || walk.recv_in || queue->held >= 0 || queue->handoff.ready_count > 0 ||
+    return !walk.sends.empty() || walk.timer_in || walk.wake_in || walk.recv_in || queue->held >= 0 || queue->handoff.ready_count > 0 ||
            qwork_cq_visible( walk );
+}
+
+// nothing waits: no bank ready or held (the driver's send_idle)
+static bool qwork_idle( const qwork_walk_t & walk )
+{
+    const struct rocketnet_uring_queue_send_queue_t * queue = &walk.send->queue[0];
+    return queue->held < 0 && queue->handoff.ready_count == 0;
 }
 
 enum
 {
     QWORK_PUBLISH,
+    QWORK_BEGIN,
     QWORK_STOP,
     QWORK_WORKER,
     QWORK_WAKES_WORKER,
     QWORK_ANSWER,
-    QWORK_POLL_FIRES,
+    QWORK_TIMER_FIRES,
     QWORK_RECV_ENDS,
     QWORK_RECV_ENDS_ITSELF,
     QWORK_WAKE_READS,
@@ -547,14 +567,22 @@ enum
 };
 
 // what main, the worker and the kernel may do now. main publishes while it
-// has a free bank, up to u banks, and only while recording; it stops when
-// stop_now, or when stop_late with the poll in the kernel (both only while
-// recording), and always once recording is over. The worker steps once it
-// has exited too: Done
-static void qwork_choices( const qwork_walk_t & walk, bool main_works, int u, bool stop_late, bool stop_now, std::vector<int> & can )
+// has a free bank, up to u banks, and only while recording; while recording
+// it begins the server's stop when begin_now, or when late with the timer
+// in the kernel, and stops the worker when stop_now, once stopping and idle,
+// or (the transport's free) when late with the timer in the kernel; once
+// recording is over it stops the worker when may_stop. The worker steps once
+// it has exited too: Done
+static void qwork_choices( const qwork_walk_t & walk, bool main_works, bool may_stop, int u, bool late, bool begin_now, bool stop_now,
+                           std::vector<int> & can )
 {
     can.clear();
     const bool quit = walk.worker.quit.load();
+    if ( main_works && begin_now && !walk.stopping )
+    {
+        can.push_back( QWORK_BEGIN );
+        return;
+    }
     if ( main_works && stop_now && !quit )
     {
         can.push_back( QWORK_STOP );
@@ -564,16 +592,28 @@ static void qwork_choices( const qwork_walk_t & walk, bool main_works, int u, bo
     {
         can.push_back( QWORK_PUBLISH );
     }
-    if ( !quit && !main_works )
+    if ( !quit && !main_works && may_stop )
     {
         can.push_back( QWORK_STOP );
     }
-    // late in the walk main stops while the poll is in the kernel, the poll
-    // the worker then cancels (CancelPoll)
-    if ( main_works && !quit && stop_late && walk.poll_in )
+    // late in the walk main begins the stop while a wait is on, the wait the
+    // worker then counts toward the bound
+    if ( main_works && !walk.stopping && late && walk.timer_in )
+    {
+        can.push_back( QWORK_BEGIN );
+        can.push_back( QWORK_BEGIN );
+        can.push_back( QWORK_BEGIN );
+    }
+    // the driver asks the stop once nothing waits; the transport's free asks
+    // it whatever waits
+    if ( main_works && walk.stopping && !quit && qwork_idle( walk ) )
     {
         can.push_back( QWORK_STOP );
         can.push_back( QWORK_STOP );
+        can.push_back( QWORK_STOP );
+    }
+    if ( main_works && !quit && late && walk.timer_in )
+    {
         can.push_back( QWORK_STOP );
     }
     if ( strcmp( walk.st, "awake" ) == 0 || ( main_works && strcmp( walk.st, "exited" ) == 0 ) )
@@ -590,11 +630,10 @@ static void qwork_choices( const qwork_walk_t & walk, bool main_works, int u, bo
     {
         can.push_back( QWORK_ANSWER );
     }
-    // after the stop the socket stays full: the poll completes only when the
-    // worker cancels it
-    if ( walk.poll_in && ( !quit || walk.poll_cancel ) )
+    // time passes: the retry timer fires, however full the socket stays
+    if ( walk.timer_in )
     {
-        can.push_back( QWORK_POLL_FIRES );
+        can.push_back( QWORK_TIMER_FIRES );
     }
     if ( walk.recv_in && walk.recv_cancel )
     {
@@ -628,8 +667,8 @@ static const char * qwork_reap_act( const qwork_walk_t & walk )
             // the class is the worker's own report after the step
             // (last_send_class), see qwork_reap_class
             return "ReapSend";
-        case ROCKETNET_URING_TAG_POLL:
-            return "ReapPoll";
+        case ROCKETNET_URING_TAG_TIMER:
+            return "ReapTimer";
         case ROCKETNET_URING_TAG_RECV:
             return "ReapRecvEnd";
         case ROCKETNET_URING_TAG_WAKE:
@@ -664,8 +703,8 @@ static const char * qwork_step_act( int did, const char * reaped, bool exited )
             return "Split";
         case ROCKETNET_URING_WORKER_STEP_DROP:
             return "Drop";
-        case ROCKETNET_URING_WORKER_STEP_ARM_POLL:
-            return "ArmPoll";
+        case ROCKETNET_URING_WORKER_STEP_ARM_TIMER:
+            return "ArmTimer";
         case ROCKETNET_URING_WORKER_STEP_ARM_RECV:
             return "ArmRecv";
         case ROCKETNET_URING_WORKER_STEP_ARM_WAKE:
@@ -674,8 +713,6 @@ static const char * qwork_step_act( int did, const char * reaped, bool exited )
             return "CancelRecv";
         case ROCKETNET_URING_WORKER_STEP_CANCEL_WAKE:
             return "CancelWake";
-        case ROCKETNET_URING_WORKER_STEP_CANCEL_POLL:
-            return "CancelPoll";
         default:
             return "StepUnknown";
     }
@@ -716,7 +753,15 @@ static const char * qwork_act( qwork_walk_t & walk, tla_random_t & random, int a
             }
             return "publish";
         }
+        case QWORK_BEGIN:
+            // the driver's begin_shutdown: shutdown, then the wake
+            walk.stopping = true;
+            rocketnet_uring_queue_worker_begin_shutdown( &walk.worker );
+            qwork_signal( walk );
+            *act = "BeginStop";
+            return "begin";
         case QWORK_STOP:
+            walk.stopping = true;
             rocketnet_uring_queue_worker_stop( &walk.worker );
             qwork_signal( walk );
             *act = "Stop";
@@ -763,15 +808,11 @@ static const char * qwork_act( qwork_walk_t & walk, tla_random_t & random, int a
         case QWORK_ANSWER:
             *act = qwork_answer( walk, random, late );
             return "answer";
-        case QWORK_POLL_FIRES:
-            walk.poll_in = false;
-            qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_POLL, 0, 0 ), walk.poll_cancel ? -ECANCELED : POLLOUT, 0, 0 );
-            if ( walk.poll_cancel )
-            {
-                qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_POLL, 0 );
-            }
-            *act = "KernelPoll";
-            return "pollFires";
+        case QWORK_TIMER_FIRES:
+            walk.timer_in = false;
+            qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_TIMER, 0, 0 ), -ETIME, 0, 0 );
+            *act = "KernelTimer";
+            return "timerFires";
         case QWORK_RECV_ENDS:
             walk.recv_in = false;
             qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), -ECANCELED, 0, 0 );
@@ -875,7 +916,7 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
     for ( int step = 0; step < steps && !failed; step++ )
     {
         const bool late = step >= ( 2 * steps ) / 3;
-        qwork_choices( walk, true, u, late, step == steps - QWORK_DRAIN_STEPS, can );
+        qwork_choices( walk, true, true, u, late, step == steps - QWORK_DRAIN_STEPS, step == steps - QWORK_DRAIN_STEPS / 2, can );
         if ( can.empty() && !walk.worker.quit.load() )
         {
             can.push_back( QWORK_STOP );
@@ -905,12 +946,30 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
         }
     }
 
-    // StopFinishes, past the records: main has stopped (the walk stops it
-    // QWORK_DRAIN_STEPS before the end at the latest), and the worker and the
-    // kernel go on until the worker exits
+    // ShutdownDrains, past the records: a server that is stopping and has not
+    // stopped the worker publishes nothing more, and the worker and the
+    // kernel go on until nothing waits, however full the socket stays (the
+    // stop the driver asks only then)
+    for ( int step = 0; !failed && walk.stopping && !walk.worker.quit.load() && !qwork_idle( walk ); step++ )
+    {
+        qwork_choices( walk, false, false, u, true, false, false, can );
+        if ( can.empty() || step == QWORK_FINISH_STEPS )
+        {
+            fprintf( stderr, "tla_trace queue-worker: the shutdown did not drain (%s)\n",
+                     can.empty() ? "nothing of the kernel's to come" : "step bound" );
+            failed = 1;
+            break;
+        }
+        const char * act = "";
+        bool planted = false;
+        (void) qwork_act( walk, random, can[(size_t) random.below( (int) can.size() )], true, &act, &planted );
+    }
+
+    // StopFinishes, past the records: main stops (when it has not), and the
+    // worker and the kernel go on until the worker exits
     for ( int step = 0; !failed && strcmp( walk.st, "exited" ) != 0; step++ )
     {
-        qwork_choices( walk, false, u, false, false, can );
+        qwork_choices( walk, false, true, u, true, false, false, can );
         if ( can.empty() || step == QWORK_FINISH_STEPS )
         {
             fprintf( stderr, "tla_trace queue-worker: the worker did not exit after the stop (%s)\n",
@@ -936,7 +995,7 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
     char constants[512];
     snprintf( constants, sizeof( constants ),
               "    U = %d\n    R = %d\n    K = %d\n    MaxRetry = %d\n    MaxAgain = %d\n    MaxRefuse = %d\n    MaxRecvEnd = %d\n"
-              "    ExitRule = \"drained\"\n    RetryRule = \"bounded\"\n    WakeRule = \"armed\"\n",
+              "    ExitRule = \"drained\"\n    RetryRule = \"bounded\"\n    WakeRule = \"armed\"\n    ShutdownRule = \"begin\"\n",
               u, QWORK_SLOTS, QWORK_K, QWORK_MAX_RETRY, QWORK_MAX_AGAIN, QWORK_MAX_REFUSE, QWORK_MAX_RECV_END );
 
     const bool written = tla_write_trace( out, "MCTraceQueueWorker", seed, "TraceRNUringQueueWorker", "", constants, records );
