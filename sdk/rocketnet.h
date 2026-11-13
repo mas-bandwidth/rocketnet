@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.34"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.35"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        34
+    #define ROCKETNET_VERSION_PATCH                        35
 
 #else // !ROCKETNET_DEV
 
@@ -3390,6 +3390,16 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// rocketnet_server_finish_message. Use it when game threads each hold a
 /// message open on their own clients; a server used from one thread may
 /// use it too.
+///
+/// One difference: an unreliable message small enough to fit in one packet
+/// is sent alone from this call, on the calling thread, rather than waiting
+/// for rocketnet_server_send_packets to pack it with others. If the update's send limits leave no room to send it, the call
+/// returns 0, the message is dropped and
+/// ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counts it. Every
+/// other message is queued as by rocketnet_server_finish_message: a larger
+/// one, a reliable one, one that must keep its order behind a message already
+/// queued, and, on the in-memory and plain socket transports, one their send
+/// ring had no slot for.
 ///
 /// Needs a message opened by rocketnet_server_start_message on client_index
 /// of a running server; otherwise it asserts in a debug build and returns 0

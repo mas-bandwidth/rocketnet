@@ -112,6 +112,13 @@ LAYERS = {
         "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
         "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],
     },
+    "writerfinish": {
+        "modules": ["RNWriterFinish.tla", "TraceRNWriterFinish.tla"],
+        "untraced": {},
+        # the walk's odd seeds are a staged transport (the first three predicates), its even seeds a buffered one
+        # (the last three): a seed set must hold both kinds
+        "reach": ["SealedAtFinish", "RefusedAtFinish", "NothingForWalk", "RingOpen", "RingQueued", "WalkCarried"],
+    },
 }
 
 STEPS = 400

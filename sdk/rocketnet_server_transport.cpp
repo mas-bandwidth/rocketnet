@@ -938,6 +938,11 @@ static bool rocketnet_server_transport_staged( const rocketnet_server_transport_
     return rocketnet_server_transport_io_has( transport->io, ROCKETNET_TRANSPORT_STAGED );
 }
 
+bool rocketnet_server_transport_send_buffered( const struct rocketnet_server_transport_t * server_transport )
+{
+    return server_transport && !rocketnet_server_transport_staged( server_transport );
+}
+
 // The unit seam: the send capacity the next create reads. 0 keeps the
 // default. It is consumed by that create so one case cannot shape another.
 #if ROCKETNET_DEV
@@ -1819,6 +1824,25 @@ uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct ro
     rocketnet_assert( server_transport );
     return rocketnet_platform_atomic_load_u64( const_cast<volatile uint64_t *>( &server_transport->payload_ring.num_packets ) );
 }
+
+#if ROCKETNET_DEV
+uint64_t rocketnet_server_transport_payload_ring_sealed_for_test( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    const struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
+    uint64_t taken = rocketnet_platform_atomic_load_u64( const_cast<volatile uint64_t *>( &ring->num_packets ) );
+    if ( taken > (uint64_t) server_transport->send_capacity )
+    {
+        taken = (uint64_t) server_transport->send_capacity;
+    }
+    uint64_t sealed = 0;
+    for ( uint64_t i = 0; i < taken; ++i )
+    {
+        sealed += ring->info[i].wire_bytes > 0 ? 1 : 0;
+    }
+    return sealed;
+}
+#endif // #if ROCKETNET_DEV
 
 uint64_t rocketnet_server_transport_fill_ring_chunk_for_test( const struct rocketnet_server_transport_t * server_transport )
 {
