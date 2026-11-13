@@ -707,7 +707,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
 
     if ( !rn_channels_deliver_sequenced( channels, channel, ordering, sequencing ) )
     {
-        // standard/MESSAGES.md m7.4 (nothing is silent): the refused record is stale, so release it and count it (proofs/tla/RNChannelTypes.tla DrainStale)
+        // standard/MESSAGES.md m7.4 (nothing is silent): the refused record is stale, so release it and count it (proofs/tla/RNChannelTypes.tla Drain, its refused set; Broken "DrainStaleSilent" is the uncounted release)
         rx->held_sequenced = slot;
         if ( !rn_sequenced_release_hold( channels, rx ) )
         {

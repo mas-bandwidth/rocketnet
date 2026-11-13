@@ -1243,7 +1243,7 @@ void rocketnet_server_uring_receive_drop_totals( struct rocketnet_server_uring_t
 // ---------------------------------------------------------------------------
 
 // any game thread: the destination's queue (the XDP hash), one claim of its
-// producer bank (proofs/tla/RNUringQueueBankLayout.tla Claim); NULL when that
+// producer bank (proofs/tla/RNUringQueueBankLayout.tla Start); NULL when that
 // bank is full
 
 uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to, uint64_t * packet_id )

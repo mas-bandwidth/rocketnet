@@ -4948,7 +4948,8 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 // The client I/O wake on Windows: a manual-reset event beside an event the
 // socket signals on FD_READ (docs/CLIENT-IO.md "The wake" and
-// rocketnet-client-io-windows; proofs/tla/RNClientIo.tla's IoWait, IoWake and Wake).
+// rocketnet-client-io-windows; proofs/tla/RNClientIo.tla's IoWait and IoWake, and the
+// wake' = TRUE set by HandOffTo).
 // The wake is level-triggered: a set made while no wait runs leaves the event
 // signalled, so the next wait returns at once. FD_READ is re-armed by the
 // drain the I/O step runs to a would-block, so no readable datagram is missed.
@@ -5164,7 +5165,7 @@ bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, do
     return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
 }
 
-// proofs/tla/RNClientIo.tla's Wake: set the level-triggered wake from any thread
+// proofs/tla/RNClientIo.tla's HandOffTo (its wake' = TRUE): set the level-triggered wake from any thread
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );

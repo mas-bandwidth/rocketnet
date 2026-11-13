@@ -537,7 +537,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
 
 static void rn_message_connection_cancel_pending( rn_message_object_t * object, int index );
 
-// proofs/tla/RNMessageOpen.tla Open and Close: a connection's one open start,
+// Open and close (no model yet: roadmap message-open-model): a connection's one open start,
 // and the object's count of them (fill threads open and close on different
 // connections at once, so the count and the last index are atomics)
 // the calling thread's line: line 0 for the client, and for a server whose
@@ -1484,7 +1484,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         return NULL;
     }
 
-    // one start pending per connection (proofs/tla/RNMessageOpen.tla): a
+    // one start pending per connection (no model yet: roadmap message-open-model): a
     // second on the same connection is refused until the first is finished or
     // aborted, or a reset of its connection cancels it
     // (rn_message_connection_cancel_at_reset, RNSlots ResetCancel). Starts on

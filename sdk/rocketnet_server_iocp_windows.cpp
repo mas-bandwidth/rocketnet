@@ -286,7 +286,7 @@ static uint64_t rocketnet_iocp_filter_state( const uint8_t * packet_filter )
 // datagram main would refuse on its stateless rungs never takes a slot; only
 // a datagram it accepts (or every datagram, before the filter is published)
 // meets the capacity check. ACCEPT means the caller banks it at num_packets.
-// proofs/tla/RNIocpReceiveAdmit.tla Arrive: Refuse, then Bank or Full.
+// proofs/tla/RNIocpReceiveAdmit.tla Arrived: Refuse, then Bank or Full.
 static rocketnet_receive_drop_t rocketnet_iocp_receive_admit( uint64_t filter_state, const uint8_t * packet_data, int packet_bytes,
                                                               int num_packets, int capacity )
 {
@@ -1304,7 +1304,7 @@ struct rocketnet_iocp_batch_t
 
 // A completed datagram's bank admission (rocketnet_iocp_receive_admit),
 // counted: banked and RECEIVE_COMPLETED, or RECEIVE_DROPPED with its reason
-// in the worker's drop tally. proofs/tla/RNIocpReceiveAdmit.tla Arrive: Bank, or the
+// in the worker's drop tally. proofs/tla/RNIocpReceiveAdmit.tla Arrived: Bank, or the
 // count of Refuse and Full (EveryDropCounted).
 static void rocketnet_iocp_bank_datagram( rocketnet_iocp_batch_t * batch, rocketnet_iocp_receive_buffer_t * buffer,
                                           const rocketnet_address_t & from, const uint8_t * packet_data, int packet_bytes )

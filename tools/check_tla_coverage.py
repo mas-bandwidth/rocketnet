@@ -210,6 +210,96 @@ def check_citations():
     return failures
 
 
+# A model citation in the code: "proofs/tla/RNFoo.tla" or "RNFoo.tla", and the
+# operators named right after it ("RNFoo.tla Open and Close", "RNFoo.tla's
+# Open, Close"). The module must exist, and an operator it names must be
+# defined by the module or a module it extends or instances: a citation of a
+# model that was never written, or of an action it does not have, binds the
+# code to nothing.
+CODE_SUFFIXES = (".h", ".hpp", ".c", ".cpp", ".inc")
+MODEL_CITATION_RE = re.compile(r"(?<![A-Za-z0-9_./-])(?:proofs/tla/)?([A-Za-z][A-Za-z0-9_]*)\.tla\b")
+_OPERATOR = r"[A-Z][A-Za-z0-9_]*"
+CITED_OPERATORS_RE = re.compile(
+    r"`?\)?(?:'s)?[ \t]+`?(" + _OPERATOR + r"(?:`?(?:[ \t]*,[ \t]*|[ \t]+and[ \t]+|[ \t]+or[ \t]+|[ \t]*/[ \t]*)`?"
+    + _OPERATOR + r")*)")
+_MODULE_REF_RE = re.compile(r"\bEXTENDS\b([^\n]*)|\bINSTANCE\s+([A-Za-z_][A-Za-z0-9_]*)")
+# a CONSTANT(S) or VARIABLE(S) list runs to the next line that starts in column 0
+_DECLARATION_RE = re.compile(r"\b(?:CONSTANTS?|VARIABLES?)\b(.*?)(?=^\S|\Z)", re.S | re.M)
+
+
+def declared_names(text):
+    """The operators, constants and variables a comment-stripped module declares."""
+    names = set(find_definitions(text))
+    for m in _DECLARATION_RE.finditer(text):
+        names.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", m.group(1)))
+    return names
+
+
+def model_definitions(module, cache):
+    """The operator names module and every proofs/tla module it EXTENDS or
+    INSTANCEs define, or None when proofs/tla/<module>.tla does not exist."""
+    if module in cache:
+        return cache[module]
+    if not (TLA_DIR / f"{module}.tla").is_file():
+        cache[module] = None
+        return None
+    names, seen, queue = set(), set(), [module]
+    while queue:
+        name = queue.pop()
+        path = TLA_DIR / f"{name}.tla"
+        if name in seen or not path.is_file():
+            continue
+        seen.add(name)
+        text = strip_comments(path.read_text(errors="replace"))
+        names.update(declared_names(text))
+        for m in _MODULE_REF_RE.finditer(text):
+            queue.extend(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", m.group(1)) if m.group(1) else [m.group(2)])
+    cache[module] = names
+    return names
+
+
+def operator_like(word, defined_anywhere):
+    """A word after a model citation that names an operator rather than prose:
+    defined by some model, or a CamelCase name of two or more words."""
+    return word in defined_anywhere or (sum(c.isupper() for c in word) >= 2 and any(c.islower() for c in word))
+
+
+def check_model_citations():
+    """Every model a C or C++ file cites exists, and every operator (or
+    constant, or variable) a citation names right after the module is declared
+    by that module or a module it extends or instances."""
+    failures = []
+    cache = {}
+    defined_anywhere = set()
+    if TLA_DIR.is_dir():
+        for path in sorted(TLA_DIR.glob("*.tla")):
+            defined_anywhere.update(declared_names(strip_comments(path.read_text(errors="replace"))))
+    for rel in citation_scan_files():
+        if not rel.endswith(CODE_SUFFIXES):
+            continue
+        text = (ROOT / rel).read_text(errors="replace")
+        for m in MODEL_CITATION_RE.finditer(text):
+            module = m.group(1)
+            line = text.count("\n", 0, m.start()) + 1
+            names = model_definitions(module, cache)
+            if names is None:
+                failures.append(f"{rel}:{line}: cites {m.group(0)}, which is not a model in proofs/tla")
+                continue
+            ops = CITED_OPERATORS_RE.match(text, m.end())
+            if not ops:
+                continue
+            # a name the chain runs into that is itself a file ("ServerStopSpread.tla
+            # SealOne", "MCFoo.cfg") is the next citation, not an operator
+            for w in re.finditer(_OPERATOR, ops.group(1)):
+                word, after = w.group(0), ops.start(1) + w.end()
+                if re.match(r"\.(?:tla|cfg)\b", text[after:after + 5]):
+                    break
+                if operator_like(word, defined_anywhere) and word not in names:
+                    failures.append(f"{rel}:{line}: cites {module}.tla {word}, which {module} does not declare "
+                                    f"(nor any module it extends or instances)")
+    return failures
+
+
 def iter_rows():
     if not COVERAGE.is_file():
         raise ValueError(f"{COVERAGE}: missing: 0 rows were read")
@@ -788,6 +878,7 @@ def main():
 
     failures.extend(owed_but_cited(rows))
     failures.extend(check_citations())
+    failures.extend(check_model_citations())
 
     if args.actions or args.actions_strict:
         action_modules = sorted({r["module"] for r in rows
