@@ -40,6 +40,7 @@ struct held_t
     rn_window_receive_t receive;
     uint32_t next_number;
     uint32_t padding;
+    uint64_t key_b;                     // the fixed home key's b (held_reset)
 };
 
 struct held_key_t
@@ -48,9 +49,15 @@ struct held_key_t
     uint32_t ordering;
 };
 
+// A reset draws a fresh home key (rn_region_carve); these cases set one fixed
+// key after it, so the homes held_map read stay the homes after each reset
+// (held_create chooses it).
+
 static void held_reset( held_t * h )
 {
     rn_region_reset( h->region );
+    h->region->held_key_a = 0x9E3779B97F4A7C15ULL;
+    h->region->held_key_b = h->key_b;
     memset( &h->counters, 0, sizeof( h->counters ) );
     check( rn_channels_init( &h->channels, h->region, h->region->num_channels, 0 ) );
     rn_window_receive_init( &h->receive, h->region, 0 );
@@ -73,6 +80,7 @@ static void held_create( held_t * h )
     h->region = rn_arena_region( h->arena, 0 );
     check( h->region->window == 64 );
     check( h->region->held_entries == 2 * h->region->window );
+    h->key_b = 0x6A09E667F3BCC909ULL;
     held_reset( h );
 }
 
@@ -147,18 +155,33 @@ static void held_release( held_t * h, held_key_t key )
     rn_channels_end_update( &h->channels );
 }
 
-// homes[o][c]: the cell (channel c, ordering o) takes in an empty index
+static bool held_pick( uint32_t homes[HELD_ORDERINGS][HELD_CHANNELS], uint32_t home, const held_key_t * taken, int num_taken, held_key_t * out );
+
+// homes[o][c]: the cell (channel c, ordering o) takes in an empty index, under
+// the first fixed home key that homes two keys at the last cell and two at
+// cell 0 on four channels (the wrap cases' layout)
 static void held_map( held_t * h, uint32_t homes[HELD_ORDERINGS][HELD_CHANNELS] )
 {
     check( h->region->num_channels >= HELD_CHANNELS );
-    for ( uint32_t ordering = 1; ordering < HELD_ORDERINGS; ordering++ )
+    const uint32_t last = h->region->held_entries - 1;
+    bool found = false;
+    for ( uint64_t step = 0; step < 64 && !found; step++ )
     {
-        for ( uint32_t channel = 0; channel < HELD_CHANNELS; channel++ )
+        h->key_b = 0x6A09E667F3BCC909ULL + step;
+        for ( uint32_t ordering = 1; ordering < HELD_ORDERINGS; ordering++ )
         {
-            held_reset( h );
-            homes[ordering][channel] = held_cell( h, held_hold( h, channel, ordering ) );
+            for ( uint32_t channel = 0; channel < HELD_CHANNELS; channel++ )
+            {
+                held_reset( h );
+                homes[ordering][channel] = held_cell( h, held_hold( h, channel, ordering ) );
+            }
         }
+
+        held_key_t key[4] = {};
+        found = held_pick( homes, last, key, 0, &key[0] ) && held_pick( homes, last, key, 1, &key[1] ) && held_pick( homes, 0, key, 2, &key[2] ) &&
+                held_pick( homes, 0, key, 3, &key[3] );
     }
+    check( found );
 
     held_reset( h );
 }

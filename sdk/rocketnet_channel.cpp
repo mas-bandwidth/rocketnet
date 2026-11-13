@@ -123,27 +123,57 @@ static rn_delivery_t * rn_channels_reliable_delivery( rn_channels_t * channels )
 #define RN_HELD_COMPLETE        1
 #define RN_HELD_COLLECTING      2
 
+// The key is 41 bits: the channel's low 17 bits over the 24-bit ordering. A
+// channel index is below 2^16, so RN_HELD_RELIABLE_BLOCK's low 17 bits are
+// above every one.
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_CHANNELS_LIMIT <= ( 1 << 16 ), "a channel index fits the key's 17 channel bits, with RN_HELD_RELIABLE_BLOCK above it" );
+ROCKETNET_STATIC_ASSERT( 2 * (uint64_t) ROCKETNET_MESSAGE_WINDOW_MAX <= ( (uint64_t) 1 << 32 ), "the 2W cells index from the mix's low 32 bits" );
+
 static inline uint64_t rn_held_key( uint32_t channel, uint32_t ordering )
 {
-    return ( (uint64_t) channel << 32 ) | rn_u24( ordering );
+    return ( (uint64_t) ( channel & 0x1FFFF ) << 24 ) | rn_u24( ordering );
 }
 
-static inline uint32_t rn_held_home( uint64_t key, uint32_t entries )
+// A key's home cell, keyed per connection. The sender chooses the keys, so a
+// fixed, public home let it choose W keys sharing one run of cells: every hold
+// and every lookup then walked the run, O(W) a record. The home is keyed with
+// a and b, the region's random key drawn at every carve (rn_region_carve):
+// a x + b over the 41-bit key, which a sender cannot predict without a and b,
+// then a fixed 64-bit mix whose low bits pick the cell. The plain
+// multiply-add-shift (top bits of a x + b) is universal, but on a sender's
+// structured keys (consecutive orderings) linear probing still let runs grow:
+// at W = 1024 one connection in sixty walked over 64 cells. The mix breaks
+// that linear structure, so the worst scan stays near a random table's.
+
+static inline uint32_t rn_held_home( const rn_region_t * region, uint64_t key )
 {
-    uint64_t h = key * 0x9E3779B97F4A7C15ULL;
+    uint64_t h = region->held_key_a * key + region->held_key_b;
     h ^= h >> 29;
-    return (uint32_t) ( h & ( entries - 1 ) );
+    h *= 0xBF58476D1CE4E5B9ULL;
+    h ^= h >> 32;
+    return (uint32_t) h & ( region->held_entries - 1 );
 }
 
 #if ROCKETNET_DEV
 // Unit-library instrumentation only: the held-index lookups this thread made,
-// so a test bounds the receive path's work per record by count, not by time.
+// so a test bounds the receive path's work per record by count, not by time;
+// and the most cells one find, insert or erase scan stepped through.
 static thread_local uint64_t rn_held_finds;
+static thread_local uint32_t rn_held_probe_worst;
 void rn_channels_held_finds_reset() { rn_held_finds = 0; }
 uint64_t rn_channels_held_finds_read() { return rn_held_finds; }
+void rn_channels_held_probe_worst_reset() { rn_held_probe_worst = 0; }
+uint32_t rn_channels_held_probe_worst_read() { return rn_held_probe_worst; }
+uint32_t rn_channels_held_home( const rn_region_t * region, uint32_t channel, uint32_t ordering )
+{
+    return rn_held_home( region, rn_held_key( channel, ordering ) );
+}
 #define RN_HELD_FIND_COUNT() ( rn_held_finds++ )
+#define RN_HELD_PROBES( cells ) ( rn_held_probe_worst = (cells) > rn_held_probe_worst ? (cells) : rn_held_probe_worst )
 #else
 #define RN_HELD_FIND_COUNT() ( (void) 0 )
+#define RN_HELD_PROBES( cells ) ( (void) 0 )
 #endif // #if ROCKETNET_DEV
 
 static uint32_t rn_held_find( const rn_region_t * region, uint64_t key )
@@ -151,23 +181,26 @@ static uint32_t rn_held_find( const rn_region_t * region, uint64_t key )
     RN_HELD_FIND_COUNT();
 
     const uint32_t entries = region->held_entries;
-    uint32_t i = rn_held_home( key, entries );
+    uint32_t i = rn_held_home( region, key );
 
     for ( uint32_t step = 0; step < entries; step++ )
     {
         const rn_held_entry_t * entry = &region->held_index[i];
         if ( !entry->used )
         {
+            RN_HELD_PROBES( step + 1 );
             return RN_DESCRIPTOR_NONE;
         }
         if ( entry->key == key )
         {
+            RN_HELD_PROBES( step + 1 );
             return i;
         }
 
         i = ( i + 1 ) & ( entries - 1 );
     }
 
+    RN_HELD_PROBES( entries );
     return RN_DESCRIPTOR_NONE;
 }
 
@@ -197,13 +230,14 @@ static bool rn_held_insert( rn_region_t * region, uint64_t key, uint64_t number,
     }
 
     const uint32_t entries = region->held_entries;
-    uint32_t i = rn_held_home( key, entries );
+    uint32_t i = rn_held_home( region, key );
 
     for ( uint32_t step = 0; step < entries; step++ )
     {
         rn_held_entry_t * entry = &region->held_index[i];
         if ( !entry->used )
         {
+            RN_HELD_PROBES( step + 1 );
             entry->key = key;
             entry->number = (uint32_t) number;
             entry->used = used;
@@ -237,11 +271,12 @@ static bool rn_held_erase( rn_region_t * region, uint32_t index )
         j = ( j + 1 ) & mask;
         if ( !region->held_index[j].used )
         {
+            RN_HELD_PROBES( step );
             ended = true;
             break;
         }
 
-        const uint32_t home = rn_held_home( region->held_index[j].key, entries );
+        const uint32_t home = rn_held_home( region, region->held_index[j].key );
 
         // the entry at j may move to the hole at i unless its home lies cyclically in (i, j]
 

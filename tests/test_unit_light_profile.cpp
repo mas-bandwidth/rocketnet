@@ -167,7 +167,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual=1528614751 (the Windows unit job, run 43448217775).
 // The per-transport thread counts grow the transport config, one 64-byte
 // rounding: actual=1528614815 (the Windows unit job, run 43463295653).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566239 )
+// The held index's per-connection home key (rn_region_t held_key_a and
+// held_key_b, 16 bytes; the struct is fixed-width fields and pointers, so the
+// same 16 on every 64-bit target) adds 16000 to the server (the regions are
+// one array, rounded once) and nothing to the client (its one region's 64-byte
+// rounding holds it, as on Linux): actual=1528630815, derived, not measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527582239 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -248,7 +253,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (ROCKETNET_MSGX_RECV_QUEUE_SIZE, 16000 at 1000 clients, was 8192; review
 // E3): three banks of 7808 more entries add 35042248 to the server: actual=
 // 1660619243 (mini-m5, Apple clang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1659570667 )
+// The held index's per-connection home key (rn_region_t held_key_a and
+// held_key_b, 16 bytes, the same on every 64-bit target) adds 16000 to the
+// server and nothing to the client (the Windows note has the account):
+// actual=1660635243, derived, not measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1659586667 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -377,9 +386,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // gso 1 worker, io_uring 2), lowers the server: actual=2142726194 (the Linux
 // Debug and Release DEV=ON unit jobs, run 43463295653). arm64 adds 8 for the
 // one xdp thread record in place of 56, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141677626ULL )
+// The held index's per-connection home key (rn_region_t held_key_a and
+// held_key_b, 16 bytes) adds 16000 to the server (the regions are one array,
+// rounded once) and nothing to the client (its one region's 64-byte rounding
+// holds it): actual=2142742194 (amd-3, gcc, Release, DEV ON); arm64 the same
+// 16000, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141693626ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141677618ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2141693618ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and

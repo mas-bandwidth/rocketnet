@@ -1895,6 +1895,15 @@ The distinction exists so that an application pays for ordering only where it as
 it, and so that the receive ring can be sized from the number of records that can be
 held rather than from the number in flight.
 
+[RN-2 m7 Delivery: reliable codes 2, 3 and 4](MESSAGES.md#m7)
+**The held records are found through 2W hashed cells, and the hash is keyed with a
+secret drawn for each connection.** The sender chooses every key, a channel and an
+ordering index, so with a fixed hash it could choose W keys that share one run of cells
+and make every hold and every lookup walk the run, a cost per record that grows with W.
+With the connection's own key, keys the sender chooses land as unrelated keys do, and the
+2W cells for at most W entries keep the worst probe short (34 cells at W = 1024 over 3000
+connections, against 984 with the fixed hash).
+
 <a id="m8"></a>
 ## m8. Blocks
 
