@@ -99,12 +99,12 @@ run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
 ```
 32 clients, 1 game thread(s), server transport loopback
-[end] client frame p50 2.4 us, p99 13.6 us, max 74.6 us (budget 100 us)
-server main thread in rocketnet mean 83.7 us, max 222.5 us; network half (on the main thread) mean 81.6 us, max 220.1 us
+[end] client frame p50 11.0 us, p99 46.1 us, max 70.0 us (budget 100 us)
+server main thread in rocketnet mean 225.9 us, max 316.7 us; network half (on the main thread) mean 73.8 us, max 112.9 us
 client frame budget held at p99 (informational, never a failure)
-latency client->server frames: min 1 mean 1.99 max 2
+latency client->server frames: min 0 mean 0.84 max 2
 latency server->client frames: min 1 mean 1.00 max 1
-latency: 2 extra frame(s) (correct order)
+latency: 1 extra frame(s) (correct order)
 PASS
 ```
 
@@ -112,11 +112,11 @@ and with `--game-threads 4`:
 
 ```
 32 clients, 4 game thread(s), server transport loopback
-[end] client frame p50 2.5 us, p99 13.5 us, max 88.2 us (budget 100 us)
-server main thread in rocketnet mean 4.8 us, max 43.7 us; network half (on the game threads) mean 476.8 us, max 1139.5 us
+[end] client frame p50 11.8 us, p99 49.9 us, max 77.0 us (budget 100 us)
+server main thread in rocketnet mean 13.8 us, max 32.2 us; network half (on the game threads) mean 323.0 us, max 575.1 us
 client frame budget held at p99 (informational, never a failure)
-latency client->server frames: min 1 mean 1.59 max 2
-latency server->client frames: min 1 mean 1.00 max 1
+latency client->server frames: min 1 mean 1.55 max 2
+latency server->client frames: min 1 mean 1.00 max 2
 latency: 2 extra frame(s) (correct order)
 PASS
 ```
