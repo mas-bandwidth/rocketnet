@@ -48,6 +48,10 @@ MCRefreshConnectedOnResponse == TRUE
 \* publishes it
 MCResponseTakesHeld == TRUE
 
+\* MCServerConnectionTwoSlots.cfg: the release hold off, to stay inside the
+\* case limit (ServerConnection HoldReleased)
+MCHoldOff == FALSE
+
 \* the family race (MCServerConnectionRace.cfg, MCServerConnectionRaceIpv6.cfg
 \* and the reversed witness MCServerConnectionBrokenCommitEarly.cfg): a token
 \* naming both families on a host with both; the server serves one family,

@@ -113,6 +113,7 @@ MCClientConnectionBrokenCookieReplaces.cfg	MCClientConnection.tla	action	Handsha
 MCClientConnectionBrokenEarlyPayload.cfg	MCClientConnection.tla	action	PayloadOnlyWhenConnected	ignore-terminal	clientconnection	required	-
 MCClientConnectionRetryFromFailure.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenRetryKeepsAttempt.cfg	MCClientConnection.tla	action	FreshAttemptFromFailure	ignore-terminal	clientconnection	required	-
+MCClientConnectionAuthenticRefusals.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionRace.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenCommitEarly.cfg	MCClientConnection.tla	invariant	CommitsOnAnswer	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenEarlyAnyCookie.cfg	MCClientConnection.tla	invariant	EarlySendPerAdvance	ignore-terminal	clientconnection	required	-

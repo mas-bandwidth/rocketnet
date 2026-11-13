@@ -311,6 +311,13 @@ NumMappings == Cardinality(LiveAddrs)
 \* (rocketnet_client_slots_assign pops only the published part of the free
 \* stack); the reversed witness lets it take a held one
 ResponseTakesHeldSlot == FALSE
+
+\* a released slot is held until the update publishes it (the code);
+\* MCServerConnectionTwoSlots.cfg turns the hold off (MCHoldOff), since the
+\* held copies of its states take it past the 110 s case limit, and the
+\* one-slot runs check the hold
+HoldReleased == TRUE
+
 Assignable == {i \in Slots \ UsedSlots : ~slot[i].held \/ ResponseTakesHeldSlot}
 
 \* the lowest assignable slot: the model's choice of a free slot (the code
@@ -677,7 +684,7 @@ ServerRecvResponse(p) ==
 \* while the history is live.
 Release(a) ==
     /\ smap' = [smap EXCEPT ![a] = NoMap]
-    /\ slot' = [slot EXCEPT ![smap[a].slot] = HeldSlot]
+    /\ slot' = [slot EXCEPT ![smap[a].slot] = IF HoldReleased THEN HeldSlot ELSE FreeSlot]
     /\ UNCHANGED churnDenied
 
 \* a sealed session packet that opens for a mapping with a slot: a
