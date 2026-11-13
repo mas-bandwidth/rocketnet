@@ -5869,6 +5869,8 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         {
             server_transport->counters.values[i] = transport_rows[i];
         }
+        // the rio transport's pin refusals, the row after the shared ones
+        server_transport->counters.values[ROCKETNET_COUNTER_RIO_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_RIO_PIN_REFUSALS];
     }
 
     return &server_transport->counters;
