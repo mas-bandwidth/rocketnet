@@ -625,8 +625,8 @@ RefusalLeavesStateUnchanged ==
           /\ sendRefused'=(sendRefused+1) % CountMod
           /\ (maxPayload' # maxPayload => NextCode \in UnreliableSources)]_vars
 \* m7.4 (nothing is silent): every sequenced record that arrived is delivered,
-\* still held, superseded, or released and counted. Broken = "DrainStaleSilent"
-\* releases a drained record without delivering or counting it.
+\* still held, superseded, refused, or released and counted. Broken =
+\* "InTurnStaleSilent" drops an in-turn stale record without counting it.
 SequencedArrivedAccounted == connected =>
     \A m \in {n \in {PacketMessage(pid) : pid \in opened} : Sequenced(Code(n)) /\ ~Block(n)} :
         m \in Values(receiver.trace) \/ m \in receiver.heldSequenced \/

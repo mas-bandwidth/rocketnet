@@ -93,8 +93,11 @@ gets a turn.
 joins the ready list; it is numbered, the pop leaves channel 0's FIFO empty,
 and the mutant rejoins channel 0 without the `queue_head != NONE` test
 (`rn_ordered_write`, after `rn_channel_queue_pop`): channel 0 is ready with
-nothing queued, and the next walk reads its head as a message
-(`rn_endpoint_ready_message`). `ReadyNonEmpty` fails at state 3. Before this
+nothing queued, which `ReadyNonEmpty` forbids. (The code would not misread
+it: `rn_endpoint_ready_message` returns NULL for an empty FIFO and the next
+walk of `rn_ordered_write` removes the channel through its defensive branch;
+the invariant states that the branch is never needed.) `ReadyNonEmpty` fails
+at state 3. Before this
 case `ReadyNonEmpty` was declared in the control with no witness and no
 record (MM041).
 

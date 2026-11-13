@@ -28,7 +28,16 @@
 \* the descriptor taking another ticket or leaving the queue, and Expire drops
 \* the entries of a stale ticket with the rest kept in order.
 \*
-\* Reversed witnesses (Broken), each a line of the code changed:
+\* Front is rn_ordered_announce_config's contract: it handles a channel 0
+\* with records queued and other channels ready. Its only callers
+\* (rn_endpoint_announce_config at the server's Observe reset and the
+\* client's connect) call it on a freshly reset endpoint, with every FIFO and
+\* the ready list empty, where appending and pushing to the front agree and
+\* nothing is ready; the model lets Enqueue run first, so ConfigAppended and
+\* FrontJoinsTwice check that contract, not a state the SDK reaches.
+\*
+\* Reversed witnesses (Broken), each the code's rule changed (FrontJoinsTwice
+\* removes two lines):
 \*   "ConfigAppended"    CONFIG appended at the tail of channel 0, not pushed
 \*                       to its head: OrderPreserved;
 \*   "RejoinEmpty"       Rotate rejoins the channel without checking that its

@@ -100,16 +100,18 @@ compared with the held state there.
 ### Every sequenced refusal is counted
 
 `released` holds every sequenced record that left the receiver without a
-delivery, and `DroppedCount(r)` is its count. `SequencedArrivedAccounted`
-(m7.4, "nothing is silent") requires every sequenced record that arrived to be
-in the delivered trace, still held, or released. The paths into `released`:
-a record superseded by a newer one; an in-turn record older than the
-watermark (`rn_sequenced_in_turn`, SEQUENCED_STALE); a future record refused
-because the hold is full or the record is oversize (HOLD_FULL), checked
-before it is compared with the held record, so a refused newer record leaves
-the older hold in place; and, in `Drain`, a held record the watermark refuses
-(`DrainStale`, the code's `Sequence < watermark` test) and a held code-1
-record meeting a spent unreliable allowance `Du` (UNRELIABLE_DELIVERY_FULL).
+delivery, and `DroppedCount(r)` is its count; `refused` holds the records
+dropped by a refusal. `SequencedArrivedAccounted` (m7.4, "nothing is
+silent") requires every sequenced record that arrived to be in the delivered
+trace, still held, refused, or released. The paths into `released`: a record
+superseded by a newer one; an in-turn record older than the watermark
+(`rn_sequenced_in_turn`, SEQUENCED_STALE); and, in `Drain`, a held record the
+watermark refuses (`DrainStale`, the code's `Sequence < watermark` test) and
+a held code-1 record meeting a spent unreliable allowance `Du`
+(UNRELIABLE_DELIVERY_FULL). Into `refused`: a future record that is oversize
+(refused before it is compared with the held record, so a refused newer
+record leaves the older hold in place) or meets a full pool (HOLD_FULL,
+after the stale and superseded comparison).
 `DrainStale` is not reachable at the model's small indexes: a held record is
 newer than the watermark of the epoch before, and the new epoch's watermark
 starts at zero; the half-range case that reaches it is `RNSequencingWrap`'s
@@ -119,8 +121,13 @@ it, and `MCRNChannelBrokenInTurnStaleSilent.cfg` fails
 `SequencedArrivedAccounted`. (The former `DrainStaleSilent` witness reached
 the invariant only through another path and is removed.)
 
-`OpenPacket` never ends the connection: every overflow of the receive side is
-dropped and counted, as the code does.
+`OpenPacket` no longer ends the connection on a sequenced or unreliable
+overflow: a full hold pool, an oversize future record and a spent `Du` are
+dropped and counted, as the code does. Two receive-side overflows still end
+the connection in the code, both invariant breaks the window bound rules
+out: a full held-ordered index (`rn_held_insert`, RNHeldOwnership `Hold`)
+and a reliable record meeting a full delivery table (the region exhausted;
+the `Drain` comment in the module calls it an invariant break).
 
 ## Shared delivery and comparison
 
