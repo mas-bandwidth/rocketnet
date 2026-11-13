@@ -1275,9 +1275,10 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 ///   function NULL, live allocations, or a library already initialized with
 ///   another allocator.
 /// - Update receives a non-finite time, a negative time (every one, not only
-///   the first) or a time below the time before it, with or without a
-///   connection. The last good time is kept, and the call logs. A negative
-///   time never moves the clock; later times move it on by the caller's
+///   the first), a time above 2^52 seconds, or a time below the time before
+///   it, with or without a connection. The last good time is kept, and the
+///   call logs. A negative time or one above 2^52 seconds never moves the
+///   clock; later times move it on by the caller's
 ///   steps.
 /// - A started message stays open at update or send_packets. On the server
 ///   every open message is aborted there. On the client an in-place start is
@@ -2701,10 +2702,12 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 ///
 /// @param client The client. NULL counts as API misuse and does nothing.
 /// @param time The game clock in seconds, the same clock on every call,
-/// finite and non-negative. A time that is not finite, a negative time
-/// (every one, not only the first), or a time below the time before it is
+/// finite, non-negative and at most 2^52 seconds (about 143 million years).
+/// A time that is not finite, a negative time (every one, not only the
+/// first), a time above 2^52 seconds, or a time below the time before it is
 /// clamped to the last good time and counted as API misuse. A negative time
-/// never moves the clock: the first finite non-negative time starts it.
+/// or one above 2^52 seconds never moves the clock: the first valid time
+/// starts it.
 
 ROCKETNET_EXPORT void rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
@@ -3249,10 +3252,12 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
 /// @param time The game clock in seconds, the same clock on every call,
-/// finite and non-negative. A time that is not finite, a negative time
-/// (every one, not only the first), or a time below the time before it is
+/// finite, non-negative and at most 2^52 seconds (about 143 million years).
+/// A time that is not finite, a negative time (every one, not only the
+/// first), a time above 2^52 seconds, or a time below the time before it is
 /// clamped to the last good time and counted as API misuse. A negative time
-/// never moves the clock: the first finite non-negative time starts it.
+/// or one above 2^52 seconds never moves the clock: the first valid time
+/// starts it.
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 

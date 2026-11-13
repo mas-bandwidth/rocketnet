@@ -2590,15 +2590,15 @@ static uint8_t * rn_server_link_start_packet( void * transport, int client_index
 static bool rn_message_link_splits_update( const struct rn_message_object_t * object )
 {
     return object->link.update_receive && object->link.update_client_acks && object->link.update_finish &&
-           object->link.update == RN_LINK_FORWARD( rocketnet_server_transport_update )::call;
+           object->link.update == RN_LINK_FORWARD( rocketnet_server_transport_update_from_layer )::call;
 }
 
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
-    link->update = RN_LINK_FORWARD( rocketnet_server_transport_update )::call;
-    link->update_receive = RN_LINK_FORWARD( rocketnet_server_transport_update_receive )::call;
+    link->update = RN_LINK_FORWARD( rocketnet_server_transport_update_from_layer )::call;
+    link->update_receive = RN_LINK_FORWARD( rocketnet_server_transport_update_receive_from_layer )::call;
     link->update_client_acks = RN_LINK_FORWARD( rocketnet_server_transport_update_client_acks )::call;
     link->update_finish = RN_LINK_FORWARD( rocketnet_server_transport_update_finish )::call;
     link->payloads = RN_LINK_FORWARD( rocketnet_server_transport_payloads )::call;
