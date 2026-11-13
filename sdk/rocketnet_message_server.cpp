@@ -1041,9 +1041,11 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // trip is taken as that sample, after this update's acks, so the
         // resend delay follows the path from the first round trip the
         // transport measures rather than waiting message_resend_delay_initial_ms;
-        // rn_window_ack_seed_rtt does nothing once the connection has a sample
+        // rn_window_ack_seed_rtt does nothing once the connection has a sample,
+        // so the transport's figure (a cold line per connection) is read only
+        // before it: link.rtt is a read with no effects
 
-        if ( object->link.rtt )
+        if ( object->link.rtt && !connection->ordered.ack.has_rtt )
         {
             rn_window_ack_seed_rtt( &connection->ordered.ack, object->link.rtt( object->link.transport, i ) );
         }
