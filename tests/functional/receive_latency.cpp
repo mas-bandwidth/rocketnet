@@ -10,8 +10,6 @@
     back returns it one update late (sdk/rocketnet_receive_delivery_check.h is
     the same rule as a unit test, with no time).
 
-    Each row is one transport pair and one direction, and is one case:
-
     The server updates at RECEIVE_LATENCY_RATE on the case's thread and the two
     clients run on a second thread. Each frame, every message goes out at 15%
     and again at 55% of the frame, so the receiver's handoff gets two datagrams
@@ -23,7 +21,10 @@
               update.
       client  the server sends each client a message at both phases, between
               its updates; the clients update on their own thread at 75% of
-              the frame, and the receive call is the client's update.
+              the frame, and the receive call is the client's update. The
+              row measures the client transport it names (the I/O thread's
+              receive handoff, sdk/rocketnet_receive_handoff.h); its server
+              may be any.
 
     A message is late when the receive call that returned it is not the first
     one to begin after its send. The case asserts on the count of late
@@ -86,6 +87,9 @@ struct receive_latency_row_t
 static const struct receive_latency_row_t receive_latency_rows[] = {
     { "server_gso", "gso", "portable", RECEIVE_LATENCY_SERVER },
     { "server_io_uring", "io_uring", "portable", RECEIVE_LATENCY_SERVER },
+    { "client_portable", "portable", "portable", RECEIVE_LATENCY_CLIENT },
+    { "client_gso", "portable", "gso", RECEIVE_LATENCY_CLIENT },
+    { "client_msgx", "portable", "msgx", RECEIVE_LATENCY_CLIENT },
 };
 
 // the phase of each send in the frame
@@ -217,8 +221,9 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 
     // a build or kernel without the transport falls to another one through
     // the pin's own fallback (rocketnet_test_server_pin_allows_io_uring): the
-    // row measures only the transport it names
-    if ( strcmp( rocketnet_server_transport_name( server ), row->server_transport ) != 0 )
+    // row measures only the transport it names. A client row measures the
+    // client's transport, so its server may be any (a leg's server pin).
+    if ( row->direction == RECEIVE_LATENCY_SERVER && strcmp( rocketnet_server_transport_name( server ), row->server_transport ) != 0 )
     {
         printf( "receive latency %s: granted %s, not %s: nothing to measure\n", name, rocketnet_server_transport_name( server ), row->server_transport );
         fflush( stdout );
@@ -277,6 +282,24 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     {
         slot[c] = rocketnet_client_index( clients[c] );
         receive_latency_check( slot[c] >= 0, name, "client has no slot" );
+    }
+
+    // a client row measures only the client transport it names: a platform
+    // or build without it grants another
+    if ( row->direction == RECEIVE_LATENCY_CLIENT )
+    {
+        const char * granted = rocketnet_client_transport_name( clients[0] );
+        if ( !granted || strcmp( granted, row->client_transport ) != 0 )
+        {
+            printf( "receive latency %s: client granted %s, not %s: nothing to measure\n", name, granted ? granted : "none", row->client_transport );
+            fflush( stdout );
+            for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+            {
+                rn_cli_client_stop_and_destroy( clients[c], rocketnet_time() );
+            }
+            rn_cli_server_stop_and_destroy( server );
+            return;
+        }
     }
 
     const int total = frames * RECEIVE_LATENCY_PHASES * RECEIVE_LATENCY_CLIENTS;
@@ -475,6 +498,9 @@ static void receive_latency_run_named( const char * row_name )
 
 void rocketnet_test_receive_latency_server_gso();
 void rocketnet_test_receive_latency_server_io_uring();
+void rocketnet_test_receive_latency_client_portable();
+void rocketnet_test_receive_latency_client_gso();
+void rocketnet_test_receive_latency_client_msgx();
 
 void rocketnet_test_receive_latency_server_gso()
 {
@@ -484,4 +510,19 @@ void rocketnet_test_receive_latency_server_gso()
 void rocketnet_test_receive_latency_server_io_uring()
 {
     receive_latency_run_named( "server_io_uring" );
+}
+
+void rocketnet_test_receive_latency_client_portable()
+{
+    receive_latency_run_named( "client_portable" );
+}
+
+void rocketnet_test_receive_latency_client_gso()
+{
+    receive_latency_run_named( "client_gso" );
+}
+
+void rocketnet_test_receive_latency_client_msgx()
+{
+    receive_latency_run_named( "client_msgx" );
 }
