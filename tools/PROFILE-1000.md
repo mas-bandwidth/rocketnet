@@ -107,8 +107,9 @@ its measurements and the remaining work before a complete budget gate.
    zero latency. The timing collector must not alter message/receipt
    consumption, and calibrated clock overhead is never subtracted from the
    reported call latencies.
-4. The public five-step loop also includes server/client release and abort
-   calls in some integrations. If not exercised by this load, cover them in a
+4. The public five-step loop also includes the message abort calls
+   (`client_abort_message`, `server_abort_message`,
+   `server_abort_client_message`) in some integrations. If not exercised by this load, cover them in a
    separate 1000-client fixture before asserting **every** main call. Create,
    stop/disconnect and destroy have distinct lifecycle budgets and are not
    smuggled into the per-frame claim.
