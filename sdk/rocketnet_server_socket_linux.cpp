@@ -550,8 +550,8 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
         {
             strcpy( gateway_ip_string, "?" );
         }
-        rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s: the server does not resolve it. send the gateway one packet (ping -c 1 %s) and start again, check it with `ip neigh show %s dev %s`, or set ROCKETNET_GATEWAY_ETHERNET_ADDRESS to its MAC",
-                         family_name, gateway_ip_string, interface_name, gateway_ip_string, gateway_ip_string, interface_name );
+        rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s: the server does not resolve it. send the gateway one packet (ping -c 1 -I %s %s, which a link-local ipv6 gateway needs) and start again, check it with `ip neigh show %s dev %s`, or set ROCKETNET_GATEWAY_ETHERNET_ADDRESS to its MAC",
+                         family_name, gateway_ip_string, interface_name, interface_name, gateway_ip_string, gateway_ip_string, interface_name );
         return false;
     }
 

@@ -224,7 +224,7 @@ after the interface name for more):
     #    to cpu num_os_cpus + k (the cpu XDP worker k pins itself to; give the
     #    script the server's ROCKETNET_SERVER_NUM_OS_CPUS when it is not 1),
     #    moves any other vector of the port off the worker cpus, and reads
-    #    them back. It writes only smp_affinity_list, so it runs beside the
+    #    back every vector it pinned or moved. It writes only smp_affinity_list, so it runs beside the
     #    live server. Provision itself runs R7 (channels) before R4 (IRQs), so
     #    a port left with many channels provisions on the first run.
     #

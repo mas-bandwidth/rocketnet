@@ -132,6 +132,13 @@ static void test_xdp_transport_preflight_irqaffinity_list()
     // an isolated set that is not a cpu list judges the form only
     rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=1", "1-3,", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
 
+    // the token twice: the kernel applies each in order, so the last one is judged
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=1 ro irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0 ro irqaffinity=2", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( isolated_cpu == 2 );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0 xirqaffinity=2", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0 irqaffinity=0,", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MALFORMED );
+
     // the value's bound: 255 characters is a value, 256 is not
     {
         char line[300] = "irqaffinity=0";

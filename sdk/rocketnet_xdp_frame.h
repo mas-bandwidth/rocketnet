@@ -1061,7 +1061,8 @@ static inline int rocketnet_xdp_cpu_list_has( const char * list, int cpu )
 
 // IRQAFFINITY (B1 of scripts/rocketnet-provision): the kernel command line's
 // irqaffinity=<cpu-list>, left-bounded (start or a space before it) like every
-// other B1 token. It keeps the machine's interrupts off the isolated cpus the
+// other B1 token; the last one when there are several, as the kernel applies
+// them in order. It keeps the machine's interrupts off the isolated cpus the
 // xdp threads spin on, so any well-formed list with no cpu in the isolated set
 // is met: irqaffinity=0 for the default num_os_cpus of 1, irqaffinity=0-1 for
 // num_os_cpus 2. An isolated list that is NULL or empty judges the form only
@@ -1088,11 +1089,15 @@ static inline int rocketnet_xdp_cmdline_irqaffinity( const char * cmdline, const
     }
 
     // left-bounded by the line start or a blank (a space or a tab, the
-    // script's word split)
-    const char * match = strstr( cmdline, token );
-    while ( match && match != cmdline && match[-1] != ' ' && match[-1] != '\t' && match[-1] != '\n' )
+    // script's word split). The last such token: the kernel runs the
+    // irqaffinity= handler for each one in order, so a later one wins
+    const char * match = NULL;
+    for ( const char * found = strstr( cmdline, token ); found; found = strstr( found + 1, token ) )
     {
-        match = strstr( match + 1, token );
+        if ( found == cmdline || found[-1] == ' ' || found[-1] == '\t' || found[-1] == '\n' )
+        {
+            match = found;
+        }
     }
 
     if ( !match )
