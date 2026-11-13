@@ -33,4 +33,8 @@ BoundOnQuitOnlyBroken == TRUE
 \* MCRNGsoHandoffReachErrorDropRunning.cfg (the rule) must fail
 \* NotReachedErrorDropRunning: a counted error drop before shutdown.
 CountErrorDropsBroken == FALSE
+
+\* MCRNGsoHandoffBrokenStopTail.cfg: the stop count forgets the unread
+\* tail of the buffer main holds; must fail RxAccounted.
+CountTailBroken == FALSE
 =============================================================================

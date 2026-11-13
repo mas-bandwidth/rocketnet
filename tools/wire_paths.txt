@@ -73,6 +73,7 @@ sdk/rocketnet_fill_phase.cpp	the check of the thread rules for server calls: pro
 sdk/rocketnet_fill_phase.h	the check of the thread rules for server calls: process state, nothing on the wire
 sdk/rocketnet_gateway_netlink.h	XDP gateway discovery through rtnetlink
 sdk/rocketnet_gateway_netlink_linux.cpp	XDP gateway discovery through rtnetlink
+sdk/rocketnet_gso_pin.h	the gso workers' cpu placement (num_os_cpus + queue): thread placement, writes no packet byte
 sdk/rocketnet_hash.cpp	FNV-1a for in-process tables
 sdk/rocketnet_hash.h	FNV-1a for in-process tables
 sdk/rocketnet_internal.h	the internal include list
