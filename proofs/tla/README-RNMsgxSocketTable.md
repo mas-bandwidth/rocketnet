@@ -97,7 +97,7 @@ and `Disconnect` (ICMP).
   fine-grained actions apply one of them and the call-level actions apply
   them in the code's order (`RunF`) with no holder step between, so each
   step has one definition. The fine-grained actions are listed untraced in
-  `tools/tla_trace_check.py` with that reason, and liveness (`SpecFair`) is
+  the layer's row, `tests/tla_trace_msgx.row`, with that reason, and liveness (`SpecFair`) is
   checked over `NextFine`, the fine-grained actions alone.
 
 The index's empty entries are outside its domain here (the code holds -1), so

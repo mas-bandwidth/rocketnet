@@ -20,7 +20,7 @@
 // between calls, so the model action is the call-level ForgetCall or
 // SweepCall. The model's fine-grained steps of those calls (Forget, Retire,
 // ForgetDereg, SweepBegin, RetireDead, Close) let holders run inside a call
-// and are listed untraced in tools/tla_trace_check.py.
+// and are listed untraced in its row, tests/tla_trace_msgx.row.
 //
 // The plant (ROCKETNET_MSGX_SOCKET_TABLE_PLANT, in
 // sdk/rocketnet_msgx_socket_table.cpp, the tla_trace_plant_msgx build): a

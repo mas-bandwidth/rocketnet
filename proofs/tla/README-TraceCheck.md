@@ -136,7 +136,11 @@ predicates for the edges (below), so a walk that never gets there is red.
      the trace is not written; a 64-bit counter goes through `tla_int_split` and the
      model compares 4-tuples. `tla_string`, `tla_sequence` and `tla_function` (empty is
      `<<>>`; a key twice is an error, never merged) write the rest.
-2. **One row of `LAYERS` in `tools/tla_trace_check.py`.**
+2. **Its row, `tests/tla_trace_x.row`, beside the layer file** (the same stem: the row
+   of `tests/tla_trace_<file>.cpp` is `tests/tla_trace_<file>.row`). A row is one Python
+   dict literal; `tools/tla_trace_check.py` reads it with `ast` and never runs it, and
+   comments are welcome. Copy `tests/tla_trace_example.row`. Its keys:
+   - `layer`: the name the file registers (`"x"`).
    - `modules`: the spec first, any module it extends from `proofs/tla`, then
      `TraceRNX.tla` last.
    - `untraced`: any action of `Next` no walk takes, with the reason.
@@ -149,7 +153,13 @@ predicates for the edges (below), so a walk that never gets there is red.
      after a wrap. Each costs one more TLC run per seed until a seed reaches it.
    - `steps` (optional): this layer's walk length, when 400 steps cannot reach its
      edges; never under 100.
+   - `header_only` (optional, `True`): the layer's code is a header-only sdk file.
    - `self_contained`: the example's alone; any other row with it is refused.
+   - `commit`: the seeds run on every commit and the shard each runs in,
+     `{seed: shard}`, a shard being `0` to `SHARD_COUNT - 1` (`tools/tla_trace_check.py`).
+     The layer's action coverage and its `reach` predicates must hold over these seeds
+     alone, per commit; nightly the layer runs 64 seeds in the shard of its first commit
+     seed. See "Adding a layer: the steps" below for choosing them.
 3. **`TraceRNX.tla`.** Copy `TraceRNTraceExample.tla` and change only these:
    - `EXTENDS RNX, Sequences` (more standard modules may follow).
    - `VarsRec == [v |-> v, ...]` over exactly the spec's `VARIABLES`, less the row's
@@ -200,10 +210,21 @@ predicates for the edges (below), so a walk that never gets there is red.
     defines and sdk includes, or the file tests the plant anywhere else; or no `#if` of
     those sdk files tests its plant define (the example alone is self-contained, and
     its row says why).
-- **The table:** a registered layer with no row, or a row with no layer; a name
-  registered twice (`REFUSED <name> registered-twice`), a bad name, or two rows of one
-  name; a row key the table does not know, `self_contained` on a row but the
-  example's, or `steps` under 100; a plant binary that is not exactly one layer.
+- **The rows:** a layer file with no row file, or a row file with no layer file; a
+  registered layer with no row, or a row with no layer; a name registered twice
+  (`REFUSED <name> registered-twice`), a bad name, or two rows of one name; a row that
+  is not one dict literal, or names a key twice; a row key the table does not know, a
+  key it needs missing, `self_contained` on a row but the example's, or `steps` under
+  100; a plant binary that is not exactly one layer, or not the layer its file's row
+  names. More layer files than `TLA_TRACE_MAX_LAYERS` (`tests/tla_trace_record.h`, 256)
+  is refused when CMake configures; a full table at start prints
+  `REFUSED <name> table-full`.
+- **The shards:** a layer with no commit seed, a commit seed given two shards (a dict
+  literal would keep only the last; the checker reads the literal), a seed in a shard
+  that does not exist, a shard that holds no (layer, seed) pair; the `tla-trace` matrix
+  of `ci.yml`, the `trace` matrix of `tlc.yml` or the ruleset's shard checks are not
+  the `SHARD_COUNT` shards. `--table` runs these and the row checks with no build (lint
+  runs it on every commit).
 - **Each walk:**
   - it fails, times out (120 s), or prints no `CONFIG`, `TRACE`, `ACTS`,
     `PLANT-FIRED` and `PLANT-AT`;
@@ -228,7 +249,9 @@ predicates for the edges (below), so a walk that never gets there is red.
   both builds, so the two traces agree until the planted code acts, and the rejection
   must land exactly where it does: the plant is the cause.
 - **Across the seeds:** an action of `Next` that is not `untraced`, or a `reach`
-  predicate, that no accepted clean trace took or reached.
+  predicate, that no accepted clean trace took or reached. Per commit the seeds are the
+  row's `commit` seeds, and the failure names the row: a layer whose commit seeds cannot
+  reach its edges is red on every commit, never checked less in silence.
 
 `tools/planted_violations.tsv` plants these on the example layer, each red with its
 reason. The sdk-include rules are planted on the example with its `self_contained`
@@ -254,11 +277,15 @@ hand-written traces:
 
 ## Where it runs, and what it costs
 
-- **Every commit:** the `tla-trace` job of `ci.yml` builds `tla_trace_all` (the harness
-  and every plant) and runs `--layer all --seeds 1-4 --jobs 8 --shard I/9` in nine parallel shard jobs
-  (a summary job carries the required name "TLA+ trace check (fixed seeds)").
-- **Nightly:** the `trace` job of `tlc.yml` runs 64 seeds that start where the day of
-  the year puts them.
+- **Every commit:** the `tla-trace` job of `ci.yml` runs `SHARD_COUNT` (9) parallel shard
+  jobs. Shard I builds `tla_trace_all` with `-DROCKETNET_TLA_TRACE_ONLY=$(python3
+  tools/tla_trace_check.py --stems I/9)`, the harness and the plants of its own layers
+  only, and runs `--layer all --seeds commit --jobs 8 --shard I/9` (a summary job
+  carries the required name "TLA+ trace check (fixed seeds)", and takes the shard names
+  from `--shard-names`).
+- **Nightly:** the `trace` job of `tlc.yml` runs the same shards: shard I runs the layers
+  whose first commit seed is in shard I, 64 seeds each that start where the day of the
+  year puts them, with their coverage and reach over all 64.
 - **Cost:** see "Measured cost" below.
 - **On failure:** TLC prints the behaviour up to the rejection. The last `ti` is the
   last record that matched, so record `ti + 1` is the first code step that is not the
@@ -268,14 +295,18 @@ hand-written traces:
   seed's first over the whole run (a plant whose violation TLC reports without
   printing a behaviour is run again, up to five times; each seed's log says
   `PLANT-ATTEMPTS` when it was).
-- **Shards are (layer, seed) pairs:** `--shard I/9` runs row I of `SHARDS` in
-  `tools/tla_trace_check.py`, where an entry is `layer:seed` or a whole `layer`. A heavy
-  layer (msgx, xdp-reply-macs) is spread by seed; its action coverage and reach
-  predicates run in the shard holding its first seed, which walks its other seeds again
-  (the walk alone; TLC checks each of them in its own shard). The table is checked on
-  every run: a pair in two shards, a pair in none, or an empty shard is red. Any other
-  shard count but 1 exits 2; `--shard 0/1` (the default, and the nightly run) checks every
-  seed of every layer in one run.
+- **Shards are (layer, seed) pairs:** with `--seeds commit`, `--shard I/9` runs every pair
+  whose row puts it in shard I. A heavy layer (msgx, xdp-reply-macs) is spread by seed; its
+  action coverage and reach predicates run in its home, the shard of its first commit
+  seed, which walks its other commit seeds again (the walk alone; TLC checks each of them
+  in its own shard). With `--seeds A-B`, `--shard I/9` runs the layers homed in shard I
+  over every seed of the range. The table is checked on every run. Any other shard count
+  but 1 exits 2; `--shard 0/1` (the default) runs the layers asked for whole.
+- **Adding shards** when one passes 45 s of check step: move pairs to a lighter shard in
+  the rows, or raise `SHARD_COUNT` in `tools/tla_trace_check.py` and run
+  `python3 tools/tla_trace_check.py --write-shards`, which writes both workflows' shard
+  matrices and the ruleset's shard checks (the ruleset is applied to GitHub by the
+  command in `docs/branch-protection.md`); then give the new shards pairs.
 
 ## Measured cost
 
@@ -295,7 +326,7 @@ walks twice over, two TLC runs and its reach runs, each TLC run about 2.5 s of J
 start. With build and tlacheck at about 30 s, the 2-minute budget holds about 30
 example-sized layers; a real layer's longer walk and larger state cost more, measured
 when its row lands. When a shard's check step passes 45 s, its pairs move to another
-shard of `SHARDS`, or a shard is added (see the `tla-trace` job's comment in `ci.yml`).
+shard in the rows, or shards are added (section "Where it runs").
 
 ## MIGRATION: a layer written against v1 (dc60a6b09 or 0c583957e)
 
@@ -347,13 +378,81 @@ A v1 layer then changes in exactly these places:
    reach predicates. Change nothing else: the checker compares the rest with the
    template. If your v1 `VarsRec` computed a field (a length, a sum), log the variable
    itself instead. If the spec's `vars` leaves a variable out, fix the spec.
-6. **`tools/tla_trace_check.py`, your row.** `{"modules": [spec, ..., "Trace<Spec>.tla"],
-   "untraced": {"Action": "why no walk takes it"}}`, plus `ghost`, `reach` and `steps`
-   (100 or more) where they apply. Drop `kind`, `quiet` and `features`. A layout layer lists its
-   edges in `reach` and sets `steps` so a walk reaches them.
-7. **CI.** Nothing: `--layer all` picks the row up. Build `tla_trace_all`.
+6. **`tests/tla_trace_<layer>.row`, your row.** `{"layer": "<name>", "modules": [spec, ...,
+   "Trace<Spec>.tla"], "untraced": {"Action": "why no walk takes it"}, "commit": {...}}`,
+   plus `ghost`, `reach` and `steps` (100 or more) where they apply. Drop `kind`, `quiet`
+   and `features`. A layout layer lists its edges in `reach` and sets `steps` so a walk
+   reaches them.
+7. **CI.** Nothing beyond the row: its `commit` puts it in its shards.
 
-Run it before you push, on a bench with the pinned jar:
-`cmake --build build --target tla_trace_all && python3 tools/tla_trace_check.py --bin bin
---tlacheck TLACHECK --jar /opt/tla/tla2tools.jar --layer <yours> --seeds 1-4 --jobs 8
---dir WORK`.
+Run it before you push as "Adding a layer: the steps" below says.
+
+## Adding a layer: the steps
+
+For a worker binding a model to its code. Everything a layer needs is its own new files;
+nothing shared is edited, so layers added on parallel branches merge without conflict.
+
+1. **Files you add**, all new:
+   - `tests/tla_trace_<file>.cpp`: the walk, registered with `TLA_TRACE_LAYER( "<name>",
+     ... )` (section "Adding a layer `x`" above). CMake picks it up and builds its plant
+     binary `tla_trace_plant_<file>`; add nothing to `CMakeLists.txt`.
+   - `tests/tla_trace_<file>.row`: its row, the same stem (below).
+   - `proofs/tla/Trace<Spec>.tla`: a copy of `TraceRNTraceExample.tla`, changed only where
+     step 3 above says.
+   - Where the model is new: `MCTraceRNXSelf.tla` and its controls (section "Controls
+     before code"), with their `CASES.tsv` and `RUNS.tsv` rows grouped with your package's.
+   - `proofs/tla/COVERAGE.tsv`: the trace row (`<module>-trace`, code
+     `tests/tla_trace_<file>.cpp`, module `Trace<Spec>`, status `covered`), placed next to
+     the model's own row, not at the end of the file.
+   - The sdk file under trace gets its plant: an `#if defined( ROCKETNET_<X>_PLANT )` arm
+     that the clean build never compiles.
+2. **The row.** Copy `tests/tla_trace_example.row` and set:
+   ```python
+   {
+       "layer": "<name>",                      # what the .cpp registers
+       "modules": ["RN<Spec>.tla", "TraceRN<Spec>.tla"],
+       "untraced": {"Action": "why no walk takes it"},
+       "ghost": {"v": "why the code holds no such word"},   # only if needed
+       "reach": ["Wrapped", "Full"],           # the edges a walk must show
+       "steps": 400,                           # only if 400 is wrong; 100 or more
+       "commit": {1: 12},                      # per commit: seed -> shard
+   }
+   ```
+3. **Seeds per commit.** One seed (`{1: <shard>}`) for a new layer; all 64 nightly seeds
+   run anyway. Four seeds (`{1: s, 2: s, 3: s, 4: s}`) for the handshake, session,
+   replay and window layers, and for any layer whose edges need more than one walk to
+   show (the writerfinish layer's odd seeds are one kind of transport and its even
+   seeds the other). The commit seeds alone must take every action and reach every
+   `reach` predicate: if they cannot, the per-commit check is red with
+   `never reached in a clean trace of seed 1 (its per-commit seeds: ...)`, and the fix
+   is more seeds in `commit`, never fewer predicates.
+4. **The shard.** Run `python3 tools/tla_trace_check.py --table` to see the table green;
+   then pick the shard by time. Measure your layer alone on a bench (step 5) and add its
+   check time to the shard you choose; the shard's check step stays under 45 s on a
+   runner, about 70 s on a bench (`## Measured cost`). Your package's pairs go to the
+   shard or shards your brief names, so two packages never fill one shard. A layer over
+   about 40 s alone is spread by seed (`{1: 3, 2: 4, ...}`), as msgx is. When no shard has
+   room, raise `SHARD_COUNT` and run `--write-shards` in its own change (section "Where it
+   runs").
+5. **Run your layer alone**, on a bench with the pinned jar and tlacheck (never a CI
+   runner host):
+   ```sh
+   cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON -DROCKETNET_TLA_TRACE_ONLY=<file>
+   cmake --build build --target tla_trace_all --parallel 4
+   python3 tools/tla_trace_check.py --bin bin --tlacheck TLACHECK --jar /opt/tla/tla2tools.jar \
+       --layer <name> --seeds commit --jobs 4 --dir WORK
+   python3 tools/tla_trace_check.py --bin bin --tlacheck TLACHECK --jar /opt/tla/tla2tools.jar \
+       --layer <name> --seeds 1000-1063 --jobs 4 --dir WORK
+   ```
+   The first is what your shard runs per commit; the second is a night's worth. Both end
+   in `TRACE-CHECK OK`. Then run your whole shard as CI does:
+   `--stems I/9` for the build, and `--layer all --seeds commit --shard I/9`.
+6. **Show the plant is rejected.** The run in step 5 does it for every seed: each seed's
+   log has the plant's walk, and the run is red unless TLC rejects the planted trace at
+   the first record the plant changed (`PLANT-AT`). Read one seed's `plant/run` log and
+   see the violation of `TraceConsistent` at that record. Then show the clean side red
+   once by hand: break the sdk code the way the plant does, with no plant define, and
+   see the clean trace rejected; put it back.
+7. **Before you push:** `python3 tools/tla_trace_check.py --table`,
+   `python3 tools/test_tla_trace_check.py`, `python3 tools/check_tla_coverage.py --all
+   --actions-strict` and `python3 tools/check_tla_records.py`.
