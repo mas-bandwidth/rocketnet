@@ -1709,7 +1709,7 @@ static inline void rocketnet_dst_check_issued( struct rocketnet_dst_check_state_
 // The related issued-once check for RNReceipts::AckedMeansPacketOpened and
 // ReplayWindow::AckReportsOnlyReceived: a link ack names a packet the acked
 // endpoint itself issued, and names it once. The join key the seam surfaces
-// is the packet id recorded when the frame was sealed. Whether the peer
+// is the packet id recorded when the frame was sealed. Whether the receiving side
 // opened or received the packet is not observed here; those mirrors are
 // owed (COVERAGE.tsv). For SessionAcks::AckedMeansSurfaced the same check
 // covers the surfaced ids the harness returns; comparing the sender's
