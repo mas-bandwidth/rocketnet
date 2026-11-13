@@ -90,6 +90,7 @@ struct rocketnet_uring_queue_send_run_t
     int last_bytes;
     bool plain;                             // handed back by a refusal: send it with no segmentation
     uint32_t tag;                           // bank * slots + slot
+    const struct rocketnet_address_t * to;  // the destination: the first slot's, in the bank
 };
 
 // a run in the bank, kept at its first slot
@@ -183,6 +184,13 @@ int rocketnet_uring_queue_send_complete( struct rocketnet_uring_queue_send_t * s
 // -EOPNOTSUPP on a segmented run REFUSED (rocketnet_server_gso.h), any other
 // FAILED
 int rocketnet_uring_queue_send_result( int res, bool segmented );
+
+// a segmented run next handed out, to a destination the worker knows
+// refuses segmentation: taken back before any send, as one plain run per
+// packet waiting to be submitted (complete's REFUSED hand-back, counted
+// nowhere). false, nothing changed, when run is not a segmented run in the
+// kernel.
+bool rocketnet_uring_queue_send_split( struct rocketnet_uring_queue_send_t * send, int queue, const struct rocketnet_uring_queue_send_run_t * run );
 
 // RNUringQueueSend WorkerRetire: the held bank back to the free FIFO, when
 // nothing in it waits to be submitted and every run of it has its

@@ -399,6 +399,55 @@ static void test_uring_queue_send_bank_of_aborts_retires_at_once()
 
 REGISTER_UNIT_TEST( test_uring_queue_send_bank_of_aborts_retires_at_once );
 
+// split: a segmented run handed out is taken back before any send, one
+// plain run a packet, counted nowhere; anything else is refused unchanged
+
+static void test_uring_queue_send_split_takes_a_run_back_plain()
+{
+    queue_send_test_t t( 4, 4, 1 << 16 );
+    check( t.send != NULL );
+
+    check( t.stage( 1, 300 ) == 0 );
+    check( t.stage( 1, 300 ) == 1 );
+    check( t.stage( 1, 120 ) == 2 );
+    check( t.stage( 2, 100 ) == 3 );
+    check( rocketnet_uring_queue_send_publish( t.send, 0 ) );
+    check( rocketnet_uring_queue_send_claim( t.send, 0 ) == 0 );
+
+    struct rocketnet_uring_queue_send_run_t run;
+    check( rocketnet_uring_queue_send_next( t.send, 0, &run ) );
+    check( run.count == 3 && run.to != NULL && queue_send_dest( t, 0, run.slot ) == 1 );
+    check( run.to == &t.banks->queue[0].bank[0].slot[0].to );
+
+    struct rocketnet_uring_queue_send_run_t single;
+    check( rocketnet_uring_queue_send_next( t.send, 0, &single ) );
+    check( single.count == 1 );
+    check( !rocketnet_uring_queue_send_split( t.send, 0, &single ) );     // one packet: nothing to split
+
+    struct rocketnet_uring_queue_send_run_t stale = run;
+    stale.tag = (uint32_t) ( ROCKETNET_URING_SEND_BANKS * 4 );
+    check( !rocketnet_uring_queue_send_split( t.send, 0, &stale ) );      // no such run
+
+    check( rocketnet_uring_queue_send_split( t.send, 0, &run ) );
+    check( !rocketnet_uring_queue_send_split( t.send, 0, &run ) );        // no longer in the kernel
+    check( rocketnet_uring_queue_send_pending( t.send, 0 ) == 1 );
+    check( t.counter( ROCKETNET_URING_QUEUE_SEND_COUNTER_REFUSED ) == 0 );
+
+    const int bytes[3] = { 300, 300, 120 };
+    for ( int i = 0; i < 3; i++ )
+    {
+        struct rocketnet_uring_queue_send_run_t plain;
+        check( rocketnet_uring_queue_send_next( t.send, 0, &plain ) );
+        check( plain.count == 1 && plain.plain && plain.slot == i && plain.segment_bytes == bytes[i] );
+        check( rocketnet_uring_queue_send_complete( t.send, 0, plain.tag, ROCKETNET_URING_QUEUE_SEND_OK ) == 1 );
+    }
+    check( rocketnet_uring_queue_send_complete( t.send, 0, single.tag, ROCKETNET_URING_QUEUE_SEND_OK ) == 1 );
+    check( rocketnet_uring_queue_send_retire( t.send, 0 ) );
+    check( t.counter( ROCKETNET_URING_QUEUE_SEND_COUNTER_SENT ) == 4 );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_send_split_takes_a_run_back_plain );
+
 #if defined( __linux__ )
 #include "../sdk/rocketnet_uring_codec.h"
 #if defined( IORING_RECV_MULTISHOT )

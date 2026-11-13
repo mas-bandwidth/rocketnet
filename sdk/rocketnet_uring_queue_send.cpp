@@ -393,6 +393,7 @@ bool rocketnet_uring_queue_send_next( struct rocketnet_uring_queue_send_t * send
         run->last_bytes = at->last_bytes;
         run->plain = at->plain;
         run->tag = (uint32_t) ( b * slots + slot );
+        run->to = &send->queues->queue[queue_index].bank[b].slot[slot].to;
         if ( at->count > 1 )
         {
             rocketnet_uring_queue_send_count( queue, ROCKETNET_URING_QUEUE_SEND_COUNTER_SEGMENTED, 1 );
@@ -419,6 +420,36 @@ int rocketnet_uring_queue_send_result( int res, bool segmented )
         return ROCKETNET_URING_QUEUE_SEND_REFUSED;
     }
     return ROCKETNET_URING_QUEUE_SEND_FAILED;
+}
+
+// a run's slots handed back as one plain run per packet, each waiting to be
+// submitted again from its own order position: the refusal's hand-back
+// (RNUringQueueSend WorkerReap, the eagain hand-back)
+
+static void rocketnet_uring_queue_send_cut_plain( struct rocketnet_uring_queue_send_queue_t * queue, uint8_t * state, const int * order,
+                                                  struct rocketnet_uring_queue_send_entry_t * entry, struct rocketnet_uring_queue_send_entry_t * at )
+{
+    const int count = at->count;
+    const int first = at->first;
+    const int segment_bytes = at->segment_bytes;
+    const int last_bytes = at->last_bytes;
+    for ( int i = 0; i < count; i++ )
+    {
+        const int s = order[first + i];
+        state[s] = ROCKETNET_URING_QUEUE_SEND_SLOT_STAGED;
+        struct rocketnet_uring_queue_send_entry_t * single = &entry[s];
+        single->count = 1;
+        single->first = first + i;
+        single->segment_bytes = i + 1 < count ? segment_bytes : last_bytes;
+        single->last_bytes = single->segment_bytes;
+        single->kernel = false;
+        single->plain = true;
+    }
+    queue->unsubmitted += count;
+    if ( first < queue->cursor )
+    {
+        queue->cursor = first;
+    }
 }
 
 // RNUringQueueSend WorkerReap: one completion, by its tag. ok and failed
@@ -497,32 +528,49 @@ int rocketnet_uring_queue_send_complete( struct rocketnet_uring_queue_send_t * s
         default:
         {
             rocketnet_assert( result == ROCKETNET_URING_QUEUE_SEND_REFUSED );
-            const int first = at->first;
-            const int segment_bytes = at->segment_bytes;
-            const int last_bytes = at->last_bytes;
-            for ( int i = 0; i < count; i++ )
-            {
-                const int s = order[first + i];
-                state[s] = ROCKETNET_URING_QUEUE_SEND_SLOT_STAGED;
-                struct rocketnet_uring_queue_send_entry_t * single = &entry[s];
-                single->count = 1;
-                single->first = first + i;
-                single->segment_bytes = i + 1 < count ? segment_bytes : last_bytes;
-                single->last_bytes = single->segment_bytes;
-                single->kernel = false;
-                single->plain = true;
-            }
-            queue->unsubmitted += count;
-            if ( first < queue->cursor )
-            {
-                queue->cursor = first;
-            }
+            rocketnet_uring_queue_send_cut_plain( queue, state, order, entry, at );
             rocketnet_uring_queue_send_count( queue, ROCKETNET_URING_QUEUE_SEND_COUNTER_REFUSED, 1 );
             break;
         }
     }
 
     return count;
+}
+
+// RNUringQueueSend WorkerReap, refused, before the kernel saw the run: a
+// segmented run handed out by next to a destination known to refuse
+// segmentation goes back as one plain run per packet, with no send and no
+// completion. Counted nowhere: no send was refused.
+
+bool rocketnet_uring_queue_send_split( struct rocketnet_uring_queue_send_t * send, int queue_index, const struct rocketnet_uring_queue_send_run_t * run )
+{
+    rocketnet_assert( send );
+    rocketnet_assert( run );
+    rocketnet_assert( queue_index >= 0 && queue_index < send->num_queues );
+
+    struct rocketnet_uring_queue_send_queue_t * queue = &send->queue[queue_index];
+    const int slots = send->slots;
+    if ( run->tag >= (uint32_t) ( ROCKETNET_URING_SEND_BANKS * slots ) )
+    {
+        return false;
+    }
+
+    const int b = (int) ( run->tag / (uint32_t) slots );
+    const int slot = (int) ( run->tag % (uint32_t) slots );
+    uint8_t * state = queue->state + (size_t) b * (size_t) slots;
+    const int * order = queue->order + (size_t) b * (size_t) slots;
+    struct rocketnet_uring_queue_send_entry_t * entry = queue->entry + (size_t) b * (size_t) slots;
+    struct rocketnet_uring_queue_send_entry_t * at = &entry[slot];
+
+    if ( at->count < 2 || !at->kernel || queue->pending[b] == 0 )
+    {
+        return false;
+    }
+
+    queue->pending[b]--;
+    at->kernel = false;
+    rocketnet_uring_queue_send_cut_plain( queue, state, order, entry, at );
+    return true;
 }
 
 // RNUringQueueSend WorkerRetire, RetireRule "cqe": nothing of the bank waits
