@@ -378,13 +378,8 @@
 
   (item "fill-phase-trace-gaps" :group "trace-check" :area "tests"
    :title "Fill-phase trace check: the gaps the split-update fix left"
-   :text "tests/tla_trace_fill_phase.cpp now reads the window and both refusal counters from the library and its reach predicates require every refusal step (MainLook, MainIn, FillLock, FillDecide, FillLook in and out of the window, TakeLook). Still open: fbroke, phaseIn, falseAlarm, mainsDone, fillsDone and takesDone are the walk's own bookkeeping, compared but read by Next, so they cannot be declared ghosts as the checker defines them; the compare-and-swap retry loop in fill_begin, main-thread nesting (main_owner, main_depth) and rocketnet_fill_phase_hand_over never run under the trace. Fill-call nesting (depth above 1, FillPeek, FillNest, FillUnnest) is modelled and walked since the nested-accept fix. Model main nesting and hand_over and drive them from the walk, and say for each walk-kept variable what in the library it stands for."
+   :text "tests/tla_trace_fill_phase.cpp now reads the window and both refusal counters from the library and its reach predicates require every refusal step (MainLook, MainIn, FillLock, FillDecide, FillLook in and out of the window, TakeLook). Still open: fbroke, phaseIn, falseAlarm, mainsDone, fillsDone and takesDone are the walk's own bookkeeping, compared but read by Next, so they cannot be declared ghosts as the checker defines them; the compare-and-swap retry loop in fill_begin and main-thread nesting (main_owner, main_depth) never run under the trace. Fill-call nesting (depth above 1, FillPeek, FillNest, FillUnnest) is modelled and walked since the nested-accept fix. Model main nesting and drive it from the walk, and say for each walk-kept variable what in the library it stands for."
    :date "2026-11-13" :origin "review fixes S1/S2, coordinator finding C7")
-
-  (item "pending-scan-before-check" :group "trace-check" :area "rocketnet"
-   :title "finish_message and abort_message scan the open starts before their check"
-   :text "rn_server_pending_slot reads each connection's plain open.pending before the hand-over's main operation checks anything, and a game thread's start (rn_message_open_set) or a stop's kick (rn_message_open_close) writes it. A game thread calling finish_message or abort_message while the main thread stops, or while another game thread starts, breaks the contract; the check is meant to refuse that, but the scan races first and TSan reports it. Make open.pending a relaxed atomic at its writers and in the scan, or take the scan inside a check, and drive the interleaving through the trace hook. Found by the cold read of the running-read fix (item F); the server's running pointer itself is read once, atomically, since that fix."
-   :date "2026-11-13" :origin "cold read of review item F, fix/v1.1.x/split-update-apply-and-nesting")
 
   (item "uring-peak-qdisc-drops" :group "after-v1-1-landing" :area "rocketnet"
    :title "io_uring at peak: whole segmented sends dropped at the server's device queue"
@@ -490,11 +485,6 @@
    :title "The xdp-gateway-refresh trace cannot see the refresh moved"
    :text "tests/tla_trace_xdp_gateway_refresh.cpp (about 192, 240-253, 326) decides when the refresh runs with the walk's own phase string; the real call site (sdk/rocketnet_server_socket_linux.cpp about 673) never runs, and the untraced ReceiveWithoutRefresh is justified by assumption (tools/tla_trace_check.py about 157). The deadline part is bound; the ordering part (the model's RefreshInFill witness) is not, so a refresh moved into the send path stays green. Drive the walk through the real call site."
    :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding C3")
-
-  (item "finish-message-starting-thread" :group "review-v1-2" :area "sdk"
-   :title "finish_message and abort_message from the starting thread are not checked against game threads"
-   :text "In sdk/rocketnet_api.cpp (about 3642-3689) and sdk/rocketnet_fill_phase.cpp (about 203-210) the hand-over runs its main thread check only when another thread owns the client. When the owner is the caller or nobody, rn_server_pending_slot scans every connection's plain open.pending while other threads write theirs. rocketnet.h says one thread at a time, and nothing refuses a call that breaks it. Refuse and count it, as the other thread rules are."
-   :date "2026-11-13" :origin "Review before v1.2.0, threading reader, finding R3")
 
   (item "counter-observed-loose-paths" :group "review-v1-2" :area "tools"
    :title "check_counter_observed.py accepts tests that assert nothing about a counter's value"

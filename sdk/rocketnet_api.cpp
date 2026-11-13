@@ -3759,15 +3759,21 @@ static int rn_server_pending_slot( const struct rocketnet_message_server_t * run
     return -1;
 }
 
-// The one open message was started by another thread: under the default
-// contract, one thread at a time, that is allowed, so the claim the starting
-// thread holds on the client is ended first by one empty main-thread
-// operation (sdk/rocketnet_fill_phase.h, hand_over), which is refused, as any
-// main-thread operation is, while another call is running.
-static bool rn_server_hand_over_open( struct rocketnet_message_server_t * running, int slot )
+// finish and abort without a destination are the calls of a server used one
+// thread at a time: once the check has begun they are main-thread calls,
+// wherever the message was started, so their scope is entered before the
+// scan for the open message (proofs/tla/RNFillPhase.tla MainAnnounce ..
+// MainDrop, a main operation of kind "other"). The scan then reads the
+// connections with no fill call running; in the window, or beside a fill
+// call, the call is refused and counted MAIN_THREAD_CALL_OVERLAP and
+// changes nothing. The finish itself, inside the scope, is the scope's own
+// work (a fill call from the main operation's thread checks nothing), and
+// the scope's end begins a new fill phase, so the client's claim the
+// starting thread held is ended. Before the check begins the scope does
+// nothing, as every scope does.
+static struct rocketnet_fill_phase_t * rn_server_fill_phase( struct rocketnet_message_server_t * running )
 {
-    struct rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( running ) );
-    return !phase || rocketnet_fill_phase_hand_over( phase, slot );
+    return running ? rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( running ) ) : NULL;
 }
 
 // finish and abort of the message open on one client: any number of fill
@@ -3843,14 +3849,15 @@ uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, in
     }
 
     struct rocketnet_message_server_t * running = rn_server_sending( server );
+    rocketnet_fill_phase_main_scope_t phase( rn_server_fill_phase( running ) );
+    if ( !phase.entered )
+    {
+        return 0;
+    }
     const int slot = rn_server_pending_slot( running );
     if ( slot < 0 )
     {
         rocketnet_assert( slot >= 0 );
-        return 0;
-    }
-    if ( !rn_server_hand_over_open( running, slot ) )
-    {
         return 0;
     }
 
@@ -3895,12 +3902,13 @@ void rocketnet_server_abort_message( struct rocketnet_server_t * server )
     }
 
     struct rocketnet_message_server_t * running = rn_server_sending( server );
-    const int slot = rn_server_pending_slot( running );
-    if ( slot < 0 )
+    rocketnet_fill_phase_main_scope_t phase( rn_server_fill_phase( running ) );
+    if ( !phase.entered )
     {
         return;
     }
-    if ( !rn_server_hand_over_open( running, slot ) )
+    const int slot = rn_server_pending_slot( running );
+    if ( slot < 0 )
     {
         return;
     }
