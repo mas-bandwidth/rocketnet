@@ -156,6 +156,8 @@ ALLOWED = [
      "config field reflection over this process's own struct; no wire byte"),
     ('sdk/rocketnet_tests.cpp', 'memcpy( &applied, base, sizeof( applied ) );',
      "config field reflection over this process's own struct; no wire byte"),
+    ('sdk/rocketnet_tests.cpp', 'memcpy( (uint8_t *) config + field->offset, &start, sizeof( start ) );',
+     "config field reflection over this process's own struct; no wire byte"),
     ('sdk/rocketnet_tests.cpp', '*(int *) config = 1000;',
      "config field reflection over this process's own struct; no wire byte"),
     ('sdk/rocketnet_tests.cpp', '- ROCKETNET_FRAME_WIRE_OFFSET, &id, 8 );',
