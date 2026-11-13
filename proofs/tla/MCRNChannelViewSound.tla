@@ -219,7 +219,7 @@ Labels ==
 \* One labelled disjunct of RNChannel's Next. The environment labels pick
 \* one Link step out of FwdEnvironment / RevEnvironment by conjunction.
 StepA(l) ==
- /\ ~A!misused
+ /\ ~a_misused
  /\ \/ (l.n = "RefuseSend" /\ A!RefuseSend)
     \/ (l.n = "DropUnreliableForBudget" /\ A!DropUnreliableForBudget)
     \/ (l.n = "Enqueue" /\ A!Enqueue)
@@ -247,7 +247,7 @@ StepA(l) ==
     \/ (l.n = "RevAge" /\ MaxDelay > 0 /\ A!RevEnvironment /\ A!Rev!Age)
 
 StepB(l) ==
- /\ ~B!misused
+ /\ ~b_misused
  /\ \/ (l.n = "RefuseSend" /\ B!RefuseSend)
     \/ (l.n = "DropUnreliableForBudget" /\ B!DropUnreliableForBudget)
     \/ (l.n = "Enqueue" /\ B!Enqueue)
