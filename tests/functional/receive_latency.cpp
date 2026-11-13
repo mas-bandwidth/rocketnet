@@ -90,6 +90,8 @@ static const struct receive_latency_row_t receive_latency_rows[] = {
     { "server_gso", "gso", "portable", false },
     { "server_io_uring", "io_uring", "portable", false },
     { "server_xdp", "xdp", "portable", true },
+    { "server_rio", "rio", "portable", false },
+    { "server_iocp", "iocp", "portable", false },
 };
 
 // the phase of each send in the frame
@@ -435,8 +437,10 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
         worst = wait > worst ? wait : worst;
     }
 
-    printf( "receive latency %s: %d messages, %d late, %d lost, wait in updates mean %.3f max %.3f\n", name, total, late, lost,
-            total > lost ? sum / ( total - lost ) : 0.0, worst );
+    // wait is in updates; reported in milliseconds at the rate run, updates after
+    const double mean = total > lost ? sum / ( total - lost ) : 0.0;
+    printf( "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n", name,
+            total, late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
     fflush( stdout );
 
     for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
@@ -458,7 +462,9 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
     receive_latency_check( lost == 0, name, "a message never arrived" );
-    receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, "more messages than the bound waited an extra update" );
+    char too_late[128];
+    snprintf( too_late, sizeof( too_late ), "more messages than the bound waited an extra %.1f ms at %.0f Hz (one update)", 1000.0 / rate, rate );
+    receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, too_late );
 }
 
 static void receive_latency_run_named( const char * row_name )
@@ -491,4 +497,17 @@ void rocketnet_test_receive_latency_server_io_uring()
 void rocketnet_test_receive_latency_server_xdp()
 {
     receive_latency_run_named( "server_xdp" );
+}
+
+void rocketnet_test_receive_latency_server_rio();
+void rocketnet_test_receive_latency_server_iocp();
+
+void rocketnet_test_receive_latency_server_rio()
+{
+    receive_latency_run_named( "server_rio" );
+}
+
+void rocketnet_test_receive_latency_server_iocp()
+{
+    receive_latency_run_named( "server_iocp" );
 }

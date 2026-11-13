@@ -1,11 +1,12 @@
 ---------------------------- MODULE MCRNRioWorker ----------------------------
 (***************************************************************************)
-(* The small instance of RNRioWorker: two receive slices, three banks of   *)
-(* two, a process view of four, three datagrams and two staged sends.      *)
+(* The small instance of RNRioWorker: two receive slices, the three banks *)
+(* of the receive handoff of two datagrams each,                           *)
+(* a process view of four, three datagrams and two staged sends.      *)
 (* MCRNRioWorker.cfg is the rule.  Each reversed witness turns off one     *)
 (* rule switch and must fail:                                              *)
-(* MCRNRioWorkerTwoBanks.cfg is the rule with two banks and four       *)
-(* datagrams, the backpressure case.                                       *)
+(* MCRNRioWorkerBackpressure.cfg is the rule with banks of one datagram, *)
+(* the backpressure case.                                                  *)
 (*   MCRNRioWorkerBrokenSwitchBeforeIdle.cfg  (SwitchOnIdle)               *)
 (*                                            FillPhaseOwnedByMain         *)
 (*   MCRNRioWorkerBrokenUnboundedDequeue.cfg  (BoundedDequeue)             *)
@@ -14,6 +15,8 @@
 (*                                            FreedOnlyWhenDrained         *)
 (*   MCRNRioWorkerBrokenNoWake.cfg            (WakeOnReturn)               *)
 (*                                            EveryDatagramConsumed        *)
+(*   MCRNRioWorkerBrokenReadOnlyLeft.cfg     (ReadOnlyLeft TRUE)          *)
+(*                                            DeliveredByNextCall          *)
 (*   MCRNRioWorkerBrokenCloseCancelsSends.cfg (DrainSendsBeforeClose)      *)
 (*                                            StopSendsFinished            *)
 (* MCRNRioWorkerInlineStop.cfg is the rule on create's failure path.       *)
@@ -57,4 +60,8 @@ MCPrefilterOnMain == FALSE
 \* posts a phase before it retires completions; must fail
 \* DrainedReturnedAtPost.
 RetireFirstBroken == FALSE
+
+\* MCRNRioWorkerBrokenReadOnlyLeft.cfg: main reads only a bank the worker
+\* has left (the old ready FIFO); must fail DeliveredByNextCall.
+ReadOnlyLeftBroken == TRUE
 =============================================================================
