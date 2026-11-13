@@ -236,9 +236,9 @@ the timer period and priorities itself (`sdk/rocketnet.h`).
 
 ## The firewall
 
-A server binds the wildcard address, so the first run of a server, of
-`functional.exe` or of the example server on an interactive desktop raises the
-Windows Defender Firewall prompt. Loopback traffic works whatever is chosen
+A server binds the wildcard address by default, so the first run of a server,
+of `functional.exe` or of the example server on an interactive desktop raises
+the Windows Defender Firewall prompt. Loopback traffic works whatever is chosen
 there. A headless server host needs an inbound rule that allows UDP on the
 server's port from the networks clients connect from; the client needs no
 inbound rule. Creating that rule is the host's provisioning, not the
@@ -261,12 +261,12 @@ client object can be reused, is the separate inventory in
 
 ## Limits for 1000 clients
 
-A server has one socket for each network worker: one for `portable`, one for
+A server's socket count depends on its transport: one for `portable`, one for
 each completion worker for `iocp` (2 on a bind address by default, 1 on the
-wildcard) and one for each lane for `rio` (5 on a bind address by default, 1
-on the wildcard). That is a few sockets, not one a client, so there is no
-descriptor limit to raise. The limit that matters is memory: per-client state
-grows with `max_clients`, the send staging and receive buffers of each
+wildcard; its send threads add none) and one for each lane for `rio` (5 on a
+bind address by default, 1 on the wildcard). That is a few sockets, not one a
+client, so there is no descriptor limit to raise. The limit that matters is
+memory: per-client state grows with `max_clients`, the send staging and receive buffers of each
 transport are sized from the same configured `max_clients` (1000 by default),
 and `rio` registers (and so locks) each lane's registered region when the
 server starts.
