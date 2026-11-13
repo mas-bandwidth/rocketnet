@@ -2168,17 +2168,20 @@ static bool rocketnet_rio_worker_pass( rocketnet_rio_lane_t * rio )
         progress = true;
     }
 
-    // WPublish (proofs/tla/RNReceiveHandoff.tla Commit): the worker's bank's
-    // count made visible to main, which reads it in place, and the worker
-    // moved to the free bank (main emptied it before freeing it) when main
-    // has started on its own; a full bank that cannot move keeps the rest
-    // in the queue (backpressure). Then every drained posted phase back to
-    // main as idle.
+    // WPublish (proofs/tla/RNReceiveHandoff.tla Commit): a bank holding
+    // datagrams has its count made visible to main, which reads it in place,
+    // and the worker moved to the free bank (main emptied it before freeing
+    // it) when main has started on its own; a full bank that cannot move
+    // keeps the rest in the queue (backpressure). An empty bank stays. Then
+    // every drained posted phase back to main as idle.
 
     const uint32_t banked = (uint32_t) rocketnet_rio_worker_bank( rio )->num_packets;
     rocketnet_platform_mutex_acquire( &rio->mutex );
 
-    rocketnet_receive_handoff_commit( &rio->receive_handoff, banked );
+    if ( banked > 0 )
+    {
+        rocketnet_receive_handoff_commit( &rio->receive_handoff, banked );
+    }
 
     for ( int p = 0; p < ROCKETNET_RIO_SEND_PHASES; ++p )
     {
