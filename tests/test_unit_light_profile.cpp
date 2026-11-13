@@ -219,7 +219,15 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
 // kept forget count beside it fills existing padding), adding 8 bytes
 // (measured with the writer list: the probe's actual= line is 3111676723).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628147ULL )
+// The XDP send queue back at 16384 per queue (two queues at 60 Hz start
+// twice 10 GbE line rate) with the receive side raised to keep the receive
+// budget twice the send: each queue's receive staging and fill frames 32768,
+// the UMEM 98304 frames (384 MiB), and the per-update receive budget 64 a
+// client (the process views, payload batch, io_uring banks, loopback queue
+// and cookie reply bitmap follow it), adding 2642136320 bytes (measured on
+// space2, gcc, Release, ROCKETNET_DEV=ON: the probe's actual= line is
+// 5753813043).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5752764467ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137506 )
 #endif // #if defined( _WIN32 )
 
