@@ -91,17 +91,6 @@ static uint64_t rocketnet_channel_allocator_calls;
 
 #define ROCKETNET_CHANNEL_CAPTURE_MAX_BYTES     ( 72 * 1024 )
 
-// A unit test includes this harness after tests/test_unit_registry.h. A unit
-// test touches no outside state, so in that build the capture tee, the seed
-// record and the seed variable are compiled out: an inherited
-// ROCKETNET_PCAPNG_CAPTURE_DIR, ROCKETNET_CHANNEL_SEED_RECORD or
-// ROCKETNET_CHANNEL_SEED changes nothing, and /proc/self/cmdline is never read.
-#if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
-#define ROCKETNET_CHANNEL_HARNESS_UNIT 1
-#else // #if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
-#define ROCKETNET_CHANNEL_HARNESS_UNIT 0
-#endif // #if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
-
 struct rocketnet_channel_capture_t
 {
     int active;
@@ -122,7 +111,7 @@ inline rocketnet_channel_capture_t & rocketnet_channel_capture()
 static inline std::string rocketnet_channel_capture_name( void )
 {
     std::string name = "channel";
-#if defined( __linux__ ) && !ROCKETNET_CHANNEL_HARNESS_UNIT
+#if defined( __linux__ ) && !defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H ) // a unit build never reads it (ROCKETNET_CHANNEL_HARNESS_UNIT below)
     FILE * file = fopen( "/proc/self/cmdline", "rb" );
     if ( file )
     {
@@ -156,7 +145,7 @@ static inline std::string rocketnet_channel_capture_name( void )
             }
         }
     }
-#endif // #if defined( __linux__ ) && !ROCKETNET_CHANNEL_HARNESS_UNIT
+#endif // #if defined( __linux__ ) && !defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
     for ( size_t i = 0; i < name.size(); i++ )
     {
         const char c = name[i];
@@ -188,7 +177,6 @@ static inline void rocketnet_channel_capture_flush( void )
 
 static inline void rocketnet_channel_capture_begin( void )
 {
-#if !ROCKETNET_CHANNEL_HARNESS_UNIT
     rocketnet_channel_capture_t & capture = rocketnet_channel_capture();
 
     char directory[4096];
@@ -209,7 +197,6 @@ static inline void rocketnet_channel_capture_begin( void )
         capture.hook_installed = 1;
         atexit( rocketnet_channel_capture_flush );
     }
-#endif // #if !ROCKETNET_CHANNEL_HARNESS_UNIT
 }
 
 static inline void rocketnet_channel_capture_record( double time, int interface_id, const uint8_t * data, int bytes, const char * comment )
@@ -1037,6 +1024,18 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
 // one line from the exit hook, so every red run names the seed that replays it.
 static const uint64_t rocketnet_channel_pinned_seed = 0x5EED5EED5EED5EEDULL;
 
+// A unit test includes this harness after tests/test_unit_registry.h. A unit
+// test touches no outside state, so in that build the capture tee is never
+// begun, and the seed record and the seed variable are compiled out: an
+// inherited ROCKETNET_PCAPNG_CAPTURE_DIR, ROCKETNET_CHANNEL_SEED_RECORD or
+// ROCKETNET_CHANNEL_SEED changes nothing, and /proc/self/cmdline is never read
+// (rocketnet_channel_capture_name is compiled without it).
+#if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
+#define ROCKETNET_CHANNEL_HARNESS_UNIT 1
+#else // #if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
+#define ROCKETNET_CHANNEL_HARNESS_UNIT 0
+#endif // #if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H )
+
 struct rocketnet_channel_seed_state_t
 {
     uint64_t seed;
@@ -1130,7 +1129,9 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // one count; the harness records it after create and restores the SDK's
     // default allocator when it is destroyed.
 
+#if !ROCKETNET_CHANNEL_HARNESS_UNIT
     rocketnet_channel_capture_begin();
+#endif // #if !ROCKETNET_CHANNEL_HARNESS_UNIT
     rocketnet_term();
     rocketnet_channel_allocator_calls = 0;
 
