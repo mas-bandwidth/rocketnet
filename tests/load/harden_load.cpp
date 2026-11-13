@@ -61,7 +61,7 @@
     every packet that client object ever received.
 
     THE HOSTILE LOAD. From --sockets sockets that are not players, at --pps
-    in total, a mix of --kinds: garbage (random bytes), prefixed (the
+    in total shared by --threads senders, a mix of --kinds: garbage (random bytes), prefixed (the
     published test filter's prefilter header, then random bytes, so it passes
     the prefilter and reaches the typed ladders), truncated (a valid header
     cut short), badsig (a connection request whose signature is random),
@@ -2624,6 +2624,170 @@ static bool harden_capture( const harden_options_t & o, int want, std::vector<st
 }
 #endif // #if defined( __linux__ )
 
+// one hostile sender: its sockets, its share of the rate, its own generator
+// (xorshift64; rand() is shared state and was the first version's ceiling)
+// and its own counts, summed by the role after the join
+struct harden_hostile_worker_t
+{
+    const harden_hostile_t * h = nullptr;
+    const bool * enabled = nullptr;
+    int num_enabled = 0;
+    std::vector<harden_socket_t> sockets;
+    struct sockaddr_in server = {};
+    double pps = 0.0;
+    double started = 0.0;
+    double hostile_end = 0.0;
+    uint64_t random = 1;
+    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
+    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
+    std::atomic<uint64_t> progress_sent{ 0 }, progress_received{ 0 }, progress_errors{ 0 };
+
+    harden_hostile_worker_t() = default;
+    harden_hostile_worker_t( const harden_hostile_worker_t & ) = delete;
+    harden_hostile_worker_t & operator=( const harden_hostile_worker_t & ) = delete;
+};
+
+static uint64_t harden_hostile_next( harden_hostile_worker_t * w )
+{
+    uint64_t x = w->random;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    w->random = x;
+    return x;
+}
+
+static void harden_hostile_fill( harden_hostile_worker_t * w, uint8_t * p, int from, int to )
+{
+    int i = from;
+    while ( i < to )
+    {
+        uint64_t r = harden_hostile_next( w );
+        for ( int b = 0; b < 8 && i < to; b++, i++ )
+        {
+            p[i] = (uint8_t) r;
+            r >>= 8;
+        }
+    }
+}
+
+static void harden_hostile_send_loop( harden_hostile_worker_t * w )
+{
+    static const uint8_t session_types[] = { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET };
+    const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const harden_hostile_t & h = *w->h;
+    uint64_t sent_total = 0;
+    int socket_cursor = 0, kind_cursor = 0;
+    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
+    while ( harden_wall() < w->hostile_end )
+    {
+        const uint64_t due_total = (uint64_t) ( ( harden_now() - w->started ) * w->pps );
+        int burst = 0;
+        while ( sent_total < due_total && burst < 4096 && w->num_enabled > 0 )
+        {
+            int kind = kind_cursor;
+            while ( !w->enabled[kind] )
+            {
+                kind = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
+            }
+            kind_cursor = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
+            const uint64_t pick = harden_hostile_next( w );
+            int bytes = 0;
+            const uint8_t * data = packet;
+            switch ( kind )
+            {
+                case 0:
+                {
+                    bytes = 1 + (int) ( pick % 1400 );
+                    harden_hostile_fill( w, packet, 0, bytes );
+                    break;
+                }
+                case 1:
+                {
+                    const uint8_t type = session_types[pick % sizeof( session_types )];
+                    uint8_t * p = packet;
+                    rocketnet_write_prefilter_header( &p, type, filter );
+                    bytes = rocketnet_session_min_wire_bytes( type ) + (int) ( ( pick >> 16 ) % 1200 );
+                    harden_hostile_fill( w, packet, ROCKETNET_PREFILTER_BYTES, bytes );
+                    break;
+                }
+                case 2:
+                {
+                    const uint8_t type = session_types[pick % sizeof( session_types )];
+                    uint8_t * p = packet;
+                    rocketnet_write_prefilter_header( &p, type, filter );
+                    const int minimum = rocketnet_session_min_wire_bytes( type );
+                    bytes = 1 + (int) ( ( pick >> 16 ) % (uint64_t) ( minimum > 1 ? minimum - 1 : 1 ) );
+                    harden_hostile_fill( w, packet, ROCKETNET_PREFILTER_BYTES, bytes );
+                    break;
+                }
+                case 3:
+                {
+                    const std::vector<uint8_t> & r = h.requests_badsig[(size_t) ( pick % h.requests_badsig.size() )];
+                    data = r.data();
+                    bytes = (int) r.size();
+                    break;
+                }
+                case 4:
+                {
+                    data = h.request_expired.data();
+                    bytes = (int) h.request_expired.size();
+                    break;
+                }
+                case 5:
+                {
+                    data = h.request_valid.data();
+                    bytes = (int) h.request_valid.size();
+                    break;
+                }
+                default:
+                {
+                    const std::vector<uint8_t> & r = h.captured[(size_t) ( pick % h.captured.size() )];
+                    data = r.data();
+                    bytes = (int) r.size();
+                    break;
+                }
+            }
+            const harden_socket_t s = w->sockets[(size_t) socket_cursor];
+            socket_cursor = ( socket_cursor + 1 ) % (int) w->sockets.size();
+            const int result = (int) sendto( s, (const char *) data, (size_t) bytes, 0, (const struct sockaddr *) &w->server, sizeof( w->server ) );
+            if ( result == bytes )
+            {
+                w->sent[kind]++;
+                w->sent_bytes += (uint64_t) bytes;
+            }
+            else
+            {
+                w->send_errors++;
+            }
+            sent_total++;
+            burst++;
+        }
+        // read whatever the server answered
+        for ( harden_socket_t s : w->sockets )
+        {
+            for ( ;; )
+            {
+                const int n = (int) recv( s, (char *) packet, (int) sizeof( packet ), 0 );
+                if ( n < 0 )
+                {
+                    break;
+                }
+                w->received++;
+                w->received_bytes += (uint64_t) n;
+            }
+        }
+        w->progress_sent.store( sent_total, std::memory_order_relaxed );
+        w->progress_received.store( w->received, std::memory_order_relaxed );
+        w->progress_errors.store( w->send_errors, std::memory_order_relaxed );
+        // sleep only when caught up with the rate
+        if ( sent_total >= due_total )
+        {
+            rocketnet_sleep( 0.001 );
+        }
+    }
+}
+
 static int harden_hostile_main( const harden_options_t & o )
 {
     const char * role = "hostile";
@@ -2725,135 +2889,74 @@ static int harden_hostile_main( const harden_options_t & o )
     printf( "harden_hostile: address=%s pps=%.0f sockets=%d kinds=%s seconds=%.0f utc=%s\n", o.address.c_str(), o.pps, o.sockets, o.kinds.c_str(), o.seconds, utc );
     fflush( stdout );
 
-    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
-    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
-    const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    static const uint8_t session_types[] = { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET };
+    // --threads senders, each with its own share of the sockets and the rate,
+    // its own generator and its own counts; one thread's sendto and the
+    // per-byte rand() of the first version topped out near 200k a second
+    const int num_workers = std::max( 1, std::min( o.threads, (int) sockets.size() ) );
+    std::vector<harden_hostile_worker_t> workers( (size_t) num_workers );
+    for ( int i = 0; i < (int) sockets.size(); i++ )
+    {
+        workers[(size_t) ( i % num_workers )].sockets.push_back( sockets[(size_t) i] );
+    }
     const double started = harden_now();
-    double last_report = started;
-    uint64_t due_total = 0, sent_total = 0, last_sent_total = 0;
-    int socket_cursor = 0, kind_cursor = 0;
-    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
     // the hostile load ends a second before the cut, so its last packets and
     // the answers to them are in before the terms are read
     const double hostile_end = o.end_at > 0.0 ? o.end_at - 1.0 : harden_wall() + o.seconds;
+    const uint64_t seed = (uint64_t) time( NULL );
+    std::vector<std::thread> threads;
+    for ( int w = 0; w < num_workers; w++ )
+    {
+        harden_hostile_worker_t & worker = workers[(size_t) w];
+        worker.h = &h;
+        worker.enabled = enabled;
+        worker.num_enabled = num_enabled;
+        worker.server = server;
+        worker.pps = o.pps / num_workers;
+        worker.started = started;
+        worker.hostile_end = hostile_end;
+        worker.random = harden_mix64( seed ^ ( (uint64_t) ( w + 1 ) << 32 ) ) | 1;
+        threads.emplace_back( harden_hostile_send_loop, &worker );
+    }
+    uint64_t last_sent_total = 0;
+    double last_report = started;
     while ( harden_wall() < hostile_end )
     {
+        rocketnet_sleep( 0.05 );
         const double t = harden_now();
-        due_total = (uint64_t) ( ( t - started ) * o.pps );
-        int burst = 0;
-        while ( sent_total < due_total && burst < 4096 && num_enabled > 0 )
-        {
-            int kind = kind_cursor;
-            while ( !enabled[kind] )
-            {
-                kind = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
-            }
-            kind_cursor = ( kind + 1 ) % HARDEN_HOSTILE_KINDS;
-            int bytes = 0;
-            const uint8_t * data = packet;
-            switch ( kind )
-            {
-                case 0:
-                {
-                    bytes = 1 + rand() % 1400;
-                    for ( int i = 0; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 1:
-                {
-                    const uint8_t type = session_types[(size_t) rand() % sizeof( session_types )];
-                    uint8_t * p = packet;
-                    rocketnet_write_prefilter_header( &p, type, filter );
-                    bytes = rocketnet_session_min_wire_bytes( type ) + rand() % 1200;
-                    for ( int i = ROCKETNET_PREFILTER_BYTES; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 2:
-                {
-                    const uint8_t type = session_types[(size_t) rand() % sizeof( session_types )];
-                    uint8_t * p = packet;
-                    rocketnet_write_prefilter_header( &p, type, filter );
-                    const int minimum = rocketnet_session_min_wire_bytes( type );
-                    bytes = 1 + rand() % ( minimum > 1 ? minimum - 1 : 1 );
-                    for ( int i = ROCKETNET_PREFILTER_BYTES; i < bytes; i++ )
-                    {
-                        packet[i] = (uint8_t) rand();
-                    }
-                    break;
-                }
-                case 3:
-                {
-                    const std::vector<uint8_t> & r = h.requests_badsig[(size_t) rand() % h.requests_badsig.size()];
-                    data = r.data();
-                    bytes = (int) r.size();
-                    break;
-                }
-                case 4:
-                {
-                    data = h.request_expired.data();
-                    bytes = (int) h.request_expired.size();
-                    break;
-                }
-                case 5:
-                {
-                    data = h.request_valid.data();
-                    bytes = (int) h.request_valid.size();
-                    break;
-                }
-                default:
-                {
-                    const std::vector<uint8_t> & r = h.captured[(size_t) rand() % h.captured.size()];
-                    data = r.data();
-                    bytes = (int) r.size();
-                    break;
-                }
-            }
-            const harden_socket_t s = sockets[(size_t) socket_cursor];
-            socket_cursor = ( socket_cursor + 1 ) % (int) sockets.size();
-            const int result = (int) sendto( s, (const char *) data, (size_t) bytes, 0, (const struct sockaddr *) &server, sizeof( server ) );
-            if ( result == bytes )
-            {
-                sent[kind]++;
-                sent_bytes += (uint64_t) bytes;
-            }
-            else
-            {
-                send_errors++;
-            }
-            sent_total++;
-            burst++;
-        }
-        // read whatever the server answered
-        for ( harden_socket_t s : sockets )
-        {
-            for ( ;; )
-            {
-                const int n = (int) recv( s, (char *) packet, (int) sizeof( packet ), 0 );
-                if ( n < 0 )
-                {
-                    break;
-                }
-                received++;
-                received_bytes += (uint64_t) n;
-            }
-        }
         if ( t - last_report >= 1.0 )
         {
+            uint64_t sent_total = 0, received_now = 0, errors_now = 0;
+            for ( const harden_hostile_worker_t & worker : workers )
+            {
+                sent_total += worker.progress_sent.load( std::memory_order_relaxed );
+                received_now += worker.progress_received.load( std::memory_order_relaxed );
+                errors_now += worker.progress_errors.load( std::memory_order_relaxed );
+            }
             printf( "harden_hostile_tick: t=%.1f sent_ps=%.0f received_total=%" PRIu64 " send_errors=%" PRIu64 "\n", t - started,
-                    (double) ( sent_total - last_sent_total ) / ( t - last_report ), received, send_errors );
+                    (double) ( sent_total - last_sent_total ) / ( t - last_report ), received_now, errors_now );
             fflush( stdout );
             last_sent_total = sent_total;
             last_report = t;
         }
-        rocketnet_sleep( 0.001 );
     }
+    for ( std::thread & thread : threads )
+    {
+        thread.join();
+    }
+    uint64_t sent[HARDEN_HOSTILE_KINDS] = {};
+    uint64_t send_errors = 0, received = 0, received_bytes = 0, sent_bytes = 0;
+    for ( const harden_hostile_worker_t & worker : workers )
+    {
+        for ( int k = 0; k < HARDEN_HOSTILE_KINDS; k++ )
+        {
+            sent[k] += worker.sent[k];
+        }
+        send_errors += worker.send_errors;
+        received += worker.received;
+        received_bytes += worker.received_bytes;
+        sent_bytes += worker.sent_bytes;
+    }
+    uint8_t packet[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 128];
 
     // a last read for late answers, then close every socket
     const double tail = harden_now() + 2.0;
