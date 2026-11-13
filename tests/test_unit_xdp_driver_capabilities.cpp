@@ -325,6 +325,20 @@ static void test_xdp_transport_receive_frames_dropped_counted()
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_receive_frames_dropped_counted );
+
+// Each refusal of an xdp thread's pin is counted once, and the refused thread
+// leaves core 0: two synthetic queues pinned through fake affinity calls, no
+// socket, no worker, no thread's affinity changed (sdk/rocketnet_server_socket_linux.cpp)
+bool rocketnet_server_socket_test_pin_refusals();
+
+SUITE_CASE_RSS_BOUND( test_xdp_transport_refused_pin_is_counted, xdp_two_queue_rss_bound_mb );
+
+static void test_xdp_transport_refused_pin_is_counted()
+{
+    check( rocketnet_server_socket_test_pin_refusals() );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_refused_pin_is_counted );
 #endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_xdp_transport_prefilter_counters_transport_reports_them );

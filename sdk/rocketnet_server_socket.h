@@ -349,6 +349,12 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
 // applied (HoldGreetingUntilMarked). Main thread, as the commit failures are.
 uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_socket_t * server_socket );
 
+// the pins the queues' xdp threads asked for and the system refused, summed
+// over the queues: each thread pins once, at start, and counts each refusal
+// (the cpu outside the set or not online, or the affinity call refused); a
+// refused thread runs on its allowed cpus less core 0. Any thread may read it.
+uint64_t rocketnet_server_socket_pin_refusals( struct rocketnet_server_socket_t * server_socket );
+
 void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_socket );
 bool rocketnet_server_socket_stopped( struct rocketnet_server_socket_t * server_socket );
 
@@ -406,6 +412,9 @@ typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketne
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
                                                    rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
+// the unit suite's case: each refusal of a queue's pin, driven through fake
+// affinity calls, is counted once (rocketnet_server_socket_pin_refusals)
+bool rocketnet_server_socket_test_pin_refusals();
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();
 bool rocketnet_server_socket_test_worker_stack();
