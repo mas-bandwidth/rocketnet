@@ -560,4 +560,14 @@
    :title "The losing family's queued datagrams are closed away uncounted at the race's commit"
    :text "When the reading thread first sees the commit, rocketnet_client_race_kept (sdk/rocketnet_client_transport.cpp) closes the losing family's socket; datagrams still queued on it go with the close, unread and uncounted. standard/TRANSPORT.md t13.3 (StoppedSocketDrained) covers a client whose connection has ended, and the handshake's race rule counts a packet read from the other family after the commit as from a foreign source and requires the other socket closed; neither says what happens to the losing socket's queue at the commit. Decide in the standard whether the commit drains and counts that queue (for example as CLIENT_RECEIVE_FOREIGN_SOURCE) before the close; then model it in RNClientRace and test it with the race harness."
    :date "2026-11-13" :origin "Review before v1.2.0, finding R88 second part, fix/v1.1.x/client-stop-and-race")
+
+  (item "server-create-refuses-what-start-refuses" :group "review-v1-2" :area "sdk"
+   :title "Refuse at create the bind addresses and per-transport counts that start refuses"
+   :text "rocketnet_server_create accepts a bind_ipv4_address or bind_ipv6_address that does not parse, and a transport count its transport cannot run (num_iocp_send_threads above the send lanes max_clients gives, for one); rocketnet.h says start refuses them, and it does. rocketnet_server_required_memory answers 0 for a config whose transports none can plan (the v1.2.0 fix), but create still returns OK. Moving these refusals to create (rn_server_config_valid in sdk/rocketnet_api.cpp) changes the header's stated contract, and a Windows-only count would then refuse a shared config on every platform: the owner decides whether and how (refuse only the candidates the list names, or only on the platform that builds them)."
+   :date "2026-11-13" :origin "Review before v1.2.0, Carbon finding C-18 (R79) and #1115-2(a)")
+
+  (item "server-open-message-outlives-disconnect" :group "review-v1-2" :area "sdk"
+   :title "Keep an open server message's memory the caller's until the next update, across a disconnect"
+   :text "rocketnet_server_disconnect_client, rocketnet_server_disconnect_all_clients and rocketnet_server_stop abort the client's open message at once (rn_message_object_kick, sdk/rocketnet_message_server.cpp): an in-place frame goes back to the transport and the reservation is released, so a caller still writing into the pointer writes into memory that is no longer its own. rocketnet.h now says so (v1.2.0). Holding the frame or the reservation until the next update or send_packets would keep the old promise; it needs lifetime state the kick does not have today (a deferred abort list per object, and the stop's lease reset waiting for it)."
+   :date "2026-11-13" :origin "Review before v1.2.0, Fable reader, finding FT4 (R11)")
  ))

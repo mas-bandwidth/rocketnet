@@ -261,7 +261,10 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 // transport list, the one start may grant: the transport generation start
 // creates, which stop retires and the next start frees before it creates the
 // next. A candidate with no plan (a custom transport) adds nothing.
-uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_server_transport_config_t * config );
+// unplannable, when not NULL, is set true when every candidate is a built-in
+// transport and none of them plans: start would refuse each one, so the list
+// has no size to give.
+uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_server_transport_config_t * config, bool * unplannable = NULL );
 
 struct rocketnet_client_transport_config_t;
 uint64_t rocketnet_client_transport_order_allocator_bytes( const rocketnet_client_transport_config_t * config );
