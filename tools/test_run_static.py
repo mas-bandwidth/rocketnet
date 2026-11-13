@@ -139,6 +139,34 @@ class RunStaticGateTest(unittest.TestCase):
         self.assertIn(TU, out)
         self.assertFalse(self.report.exists(), out)
 
+    def test_parser_reached_through_a_header_is_selected(self):
+        # the plant: a receive parser inline in a header that includes the
+        # wire readers, called from a unit whose own text never names them
+        root = Path(self.tmp.name) / "tree"
+        sdk = root / "sdk"
+        sdk.mkdir(parents=True)
+        (sdk / "rocketnet_read_write.h").write_text("// wire readers\n")
+        (sdk / "planted_client_io.h").write_text(
+            '#include "rocketnet_read_write.h"\n'
+            "inline void planted_receive( int * p ) { *p = 0; }\n")
+        (sdk / "planted_client_transport.cpp").write_text(
+            '#include "planted_client_io.h"\nvoid planted_step() { planted_receive( 0 ); }\n')
+        (sdk / "planted_unrelated.cpp").write_text('#include "planted_other.h"\n')
+        (sdk / "planted_other.h").write_text("// no wire reader\n")
+        saved_root = run_static.ROOT
+        run_static.ROOT = str(root)
+        try:
+            files = self.saved["parser_files"]()
+        finally:
+            run_static.ROOT = saved_root
+        self.assertEqual(files, ["sdk/planted_client_transport.cpp"])
+
+    def test_client_receive_parser_unit_is_selected(self):
+        # rocketnet_client_io_decrypt_datagram is inline in
+        # rocketnet_client_io.h; its only caller is the client transport
+        files = self.saved["parser_files"]()
+        self.assertIn("sdk/rocketnet_client_transport.cpp", files)
+
     def test_incomplete_run_writes_no_baseline(self):
         self.write_db([])
         self.baseline.write_text("kept\n")

@@ -3,8 +3,10 @@
 
 Compares the current gcc -fanalyzer findings against tools/static_baseline.txt.
 
-gcc -fanalyzer runs over the parser translation units: every sdk/*.cpp that
-includes rocketnet_read_write.h, plus the parser files named in the card
+gcc -fanalyzer runs over the parser translation units: every sdk/*.cpp whose
+quoted-include closure holds rocketnet_read_write.h (directly or through a
+header such as rocketnet_client_io.h, whose inline receive parser is analysed
+only in the units that call it), plus the parser files named in the card
 (base64, message, ack, replay, connect_token). The analyzer walks
 these paths interprocedurally, which is where wire parsing defects live.
 
@@ -96,19 +98,46 @@ def load_compile_db():
     return by_file
 
 
+INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.MULTILINE)
+
+
+def quoted_includes(path, cache):
+    """The files path includes by quoted name, transitively, resolved beside
+    the including file and then in sdk/ (an #if around an include is not
+    evaluated, so the closure is a superset, never a subset)."""
+    path = os.path.abspath(path)
+    if path in cache:
+        return cache[path]
+    cache[path] = set()
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        return cache[path]
+    found = set()
+    for name in INCLUDE.findall(text):
+        for base in (os.path.dirname(path), os.path.join(ROOT, "sdk")):
+            candidate = os.path.abspath(os.path.join(base, name))
+            if os.path.isfile(candidate):
+                found.add(candidate)
+                found |= quoted_includes(candidate, cache)
+                break
+    cache[path] = found
+    return found
+
+
 def parser_files():
+    """Every sdk/*.cpp whose include closure holds rocketnet_read_write.h
+    (the wire readers; the client receive parser, for one, is inline in
+    rocketnet_client_io.h, which includes it), plus the named parser files."""
     files = set()
     sdk = os.path.join(ROOT, "sdk")
+    cache = {}
     for name in sorted(os.listdir(sdk)) if os.path.isdir(sdk) else []:
         if not name.endswith(".cpp"):
             continue
-        path = os.path.join(sdk, name)
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                text = handle.read()
-        except OSError:
-            continue
-        if READ_WRITE_HEADER in text:
+        closure = quoted_includes(os.path.join(sdk, name), cache)
+        if any(os.path.basename(header) == READ_WRITE_HEADER for header in closure):
             files.add(os.path.join("sdk", name))
     for name in NAMED_PARSER_FILES:
         if os.path.exists(os.path.join(ROOT, name)):
