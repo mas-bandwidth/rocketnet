@@ -5,6 +5,19 @@
    Every switch is the code's in MCRNGsoQueueBankLayout.cfg (the control, two
    flushes) and in MCRNGsoQueueBankLayoutFlush3.cfg (the same at three
    flushes, a bench case over the per-case budget); each Broken cfg changes
-   one. *)
+   one. MCRNGsoQueueBankLayoutReachKeptProducer.cfg is the control's instance
+   and must fail NoKeptProducer: a flush keeps a staged producer while a free
+   bank waits (a contended try-acquire or a stopping transport), and the
+   next frame's starts claim on from its count. *)
 EXTENDS RNGsoQueueBankLayout
+
+\* the reach predicate, negated: no queue has kept a staged producer at a
+\* flush. A queue still on turn 0 after a flush, with claims in its producer
+\* and no start yet in the new frame, kept that producer at the flush,
+\* although two banks were free (no queue on turn 0 has handed one over)
+NoKeptProducer ==
+    ~ \E q \in Qs : /\ flushes >= 1
+                    /\ turn[q] = 0
+                    /\ cnt[q][prod[q]] > 0
+                    /\ \A t \in Threads : demand[t] = 0
 ==============================================================================

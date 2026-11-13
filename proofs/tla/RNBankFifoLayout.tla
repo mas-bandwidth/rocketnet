@@ -11,7 +11,14 @@
 (*   ready FIFO of three, free initialized from the literal { 1, 2, 0 }.   *)
 (*   rocketnet_server_gso_publish_send, rocketnet_server_gso_take_send and *)
 (*   rocketnet_server_gso_return_send (sdk/rocketnet_server_gso_linux.cpp): *)
-(*   the same shape and literal.                                           *)
+(*   the same shape and literal, with the stop's final transfer: once quit *)
+(*   is stored (rocketnet_server_gso_stop, after stopping, which refuses   *)
+(*   every later publish) and the ready FIFO is empty, take_send hands the *)
+(*   producer itself to the worker and sets producer to -1; the worker     *)
+(*   sends it and never returns it (StopKind "code": Take's final branch). *)
+(*   The model has no quit of its own: main may publish until the take     *)
+(*   that observes quit, which includes every order the code allows (the   *)
+(*   code stops publishing earlier, at stop).                              *)
 (*   rocketnet_xdp_buffer_exchange_t publish, claim and recycle            *)
 (*   (sdk/rocketnet_server_socket_linux.cpp): free FIFO and ready FIFO of  *)
 (*   N, free initialized by a loop.                                        *)
@@ -44,6 +51,15 @@
 (*                    publish order.                                       *)
 (*   InBounds         no position outside the arrays is read or written.   *)
 (*   CountsInRange    the free and ready counts stay in 0..N.              *)
+(*   FinalLast        the stop's final producer goes to the worker only    *)
+(*                    once every published bank was taken.                 *)
+(*                                                                         *)
+(* A refused call changes nothing and needs no action of its own: it is a  *)
+(* stuttering step of Spec, which no invariant can see.  The refusals are  *)
+(* a publish with no free bank or max_ready banks ready (Publish's         *)
+(* guard), and in rocketnet_server_gso_publish_send also a contended lane  *)
+(* mutex (the try-acquire) and a stopping transport; a take with nothing   *)
+(* ready and no quit (TxTakeNone in RNGsoHandoff).                         *)
 (*                                                                         *)
 (* Rule switches, each changed in one reversed witness:                    *)
 (*   FreeSlack   0 is the code's test (no exchange when free_count = 0);   *)
@@ -59,6 +75,11 @@
 (*               "posted" is every buffer posted (the iocp client).        *)
 (*   MaxReady    rocketnet_buffer_handoff_publish's max_ready; N where the *)
 (*               code has no such test.                                    *)
+(*   StopKind    "none" where the code has no final transfer; "code" is    *)
+(*               the gso lane's; "early" takes the producer while banks    *)
+(*               are still ready (FinalLast); "publishafter" lets main     *)
+(*               publish after the final take, from the -1 producer        *)
+(*               (ExactlyOnePlace).                                        *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -67,12 +88,15 @@ CONSTANTS N,          \* banks (or posted receives)
           ConsMax,    \* banks the consumer may hold at once
           MaxReady,   \* max_ready, or N for no such test
           MaxPub,     \* publishes the harness makes in all
-          FreeSlack, HeadMod, TailMod, PushKind, PopKind, InitKind
+          FreeSlack, HeadMod, TailMod, PushKind, PopKind, InitKind,
+          StopKind    \* the stop's final transfer of the producer, or "none"
 
 ASSUME N >= 3 /\ ArrLen >= N /\ ConsMax \in 1..N /\ MaxReady \in 1..N /\ MaxPub >= 1
 ASSUME FreeSlack \in 0..1 /\ HeadMod \in 0..ArrLen /\ TailMod \in 0..ArrLen
 ASSUME PushKind \in {"fifo", "lifo"} /\ PopKind \in {"fifo", "lifo"}
 ASSUME InitKind \in {"literal", "loop", "posted"}
+ASSUME StopKind \in {"none", "code", "early", "publishafter"}
+ASSUME StopKind # "none" => InitKind # "posted"
 
 Banks == 0..N - 1
 NoBank == -1
@@ -91,10 +115,11 @@ VARIABLES producer,     \* the producer's bank (NoBank for the iocp client)
           posted,       \* the iocp client: posted[b], the kernel holds buffer b
           oob,          \* a position outside an array was read or written
           absReady,     \* ghost: banks published and not taken, in order
-          pubs          \* ghost: publishes so far
+          pubs,         \* ghost: publishes so far
+          finalTaken    \* the worker took the producer as the final bank (take_send's *final)
 
 vars == <<producer, freeArr, freeHead, freeCount, readyArr, readyHead, readyCount,
-          exposed, exposedCount, posted, oob, absReady, pubs>>
+          exposed, exposedCount, posted, oob, absReady, pubs, finalTaken>>
 
 Red(x) == IF HeadMod = 0 THEN x ELSE x % HeadMod     \* ( head + 1 ) % N
 Tl(x) == IF TailMod = 0 THEN x ELSE x % TailMod      \* ( head + count ) % N
@@ -142,13 +167,16 @@ Init ==
     /\ oob = FALSE
     /\ absReady = <<>>
     /\ pubs = 0
+    /\ finalTaken = FALSE
 
 \* The ready tail write shared by both publishes.
 ReadyTail == Tl(readyHead + readyCount)
 
 \* The producer publishes: its bank onto the ready tail, the oldest (or top)
 \* free bank becomes the producer.  Refused, with nothing changed, when no
-\* bank is free or max_ready banks are ready.  portable_rx_publish,
+\* bank is free or max_ready banks are ready, and in the gso lane once the
+\* worker took the producer at stop (the code refuses from stop on: stopping,
+\* and producer < 0).  portable_rx_publish,
 \* portable_tx_publish, rocketnet_server_gso_publish_send,
 \* rocketnet_xdp_buffer_exchange_t::publish, rocketnet_buffer_handoff_publish,
 \* rocketnet_server_iocp_send_packets.
@@ -156,6 +184,7 @@ Publish ==
     /\ ~Posted
     /\ ~oob
     /\ pubs < MaxPub
+    /\ ~finalTaken \/ StopKind = "publishafter"
     /\ freeCount >= 1 - FreeSlack
     /\ readyCount < MaxReady
     /\ LET f == Pop(FreeRec)
@@ -167,7 +196,7 @@ Publish ==
           /\ oob' = (f.bad \/ ~In(ReadyTail))
     /\ absReady' = Append(absReady, producer)
     /\ pubs' = pubs + 1
-    /\ UNCHANGED <<freeArr, readyHead, exposed, exposedCount, posted>>
+    /\ UNCHANGED <<freeArr, readyHead, exposed, exposedCount, posted, finalTaken>>
 
 \* The iocp client: a posted receive completes with a datagram and its
 \* buffer joins the ready tail, in completion order.  rocketnet_client_iocp_dequeue.
@@ -182,23 +211,38 @@ Complete(b) ==
     /\ oob' = ~In(ReadyTail)
     /\ absReady' = Append(absReady, b)
     /\ pubs' = pubs + 1
-    /\ UNCHANGED <<producer, freeArr, freeHead, freeCount, readyHead, exposed, exposedCount>>
+    /\ UNCHANGED <<producer, freeArr, freeHead, freeCount, readyHead, exposed, exposedCount, finalTaken>>
 
 \* The consumer takes the oldest ready bank onto its list.  portable_rx_acquire,
 \* portable_tx_worker, rocketnet_server_gso_take_send,
 \* rocketnet_xdp_buffer_exchange_t::claim, rocketnet_buffer_handoff_take,
 \* rocketnet_iocp_send_worker, rocketnet_client_iocp_receive_batch.
+\* The second branch is rocketnet_server_gso_take_send's final one: under the
+\* mutex, holding no bank, with none ready and quit stored, the worker takes
+\* the producer itself and the producer becomes -1 (StopKind # "none").  The
+\* worker sends that bank and never returns it.
 Take ==
     /\ ~oob
-    /\ readyCount > 0
     /\ exposedCount < ConsMax
-    /\ exposed' = [exposed EXCEPT ![exposedCount] = Rd(readyArr, readyHead)]
-    /\ exposedCount' = exposedCount + 1
-    /\ readyHead' = Red(readyHead + 1)
-    /\ readyCount' = readyCount - 1
-    /\ oob' = ~In(readyHead)
-    /\ absReady' = Tail(absReady)
-    /\ UNCHANGED <<producer, freeArr, freeHead, freeCount, readyArr, posted, pubs>>
+    /\ \/ /\ readyCount > 0
+          /\ exposed' = [exposed EXCEPT ![exposedCount] = Rd(readyArr, readyHead)]
+          /\ exposedCount' = exposedCount + 1
+          /\ readyHead' = Red(readyHead + 1)
+          /\ readyCount' = readyCount - 1
+          /\ oob' = ~In(readyHead)
+          /\ absReady' = Tail(absReady)
+          /\ UNCHANGED <<producer, finalTaken>>
+       \/ /\ StopKind # "none"
+          /\ ~finalTaken
+          /\ producer # NoBank
+          /\ exposedCount = 0
+          /\ readyCount = 0 \/ StopKind = "early"
+          /\ exposed' = [exposed EXCEPT ![0] = producer]
+          /\ exposedCount' = 1
+          /\ producer' = NoBank
+          /\ finalTaken' = TRUE
+          /\ UNCHANGED <<readyHead, readyCount, oob, absReady>>
+    /\ UNCHANGED <<freeArr, freeHead, freeCount, readyArr, posted, pubs>>
 
 \* The consumer returns every bank it holds, in order, to the free queue (or,
 \* for the iocp client, posts it again).  portable_rx_acquire,
@@ -208,6 +252,7 @@ Take ==
 Release ==
     /\ ~oob
     /\ exposedCount > 0
+    /\ ~finalTaken
     /\ IF Posted
          THEN /\ posted' = [b \in Banks |->
                               posted[b] \/ \E j \in 0..exposedCount - 1 : exposed[j] = b]
@@ -219,7 +264,7 @@ Release ==
                  /\ oob' = f.bad
                  /\ UNCHANGED posted
     /\ exposedCount' = 0
-    /\ UNCHANGED <<producer, readyArr, readyHead, readyCount, exposed, absReady, pubs>>
+    /\ UNCHANGED <<producer, readyArr, readyHead, readyCount, exposed, absReady, pubs, finalTaken>>
 
 Next == Publish \/ (\E b \in Banks : Complete(b)) \/ Take \/ Release
 
@@ -238,8 +283,14 @@ TypeOK ==
     /\ exposedCount \in 0..ConsMax
     /\ oob \in BOOLEAN
     /\ pubs \in 0..MaxPub
+    /\ finalTaken \in BOOLEAN
 
 InBounds == ~oob
+
+\* The final producer goes to the worker only once every published bank was
+\* taken: the worker's send side ends with it, so a bank still ready then
+\* would never be sent.  After it nothing is published (producer -1).
+FinalLast == finalTaken => readyCount = 0
 
 CountsInRange == freeCount \in 0..N /\ readyCount \in 0..N
 

@@ -36,8 +36,13 @@
 (* Flush is send_packets with the game threads joined (the game threads' call  *)
 (* contract): each queue that staged anything hands its producer to its   *)
 (* worker and takes a free bank as the new producer, its counter reset by  *)
-(* the worker when it returned it.  A queue with no free bank keeps its    *)
-(* producer (main never waits).  WorkerReturn is the queue's worker giving *)
+(* the worker when it returned it.  A queue keeps its producer when it has *)
+(* no free bank, and also when the lane mutex's try-acquire fails (the     *)
+(* worker holds it) or the transport is stopping: main never waits, and    *)
+(* the kept producer goes on filling in the next frame from its count.     *)
+(* The model lets any staged queue keep its producer at any flush; the     *)
+(* stop's final transfer of the producer is RNGsoHandoff's and             *)
+(* RNBankFifoLayout's.  WorkerReturn is the queue's worker giving          *)
 (* a sent bank back.  The FIFO order of the hand-off is layer L3           *)
 (* (RNGsoHandoff over RNBankFifoLayout, per queue); here only ownership    *)
 (* matters.                                                                *)
@@ -212,13 +217,15 @@ FreeBank(q) == IF FlushRule = "joined"
                  ELSE {(prod[q] + 1) % NB}
 
 \* send_packets: every queue that staged hands its producer to its worker and
-\* takes a free bank; a queue with none keeps its producer
+\* takes a free bank; a queue with none keeps its producer, and so does one
+\* whose lane mutex the worker holds (the try-acquire fails) or whose
+\* transport is stopping (pick[q] = -1 with a free bank: main never waits)
 Flush ==
     /\ FlushRule = "open" \/ \A t \in Threads : held[t] = None /\ load[t] = None
     /\ flushes < MaxFlush
     /\ \E pick \in [Qs -> Bs \cup {-1}] :
           /\ \A q \in Qs : IF cnt[q][prod[q]] # 0 /\ FreeBank(q) # {}
-                             THEN pick[q] \in FreeBank(q)
+                             THEN pick[q] \in FreeBank(q) \cup {-1}
                              ELSE pick[q] = -1
           /\ prod' = [q \in Qs |-> IF pick[q] = -1 THEN prod[q] ELSE pick[q]]
           /\ own' = [q \in Qs |-> [b \in Bs |->
