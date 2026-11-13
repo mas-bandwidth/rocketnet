@@ -372,7 +372,12 @@ def check_row(row, dst_names):
             failures.append(f"{module}: {machine} a dst row must name the DST check in its note")
         return failures
 
-    if status != "owed" and status not in ("current", "covered"):
+    # "partial" is the DST-mirror distinction: a check runs and observes a
+    # narrower predicate than the named property (or a related one), so the
+    # row is neither "covered" nor "owed" ("owed" would also conflict with
+    # owed_but_cited for modules sdk/ cites). The note states what is checked
+    # and what mirror remains owed.
+    if status != "owed" and status not in ("current", "covered", "partial"):
         failures.append(f"{module}: {machine} unknown status {status}")
         return failures
 
