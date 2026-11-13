@@ -117,15 +117,15 @@ struct rocketnet_server_gso_recv_buffer_t
 {
     uint8_t padding_0[4096];
 
-    uint32_t num_packets;
-    uint64_t dropped_size;
-    uint64_t dropped_too_large;     // the part of dropped_size above the receive ceiling or truncated
-    uint64_t dropped_overflow;
-    uint64_t dropped_source;
-    uint64_t dropped_prefilter;     // refused by the prefilter for a reason other than size
-    uint64_t gro_batches;
-    uint64_t gro_cmsg_faults;                   // a GRO cmsg this worker refused
-    uint64_t receive_errors;
+    uint32_t num_packets = 0;
+    uint64_t dropped_size = 0;
+    uint64_t dropped_too_large = 0;     // the part of dropped_size above the receive ceiling or truncated
+    uint64_t dropped_overflow = 0;
+    uint64_t dropped_source = 0;
+    uint64_t dropped_prefilter = 0;     // refused by the prefilter for a reason other than size
+    uint64_t gro_batches = 0;
+    uint64_t gro_cmsg_faults = 0;                   // a GRO cmsg this worker refused
+    uint64_t receive_errors = 0;
     rocketnet_address_t from[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     int packet_bytes[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     alignas( 16 ) uint8_t packet_data[ROCKETNET_GSO_RECV_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
@@ -201,10 +201,10 @@ struct rocketnet_server_gso_send_lane_t
 
     // worker-only scratch: sendmmsg headers, gather iovecs (up to a full
     // super-datagram per message), destinations and segment cmsgs
-    struct mmsghdr headers[ROCKETNET_GSO_SEND_BATCH];
-    struct iovec iovecs[ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS];
-    struct sockaddr_storage names[ROCKETNET_GSO_SEND_BATCH];
-    char controls[ROCKETNET_GSO_SEND_BATCH][CMSG_SPACE( sizeof( uint16_t ) )];
+    struct mmsghdr headers[ROCKETNET_GSO_SEND_BATCH] = {};
+    struct iovec iovecs[ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS] = {};
+    struct sockaddr_storage names[ROCKETNET_GSO_SEND_BATCH] = {};
+    char controls[ROCKETNET_GSO_SEND_BATCH][CMSG_SPACE( sizeof( uint16_t ) )] = {};
 
     // worker-only gather (sdk/rocketnet_send_gather.h): a taken bank's slots
     // grouped by destination, each destination's in staged order. The flush
@@ -212,10 +212,10 @@ struct rocketnet_server_gso_send_lane_t
     // segment even when other destinations were staged between them.
     // gather_memory holds the gather's scratch: buckets (the least power of
     // two at least twice the slots) plus three ints per slot
-    int gather_memory[rocketnet_server_gso_gather_buckets( 1 ) + 3 * ROCKETNET_GSO_SEND_QUEUE_SIZE];
+    int gather_memory[rocketnet_server_gso_gather_buckets( 1 ) + 3 * ROCKETNET_GSO_SEND_QUEUE_SIZE] = {};
     struct rocketnet_send_gather_scratch_t gather = {};
-    int order[ROCKETNET_GSO_SEND_QUEUE_SIZE];
-    struct rocketnet_send_gather_run_t runs[ROCKETNET_GSO_SEND_QUEUE_SIZE];
+    int order[ROCKETNET_GSO_SEND_QUEUE_SIZE] = {};
+    struct rocketnet_send_gather_run_t runs[ROCKETNET_GSO_SEND_QUEUE_SIZE] = {};
 
     uint8_t padding_4[4096];
 
@@ -226,12 +226,12 @@ struct rocketnet_server_gso_queue_t
 {
     uint8_t padding_0[4096];
 
-    int fd;
-    int wake_fd;                    // eventfd main writes to wake the worker; -1 on the test fixture
-    int index;                      // this queue's place in the group: the packet id's low part
-    bool ipv6;
-    struct rocketnet_server_gso_t * gso;
-    rocketnet_platform_thread_t * thread;
+    int fd = -1;
+    int wake_fd = -1;               // eventfd main writes to wake the worker; -1 on the test fixture
+    int index = 0;                  // this queue's place in the group: the packet id's low part
+    bool ipv6 = false;
+    struct rocketnet_server_gso_t * gso = NULL;
+    rocketnet_platform_thread_t * thread = NULL;
 
     // the cpu the worker pinned itself to (rocketnet_gso_pin.h): PENDING until
     // its thread has run the pin, then the cpu or NONE
@@ -248,11 +248,11 @@ struct rocketnet_server_gso_queue_t
     // Only ownership is protected by receive_mutex. The worker fills one
     // buffer, can publish one ready buffer, and the main thread holds one
     // view buffer. One of ready/free is null at each handoff.
-    struct rocketnet_server_gso_recv_buffer_t * worker_buffer;
-    struct rocketnet_server_gso_recv_buffer_t * ready_buffer;
-    struct rocketnet_server_gso_recv_buffer_t * main_buffer;
-    struct rocketnet_server_gso_recv_buffer_t * free_buffer;
-    rocketnet_platform_mutex_t receive_mutex;
+    struct rocketnet_server_gso_recv_buffer_t * worker_buffer = NULL;
+    struct rocketnet_server_gso_recv_buffer_t * ready_buffer = NULL;
+    struct rocketnet_server_gso_recv_buffer_t * main_buffer = NULL;
+    struct rocketnet_server_gso_recv_buffer_t * free_buffer = NULL;
+    rocketnet_platform_mutex_t receive_mutex = {};
     uint32_t main_cursor = 0; // retained tail in main_buffer, main thread only
     // Idle EAGAIN calls still count without publishing an empty ready buffer.
     std::atomic<uint64_t> receive_syscalls{ 0 };
@@ -262,18 +262,18 @@ struct rocketnet_server_gso_queue_t
     // the datagrams this queue's worker dropped before banking, by reason
     // (sdk/rocketnet_receive_prefilter.h): the worker is the one writer, main
     // sums every queue's in rocketnet_server_gso_receive_drop_totals
-    struct rocketnet_receive_drop_tally_t receive_tally;
+    struct rocketnet_receive_drop_tally_t receive_tally = {};
 
     uint8_t padding_3[4096];
 
     // worker-only recvmmsg scratch: the kernel fills these, the worker
     // splits and copies segments into its owned staging buffer
 
-    struct mmsghdr messages[ROCKETNET_GSO_RECV_BATCH];
-    struct iovec iovecs[ROCKETNET_GSO_RECV_BATCH];
-    struct sockaddr_storage names[ROCKETNET_GSO_RECV_BATCH];
-    char controls[ROCKETNET_GSO_RECV_BATCH][CMSG_SPACE( sizeof( int ) )];
-    uint8_t scratch[ROCKETNET_GSO_RECV_BATCH][ROCKETNET_GSO_RECV_BUFFER_BYTES];
+    struct mmsghdr messages[ROCKETNET_GSO_RECV_BATCH] = {};
+    struct iovec iovecs[ROCKETNET_GSO_RECV_BATCH] = {};
+    struct sockaddr_storage names[ROCKETNET_GSO_RECV_BATCH] = {};
+    char controls[ROCKETNET_GSO_RECV_BATCH][CMSG_SPACE( sizeof( int ) )] = {};
+    uint8_t scratch[ROCKETNET_GSO_RECV_BATCH][ROCKETNET_GSO_RECV_BUFFER_BYTES]; // filled by the kernel before it is read
 
     uint8_t padding_4[4096];
 
@@ -1510,7 +1510,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
 
     for ( int i = 0; i < num_queues; i++ )
     {
-        new ( &gso->queues[i] ) rocketnet_server_gso_queue_t();
+        new ( &gso->queues[i] ) rocketnet_server_gso_queue_t; // default-initialized: the big banks and buffers are not written here, so their pages stay untouched until a packet uses them
         rocketnet_receive_drop_tally_reset( &gso->queues[i].receive_tally );
         rocketnet_server_gso_gather_init( &gso->queues[i].send );
         gso->queues[i].stopped.store( true, std::memory_order_relaxed );
@@ -2660,7 +2660,7 @@ static bool rocketnet_server_gso_test_stage( struct rocketnet_server_gso_t * gso
 static bool rocketnet_server_gso_test_init_queue( struct rocketnet_server_gso_t * gso, int index )
 {
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[index];
-    new ( queue ) rocketnet_server_gso_queue_t();
+    new ( queue ) rocketnet_server_gso_queue_t; // default-initialized, as rocketnet_server_gso_create does
     rocketnet_receive_drop_tally_reset( &queue->receive_tally );
     rocketnet_server_gso_gather_init( &queue->send );
     queue->fd = -1;
