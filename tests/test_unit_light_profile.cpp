@@ -129,9 +129,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
 // The protocol send reserve and its counter SEND_RESERVE_REFUSED (the Linux
 // block below has the account): the client reads actual=15389932 in the
-// Windows unit job, 64 above the counter union. The server pin is still the
-// union's: its job stopped at the client check, and it is read from the next.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453183 )
+// Windows unit jobs, 64 above the counter union, and the server reads
+// actual=1469512895, 11136 above it (MSVC, Release, DEV ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468464319 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
