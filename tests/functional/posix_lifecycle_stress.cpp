@@ -749,11 +749,18 @@ static void posix_cell_end( const posix_env_guard_t * server_guard, const posix_
 
 #define POSIX_XDP_QUEUES 1
 
-static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * cell, const char * address, int max_clients )
+// num_queues above zero sets the queue count of a gso or io_uring server (zero
+// keeps the config's default); an xdp cell always runs its one queue
+static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * cell, const char * address, int max_clients, int num_queues = 0 )
 {
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
+
+    if ( num_queues > 0 )
+    {
+        config.num_xdp_queues = num_queues;
+    }
 
     if ( cell->xdp )
     {
@@ -1111,9 +1118,17 @@ void rocketnet_test_posix_server_create_destroy_1000()
 
         const bool expensive_server = strcmp( cell->server_granted, "gso" ) == 0 || strcmp( cell->server_granted, "io_uring" ) == 0;
         const int count = expensive_server ? 250 : posix_count( cell, 1000 );
+
+        // a gso create maps and zeroes every queue's receive and send
+        // buffers (about 150 MB a queue since the 32768 receive queue), and
+        // the default is four queues: one queue keeps each create to a
+        // quarter of that and still creates, starts and destroys a worker
+        // and the send thread every cycle (the cell's own cases run four)
+
+        const int num_queues = strcmp( cell->server_granted, "gso" ) == 0 ? 1 : 0;
         for ( int i = 0; i < count; i++ )
         {
-            rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), 4 );
+            rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), 4, num_queues );
 
             // a live xdp server holds at least one umem, so the count sees
             // it: a count that cannot move cannot catch a leaked umem
