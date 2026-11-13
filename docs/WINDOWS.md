@@ -162,6 +162,49 @@ Do the same.
    worker on `2l + 1`); check them against the RSS processors read back in
    step 3.
 
+### Network adapter setup for rio and iocp
+
+The network card's receive work, its interrupts and the deferred procedure
+calls (DPCs) that follow them, runs on the processors RSS names, ahead of every
+thread there. The lane and completion workers run at
+`THREAD_PRIORITY_TIME_CRITICAL`, so an ordinary process cannot take their
+processors, but DPCs can. With `rio` the receive work belongs on each lane's
+socket processor (`2l`) and never on its worker's (`2l + 1`). Step 3 above
+places RSS that way. Check it on the running server under load, from
+PowerShell:
+
+```powershell
+Get-Counter -Counter '\Processor Information(0,*)\% DPC Time' -SampleInterval 2 -MaxSamples 5
+```
+
+In the measured 5-lane rows at the peak load (about 900,000 packets a second),
+the socket processors 0, 2, 4, 6 and 8 each spent 38 to 47% of their time in
+DPCs, at about 41,000 to 47,000 DPCs a second each, and the worker processors 1,
+3, 5, 7 and 9 spent 0.0%. DPC time on a worker's processor means RSS is not
+where step 3 put it: set it again and read it back before reading any other
+number.
+
+What a run looks like when the send side falls behind: one host's 5-lane rows
+(v1.1.53), with RSS read back as in step 3, held about 580,000 packets a second
+instead of 900,000 from the load's ramp to its end. Against passing runs of the
+same build on the same host:
+
+- `RIO_SEND_WAITS` (flushes that found the lane's next send phase still
+  busy): about 8,000 in the run, against 10 or fewer;
+- `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY`: about 1.5 million by 80 s,
+  against 0;
+- the lane workers' own thread time (`\Thread(*)\% Processor Time` for the
+  server process): 55 to 78%, against 85 to 95%;
+- the receive delay of the players' inputs at 60 Hz: about 30 ms mean and
+  125 ms p99, against about 10 ms and 30 ms.
+
+Those rows had no per-processor counters, so where that host's DPCs ran is not
+known. The same build on the same host held 900,000 packets a second with 0
+refused about 15 minutes later. A stall of every worker for 3 s, forced on purpose,
+cost those 3 s and about one more; the server was back at 900,000 a second
+with 0 refused after that. So a run that stays in this state is held there by
+something that lasts. Read the per-processor DPC time first.
+
 ### IOCP at 10 Gb/s
 
 IOCP completion worker `w` sits on the first logical processor of core `w`
