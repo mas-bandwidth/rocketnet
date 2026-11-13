@@ -505,6 +505,9 @@ the floor holds on every platform (one rounding of `a*b+c` would change `0x00000
 `0x33800000` / `0x3C90000000000000`). x86-64 has no FMA in its baseline, so
 `test_fp_contract_fma` builds the same canary with `-mfma` (GCC/Clang) or `/arch:AVX2` (MSVC,
 clang-cl) and runs it as soon as it links: a build whose floor does not hold fails to build.
+It runs only where the build machine runs the target and its CPU runs code built with that flag
+(a one-line FMA program is run at configure time); on a CPU without FMA the canary is built
+but not run, and the configure output says so.
 Configuring the tree fails when any target it compiles lacks its compiler family's flag above
 or carries a contracting one (`rocketnet_check_fp_floor` in `CMakeLists.txt`), and
 `tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
