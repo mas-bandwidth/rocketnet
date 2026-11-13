@@ -75,8 +75,7 @@ RemoveBracesLLVM: false
 FixNamespaceComments: false
 ReflowComments: false
 SkipMacroDefinitionBody: true
-# declaration macros written tight in this style, `ROCKETNET_DECLARE_SENTINEL(0)`
+# macro calls whose arguments are left as written
 WhitespaceSensitiveMacros:
-  - ROCKETNET_DECLARE_SENTINEL
   - MAKEWORD
   - VERSION_STRING

@@ -2,7 +2,9 @@
 * text=auto eol=lf
 
 # TLA cards append ledger rows; a doubled row after a merge is refused by
-# tlacheck and tools/check_tla_coverage.py.
+# tools/check_tla_records.py (CASES.tsv, RUNS.tsv) and
+# tools/check_tla_coverage.py (COVERAGE.tsv). Nothing refuses a doubled
+# README.md line: it is removed by hand (tools/check_tla_ledger_merge.py).
 proofs/tla/CASES.tsv merge=union
 proofs/tla/COVERAGE.tsv merge=union
 proofs/tla/RUNS.tsv merge=union
