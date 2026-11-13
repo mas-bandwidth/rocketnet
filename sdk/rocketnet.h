@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.51"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.52"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        51
+    #define ROCKETNET_VERSION_PATCH                        52
 
 #else // !ROCKETNET_DEV
 
@@ -1064,14 +1064,18 @@ struct rocketnet_client_t;
 ///   rocketnet_server_send_packets calls may then leave in either order.
 ///
 /// The check. It begins at the server's first
-/// rocketnet_server_finish_client_message or
-/// rocketnet_server_abort_client_message: a server that never makes those
-/// calls is used one thread at a time, as ever, its threads may send to one
-/// client in turn, and nothing is checked, refused or counted. From that call
-/// on, in every build, the three calls and the main thread calls that change
-/// the server (update, send_packets, receive_messages, receipts, a client's
-/// send rate, the disconnects and stop) are checked. One that breaks a rule
-/// is refused: it does nothing, it is counted
+/// rocketnet_server_finish_client_message,
+/// rocketnet_server_abort_client_message or rocketnet_server_update_receive:
+/// a server that never makes those calls is used one thread at a time, as
+/// ever, its threads may send to one client in turn, and nothing is checked,
+/// refused or counted. From that call on, in every build, the three calls,
+/// rocketnet_server_update_client and the main thread calls that change
+/// the server (update, the split update's receive and finish, send_packets,
+/// receive_messages, receipts, a client's send rate, the disconnects and
+/// stop) are checked, and between rocketnet_server_update_receive and
+/// rocketnet_server_update_finish only rocketnet_server_update_client and
+/// the update calls may run (see rocketnet_server_update_receive). One that
+/// breaks a rule is refused: it does nothing, it is counted
 /// (MAIN_THREAD_CALL_OVERLAP for a main thread call and another call at
 /// once, CLIENT_SEND_TWO_THREADS for a second thread on one client), and it
 /// asserts in a debug build. A refused start returns NULL and a refused
@@ -3159,6 +3163,18 @@ ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * serve
 /// else may be called on the server. The game joins its game threads (a join
 /// or a barrier, not a wall-clock wait) before
 /// rocketnet_server_update_finish.
+///
+/// rocketnet_server_update_receive starts the check (see
+/// rocketnet_server_t); rocketnet_server_update stays unchecked until one of
+/// the calls that start it. Checked, any other call between
+/// rocketnet_server_update_receive and rocketnet_server_update_finish (a
+/// start, a finish, an abort, send_packets, receive_messages, receipts, a
+/// client's send rate, a disconnect, stop) is refused and counted as
+/// MAIN_THREAD_CALL_OVERLAP; so are rocketnet_server_update_client during a
+/// main thread call, and rocketnet_server_update_finish while a game thread
+/// is still in rocketnet_server_update_client. rocketnet_server_update or
+/// rocketnet_server_update_receive called again inside the update is not
+/// refused: it counts as API misuse and finishes the open update first.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
 /// @param time As rocketnet_server_update's.

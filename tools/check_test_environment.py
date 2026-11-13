@@ -508,9 +508,36 @@ def assert_name_set(printed, registered, always, label, exec_names=None):
                  % (label, len(printed), len(registered), "; ".join(parts)))
 
 
-def run_binary(binary, env, timeout):
+def parse_unit_shard(args):
+    """(shard, args without it): --shard I/N as (I, N), or None when absent."""
+    if "--shard" not in args:
+        return None, args
+    at = args.index("--shard")
+    m = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", args[at + 1]) if at + 1 < len(args) else None
+    if not m or int(m.group(1)) >= int(m.group(2)):
+        sys.exit("check_test_environment.py: --shard is I/N with 0 <= I < N")
+    return (int(m.group(1)), int(m.group(2))), args[:at] + args[at + 2:]
+
+
+def in_unit_shard(name, shard):
+    """Whether the unit case NAME runs in SHARD (I, N); every case when SHARD is None."""
+    return shard is None or shard_of(name, shard[1]) == shard[0]
+
+
+def strip_unit_shard_line(lines, shard, label):
+    """A shard run prints exactly one "shard I/N: k of m cases" line (suite_keep_shard),
+    for this shard: hold it to that and drop it; a whole run passes LINES through."""
+    if shard is None:
+        return lines
+    found = [(int(m.group(1)), int(m.group(2))) for m in (SHARD_LINE_RE.fullmatch(line) for line in lines) if m]
+    if found != [shard]:
+        sys.exit("%s: expected one 'shard %d/%d: <k> of <m> cases' line, found %r" % (label, shard[0], shard[1], found))
+    return [line for line in lines if not SHARD_LINE_RE.fullmatch(line)]
+
+
+def run_binary(binary, env, timeout, extra=()):
     try:
-        result = subprocess.run([str(binary)], env=env, text=True,
+        result = subprocess.run([str(binary)] + list(extra), env=env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 timeout=execution_timeout(timeout))
     except subprocess.TimeoutExpired:
@@ -538,12 +565,18 @@ def main():
     # --production: the binary links the production library (ROCKETNET_DEV=OFF),
     # which compiles no in-memory environment table and so no restoration test
     production = "--production" in sys.argv[1:]
+    # --shard I/N (the unit suite only): run the suite's shard I of N under the
+    # ambient overrides and hold its output to the registered names of that
+    # shard (suite_shard_of); shards 0 to N-1 together are the whole check
+    unit_shard, args = parse_unit_shard(args)
     binary = Path(args[0] if args else "bin/test").resolve()
     functional = "functional" in binary.name
 
     env = os.environ.copy()
     env.pop("ROCKETNET_TEST_VERBOSE", None)
 
+    if functional and unit_shard is not None:
+        sys.exit("check_test_environment.py: --shard here is for the unit suite; a functional log takes --functional-log LOG --shard I/N")
     if functional:
         # the functional suite opens loopback sockets and walks the transport
         # transport order; its CI job invokes it with the ambient environment (and any
@@ -576,15 +609,22 @@ def main():
         "ROCKETNET_PUMP": "portable",
     })
 
-    result = run_binary(binary, env, timeout=180)
+    extra = ()
+    label = "SDK suite"
+    if unit_shard is not None:
+        extra = ("--shard", "%d/%d" % unit_shard)
+        label = "SDK suite shard %d/%d" % unit_shard
+    result = run_binary(binary, env, timeout=180, extra=extra)
     if result.returncode:
-        sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
-    names = check_shape(result.stdout.splitlines(), "SDK suite", once=True)
-    if not production and "test_suite_environment" not in names:
-        sys.exit("SDK suite did not execute its environment restoration test")
+        sys.exit("%s failed with ambient config overrides: %s" % (label, result.returncode))
+    lines = strip_unit_shard_line(result.stdout.splitlines(), unit_shard, label)
+    names = check_shape(lines, label, once=True)
+    if not production and in_unit_shard("test_suite_environment", unit_shard) and "test_suite_environment" not in names:
+        sys.exit("%s did not execute its environment restoration test" % label)
 
     reg_all, reg_always = registered_unit_names(production)
-    assert_name_set(set(names), reg_all, reg_always, "SDK suite")
+    assert_name_set(set(names), {n for n in reg_all if in_unit_shard(n, unit_shard)},
+                    {n for n in reg_always if in_unit_shard(n, unit_shard)}, label)
 
 
 if __name__ == "__main__":

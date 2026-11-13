@@ -293,10 +293,25 @@ inline rocketnet_receive_drop_sample_t * rocketnet_receive_drop_samples()
     return samples;
 }
 
+// the samples taken so far; the unit seam sets it to drive the boundary
+inline std::atomic<uint64_t> & rocketnet_receive_drop_sample_next()
+{
+    static std::atomic<uint64_t> next{ 0 };
+    return next;
+}
+
+// Refused datagrams need no authentication, so a flood reaches here without
+// end: once the samples are full the count stops (a load, no add), and while
+// they fill each racing thread adds at most once, so the count stays near
+// ROCKETNET_RECEIVE_DROP_SAMPLES and is never an index outside the samples.
 inline void rocketnet_receive_drop_sample_record( int reason, const struct rocketnet_address_t * from, const uint8_t * data, int bytes )
 {
-    static std::atomic<int> next{ 0 };
-    const int at = next.fetch_add( 1 );
+    std::atomic<uint64_t> & next = rocketnet_receive_drop_sample_next();
+    if ( next.load( std::memory_order_relaxed ) >= ROCKETNET_RECEIVE_DROP_SAMPLES )
+    {
+        return;
+    }
+    const uint64_t at = next.fetch_add( 1 );
     if ( at >= ROCKETNET_RECEIVE_DROP_SAMPLES )
     {
         return;

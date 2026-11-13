@@ -20,9 +20,23 @@
 # - the compiler is identified by its content on Linux, and by `<compiler> -v`
 #   on macOS, where /usr/bin/cc and /usr/bin/c++ are xcrun trampolines whose
 #   content does not change when Xcode or the Command Line Tools do;
-# - no sloppiness and no base_dir: paths stay absolute (tests locate their
-#   corpora through __FILE__, which a relative rewrite would break), so a hit
-#   needs the same work directory, which each runner keeps between jobs;
+# - no sloppiness;
+# - the checkout's path is not part of the key: base_dir is the job's
+#   workspace (its physical path), so ccache hands the compiler every path
+#   under it relative to the compile's own directory and hashes that, and
+#   hash_dir is off, so a -g compile does not hash the directory it ran in.
+#   Every runner on a host shares one cache directory, and each runner has
+#   its own work directory: with the path in the key (before 2026-11-13) a
+#   runner only hit what that same runner had compiled, 41-82% on a new
+#   commit against 99% on a rerun of the same commit (main, runs
+#   43457991785 and 43456588022). What this costs, named: __FILE__ is
+#   relative to the compile's directory (no test finds a file through it;
+#   tests read the tree through ROCKETNET_SOURCE_DIR), and a Debug object's
+#   DW_AT_comp_dir is the build directory of whichever runner on the host
+#   compiled it first, while its file names stay relative ("../sdk/x.cpp"),
+#   so a sanitizer report or debugger still names the file and line. A
+#   ROCKETNET_SOURCE_DIR definition carries an absolute path, so the few
+#   translation units that take one still key on the path;
 # - a compile that fails is never cached, so with -Werror a warning stays a
 #   red build however warm the cache is.
 #
@@ -70,9 +84,12 @@ runs:
         mkdir -p "$dir"
         stats="$RUNNER_TEMP/ccache-stats.log"
         : > "$stats"
+        # the physical path: the build tools see the workspace through getcwd()
+        base="$(cd "$GITHUB_WORKSPACE" && pwd -P)"
         if [ "$windows" = yes ]; then
           dir="$(cygpath -m "$dir")"
           stats="$(cygpath -m "$stats")"
+          base="$(cygpath -m "$base")"
           if [ -f /c/ProgramData/nova/ccache/msvc/cl.exe ]; then
             echo "ROCKETNET_VS_CCACHE_GLOBALS=CLToolExe=cl.exe;CLToolPath=C:/ProgramData/nova/ccache/msvc/;TrackFileAccess=false;UseMultiToolTask=true" >> "$GITHUB_ENV"
           fi
@@ -82,11 +99,12 @@ runs:
           echo "CCACHE_MAXSIZE=$size"
           echo "CCACHE_COMPILERCHECK=$check"
           echo "CCACHE_SLOPPINESS="
-          echo "CCACHE_BASEDIR="
+          echo "CCACHE_BASEDIR=$base"
+          echo "CCACHE_NOHASHDIR=1"
           echo "CCACHE_STATSLOG=$stats"
           echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
           echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
         } >> "$GITHUB_ENV"
-        echo "ccache $(ccache --version | head -1) at $dir, max $size, compiler check '$check'"
-        CCACHE_DIR="$dir" CCACHE_MAXSIZE="$size" CCACHE_COMPILERCHECK="$check" CCACHE_SLOPPINESS= CCACHE_BASEDIR= \
+        echo "ccache $(ccache --version | head -1) at $dir, max $size, compiler check '$check', base $base"
+        CCACHE_DIR="$dir" CCACHE_MAXSIZE="$size" CCACHE_COMPILERCHECK="$check" CCACHE_SLOPPINESS= CCACHE_BASEDIR="$base" CCACHE_NOHASHDIR=1 \
           ccache --show-config | grep -E '\) (base_dir|cache_dir|compiler_check|direct_mode|hash_dir|max_size|run_second_cpp|sloppiness) ='

@@ -875,6 +875,136 @@ static void test_wide_fill_main_refused_during_fill()
     rocketnet_assert_function( NULL );
 }
 
+// the update in three calls. update_receive arms the check, as the first
+// call that names a client does. From update_receive's return to
+// update_finish only update_client (from any thread) and update_finish are
+// allowed: a send from any thread and every other checked main-thread call
+// is refused, counted MAIN_THREAD_CALL_OVERLAP, and does nothing. And
+// update_finish is a main-thread call: made while a fill call is in progress
+// it is refused and counted, not run over the fill. One thread holds the
+// fill by hand (the check's own entry); the game thread's send is a real
+// second thread.
+
+static void test_wide_fill_split_update_window()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    g_wide_fill_asserts = 0;
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 2 );
+    wide_fill_connect_all( &world );
+    const int slot0 = rocketnet_client_index( world.clients[0] );
+    const int slot1 = rocketnet_client_index( world.clients[1] );
+
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) );
+    rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( transport );
+    check( phase != NULL );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+
+    // the split update arms the check
+
+    check( !rocketnet_fill_phase_armed( phase ) );
+    rocketnet_server_send_packets( world.server );
+    wide_fill_clients_step( &world );
+    rocketnet_server_update_receive( world.server, world.time );
+    check( rocketnet_fill_phase_armed( phase ) );
+
+    // inside the window: refused, counted, nothing done
+
+    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
+    check( rocketnet_server_start_message( world.server, (uint64_t) slot0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 ) == NULL );
+    uint8_t * game = (uint8_t *) 1;
+    std::thread tg( [&]
+                    { game = rocketnet_server_start_message( world.server, (uint64_t) slot1, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 8 ); } );
+    tg.join();
+    check( game == NULL );
+    rocketnet_server_send_packets( world.server );
+    check( rocketnet_server_receive_messages( world.server ) == NULL );
+    struct rocketnet_receipt_t receipts[4];
+    check( rocketnet_server_receipts( world.server, slot0, receipts, 4 ) == 0 );
+    check( rocketnet_server_set_send_kbps( world.server, slot0, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_server_disconnect_client( world.server, slot1 );
+    rocketnet_server_disconnect_all_clients( world.server );
+    rocketnet_server_stop( world.server );
+    check( rocketnet_server_running( world.server ) );
+    check( rocketnet_server_client_connected( world.server, slot0 ) );
+    check( rocketnet_server_client_connected( world.server, slot1 ) );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 9 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 9 ) );
+
+    // update_client from this thread and from a game thread is the window's
+    // own work: nothing refused; then update_finish closes the window
+
+    (void) rocketnet_server_update_client( world.server, slot0 );
+    std::thread tu( [&]
+                    { (void) rocketnet_server_update_client( world.server, slot1 ); } );
+    tu.join();
+    rocketnet_server_update_finish( world.server );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 9 );
+
+    uint8_t * p = rocketnet_server_start_message( world.server, (uint64_t) slot0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
+    check( p != NULL );
+    if ( p )
+    {
+        memset( p, 0x61, 8 );
+        check( rocketnet_server_finish_client_message( world.server, slot0, 8 ) != 0 );
+    }
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 9 );
+
+    // update_finish while a fill call is in progress: refused and counted,
+    // not run as an end with no begin (which would be misuse)
+
+    g_wide_fill_asserts = 0;
+    check( rocketnet_fill_phase_fill_begin( phase, slot1 ) );
+    rocketnet_server_update_finish( world.server );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 10 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 1 ) );
+    rocketnet_fill_phase_fill_end( phase, slot1 );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    // update_finish while a game thread is inside update_client (a take held
+    // by hand): refused and counted, the update stays open, and a send is
+    // still refused in it; with the take ended the finish closes it
+
+    g_wide_fill_asserts = 0;
+    rocketnet_server_send_packets( world.server );
+    wide_fill_clients_step( &world );
+    rocketnet_server_update_receive( world.server, world.time );
+    check( rocketnet_fill_phase_take_begin( phase ) );
+    rocketnet_server_update_finish( world.server );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 11 );
+    rocketnet_fill_phase_take_end( phase );
+    check( rocketnet_server_start_message( world.server, (uint64_t) slot0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 ) == NULL );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 12 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 2 ) );
+    rocketnet_server_update_finish( world.server );
+    p = rocketnet_server_start_message( world.server, (uint64_t) slot0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
+    check( p != NULL );
+    if ( p )
+    {
+        memset( p, 0x62, 8 );
+        check( rocketnet_server_finish_client_message( world.server, slot0, 8 ) != 0 );
+    }
+
+    // an update_client made inside a main-thread operation: refused at its
+    // look and counted (the operation is held open by hand)
+
+    rocketnet_server_update_receive( world.server, world.time );
+    check( rocketnet_fill_phase_main_begin( phase, true ) );
+    int taken = -1;
+    std::thread tt( [&]
+                    { taken = rocketnet_server_update_client( world.server, slot0 ); } );
+    tt.join();
+    check( taken == 0 );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 13 );
+    rocketnet_fill_phase_main_end( phase );
+    rocketnet_server_update_finish( world.server );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
 // a finish the check refuses leaves its start open; the next main-thread
 // operation closes it, counted MESSAGE_SEND_REFUSED; and a refused transport
 // start names no client, so its finish and abort claim none
@@ -1623,4 +1753,5 @@ REGISTER_UNIT_TEST( test_wide_fill_check_steps );
 REGISTER_UNIT_TEST( test_wide_fill_check_public );
 REGISTER_UNIT_TEST( test_wide_fill_open_per_client );
 REGISTER_UNIT_TEST( test_wide_fill_main_refused_during_fill );
+REGISTER_UNIT_TEST( test_wide_fill_split_update_window );
 REGISTER_UNIT_TEST( test_wide_fill_refused_finish_and_start );
