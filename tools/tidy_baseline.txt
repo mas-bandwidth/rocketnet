@@ -101,7 +101,6 @@ clang-tidy	sdk/rocketnet_protocol.h	bugprone-macro-parentheses	8f32cc4b5dbc870c
 clang-tidy	sdk/rocketnet_protocol.h	bugprone-macro-parentheses	9b020571ef072691
 clang-tidy	sdk/rocketnet_protocol.h	bugprone-macro-parentheses	cda43c215d46abb2
 clang-tidy	sdk/rocketnet_replay.cpp	bugprone-narrowing-conversions	0d68945199a0dfd5
-clang-tidy	sdk/rocketnet_server_gso_linux.cpp	bugprone-implicit-widening-of-multiplication-result	c9d1a91f610d3e33
 clang-tidy	sdk/rocketnet_server_gso_linux.cpp	concurrency-mt-unsafe	6e0766d3bacf9f0e
 clang-tidy	sdk/rocketnet_server_protocol.cpp	bugprone-branch-clone	438777663ef687cd
 clang-tidy	sdk/rocketnet_server_protocol.cpp	bugprone-implicit-widening-of-multiplication-result	d0ae478c9fe85d25
@@ -156,7 +155,6 @@ clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-implicit-widening-of-mult
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-implicit-widening-of-multiplication-result	c2998355ba4f6d30
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-misplaced-widening-cast	57b112052d010108
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-misplaced-widening-cast	996deb03ebfe5e3b
-clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-misplaced-widening-cast	a9f0727008c383e8
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-misplaced-widening-cast	b7ca439d51463355
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-multi-level-implicit-pointer-conversion	04db4c1d8b55b0d6
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-multi-level-implicit-pointer-conversion	5bebdf7298f8aa05
