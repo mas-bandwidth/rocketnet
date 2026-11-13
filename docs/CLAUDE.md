@@ -96,7 +96,8 @@ remaining gaps; earlier-head evidence is not a current-build pass.
 ## Roadmap
 
 Planned work lives in `docs/roadmap.sexp`, the committed roadmap ledger;
-`ROADMAP.md` is not committed. A pull request edits only `docs/roadmap.sexp`.
+`ROADMAP.md` at the repository root is generated from it and committed on main
+by the roadmap workflow. A pull request edits only `docs/roadmap.sexp`.
 On a pull request the roadmap workflow runs `make roadmap-check`
 (the file parses and every id is unique). Keep exactly one
 blank line between items, and remove an item by deleting its lines only, so
