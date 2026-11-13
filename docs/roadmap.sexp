@@ -517,6 +517,16 @@
    :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R103)")
 
 
+  (item "ack-apply-walk-many-ids" :group "review-v1-2" :area "proofs"
+   :title "The ack-apply trace walk sends blocks that apply many ids"
+   :text "tests/tla_trace_ack_apply.cpp makes every block acknowledge one new sequence with its ranges over sequences already acknowledged, so each apply gives exactly one id; a defect in the apply of a block that acknowledges several new sequences at once (the common case on a lossy link) is never walked. Let the walk draw blocks whose ranges cover unacknowledged sequences, within the batch, and extend RNAckApplyPhase's Receive to carry the id count."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-A5 (R115)")
+
+  (item "client-connection-integrity-limit" :group "review-v1-2" :area "proofs"
+   :title "ClientConnection.tla models the AEAD integrity limit"
+   :text "sdk/rocketnet_client_protocol.cpp rocketnet_client_integrity_failure disconnects the client after ROCKETNET_INTEGRITY_LIMIT failed opens (TRANSPORT.md t14); proofs/tla/ClientConnection.tla has no action for it. Add the action, with the limit as a small constant, and a reversed witness that never disconnects."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-A6 (R115)")
+
   (item "message-open-model" :group "review-v1-2" :area "proofs"
    :title "A model of the open message per connection and the object's count of open starts"
    :text "sdk/rocketnet_message_object.h (the open-message fields), sdk/rocketnet_message_server.cpp (rn_message_open_line_index and the one-start-pending refusal in the start path) and tests/wide_fill_cases.cpp cited proofs/tla/RNMessageOpen.tla, which was never written; the citations now say there is no model. The state: at most one open start per connection, fill threads opening and closing on different connections at once, the object's count of open starts and its last index as atomics, a reset's cancel (RNSlots ResetCancel). A model would carry the count's arithmetic at capacity 3 with a reversed witness (a second start on one connection admitted) and a trace walk of the wide fill."
