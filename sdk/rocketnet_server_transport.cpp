@@ -2123,8 +2123,15 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
                 rocketnet_server_transport_io_count_refused_judged( transport, 0, true );
                 continue;
             }
+            // the put-back cannot find the store full (the receive just freed
+            // a slot under this same lock); the one way it is refused is a
+            // free slot whose generation is exhausted, and the simulator
+            // counts that refusal itself (store_refused, with a warning if it
+            // is the simulator's first refusal), as it counts every packet its
+            // store refuses on the send
+            // path. Counting it here as well would count it twice
             const uint8_t * held = packet;
-            rocketnet_network_simulator_deliver_packets( transport->link_simulator, &from, &to, &held, &packet_bytes, 1, transport->time );
+            (void) rocketnet_network_simulator_deliver_packets( transport->link_simulator, &from, &to, &held, &packet_bytes, 1, transport->time );
             rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
             break;
         }
