@@ -505,7 +505,7 @@ transport creates, from the creating thread right after the create
 
 | Transport | Network threads it creates | What the library sets |
 |---|---|---|
-| GSO (Linux) | one worker per queue (`num_gso_workers`), receiving and sending | on itself at thread start: pinned to cpu `num_os_cpus + queue`; `SCHED_RR`, minimum priority, after each create |
+| GSO (Linux) | one worker per queue (`num_gso_workers`), receiving and sending | on itself at thread start: pinned to cpu `num_os_cpus + queue`, then `SCHED_RR` at the minimum priority |
 | io_uring (Linux) | one worker per ring (`num_io_uring_workers`) | on itself at thread start: pinned to cpu `num_os_cpus + queue`, then `SCHED_RR` at the minimum priority |
 | XDP (Linux) | one thread per queue (`num_xdp_threads`, `sdk/rocketnet_server_socket_linux.cpp`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
 | IOCP (Windows) | `num_iocp_completion_workers` completion workers plus `num_iocp_send_threads` send threads | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
@@ -514,7 +514,9 @@ transport creates, from the creating thread right after the create
 | portable socket | one receive worker and one transmit worker | nothing |
 
 `rocketnet_thread_priority( false )` turns the priority calls off for
-threads created after it; the XDP thread's pin to its queue's cpu always runs.
+threads created after it. The pins of the XDP, GSO and io_uring threads to
+their queue's cpu always run; those threads ask for `SCHED_RR` only when the
+switch is on and the thread was kept off core 0.
 A refused call is counted in the stats structs' `thread_priority_refusals` and
 logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the transport starts
 either way. The server task workers of a game and its main thread are the
