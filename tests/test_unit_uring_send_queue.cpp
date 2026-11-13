@@ -451,22 +451,34 @@ static void test_uring_send_queues_create_allocates_its_plan()
     check( rocketnet_init_internal( &counting, uring_send_queue_count_allocate, uring_send_queue_count_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
-    const int queue_counts[] = { 1, 2, ROCKETNET_URING_SEND_MAX_QUEUES };
-    const int sizes[] = { 1, 3, ROCKETNET_URING_SEND_BANK_SLOTS, ROCKETNET_URING_SEND_BANK_SLOTS + 1 };
-    for ( int q = 0; q < (int) ( sizeof( queue_counts ) / sizeof( queue_counts[0] ) ); q++ )
+    // every queue count at small banks, and the base and past-base bank
+    // sizes at one and two queues: the queue count's term and the bank
+    // size's term of the plan each move, without a create of hundreds of
+    // megabytes (MAX_QUEUES at a full bank) in a suite run one case a core
+    const int plans[][2] = {
+        { 1, 1 },
+        { 1, 3 },
+        { 2, 3 },
+        { ROCKETNET_URING_SEND_MAX_QUEUES, 1 },
+        { ROCKETNET_URING_SEND_MAX_QUEUES, 3 },
+        { 1, ROCKETNET_URING_SEND_BANK_SLOTS },
+        { 2, ROCKETNET_URING_SEND_BANK_SLOTS },
+        { 1, ROCKETNET_URING_SEND_BANK_SLOTS + 1 },
+        { 2, ROCKETNET_URING_SEND_BANK_SLOTS + 1 },
+    };
+    for ( int p = 0; p < (int) ( sizeof( plans ) / sizeof( plans[0] ) ); p++ )
     {
-        for ( int s = 0; s < (int) ( sizeof( sizes ) / sizeof( sizes[0] ) ); s++ )
-        {
-            const int live = counting.live;
-            counting.calls = 0;
-            counting.requested = 0;
-            struct rocketnet_uring_send_queues_t * queues = rocketnet_uring_send_queues_create( &counting, queue_counts[q], sizes[s] );
-            check( queues != NULL );
-            check( counting.calls == 1 );
-            check( counting.requested == rocketnet_uring_send_queues_allocation_bytes( queue_counts[q], sizes[s] ) + rocketnet_allocation_overhead() );
-            rocketnet_uring_send_queues_destroy( queues );
-            check( counting.live == live );
-        }
+        const int queue_count = plans[p][0];
+        const int slots = plans[p][1];
+        const int live = counting.live;
+        counting.calls = 0;
+        counting.requested = 0;
+        struct rocketnet_uring_send_queues_t * queues = rocketnet_uring_send_queues_create( &counting, queue_count, slots );
+        check( queues != NULL );
+        check( counting.calls == 1 );
+        check( counting.requested == rocketnet_uring_send_queues_allocation_bytes( queue_count, slots ) + rocketnet_allocation_overhead() );
+        rocketnet_uring_send_queues_destroy( queues );
+        check( counting.live == live );
     }
 
     check( rocketnet_test_loopback_hub_release() );

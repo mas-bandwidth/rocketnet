@@ -28,7 +28,8 @@
 //   * the Wycheproof files load with their counts, and the JSON reader
 //     refuses malformed input.
 //
-// No socket, no clock: the inputs are fixed and the functions are pure.
+// No socket, no clock: the inputs are fixed, and the Wycheproof files are
+// read from the tree.
 
 #include "test_unit_registry.h"
 
@@ -115,7 +116,7 @@ static void test_base64_decode_data_never_returns_negative()
 // INT_MAX + 1. The test cannot allocate 2 GB, so it relies on the refusal
 // touching nothing: the input and output are 16 bytes each and output_size
 // claims SIZE_MAX, so a guard that reads or writes a byte walks off both
-// buffers. At head it returns -1 with the output untouched.
+// buffers. It returns -1 with the output untouched.
 // ---------------------------------------------------------------------------
 
 static void test_base64_encode_refuses_length_over_int_max()

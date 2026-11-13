@@ -1427,10 +1427,14 @@ static struct
 static int worker_test_script_submit( void * context, bool wait )
 {
     worker_test_kernel_t * k = (worker_test_kernel_t *) context;
-    const int handed = worker_test_submit( context, wait );
     const int call = worker_test_script.calls++;
     worker_test_script.waits += wait ? 1 : 0;
     check( worker_test_script.calls <= 64 );
+
+    // a refused submit hands the kernel nothing: the prepared entries stay
+    // queued for the next one, as with io_uring_enter
+    const bool refused = call < (int) worker_test_script.results.size() && worker_test_script.results[(size_t) call] < 0;
+    const int handed = refused ? 0 : worker_test_submit( context, wait );
     if ( call + 1 == worker_test_script.drain_after )
     {
         struct rocketnet_uring_queue_worker_completion_t receive = { rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), -ECANCELED, 0 };
