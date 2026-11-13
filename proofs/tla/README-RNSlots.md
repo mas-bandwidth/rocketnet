@@ -216,7 +216,7 @@ was measured on 2026-11-13 on aws-mut-3, a shared bench under other load, so
 the seconds are loaded; `RUNS.tsv` holds the records. The controls grew with
 this revision (an update with views held now continues, the region keeps
 released records until the next update begins, and a start is pending per
-slot): `MCRNSlotsExhaustion.cfg` is the closest to the budget at 72 seconds.
+slot): `MCRNSlotsExhaustion.cfg` is the closest to the budget at 68 to 72 seconds, and declares a 150-second budget in `BUDGETS.tsv`.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|
@@ -231,7 +231,7 @@ slot): `MCRNSlotsExhaustion.cfg` is the closest to the budget at 72 seconds.
 | `MCRNSlotsBrokenUpdateWithHeldViews.cfg` | 279 | 200 | 0.773 | invariant UpdateRequiresReleasedViews |
 | `MCRNSlotsBrokenPendingAcrossReset.cfg` | 251 | 182 | 0.796 | invariant NoPendingAcrossReset |
 | `MCRNSlotsTwoPending.cfg` | 401 | 250 | 0.816 | invariant NotBothPending |
-| `MCRNSlotsExhaustion.cfg` | 13,307,947 | 3,072,865 | 71.697 | pass - |
+| `MCRNSlotsExhaustion.cfg` | 13,307,947 | 3,072,865 | 68.495 | pass - |
 | `MCRNSlotsLive.cfg` | 1,833 | 1,024 | 2.968 | pass - |
 | `MCRNSlotsTwoSlots.cfg` | 4,528,622 | 1,700,027 | 38.532 | pass - |
 
