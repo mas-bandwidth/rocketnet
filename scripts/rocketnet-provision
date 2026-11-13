@@ -37,7 +37,7 @@
 #                             isolated-core mask, the queue count and the
 #                             IRQ pinning scale TOGETHER with NIC bandwidth
 #                             ("higher bandwidth nics may need more cores").
-#   B2. isolated cpu set      /sys/devices/system/cpu/isolated is non-empty
+#   B2. isolated cpu set      /sys/devices/system/cpu/isolated is a non-empty cpu list
 #                             (the observable effect of B1's isolcpus).
 #   B3. NIC driver            one with AF_XDP zero copy. Measured on an X710:
 #                             the in-tree i40e of Ubuntu's 7.0.0-43-generic

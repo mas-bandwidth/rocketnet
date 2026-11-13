@@ -339,7 +339,7 @@ refuses by name on any unmet condition (`BUILDING.md`,
 | condition | what | script |
 | --- | --- | --- |
 | B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); `irqaffinity=` may be any cpu list with no isolated cpu; grub and reboot | `:27-39` |
-| B2 | `/sys/devices/system/cpu/isolated` is non-empty | `:40-41` |
+| B2 | `/sys/devices/system/cpu/isolated` is a non-empty cpu list | `:40-41` |
 | B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:42-47` |
 | R1 | euid 0 | `:51` |
 | R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act, and the parent's `rx-vlan-offload` is off so the tag reaches the filter; the pre-flight checks it carries the public address | `:52-59` |

@@ -1377,10 +1377,22 @@ static int rocketnet_server_socket_read_vectors( const char * root, const char *
 // matches as a whole token, never a substring ("lo" must not match
 // "velocity0"). scripts/rocketnet-provision's R4 is the same rule.
 
+// command_interface is the name the provision hint gives the script: the
+// address's interface, which for a VLAN server is the VLAN device (the
+// script resolves the parent and checks the VLAN's offload)
+
+static bool rocketnet_server_socket_preflight_irqs_named( const char * root, const char * interface_name, const char * command_interface, int num_queues, int num_os_cpus );
+
 bool rocketnet_server_socket_preflight_irqs( const char * root, const char * interface_name, int num_queues, int num_os_cpus )
+{
+    return rocketnet_server_socket_preflight_irqs_named( root, interface_name, interface_name, num_queues, num_os_cpus );
+}
+
+static bool rocketnet_server_socket_preflight_irqs_named( const char * root, const char * interface_name, const char * command_interface, int num_queues, int num_os_cpus )
 {
     rocketnet_assert( root );
     rocketnet_assert( interface_name );
+    rocketnet_assert( command_interface );
     rocketnet_assert( num_queues >= 1 );
 
     bool provisioned = true;
@@ -1393,7 +1405,7 @@ bool rocketnet_server_socket_preflight_irqs( const char * root, const char * int
                                rocketnet_server_socket_read_sysfs( path, isolated, sizeof( isolated ) ) && rocketnet_xdp_cpu_list_has( isolated, 0 ) != -1;
 
     char command[512];
-    rocketnet_server_socket_provision_command( command, sizeof( command ), interface_name, num_queues, num_os_cpus, "" );
+    rocketnet_server_socket_provision_command( command, sizeof( command ), command_interface, num_queues, num_os_cpus, "" );
 
     rocketnet_server_socket_vector_t vectors[ROCKETNET_XDP_PREFLIGHT_MAX_VECTORS];
     const int num_vectors = rocketnet_server_socket_read_vectors( root, interface_name, vectors, ROCKETNET_XDP_PREFLIGHT_MAX_VECTORS );
@@ -1433,7 +1445,7 @@ bool rocketnet_server_socket_preflight_irqs( const char * root, const char * int
     // isolated set there is nothing to pin to, as in the script
     if ( !named_queues && !have_isolated )
     {
-        rocketnet_warn( "xdp pre-flight: cannot pin %s's IRQs (R4): no isolated cpus (B1/B2 first)", interface_name );
+        rocketnet_warn( "xdp pre-flight: cannot pin %s IRQs (R4): no isolated cpus (B1/B2 first)", interface_name );
         return false;
     }
 
@@ -2025,7 +2037,12 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
     }
 
     // R2: the device XDP attaches to: the interface itself, or the parent of
-    // a VLAN device. Every check below is of that device
+    // a VLAN device. Every check below is of that device; every provision
+    // hint names the address's interface, so a VLAN server's names the VLAN
+    // device (the script resolves the parent and checks the VLAN's offload)
+
+    char provision_interface[1024];
+    snprintf( provision_interface, sizeof( provision_interface ), "%s", interface_name );
 
     {
         char xdp_name[ROCKETNET_GATEWAY_NETLINK_NAME_BYTES];
@@ -2098,7 +2115,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
                 attached_mode = "offload";
             }
 
-            rocketnet_warn( "xdp pre-flight: an XDP program (id %u, %s mode) is already attached to %s (R3): run scripts/rocketnet-provision %s %d", attached_program_id, attached_mode, interface_name, interface_name, num_queues );
+            rocketnet_warn( "xdp pre-flight: an XDP program (id %u, %s mode) is already attached to %s (R3): run scripts/rocketnet-provision %s %d", attached_program_id, attached_mode, interface_name, provision_interface, num_queues );
             provisioned = false;
         }
     }
@@ -2112,7 +2129,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
 
     char value[4096];
 
-    // B2: the isolated cpu set exists and is non-empty -- isolcpus= taken
+    // B2: the isolated cpu set exists and is a non-empty cpu list -- isolcpus= taken
     // effect. an absent file is the same errand as an empty one, in both
     // this check and the script. A set that is not a cpu list is unmet
     // and counts as none for R4, in both.
@@ -2154,7 +2171,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
 
     // R4: the queue IRQs, pinned (the function above)
 
-    if ( !rocketnet_server_socket_preflight_irqs( "", interface_name, num_queues, num_os_cpus ) )
+    if ( !rocketnet_server_socket_preflight_irqs_named( "", interface_name, provision_interface, num_queues, num_os_cpus ) )
     {
         provisioned = false;
     }
@@ -2172,7 +2189,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
     {
         if ( strcmp( value, "off" ) != 0 && strcmp( value, "forceoff" ) != 0 && strcmp( value, "notsupported" ) != 0 && strcmp( value, "notimplemented" ) != 0 )
         {
-            rocketnet_warn( "xdp pre-flight: smt is '%s', want off (R6): run scripts/rocketnet-provision %s %d", value, interface_name, num_queues );
+            rocketnet_warn( "xdp pre-flight: smt is '%s', want off (R6): run scripts/rocketnet-provision %s %d", value, provision_interface, num_queues );
             provisioned = false;
         }
     }
@@ -2184,7 +2201,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
 
     if ( rocketnet_server_socket_read_sysfs( path, value, sizeof( value ) ) && strcmp( value, "2" ) != 0 )
     {
-        rocketnet_warn( "xdp pre-flight: napi_defer_hard_irqs is %s, want 2 (R5): run scripts/rocketnet-provision %s %d", value, interface_name, num_queues );
+        rocketnet_warn( "xdp pre-flight: napi_defer_hard_irqs is %s, want 2 (R5): run scripts/rocketnet-provision %s %d", value, provision_interface, num_queues );
         provisioned = false;
     }
 
@@ -2192,7 +2209,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
 
     if ( rocketnet_server_socket_read_sysfs( path, value, sizeof( value ) ) && strcmp( value, "200000" ) != 0 )
     {
-        rocketnet_warn( "xdp pre-flight: gro_flush_timeout is %s, want 200000 (R5): run scripts/rocketnet-provision %s %d", value, interface_name, num_queues );
+        rocketnet_warn( "xdp pre-flight: gro_flush_timeout is %s, want 200000 (R5): run scripts/rocketnet-provision %s %d", value, provision_interface, num_queues );
         provisioned = false;
     }
 
@@ -2251,7 +2268,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
                 {
                     rocketnet_warn( "xdp pre-flight: %s has %u combined queues and the server runs %d XDP threads (num_xdp_threads; R7): provision the NIC with "
                                     "`sudo scripts/rocketnet-provision %s %d`, or set num_xdp_threads (ROCKETNET_SERVER_NUM_XDP_THREADS) to %u",
-                                    interface_name, channels.combined_count, num_queues, interface_name, num_queues, channels.combined_count );
+                                    interface_name, channels.combined_count, num_queues, provision_interface, num_queues, channels.combined_count );
                     provisioned = false;
                 }
             }
@@ -3204,7 +3221,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( off > 0 )
         {
             char command[512];
-            rocketnet_server_socket_provision_command( command, sizeof( command ), xdp_interface_name, num_queues, num_os_cpus, "repin" );
+            // the address's interface: given a VLAN device, the script
+            // resolves the parent itself
+            rocketnet_server_socket_provision_command( command, sizeof( command ), interface_name, num_queues, num_os_cpus, "repin" );
             rocketnet_warn( "xdp: attaching server_xdp moved %d of %s's %d queue interrupts off their xdp threads' cpus (%s): the driver most likely rebuilt its vectors on the attach (or something changed them since the pre-flight), so each packet on those queues takes its interrupt on another core. run %s now (docs/DEPLOYING.md, step 4a)",
                             off, xdp_interface_name, num_queues, first_off, command );
         }
