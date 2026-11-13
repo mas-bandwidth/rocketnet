@@ -40,6 +40,8 @@ set(ROCKETNET_SDK_SOURCES_COMMON
     sdk/rocketnet_message.cpp
     sdk/rocketnet_message_client.cpp
     sdk/rocketnet_message_server.cpp
+    sdk/rocketnet_msgx_socket_table.cpp
+    sdk/rocketnet_msgx_send_runs.cpp
     sdk/rocketnet_endpoint.cpp
     sdk/rocketnet_slots.cpp
     sdk/rocketnet_channel.cpp
@@ -72,8 +74,9 @@ set(ROCKETNET_SDK_SOURCES_LINUX
     sdk/rocketnet_server_udp_linux.cpp
     sdk/rocketnet_server_socket_linux.cpp)
 
-# No Apple-only source today: macOS and iOS use the common sources.
-set(ROCKETNET_SDK_SOURCES_APPLE)
+# The macOS batched server (msgx), staged; iOS uses the common sources.
+set(ROCKETNET_SDK_SOURCES_APPLE
+    sdk/rocketnet_server_msgx_apple.cpp)
 
 set(ROCKETNET_SDK_SOURCES_WINDOWS
     sdk/rocketnet_client_iocp_windows.cpp

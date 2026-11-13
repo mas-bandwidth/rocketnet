@@ -83,6 +83,28 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
+    "msgx": {
+        "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
+        "untraced": {
+            "Forget": "the first step of a forget call, where holders run before its retire: the walk sees the table between calls and takes the whole call, ForgetCall",
+            "Retire": "the second step of a retire inside a forget or a sweep call, which the walk takes whole as ForgetCall or SweepCall",
+            "RetireWordLate": "the broken order of the retire's two steps (PassCopyFirst), which the code does not have and the model's reversed witness keeps",
+            "ForgetDereg": "the last step of a forget call, taken whole as ForgetCall",
+            "SweepBegin": "the first step of a sweep call, where holders run before its dead-report loop: the walk takes the whole call, SweepCall",
+            "RetireDead": "one slot of a sweep call's dead-report loop, taken whole as SweepCall",
+            "Close": "one entry of a sweep call's close loop, taken whole as SweepCall",
+        },
+        "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired"],
+        "steps": 500,
+    },
+    "msgxsendruns": {
+        "modules": ["RNMsgxSendRuns.tla", "TraceRNMsgxSendRuns.tla"],
+        "untraced": {},
+        # one bank of 16 to 24 packets leaves in about 60 steps; the rest
+        # of a 400-step walk would be Done records, each paid for by the
+        # template's ASSUME
+        "steps": 150,
+    },
     "iocp-admit": {
         "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
         "untraced": {},

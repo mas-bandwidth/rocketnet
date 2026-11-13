@@ -88,6 +88,12 @@ enum rocketnet_receive_drop_t
     // main will not take). Feeds ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED.
     ROCKETNET_RECEIVE_DROP_STOPPED,
 
+    // never returned by the prefilter: counted by a transport for a datagram
+    // queued at a client's own socket when the transport retired that socket
+    // (the client left or moved), which it never handed to main. Feeds
+    // ROCKETNET_COUNTER_RECEIVE_DROPPED_RETIRED.
+    ROCKETNET_RECEIVE_DROP_RETIRED,
+
     ROCKETNET_RECEIVE_NUM_DROPS
 };
 
@@ -164,6 +170,9 @@ static inline int rocketnet_receive_drop_counters( enum rocketnet_receive_drop_t
             return 1;
         case ROCKETNET_RECEIVE_DROP_STOPPED:
             counters[0] = ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED;
+            return 1;
+        case ROCKETNET_RECEIVE_DROP_RETIRED:
+            counters[0] = ROCKETNET_COUNTER_RECEIVE_DROPPED_RETIRED;
             return 1;
         default:
             break;

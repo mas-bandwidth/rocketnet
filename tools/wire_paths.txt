@@ -98,6 +98,8 @@ sdk/rocketnet_server_gso.h	Linux UDP segmentation offload for the server socket
 sdk/rocketnet_server_gso_linux.cpp	Linux UDP segmentation offload for the server socket
 sdk/rocketnet_server_iocp.h	Windows IOCP server transport
 sdk/rocketnet_server_iocp_windows.cpp	Windows IOCP server transport
+sdk/rocketnet_server_msgx.h	macOS batched server transport (sendmsg_x, recvmsg_x)
+sdk/rocketnet_server_msgx_apple.cpp	macOS batched server transport (sendmsg_x, recvmsg_x)
 sdk/rocketnet_server_replay_marks.cpp	server replay slot marks for the kernel map
 sdk/rocketnet_server_replay_marks.h	server replay slot marks for the kernel map
 sdk/rocketnet_server_rio.h	Windows RIO server transport
@@ -140,6 +142,10 @@ sdk/rocketnet_xdp_replay_sink.h	the replay writer's forget, mark and commit into
 sdk/rocketnet_xdp_socket_config.h	AF_XDP socket bind config
 sdk/xdp/server_xdp.c	the kernel filter: :360-424 read header bytes at the offsets rocketnet_wire.h defines, write none
 sdk/rocketnet_receive_prefilter.h	the receive drop reasons and their counters, and the drop tallies; reads and writes no byte
+sdk/rocketnet_msgx_socket_table.h	the macOS per-client socket table: slots, passes, address index and counters over a socket the caller opens; reads and writes no packet byte
+sdk/rocketnet_msgx_socket_table.cpp	the table's retire (the trace check's plant lives here); reads and writes no packet byte
+sdk/rocketnet_msgx_send_runs.h	the macOS send path over a taken bank: sort by slot, runs, the cursor a send result moves, over a fake-able send; reads and writes no packet byte
+sdk/rocketnet_msgx_send_runs.cpp	the send runs' generation test (the trace check's plant lives here); reads and writes no packet byte
 # Files a review named as defining wire bytes that the owner has not yet
 # ruled on. The check accepts them and names every one on every run; they
 # are not in the gate above until the owner moves each to a list.

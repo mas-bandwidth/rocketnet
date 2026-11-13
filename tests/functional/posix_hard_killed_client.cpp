@@ -73,6 +73,7 @@
 #include <netinet/in.h>
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include <mach-o/dyld.h>
+#include "rocketnet_server_msgx.h"
 #else
 #include <sys/random.h>
 #include "rocketnet_server_gso.h"
@@ -206,11 +207,12 @@ static void posix_hk_leave_far( int self_ns, int far_ns )
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
 
 // the transports whose server owns one platform socket the case reads its
-// live pump from; gso and io_uring own a socket group and no single socket
+// live pump from; gso and io_uring own a socket group and no single socket,
+// and msgx (macOS) owns a shared socket and one connected socket per client
 
 static bool posix_hk_server_has_socket( const posix_hk_cell_t & cell )
 {
-    return strcmp( cell.server, "portable" ) == 0 || strcmp( cell.server, "msgx" ) == 0;
+    return strcmp( cell.server, "portable" ) == 0;
 }
 
 static void posix_hk_setenv( const char * name, const char * value )
@@ -225,9 +227,9 @@ static void posix_hk_setenv( const char * name, const char * value )
     }
 }
 
-static const char * posix_hk_expected_server_pump( const posix_hk_cell_t & cell )
+static const char * posix_hk_expected_server_pump( const posix_hk_cell_t & )
 {
-    return strcmp( cell.server, "msgx" ) == 0 ? "msgx" : "portable";
+    return "portable";
 }
 
 static void posix_hk_server_address( const posix_hk_cell_t & cell, int port, char * out, size_t bytes )
@@ -1170,13 +1172,13 @@ static bool posix_hk_port_held( const posix_hk_cell_t & cell, int port )
 }
 
 // count datagrams to the closed port, sent from the server's own sockets:
-// the one platform socket of portable and msgx, or the socket group of gso
-// and io_uring, staged through the transport instance's own start, finish
+// the one platform socket of portable, the shared and connected sockets of
+// msgx, or the socket group of gso and io_uring, staged through the transport instance's own start, finish
 // and send phase on this, the main thread, between the transport's calls
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 static void posix_hk_server_send_to( struct rocketnet_server_transport_t * server, const posix_hk_cell_t & cell, const rocketnet_address_t * to, const uint8_t * data, int bytes, int count )
 {
@@ -1243,6 +1245,20 @@ static void posix_hk_server_send_to( struct rocketnet_server_transport_t * serve
     {
         rocketnet_server_uring_send_packets( (struct rocketnet_server_uring_t *) instance );
     }
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) rocketnet_server_transport_io_name_for_testing( server );
+    posix_hard_killed_require( msgx && strcmp( cell.server, "msgx" ) == 0 );
+
+    for ( int i = 0; i < count; i++ )
+    {
+        uint64_t packet_id = 0;
+        uint8_t * frame = rocketnet_server_msgx_start_packet( msgx, to, &packet_id );
+        posix_hard_killed_require( frame );
+        memcpy( frame + ROCKETNET_FRAME_WIRE_OFFSET, data, (size_t) bytes );
+        rocketnet_server_msgx_finish_packet( msgx, packet_id, frame, bytes );
+    }
+
+    rocketnet_server_msgx_send_packets( msgx );
 #else
     (void) to;
     (void) data;

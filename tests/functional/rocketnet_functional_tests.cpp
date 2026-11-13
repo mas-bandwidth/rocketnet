@@ -948,6 +948,10 @@ void rocketnet_test_transport_ring_exhaustion()
     const int capacity = rocketnet_test_fill_server_ring( server, completion_capacity );
     rocketnet_check( capacity >= 256 );
     rocketnet_check( capacity < 20000 );
+    // msgx's one transmit worker takes a frame's whole peak share: space game's
+    // peak is 15 starts a client at 1000 clients, 15,000 a frame, and two
+    // workers at 4096 each refused 7,000 of them (ROCKETNET_MSGX_SEND_QUEUE_SIZE)
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "msgx" ) != 0 || capacity >= 15000 );
 
     // the fill takes exactly the lane's pool less the reserve, in every build
     // (read by value on Windows: development and production both)
@@ -978,7 +982,10 @@ void rocketnet_test_transport_ring_exhaustion()
     // Accumulate returned frames in this one fill until the same exact
     // capacity is reached. No flush or transport update assists the refill.
 
-    const int refill = rocketnet_test_fill_server_ring( server, completion_capacity );
+    // msgx's banks come back when their transmit workers have sent them:
+    // the refill waits for the whole capacity, as IOCP's for its completions
+    const int msgx_staged = strcmp( rocketnet_server_transport_io_name( server ), "msgx" ) == 0;
+    const int refill = rocketnet_test_fill_server_ring( server, msgx_staged ? capacity : completion_capacity );
     if ( refill != capacity )
     {
         printf( "ring refill: transport=%s first=%d second=%d\n", rocketnet_server_transport_io_name( server ), capacity, refill );
@@ -997,6 +1004,10 @@ void rocketnet_test_transport_ring_exhaustion()
 
     rocketnet_server_transport_update( server, rocketnet_platform_time() );
 
+    // likewise a start right after the flush may still refuse on msgx, as
+    // IOCP's may before its completions retire
+    const int sends_asynchronously = completion_capacity || msgx_staged;
+
     int recovered = 0;
 
     start = rocketnet_platform_time();
@@ -1004,7 +1015,7 @@ void rocketnet_test_transport_ring_exhaustion()
     {
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
-        rocketnet_check( frame || completion_capacity );
+        rocketnet_check( frame || sends_asynchronously );
         if ( frame )
         {
             memcpy( frame, "again", 5 );
@@ -15341,6 +15352,10 @@ void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
 void rocketnet_test_posix_client_drops_foreign_sources();
 void rocketnet_test_posix_platform_send_seam();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+void rocketnet_test_posix_msgx_retired_socket_counted();
+void rocketnet_test_posix_msgx_dual_stack_client_sockets_open();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void rocketnet_test_posix_transport_send_seam();
 void rocketnet_test_posix_send_burst();
 #if defined( __linux__ )
@@ -16080,6 +16095,9 @@ extern void rocketnet_test_server_bind_address_not_reached_on_another_address();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 extern void rocketnet_test_server_bind_refused_portable();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_server_bind_refused_msgx();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_server_bind_refused_gso();
 extern void rocketnet_test_server_bind_refused_io_uring();
@@ -16375,6 +16393,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather, NULL },
     { "test_posix_client_drops_foreign_sources", rocketnet_test_posix_client_drops_foreign_sources, NULL },
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam, NULL },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_posix_msgx_retired_socket_counted", rocketnet_test_posix_msgx_retired_socket_counted, NULL },
+    { "test_posix_msgx_dual_stack_client_sockets_open", rocketnet_test_posix_msgx_dual_stack_client_sockets_open, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam, NULL },
     { "test_posix_send_burst", rocketnet_test_posix_send_burst, NULL },
 #endif // #if !defined( _WIN32 ) && ROCKETNET_DEV
@@ -16679,6 +16701,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, NULL },
     { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, NULL },

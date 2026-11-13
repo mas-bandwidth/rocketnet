@@ -301,6 +301,7 @@ def write_tidy_db(by_file, files):
 NOT_ANALYSED_HERE = {
     "Linux": {
         "sdk/rocketnet_server_rio_windows.cpp": "the RIO server transport, wholly inside ROCKETNET_PLATFORM_WINDOWS",
+        "sdk/rocketnet_server_msgx_apple.cpp": "the msgx server transport, wholly inside ROCKETNET_PLATFORM_MAC",
     },
 }
 

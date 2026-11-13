@@ -281,6 +281,79 @@ void rocketnet_test_server_bind_refused_portable()
     bind_refused_ipv6_for( "portable" );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+// msgx's shared socket binds with neither SO_REUSEADDR nor SO_REUSEPORT and
+// sets them after the bind, so a port another process holds is refused like
+// every transport's; its client sockets still join the port. With the options
+// set before the bind, macOS let it succeed and the more specific socket took
+// the other's datagrams (the parallel functional suite lost packets to it).
+static struct rocketnet_server_t * bind_started_msgx( const char * public_address )
+{
+    struct rocketnet_server_config_t config;
+    bind_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    bind_check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    memcpy( config.backend_public_key, backend_public, sizeof( config.backend_public_key ) );
+    config.protocol_id = 0x62696e6472666564ULL;
+    config.max_clients = 1;
+    config.packet_filter[0] = 0x62;
+    config.packet_filter[1] = 0x69;
+    config.packet_filter[2] = 0x6e;
+    config.packet_filter[3] = 0x65;
+    config.transport = "msgx";
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, public_address[0] == '[' ? NULL : public_address, public_address[0] == '[' ? public_address : NULL, &config, &status );
+    bind_check( server != NULL && status == ROCKETNET_STATUS_OK );
+    if ( rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        return NULL;
+    }
+    return server;
+}
+
+static void bind_stopped_msgx( struct rocketnet_server_t * server )
+{
+    double time = 1000.0;
+    rocketnet_server_stop( server );
+    while ( !rocketnet_server_stopped( server ) )
+    {
+        time += 0.01;
+        rocketnet_server_update( server, time );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_server_destroy( server );
+}
+
+// a port another msgx server holds (its shared socket has SO_REUSEPORT, set
+// after its bind) is refused too: never a silent share of its datagrams.
+// IPv6 is skipped where the host has none.
+static void bind_refused_held_by_msgx( bool ipv6 )
+{
+    struct rocketnet_server_t * holder = bind_started_msgx( ipv6 ? "[::1]:0" : "127.0.0.1:0" );
+    if ( !holder )
+    {
+        bind_check( ipv6 );
+        return;
+    }
+    char held_address[64];
+    snprintf( held_address, sizeof( held_address ), ipv6 ? "[::1]:%u" : "127.0.0.1:%u", (unsigned) rocketnet_server_port( holder ) );
+    bind_check( bind_refused_start( "msgx", held_address, NULL ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+    bind_stopped_msgx( holder );
+}
+
+void rocketnet_test_server_bind_refused_msgx()
+{
+    bind_refused_for( "msgx" );
+    bind_refused_ipv6_for( "msgx" );
+    bind_refused_held_by_msgx( false );
+    bind_refused_held_by_msgx( true );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 void rocketnet_test_server_bind_refused_gso()
