@@ -11,13 +11,14 @@
 (* looks at main_calls only (OneFiller), MCRNFillPhaseBrokenNoRestore.cfg *)
 (* leaves a refused look's claim (NoFalseAlarm),                        *)
 (* MCRNFillPhaseBrokenScanOne.cfg looks at one fills_in line (Sound).     *)
-(* Two fills_in lines: f2 counts on l2, every other filler on l1, so at   *)
-(* three fillers two share a line.  README-RNFillPhase.md gives the       *)
+(* Two fills_in lines: f2 counts on line 1, every other filler on line 0 *)
+(* (MCLineChoice, for the spec's LineChoice: a thread's line is fixed),   *)
+(* so at three fillers two share a line.  README-RNFillPhase.md gives the *)
 (* traces TLC printed and the check against the code by hand.            *)
 (***************************************************************************)
 EXTENDS RNFillPhase
 
-CONSTANTS f1, f2, f3, l1, l2
+CONSTANTS f1, f2, f3
 
-MCLineOf == [f \in Fillers |-> IF f = f2 THEN l2 ELSE l1]
+MCLineChoice(f) == {IF f = f2 THEN 1 ELSE 0}
 =============================================================================

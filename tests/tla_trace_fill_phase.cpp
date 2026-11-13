@@ -15,22 +15,33 @@
 // parks in the code's own trace hook at the end of each step the model names
 // (rocketnet_fill_phase_set_trace), and the walk releases one actor at a
 // time, chosen by the seed, so a seed is one interleaving, run the same way
-// every time. After each step it writes one record of every model variable:
-// the code's own state (main_calls, each fills_in line, the epoch, each
-// client's word and owner) read from the fill phase, the control state and the words a
-// call saved from the step the hook names, and the contract's ghost (who
-// passed on what in this phase, which calls met a main operation, whether a
-// refusal was of an honest call) by the model's own rules.
+// every time. Each filler counts on a fills_in line the seed picks
+// (rocketnet_fill_phase_test_set_line, in place of its thread id's hash, an
+// address that differs run to run); a seed sometimes gives two fillers one
+// line.
+//
+// One record per step (tla_step, record format v2): the call the thread is
+// in (main_begin, main_end, fill_begin, fill_end), the step the code's hook
+// named (the action), its arguments with what the step gave back (the line
+// a look read or a count took, ok for a look, lock or decide that let the
+// call go on), and every model variable after it: the code's own state
+// (main_calls, each fills_in line, the epoch, each client's word and owner)
+// read from the fill phase, the control state, the line each call counted
+// on and the words a call saved from the steps the hook names, and the
+// contract's ghost (who passed on what in this phase, which calls met a main
+// operation, whether a refusal was of an honest call) by the model's own
+// rules.
 //
 // The environment is free to break the contract, as in the model: the main
 // thread and the fillers run at once, and two fillers may pick one client.
 // Every refusal is then a step of the model too.
 //
-// The plant (ROCKETNET_FILL_PHASE_PLANT, the tla_trace_plant build) restores
-// the defect MCRNFillPhaseBrokenNoRestore names: a refused look leaves its
-// claim, out, in place of the word and owner it replaced. PLANT-FIRED counts
-// the refused looks on a client where that differs from the restore. The
-// walk steers toward them: after a filler counts itself in, the main thread
+// The plant (ROCKETNET_FILL_PHASE_PLANT, tla_trace_plant_fill_phase)
+// restores the defect MCRNFillPhaseBrokenNoRestore names: a refused look
+// leaves its claim, out, in place of the word and owner it replaced. The
+// walk reports it (PLANT-AT) at each refused look on a client where that
+// differs from the restore, the record where the word shows it. The walk
+// steers toward them: after a filler counts itself in, the main thread
 // often runs next, so the filler's look finds it.
 
 #if defined( ROCKETNET_TLA_PLANT )
@@ -52,12 +63,15 @@
 #include "../sdk/rocketnet_platform.h"
 #include "tla_trace_record.h"
 
+// the instance: two clients, three fillers, every fills_in line of the
+// code. Each actor may make as many calls as the walk has steps, so the
+// walk never runs out of calls before its last step (the model's Done is
+// never reached)
 #define FP_CLIENTS 2
 #define FP_FILLERS 3
-#define FP_MAX_MAIN 10
-#define FP_MAX_FILLS 10
 #define FP_ACTORS ( 1 + FP_FILLERS )
 #define FP_LINES ROCKETNET_FILL_PHASE_FILL_LINES
+#define FP_NO_LINE -1
 
 // an actor between steps: parked before its next call (READY), parked in the
 // hook at the end of a step (STEP), running, or done with its calls
@@ -112,6 +126,8 @@ struct fp_walk_t
     struct rocketnet_fill_phase_t * phase;
     uint64_t overlaps;
     uint64_t two_fillers;
+    int calls;                                      // the calls each actor may make
+    int line[FP_FILLERS];                           // each filler's fills_in line, picked by the seed
 
     // the owners as the last record read them: a decide's saved owner
     int last_owner[FP_CLIENTS];
@@ -124,6 +140,7 @@ struct fp_walk_t
     uint64_t fepoch[FP_FILLERS];
     fp_word_t seen[FP_FILLERS];
     int saved[FP_FILLERS];
+    int fline[FP_FILLERS];
     bool fbroke[FP_FILLERS];
     bool phase_in[FP_CLIENTS][FP_FILLERS];
     bool false_alarm;
@@ -191,7 +208,8 @@ static int fp_owner( const fp_walk_t * walk, uint64_t id )
     return -2;
 }
 
-static tla_record_t fp_record( fp_walk_t * walk )
+// every model variable, as the code and the walk hold them after a step
+static tla_record_t fp_state( fp_walk_t * walk )
 {
     std::vector<std::string> fillers, clients;
     for ( int f = 0; f < FP_FILLERS; f++ )
@@ -216,7 +234,7 @@ static tla_record_t fp_record( fp_walk_t * walk )
     }
     mscan += "}";
 
-    std::vector<std::string> fpc, fclient, fepoch, seen, saved, fbroke, fills;
+    std::vector<std::string> fpc, fclient, fepoch, seen, saved, fline, fbroke, fills;
     for ( int f = 0; f < FP_FILLERS; f++ )
     {
         fpc.push_back( fp_pc_text( walk->fpc[f] ) );
@@ -224,6 +242,7 @@ static tla_record_t fp_record( fp_walk_t * walk )
         fepoch.push_back( tla_int( (int64_t) walk->fepoch[f] ) );
         seen.push_back( fp_word_text( walk->seen[f] ) );
         saved.push_back( fp_owner_name( walk->saved[f] ) );
+        fline.push_back( tla_int( walk->fline[f] ) );
         fbroke.push_back( tla_bool( walk->fbroke[f] ) );
         fills.push_back( tla_int( walk->fills_done[f] ) );
     }
@@ -255,6 +274,7 @@ static tla_record_t fp_record( fp_walk_t * walk )
     record.add( "saved", tla_function( fillers, saved ) );
     record.add( "mainCalls", tla_int( walk->phase->main_calls.load() ) );
     record.add( "fillsIn", tla_function( lines, fills_in ) );
+    record.add( "fline", tla_function( fillers, fline ) );
     record.add( "epoch", tla_int( (int64_t) walk->phase->epoch.load() ) );
     record.add( "word", tla_function( clients, words ) );
     record.add( "owner", tla_function( clients, owners ) );
@@ -391,10 +411,12 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
     else if ( action == "FillCount" )
     {
         walk->fpc[f] = FP_COUNTED;
+        walk->fline[f] = (int) step->word;
     }
     else if ( action == "FillLook" && step->refused )
     {
         fp_fill_refused( walk, f );
+        walk->fline[f] = FP_NO_LINE;
     }
     else if ( action == "FillLook" )
     {
@@ -408,6 +430,7 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
     else if ( action == "FillLeave" )
     {
         walk->fpc[f] = FP_IDLE;
+        walk->fline[f] = FP_NO_LINE;
         walk->fills_done[f]++;
     }
     else
@@ -452,8 +475,11 @@ static void fp_actor( fp_walk_t * walk, int me )
         std::unique_lock<std::mutex> lock( walk->mutex );
         walk->id[me] = rocketnet_platform_thread_id();
     }
-    const int calls = me == 0 ? FP_MAX_MAIN : FP_MAX_FILLS;
-    for ( int call = 0; call < calls; call++ )
+    if ( me > 0 )
+    {
+        rocketnet_fill_phase_test_set_line( walk->line[me - 1] );
+    }
+    for ( int call = 0; call < walk->calls; call++ )
     {
         fp_park_ready( walk, me );
         if ( me == 0 )
@@ -483,12 +509,55 @@ static void fp_assert( const char *, const char *, const char *, int )
 {
 }
 
+// the call a step is part of: main_begin (announce, the looks, in), main_end
+// (epoch, drop), fill_begin (begin to look), fill_end (unclaim, leave)
+static const char * fp_op( int actor, const std::string & action )
+{
+    if ( actor == 0 )
+    {
+        return action == "MainEpoch" || action == "MainDrop" ? "main_end" : "main_begin";
+    }
+    return action == "FillUnclaim" || action == "FillLeave" ? "fill_end" : "fill_begin";
+}
+
+// the step's arguments in the model's order, what it gave back among them:
+// the line a look read or a count took, and ok, the step let the call or
+// operation go on
+static std::string fp_args( int actor, const fp_step_t * step )
+{
+    const std::string action = step->action;
+    const std::string ok = tla_bool( !step->refused );
+    if ( action == "MainLook" )
+    {
+        return tla_sequence( { tla_int( step->client_index ), ok } );
+    }
+    if ( actor == 0 )
+    {
+        return "<<>>";
+    }
+    const std::string f = fp_filler_name( actor - 1 );
+    if ( action == "FillBegin" )
+    {
+        return tla_sequence( { f, tla_int( step->client_index ) } );
+    }
+    if ( action == "FillCount" )
+    {
+        return tla_sequence( { f, tla_int( (int64_t) step->word ) } );
+    }
+    if ( action == "FillLock" || action == "FillDecide" || action == "FillLook" )
+    {
+        return tla_sequence( { f, ok } );
+    }
+    return tla_sequence( { f } );
+}
+
 static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 {
     fp_walk_t * walk = new fp_walk_t();
     walk->phase = new rocketnet_fill_phase_t();
     rocketnet_fill_phase_init( walk->phase, FP_CLIENTS, &walk->overlaps, &walk->two_fillers );
     walk->running = -1;
+    walk->calls = steps;
     for ( int a = 0; a < FP_ACTORS; a++ )
     {
         walk->state[a] = FP_RUNNING;
@@ -496,10 +565,23 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     for ( int f = 0; f < FP_FILLERS; f++ )
     {
         walk->saved[f] = -1;
+        walk->fline[f] = FP_NO_LINE;
     }
     for ( int c = 0; c < FP_CLIENTS; c++ )
     {
         walk->last_owner[c] = -1;
+    }
+
+    tla_random_t random = { seed };
+
+    // each filler's line; one seed in two puts the third filler on the first's
+    for ( int f = 0; f < FP_FILLERS; f++ )
+    {
+        walk->line[f] = random.below( FP_LINES );
+    }
+    if ( random.below( 2 ) == 0 )
+    {
+        walk->line[FP_FILLERS - 1] = walk->line[0];
     }
 
     rocketnet_assert_function( fp_assert );
@@ -512,16 +594,22 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
         actors.emplace_back( fp_actor, walk, a );
     }
 
-    tla_random_t random = { seed };
     std::vector<tla_record_t> records;
-    int fired = 0;
+    tla_report_t report;
     bool unknown = false;
+    int refused = 0;
+    int mains = 0;
+    int chances = 0;
 
     // a filler that has loaded the epoch is often held back for a while, so
     // a main operation and other fillers' whole calls run inside its call (a
     // stale call), which a uniform schedule rarely makes; and after a filler
     // counts itself in, the main thread often runs next, so the filler's look
-    // finds it (the plant's condition). Steering only orders steps: every
+    // finds it (the plant's condition). After a main operation drops, the
+    // main thread is held back for a while, so fillers also make whole calls
+    // with no main operation in (a main call is one look per line, so an
+    // unpaced main thread is in an operation nearly all the walk). Steering
+    // only orders steps: every
     // step is still the code's own, and the record after it is still checked.
     int hold[FP_ACTORS] = {};
     int then = -1;                                  // the actor the steering picks next
@@ -538,9 +626,9 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
             }
             return true;
         } );
-        records.push_back( fp_record( walk ) );
+        records.push_back( tla_step( "init", "init", "<<>>", fp_state( walk ) ) );
 
-        for ( int pick = 0; pick < steps; pick++ )
+        while ( (int) records.size() < steps + 1 )
         {
             int live[FP_ACTORS];
             int num_live = 0;
@@ -584,34 +672,55 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 
             if ( walk->state[a] != FP_STEP )
             {
-                continue;
+                continue;                           // the call returned: no step of the model
             }
 
             const fp_step_t * step = &walk->step[a];
             const std::string action = step->action;
+            bool planted = false;
             if ( a > 0 && action == "FillLook" && step->refused )
             {
-                // the plant's condition: the restore differs from the claim left in place
+                // a refused look whose restore differs from the claim the
+                // plant would leave in place: the plant's chance, the same
+                // in both builds
                 const int f = a - 1;
                 const fp_word_t left = { walk->fepoch[f], false, false };
                 const fp_word_t back = walk->seen[f];
                 if ( back.ep != left.ep || back.held || back.in || walk->saved[f] != f )
                 {
-                    fired++;
+                    chances++;
                 }
+                // the planted effect: the word or the owner the look left is
+                // not the one it replaced, which the clean code never leaves
+                const int c = walk->fclient[f];
+                const fp_word_t now = fp_word( walk->phase->clients[c].claim.load() );
+                planted = now.ep != back.ep || now.held != back.held || now.in != back.in ||
+                          fp_owner( walk, walk->phase->clients[c].owner.load() ) != walk->saved[f];
             }
+            refused += step->refused ? 1 : 0;
+            mains += action == "MainDrop" ? 1 : 0;
 
+            const std::string args = fp_args( a, step );
             if ( !fp_apply( walk, a, step ) )
             {
                 unknown = true;
             }
-            records.push_back( fp_record( walk ) );
+            report.act( step->action );
+            records.push_back( tla_step( fp_op( a, action ), step->action, args, fp_state( walk ) ) );
+            if ( planted )
+            {
+                report.planted( (int) records.size() );
+            }
 
             if ( a > 0 && action == "FillBegin" && random.below( 4 ) != 0 )
             {
                 hold[a] = 8 + random.below( 16 );
             }
-            if ( a > 0 && action == "FillCount" && ( fired == 0 || random.below( 2 ) == 0 ) )
+            if ( a == 0 && action == "MainDrop" )
+            {
+                hold[0] = 32 + random.below( 64 );  // fillers' whole calls with no main operation in
+            }
+            if ( a > 0 && action == "FillCount" && ( chances == 0 || random.below( 2 ) == 0 ) )
             {
                 then = 0;                           // the main thread, then this filler's look
             }
@@ -628,15 +737,9 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
         }
     }
 
-    bool finished = true;
-    for ( int a = 0; a < FP_ACTORS; a++ )
+    // the walk's last step taken: let every actor run to its end, unrecorded
+    rocketnet_fill_phase_set_trace( NULL, NULL );
     {
-        finished = finished && walk->state[a] == FP_DONE;
-    }
-    if ( !finished )
-    {
-        // the step budget ended first: let every actor run to its end, unrecorded
-        rocketnet_fill_phase_set_trace( NULL, NULL );
         std::unique_lock<std::mutex> lock( walk->mutex );
         for ( int a = 0; a < FP_ACTORS; a++ )
         {
@@ -652,46 +755,47 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     {
         actors[i].join();
     }
-    rocketnet_fill_phase_set_trace( NULL, NULL );
     rocketnet_assert_function( NULL );
 
-    printf( "PLANT-FIRED %d\n", fired );
+    printf( "WALK records=%d mains=%d refused=%d chances=%d lines=%d,%d,%d\n", (int) records.size(), mains, refused, chances, walk->line[0],
+            walk->line[1], walk->line[2] );
+    report.print();
     if ( unknown )
     {
         fprintf( stderr, "tla_trace fill_phase: the hook named a step the model does not have\n" );
     }
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceFillPhasePlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceFillPhaseSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
+    std::vector<std::string> line_names;
+    for ( int l = 0; l < FP_LINES; l++ )
+    {
+        line_names.push_back( tla_int( l ) );
+    }
+    std::string lines = "{";
+    for ( size_t l = 0; l < line_names.size(); l++ )
+    {
+        lines += ( l > 0 ? ", " : "" ) + line_names[l];
+    }
+    lines += "}";
 
-    // each filler's fills_in line, from its thread's id
-    std::string definitions = "TraceLines == 0.." + tla_int( FP_LINES - 1 ) + "\nTraceLineOf == (";
+    std::string fillers = "{";
     for ( int f = 0; f < FP_FILLERS; f++ )
     {
-        definitions += ( f > 0 ? " @@ " : "" ) + fp_filler_name( f ) + " :> " + tla_int( rocketnet_fill_phase_line_of( walk->id[1 + f] ) );
+        fillers += ( f > 0 ? ", " : "" ) + fp_filler_name( f );
     }
-    definitions += ")\n";
+    fillers += "}";
 
-    char constants[640];
-    snprintf( constants, sizeof( constants ),
-              "    Fillers = {\"f1\", \"f2\", \"f3\"}\n"
-              "    Clients = {0, 1}\n"
-              "    NoOwner = \"none\"\n"
-              "    MaxMain = %d\n"
-              "    MaxFills = %d\n"
-              "    LookFirst = FALSE\n"
-              "    LoadStore = FALSE\n"
-              "    ResetOnLeave = TRUE\n"
-              "    NoEpochLook = FALSE\n"
-              "    NoRestore = FALSE\n"
-              "    ScanOne = FALSE\n"
-              "    Lines <- TraceLines\n"
-              "    LineOf <- TraceLineOf\n",
-              FP_MAX_MAIN, FP_MAX_FILLS );
-    const bool written = tla_write_trace( out, name, "TraceRNFillPhase", definitions, constants, records );
+    std::string clients = "{";
+    for ( int c = 0; c < FP_CLIENTS; c++ )
+    {
+        clients += ( c > 0 ? ", " : "" ) + tla_int( c );
+    }
+    clients += "}";
+
+    const std::string constants = "    Fillers = " + fillers + "\n" + "    Clients = " + clients + "\n" + "    NoOwner = \"none\"\n" +
+                                  "    MaxMain = " + tla_int( walk->calls ) + "\n" + "    MaxFills = " + tla_int( walk->calls ) + "\n" +
+                                  "    LookFirst = FALSE\n    LoadStore = FALSE\n    ResetOnLeave = TRUE\n    NoEpochLook = FALSE\n" +
+                                  "    NoRestore = FALSE\n    ScanOne = FALSE\n" + "    Lines = " + lines + "\n";
+    const bool written = tla_write_trace( out, "MCTraceFillPhase", seed, "TraceRNFillPhase", "", constants, records );
 
     delete walk->phase;
     delete walk;

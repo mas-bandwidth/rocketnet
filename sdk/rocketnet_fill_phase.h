@@ -204,9 +204,15 @@ struct rocketnet_fill_phase_fill_scope_t
 // end of each step proofs/tla/RNFillPhase.tla names, after all of that step's
 // shared effects (a refusal's count included), on the thread taking it, so a
 // recorder that parks the thread there sees the state the model's step
-// leaves; NULL (the default): nothing
+// leaves; NULL (the default): nothing. At FillCount and FillLeave, word is
+// the fills_in line the call counted on.
 typedef void rocketnet_fill_phase_trace_function_t( void * context, const char * action, int client_index, uint64_t word, bool refused );
 void rocketnet_fill_phase_set_trace( rocketnet_fill_phase_trace_function_t * function, void * context );
+
+// the trace check's line: the fills_in line the calling thread counts on, in
+// place of its thread id's hash, so a seeded walk is the same every run (a
+// thread id is an address); -1 (the default): the hash
+void rocketnet_fill_phase_test_set_line( int line );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_FILL_PHASE_H

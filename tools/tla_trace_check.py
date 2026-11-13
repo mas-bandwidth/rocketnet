@@ -81,7 +81,13 @@ LAYERS = {
     },
     "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
-        "quiet": False,
+        "untraced": {
+            "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
+            "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",
+            "FillStore": "a reversed witness's step (LoadStore); the code locks by one CAS",
+            "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
+                    "so it never gets there",
+        },
     },
 }
 

@@ -26,8 +26,27 @@ void rocketnet_fill_phase_set_trace( rocketnet_fill_phase_trace_function_t * fun
             rocketnet_fill_phase_trace_function( rocketnet_fill_phase_trace_context, action, client_index, word, refused ); \
         }                                                                                                                  \
     } while ( 0 )
+
+static thread_local int rn_fill_phase_test_line = -1;
+
+void rocketnet_fill_phase_test_set_line( int line )
+{
+    rn_fill_phase_test_line = line;
+}
+
+// the fills_in line this thread counts on (the trace check's, when it set one)
+static inline int rn_fill_phase_line( uint64_t me )
+{
+    return rn_fill_phase_test_line >= 0 && rn_fill_phase_test_line < ROCKETNET_FILL_PHASE_FILL_LINES ? rn_fill_phase_test_line
+                                                                                                     : rocketnet_fill_phase_line_of( me );
+}
 #else // #if ROCKETNET_DEV
 #define RN_FILL_PHASE_TRACE( action, client_index, word, refused ) ( (void) 0 )
+
+static inline int rn_fill_phase_line( uint64_t me )
+{
+    return rocketnet_fill_phase_line_of( me );
+}
 #endif // #if ROCKETNET_DEV
 
 static inline uint64_t rn_fill_phase_word( uint64_t epoch, uint64_t depth, bool in )
@@ -234,9 +253,10 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         RN_FILL_PHASE_TRACE( "FillDecide", client_index, rn_fill_phase_word( epoch, 1, true ), false );
     }
 
-    std::atomic<uint32_t> * fills_in = &fill_phase->lines[rocketnet_fill_phase_line_of( me )].fills_in;
+    const int line = rn_fill_phase_line( me );
+    std::atomic<uint32_t> * fills_in = &fill_phase->lines[line].fills_in;
     fills_in->fetch_add( 1 );
-    RN_FILL_PHASE_TRACE( "FillCount", client_index, 0, false );
+    RN_FILL_PHASE_TRACE( "FillCount", client_index, (uint64_t) line, false );
 
     // the epoch is read again after the look: a main operation that began and
     // ended between the epoch load and the count left this call deciding with
@@ -302,6 +322,7 @@ void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, 
         RN_FILL_PHASE_TRACE( "FillUnclaim", client_index, left, false );
     }
 
-    fill_phase->lines[rocketnet_fill_phase_line_of( me )].fills_in.fetch_sub( 1 );
-    RN_FILL_PHASE_TRACE( "FillLeave", client_index, 0, false );
+    const int line = rn_fill_phase_line( me );
+    fill_phase->lines[line].fills_in.fetch_sub( 1 );
+    RN_FILL_PHASE_TRACE( "FillLeave", client_index, (uint64_t) line, false );
 }
