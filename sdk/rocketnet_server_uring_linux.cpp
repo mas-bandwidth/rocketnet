@@ -1263,7 +1263,7 @@ void rocketnet_server_uring_receive_drop_totals( struct rocketnet_server_uring_t
 // send
 // ---------------------------------------------------------------------------
 
-// any fill thread: the destination's queue (the XDP hash), one claim of its
+// any game thread: the destination's queue (the XDP hash), one claim of its
 // producer bank (proofs/tla/RNUringQueueBankLayout.tla Claim); NULL when that
 // bank is full
 
@@ -1305,7 +1305,7 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
     rocketnet_uring_send_queues_abort( uring->banks, packet_id, packet_data );
 }
 
-// main, the fill joined: each queue's producer published to its worker
+// main, the game threads joined: each queue's producer published to its worker
 // (proofs/tla/RNUringQueueSend.tla Publish) and the worker woken
 // (RNUringQueueWorker.tla Signal). A queue with no free bank keeps its
 // producer, with its slots, for a later call.
