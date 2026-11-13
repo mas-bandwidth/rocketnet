@@ -535,7 +535,7 @@ applications call only declarations in [rocketnet.h](../sdk/rocketnet.h).
 Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is negative, from `-1` to `-34`. `-9` is not a code
+2. Every failure code is negative, from `-1` to `-35`. `-9` is not a code
    and `-22` is reserved; no call returns either. `status < 0` means the call
    failed.
 3. There is no count value. `rocketnet_status_name` maps each code by value.
@@ -560,7 +560,8 @@ out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 error line, when its key could not be generated or derived. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `CONNECT_TOKEN_PORT_ZERO`, `SERVER_NOT_STOPPED`,
-`TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
+`TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`,
+`TRANSPORT_BIND_REFUSED`, `MISSING_KEYS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED` and
 `THREAD_CREATE_FAILED`. Server start reports a
 transport whose thread the platform refused as `TRANSPORT_LADDER_EXHAUSTED`;
@@ -597,10 +598,14 @@ refuse a transport list that names `loopback` when the config's
 `loopback_hub` is `NULL`. `ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH` is -33:
 create and `rocketnet_loopback_hub_destroy` refuse a hub whose magic, version
 or layout id differ from this library's, one made by another build.
-`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34, the last code:
+`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34:
 `rocketnet_loopback_hub_destroy` refuses while a server or client endpoint is
 registered with the hub, keeps the hub, logs one `ERROR` line and counts API
-misuse.
+misuse. `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED` is -35, the last code: server
+start refuses when every transport it tried was refused its bind (another
+socket holds the address and port, or the address is not one this host can
+bind). The RIO transport reports it for its exclusive probe and for every
+lane's bind.
 
 <a id="22-reporting"></a>
 
