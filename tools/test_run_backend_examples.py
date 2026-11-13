@@ -109,6 +109,72 @@ class RunBackendExamplesTest(unittest.TestCase):
         self.assertIn("PASS backend_go_keygen", result.stdout)
         self.assertIn("FAIL backend_go_token: backend_check_token exited 0", result.stderr)
 
+    def start_fake_server(self, ports, lost_output="FAIL: server start: TRANSPORT_LADDER_EXHAUSTED"):
+        """start_on_free_port with a fake server that loses every port in
+        lost_ports; free_port is replaced, so no socket is opened."""
+        import contextlib
+        import io
+        from unittest import mock
+        server = Path(self.tmp.name) / "server.py"
+        workdir = Path(self.tmp.name) / "work"
+        workdir.mkdir()
+        self.script(server, "import os, sys\n"
+                            "port = os.environ['ROCKETNET_EXAMPLE_PORT']\n"
+                            f"if port in {sorted(ports['lost'])!r}:\n"
+                            f"    print({lost_output!r}); sys.exit(1)\n"
+                            "open('backend.env', 'w').write('ROCKETNET_BACKEND_SERVER_ADDRESSES=127.0.0.1:' + port + "
+                            "'\\nROCKETNET_BACKEND_SERVER_PUBLIC_KEY=k\\n')\n")
+        offered = iter(ports["offered"])
+
+        def launch(port):
+            env = dict(self.env, ROCKETNET_EXAMPLE_PORT=str(port))
+            return subprocess.Popen([str(server)], cwd=workdir, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(run_backend_examples, "free_port", lambda kind: next(offered)), \
+             mock.patch.object(run_backend_examples, "READY_SECONDS", 10), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            started = run_backend_examples.start_on_free_port(
+                "backend_go_end_to_end", "server", None, launch,
+                lambda port: run_backend_examples.read_env_file(workdir / "backend.env"),
+                run_backend_examples.server_lost_port)
+        if started:
+            run_backend_examples.stop(started[0])
+        return started, out.getvalue(), err.getvalue()
+
+    def test_a_server_that_loses_its_port_is_started_on_another(self):
+        started, out, err = self.start_fake_server({"lost": ["1001"], "offered": [1001, 1002]})
+        self.assertIsNotNone(started, err)
+        self.assertEqual(started[1], 1002)
+        self.assertEqual(started[2]["ROCKETNET_BACKEND_SERVER_ADDRESSES"], "127.0.0.1:1002")
+        self.assertIn("server could not bind 127.0.0.1:1001 (try 1 of 3), picking another port", out)
+
+    def test_a_server_that_loses_every_port_fails_after_three_tries(self):
+        started, out, err = self.start_fake_server({"lost": ["1001", "1002", "1003"],
+                                                    "offered": [1001, 1002, 1003]})
+        self.assertIsNone(started)
+        self.assertIn("(try 3 of 3)\n", out)
+        self.assertIn("FAIL backend_go_end_to_end: server could not bind a free port in 3 tries", err)
+
+    def test_a_server_that_fails_otherwise_is_not_retried(self):
+        started, out, err = self.start_fake_server({"lost": ["1001"], "offered": [1001, 1002]},
+                                                   lost_output="FAIL: init: PLATFORM_INIT_FAILED")
+        self.assertIsNone(started)
+        self.assertNotIn("try 1 of 3", out)
+        self.assertIn("FAIL backend_go_end_to_end: server exited 1 on 127.0.0.1:1001", err)
+        self.assertIn("FAIL: init: PLATFORM_INIT_FAILED", err)
+
+    def test_backend_address_in_use_errors_are_lost_ports(self):
+        lost = run_backend_examples.backend_lost_port
+        self.assertTrue(lost("error: listen tcp 127.0.0.1:41234: bind: address already in use\n"))
+        self.assertTrue(lost("Unhandled exception. System.IO.IOException: Failed to bind to address "
+                             "http://127.0.0.1:41234: address already in use.\n"))
+        self.assertTrue(lost("bind: Only one usage of each socket address (protocol/network address/port) "
+                             "is normally permitted.\n"))
+        self.assertFalse(lost("error: ROCKETNET_BACKEND_PRIVATE_KEY is not set\n"))
+        self.assertFalse(run_backend_examples.server_lost_port("FAIL: init: PLATFORM_INIT_FAILED\n"))
+
     def test_no_binaries_is_refused(self):
         result = self.run_tool()
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

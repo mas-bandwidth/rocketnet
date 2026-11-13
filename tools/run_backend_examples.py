@@ -18,7 +18,9 @@ For each backend in examples/backend/:
    live server over HTTP; the token then comes from GET /match/<client id>;
    example_backend_client connects with it, sends a
    message and receives the echo. Server and client must both exit 0 with
-   PASS as their last line.
+   PASS as their last line. A server or backend that exits before it is
+   ready because another process took its port is started again on another
+   port, at most PORT_TRIES times.
 
 This is the functional tier: it uses sockets and the wall clock. The unit
 tests of the backends are `go test` in examples/backend/go and
@@ -85,6 +87,50 @@ def free_port(kind):
     with socket.socket(socket.AF_INET, kind) as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+# A port free when probed can be taken before the program binds it. The
+# example server then prints "FAIL: server start: ..." and the backends print
+# the operating system's address-in-use error; either one exits before it is
+# ready, and is started again on another port, at most PORT_TRIES times.
+PORT_TRIES = 3
+SERVER_BIND_FAILURE = "FAIL: server start: "
+BACKEND_BIND_FAILURES = ("address already in use", "only one usage of each socket address")
+
+
+def start_on_free_port(label, what, kind, launch, ready, lost_port):
+    """Starts a program on a free port and waits for it to be ready.
+
+    launch(port) starts it, ready(port) is its readiness value, and
+    lost_port(output) says an early exit was a port lost to another process.
+    Returns (process, port, value), or None after printing why."""
+    for attempt in range(1, PORT_TRIES + 1):
+        port = free_port(kind)
+        process = launch(port)
+        value = wait_for(lambda: ready(port), process, READY_SECONDS)
+        if value:
+            return process, port, value
+        exited = process.poll() is not None
+        out, _ = stop(process)
+        out = out or ""
+        if exited and process.returncode != 0 and lost_port(out):
+            again = ", picking another port" if attempt < PORT_TRIES else ""
+            print(f"{label}: {what} could not bind 127.0.0.1:{port} (try {attempt} of {PORT_TRIES}){again}")
+            continue
+        state = f"exited {process.returncode}" if exited else f"was not ready within {READY_SECONDS}s"
+        fail(label, f"{what} {state} on 127.0.0.1:{port}\n{out}")
+        return None
+    fail(label, f"{what} could not bind a free port in {PORT_TRIES} tries")
+    return None
+
+
+def server_lost_port(output):
+    return any(line.startswith(SERVER_BIND_FAILURE) for line in output.splitlines())
+
+
+def backend_lost_port(output):
+    folded = output.casefold()
+    return any(text in folded for text in BACKEND_BIND_FAILURES)
 
 
 def backend_environment(extra):
@@ -214,24 +260,32 @@ def end_to_end(name, command, server_binary, client_binary, keys, production):
     workdir = Path(tempfile.mkdtemp(prefix=f"rocketnet_backend_{name}_"))
     server = backend = None
     try:
-        env = backend_environment({"ROCKETNET_SERVER_BACKEND_PUBLIC_KEY": keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"]})
-        env["ROCKETNET_EXAMPLE_PORT"] = str(free_port(socket.SOCK_DGRAM))
-        server = subprocess.Popen([str(server_binary)], cwd=workdir, env=env,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        values = wait_for(lambda: read_env_file(workdir / "backend.env"), server, READY_SECONDS)
-        if not values:
-            out, _ = stop(server)
-            return fail(label, f"server wrote no backend.env\n{out}")
+        def launch_server(port):
+            env = backend_environment({"ROCKETNET_SERVER_BACKEND_PUBLIC_KEY": keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"],
+                                       "ROCKETNET_EXAMPLE_PORT": str(port)})
+            return subprocess.Popen([str(server_binary)], cwd=workdir, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
-        port = free_port(socket.SOCK_STREAM)
-        backend = subprocess.Popen(command, cwd=workdir, env=backend_environment({"ROCKETNET_BACKEND_PORT": str(port),
-                                       "ROCKETNET_BACKEND_PRIVATE_KEY": keys["ROCKETNET_BACKEND_PRIVATE_KEY"]}),
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        started = start_on_free_port(label, "server (no backend.env)", socket.SOCK_DGRAM, launch_server,
+                                     lambda port: read_env_file(workdir / "backend.env"), server_lost_port)
+        if not started:
+            return False
+        server, _, values = started
+
+        def launch_backend(port):
+            env = backend_environment({"ROCKETNET_BACKEND_PORT": str(port),
+                                       "ROCKETNET_BACKEND_PRIVATE_KEY": keys["ROCKETNET_BACKEND_PRIVATE_KEY"]})
+            return subprocess.Popen(command, cwd=workdir, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+        # ready once it reports an empty server registry
+        started = start_on_free_port(
+            label, "backend (no empty server registry)", socket.SOCK_STREAM, launch_backend,
+            lambda port: http_status(f"http://127.0.0.1:{port}/match/{CLIENT_ID}") == 503, backend_lost_port)
+        if not started:
+            return False
+        backend, port, _ = started
         match_url = f"http://127.0.0.1:{port}/match/{CLIENT_ID}"
-        empty = wait_for(lambda: http_status(match_url) == 503, backend, READY_SECONDS)
-        if not empty:
-            out, _ = stop(backend)
-            return fail(label, f"backend did not report an empty server registry\n{out}")
         registered = wait_for(lambda: register_server(f"http://127.0.0.1:{port}/servers/example", values), backend, READY_SECONDS)
         if not registered:
             out, _ = stop(backend)
