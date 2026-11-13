@@ -1324,6 +1324,7 @@ struct harden_frame_window_t
 {
     std::vector<double> work;
     double update_sum = 0, receive_sum = 0, write_sum = 0, send_sum = 0;
+    double update_core_sum = 0;                    // the update's seconds on the main thread's own core: with --space-update split its serial calls only (the range jobs count themselves in net_thread), the wall time otherwise
     double update_max = 0, receive_max = 0, write_max = 0, send_max = 0;
     uint64_t frames = 0, overruns = 0;
     uint64_t messages = 0, start_refused = 0, received = 0;
@@ -1559,6 +1560,10 @@ struct harden_stage_t
 
 #define HARDEN_SPACE_RING 2 // the frame ring of plans (space's state records: frame % 128)
 
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 ) // the cache-line aligned counters pad their struct: the padding is the point
+#endif // #if defined( _MSC_VER )
 struct harden_space_t
 {
     ThreadPool pool;
@@ -1594,6 +1599,9 @@ struct harden_space_t
     double task_sent_at = 0;                               // --space-net task: when the task's send_packets began
     double update_done_at = 0;                             // --space-net task: when the task's update finished (the batch the next receive reads)
 };
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
 
 // the per-client part of the server update, over a range of client slots:
 // a plain range call any job system can make (rocketnet_server_update_client)
@@ -2312,6 +2320,15 @@ static int harden_server_main( const harden_options_t & o )
         }
         printf( "harden_pool: shape=%s game_threads=%d first_cpu=%d pinned=%d realtime=%d world_ms=%.2f game_load=%.2f\n", o.space_shape ? "space" : "blocking", o.game_threads, o.pin_first_cpu,
                 harden_pin.pinned.load(), harden_pin.realtime.load(), o.world_ms, o.game_load );
+        // a setting the system refused is in the row (nothing prints when every setting held)
+        if ( harden_pin.pin_refused.load() > 0 || harden_pin.realtime_refused.load() > 0 )
+        {
+            printf( "harden_pool_refused: pin_refused=%d pin_error=%d realtime_refused=%d realtime_error=%d (error codes are errno, or GetLastError on Windows; priority is SCHED_FIFO max, or THREAD_PRIORITY_TIME_CRITICAL on Windows)\n",
+                    harden_pin.pin_refused.load(), harden_pin.pin_error.load(), harden_pin.realtime_refused.load(), harden_pin.realtime_error.load() );
+        }
+#if defined( __APPLE__ )
+        printf( "harden_pool_advisory: pinning is advisory on macOS: no hard CPU pinning; threads get QOS_CLASS_USER_INTERACTIVE and an affinity tag (pinned counts accepted tags, realtime counts QoS set; on macOS the pin_error is a kern_return_t)\n" );
+#endif // #if defined( __APPLE__ )
         fflush( stdout );
     }
     double last_plan_time = 0.0; // space: when the frame the task staged was built from game state
@@ -2425,7 +2442,7 @@ static int harden_server_main( const harden_options_t & o )
                 {
                     net_all += w.net_thread[i];
                 }
-                const double rn_core_ms = 1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum + net_all ) / f;
+                const double rn_core_ms = 1e3 * ( w.update_core_sum + w.receive_sum + w.write_sum + w.send_sum + net_all ) / f;
                 printf( "harden_frame: t=%.1f shape=%s threads=%d pinned=%d realtime=%d main_rn_ms p99=%.3f max=%.3f join_ms avg=%.3f max=%.3f task_ms avg=%.3f max=%.3f late=%" PRIu64
                         " task_core_ms avg=%.3f max=%.3f commit_ms avg=%.3f max=%.3f world_ms avg=%.3f max=%.3f game_core_ms=%.3f rn_core_ms=%.3f leftover_core_ms=%.3f latency_ms avg=%.3f max=%.3f input_age_ms avg=%.3f max=%.3f\n",
                         t_now - started, o.space_shape ? "space" : "blocking", o.game_threads, harden_pin.pinned.load(), harden_pin.realtime.load(), 1e3 * harden_percentile( work_copy, 0.99 ),
@@ -2657,21 +2674,22 @@ static int harden_server_main( const harden_options_t & o )
                 last_plan_time = 0.0;
             }
             harden_main_phase.store( HARDEN_MAIN_UPDATE, std::memory_order_relaxed );
+            double update_serial = -1.0;
             if ( !o.space_net_in_task )
             {
-                (void) harden_space_update( &space, frame_start );
+                update_serial = harden_space_update( &space, frame_start );
             }
             const double t_update = harden_now();
             harden_main_phase.store( HARDEN_MAIN_RECEIVE, std::memory_order_relaxed );
+            drain_receive();
+            const double t_receive = harden_now();
             if ( o.space_net_in_task && space.update_done_at > 0.0 )
             {
-                const double age = harden_now() - space.update_done_at;
+                const double age = t_receive - space.update_done_at;
                 w.input_age_sum += age;
                 w.input_age_max = std::max( w.input_age_max, age );
                 w.input_age_frames++;
             }
-            drain_receive();
-            const double t_receive = harden_now();
 
             // ---- the world update, the main thread (S:643-961). First the
             // reliable messages and a second send_packets (S:678-712)
@@ -2754,6 +2772,7 @@ static int harden_server_main( const harden_options_t & o )
             w.send_sum += ( t_sent - t_first ) + ( t_sent_reliable - t_reliable );
             w.send_max = std::max( w.send_max, ( t_sent - t_first ) + ( t_sent_reliable - t_reliable ) );
             w.update_sum += t_update - t_sent;
+            w.update_core_sum += update_serial >= 0.0 ? update_serial : t_update - t_sent;
             w.update_max = std::max( w.update_max, t_update - t_sent );
             w.receive_sum += t_receive - t_update;
             w.receive_max = std::max( w.receive_max, t_receive - t_update );
@@ -2892,6 +2911,7 @@ static int harden_server_main( const harden_options_t & o )
         all_work.push_back( work );
         all_work_max = std::max( all_work_max, work );
         w.update_sum += t_update - frame_start;
+        w.update_core_sum += t_update - frame_start;
         w.receive_sum += t_received - t_update;
         w.write_sum += t_write - t_receive;
         w.send_sum += t_send - t_write;
