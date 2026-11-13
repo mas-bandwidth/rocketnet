@@ -147,7 +147,7 @@ static tla_record_t sr_state( struct rocketnet_server_transport_t * server )
     state.add( "ownUsed", tla_int( (int64_t) rocketnet_server_transport_fill_own_used_for_test( server, 0 ) ) );
     state.add( "own", sr_client_set( own ) );
     state.add( "ownLeft", tla_int( (int64_t) rocketnet_server_transport_fill_own_frames_for_test( server ) ) );
-    state.add( "refused", tla_int( (int64_t) rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] ) );
+    state.add( "refused", tla_int( (int64_t) rocketnet_server_transport_counters( const_cast<struct rocketnet_server_transport_t *>( server ) )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] ) );
     return state;
 }
 
