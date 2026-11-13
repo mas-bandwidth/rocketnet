@@ -179,7 +179,7 @@ static void test_gaps_secrets_stack_dev_token_config()
 
     gaps_stack_arm();
     const enum rocketnet_status_t status = rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, rocketnet_dev_server_public_key, 30, 10,
-                                                                              0x51AC0003ULL, ROCKETNET_DEV_PROTOCOL_ID, 1000000, NULL, token );
+                                                                               0x51AC0003ULL, ROCKETNET_DEV_PROTOCOL_ID, 1000000, NULL, token );
     gaps_stack_disarm();
 
     rocketnet_unit_check( status == ROCKETNET_STATUS_OK );
