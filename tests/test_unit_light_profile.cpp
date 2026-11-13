@@ -178,7 +178,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client: computed, not measured
 // on macOS, from the 48000 and the 64 Linux measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468504927 )
+// The per-update receive budget at 64 a client (it was 16; the XDP send
+// queue fix, so the receive budget holds twice the send) grows the process
+// views, the payload batch and the cookie reply bitmap, adding 354722304
+// bytes (measured on v1.1.9 on the macOS CI runner, Debug); summed here
+// with the figure above, not measured on this branch.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1823227231 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988042 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).

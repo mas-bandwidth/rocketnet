@@ -324,7 +324,7 @@ run_xdp_cell() { # server client
             } > "$prefix.guest.sh"
             guest_script=${prefix#"$PWD"/}.guest.sh
             scripts/vm-boot-guard --marker "$prefix.started" -- \
-                ${timeout_command[@]+"${timeout_command[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                ${timeout_command[@]+"${timeout_command[@]}"} vng --run "$vm_kernel" --memory 3072M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
                 sh "$guest_script" \
                 > "$prefix.vm.log" 2>&1
             if [ $? = 125 ]; then

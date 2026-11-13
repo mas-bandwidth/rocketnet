@@ -814,7 +814,11 @@ jobs:
                 # the cases run in series inside a guest; xdp_guests guests, each
                 # its own VM with its own namespace and veth pair, run at once,
                 # case n in guest n % xdp_guests (in series one guest took
-                # about 60 s, most of the step)
+                # about 60 s, most of the step). Each guest has 3072 MiB: one
+                # xdp queue holds about 583 MiB of staging (zeroed at create)
+                # and 384 MiB of UMEM since the send queue went back to 16384,
+                # and some cases run two queues; at 1536 MiB those cases were
+                # killed (exit 137)
                 xdp_guests=3
                 for guest in $(seq 0 $((xdp_guests - 1))); do
                   guest_cases=""
@@ -845,7 +849,7 @@ jobs:
                     printf 'done\n'
                   } > "$script"
                   scripts/vm-boot-guard --marker "$marker" -- \
-                  ${vm_timeout[@]+"${vm_timeout[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                  ${vm_timeout[@]+"${vm_timeout[@]}"} vng --run "$vm_kernel" --memory 3072M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
                     sh "${script#"$PWD"/}" \
                     > "$logs/$server.$client.vm$guest.log" 2>&1 &
                 done
