@@ -676,7 +676,7 @@ static int rocketnet_uring_receive_queue_buffer( struct rocketnet_uring_receive_
                     {
                         at += snprintf( text + at, sizeof( text ) - (size_t) at, "%02x", data[b] );
                     }
-                    fprintf( stderr, "DIAG-PREFILTER wrong value: queue %d from type %d port %d len %d first16 %s pid %d\n", queue->index, (int) from.type, (int) from.port, bytes, text, (int) getpid() );
+                    fprintf( stderr, "DIAG-PREFILTER wrong value: queue %d from type %d port %d len %d first16 %s pid %d\n", queue->queue_index, (int) from.type, (int) from.port, bytes, text, (int) getpid() );
                     fflush( stderr );
                 }
             }
