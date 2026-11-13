@@ -80,7 +80,10 @@ static GAPS_ST_LAYOUT_NOINLINE bool gaps_st_layout_estimate( const char * transp
 // (the exclusions copy one past the count). Every field the estimate does not
 // set on the portable path is zero, the total is the sum of its parts, and
 // every exclusion past the count is NULL, whatever the stack held before.
-// The MSan leg reads the same fields as uninitialized under either mutant.
+// The dirty stack reaches the estimate itself (4866); the local exclusion
+// list it copies from sits where its own callees ran first, so 4909 is caught
+// by the MSan leg (tools/run_msan.sh), which reads the copied slot as
+// uninitialized in the NULL check below.
 
 static void test_gaps_st_layout_host_memory_estimate_on_a_dirty_stack()
 {
@@ -88,7 +91,7 @@ static void test_gaps_st_layout_host_memory_estimate_on_a_dirty_stack()
     memset( &e, 0xA5, sizeof( e ) );
 
     gaps_st_layout_dirty_stack();
-    check( gaps_st_layout_estimate( "portable", &e ) );
+    check( gaps_st_layout_holds( gaps_st_layout_estimate( "portable", &e ), "portable estimate refused: a byte count accumulated onto stack garbage overflowed" ) );
 
     uint64_t sum = 0;
     for ( uint64_t bytes : { e.allocator_bytes, e.umem_bytes, e.registered_region_bytes, e.socket_send_buffer_bytes,
