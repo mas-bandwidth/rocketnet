@@ -1,0 +1,17 @@
+# The trace check's row of tests/tla_trace_ordering_wrap.cpp (proofs/tla/README-TraceCheck.md, "A layer's row"):
+# a Python literal that tools/tla_trace_check.py reads with ast and never runs.
+{
+    "layer": "ordering-wrap",
+    "modules": ["RNOrderingWrap.tla", "TraceRNOrderingWrap.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_ORDERING_WRAP_PLANT"],
+    "untraced": {"Ended": "the terminal stutter of an exhausted region; the walk fails if a record exhausts it, which "
+                          "the clean code's reservation never lets happen (NoExhaust)"},
+    "ghost": {"disagree": "history for CompareAgrees: the reservation's compare differed from the mod-wire one; the code "
+                          "keeps no such word",
+              "wasted": "history for NeverDeferWithRoom: a deferral with room; the code keeps no such word, and the "
+                        "recorded d binds each deferral to the model's own test"},
+    "reach": ["Wrapped", "RunHeld", "HeldAtEdge", "TableFull", "HoldUnreliable", "HoldReliable", "HoldUnreliableDuSpent"],
+    # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
+    "commit": {1: 0},
+}

@@ -2057,6 +2057,13 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
 
     uint32_t needed = 1;
 
+#if defined( ROCKETNET_ORDERING_WRAP_PLANT )
+    // the trace check's plant (tests/tla_trace_ordering_wrap.cpp): the
+    // reservation up to v1.1.52, which ran before the duplicate test, so an in-turn
+    // duplicate reserves its held run (MCRNOrderingWrapBrokenDupRun.cfg)
+    duplicate = false;
+#endif // #if defined( ROCKETNET_ORDERING_WRAP_PLANT )
+
     if ( duplicate || record->code != ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED || record->channel >= channels->num_channels )
     {
         return needed;

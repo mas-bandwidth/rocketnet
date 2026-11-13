@@ -51,6 +51,12 @@
 (* run for an in-turn fragment that cannot complete its block: deferred    *)
 (* with room (NeverDeferWithRoom), and in the code the run's lookups per   *)
 (* fragment.                                                               *)
+(*                                                                         *)
+(* Each receive action takes d, what rn_ordered_receive returned: TRUE for *)
+(* ROCKETNET_CHANNEL_RECEIVE_DEFERRED.  The model requires d to be its own *)
+(* deferral test, so the trace check (TraceRNOrderingWrap.tla) sees a      *)
+(* deferral the code makes with room.  ReadInit is ordered_read at the     *)
+(* start: 0 in the model's instances, near the wire's wrap in the trace.   *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -63,9 +69,12 @@ CONSTANTS
     Masked,      \* BOOLEAN: the reservation compares modulo WireMod
     ExactSeq,    \* BOOLEAN: the reservation counts a code-1 hold only when Du has room
     DupOne,      \* BOOLEAN: a duplicate reserves one delivery, not the held run
-    PartialOne   \* BOOLEAN: an in-turn fragment that cannot complete its block reserves one
+    PartialOne,  \* BOOLEAN: an in-turn fragment that cannot complete its block reserves one
+    ReadInit     \* ordered_read when the channel starts: 0 in the code's own start, and
+                 \* past it where a trace starts the channel near the wire's wrap
 
 ASSUME CounterMod % WireMod = 0 /\ WireMod >= 2 * W /\ Cap >= 1 /\ Du \in 0..Cap
+ASSUME ReadInit \in 0..CounterMod-1
 ASSUME DupOne \in BOOLEAN /\ PartialOne \in BOOLEAN
 
 VARIABLES
@@ -93,7 +102,7 @@ TypeOK ==
     /\ wasted \in BOOLEAN
 
 Init ==
-    /\ read = 0
+    /\ read = ReadInit
     /\ held = {}
     /\ deliveries = 0
     /\ exhausted = FALSE
@@ -138,12 +147,14 @@ ReleaseHold(d) ==
                           ELSE <<d + 1, uDelivered + 1, FALSE>>
       [] OTHER -> <<d, uDelivered, FALSE>>
 
-\* one record of ordering o (a wire value) through rn_ordered_receive
-Receive(o) ==
+\* one record of ordering o (a wire value) through rn_ordered_receive; d is
+\* what the call says: TRUE when it returned ROCKETNET_CHANNEL_RECEIVE_DEFERRED
+Receive(o, d) ==
     /\ ~exhausted
-    /\ disagree' = (disagree \/ (InTurnCompare(o) # (U24(o) = U24(read))))
-    /\ IF Needed(o) > Cap - deliveries
-         THEN /\ wasted' = (wasted \/ Actual(o) <= Cap - deliveries)
+    /\ IF InTurnCompare(o) # (U24(o) = U24(read)) THEN disagree' = TRUE ELSE UNCHANGED disagree
+    /\ d = (Needed(o) > Cap - deliveries)
+    /\ IF d
+         THEN /\ IF Actual(o) <= Cap - deliveries THEN wasted' = TRUE ELSE UNCHANGED wasted
               /\ UNCHANGED <<read, held, deliveries, exhausted, uDelivered, seqHold>>   \* DEFERRED, rn_ordered_receive
          ELSE /\ UNCHANGED wasted
               /\ LET delta == U24(o - read) IN                       \* rn_channels_dispatch_ordered
@@ -174,12 +185,11 @@ Receive(o) ==
 \* its turn (Actual 1); a table without that one defers the packet, and
 \* rn_window_receive_accept drops and counts it otherwise.  Counting the held
 \* run (DupOne = FALSE) defers it when the run does not fit although one does.
-ReceiveDuplicate(o) ==
+ReceiveDuplicate(o, d) ==
     /\ ~exhausted
     /\ LET needed == IF DupOne THEN 1 ELSE Needed(o)
-       IN  IF needed > Cap - deliveries
-             THEN wasted' = (wasted \/ 1 <= Cap - deliveries)        \* DEFERRED
-             ELSE UNCHANGED wasted
+       IN  /\ d = (needed > Cap - deliveries)
+           /\ IF d /\ 1 <= Cap - deliveries THEN wasted' = TRUE ELSE UNCHANGED wasted   \* DEFERRED
     /\ UNCHANGED <<read, held, deliveries, exhausted, disagree, uDelivered, seqHold>>
 
 \* a fresh code-3 block fragment at the read index that does not complete
@@ -187,12 +197,11 @@ ReceiveDuplicate(o) ==
 \* rn_receive_delivery_reservation counts it one, as a record ahead of its
 \* turn (Actual 1); counting the held run (PartialOne = FALSE) defers it
 \* when the run does not fit although one does.
-ReceivePartial ==
+ReceivePartial(d) ==
     /\ ~exhausted
     /\ LET needed == IF PartialOne THEN 1 ELSE Needed(read)
-       IN  IF needed > Cap - deliveries
-             THEN wasted' = (wasted \/ 1 <= Cap - deliveries)        \* DEFERRED
-             ELSE UNCHANGED wasted
+       IN  /\ d = (needed > Cap - deliveries)
+           /\ IF d /\ 1 <= Cap - deliveries THEN wasted' = TRUE ELSE UNCHANGED wasted   \* DEFERRED
     /\ UNCHANGED <<read, held, deliveries, exhausted, disagree, uDelivered, seqHold>>
 
 \* a code-0 record (rn_channels_dispatch, code 0): delivered while the
@@ -207,10 +216,10 @@ ReceiveUnreliable ==
 
 \* a future sequenced record of either code taken into the empty hold
 \* (rn_channels_dispatch_sequenced)
-HoldSequenced ==
+HoldSequenced(k) ==
     /\ ~exhausted
     /\ seqHold = "none"
-    /\ \E k \in {"u", "r"} : seqHold' = k
+    /\ seqHold' = k
     /\ UNCHANGED <<read, held, deliveries, exhausted, disagree, uDelivered, wasted>>
 
 \* the honest records: fresh, ahead by less than W, not already held
@@ -225,14 +234,14 @@ EndUpdate ==
 \* an exhausted region ends the connection: nothing more is received
 Ended ==
     /\ exhausted
-    /\ UNCHANGED vars
+    /\ UNCHANGED <<read, held, deliveries, exhausted, disagree, uDelivered, seqHold, wasted>>   \* vars, named
 
 Next ==
-    \/ \E o \in Honest : Receive(o)
-    \/ \E o \in {U24(read + k) : k \in 0..W-1} : ReceiveDuplicate(o)
-    \/ ReceivePartial
+    \/ \E o \in Honest, d \in BOOLEAN : Receive(o, d)
+    \/ \E o \in {U24(read + k) : k \in 0..W-1}, d \in BOOLEAN : ReceiveDuplicate(o, d)
+    \/ \E d \in BOOLEAN : ReceivePartial(d)
     \/ ReceiveUnreliable
-    \/ HoldSequenced
+    \/ \E k \in {"u", "r"} : HoldSequenced(k)
     \/ EndUpdate
     \/ Ended
 

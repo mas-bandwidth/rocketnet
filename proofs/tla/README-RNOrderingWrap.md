@@ -17,7 +17,13 @@ comparison made at the wrong width.
 `MCRNOrderingWrap.tla`: `W = 2`, a wire ordering modulo 8, a read counter
 modulo 32 (so it passes the wire wrap three times and wraps itself), a
 delivery table of three and an unreliable allowance `Du = 1` (the table is
-`Du + W` entries, as `delivery_entries` is).
+`Du + W` entries, as `delivery_entries` is). The read index starts at
+`ReadInit = 0`; the trace check starts it where the walk's code does.
+
+`Receive`, `ReceiveDuplicate` and `ReceivePartial` take `d`, whether the
+call deferred. It is decided by the reservation, so each action pins `d` to
+its own reservation test: the parameter adds no behaviour, and a trace
+record names the deferral its call reported.
 
 ## Actions and the code they mirror
 
@@ -25,11 +31,11 @@ Functions in `sdk/rocketnet_channel.cpp`.
 
 | Action | Code |
 |---|---|
-| `Receive(o)` | one record of `rn_ordered_receive`: `rn_receive_delivery_reservation` (one delivery, plus each complete held successor when the record is in turn by its in-turn compare), the deferral when the table lacks that room, then `rn_channels_dispatch_ordered`: `delta = rn_u24(ordering - ordered_read)`, in turn delivered through `rn_channels_reliable_delivery` (which exhausts the region on a full table) and `rn_channels_deliver_ordered`, then `rn_channels_drain` (key `rn_held_key(channel, ordered_read)`, a full table exhausts the region); ahead, held |
-| `ReceiveDuplicate(o)` | a resend whose number layer 3 already took, at ordering `o` in turn or ahead: `rn_receive_delivery_reservation` asks `rn_window_receive_duplicate` first and counts it one, as a record ahead of its turn, never the held run; a table without that one defers the packet, as before, and otherwise `rn_window_receive_accept` drops and counts it |
-| `ReceivePartial` | a fresh code-3 block fragment at the read index that does not complete its block (`rn_channels_dispatch_chunk` collects it and delivers nothing): the reservation finds the block's entry with one lookup and counts the fragment one, as a record ahead of its turn, not the held run |
+| `Receive(o, d)` | one record of `rn_ordered_receive`: `rn_receive_delivery_reservation` (one delivery, plus each complete held successor when the record is in turn by its in-turn compare), the deferral when the table lacks that room, then `rn_channels_dispatch_ordered`: `delta = rn_u24(ordering - ordered_read)`, in turn delivered through `rn_channels_reliable_delivery` (which exhausts the region on a full table) and `rn_channels_deliver_ordered`, then `rn_channels_drain` (key `rn_held_key(channel, ordered_read)`, a full table exhausts the region); ahead, held |
+| `ReceiveDuplicate(o, d)` | a resend whose number layer 3 already took, at ordering `o` in turn or ahead: `rn_receive_delivery_reservation` asks `rn_window_receive_duplicate` first and counts it one, as a record ahead of its turn, never the held run; a table without that one defers the packet, as before, and otherwise `rn_window_receive_accept` drops and counts it |
+| `ReceivePartial(d)` | a fresh code-3 block fragment at the read index that does not complete its block (`rn_channels_dispatch_chunk` collects it and delivers nothing): the reservation finds the block's entry with one lookup and counts the fragment one, as a record ahead of its turn, not the held run |
 | `ReceiveUnreliable` | a code-0 record through `rn_channels_dispatch`: delivered while the update's unreliable deliveries are below `Du` and the table has room |
-| `HoldSequenced` | a future sequenced record taken into the channel's empty hold (`rn_channels_dispatch_sequenced`): code 1 (`"u"`) or code 4 (`"r"`, `RN_SEQUENCED_RELIABLE_HOLD` set) |
+| `HoldSequenced(k)` | a future sequenced record taken into the channel's empty hold (`rn_channels_dispatch_sequenced`): code 1 (`"u"`) or code 4 (`"r"`, `RN_SEQUENCED_RELIABLE_HOLD` set) |
 | `EndUpdate` | `rn_channels_end_update`: `deliveries = 0`, `unreliable_delivered = 0` |
 | `Ended` | environment: an exhausted region takes nothing more (`rn_ordered_receive`); a terminal stutter |
 
@@ -136,6 +142,40 @@ counts a fragment that cannot complete it one. With orderings 1 to `W - 1`
 held, each such fragment cost the main thread 332 us at `W = 65536` (0.08 us
 after). `test_fragments_at_the_read_index_never_scan_the_held_run` runs both on
 the code.
+
+## Trace check
+
+`TraceRNOrderingWrap.tla` replays the records the walk of
+`tests/tla_trace_ordering_wrap.cpp` (`tla_trace --layer ordering-wrap`)
+writes over the real receive path at `W = 64` and `Du = 4`, the read index
+started 48 below the wire wrap. Each record is the call, its action, that
+action's arguments and every model variable read back from the code:
+`ordered_read`, the complete held orderings, the deliveries, the region's
+exhaustion, `unreliable_delivered` and the hold's code. The action is named
+by the kind of record the walk sent (the op), and `d` is the call's own
+result, `ROCKETNET_CHANNEL_RECEIVE_DEFERRED`. TLC's integers are 32-bit, so
+the trace's `CounterMod` is the largest multiple of 2^24 it holds, not 2^32;
+the counter's own wrap is checked here, at the small instance. The walk
+sends honest records only (a fresh record takes a number the window accepts
+into a free descriptor), sends no code-0 record past `Du` and no code-4 hold
+the table cannot take, and reaches a block only at the read index.
+
+What the trace can bind of the reservation: a number stays live while it is
+held or delivered in the update (`rn_channels_release`), so the delivery
+table has room for every live descriptor and the unreliable allowance left,
+and below a full table a record that takes a free descriptor never defers.
+The trace binds the duplicate's reservation (a duplicate takes no
+descriptor), every deferral at a full table, and the dispatch's delta, the
+drain's key, the read index and the held set across the wire's wrap. The
+in-turn run count, the masked in-turn compare (`Masked`) and the sequenced
+term (`ExactSeq`) never decide a deferral in a state the code reaches; they
+are checked by this module's cases, not by the trace.
+
+Reach: `Wrapped`, `RunHeld`, `HeldAtEdge` (a held record at `read + W - 1`),
+`TableFull`, `HoldUnreliable`, `HoldReliable` and `HoldUnreliableDuSpent`.
+The plant `ROCKETNET_ORDERING_WRAP_PLANT` in `rn_receive_delivery_reservation`
+is `MCRNOrderingWrapBrokenDupRun.cfg`'s reservation before the duplicate test;
+the check rejects it at the first duplicate it defers.
 
 ## Records
 
