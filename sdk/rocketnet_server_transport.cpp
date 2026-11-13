@@ -428,25 +428,25 @@ struct rocketnet_server_transport_t
     bool io_stop_requested;                             // the stop's last burst is flushed and the I/O told to stop
 
     // The protocol send reserve (proofs/tla/RNSendReserve.tla). On a staged
-    // transport the game's fill and the protocol's frames share each queue's
-    // staging. When main opens a fill phase it gives each queue a fill
+    // transport the game's packets and the protocol's frames share each queue's
+    // staging. At the end of update and of send_packets main gives each queue a
     // budget: its room less the reserve the next update's protocol frames may
-    // need there. A fill start claims one unit of its queue's budget with one
+    // need there. A game packet start claims one unit of its queue's budget with one
     // atomic add and is refused (SEND_RESERVE_REFUSED) past it; protocol
-    // frames never claim. Written by main only between fill phases; the
-    // claims are atomic adds on the fill threads.
+    // frames never claim. Written by main only while no game packet is being started; the
+    // claims are atomic adds.
     int send_queues;                                    // the transport's send_queues, or 1
     uint64_t fill_budget[ROCKETNET_SERVER_MAX_SEND_QUEUES];
     uint64_t fill_claims[ROCKETNET_SERVER_MAX_SEND_QUEUES];
     uint64_t fill_own_used[ROCKETNET_SERVER_MAX_SEND_QUEUES] = {};  // own frames taken, by the queue they staged in
     uint64_t send_reserve[ROCKETNET_SERVER_MAX_SEND_QUEUES]; // the last reserve computed, per queue (read by tests)
     // A connected client whose keep-alive is acknowledged owns its reserved
-    // frame this phase: the fill's first frame to it takes that frame (the
+    // frame until the budget opens again: the game's first frame to it takes that frame (the
     // payload is what the keep-alive would have carried), and its later
     // frames claim the queue's budget. Set by main at open; cleared by that
-    // client's one filler (rocketnet_fill_phase.h, one filler per client).
+    // client's packet start.
     uint8_t fill_own_frame[ROCKETNET_MAX_CLIENTS] = {};
-    uint64_t fill_own_frames_left = 0;                      // own frames not yet taken this phase (atomic on the fill threads)
+    uint64_t fill_own_frames_left = 0;                      // own frames not yet taken since the budget opened (atomic)
 #if ROCKETNET_DEV
     uint64_t retest_take_back_for_test = 0;                 // claims taken back, as by another thread, between a claim's refusal and its retest
 #endif // #if ROCKETNET_DEV
@@ -1007,7 +1007,7 @@ static int rocketnet_server_transport_send_queue_of( const rocketnet_server_tran
 //     queue. With one queue that is every slot.
 // Not reserved, by design: the cookie replies to requests that carry no
 // valid cookie. They answer unauthenticated sources at whatever rate those
-// send, so no constant bounds them; they compete with the fill and are
+// send, so no constant bounds them; they compete with the game's packets and are
 // refused like it when the staging is full.
 static void rocketnet_server_transport_send_reserves( const rocketnet_server_transport_t * server_transport, uint64_t * reserve )
 {
@@ -1070,16 +1070,16 @@ static uint64_t rocketnet_server_transport_load_u64( const uint64_t * value )
     return rocketnet_platform_atomic_load_u64( const_cast<volatile uint64_t *>( value ) );
 }
 
-// The most fill frames the queue may grant this phase, as its state reads
+// The most game frames the queue may grant until the budget opens again, as its state reads
 // now: the grants already staged, plus the room left above the reserve the
 // protocol still needs there. Every own frame staged has left the room and
 // the reserve together, so it is taken out of the reserve. Both counts move
 // only after their frame has left the room, so they are read before the
 // room: a frame staged between the reads is then counted nowhere, never
 // twice. Read again after the room and started over if either moved, so no
-// frame staged in between is lost to the fill either (RNSendReserve Read1,
+// frame staged in between is lost to the game's packets either (RNSendReserve Read1,
 // Read2, Read3; witnesses RoomFirst and NoReread). Each start over follows a
-// frame some other filler staged, so the loop ends.
+// frame some other thread staged, so the loop ends.
 // The grants the lines staged on the queue this phase, summed (rocketnet_server_fill_line_t started).
 static uint64_t rocketnet_server_transport_started_sum( const struct rocketnet_server_transport_t * server_transport, int queue )
 {
@@ -1112,9 +1112,9 @@ static void rocketnet_server_transport_return_fill_tails( struct rocketnet_serve
 
 
 
-// proofs/tla/RNSendReserve.tla OpenFill: main, with no fill running, gives
-// each queue a fill budget of its room less its reserve and zeroes the
-// claims. A transport that is not staged keeps the game's fill in its own
+// proofs/tla/RNSendReserve.tla OpenFill: main, with no game packet being started, gives
+// each queue a budget of its room less its reserve and zeroes the
+// claims. A transport that is not staged keeps the game's packets in its own
 // payload ring, apart from the protocol's frames, and needs no reserve.
 static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server_transport_t * server_transport )
 {
@@ -1147,11 +1147,11 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
         server_transport->fill_budget[queue] = rocketnet_server_transport_queue_budget_now( server_transport, queue );
     }
 
-    // The own frames. A client the fill sends a payload to this phase is
+    // The own frames. A client the game sends a payload to before the next update is
     // owed no keep-alive or ack at the next update once its keep-alive is
     // acknowledged: the payload stamps the send time
     // rocketnet_server_keep_alive_due reads and clears the ack debt. So its
-    // reserved frame is the fill's to use for that first payload. A guess,
+    // reserved frame is the game's to use for that first payload. A guess,
     // stated: that holds while the game updates more often than send_rate;
     // when it does not, the keep-alive still due finds the room spent, and the
     // sweep, which stops at a full staging, serves that client first at the
@@ -1171,8 +1171,8 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
 }
 
 // Raises the queue's budget to what its state allows now, never lowers it:
-// frames a transport retires during the fill phase (a completion port, a
-// ring the kernel drains) come back to the fill, and the reserve stays.
+// frames a transport retires after the budget opened (a completion port, a
+// ring the kernel drains) come back to the game's packets, and the reserve stays.
 static uint64_t rocketnet_server_transport_refresh_fill_budget( struct rocketnet_server_transport_t * server_transport, int queue )
 {
     const uint64_t now = rocketnet_server_transport_queue_budget_now( server_transport, queue );
@@ -1332,6 +1332,14 @@ static void rocketnet_server_transport_fill_started( struct rocketnet_server_tra
 // stays in the reserve.
 static void rocketnet_server_transport_fill_refused( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_fill_line_t * line, int queue, bool own )
 {
+#if defined( ROCKETNET_SEND_RESERVE_PLANT )
+    // the trace check's plant (tests/tla_trace_send_reserve.cpp): the
+    // refused frame's claim and the line's tail are kept
+    (void) server_transport;
+    (void) line;
+    (void) queue;
+    (void) own;
+#else  // #if defined( ROCKETNET_SEND_RESERVE_PLANT )
     if ( own )
     {
         return;
@@ -1348,6 +1356,7 @@ static void rocketnet_server_transport_fill_refused( struct rocketnet_server_tra
         }
     }
     rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], 0 - ( rest + 1 ) );
+#endif // #if defined( ROCKETNET_SEND_RESERVE_PLANT )
 }
 
 // Main, with no fill running (RNSendReserve End at the phase's end): every
@@ -1420,7 +1429,7 @@ static int rocketnet_server_transport_fill_budget_left( const rocketnet_server_t
 
 // How many payload frames may still start this update: the payload ring's
 // free slots on a buffered transport; on a staged one the transport's own
-// send room, and no more than the fill budget the protocol reserve leaves
+// send room, and no more than the budget the protocol reserve leaves
 // (RNSendReserve), so a full staging or a spent budget stops the fair send
 // pass where the next unserved client waits. Both count what the calling
 // thread may still take: its own fill line's unused chunk (ring slots or
@@ -1698,6 +1707,24 @@ void rocketnet_server_transport_refuse_fill_chunks_for_test( struct rocketnet_se
 {
     rocketnet_assert( server_transport );
     server_transport->refuse_fill_chunks_for_test = chunks;
+}
+
+uint64_t rocketnet_server_transport_fill_started_for_test( const struct rocketnet_server_transport_t * server_transport, int queue )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    return rocketnet_server_transport_started_sum( server_transport, queue );
+}
+
+uint64_t rocketnet_server_transport_fill_own_used_for_test( const struct rocketnet_server_transport_t * server_transport, int queue )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    return rocketnet_server_transport_load_u64( &server_transport->fill_own_used[queue] );
+}
+
+bool rocketnet_server_transport_fill_own_frame_for_test( const struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    rocketnet_assert( server_transport && client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS );
+    return server_transport->fill_own_frame[client_index] != 0;
 }
 
 void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims )
@@ -3069,8 +3096,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     server_transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
     server_transport->disconnect_seals_left = server_transport->disconnect_packets_per_update;
 
-    // no fill phase is open until the first update or send_packets opens one;
-    // until then the fill is unbudgeted, as before the reserve
+    // no budget is open until the first update or send_packets opens one;
+    // until then the game's packets are unbudgeted, as before the reserve
     server_transport->send_queues = 1;
     for ( int queue = 0; queue < ROCKETNET_SERVER_MAX_SEND_QUEUES; ++queue )
     {
@@ -4854,7 +4881,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 
     rocketnet_server_transport_flush( server_transport, false );
 
-    // the next fill phase opens with the room the flush left
+    // the budget opens again with the room the flush left
 
     rocketnet_server_transport_open_fill_budget( server_transport );
 }

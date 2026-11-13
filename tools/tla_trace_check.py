@@ -89,6 +89,12 @@ LAYERS = {
                     "so it never gets there",
         },
     },
+    "sendreserve": {
+        "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
+        "untraced": {},
+        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
+        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed"],
+    },
 }
 
 STEPS = 400
