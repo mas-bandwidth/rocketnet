@@ -69,6 +69,12 @@ enum rocketnet_receive_drop_t
     // ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL.
     ROCKETNET_RECEIVE_DROP_BANK_FULL,
 
+    // never returned by the prefilter: counted by the transport itself for a
+    // receive it completed but cannot read as a datagram (an error
+    // completion, a source address it cannot read). Feeds
+    // ROCKETNET_COUNTER_RECEIVE_FAILED.
+    ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED,
+
     ROCKETNET_RECEIVE_NUM_DROPS
 };
 
@@ -126,7 +132,8 @@ static inline enum rocketnet_receive_drop_t rocketnet_receive_prefilter( const u
 // how many (at most ROCKETNET_RECEIVE_DROP_MAX_COUNTERS). They are exactly
 // what main's ladder adds for the same datagram: PACKETS_RECEIVED, then the
 // type's RECEIVED where main counts one before its size check, then the
-// reason. BANK_FULL is RECEIVE_DROPPED_FULL alone: the datagram was never
+// reason. BANK_FULL is RECEIVE_DROPPED_FULL alone and RECEIVE_FAILED is
+// RECEIVE_FAILED alone: the datagram was never
 // received by the protocol. ACCEPT adds nothing.
 #define ROCKETNET_RECEIVE_DROP_MAX_COUNTERS 3
 
@@ -138,6 +145,9 @@ static inline int rocketnet_receive_drop_counters( enum rocketnet_receive_drop_t
             return 0;
         case ROCKETNET_RECEIVE_DROP_BANK_FULL:
             counters[0] = ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL;
+            return 1;
+        case ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED:
+            counters[0] = ROCKETNET_COUNTER_RECEIVE_FAILED;
             return 1;
         default:
             break;
@@ -191,21 +201,22 @@ static inline int rocketnet_receive_drop_counters( enum rocketnet_receive_drop_t
 // load relaxed. A transport keeps one tally per receive worker (or one per
 // worker and one more for a path main itself runs), each on its own cache
 // lines, and sums them in its receive_drop_totals operation.
+// The values fill whole cache lines, the slots past the last reason held at
+// zero, so the compiler adds no padding (MSVC C4324 refuses implicit
+// padding from an alignment).
+#define ROCKETNET_RECEIVE_DROP_TALLY_SLOTS ( ( ( ROCKETNET_RECEIVE_NUM_DROPS + 7 ) / 8 ) * 8 )
+
 struct alignas( 64 ) rocketnet_receive_drop_tally_t
 {
-    std::atomic<uint64_t> values[ROCKETNET_RECEIVE_NUM_DROPS];
-    // the rest of the last cache line, explicit so the compiler adds no
-    // padding (MSVC C4324 refuses implicit padding from an alignment)
-    uint8_t padding[64 - ( ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) ) % 64];
+    std::atomic<uint64_t> values[ROCKETNET_RECEIVE_DROP_TALLY_SLOTS];
 };
 
-
-static_assert( sizeof( std::atomic<uint64_t> ) == sizeof( uint64_t ), "the padding counts each value as eight bytes" );
+static_assert( sizeof( std::atomic<uint64_t> ) == sizeof( uint64_t ), "eight values fill one cache line" );
 static_assert( sizeof( struct rocketnet_receive_drop_tally_t ) % 64 == 0, "a tally is whole cache lines" );
 
 static inline void rocketnet_receive_drop_tally_reset( struct rocketnet_receive_drop_tally_t * tally )
 {
-    for ( int i = 0; i < ROCKETNET_RECEIVE_NUM_DROPS; ++i )
+    for ( int i = 0; i < ROCKETNET_RECEIVE_DROP_TALLY_SLOTS; ++i )
     {
         tally->values[i].store( 0, std::memory_order_relaxed );
     }
