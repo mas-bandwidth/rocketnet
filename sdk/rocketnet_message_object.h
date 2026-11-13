@@ -126,6 +126,12 @@ struct rn_message_link_t
     // than the reserve keeps), so a queue with more room can take more.
     int ( *send_capacity_available )( void * transport );
 
+    // the send pass's test: how many frames a start to this connection may
+    // still take, its own send queue's; an index below 0 asks whether any
+    // queue may take one. NULL (the client's link, the unit suite's fakes):
+    // the pass reads send_capacity_available for every connection.
+    int ( *send_capacity_to )( void * transport, int index );
+
     // connected clients whose next send round must remain available
     int ( *send_connected_count )( void * transport );
 
