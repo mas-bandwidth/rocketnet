@@ -721,14 +721,14 @@ static void test_server_in_place_start_leaves_a_round_for_the_others()
             // exactly one round left: no frame, the region holds the message
 
             check( w.t->started == 0 );
-            check( w.object->in_place != 1 && w.object->in_place != 2 );
+            check( w.object->connections[0].open.in_place != 1 && w.object->connections[0].open.in_place != 2 );
         }
         else
         {
             // one frame more than a round: the packed build opens a frame
 
             check( w.t->started == 1 );
-            check( w.object->in_place == 2 );
+            check( w.object->connections[0].open.in_place == 2 );
         }
         memset( p, 0x33, 100 );
         rocketnet_message_server_finish( w.server, 0, 100 );
@@ -785,7 +785,7 @@ static void test_server_calls_refuse_the_index_past_the_slots()
 
         check( rocketnet_message_server_start( w.server, index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
         check( rocketnet_message_server_start( w.server, index, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 ) == NULL );
-        check( w.object->pending_connection == -1 && w.object->in_place == 0 );
+        check( rn_message_open_count( w.object ) == 0 && w.object->connections[0].open.in_place == 0 );
         check( rocketnet_message_server_finish( w.server, index, 16 ) == 0 );
         rocketnet_message_server_abort( w.server, index );
         check( rocketnet_message_server_send( w.server, index, 0, ROCKETNET_RELIABILITY_RELIABLE, message, 16 ) == 0 );
@@ -1081,7 +1081,7 @@ static void test_server_abort_on_the_region_path_returns_the_room()
     {
         uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, types[n % 3], 100 );
         check( p != NULL );
-        check( w.object->in_place == 0 );                               // the region path, not a frame
+        check( w.object->connections[0].open.in_place == 0 );                               // the region path, not a frame
         check( region->descriptors_free == descriptors_free - 1 );
         if ( p )
         {
@@ -1091,7 +1091,7 @@ static void test_server_abort_on_the_region_path_returns_the_room()
         rocketnet_message_server_abort( w.server, 0 );
         check( region->descriptors_free == descriptors_free );
         check( cr_store_free_chunks( region ) == chunks_free );
-        check( w.object->pending_connection == -1 );
+        check( rn_message_open_count( w.object ) == 0 );
     }
     check( given == rounds );
     check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == queue_full );
@@ -1122,7 +1122,7 @@ static void test_server_abort_on_the_region_path_returns_the_room()
         for ( int n = 0; n < 3; n++ )
         {
             check( rocketnet_message_server_start( w.server, 0, 0, types[n], 100 ) != NULL );
-            check( w.object->in_place != 0 );
+            check( w.object->connections[0].open.in_place != 0 );
             check( region->descriptors_free == descriptors_free );
             rocketnet_message_server_abort( w.server, 0 );
             check( region->descriptors_free == descriptors_free );
@@ -1239,7 +1239,7 @@ static void test_server_in_place_send_never_overtakes_a_queued_one()
     w.t->capacity = w.t->started + 16;
     uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100 );
     check( p != NULL );
-    check( w.object->in_place == 0 );                                   // queued behind the first
+    check( w.object->connections[0].open.in_place == 0 );                                   // queued behind the first
     if ( p )
     {
         memset( p, 0xB2, 100 );
@@ -1280,7 +1280,7 @@ static void test_server_in_place_keeps_a_packet_for_due_reliable_work()
     const int bytes = 1400;
     uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
     check( p != NULL );
-    check( w.object->in_place != 0 );                                   // the first packet of two
+    check( w.object->connections[0].open.in_place != 0 );                                   // the first packet of two
     if ( p )
     {
         memset( p, 0xD4, (size_t) bytes );
@@ -1290,7 +1290,7 @@ static void test_server_in_place_keeps_a_packet_for_due_reliable_work()
 
     p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
     check( p != NULL );
-    check( w.object->in_place == 0 );                                   // the last packet is the reliable message's
+    check( w.object->connections[0].open.in_place == 0 );                                   // the last packet is the reliable message's
     if ( p )
     {
         memset( p, 0xE5, (size_t) bytes );

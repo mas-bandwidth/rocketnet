@@ -224,12 +224,10 @@ int main( int argc, char ** argv )
             {
                 rocketnet_packet_context_t context;
 
-                uint8_t * frame = from_server
+                uint8_t * payload = from_server
                     ? rocketnet_server_transport_start_packet(server, client_index, payload_bytes, &context)
                     : rocketnet_client_transport_start_packet(client, payload_bytes, &context);
-                CHECK(frame);
-
-                uint8_t * payload = frame + context.payload_index;
+                CHECK(payload);
 
                 if (access)
                 {

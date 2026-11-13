@@ -92,11 +92,25 @@ LAYERS = {
         # seven steps a bank (six stages and the call): 100 calls a seed
         "steps": 700,
     },
+    "fillphase": {
+        "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
+        "untraced": {
+            "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
+            "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",
+            "FillStore": "a reversed witness's step (LoadStore); the code locks by one CAS",
+            "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
+                    "so it never gets there",
+        },
+        # each record carries the 64 fills_in lines, and a TLC run's time is the size of the log it reads: 400 steps
+        # ran 35 to 53 s a run on a shared bench slot (vision, 2026-11-13) against the 100 s budget; a main call is 66
+        # steps (one look a line), so a walk much shorter than this finishes none
+        "steps": 240,
+    },
     "sendreserve": {
         "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
         "untraced": {},
         "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
-        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed"],
+        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],
     },
 }
 

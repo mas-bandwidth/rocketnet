@@ -88,9 +88,9 @@ int main( int argc, char ** argv )
         for ( int i = 0; i < batch_size; ++i )
         {
             rocketnet_packet_context_t context;
-            uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, payload_bytes, &context );
-            CHECK( frame );
-            memset( frame + context.payload_index, i, size_t( payload_bytes ) );
+            uint8_t * payload = rocketnet_server_transport_start_packet( server, client_index, payload_bytes, &context );
+            CHECK( payload );
+            memset( payload, i, size_t( payload_bytes ) );
 
             // Instrument honesty: an optional dependent volatile workload must
             // move the timing. It is caller work, never a production SDK branch.
