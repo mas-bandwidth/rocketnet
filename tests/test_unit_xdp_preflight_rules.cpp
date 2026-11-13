@@ -144,6 +144,17 @@ static void test_xdp_transport_preflight_irqaffinity_list()
     rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "ro -- irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ABSENT );
     rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "a=--b irqaffinity=2 x-- irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
 
+    // a tab or a newline bounds the "--" and a token as a space does; "--x"
+    // is not a bare "--", whatever follows it
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=2\t-- irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=2\n-- irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=2 --\tirqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=2 --\nirqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=2 --x irqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=2 --x\tirqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=2 --x\nirqaffinity=0", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "quiet\nirqaffinity=2", "1-3", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+
     // the value's bound: 255 characters is a value, 256 is not
     {
         char line[300] = "irqaffinity=0";
