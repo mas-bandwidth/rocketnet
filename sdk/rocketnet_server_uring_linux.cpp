@@ -7,6 +7,7 @@
 #include "rocketnet_test_seams.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_server_uring.h"
+#include "rocketnet_uring_pin.h"
 #include "rocketnet_receive_prefilter.h" // ROCKETNET_RECEIVE_NUM_DROPS, in the built transport and the stub alike
 
 #include <new>
@@ -60,6 +61,8 @@
 #include "rocketnet_uring_queue_worker.h"
 #include "rocketnet_uring_receive_queue.h"
 
+#include <pthread.h>
+#include <sched.h>
 #include <sys/socket.h>
 #include <sys/eventfd.h>
 #include <netinet/in.h>
@@ -112,6 +115,11 @@ struct rocketnet_server_uring_queue_t
     struct rocketnet_uring_queue_worker_t worker;
     struct rocketnet_platform_thread_t * thread = NULL;
 
+    // the cpu the worker pinned itself to (rocketnet_uring_pin.h): PENDING
+    // until its thread has run the pin, then the cpu or NONE
+
+    std::atomic<int> pin_cpu{ ROCKETNET_URING_PIN_PENDING };
+
     // the worker thread stores it (release) after its loop's last access to
     // the ring; main loads it (acquire) in stopped
 
@@ -128,6 +136,8 @@ struct rocketnet_server_uring_t
     void * context = NULL;
 
     int num_queues = 0;
+    int num_os_cpus = 0;                        // the server's num_os_cpus: the workers pin to num_os_cpus + queue; 0 pins nothing
+    std::atomic<int> pin_refusals{ 0 };         // pins and priorities the workers asked for and the system refused
     bool ipv6 = false;
     int features = 0;                           // ROCKETNET_SERVER_URING_FEATURE_*: what the create probe found
     int max_clients = 0;
@@ -535,6 +545,75 @@ static bool rocketnet_server_uring_receive_armed( void * context )
     return rocketnet_uring_receive_queue_armed( (const struct rocketnet_uring_receive_queue_t *) context );
 }
 
+// the worker pins itself the way the XDP transport's thread does
+// (rocketnet_server_socket_xdp_thread_function): affinity to cpu num_os_cpus +
+// queue, then SCHED_RR at the minimum unless the priority switch is off. A
+// refusal is a warning naming the queue and the cpu, counted in pin_refusals
+// (rocketnet_server_uring_pin_refusals) and in the platform's priority
+// refusals, and the queue's pin_cpu stays NONE: a worker is reported pinned
+// only when pthread_setaffinity_np said so. num_os_cpus 0 pins nothing (the
+// transport driven directly).
+
+static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_queue_t * queue )
+{
+    struct rocketnet_server_uring_t * uring = queue->uring;
+    if ( uring->num_os_cpus <= 0 )
+    {
+        queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
+        return;
+    }
+
+    const int cpu = rocketnet_uring_pin_cpu( queue->index, uring->num_os_cpus );
+    const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    const int check = rocketnet_uring_pin_check( cpu, CPU_SETSIZE, online );
+    if ( check != ROCKETNET_URING_PIN_OK )
+    {
+        uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+        if ( check == ROCKETNET_URING_PIN_OUTSIDE_SET )
+        {
+            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is outside 0 .. %d; it runs on any cpu", queue->index, cpu, CPU_SETSIZE - 1 );
+        }
+        else
+        {
+            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is not online (0 .. %d); it runs on any cpu", queue->index, cpu, online - 1 );
+        }
+        queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
+    }
+    else
+    {
+        cpu_set_t cpuset;
+        CPU_ZERO( &cpuset );
+        CPU_SET( (size_t) cpu, &cpuset );
+        const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset );
+        if ( result != 0 )
+        {
+            uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+            rocketnet_warn( "io_uring worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on any cpu", queue->index, cpu, strerror( result ) );
+            queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
+        }
+        else
+        {
+            rocketnet_info( "io_uring worker %d pinned to cpu %d", queue->index, cpu );
+            queue->pin_cpu.store( cpu, std::memory_order_release );
+        }
+    }
+
+    if ( rocketnet_platform_thread_priority_enabled() )
+    {
+        struct sched_param param;
+        param.sched_priority = sched_get_priority_min( SCHED_RR );
+        const int result = pthread_setschedparam( pthread_self(), SCHED_RR, &param );
+        if ( result != 0 )
+        {
+            uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+            char call[64];
+            snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", param.sched_priority );
+            rocketnet_warn( "io_uring worker %d priority not set: %s refused (%s); it runs at its default priority", queue->index, call, strerror( result ) );
+            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+        }
+    }
+}
+
 // the queue's worker thread: the loop until it has stopped and nothing of
 // its is in the kernel, then the exited flag (its last access to the queue)
 
@@ -542,6 +621,7 @@ static void rocketnet_server_uring_worker_thread( struct rocketnet_platform_thre
 {
     struct rocketnet_server_uring_queue_t * queue = (struct rocketnet_server_uring_queue_t *) data;
     rocketnet_assert( queue );
+    rocketnet_server_uring_pin_worker( queue );
     rocketnet_uring_queue_worker_run( &queue->worker );
     queue->exited.store( true, std::memory_order_release );
 }
@@ -744,6 +824,12 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status,
                                                                        const uint8_t * packet_filter )
 {
+    return rocketnet_server_uring_create_pinned( context, bind_address, num_queues, max_clients, flags, 0, status, packet_filter );
+}
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
+                                                                        int * status, const uint8_t * packet_filter )
+{
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
 
@@ -784,6 +870,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
     uring->context = context;
     uring->num_queues = num_queues;
+    uring->num_os_cpus = num_os_cpus;
     uring->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     uring->max_clients = max_clients;
     uring->bank_size = rocketnet_server_uring_bank_packets( max_clients );
@@ -1244,6 +1331,19 @@ int rocketnet_server_uring_send_queues( struct rocketnet_server_uring_t * uring 
     return uring->num_queues;
 }
 
+int rocketnet_server_uring_worker_cpu( struct rocketnet_server_uring_t * uring, int queue )
+{
+    rocketnet_assert( uring );
+    rocketnet_assert( queue >= 0 && queue < uring->num_queues );
+    return uring->queues[queue].pin_cpu.load( std::memory_order_acquire );
+}
+
+int rocketnet_server_uring_pin_refusals( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+    return uring->pin_refusals.load( std::memory_order_relaxed );
+}
+
 int rocketnet_server_uring_send_queue_of( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to )
 {
     rocketnet_assert( uring );
@@ -1442,6 +1542,26 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 {
     (void) flags;
     return rocketnet_server_uring_create( context, bind_address, num_queues, max_clients, status, packet_filter );
+}
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
+                                                                        int * status, const uint8_t * packet_filter )
+{
+    (void) num_os_cpus;
+    return rocketnet_server_uring_create_flags( context, bind_address, num_queues, max_clients, flags, status, packet_filter );
+}
+
+int rocketnet_server_uring_worker_cpu( struct rocketnet_server_uring_t * uring, int queue )
+{
+    (void) uring;
+    (void) queue;
+    return ROCKETNET_URING_PIN_NONE;
+}
+
+int rocketnet_server_uring_pin_refusals( struct rocketnet_server_uring_t * uring )
+{
+    (void) uring;
+    return 0;
 }
 
 int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring )
