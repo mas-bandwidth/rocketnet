@@ -295,3 +295,39 @@ test `ack->has_oldest && ( now - ack->oldest_first_send ) >=
 ack->reliable_timeout` without `ack->reliable_timeout > 0.0`, commit
 55daea990) with a timeout of 0 does the same at the first check after the
 first send.
+
+## Revision 1.2: LOSS for a receipt that never reached the wire
+
+Before this revision a type-5 LOSS came only after a sent packet's deadline
+or its sent-map entry's eviction. The code also reports LOSS at once, with
+no sent-map record, for a type-5 message none of whose parts was written:
+the send budget drops it (`rn_endpoint_unreliable_drop_all`,
+`rn_message_flush_unreliable`) or the transport refuses its finish or its
+packet (`rn_endpoint_in_place_finish`, `rn_endpoint_in_place_failed`, the
+`RN_ENDPOINT_PACKET_UNRELIABLE` arm of `rn_endpoint_packet_failed`). That is
+now `SweepLoss`'s drop arm: a type-5 serial with no part in `sentNums` may
+take LOSS at once; it is recorded in the ghost `dropped`, and it carries no
+fairness (the code drops only under a budget or a refusal). A serial that
+was written stays on the deadline arm.
+
+| Property | Statement | Fails when (checked) |
+|---|---|---|
+| `DropOnlyOffWire` | every dropped serial had no part on the wire and no write | `MCRNReceiptsBrokenDropAfterWrite.cfg` (`BrokenDropAfterWrite = TRUE`: the drop arm also fires after a write) |
+
+| Case | Expected | Exit | Generated | Distinct | Seconds |
+|---|---|---:|---:|---:|---:|
+| `MCRNReceipts.cfg` (now with `DropOnlyOffWire`) | pass | 0 | 68940 | 24304 | 6.893 |
+| `MCRNReceiptsMid.cfg` (the same) | pass | 0 | 3605460 | 793675 | 13.883 |
+| `MCRNReceiptsTimeoutOff.cfg` (the same) | pass | 0 | 247734 | 68960 | 2.163 |
+| `MCRNReceiptsOptedIn.cfg` (the same) | pass | 0 | 267438 | 84860 | 2.429 |
+| `MCRNReceiptsBrokenDropAfterWrite.cfg` | `DropOnlyOffWire` | 12 | 87 | 40 | 0.764 |
+
+Witness trace for `MCRNReceiptsBrokenDropAfterWrite.cfg`, read by hand:
+serials 1 and 2 are issued (`Send` twice), one packet carries serial 2's
+only part (`WritePacket`: `sentNums` holds `<<2, 0>>`, `writes[2] = 1`), and
+the drop arm reports LOSS for serial 2 at once. In the code a written
+type-5 record leaves the drop paths: `rn_endpoint_unreliable_drop_all` and
+`rn_message_flush_unreliable` drop only records still queued, and a refused
+finish or packet reports LOSS only for the records of that refused packet,
+which never reached the wire; once a record is in a committed packet its
+LOSS waits for the deadline sweep or the entry's eviction.

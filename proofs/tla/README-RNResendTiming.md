@@ -474,3 +474,37 @@ owed outage defined from the sender alone; the filter cases of revision 1.1 and
 1.2 (`MCRNResendTimingFilter*.cfg`, `MCRNResendTimingBrokenSampleAcrossSilence.cfg`,
 `MCRNResendTimingBrokenSilenceOnGap.cfg`) are replaced by its cases. `Sample`
 here sets only the resend delay.
+
+## Revision 1.4: the timeout floor, and acks before the timeout check
+
+`ConfigAccepted` now carries the 1000 ms floor of
+`rocketnet_message_validate_config_internal` (`sdk/rocketnet_config.cpp`): a
+configured timeout is at least 1000 ms and at least `MinAttempts` sends of
+the initial resend delay. The floor is `TimeoutFloor` ticks: 2 at the
+500 ms tick, `TimeoutFloorFine` (10) at the 100 ms tick of the seeded and
+back-off cases (`TimeoutFloor <- TimeoutFloorFine`). At 500 ms it never
+binds; `MCRNResendTimingBelowTimeoutFloor.cfg` (100 ms tick, `Timeout = 8`,
+800 ms, with `MinAttempts × RtoInitial = 8`) is a configuration the rule
+without the floor accepts and the code refuses, and it violates
+`ConfigAccepted` in the initial state.
+
+The message update applies the update's received ids
+(`rn_endpoint_on_acked_ids`, `sdk/rocketnet_message_server.cpp`) before
+`rn_endpoint_tick` checks the timeout, so an ack processed in the update the
+deadline falls in keeps the connection. Before this revision `Ack` and
+`Sample` were disabled as soon as `TimedOut` held, which is the check before
+the acks. They now need `AcksOpen` (not silenced, a record unacked), and
+`TimedOut` gates them only in the reversed witness (`CheckBeforeAcks <-
+CheckBeforeAcksOn`).
+
+| Property | Meaning |
+|---|---|
+| `DeadlineUpdateTakesAcks` | at the start of the update a record's deadline falls in, before any call, the record (sent, unacked, not silenced) can still be acknowledged |
+
+| Case | Property | Exit | Generated | Distinct | Seconds |
+|---|---|---:|---:|---:|---:|
+| `MCRNResendTiming.cfg`, `MCRNResendTimingPaced.cfg` (now with `DeadlineUpdateTakesAcks`) | every invariant | 0 | RT-MAIN | RT-PACED | RT-S |
+| `MCRNResendTimingBrokenCheckBeforeAcks.cfg` | `DeadlineUpdateTakesAcks` | 12 | RT-CBA | RT-CBA-D | RT-CBA-S |
+| `MCRNResendTimingBelowTimeoutFloor.cfg` | `ConfigAccepted` | 12 | RT-FL | RT-FL-D | RT-FL-S |
+
+TRACE-CBA

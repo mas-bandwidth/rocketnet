@@ -42,8 +42,9 @@
 (* rn_channels_dispatch_chunk), or when its count, first number n - index  *)
 (* or base disagrees with the anchor's (rn_channels_block_collect,         *)
 (* MESSAGE_BAD_BLOCK).  Otherwise it is copied to ring + index*F (its own  *)
-(* ring offset) and counts in the anchor.  When have = k the block is      *)
-(* complete; the message whose ordering index is the channel's read index  *)
+(* ring offset) and counts in the anchor.  When the chunks in reach the   *)
+(* arriving chunk's count k the block is complete (rn_channels_block_      *)
+(* settle); the message whose ordering index is the channel's read index   *)
 (* is delivered when complete, as a view of its span read at stride F, and *)
 (* the read index moves by one.                                            *)
 (*                                                                         *)
@@ -65,7 +66,8 @@
 (*                          SpanInsideRing.                                *)
 (*   AnchorCheck <- AnchorCheckOff with Forge: the receiver never compares *)
 (*                          a chunk with its anchor, so a forged count     *)
-(*                          completes a block early.  TLC must fail        *)
+(*                          that arrives after a correct chunk completes   *)
+(*                          the block early.  TLC must fail                *)
 (*                          NoPartialDelivery.                             *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
@@ -164,7 +166,7 @@ fwdVars      == <<fwdWire, fwdSent, fwdPulse>>
 Fwd == INSTANCE Link WITH wire <- fwdWire, sent <- fwdSent, pulse <- fwdPulse,
                           Packets <- Records, Pattern <- FwdPattern
 
-NoAnchor == [have |-> 0, cnt |-> 0, first |-> 0, base |-> 0]
+NoAnchor == [have |-> 0, cnt |-> 0, first |-> 0, base |-> 0, done |-> FALSE]
 
 Init ==
     /\ nextMsg = 1 /\ next = 0 /\ ringNext = RingStart /\ low = RingStart
@@ -245,27 +247,33 @@ BaseOf(r) == r.ring - r.idx * F
 
 \* the anchor a chunk finds, or the one it opens
 AnchorFor(r) == IF anchor[r.ord].cnt = 0
-                  THEN [have |-> 0, cnt |-> r.cnt, first |-> r.num - r.idx, base |-> BaseOf(r)]
+                  THEN [have |-> 0, cnt |-> r.cnt, first |-> r.num - r.idx, base |-> BaseOf(r),
+                        done |-> FALSE]
                   ELSE anchor[r.ord]
 
 \* a chunk (count 2 or more: the code's block path) the receiver refuses:
 \* rn_block_shape_valid's index below count, check 8's span inside the
 \* ring (a chunk not the last knows the end to within one unit), and
-\* rn_channels_block_collect's count, first number and base agreement with
-\* the anchor (MESSAGE_BAD_BLOCK), which AnchorCheck <- AnchorCheckOff drops
+\* rn_channels_block_collect's test that the anchor is still collecting and
+\* agrees on count, first number and base (MESSAGE_BAD_BLOCK), which
+\* AnchorCheck <- AnchorCheckOff drops
 Refused(r) ==
     /\ r.cnt >= 2
     /\ LET a == AnchorFor(r)
        IN \/ r.idx >= r.cnt
           \/ BaseOf(r) < 0
           \/ BaseOf(r) + (r.cnt - 1) * F + 1 > B
-          \/ AnchorCheck /\ (r.cnt # a.cnt \/ r.num - r.idx # a.first \/ BaseOf(r) # a.base)
+          \/ AnchorCheck /\ (a.done \/ r.cnt # a.cnt \/ r.num - r.idx # a.first \/ BaseOf(r) # a.base)
 
 \* A record arrives.  A duplicate writes nothing (6.5).  A refused chunk
 \* ends the connection and writes nothing.  Otherwise a single record is
 \* copied to its ring offset, and a fragment finds or opens its block's
 \* anchor by its ordering index and is copied by index (ring + index*F, its
 \* own offset), or, in the reversed witness, by arrival (base + have*F).
+\* The block is complete when the chunks in reach the arriving chunk's own
+\* count, and takes that count (rn_channels_dispatch_chunk's block_have <
+\* count, then rn_channels_block_settle); it equals the anchor's whenever
+\* the agreement test passed.
 Receive(r) ==
     /\ ~violated
     /\ Fwd!Deliver(r)
@@ -276,9 +284,13 @@ Receive(r) ==
               /\ UNCHANGED <<rcvd, anchor, ring, ordRead, log>>
          ELSE LET a   == AnchorFor(r)
                   pos == IF PlaceByIndex THEN r.ring ELSE (a.base + a.have * F) % B
+                  fin == a.have + 1 >= r.cnt
               IN /\ rcvd' = rcvd \cup {r.num}
                  /\ ring' = [ring EXCEPT ![pos] = r.tag]
-                 /\ anchor' = [anchor EXCEPT ![r.ord] = [a EXCEPT !.have = @ + 1]]
+                 /\ anchor' = [anchor EXCEPT ![r.ord] =
+                                 [a EXCEPT !.have = @ + 1,
+                                           !.cnt = IF fin THEN r.cnt ELSE @,
+                                           !.done = fin]]
                  /\ UNCHANGED <<ordRead, violated, log>>
     /\ UNCHANGED <<senderVars, forged>>
 
@@ -287,8 +299,7 @@ Receive(r) ==
 \* moves by one: one ordering slot per message (7.2, 8 "Receive").
 Deliver(o) ==
     /\ ~violated
-    /\ anchor[o].cnt > 0
-    /\ anchor[o].have = anchor[o].cnt
+    /\ anchor[o].done
     /\ o = ordRead
     /\ log' = Append(log, [ord |-> o,
                             data |-> [j \in 1..anchor[o].cnt |->

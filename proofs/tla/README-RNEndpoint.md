@@ -102,7 +102,8 @@ An end in error does nothing more: the object disconnects it (section 11).
   (Revision 1.2; before it the model compared and took CONFIG from a packet
   it then refused.) The violations the code finds record by record, after
   earlier records of the packet were taken (the window's, in `RNWindow`
-  `Accept`, and the dispatch's block checks, in `RNBlocks` `RefuseBlock`),
+  `OpenPacket`'s record-by-record fold, and the dispatch's block checks, in
+  `RNBlocks` `Receive`'s refusal, `Refused`),
   are not modelled here. The order
   of records inside a packet beyond that is section 9.3's.
 - **The CONFIG wait** starts at `Reset` for both ends. The code starts each

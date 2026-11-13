@@ -19,7 +19,7 @@ functions, which cite it by name:
 |---|---|
 | `Init` | `rn_window_send_init` (`sdk/rocketnet_window_send.cpp`), `rn_window_receive_init` (`sdk/rocketnet_window_receive.cpp`), `rn_window_ack_init` (`sdk/rocketnet_window_ack.cpp`) |
 | `NumberRecord` | `rn_window_send_admit`, `rn_window_send_first_write` and `rn_window_send_first_write_block` (`sdk/rocketnet_window_send.cpp`) |
-| `WouldNumber` (NumberRecord's count bound alone) | `rn_window_send_would_number` and `rn_window_send_stall_unless_numbered` (`sdk/rocketnet_window_send.cpp`), asked by the send pass's due test (`rn_endpoint_ordered_due`, `sdk/rocketnet_endpoint.cpp`) before a frame is started |
+| `WouldNumber` (NumberRecord's count bound alone) | `rn_window_send_would_number` and `rn_window_send_stall_unless_numbered` (`sdk/rocketnet_window_send.cpp`), asked by the send pass's due test (`rn_endpoint_ordered_due`, `sdk/rocketnet_endpoint.cpp`) before a frame is started. It is the count half of `rn_window_send_fits` only; the ring-byte half is `RNRing`'s `Admits`, and the liveness cases assume the ring has room |
 | `WritePacket`, `WriteOldest` | `rn_window_ack_commit`, the sent-packet map and the resend FIFO (`sdk/rocketnet_window_ack.cpp`) |
 | `ReceiveAck` | `rn_window_send_mark_acked` (`sdk/rocketnet_window_send.cpp`) and `rn_window_ack_on_ack` (`sdk/rocketnet_window_ack.cpp`) |
 | `OpenPacket` | `rn_window_receive_accept` (`sdk/rocketnet_window_receive.cpp`) |
@@ -30,11 +30,13 @@ functions, which cite it by name:
 `tests/test_unit_window_sequences.cpp` drives the same operation sequences against
 those functions (below).
 
-`proofs/tla/MCRNWindow.tla` holds the instance, and there are seven committed cases, each one
+`proofs/tla/MCRNWindow.tla` holds the instance, and there are eight committed cases, each one
 inside tlacheck's 110 s budget:
 - `proofs/tla/MCRNWindow.cfg`: `W = 2`, numbers 0..4 wrapping at `NumMod = 4`, Link capacity 2,
   the `"alternate"` loss pattern both ways, every invariant and the liveness property.
 - `proofs/tla/MCRNWindowSafety.cfg`: numbers 0..5, `"arbitrary"` loss, safety only.
+- `proofs/tla/MCRNWindowSafetyTwo.cfg`: numbers 0..4, `"arbitrary"` loss, two records a
+  packet (`MaxPerPacket = 2`), safety only: the record-by-record accept in both orders.
 - The five reversed witnesses, `proofs/tla/MCRNWindowBroken*.cfg`, each `MCRNWindow.cfg` with one
   constant flipped (`diff` shows one line).
 
@@ -82,7 +84,7 @@ Actions, one per operation and per outside event:
 | `NumberRecord` | sender | gives `next` to a record under the count bound; the block takes `BlockLen` numbers at once |
 | `WritePacket(S, pid)` | sender | writes a packet with a fresh id carrying any set of unacked numbered records, first sends and resends alike (the resend delay firing); records it in the map, evicting the oldest entry when full; `Fwd!Send` |
 | `ReceiveAck(q)` | sender | `Rev!Deliver`; every id of `q` still in the map marks its numbers acked and leaves the map; other ids are ignored |
-| `OpenPacket(p)` | receiver | `Fwd!Deliver`; the id joins `pending` (P2); each wire number is reconstructed against `R` (a misread is recorded and nothing else happens); then `Accept`: 6.5 per number (duplicate dropped, outside the window or slot live with another number is a violation), accepted numbers set bits, claim descriptors, advance `R`; then 7.2 dispatch: unordered delivered now, ordered delivered when every ordered predecessor is received (draining holds), else held |
+| `OpenPacket(p)` | receiver | `Fwd!Deliver`; the id joins `pending` (P2); the packet's records are processed one at a time, in any order the packet can carry them (`AcceptFrom`, `AcceptOne`): each wire number is reconstructed against `R` as the earlier records left it (a misread is recorded and stops the packet); 6.5 (duplicate dropped, outside the window or slot live with another number is a violation that stops the packet, the earlier records staying accepted); an accepted number sets its bit, claims its descriptor and advances `R`; then 7.2 dispatch: unordered delivered now, ordered delivered when every ordered predecessor is received (draining holds), else held |
 | `FixBatch` | receiver | the batch is fixed; no more opens this update (P6) |
 | `SendAck` | receiver | `Rev!Send(pending)` after the batch is fixed |
 | `EndUpdate` | receiver | the delivered list expires; its descriptors stop being live |
@@ -143,7 +145,12 @@ value exhausts TLC's tableau.
 - `DeliveryFairHead`: strong fairness on opening the head of the forward wire and on
   receiving acks. Enough for the deterministic patterns on a FIFO link (`Spec`).
 - `AcksLand`: acks that leave without bound include, without bound, acks naming an id the
-  map still holds. The model's stand-in for real time; see "What TLC found".
+  map still holds. The model's stand-in for real time; see "What TLC found". It is an
+  ASSUMPTION the code does not keep under receipt-only traffic: receipt-only packets also
+  take sent-map entries, and enough of them evict every entry naming a reliable number
+  before its ack lands (`RNSentMap`, `MCRNSentMapReceiptEviction.cfg`, and the
+  `packets_in_flight` contract). The code half is the roadmap entry
+  `sent-map-receipts-give-way`.
 - `OldestLands` (`SpecTyped`, for `"arbitrary"`, where `Drop` removes copies in flight):
   the oldest number, written through without bound, is opened without bound.
 
@@ -160,11 +167,13 @@ value exhausts TLC's tableau.
   modelled; Link's duplication and reordering reach the receiver unfiltered, which is a
   stronger adversary than the transport lets through, except where it matters for
   wraparound (below).
-- The receiver reconstructs every number of a packet against the `R` the packet found;
-  the code (`rn_window_receive_accept`) reconstructs record by record as `R` advances
-  inside the packet. Both
-  values lie in one window, and `WireNumberReconstructs` holds for the reading the model
-  makes.
+- Record by record inside a packet (revision 1.1). The receiver reconstructs and accepts
+  each record against `R` as the packet's earlier records left it, as
+  `rn_window_receive_accept` does, and a violation or misread stops the packet with the
+  earlier records kept. Before this revision every number of a packet was read against
+  the `R` the packet found and the packet was all or nothing. The committed instances
+  with one record a packet have the same state graph; `MCRNWindowSafetyTwo.cfg` checks
+  two records a packet.
 
 ## How to run it
 
@@ -220,6 +229,7 @@ Committed cases:
 | `MCRNWindowBrokenHalfRange.cfg` | every invariant | 176 | 107 | 8 | 1 s | fail as expected: `WireNumberReconstructs` |
 | `MCRNWindowBrokenHoldOrdered.cfg` | every invariant | 1,431 | 741 | 19 | 2 s | fail as expected: `OrderedDeliveredInOrder` |
 | `MCRNWindowBrokenDropDuplicates.cfg` | every invariant | 173 | 105 | 8 | 1 s | fail as expected: `DeliveredOnce` |
+| `MCRNWindowSafetyTwo.cfg` (numbers 0..4, `"arbitrary"`, `MaxPerPacket = 2`, revision 1.1; tlacheck, 2026-11-13) | every invariant | 4,597,613 | 1,198,503 | - | 36 s | pass |
 
 Bench runs (each is `MCRNWindow.cfg` with the changes named):
 

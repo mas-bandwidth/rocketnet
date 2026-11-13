@@ -38,11 +38,12 @@
 (* reaches r" below means its value rounded to the model's grain.          *)
 (*                                                                          *)
 (* Two more acknowledgements the code takes (revision 1.2):                 *)
-(*   AckNothing: an acknowledgement batch whose ids match no live sent-map  *)
-(*     entry (a packet evicted from the map, or one that carried no message *)
-(*     record): rn_window_ack_on_acks still runs the silence test and moves *)
-(*     last_ack, and rn_window_ack_on_ack finds nothing, so no sample.      *)
-(*   SendReceipt (ReceiptPkts): a packet that carries unreliable receipt     *)
+(*   Ack(0) (AckOfNothing): an acknowledgement batch whose ids match no     *)
+(*     live sent-map entry (a packet evicted from the map, or one that      *)
+(*     carried no message record): rn_window_ack_on_acks still runs the     *)
+(*     silence test and moves last_ack, and rn_window_ack_on_ack finds      *)
+(*     nothing, so no sample.                                               *)
+(*   Send's receipt branch (ReceiptPkts): a packet that carries receipt     *)
 (*     serials and no reliable number (rn_window_ack_commit_receipt_packet, *)
 (*     ref_count 0).  Its acknowledgement is sampled (entry->ref_count == 0 *)
 (*     in rn_window_ack_on_ack), through the same silence filter.  With no  *)
@@ -89,7 +90,7 @@ CONSTANTS
     DupSample,  \* FALSE: the code (v1.1.4) and m9.1, no sample from a packet whose
                 \* numbers were all acknowledged already; TRUE: v1.1.1, one sample per
                 \* acknowledged packet, a packet whose number was already acknowledged included
-    ReceiptPkts \* TRUE: the sender also writes receipt-only packets (SendReceipt)
+    ReceiptPkts \* TRUE: the sender also writes receipt-only packets (Send)
 
 ASSUME /\ Probe \in Nat \ {0}
        /\ RttLow \in Nat /\ RttHigh \in Nat /\ RttLow <= RttHigh /\ RttHigh < Probe
@@ -156,17 +157,28 @@ Init ==
     /\ owedQuiet = 0 /\ realEndAge = Cap
     /\ badSample = FALSE /\ badRefusal = FALSE
 
-\* A new number, sent at once (rn_window_ack_record_first_send: when it is U
-\* and the oldest is not tracked at it, the oldest is now this send).
+\* A receipt-only packet carries packet number RO: no reliable number.
+RO == -2
+
+\* A packet is committed (rn_window_ack_commit).  Either a new number, sent
+\* at once (rn_window_ack_record_first_send: when it is U and the oldest is
+\* not tracked at it, the oldest is now this send), or, with ReceiptPkts, a
+\* receipt-only packet (num RO), which touches no number and not the
+\* oldest (a commit with count 0 stamps no first send).
 Send ==
-    /\ Len(nums) < M
     /\ Free # {}
-    /\ LET n == NumAt(Len(nums) + 1) IN
-       /\ nums' = Append(nums, [first |-> 0, acked |-> FALSE])
-       /\ pkts' = Put([used |-> TRUE, age |-> 0, prtt |-> rttNow, num |-> n])
-       /\ IF n = U /\ (~hasOldest \/ oldestNum # n)
-          THEN /\ hasOldest' = TRUE /\ oldestNum' = n /\ oldestFirstAge' = 0
-          ELSE UNCHANGED <<hasOldest, oldestNum, oldestFirstAge>>
+    /\ \/ /\ Len(nums) < M
+          /\ LET n == NumAt(Len(nums) + 1) IN
+             /\ nums' = Append(nums, [first |-> 0, acked |-> FALSE])
+             /\ pkts' = Put([used |-> TRUE, age |-> 0, prtt |-> rttNow, num |-> n])
+             /\ IF n = U /\ (~hasOldest \/ oldestNum # n)
+                THEN /\ hasOldest' = TRUE /\ oldestNum' = n /\ oldestFirstAge' = 0
+                ELSE UNCHANGED <<hasOldest, oldestNum, oldestFirstAge>>
+       \/ /\ ReceiptPkts
+          /\ LET p == [used |-> TRUE, age |-> 0, prtt |-> rttNow, num |-> RO] IN
+             /\ \A s \in InFlight : pkts[s] # p
+             /\ pkts' = Put(p)
+             /\ UNCHANGED <<nums, hasOldest, oldestNum, oldestFirstAge>>
     /\ UNCHANGED <<srtt, hasRtt, lastAckAge, hasLastAck, silenceEndAge, ubase, pathVars, ghostVars>>
 
 \* A number on the wire, unacknowledged, sent again (first send unchanged).
@@ -175,17 +187,6 @@ Resend(i) ==
     /\ ~nums[i].acked
     /\ Free # {}
     /\ LET p == [used |-> TRUE, age |-> 0, prtt |-> rttNow, num |-> NumAt(i)] IN
-       /\ \A s \in InFlight : pkts[s] # p
-       /\ pkts' = Put(p)
-    /\ UNCHANGED <<codeVars, ubase, nums, pathVars, ghostVars>>
-
-\* A receipt-only packet (num RO): no reliable number, so the oldest is not
-\* touched (rn_window_ack_commit with count 0 stamps no first send).
-RO == -2
-SendReceipt ==
-    /\ ReceiptPkts
-    /\ Free # {}
-    /\ LET p == [used |-> TRUE, age |-> 0, prtt |-> rttNow, num |-> RO] IN
        /\ \A s \in InFlight : pkts[s] # p
        /\ pkts' = Put(p)
     /\ UNCHANGED <<codeVars, ubase, nums, pathVars, ghostVars>>
@@ -219,10 +220,11 @@ EndsSilence ==
 \* in the same update finds last_ack = now (age 0), as the batch does.  A
 \* packet whose number was already acknowledged acknowledges nothing and,
 \* by m9.1 and the code, gives no sample (DupSample TRUE: v1.1.1, which
-\* sampled it).  A packet carries one reliable number, or (SendReceipt) none:
+\* sampled it).  A packet carries one reliable number, or (Send's receipt
+\* branch) none:
 \* a receipt-only packet is always sampled, through the filter
 \* (entry->ref_count == 0 || acked > 0).
-Ack(s) ==
+AckPacket(s) ==
     /\ s \in InFlight
     /\ ~dark
     /\ pkts[s].age >= pkts[s].prtt
@@ -283,8 +285,8 @@ Ack(s) ==
 \* test and moves last_ack whatever the ids (rocketnet_window_ack.cpp, before
 \* the empty-ring return); rn_window_ack_on_ack returns 0 for each id, so
 \* nothing is sampled or acknowledged.  For the definitions an arriving
-\* acknowledgement ends a quiet run as Ack's does: the path is back.
-AckNothing ==
+\* acknowledgement ends a quiet run as AckPacket's does: the path is back.
+AckOfNothing ==
     /\ ~dark
     /\ LET sEnd == IF EndsSilence THEN 0 ELSE silenceEndAge
            rEnd == IF owedQuiet >= Probe THEN 0 ELSE realEndAge
@@ -295,6 +297,11 @@ AckNothing ==
        /\ owedQuiet' = 0
        /\ realEndAge' = rEnd
     /\ UNCHANGED <<srtt, hasRtt, hasOldest, oldestNum, oldestFirstAge, sendVars, pathVars, badSample, badRefusal>>
+
+\* An acknowledgement batch arrives (rn_window_ack_on_acks): for the packet
+\* in slot s (AckPacket), or, with s = 0, for ids that match no live entry
+\* (AckOfNothing).
+Ack(s) == IF s = 0 THEN AckOfNothing ELSE AckPacket(s)
 
 \* The update ends and time moves on one tick.  While the path delivers,
 \* every acknowledgement due has arrived (or was lost) first.  The path
@@ -320,10 +327,8 @@ Tick ==
 Next ==
     \/ Send
     \/ \E i \in 1..M : Resend(i)
-    \/ SendReceipt
     \/ \E s \in Slots : Lose(s)
-    \/ \E s \in Slots : Ack(s)
-    \/ AckNothing
+    \/ \E s \in {0} \cup Slots : Ack(s)
     \/ Tick
 
 Spec == Init /\ [][Next]_vars
