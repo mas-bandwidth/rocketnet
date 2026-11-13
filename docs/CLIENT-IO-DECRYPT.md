@@ -5,10 +5,11 @@ layer can observe it. The transport owns fixed receive buffers and transfers
 them through bounded queues. Each accepted packet follows this order:
 
 1. validate its fixed header and connection mapping;
-2. authenticate and open it;
-3. apply the replay-window decision;
-4. append its payload and acknowledgement data to the bounded update batch;
-5. retire the receive buffer exactly once.
+2. check the replay window: a sequence already received is refused unopened;
+3. authenticate and open it;
+4. mark its sequence received in the replay window, only after it opened;
+5. append its payload and acknowledgement data to the bounded update batch;
+6. retire the receive buffer exactly once.
 
 A session datagram below its type's wire floor, or with sequence zero, is
 refused before authentication. The I/O thread opens a payload as soon as it

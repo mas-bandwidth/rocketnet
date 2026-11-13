@@ -195,11 +195,11 @@ bounded per receive call by the read budget below.
 | portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`rocketnet_server_receive_packets_per_update`) |
 | msgx | portable batch, 256–1000 | 16000 per update |
 | loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
-| gso | 16384 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 32768 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
+| gso | per queue, a producer bank of 16384 send slots and two banks the worker sends from (`ROCKETNET_GSO_SEND_QUEUE_SIZE`, `ROCKETNET_GSO_TX_BANKS`) | 32768 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
 | io_uring | per queue, a producer bank of at least 4096 send slots sized by rate (at most 32768) and two banks the worker sends from; the worker reaps its own completions (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `rocketnet_server_uring_send_slots`, `ROCKETNET_URING_SEND_MAX_BANK_SLOTS`) | 4096 receive buffers of 66 KiB per queue; a receive bank per queue of at least `ROCKETNET_URING_RECEIVE_BANK_FLOOR` (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
 | xdp | 16384 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 32768 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
 | iocp | 4096 per send lane, one lane per 128 clients from 4 to 16 lanes, a lane never smaller than every client slot plus 1024 and all lanes within 65536 operations; 8 x 4096 at 1000 clients, 4 x 16384 at 10000 (`rocketnet_server_iocp_send_lanes`, `rocketnet_server_iocp_send_queue_size`) | 16000 across the completion workers, one update's receive budget (`rocketnet_server_iocp_receive_queue_size`) |
-| rio | 16384 per phase per lane (the staging, floor `ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE`; `rocketnet_server_rio_send_queue_size`) | 4096 posted receives (`rocketnet_server_rio_receives`) |
+| rio | 16384 per phase per lane (the staging, floor `ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE`; `rocketnet_server_rio_send_queue_size`) | 4096 posted receives per lane (`rocketnet_server_rio_receives`) |
 
 <a id="current-staging-and-drain-limitations"></a>
 
@@ -215,13 +215,20 @@ them send staging (`sdk/rocketnet_server_gso_linux.cpp`,
 
 Every built-in server transport but loopback reports the frames it takes before its next
 flush through the optional `send_room` operation (`sdk/rocketnet_driver.h`):
-the free slots of the gso producer bank, the io_uring array, the IOCP
-producer bank (at most its free send operations), the open RIO fill phase,
-the fullest XDP queue, and the portable producer bank. A frame the transport
+the free slots of the fullest queue's producer bank for gso, io_uring and
+XDP, of the fullest lane for IOCP (at most its free send operations) and RIO
+(its open fill phase), and the portable producer bank. A frame the transport
 still holds from an earlier flush is not room.
 `rocketnet_server_transport_send_capacity_available` returns it for the
-staged transports, so the message layer's rotation stops at a full staging
-and its cursor keeps the next unserved connection. The disconnect drain seals
+staged transports. With one send queue the message layer's rotation stops at
+a full staging and its cursor keeps the next unserved connection. With
+several, the send pass, the keep-alive sweep and the disconnect drain read
+the room of each destination's own queue (the send pass through
+`rocketnet_server_transport_send_capacity_to`): a connection or disconnect
+burst whose queue is full is held, its sends left for a later update, and
+the walk goes on to those of the queues with room; only no room in any
+queue ends it. The send pass and the sweep then leave their cursor on the first
+connection held after their first frame, which is served first next update. The disconnect drain seals
 no more than the room each update, a kicked client's burst is sealed at once
 only while the room holds all of it, and stop's bursts leave across stop steps
 the same way (`proofs/tla/ServerStopSpread.tla`). Stop tells the I/O to stop
@@ -341,7 +348,8 @@ A datagram committed before main's call is returned by that call unless the
 mutex was busy (on XDP, through every one of a few tries), the per-update
 budget cut the call, or the call began with datagrams left from a cut call:
 main then reads the tail and its own buffer but moves on to the worker's
-only at its next call (`RNReceiveHandoff.DeliveredByNextCall`, bound to the
+only at its next call, so those datagrams wait one more update (16.7 ms at
+60 Hz) (`RNReceiveHandoff.DeliveredByNextCall`, bound to the
 code by the `receive-handoff` and `receive-handoff-xdp` trace checks; `RNGsoHandoff.RxFill` and `RxCall` are
 the same exchange beside the send side and the stop count). A GSO worker
 pass that finds its buffer full while main has not started on it, or whose
@@ -415,8 +423,11 @@ unreachable. A BSD stack reports such an error to the next receive or send on a
 connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. A client's
 portable or msgx socket is connected to its one server
 (`rocketnet_platform_socket_connect`, so the kernel drops datagrams from any
-other source), and the kernel routes these errors to it; server sockets are
-never connected. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
+other source), and the kernel routes these errors to it. Server sockets are
+not connected, except the msgx server's per-client sockets: each is
+connected to its one client (`sdk/rocketnet_server_msgx.h`), so the kernel
+reports that client's errors on that socket, and the msgx receive worker
+reads past them, counts them and keeps draining. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
 ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
 (`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
 portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm
@@ -517,13 +528,17 @@ Dispatch measurements and their limits are recorded in
 ## The RIO server transport
 
 `rio` (`sdk/rocketnet_server_rio_windows.cpp`, `sdk/rocketnet_server_rio.h`)
-is a Windows staged server transport with one registered memory region and one
-I/O worker that polls the send and receive completion queues. The frame thread
+is a Windows staged server transport that runs `num_rio_lanes` lanes. Each
+lane has its own socket, registered memory region, send and receive
+completion queues, and I/O worker that polls them; a frame stages in the lane
+its destination address hashes to. In each lane the frame thread
 hands deferred sends to one of three phases; a phase stays worker-owned until
 its sends complete, and its received datagrams reach main through the shared
 receive handoff (`sdk/rocketnet_receive_handoff.h`, three banks): main reads
 the bank the worker is filling up to its committed count, so a datagram banked
-before a receive call is returned by that call.
+before a receive call is returned by that call, unless main's one try of the
+lane's mutex fails or the process view is full: then it is returned at the
+next call, one update (16.7 ms at 60 Hz) later.
 Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_COUNTER_RIO_*` counters (public rows, sdk/rocketnet_counters.h) report sent and received packets, full send
@@ -569,13 +584,17 @@ went to a closed port.
 ## The io_uring server transport
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
-is a staged Linux server transport with one io_uring per transport, used only on the
-main thread, with no I/O worker threads. An `SO_REUSEPORT` socket group, bound the
+is a staged Linux server transport with one worker thread per queue
+(`num_io_uring_workers`). Each queue has its own socket, its own io_uring and
+its worker, the only thread that submits to that ring or reaps it; main never
+touches a ring. An `SO_REUSEPORT` socket group, bound the
 way the GSO transport binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
-receive buffers with no syscall per datagram; `send_packets` submits one
-batched `SENDMSG` per send run, in chunks no larger than the free submission
-queue space.
+receive buffers with no syscall per datagram. A frame stages in the queue its
+destination hashes to; `send_packets` publishes each queue's producer bank to
+its worker and wakes it, and the worker sends each run of the bank as one
+`SENDMSG`. Main and a worker meet only in the send handoff, the receive bank,
+the stop flag and wake, and the counters.
 
 Send segmentation is the GSO transport's tier, probed at create: every socket
 of the group must accept `UDP_SEGMENT` (set to 0), all or nothing, and the
@@ -592,8 +611,8 @@ created with `ROCKETNET_SERVER_URING_DISABLE_SEGMENT` (through
 `rocketnet_server_uring_create_flags`, for tests), a run is one slot. A live
 refusal, a segmented send's completion of `-EINVAL`, `-EIO` or `-EOPNOTSUPP`,
 is that destination's (its route: an IPsec policy, say): the run's slots are
-resent at once as one plain `SENDMSG` each, pending in their phase so its index
-is not reset under them, and the destination is remembered (the table in
+resent at once as one plain `SENDMSG` each, pending in their bank so the bank
+is not retired under them, and the destination is remembered (the table in
 `sdk/rocketnet_server_gso.h`) so its later runs leave plain without a refusal.
 Other destinations keep segmenting. Segmentation turns off for the transport,
 with one warning (`GSO_FALLBACKS`), only when
@@ -609,31 +628,37 @@ the result (`UDP_GRO yes`, or `no (one datagram per receive buffer)`). With
 it each queue's multishot msghdr reserves a control area for the `UDP_GRO`
 cmsg (`ROCKETNET_URING_GRO_CONTROL_BYTES`), and one provided buffer may hold
 a coalesced receive of several datagrams: `rocketnet_uring_recvmsg_parse`
-returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
-segment is size-checked and copied into the fill bank before the buffer goes
-back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A
-receive is copied only while the fill bank has room for a whole coalesced
-receive (64 datagrams; of a longer one, the first 64 are copied and each
-datagram past them is counted in `RECEIVE_DROPPED_OVERFLOW`); otherwise it is held with its buffer, in arrival order, until a swap
-brings room, and the completions behind it, sends among them, are reaped in
-the same call (`proofs/tla/RNUringReapLayout.tla`). Destroy's drain copies
-regardless and counts what the bank cannot take as `RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
+returns the stride, `rocketnet_coalesce_split_prefix` cuts the buffer, and the
+queue's worker size-checks every segment, runs the server's stateless
+prefilter and copies each one that passes into the queue's receive bank
+before the buffer goes back to the ring
+(`sdk/rocketnet_uring_receive_queue.cpp`,
+`proofs/tla/RNUringQueueReceiveLayout.tla` `Complete`). One receive is taken
+as at most 64 datagrams; each datagram past them is counted in
+`RECEIVE_DROPPED_OVERFLOW`. The bank is a ring with one writer, the worker,
+and one reader, main; a datagram that finds it full is dropped and counted
+(the server's `RECEIVE_DROPPED_FULL`), and the worker never waits on main.
+`GRO_BATCHES` counts buffers that held more than
 one segment, and `GRO_CMSG_FAULTS` a truncated or malformed `UDP_GRO` cmsg,
 taken as one datagram (the GSO transport's fault). Created with
-`ROCKETNET_SERVER_URING_DISABLE_GRO`, no control area is reserved and a
+`ROCKETNET_SERVER_URING_DISABLE_GRO`, no `UDP_GRO` control area is reserved and a
 buffer is one datagram; `rocketnet_server_uring_features` reports
 `ROCKETNET_SERVER_URING_FEATURE_GRO` while it is on. A coalesced receive is
 up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES`):
-4096 buffers are 264 MiB of address space per queue, allocated at create
-(8 MiB of 2 KiB buffers before `UDP_GRO`), and the buffers are not written at
+4096 buffers are 264 MiB of address space per queue, allocated at create,
+and the buffers are not written at
 create, so a page is resident only once the kernel writes it: small datagrams
-keep about one page of each buffer resident. The queue workers reap every
-completion; `receive_packets` takes at most the receive bank's size
-(`rocketnet_server_uring_bank_size`, at least `ROCKETNET_URING_RECEIVE_BANK_FLOOR`)
-and neither call waits, so an
-update returns under sustained traffic; completions past a budget stay queued
-for the next call, and a send without its completion keeps its slot until a
-later call reaps it. A queue count past
+keep about one page of each buffer resident. Each queue's worker reaps its own
+completions, at most 256 a pass (`ROCKETNET_URING_WORKER_CQE_BATCH`), and
+leaves the rest for its next pass. `receive_packets` drains every queue's bank
+into one process view of the receive bank's size
+(`rocketnet_server_uring_bank_size`, at least `ROCKETNET_URING_RECEIVE_BANK_FLOOR`),
+from a first queue that moves on each call (to the queue after the one that
+filled the previous call's view, when one did); what does not
+fit waits in its queue's bank for the next call. Neither `receive_packets`
+nor `send_packets` waits on a worker, so an update returns under sustained
+traffic. A bank of sends goes back to the game threads only after the last
+completion of its sends. A queue count past
 `ROCKETNET_URING_MAX_QUEUES` refuses the create; zero selects
 `ROCKETNET_URING_DEFAULT_QUEUES`.
 
@@ -648,18 +673,25 @@ in the Linux `auto` order; it has no client side.
 Its counters (the public `ROCKETNET_COUNTER_URING_*` rows) are packets sent and received,
 submit syscalls, send drops, receive drops for size, bank overflow and
 unconvertible source, receives ended for want of buffers, multishot
-re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
-send calls that returned with sends still owned by the kernel
-(`SEND_DEFERRED`), receive completions that named no provided buffer
+re-arms, worker passes that left completions for the next pass
+(`REAP_DEFERRED`), send completions answered full (`-EAGAIN`, `-EINTR`,
+`-ENOBUFS` or `-ENOMEM`: the socket or the device queue had no room), each
+run sent again after the worker's retry wait (`SEND_DEFERRED`), receive completions that named no provided buffer
 (`RECEIVE_DROPPED_NO_BUFFER`), segmented sends (`GSO_SENDS`) and live
-segmentation turned off for the transport (`GSO_FALLBACKS`), datagrams the kernel dropped at a queue socket (`RECEIVE_DROPPED_SOCKET`, read through `SO_RXQ_OVFL`) and receive completions the kernel refused (the server's `RECEIVE_FAILED`). Stop requests cancellation, and stopped remains
-false until outstanding completions have relinquished their storage. Destroy
-requires stopped and no longer uses a timed wait followed by leaked storage as
-normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;
+segmentation turned off for the transport (`GSO_FALLBACKS`), datagrams the kernel dropped at a queue socket (`RECEIVE_DROPPED_SOCKET`, read through `SO_RXQ_OVFL`) and receive completions the kernel refused (the server's `RECEIVE_FAILED`). Stop tells
+every queue's worker to stop: it cancels its receive, keeps sending what was
+published (a socket that stays full gets a bounded number of retries, and
+what it never takes is counted in `SEND_DROPPED`) and exits once none of its
+operations is in the kernel. Stopped is true once every worker has exited;
+neither call waits. Destroy requires stopped, joins the workers, then frees.
+Existing leak counters remain diagnostic compatibility surfaces;
 completion, not a timeout, authorizes reclamation.
-The send staging (a send run as one send whose completion frees every slot of
-the run), the two receive banks, the per-call completion budget and destroy are
-modelled in `proofs/tla/RNUringDriver.tla`.
+Each part is modelled per queue in `proofs/tla/`: the send staging
+(`RNUringQueueBankLayout`), the send handoff (`RNUringQueueSend`), the
+grouping of a bank into runs (`RNSendGatherLayout`), the worker loop
+(`RNUringQueueWorker`) and the receive bank (`RNUringQueueReceive`,
+`RNUringQueueReceiveLayout`); `proofs/tla/COVERAGE.tsv` lists the trace
+checks that bind them to the code.
 
 ## The XDP receive filter
 
@@ -771,17 +803,25 @@ arrival family is one of those (`TokenAddressAdvertised`, `sdk/rocketnet_server_
 v4-mapped source is canonicalised to IPv4 first. The token's other-family
 address is not consulted.
 
-The given addresses are advertised addresses, not bind restrictions. With one
-address, the server binds that family's wildcard (`0.0.0.0` or `[::]`) on the
-given port, even when the address names a specific IP
-(`sdk/rocketnet_server_transport.cpp`), and every transport except
-`xdp` opens its sockets on that wildcard: `xdp` alone carries
-`ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS` and attaches to the interface that
-carries the given address. The `server transport started on` log line names
-the wildcard for a socket transport and the given address for `xdp`
-(`sdk/rocketnet_server_transport.cpp`). Connect tokens must name the
-given address, the one clients reach; a socket transport still receives the
-server's port on every local address of the family.
+The given addresses are advertised addresses, not bind restrictions. The
+address the server binds is the server config's `bind_ipv4_address` or
+`bind_ipv6_address` (`rocketnet_server_transport_resolve_bind_address`,
+`sdk/rocketnet_server_transport.cpp`). Unset, a server of one family binds
+that family's wildcard (`0.0.0.0` or `[::]`) on the given port, even when the
+given address names a specific IP. Set, a server of one family binds that
+local address on the given port, so a datagram to any other address of the
+machine does not reach it; behind NAT it is the private address that reaches
+the given public one. Start refuses with `INVALID_ADDRESS` a bind address
+for the family the server does not serve, and any bind address on a server
+of both families, whose one dual-stack socket binds `[::]`. Every transport
+except `xdp` opens its sockets on that bind address: `xdp` alone carries
+`ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS`, does not read the bind address,
+and attaches to the interface that carries the given address. The `server
+transport started on` log line names the bind address for a socket
+transport and the given address for `xdp`. Connect tokens must name the
+given address, the one clients reach; a socket transport bound to the
+wildcard still receives the server's port on every local address of the
+family.
 
 `portable` on OpenBSD cannot clear `IPV6_V6ONLY` and refuses both families
 with `TRANSPORT_FAMILIES_UNSUPPORTED` (`sdk/rocketnet_driver_builtin.cpp`).
@@ -840,10 +880,14 @@ memory runs out and the server is killed). The case starts the server with
 connects rather than the example's default 1000 (`tests/test_xdp_filter.cpp`, the
 `--max-clients` option of `tests/client_server/server.c`), and it gives the server and client a pipe it holds open as
 stdin, because the server stops when its stdin reaches end of file
-(`check_stdin_closed` in `tests/client_server/server.c`) and a guest run without a terminal starts there:
+(`check_stdin_closed` in `tests/client_server/server.c`) and a guest run without a terminal starts there.
+The guest boots four CPUs and isolates 1-3: the on-link reply case's one
+queue runs on CPU 1, and `xdp_create_fails_part_way_tears_down` runs two
+queues on CPUs 2 and 3. `tools/run_xdp_filter_guest.sh` runs the suite in
+such a guest and requires every case to pass:
 
 ```sh
-vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
+vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 4 --append "irqaffinity=0 isolcpus=1-3 nohz_full=1-3" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from
