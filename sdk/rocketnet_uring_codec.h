@@ -251,7 +251,7 @@ static inline bool rocketnet_uring_sockaddr_to_address(
         }
 
         rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in *) input, out );
-        return true;
+        return rocketnet_address_accept_received_source( out, socket_ipv6 );
     }
 
     return false;

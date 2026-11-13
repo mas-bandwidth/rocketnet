@@ -2139,8 +2139,8 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
 
         if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &sockaddr_from, from ) )
         {
-            rocketnet_assert( sockaddr_from.ss_family == AF_INET6 );
-            if ( sockaddr_from.ss_family != AF_INET6 )
+            rocketnet_assert( sockaddr_from.ss_family == AF_INET6 || sockaddr_from.ss_family == AF_INET );
+            if ( sockaddr_from.ss_family != AF_INET6 && sockaddr_from.ss_family != AF_INET )
             {
                 return 0;
             }
@@ -5455,7 +5455,7 @@ bool rocketnet_platform_sockaddr_to_address( const struct sockaddr_storage * sto
     if ( storage->ss_family == AF_INET )
     {
         rocketnet_platform_sockaddr_in_to_address( (const sockaddr_in *) storage, address );
-        return true;
+        return rocketnet_address_accept_received_source( address, dual_stack );
     }
 
     return false;

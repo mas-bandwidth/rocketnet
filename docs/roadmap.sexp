@@ -550,4 +550,14 @@
    :title "The portable server's receive retries a failing recvmmsg at once"
    :text "Reported in the 2026-11-13 review round as an error spin: the platform receive loop (sdk/rocketnet_platform.cpp, the recvmmsg call and its receive-weather retry) retries an error it reads as weather in the same pass, with no back-off. Not reproduced on this branch. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
    :date "2026-11-13" :origin "2026-11-13 review round; moved off the fix round by the owner")
+
+  (item "segment-refusal-needs-plain-success" :group "after-v1-1-landing" :area "sdk"
+   :title "Count a segmentation refusal only when the run's plain resend got through"
+   :text "The gso flush (sdk/rocketnet_server_gso_linux.cpp, rocketnet_server_gso_flush) and the io_uring queue worker count EINVAL, EIO or EOPNOTSUPP on a segmented send as that destination refusing segmentation, though a send the destination would refuse plain fails the same way. Before any segmented send was accepted, ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD such destinations turn segmentation off for the transport. The one remote trigger, a source port of 0 (the kernel refuses destination port 0 with EINVAL, shown on 7.0.0-43), is refused at receive since 2026-11-13 (accept_received_source). The general repair resends plain first and counts the refusal only when a plain packet went; it reorders the refused path, so RNSegmentRefusal and RNGsoHandoff gain a destination that refuses plain sends too, with a reversed witness."
+   :date "2026-11-13" :origin "Round-1 audit R56 (FL-L9); a low item larger than a point release carries")
+
+  (item "gso-retry-after-quit-by-time" :group "after-v1-1-landing" :area "sdk"
+   :title "Bound the gso and io_uring send retry after quit by time, not attempts"
+   :text "Once shutdown begins, a socket that stays full is tried ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT (100) more times before its tail is dropped (sdk/rocketnet_server_gso_linux.cpp, rocketnet_server_gso_send_step; the io_uring worker shares the bound). The attempts are paced by the 1 ms retry timeout and by main's wakes, once per update, so at 60 Hz the bound is about 100 ms or more, as documented; only a main updating faster than 1 kHz while stopping shortens it. Not reproduced as a fault; a time bound would make the window independent of the update rate."
+   :date "2026-11-13" :origin "Round-1 audit R56 (FL-L10); not reproduced, closed with this entry")
  ))

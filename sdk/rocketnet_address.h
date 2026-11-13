@@ -59,11 +59,21 @@ uint32_t rocketnet_address_ipv4( struct rocketnet_address_t * address );
 // ipv6-only socket -- a mapped source never occurs legitimately (RFC 4291
 // 2.5.5.2): it is spoofed, and dropped.
 //
+// a source port of 0 is dropped in every family: no reply can reach it (the
+// kernel refuses a send to destination port 0 with EINVAL, segmented or
+// plain, and a segmented one would read as that destination refusing
+// segmentation).
+//
 // returns false when the source must be dropped. any other source passes
 // through unchanged.
 
 static inline bool rocketnet_address_accept_received_source( struct rocketnet_address_t * from, bool dual_stack )
 {
+    if ( from->port == 0 )
+    {
+        return false;
+    }
+
     if ( !rocketnet_address_is_ipv4_in_ipv6( from ) )
     {
         return true;
