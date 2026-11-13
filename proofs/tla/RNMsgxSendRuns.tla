@@ -3,7 +3,7 @@
 (* The macOS batched server transport's send path over one taken bank     *)
 (* (sdk/rocketnet_msgx_send_runs.h, called by rocketnet_server_msgx_sort,  *)
 (* rocketnet_server_msgx_send_bank and rocketnet_server_msgx_worker in     *)
-(* sdk/rocketnet_server_msgx_darwin.cpp) at the code's layout: the        *)
+(* sdk/rocketnet_server_msgx_apple.cpp) at the code's layout: the         *)
 (* counting sort's bucket array and its placement loop, the sorted order  *)
 (* array, the cursor, the run builder's scan, the partial send's cursor   *)
 (* walk, the dead run's resend loop and the worker's bounded retries      *)

@@ -780,8 +780,7 @@ static int rocketnet_server_msgx_run_send_shared( void * user, int i )
         return ROCKETNET_MSGX_SHARED_DROPPED;
     }
     context->worker->send_calls.fetch_add( 1, std::memory_order_relaxed );
-    const ssize_t result = rocketnet_server_msgx_test_send_fails( msgx ) ? -1 : sendto( msgx->shared_fd, bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bank->info[i].packet_bytes, 0,
-                                   (const struct sockaddr *) &sockaddr, socklen );
+    const ssize_t result = rocketnet_server_msgx_test_send_fails( msgx ) ? -1 : sendto( msgx->shared_fd, bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bank->info[i].packet_bytes, 0, (const struct sockaddr *) &sockaddr, socklen );
     if ( result >= 0 )
     {
         return ROCKETNET_MSGX_SHARED_SENT;
@@ -1294,7 +1293,7 @@ static void rocketnet_server_msgx_abort_create( struct rocketnet_server_msgx_t *
 }
 
 struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, struct rocketnet_address_t * bind_address, int num_workers,
-                                                             int max_clients, const uint8_t * packet_filter, int * status )
+                                                               int max_clients, const uint8_t * packet_filter, int * status )
 {
     rocketnet_assert( bind_address );
     rocketnet_assert( packet_filter );

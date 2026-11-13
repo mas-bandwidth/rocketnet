@@ -2,7 +2,7 @@
 
 The macOS batched server transport's send path over one taken bank,
 `sdk/rocketnet_msgx_send_runs.h`, at the code's layout, with the worker loop
-of `rocketnet_server_msgx_worker` (`sdk/rocketnet_server_msgx_darwin.cpp`)
+of `rocketnet_server_msgx_worker` (`sdk/rocketnet_server_msgx_apple.cpp`)
 that calls it. The bank hand-off is `rocketnet_buffer_handoff_t`, checked by
 [RNBankFifoLayout](README-RNBankFifoLayout.md); the socket table the path
 resolves through is [RNMsgxSocketTable](README-RNMsgxSocketTable.md). This
