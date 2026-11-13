@@ -23,6 +23,9 @@ bool rocketnet_server_rio_test_stop_drains_sends();
 bool rocketnet_server_rio_test_send_accounting();
 bool rocketnet_server_rio_test_create_failure_drain( int late_waits, bool refuse_close, bool * stopped_out, int * closes_out,
                                                      int * waits_out, int * longest_wait_milliseconds_out );
+bool rocketnet_server_rio_test_create_failure_unposted( bool * stopped_out, int * closes_out, uint64_t * abandoned_out );
+bool rocketnet_server_rio_test_stop_counts_stranded( uint64_t * stopped_out );
+bool rocketnet_server_rio_test_corrupt_queue( bool * stopped_out, uint64_t * corrupt_out );
 
 static void test_rio_transport_overflow_seam()
 {
@@ -160,5 +163,48 @@ static void test_rio_transport_create_failure_drain_counts_only_stalled_passes()
 }
 
 REGISTER_UNIT_TEST( test_rio_transport_create_failure_drain_counts_only_stalled_passes );
+
+// A create that fails before any receive is posted, with closesocket refused
+// on every pass: nothing is kernel owned, so the drain stops after its eleven
+// bounded passes and abandons only the socket handle (counted by name); the
+// lane is freed, not leaked whole, and no create leak is counted.
+static void test_rio_transport_create_failure_unposted_frees_the_lane()
+{
+    bool stopped = false;
+    int closes = 0;
+    uint64_t abandoned = 0;
+    check( rocketnet_server_rio_test_create_failure_unposted( &stopped, &closes, &abandoned ) );
+    check( stopped );
+    check( closes == 11 );
+    check( abandoned == 1 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_create_failure_unposted_frees_the_lane );
+
+// At stop, three datagrams completed after the close, three in the fill
+// bank and two in a ready bank main never took: all eight are counted as
+// RECEIVE_DROP_STOPPED and no other reason moves (a fake kernel, no socket,
+// no worker thread, no clock).
+static void test_rio_transport_stop_counts_stranded_datagrams()
+{
+    uint64_t stopped = 0;
+    check( rocketnet_server_rio_test_stop_counts_stranded( &stopped ) );
+    check( stopped == 8 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_stop_counts_stranded_datagrams );
+
+// A corrupt receive completion queue at stop: the lane never reports
+// stopped, and the corruption is named and counted once over three passes.
+static void test_rio_transport_corrupt_queue_is_named_once()
+{
+    bool stopped = true;
+    uint64_t corrupt = 0;
+    check( rocketnet_server_rio_test_corrupt_queue( &stopped, &corrupt ) );
+    check( !stopped );
+    check( corrupt == 1 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_corrupt_queue_is_named_once );
 
 #endif // #if defined( _WIN32 )

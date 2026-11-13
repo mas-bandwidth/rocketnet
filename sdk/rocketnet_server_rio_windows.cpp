@@ -51,6 +51,11 @@
 // write, as the iocp client's destroy does.
 #define ROCKETNET_RIO_DRAIN_WAITS 10
 #define ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS 50
+// A multi-lane create that fails at a later lane stops the lanes it made and
+// polls each for stopped at most this many times, a millisecond apart (about
+// the second server destroy gives its workers); a lane still running then is
+// leaked whole, named and counted (rocketnet_server_rio_create_leaks).
+#define ROCKETNET_RIO_ROLLBACK_POLLS 1000
 
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
 
@@ -119,6 +124,8 @@ struct rocketnet_rio_lane_t
     // (rocketnet_server_rio_lane_placement), and the Win32 error of a refusal
     std::atomic<int> placement{ ROCKETNET_RIO_PLACEMENT_PENDING };
     std::atomic<unsigned long> placement_error{ 0 };
+    // a completion queue of this lane was reported corrupt (named once)
+    bool corrupt_reported = false;
     // each send phase's slots (rocketnet_server_rio_send_queue_size), every
     // phase's frames, and the receive slices (rocketnet_server_rio_receives),
     // for the configured max_clients; the one allocation the slot bytes, the
@@ -296,6 +303,27 @@ static ULONG rocketnet_rio_dequeue( rocketnet_rio_lane_t * rio, RIO_CQ cq, RIORE
     }
 #endif // #if ROCKETNET_DEV
     return rio->rio.RIODequeueCompletion( cq, results, max_results );
+}
+
+// the completion queues RIODequeueCompletion reported corrupt
+// (rocketnet_server_rio_corrupt_queues)
+static std::atomic<uint64_t> rocketnet_rio_corrupt_queues{ 0 };
+
+// RIO_CORRUPT_CQ: the queue's requests can never be accounted for, so the
+// lane never reports stopped and its registered region is never freed (the
+// kernel may still write it). Not silent: named once per lane at error and
+// counted for the process.
+static void rocketnet_rio_corrupt_queue( rocketnet_rio_lane_t * rio, const char * which )
+{
+    if ( rio->corrupt_reported )
+    {
+        return;
+    }
+    rio->corrupt_reported = true;
+    const uint64_t corrupt = rocketnet_rio_corrupt_queues.fetch_add( 1, std::memory_order_relaxed ) + 1;
+    rocketnet_error( "rio transport: the %s completion queue is corrupt (RIO_CORRUPT_CQ); the lane cannot account for its requests, never reports "
+                     "stopped, and its registered region is never freed (corrupt queue %llu in this process)",
+                     which, (unsigned long long) corrupt );
 }
 
 static BOOL rocketnet_rio_send_call( rocketnet_rio_lane_t * rio, RIO_BUF * data, RIO_BUF * address, DWORD flags, void * request_context )
@@ -551,7 +579,7 @@ static int rocketnet_rio_dequeue_send( rocketnet_rio_lane_t * rio )
         const ULONG count = rocketnet_rio_dequeue( rio, rio->send_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
         if ( count == RIO_CORRUPT_CQ )
         {
-            rocketnet_error( "rio transport: send completion queue corrupt" );
+            rocketnet_rio_corrupt_queue( rio, "send" );
             return total;
         }
 
@@ -717,6 +745,7 @@ static bool rocketnet_rio_stop_pass( rocketnet_rio_lane_t * rio )
             const ULONG count = rocketnet_rio_dequeue( rio, rio->send_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
             if ( count == RIO_CORRUPT_CQ )
             {
+                rocketnet_rio_corrupt_queue( rio, "send" );
                 return false;
             }
             for ( ULONG i = 0; i < count; ++i )
@@ -738,7 +767,19 @@ static bool rocketnet_rio_stop_pass( rocketnet_rio_lane_t * rio )
             const ULONG count = rocketnet_rio_dequeue( rio, rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
             if ( count == RIO_CORRUPT_CQ )
             {
+                rocketnet_rio_corrupt_queue( rio, "receive" );
                 return false;
+            }
+            // stopping: a datagram that arrived is never banked, so it is
+            // counted by name; a receive the close cancelled carries none
+            uint64_t stranded = 0;
+            for ( ULONG i = 0; i < count; ++i )
+            {
+                stranded += results[i].Status == 0 && results[i].BytesTransferred > 0 ? 1 : 0;
+            }
+            if ( stranded )
+            {
+                rocketnet_receive_drop_tally_count( rio->drops, ROCKETNET_RECEIVE_DROP_STOPPED, stranded );
             }
             rio->posted_receives.fetch_sub( (int) count, std::memory_order_relaxed );
             if ( count < ROCKETNET_RIO_DEQUEUE_BATCH )
@@ -1065,6 +1106,15 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
 
 // the lanes a failed create leaked to the kernel (rocketnet_server_rio_create_leaks)
 static std::atomic<uint64_t> rocketnet_rio_create_leaks{ 0 };
+// the sockets a failed create left open because closesocket refused them with
+// nothing posted (rocketnet_server_rio_create_abandoned_sockets)
+static std::atomic<uint64_t> rocketnet_rio_create_abandoned_sockets{ 0 };
+#if ROCKETNET_DEV
+// development library only: a create rollback holds every made lane's sends
+// (so none can stop) and keeps the lane it leaks here for the test to finish
+static bool rocketnet_rio_test_hold_rollback = false;
+static rocketnet_rio_lane_t * rocketnet_rio_test_rollback_leaked = NULL;
+#endif // #if ROCKETNET_DEV
 
 // proofs/tla/RNRioWorker.tla PassFails on create's inline drain: the wait
 // between two passes. Only one thing is worth waiting for: closesocket
@@ -1112,6 +1162,19 @@ static bool rocketnet_rio_create_failed_drain( rocketnet_rio_lane_t * rio )
         }
         if ( rio->posted_receives.load( std::memory_order_relaxed ) >= posted && ++stalled > ROCKETNET_RIO_DRAIN_WAITS )
         {
+            // closesocket refused on every pass, with nothing posted and no
+            // send outstanding: the kernel owns no request on the region, so
+            // only the socket handle is left behind (abandoned, named and
+            // counted) and the rest of the lane is freed, never leaked whole
+            if ( rio->socket != INVALID_SOCKET && rio->posted_receives.load( std::memory_order_relaxed ) == 0 && rocketnet_rio_outstanding_sends( rio ) == 0 )
+            {
+                const uint64_t abandoned = rocketnet_rio_create_abandoned_sockets.fetch_add( 1, std::memory_order_relaxed ) + 1;
+                rocketnet_error( "rio transport: create failed and closesocket refused %d times with nothing posted; socket %llu is abandoned open, the rest of the lane "
+                                 "is freed (abandoned socket %llu in this process)",
+                                 stalled, (unsigned long long) rio->socket, (unsigned long long) abandoned );
+                rio->socket = INVALID_SOCKET;
+                return rocketnet_rio_lane_stopped( rio );
+            }
             return false;
         }
         rocketnet_rio_create_drain_wait( rio );
@@ -1301,9 +1364,12 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
         DWORD returned = 0;
         if ( WSAIoctl( rio->socket, SIO_CPU_AFFINITY, &processor, sizeof( processor ), NULL, 0, &returned, NULL, NULL ) == SOCKET_ERROR )
         {
+            // a refusal for want of memory reads OUT_OF_MEMORY, never a bind refusal
+            const int error = WSAGetLastError();
             rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+            rocketnet_platform_windows_create_status( status, (unsigned long) error );
             rocketnet_error( "rio transport refused: SIO_CPU_AFFINITY to processor %d was refused (Winsock %d); lanes share the port only through it",
-                             cpu->index, WSAGetLastError() );
+                             cpu->index, error );
             goto failed;
         }
     }
@@ -1329,21 +1395,36 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     {
         goto failed;
     }
-    // Match the portable socket's don't-fragment rule, tolerating option refusal.
+    // Match the portable socket's don't-fragment rule, tolerating option
+    // refusal: a refusal is a fallback, so it is named at warn.
 
-    if ( rio->ipv6 )
+    if ( rio->ipv6 && setsockopt( rio->socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
     {
-        setsockopt( rio->socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) );
+        rocketnet_warn( "rio transport: IPV6_DONTFRAG refused (Winsock %d); IPv6 datagrams may be fragmented", WSAGetLastError() );
     }
-    setsockopt( rio->socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
+    if ( setsockopt( rio->socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
+    {
+        rocketnet_warn( "rio transport: IP_DONTFRAGMENT refused (Winsock %d); IPv4 datagrams may be fragmented", WSAGetLastError() );
+    }
     // both ICMP reset reports off; a refusal is logged once and the receive
     // path skips the statuses
 
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
-    if ( bind( rio->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
+    int bind_result = bind( rio->socket, (sockaddr *) &address, address_bytes );
+#if ROCKETNET_DEV
+    if ( fail_stage == 8 )
     {
-        // a held port or an address this host cannot bind
+        bind_result = SOCKET_ERROR;
+        WSASetLastError( WSAENOBUFS );
+    }
+#endif // #if ROCKETNET_DEV
+    if ( bind_result == SOCKET_ERROR )
+    {
+        // a held port or an address this host cannot bind; a refusal for
+        // want of memory reads OUT_OF_MEMORY
+        const int error = WSAGetLastError();
         rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        rocketnet_platform_windows_create_status( status, (unsigned long) error );
         goto failed;
     }
     address_bytes = sizeof( address );
@@ -1877,7 +1958,7 @@ static int rocketnet_rio_dequeue_receive( rocketnet_rio_lane_t * rio )
         const ULONG count = rocketnet_rio_dequeue( rio, rio->receive_cq, results, batch );
         if ( count == RIO_CORRUPT_CQ )
         {
-            rocketnet_error( "rio transport: receive completion queue corrupt" );
+            rocketnet_rio_corrupt_queue( rio, "receive" );
             break;
         }
 
@@ -2027,6 +2108,32 @@ static void rocketnet_rio_idle_wait( rocketnet_rio_lane_t * rio )
     WaitForMultipleObjects( 2, handles, FALSE, retry ? 1 : 50 );
 }
 
+// At the worker's exit, after its last stop pass: the datagrams banked but
+// never handed to main, in its fill bank and its ready banks (main's receive
+// takes nothing once stopping), are counted as RECEIVE_DROP_STOPPED, so every
+// datagram the socket delivered is in exactly one public counter. The banks
+// main was exposed were delivered. Each bank is emptied, so a count is never
+// taken twice; the banks keep their places (RNBankFifoLayout has no step
+// after stop).
+static void rocketnet_rio_drop_unread_banks( rocketnet_rio_lane_t * rio )
+{
+    uint64_t datagrams = 0;
+    rocketnet_platform_mutex_acquire( &rio->mutex );
+    datagrams += (uint64_t) rio->banks[rio->fill_bank].num_packets;
+    rio->banks[rio->fill_bank].num_packets = 0;
+    for ( int k = 0; k < rio->ready_count; ++k )
+    {
+        const int index = rio->ready_banks[( rio->ready_head + k ) % ROCKETNET_RIO_RECEIVE_BANKS];
+        datagrams += (uint64_t) rio->banks[index].num_packets;
+        rio->banks[index].num_packets = 0;
+    }
+    rocketnet_platform_mutex_release( &rio->mutex );
+    if ( datagrams )
+    {
+        rocketnet_receive_drop_tally_count( rio->drops, ROCKETNET_RECEIVE_DROP_STOPPED, datagrams );
+    }
+}
+
 // proofs/tla/RNRioWorker.tla WTop: the loop reads stopping at the top of every pass
 // and turns to the stop pass once it is set.
 static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument )
@@ -2056,6 +2163,7 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
         {
             if ( rocketnet_rio_stop_pass( rio ) )
             {
+                rocketnet_rio_drop_unread_banks( rio );
                 break;
             }
             WaitForSingleObject( rio->notify, 1 );
@@ -2594,6 +2702,12 @@ struct rocketnet_rio_stop_test_state_t
     int late_receives;
     int waits;
     DWORD longest_wait_milliseconds;
+    // closesocket completes this many posted receives with a datagram (they
+    // arrived before the close), the rest cancelled; corrupt_receive makes the
+    // receive queue's dequeue report RIO_CORRUPT_CQ
+    int arrive_at_close;
+    int arrived_receives;
+    bool corrupt_receive;
 };
 
 static rocketnet_rio_stop_test_state_t * rocketnet_rio_stop_test_state = NULL;
@@ -2627,6 +2741,18 @@ static ULONG WINAPI rocketnet_rio_stop_test_dequeue( RIO_CQ cq, PRIORESULT resul
         return count;
     }
 
+    if ( state->corrupt_receive )
+    {
+        return RIO_CORRUPT_CQ;
+    }
+    while ( count < max_results && state->arrived_receives > 0 )
+    {
+        state->arrived_receives--;
+        results[count].Status = 0;
+        results[count].BytesTransferred = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+        results[count].RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) count );
+        count++;
+    }
     while ( count < max_results && state->cancelled_receives > 0 )
     {
         state->cancelled_receives--;
@@ -2677,7 +2803,8 @@ static int WINAPI rocketnet_rio_stop_test_close( SOCKET )
     }
     else
     {
-        state->cancelled_receives = ROCKETNET_RIO_TEST_RECEIVES;
+        state->arrived_receives = state->arrive_at_close;
+        state->cancelled_receives = ROCKETNET_RIO_TEST_RECEIVES - state->arrive_at_close;
     }
     return 0;
 }
@@ -2800,6 +2927,148 @@ bool rocketnet_server_rio_test_create_failure_drain( int late_waits, bool refuse
 
     rio->have_table = false;
     rocketnet_rio_test_drain_wait = NULL;
+    rocketnet_rio_stop_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
+// create's failure drain when nothing was ever posted (a failure before the
+// receives) and closesocket refuses every time: the kernel owns nothing on
+// the region, so the drain stops after its bounded passes, abandons only the
+// socket handle (counted) and the lane can be freed. Reports whether it
+// stopped, the closesocket calls and the abandoned sockets it added.
+bool rocketnet_server_rio_test_create_failure_unposted( bool * stopped_out, int * closes_out, uint64_t * abandoned_out )
+{
+    rocketnet_rio_lane_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+    {
+        return false;
+    }
+    static rocketnet_rio_stop_test_state_t state;
+    memset( &state, 0, sizeof( state ) );
+    state.refuse_close = true;
+
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_stop_test_dequeue,
+        rocketnet_rio_stop_test_receive,
+        rocketnet_rio_stop_test_send,
+        rocketnet_rio_stop_test_close
+    };
+    rocketnet_rio_stop_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+    rocketnet_rio_test_drain_wait = rocketnet_rio_stop_test_drain_wait;
+    rio->have_table = true;
+    rio->socket = (SOCKET) 7;
+    rio->posted_receives.store( 0, std::memory_order_relaxed );
+
+    const uint64_t before = rocketnet_rio_create_abandoned_sockets.load();
+    const uint64_t leaks_before = rocketnet_rio_create_leaks.load();
+    *stopped_out = rocketnet_rio_create_failed_drain( rio );
+    *closes_out = state.closes;
+    *abandoned_out = rocketnet_rio_create_abandoned_sockets.load() - before;
+    const bool valid = rio->socket == INVALID_SOCKET && rocketnet_rio_create_leaks.load() == leaks_before;
+
+    rio->have_table = false;
+    rocketnet_rio_test_drain_wait = NULL;
+    rocketnet_rio_stop_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
+// The stop on one thread with a fake kernel: closesocket completes three
+// posted receives with a datagram and cancels the rest, three datagrams wait
+// in the fill bank and two in a ready bank main never took. The stop pass
+// counts the three completed and the worker's exit the five banked, all as
+// RECEIVE_DROP_STOPPED and nothing else; a second exit counts nothing more.
+bool rocketnet_server_rio_test_stop_counts_stranded( uint64_t * stopped_out )
+{
+    rocketnet_rio_lane_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+    {
+        return false;
+    }
+    static rocketnet_rio_stop_test_state_t state;
+    memset( &state, 0, sizeof( state ) );
+    state.arrive_at_close = 3;
+
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_stop_test_dequeue,
+        rocketnet_rio_stop_test_receive,
+        rocketnet_rio_stop_test_send,
+        rocketnet_rio_stop_test_close
+    };
+    rocketnet_rio_stop_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+    rio->have_table = true;
+    rio->socket = (SOCKET) 7;
+
+    const int ready = rio->fill_bank == 0 ? 1 : 0;
+    rio->banks[rio->fill_bank].num_packets = 3;
+    rio->banks[ready].num_packets = 2;
+    rio->ready_banks[rio->ready_head] = ready;
+    rio->ready_count = 1;
+
+    rocketnet_rio_lane_stop( rio );
+    bool valid = rocketnet_rio_stop_pass( rio );
+    valid &= rio->drops->values[ROCKETNET_RECEIVE_DROP_STOPPED].load() == 3;
+    rocketnet_rio_drop_unread_banks( rio );
+    rocketnet_rio_drop_unread_banks( rio );
+    *stopped_out = rio->drops->values[ROCKETNET_RECEIVE_DROP_STOPPED].load();
+    for ( int i = 0; i < ROCKETNET_RECEIVE_NUM_DROPS; ++i )
+    {
+        valid &= i == ROCKETNET_RECEIVE_DROP_STOPPED || rio->drops->values[i].load() == 0;
+    }
+    valid &= rio->posted_receives.load() == 0;
+
+    rio->ready_count = 0;
+    rio->have_table = false;
+    rocketnet_rio_stop_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
+// A receive completion queue that reports RIO_CORRUPT_CQ at stop: the lane
+// never reports stopped (its requests cannot be accounted for), and the
+// corruption is named once and counted once however many passes see it.
+bool rocketnet_server_rio_test_corrupt_queue( bool * stopped_out, uint64_t * corrupt_out )
+{
+    rocketnet_rio_lane_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+    {
+        return false;
+    }
+    static rocketnet_rio_stop_test_state_t state;
+    memset( &state, 0, sizeof( state ) );
+    state.corrupt_receive = true;
+
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_stop_test_dequeue,
+        rocketnet_rio_stop_test_receive,
+        rocketnet_rio_stop_test_send,
+        rocketnet_rio_stop_test_close
+    };
+    rocketnet_rio_stop_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+    rio->have_table = true;
+    rio->socket = (SOCKET) 7;
+
+    const uint64_t before = rocketnet_rio_corrupt_queues.load();
+    rocketnet_rio_lane_stop( rio );
+    bool stopped = false;
+    for ( int pass = 0; pass < 3; ++pass )
+    {
+        stopped |= rocketnet_rio_stop_pass( rio );
+    }
+    *stopped_out = stopped;
+    *corrupt_out = rocketnet_rio_corrupt_queues.load() - before;
+    const bool valid = rio->socket == INVALID_SOCKET;
+
+    // the fixture is the test's: its queue is not the kernel's, so it is freed
+    rio->posted_receives.store( 0 );
+    rio->have_table = false;
     rocketnet_rio_stop_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
 
@@ -3197,6 +3466,13 @@ static bool rocketnet_rio_lane_processors( void * context, int lanes, rocketnet_
     {
         out[i] = order[i % count];
     }
+    if ( ok && lanes > count )
+    {
+        // a fallback: named at warn, and each lane's processor is readable
+        // after start (rocketnet_server_rio_lane_placement)
+        rocketnet_warn( "rio transport: %d lanes asked for %d logical processors; lanes %d..%d share processors with lanes 0..%d", lanes, count, count,
+                        lanes - 1, lanes - 1 - count );
+    }
     if ( !ok )
     {
         rocketnet_platform_windows_create_status( status, GetLastError() );
@@ -3360,6 +3636,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         return NULL;
     }
     const uint8_t * packet_filter = options ? options->packet_filter : NULL;
+    const rocketnet_address_t asked_address = *bind_address;
     void * storage = rocketnet_malloc( context, sizeof( rocketnet_server_rio_t ) );
     if ( !storage )
     {
@@ -3442,22 +3719,47 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         {
             // the lanes already made stop and drain before they are freed;
             // a lane whose own create failed has drained or leaked itself.
-            // A made lane stops on its worker's path, which retries without
-            // bound as rocketnet_server_rio_destroy's caller does
+            // A made lane stops on its worker's path
             // (proofs/tla/RNRioWorker.tla StopCompletesUnlessRefused): it
-            // finishes unless the kernel refuses every later close.
+            // finishes unless the kernel refuses every later close, so the
+            // wait here is bounded as server destroy's is
+            // (ROCKETNET_RIO_ROLLBACK_POLLS polls of a millisecond); a lane
+            // still running then is leaked whole, named and counted, never
+            // freed under its worker.
             for ( int j = 0; j < i; ++j )
             {
+#if ROCKETNET_DEV
+                if ( rocketnet_rio_test_hold_rollback )
+                {
+                    rocketnet_rio_lane_test_hold_send( rio->lanes[j], true );
+                }
+#endif // #if ROCKETNET_DEV
                 rocketnet_rio_lane_stop( rio->lanes[j] );
             }
             for ( int j = 0; j < i; ++j )
             {
-                while ( !rocketnet_rio_lane_stopped( rio->lanes[j] ) )
+                int polls = 0;
+                while ( !rocketnet_rio_lane_stopped( rio->lanes[j] ) && polls < ROCKETNET_RIO_ROLLBACK_POLLS )
                 {
                     rocketnet_platform_sleep( 0.001 );
+                    ++polls;
                 }
-                rocketnet_rio_lane_destroy( rio->lanes[j] );
+                if ( rocketnet_rio_lane_stopped( rio->lanes[j] ) )
+                {
+                    rocketnet_rio_lane_destroy( rio->lanes[j] );
+                    continue;
+                }
+                const uint64_t leaks = rocketnet_rio_create_leaks.fetch_add( 1, std::memory_order_relaxed ) + 1;
+                rocketnet_error( "rio transport: create failed at lane %d and lane %d did not stop within %d polls; leaking it whole, its worker still running "
+                                 "(create leak %llu in this process)",
+                                 i, j, ROCKETNET_RIO_ROLLBACK_POLLS, (unsigned long long) leaks );
+#if ROCKETNET_DEV
+                rocketnet_rio_test_rollback_leaked = rio->lanes[j];
+#endif // #if ROCKETNET_DEV
             }
+            // lane 0 wrote the port it was given into bind_address: the next
+            // transport of the ladder gets the address the caller asked for
+            *bind_address = asked_address;
             rocketnet_rio_free( rio );
             return NULL;
         }
@@ -3589,6 +3891,50 @@ uint64_t rocketnet_server_rio_create_leaks()
 {
     return rocketnet_rio_create_leaks.load( std::memory_order_relaxed );
 }
+
+uint64_t rocketnet_server_rio_create_abandoned_sockets()
+{
+    return rocketnet_rio_create_abandoned_sockets.load( std::memory_order_relaxed );
+}
+
+uint64_t rocketnet_server_rio_corrupt_queues()
+{
+    return rocketnet_rio_corrupt_queues.load( std::memory_order_relaxed );
+}
+
+#if ROCKETNET_DEV
+// development library only: hold every made lane's sends in a failed create's
+// rollback, so no made lane can stop and the bounded wait gives up
+void rocketnet_server_rio_test_set_hold_rollback( bool hold )
+{
+    rocketnet_rio_test_hold_rollback = hold;
+}
+
+// development library only: lets the lane a held rollback leaked stop (its
+// hold released), waits for it as long as the rollback would and frees it.
+// True when there was one and it was freed.
+bool rocketnet_server_rio_test_finish_rollback_leak()
+{
+    rocketnet_rio_lane_t * lane = rocketnet_rio_test_rollback_leaked;
+    if ( !lane )
+    {
+        return false;
+    }
+    rocketnet_rio_test_rollback_leaked = NULL;
+    rocketnet_rio_lane_test_hold_send( lane, false );
+    SetEvent( lane->wake );
+    for ( int polls = 0; polls < ROCKETNET_RIO_ROLLBACK_POLLS && !rocketnet_rio_lane_stopped( lane ); ++polls )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+    if ( !rocketnet_rio_lane_stopped( lane ) )
+    {
+        return false;
+    }
+    rocketnet_rio_lane_destroy( lane );
+    return true;
+}
+#endif // #if ROCKETNET_DEV
 
 // proofs/tla/RNRioLaneLayout.tla LaneOf
 int rocketnet_server_rio_lane_of( rocketnet_server_rio_t * rio, const rocketnet_address_t * to )

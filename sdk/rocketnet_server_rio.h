@@ -133,8 +133,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
 #if ROCKETNET_DEV
     // Development constructor control: fail after the socket, RIO table,
     // region, completion queues, request queue, first posted receive or last
-    // posted receive (stages 1..7), in lane 0. A stage plus 16 * L fails lane
-    // L instead, once lanes 0..L-1 are made and running.
+    // posted receive (stages 1..7), in lane 0; stage 8 refuses the bind with
+    // WSAENOBUFS. A stage plus 16 * L fails lane L instead, once lanes
+    // 0..L-1 are made and running.
                                                       ,
                                                       int fail_stage = 0
 #endif // #if ROCKETNET_DEV
@@ -173,6 +174,13 @@ int rocketnet_server_rio_lane_placement( rocketnet_server_rio_t * rio, int lane,
 // the lanes whose failed create gave up its bounded drain and leaked its
 // socket, registered region and queues to the kernel, in this process
 uint64_t rocketnet_server_rio_create_leaks();
+// the sockets a failed create left open, in this process: closesocket refused
+// on every pass of the drain with nothing posted and no send outstanding, so
+// the rest of the lane was freed and only the handle stays
+uint64_t rocketnet_server_rio_create_abandoned_sockets();
+// the completion queues RIODequeueCompletion reported corrupt, in this
+// process: each lane with one never reports stopped and is never freed
+uint64_t rocketnet_server_rio_corrupt_queues();
 int rocketnet_server_rio_lane_of( rocketnet_server_rio_t * rio, const rocketnet_address_t * to );
 int rocketnet_server_rio_lane_send_room( rocketnet_server_rio_t * rio, int lane );
 // true once the open fill phase is empty, every other phase is idle and no
@@ -220,6 +228,11 @@ int rocketnet_server_rio_lane_count( int lanes );
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
 // the waits between drain passes that failed creates have made in this process
 int rocketnet_server_rio_test_create_drain_waits();
+// a failed multi-lane create's rollback holds every made lane's sends, so none
+// stops and its bounded wait gives up and leaks it (counted)
+void rocketnet_server_rio_test_set_hold_rollback( bool hold );
+// releases the lane a held rollback leaked, waits for it to stop and frees it
+bool rocketnet_server_rio_test_finish_rollback_leak();
 // The fault seam, compiled only into the test executable. The next count
 // events at a fault point fail with status, as the host fails them: a send or
 // receive completion reports status as its completion status; a send or
