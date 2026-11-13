@@ -247,8 +247,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual=15186146 for the client, 64 above it (the counters cross its
 // object's 64-byte rounding). The two fill-phase counters move the client
 // another 64 (actual=15186210, bench-nyc-6), and they and the two bind
-// addresses move the server 576 (actual=3111681075).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632499ULL )
+// addresses move the server 576 (actual=3111681075). The xdp transport's
+// server-wide packet id counter left for per-queue ids (a uint64_t; the
+// per-queue fields sit in the queue sockets), so the server is 8 smaller
+// (actual=3111681067, bench-nyc-3, gcc Debug).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632491ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137634 )
 #endif // #if defined( _WIN32 )
 
