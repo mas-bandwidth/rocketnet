@@ -1,7 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // The cost of one unit of the server's per-update handshake work budget
 // (handshakes_per_update): one cookie-validated connection request through
-// the protocol's request ladder, the shape a flood or a mass join spends.
+// the protocol's request check sequence, the shape a flood or a mass join spends.
 //
 // Two request shapes, each from its own source address with a valid cookie
 // for that address, so every request passes the cookie gate and is counted

@@ -449,7 +449,7 @@ static void rn_zero_block_seen( uint8_t * block, int bytes, int at_exit )
 }
 #endif // #if ROCKETNET_DEV
 
-// returns the process result, with the request ladder's counters in *counters
+// returns the process result, with the request check sequence's counters in *counters
 
 static int rn_zero_server_process( const uint8_t * token, struct rocketnet_counters_t * counters, int * response_bytes )
 {

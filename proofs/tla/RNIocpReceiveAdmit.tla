@@ -13,7 +13,7 @@
 (* takes a slot; one it accepts is banked if there is room and otherwise  *)
 (* counted as BANK_FULL (ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL).  Before *)
 (* the filter is published (FilterOn = FALSE) every datagram meets only   *)
-(* the capacity check, and main's ladder filters it, as before.  Drain is *)
+(* the capacity check, and main's checks filter it, as before.   Drain is *)
 (* the main thread taking the bank (rocketnet_server_iocp_receive_packets *)
 (* over the RNBankFifoLayout hand-off, which this model abstracts to one  *)
 (* step: the bank's whole content leaves and its slots are free).         *)

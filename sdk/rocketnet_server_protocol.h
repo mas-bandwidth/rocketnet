@@ -17,7 +17,7 @@
 #include "rocketnet_server.h"
 #include "rocketnet_server_uring.h"
 
-// Server-side connection request processing: the ladder from the standard,
+// Server-side connection request processing: the check sequence from the standard,
 // every check in its exact order, each rung rejecting what it can at its own
 // cost so the expensive rung is reached only by traffic that already cleared
 // the cheap ones. Processing returns what to send and the caller sends it.
@@ -214,7 +214,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
 // The server's receive entry for every packet: the reading order from the
 // standard over one function. Runs the prefilter, refuses reserved types and
-// wrong-direction types, hands type 0 to the request ladder, and takes the
+// wrong-direction types, hands type 0 to the request check sequence, and takes the
 // sealed types through mapping lookup, sequence reconstruction, replay and
 // open, then dispatches. On SEND_* the response is in response_packet with
 // its length in response_bytes. A payload that opens for a connected client

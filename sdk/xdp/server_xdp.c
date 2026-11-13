@@ -7,7 +7,7 @@
     server before it costs a ring slot: UDP to the configured address and
     port, wire size in bounds, the filter epoch and value, and a
     server-inbound packet type at its exact wire size -- the same rule the userspace
-    refusal ladder applies, shared via rocketnet_wire.h so the two can
+    refusal check sequence applies, shared via rocketnet_wire.h so the two can
     never drift apart. Survivors redirect into the AF_XDP socket for their
     queue; traffic for any other port passes untouched. Frames shorter than
     the IP header (runt IPv4 < 20 bytes or runt IPv6 < 40 bytes) drop

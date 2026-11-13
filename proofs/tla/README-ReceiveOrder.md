@@ -97,7 +97,7 @@ claim check after the response but remains refused by the token binding.
 
 ## Half-open replacement
 
-`MCReceiveOrder.NewRequest` starts a ladder run for a free address, or for an
+`MCReceiveOrder.NewRequest` starts a check sequence run for a free address, or for an
 address whose half-open mapping holds another token (a connected mapping is
 never replaced). The half-open mapping's own token may be bound: a response
 that bound it and was then denied, for want of a slot or because its client

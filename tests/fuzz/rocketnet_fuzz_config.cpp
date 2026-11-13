@@ -45,7 +45,7 @@
 //   - after an applied numeric field, validation passes exactly when the
 //     value is in the field's declared range (or zero, where zero means the
 //     default)
-//   - a ladder that parses names real transports and fits its array
+//   - a transport order that parses names real transports and fits its array
 
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
@@ -164,7 +164,7 @@ static bool fuzz_in_range( const struct rocketnet_config_field_t * field, int64_
     return value >= field->min_value && value <= field->max_value;
 }
 
-static void fuzz_check_ladder( const char * value )
+static void fuzz_check_transport_order( const char * value )
 {
     for ( int side = 0; side < 2; side++ )
     {
@@ -172,26 +172,26 @@ static void fuzz_check_ladder( const char * value )
         const int * available = side == 0 ? rocketnet_server_transport_io_availability( &num_available )
                                           : rocketnet_client_transport_io_availability( &num_available );
 
-        struct rocketnet_transport_order_t ladder;
-        memset( &ladder, 0, sizeof( ladder ) );
-        if ( !rocketnet_transport_order_parse( value, available, num_available, &ladder ) )
+        struct rocketnet_transport_order_t transport_order;
+        memset( &transport_order, 0, sizeof( transport_order ) );
+        if ( !rocketnet_transport_order_parse( value, available, num_available, &transport_order ) )
         {
             continue;
         }
-        rocketnet_fuzz_require( ladder.num_candidates >= 1 && ladder.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "a parsed ladder holds one to the maximum candidates" );
-        rocketnet_fuzz_require( ladder.num_skipped >= 0 && ladder.num_skipped <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "a parsed ladder's skips fit its array" );
-        for ( int i = 0; i < ladder.num_candidates; i++ )
+        rocketnet_fuzz_require( transport_order.num_candidates >= 1 && transport_order.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "a parsed transport order holds one to the maximum candidates" );
+        rocketnet_fuzz_require( transport_order.num_skipped >= 0 && transport_order.num_skipped <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "a parsed transport order's skips fit its array" );
+        for ( int i = 0; i < transport_order.num_candidates; i++ )
         {
-            rocketnet_fuzz_require( ladder.candidates[i] >= 0 && ladder.candidates[i] < ROCKETNET_NUM_TRANSPORTS, "a ladder candidate is a real transport" );
+            rocketnet_fuzz_require( transport_order.candidates[i] >= 0 && transport_order.candidates[i] < ROCKETNET_NUM_TRANSPORTS, "a transport order candidate is a real transport" );
 
             bool offered = false;
 
             for ( int j = 0; j < num_available; j++ )
             {
-                offered = offered || available[j] == ladder.candidates[i];
+                offered = offered || available[j] == transport_order.candidates[i];
             }
 
-            rocketnet_fuzz_require( offered, "a ladder candidate is an available transport" );
+            rocketnet_fuzz_require( offered, "a transport order candidate is an available transport" );
         }
     }
 }
@@ -334,7 +334,7 @@ static void fuzz_overlay( int table_index, int field_index, uint8_t mode, const 
 //  one seed per field kind carrying the field's own default as the env
 //  would spell it (the integer in decimal, the bytes through the repo's
 //  base64 encoder, the string as is), the first INT field at its declared
-//  minimum and maximum, and the transport field set to the ladder of every
+//  minimum and maximum, and the transport field set to the transport order of every
 //  available transport by name. ROCKETNET_FUZZ_SEED_FROM=<tests/fuzz/corpus>
 //  additionally rewraps the committed config_* seeds of rocketnet_fuzz as
 //  the server's transport variable. The replay then continues as usual.
@@ -457,8 +457,8 @@ static void fuzz_write_seeds( const char * dir, const char * from )
 
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
-    char ladder[1024];
-    ladder[0] = '\0';
+    char transport_order[1024];
+    transport_order[0] = '\0';
     for ( int i = 0; i < num_available; i++ )
     {
         const char * transport = rocketnet_transport_name( available[i] );
@@ -467,17 +467,17 @@ static void fuzz_write_seeds( const char * dir, const char * from )
             continue;
         }
 
-        const size_t used = strlen( ladder );
-        snprintf( ladder + used, sizeof( ladder ) - used, "%s%s", ladder[0] != '\0' ? "," : "", transport );
+        const size_t used = strlen( transport_order );
+        snprintf( transport_order + used, sizeof( transport_order ) - used, "%s%s", transport_order[0] != '\0' ? "," : "", transport );
     }
 
-    fuzz_write_seed( dir, "server_transport_order_available", 1, transport_field, 2, ladder );
+    fuzz_write_seed( dir, "server_transport_order_available", 1, transport_field, 2, transport_order );
 
     if ( from == NULL || from[0] == '\0' )
     {
         return;
     }
-    const char * committed[] = { "config_auto", "config_auto_in_list", "config_empty_element", "config_ladder", "config_long_list",
+    const char * committed[] = { "config_auto", "config_auto_in_list", "config_empty_element", "config_transport_order", "config_long_list",
                                  "config_pin_portable", "config_spaced", "config_unknown_name" };
 
     for ( size_t c = 0; c < sizeof( committed ) / sizeof( committed[0] ); c++ )
@@ -596,7 +596,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 #endif // #if defined( ROCKETNET_FUZZ_HEAP_CHECK )
     if ( data[2] & 2 )
     {
-        fuzz_check_ladder( value );
+        fuzz_check_transport_order( value );
     }
 
     return 0;

@@ -1002,14 +1002,14 @@ static int rocketnet_transport_id_from_name( const char * name, int name_length 
     return -1;
 }
 
-bool rocketnet_transport_order_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_order_t * ladder, bool server )
+bool rocketnet_transport_order_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_order_t * transport_order, bool server )
 {
     rocketnet_assert( available );
     rocketnet_assert( num_available > 0 );
     rocketnet_assert( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
-    rocketnet_assert( ladder );
+    rocketnet_assert( transport_order );
 
-    memset( ladder, 0, sizeof( struct rocketnet_transport_order_t ) );
+    memset( transport_order, 0, sizeof( struct rocketnet_transport_order_t ) );
 
     // auto -- explicitly, or as the zero value -- expands to the
     // platform's recommended order for this endpoint
@@ -1048,13 +1048,13 @@ bool rocketnet_transport_order_parse( const char * value, const int * available,
                 continue;
             }
 
-            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            if ( transport_order->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
                 rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value ? value : "auto", ROCKETNET_MAX_TRANSPORT_CANDIDATES );
                 return false;
             }
 
-            ladder->candidates[ladder->num_candidates++] = available[i];
+            transport_order->candidates[transport_order->num_candidates++] = available[i];
         }
 
         return true;
@@ -1122,13 +1122,13 @@ bool rocketnet_transport_order_parse( const char * value, const int * available,
 
         if ( transport_available )
         {
-            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            if ( transport_order->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
                 rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
                 return false;
             }
 
-            ladder->candidates[ladder->num_candidates++] = transport;
+            transport_order->candidates[transport_order->num_candidates++] = transport;
         }
         else
         {
@@ -1137,13 +1137,13 @@ bool rocketnet_transport_order_parse( const char * value, const int * available,
             // skip list is bounded like the candidate list -- overflowing
             // it silently would under-name the exhausted report.
 
-            if ( ladder->num_skipped >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            if ( transport_order->num_skipped >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
                 rocketnet_error( "transport list \"%s\" has too many skipped names (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
                 return false;
             }
 
-            ladder->skipped[ladder->num_skipped++] = transport;
+            transport_order->skipped[transport_order->num_skipped++] = transport;
             if ( pin_only_in_list )
             {
                 rocketnet_info( "transport %.*s is pin-only: applicable only as the sole name of a list, not in \"%s\". skipped", name_length, name, value );
@@ -1171,7 +1171,7 @@ bool rocketnet_transport_order_parse( const char * value, const int * available,
     // full pin semantics: those candidates and only those, refusal is
     // failure. (ruled on review, inside the ignore rule.)
 
-    if ( ladder->num_candidates == 0 )
+    if ( transport_order->num_candidates == 0 )
     {
         char auto_names[128];
         auto_names[0] = '\0';
@@ -1197,13 +1197,13 @@ bool rocketnet_transport_order_parse( const char * value, const int * available,
                 continue;
             }
 
-            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            if ( transport_order->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
                 rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
                 return false;
             }
 
-            ladder->candidates[ladder->num_candidates++] = available[i];
+            transport_order->candidates[transport_order->num_candidates++] = available[i];
         }
     }
 

@@ -543,7 +543,7 @@ ClientRecv(p) ==
 
 (***************************************************************************)
 (* The server receives.  rocketnet_server_protocol_process_connection_      *)
-(* request and the sealed-packet ladder, as far as they answer the client. *)
+(* request and the sealed-packet check sequence, as far as they answer the client. *)
 (***************************************************************************)
 serverRecvUnchanged == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
                          cSinceRecv, cAge, cPayloadDelivered, cDiscPending, cDiscKeys,

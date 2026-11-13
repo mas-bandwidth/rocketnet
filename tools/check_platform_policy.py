@@ -680,7 +680,7 @@ jobs:
           - { os: linux, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
     steps:
-      - name: Run functional suite (whole, on Linux; ladder)
+      - name: Run functional suite (whole, on Linux; transport order)
         if: matrix.leg == 'functional' && (inputs.full || matrix.build_type == 'Debug')
         run: ./bin/functional
       - name: Run functional suite (one pinned case)
@@ -714,8 +714,8 @@ jobs:
 POLICY_HEADER = ("| Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label | Per-commit functional |\n"
                  "| --- | --- | --- | --- | --- | --- | --- | --- |\n")
 POLICY_CLEAN_ROWS = [
-    "| Linux | x86_64 | GCC | portable, gso | supported | w.yml | Linux, X64 | full: Run functional suite (whole, on Linux; ladder) |",
-    "| macOS | arm64 | Clang | portable, msgx | supported | w.yml | macOS, ARM64 | full: Run functional suite (whole, on Linux; ladder) |",
+    "| Linux | x86_64 | GCC | portable, gso | supported | w.yml | Linux, X64 | full: Run functional suite (whole, on Linux; transport order) |",
+    "| macOS | arm64 | Clang | portable, msgx | supported | w.yml | macOS, ARM64 | full: Run functional suite (whole, on Linux; transport order) |",
     "| Windows | x86_64 | MSVC | portable, iocp, rio | supported | w.yml | Windows, X64 | subset: Run happy_path |",
     "| Linux | s390x | cross | build only: portable, rio; run: no transport | supported | w.yml | Linux, X64 | subset: Run functional suite (one pinned case) |",
     "| Linux | arm64 | none | none | unsupported | - | - | - |",
@@ -740,7 +740,7 @@ def policy_self_check(check=check_policy_tree):
     """
     import tempfile
 
-    whole = "Run functional suite (whole, on Linux; ladder)"
+    whole = "Run functional suite (whole, on Linux; transport order)"
     cases = [
         ("supported Windows arm64 row on a job of Windows X64 and macOS ARM64 runners (V6-B B4)",
          {}, ["| Windows | arm64 | MSVC | portable | supported | w.yml | Windows, ARM64 | subset: Run happy_path |"],

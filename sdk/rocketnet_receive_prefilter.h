@@ -22,7 +22,7 @@
 #endif // #if ROCKETNET_DEV
 
 // The worker-side prefilter: the stateless first rungs of the server's
-// receive ladder, run by a transport's own receive worker before a datagram
+// receive check sequence, run by a transport's own receive worker before a datagram
 // takes a slot in the receive bank, so garbage cannot evict a connected
 // player's packets.
 //
@@ -34,7 +34,7 @@
 // state at create and passes them to every call. No published copy, no lock, no
 // main-thread state: any number of workers may call it at once.
 //
-// A datagram it accepts still runs the whole ladder on main, which repeats
+// A datagram it accepts still runs the whole check sequence on main, which repeats
 // these checks; the worker's checks are a strict prefix of main's, so a
 // datagram refused here is one main would refuse on the same rung, one
 // accepted here is never refused by those rungs on main, and a refused one
@@ -149,7 +149,7 @@ static inline enum rocketnet_receive_drop_t rocketnet_receive_prefilter( const u
 
 // The server counters one drop adds, written to counters[] in order; returns
 // how many (at most ROCKETNET_RECEIVE_DROP_MAX_COUNTERS). They are exactly
-// what main's ladder adds for the same datagram: PACKETS_RECEIVED, then the
+// what main's check sequence adds for the same datagram: PACKETS_RECEIVED, then the
 // type's RECEIVED where main counts one before its size check, then the
 // reason. BANK_FULL is RECEIVE_DROPPED_FULL alone and RECEIVE_FAILED is
 // RECEIVE_FAILED alone: the datagram was never received by the protocol.
@@ -270,7 +270,7 @@ static inline void rocketnet_receive_drop_tally_sum( const struct rocketnet_rece
 
 #if ROCKETNET_DEV
 // Development library only, nothing in the production library: the first few
-// datagrams the prefilter refused (the server's own ladder and a transport's
+// datagrams the prefilter refused (the server's own check sequence and a transport's
 // worker prefilter alike), kept so a functional "clean run" case that finds a
 // refusal counter moved can name the datagrams (source, length and first 16
 // bytes) in its report (tests/counters_expect.h). Written from any thread,

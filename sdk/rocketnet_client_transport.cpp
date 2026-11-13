@@ -262,7 +262,7 @@ struct rocketnet_client_legacy_receive_state_t
     X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[ROCKETNET_CLIENT_IO_NUM_RINGS] ) /* three rings of one layout (proofs/tla/RNBufferHandoff.tla): game threads */ /* fill payload_ring[client_io.send_fill]. The BASE path never hands */ /* off, so it fills ring 0 only. */ \
     X( context, void * context )                                                                                     \
     X( bound_port, uint16_t bound_port )                                                                             \
-    X( transport, int transport ) /* the granted transport (ROCKETNET_TRANSPORT_*), decided by the ladder at create */           \
+    X( transport, int transport ) /* the granted transport (ROCKETNET_TRANSPORT_*), decided by the transport order at create */           \
     X( io, rocketnet_client_transport_io_t io )                                                                            \
     X( thread, rocketnet_platform_thread_t * thread )                                                                \
     X( mutex, rocketnet_platform_mutex_t mutex )                                                                     \
@@ -1359,7 +1359,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC // msgx exists on macOS only, as in the registry and the server plan
               || strcmp( transport, "msgx" ) == 0
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX // the native clients the default ladder ranks first
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX // the native clients the default transport order ranks first
               || strcmp( transport, "gso" ) == 0
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -1471,18 +1471,18 @@ uint64_t rocketnet_client_transport_order_allocator_bytes( const rocketnet_clien
 
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
-    struct rocketnet_transport_order_t ladder;
-    if ( !rocketnet_transport_order_parse( config->transport, available, num_available, &ladder, false ) )
+    struct rocketnet_transport_order_t transport_order;
+    if ( !rocketnet_transport_order_parse( config->transport, available, num_available, &transport_order, false ) )
     {
         return 0;
     }
 
     uint64_t most = 0;
 
-    for ( int i = 0; i < ladder.num_candidates; ++i )
+    for ( int i = 0; i < transport_order.num_candidates; ++i )
     {
         rocketnet_client_memory_plan_t plan;
-        if ( rocketnet_client_transport_memory_plan( config, rocketnet_transport_name( ladder.candidates[i] ), plan ) && plan.total_bytes > most )
+        if ( rocketnet_client_transport_memory_plan( config, rocketnet_transport_name( transport_order.candidates[i] ), plan ) && plan.total_bytes > most )
         {
             most = plan.total_bytes;
         }
@@ -1502,7 +1502,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL );
 }
 
-// One socket of the ladder: opens the transport bound as bind asks and
+// One socket of the transport order: opens the transport bound as bind asks and
 // connects it to server (TRANSPORT.md t11: the kernel then drops datagrams
 // from any other source). A connect the kernel refuses closes the socket and
 // is a refusal. bind is written with the bound address only when the socket
@@ -1764,7 +1764,7 @@ void rocketnet_client_transport_mutate_refusal_state_for_test(
 struct rocketnet_client_transport_resolved_t
 {
     struct rocketnet_client_transport_config_t config;
-    struct rocketnet_transport_order_t ladder;
+    struct rocketnet_transport_order_t transport_order;
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
 };
 
@@ -1861,8 +1861,8 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     int num_available_transports = 0;
     const int * available_transports = rocketnet_client_transport_io_availability( &num_available_transports );
 
-    struct rocketnet_transport_order_t ladder;
-    if ( !rocketnet_transport_order_parse( config->transport, available_transports, num_available_transports, &ladder, false ) )
+    struct rocketnet_transport_order_t transport_order;
+    if ( !rocketnet_transport_order_parse( config->transport, available_transports, num_available_transports, &transport_order, false ) )
     {
         if ( status )
         {
@@ -1875,7 +1875,7 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     // the operator memory budget: each candidate's pre-allocation plan
     // is compared to the budget before any allocation, and a candidate whose
     // plan exceeds it is refused exactly as a refusing transport is -- logged with
-    // the plan and the budget, and skipped so the ladder falls to the next
+    // the plan and the budget, and skipped so the transport order falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
 
@@ -1896,9 +1896,9 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     int budget_refused_total = 0;
     int budget_allowed = 0;
 
-    for ( int i = 0; i < ladder.num_candidates; ++i )
+    for ( int i = 0; i < transport_order.num_candidates; ++i )
     {
-        const int candidate = ladder.candidates[i];
+        const int candidate = transport_order.candidates[i];
         const char * name = rocketnet_transport_name( candidate );
         rocketnet_client_memory_plan_t plan;
         if ( rocketnet_client_transport_memory_plan( config, name, plan ) )
@@ -1939,7 +1939,7 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     }
 
     out->config = effective_config;
-    out->ladder = ladder;
+    out->transport_order = transport_order;
     memcpy( out->budget_refused, budget_refused, sizeof( out->budget_refused ) );
 
     return true;
@@ -1995,7 +1995,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     }
 
     config = &resolved.config;
-    const struct rocketnet_transport_order_t ladder = resolved.ladder;
+    const struct rocketnet_transport_order_t transport_order = resolved.transport_order;
     const bool * budget_refused = resolved.budget_refused;
 
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) rocketnet_malloc( context, sizeof( rocketnet_client_transport_t ) );
@@ -2181,7 +2181,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     // IPv6 server above. Its IPv4 server is the family race's second server
     // (below) and the family fallback's: a candidate whose IPv6 socket is
     // refused, at open or at connect, is opened again for the IPv4 server
-    // before the ladder falls to the next candidate. The fallback binds IPv4,
+    // before the transport order falls to the next candidate. The fallback binds IPv4,
     // as a host without IPv6 binds for an IPv4 server, so a host that refuses
     // IPv6 sockets does not refuse it too.
 
@@ -2201,20 +2201,20 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     rocketnet_address_t ipv4_bind = bind_address;
     ipv4_bind.type = (uint8_t) rocketnet_platform_client_bind_family( ROCKETNET_ADDRESS_IPV4, false, false );
 
-    // THE LADDER, the client's short form: candidates tried left to
+    // THE TRANSPORT ORDER, the client's short form: candidates tried left to
     // right, first grant wins, a one-element list is a pin that refuses
     // rather than falls, and the exhausted list fails loudly naming what
     // was skipped for platform and what refused for grant
-    // (proofs/tla/RNClientLadder.tla).
+    // (proofs/tla/RNClientTransportOrder.tla).
 
     int granted_transport = -1;
 
     char refused_names[128];
     refused_names[0] = '\0';
 
-    for ( int i = 0; i < ladder.num_candidates && granted_transport < 0; i++ )
+    for ( int i = 0; i < transport_order.num_candidates && granted_transport < 0; i++ )
     {
-        const int candidate = ladder.candidates[i];
+        const int candidate = transport_order.candidates[i];
 
         // a candidate whose memory plan the operator budget refused was logged
         // and refused in the plan loop above; record it for the exhausted
@@ -2332,7 +2332,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
             // selected, before anything is sent or received, so the kernel
             // drops datagrams from any other source. the source check in
             // rocketnet_client_process_packet stays behind it. a connect the
-            // kernel refuses is a refusal (proofs/tla/RNClientLadder.tla
+            // kernel refuses is a refusal (proofs/tla/RNClientTransportOrder.tla
             // TryPrimary).
 
             if ( rocketnet_client_transport_open_connected( operations, operations_context, &transport_config, &bind_address,
@@ -2342,7 +2342,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
             }
             else if ( both_families && transport_status != ROCKETNET_STATUS_OUT_OF_MEMORY )
             {
-                // the family fallback (proofs/tla/RNClientLadder.tla
+                // the family fallback (proofs/tla/RNClientTransportOrder.tla
                 // TryFallback): the same candidate, for the token's IPv4
                 // server. A refusal for want of memory never falls to it.
 
@@ -2363,7 +2363,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
             // a rung that failed for want of memory is not a refusal: the create
             // ends with OUT_OF_MEMORY and never falls to the next candidate
             // or family (rocketnet_client_transport_io_config_t.status,
-            // sdk/rocketnet_driver.h, proofs/tla/RNClientLadder.tla NoTryAfterOom);
+            // sdk/rocketnet_driver.h, proofs/tla/RNClientTransportOrder.tla NoTryAfterOom);
             // any other failed open is a refusal and falls
 
             if ( granted_transport < 0 && transport_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
@@ -2383,7 +2383,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
             if ( granted_transport < 0 )
             {
                 rocketnet_warn( "client transport %s refused%s", rocketnet_transport_name( candidate ),
-                                i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
+                                i + 1 < transport_order.num_candidates ? ". trying the next candidate" : "" );
 
                 const size_t used = strlen( refused_names );
                 snprintf( refused_names + used, sizeof( refused_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
@@ -2396,10 +2396,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
         char skipped_names[128];
         skipped_names[0] = '\0';
 
-        for ( int i = 0; i < ladder.num_skipped; i++ )
+        for ( int i = 0; i < transport_order.num_skipped; i++ )
         {
             const size_t used = strlen( skipped_names );
-            snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( ladder.skipped[i] ) );
+            snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( transport_order.skipped[i] ) );
         }
 
         rocketnet_error( "client transport: no transport found. refused: %s. skipped for platform: %s",
@@ -2420,10 +2420,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
 
     // the family race (TRANSPORT.md t11 rule 3, proofs/tla/ServerConnection.tla
     // RaceFamilies): a token naming both families on a host that can use
-    // both selected its IPv6 server above, and when the ladder granted that
+    // both selected its IPv6 server above, and when the transport order granted that
     // server the IPv4 server is dialed too, on a second socket of the
     // granted transport, bound with the family an IPv4 server binds today
-    // and connected to that server. A ladder that fell back to the IPv4
+    // and connected to that server. A transport order that fell back to the IPv4
     // server races nothing. Both sockets are opened here, with the connect;
     // nothing is opened during update. A host whose second socket is
     // refused races nothing and connects exactly as a one-family client; a
@@ -4068,7 +4068,7 @@ int rocketnet_client_transport_state( rocketnet_client_transport_t * client_tran
     return client_transport->protocol.state;
 }
 
-// the granted-tier report: the transport that won the ladder at create, by
+// the granted-tier report: the transport that won the transport order at create, by
 // name -- what performance claims and operator errands attach to
 
 const char * rocketnet_client_transport_io_name( rocketnet_client_transport_t * client_transport )

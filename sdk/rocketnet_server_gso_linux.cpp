@@ -1011,7 +1011,7 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
 // RECEIVE_DROPPED_SIZE); then, when the transport has the packet filter, the
 // server's stateless prefilter (sdk/rocketnet_receive_prefilter.h), so
 // garbage never evicts a player's packet and is counted exactly as main's
-// ladder would count it.
+// check sequence would count it.
 static enum rocketnet_receive_drop_t rocketnet_server_gso_screen( const struct rocketnet_server_gso_t * gso, const uint8_t * packet_data, int packet_bytes )
 {
     if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )

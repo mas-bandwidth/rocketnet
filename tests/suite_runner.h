@@ -582,8 +582,8 @@ inline int suite_layer_of( const std::string & name )
         { "ack", "sequence", "send_history", "loss", "jitter", "out_of_order", "reply", "previous", "pending", "never", "newer", "older", "newest", "equal", "same", "repeated", "higher", "round", "one", "both", "first", "each", NULL },
         // the message layer: fragments, the window, receipts, channels, the endpoint and the message objects
         { "fragment", "window", "receipt", "rnreceipts", "resend", "resent", "watermark", "held", "hold", "endpoint", "budget", "send_budget", "rnscheduler", "message", "channel", "rnchannel", "reliab", "unreliable", "ordered", "violation", "wide", "dispatch", "block", "promoted", "mixed", "rtt_estimator", "shares", "generation", "reservation", "store", "chunk", "span", "builder", NULL },
-        // transport basics: the driver/transport interface and the ladder
-        { "driver", "transport", "ladder", "network_simulator", "sim", "link", "send", "receive", "fake", "table", "rnslots", NULL },
+        // transport basics: the driver/transport interface
+        { "driver", "transport", "network_simulator", "sim", "link", "send", "receive", "fake", "table", "rnslots", NULL },
         // each transport type
         { "portable", "loopback", "msgx", "gso", "io_uring", "xdp", "iocp", "rio", "windows", "posix", "linux", "macos", "umem", NULL },
         // client/server: connect, handshake, slots, disconnect, lifecycle

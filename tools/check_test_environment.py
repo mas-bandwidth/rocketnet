@@ -546,7 +546,7 @@ def main():
 
     if functional:
         # the functional suite opens loopback sockets and walks the transport
-        # ladder; its CI job invokes it with the ambient environment (and any
+        # transport order; its CI job invokes it with the ambient environment (and any
         # ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin) rather than the
         # unit suite's hostile config.
         result = run_binary(binary, env, timeout=1200)

@@ -12,10 +12,10 @@
 //     transport with three allocations, server and client, gives OUT_OF_MEMORY
 //     at each with nothing live, and a create that refuses without a failed
 //     allocation leaves the status untouched;
-//   * test_transport_create_server_ladder_stops_on_out_of_memory: the loopback
+//   * test_transport_create_server_order_stops_on_out_of_memory: the loopback
 //     transport under rocketnet_server_transport_create_internal, pinned and as the
 //     first of two candidates;
-//   * test_transport_create_client_ladder_stops_on_out_of_memory: the same for
+//   * test_transport_create_client_order_stops_on_out_of_memory: the same for
 //     rocketnet_client_transport_create_internal;
 //   * test_platform_init_survives_a_refusing_allocator: rocketnet_init_internal under an
 //     allocator that refuses its first TRANSPORT_OOM_GIVE_WAY requests completes,
@@ -282,7 +282,7 @@ static void test_transport_open_reports_out_of_memory()
     state.fail_at = 0;
 
     // a create that refuses with no failed allocation is a refusal: the
-    // status stays OK, so the ladder falls to the next candidate
+    // status stays OK, so the transport order falls to the next candidate
     {
         transport_oom_refuse = true;
 
@@ -318,7 +318,7 @@ static void test_transport_open_reports_out_of_memory()
     transport_oom_end( &state );
 }
 
-// ---- the server ladder ---------------------------------------------------------
+// ---- the server transport order ---------------------------------------------------------
 
 #if ROCKETNET_DEV
 static void transport_oom_production_server_config( struct rocketnet_server_transport_config_t * config, const char * transport )
@@ -372,7 +372,7 @@ static int transport_oom_walk_server( transport_oom_allocator_t * state, const c
     return 0;
 }
 
-static void test_transport_create_server_ladder_stops_on_out_of_memory()
+static void test_transport_create_server_order_stops_on_out_of_memory()
 {
 #if ROCKETNET_DEV
     transport_oom_env_pin_t pin;
@@ -394,7 +394,7 @@ static void test_transport_create_server_ladder_stops_on_out_of_memory()
 #endif // #if ROCKETNET_DEV
 }
 
-// ---- the client ladder ---------------------------------------------------------
+// ---- the client transport order ---------------------------------------------------------
 
 static double transport_oom_clock = 1000.0;
 static double transport_oom_time_callback( void * ) { return transport_oom_clock; }
@@ -438,7 +438,7 @@ static int transport_oom_walk_client( transport_oom_allocator_t * state, const u
     return 0;
 }
 
-static void test_transport_create_client_ladder_stops_on_out_of_memory()
+static void test_transport_create_client_order_stops_on_out_of_memory()
 {
 #if ROCKETNET_DEV
     transport_oom_env_pin_t pin;
@@ -503,8 +503,8 @@ static void test_platform_init_survives_a_refusing_allocator()
 
 REGISTER_UNIT_TEST( test_transport_open_reports_out_of_memory );
 #if ROCKETNET_DEV
-REGISTER_UNIT_TEST( test_transport_create_server_ladder_stops_on_out_of_memory );
-REGISTER_UNIT_TEST( test_transport_create_client_ladder_stops_on_out_of_memory );
+REGISTER_UNIT_TEST( test_transport_create_server_order_stops_on_out_of_memory );
+REGISTER_UNIT_TEST( test_transport_create_client_order_stops_on_out_of_memory );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_platform_init_survives_a_refusing_allocator );
 
