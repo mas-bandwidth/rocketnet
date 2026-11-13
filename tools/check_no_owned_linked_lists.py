@@ -4,7 +4,7 @@
 Policy: docs/SEQUENCE-BUFFERS.md, "Owned storage manifest". Bounded
 registries, queues and pools are arrays, rings, stacks or sequence buffers;
 none links its elements to each other. This audit reads every tracked C and
-C++ source outside the vendored libsodium tree, removes comments, string and
+C++ source outside the vendored libsodium and enkiTS trees, removes comments, string and
 character literals, and works on tokens. It never matches names such as
 next, head or list: a field is a link only by how the code uses it.
 
@@ -48,7 +48,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "docs" / "SEQUENCE-BUFFERS.md"
 SUFFIXES = (".c", ".h", ".cpp", ".cc", ".hpp", ".inc")
-VENDORED = ("sodium/",)
+# the vendored libsodium tree, and enkiTS (tests/load/enkiTS/README.md), the job system the load test runs on
+VENDORED = ("sodium/", "tests/load/enkiTS/")
 LINK_STORE_WINDOW = 4
 
 TOKEN = re.compile(r"""

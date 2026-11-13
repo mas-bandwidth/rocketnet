@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.1.30 of v1.1.30;
+# CMake's VERSION holds numbers only, so it is the 1.1.35 of v1.1.35;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.1.30 LANGUAGES C CXX)
+project(rocketnet VERSION 1.1.35 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -1348,8 +1348,21 @@ if(ROCKETNET_BUILD_TOOLS)
     rocketnet_warning_floor(test_load_census)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
     # The server transport hardening load (docs/HARDEN_LOAD.md): a bench tool.
-    add_executable(harden_load tests/load/harden_load.cpp)
+    # enkiTS (tests/load/enkiTS/README.md) runs the space frame shape's jobs:
+    # tests only, never linked into the SDK. It is vendored unmodified, so it is
+    # a system include and its one source is built without rocketnet's strict
+    # conversion set (its sign conversions are upstream's, in a test tool), and
+    # without gcc's refusal of atomic_thread_fence under -fsanitize=thread
+    add_executable(harden_load tests/load/harden_load.cpp tests/load/enkiTS/TaskScheduler.cpp)
     target_compile_features(harden_load PRIVATE cxx_std_11)
+    target_include_directories(harden_load SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/load/enkiTS")
+    # by compiler id: clang-cl is Clang with MSVC true, and takes these too
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        set_source_files_properties(tests/load/enkiTS/TaskScheduler.cpp PROPERTIES COMPILE_OPTIONS "-Wno-sign-conversion;-Wno-conversion")
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            set_property(SOURCE tests/load/enkiTS/TaskScheduler.cpp APPEND PROPERTY COMPILE_OPTIONS "-Wno-tsan")
+        endif()
+    endif()
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
     add_executable(dst tests/dst.cpp)
@@ -1546,8 +1559,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.1.30; the label
-# v1.1.30 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.1.35; the label
+# v1.1.35 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
