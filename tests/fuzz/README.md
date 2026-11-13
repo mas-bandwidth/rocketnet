@@ -269,8 +269,9 @@ server-facing packet type, size and family, each replayed to the verdict
 the userspace rungs name for its payload (where the filter is not built as
 host C: MSVC, and the Makefile's Darwin build, it writes them without replaying). The other generators replay each seed through the target before writing it;
 `rocketnet_fuzz_config`, `rocketnet_fuzz_round_trip` and
-`rocketnet_fuzz_token_private` write their seeds without replaying them. A
-generator exits 1 and prints `INCOMPLETE` unless every packet type the
+`rocketnet_fuzz_token_private` write their seeds without replaying them, and
+have no completeness check. Every other generator
+exits 1 and prints `INCOMPLETE` unless every packet type the
 target's receive loop reads has a seed that raises that type's counter (or,
 for the session target, unless every reliability type is delivered in both
 directions). A type with no seed would be a parser the fuzzer never enters,

@@ -155,14 +155,15 @@ struct audit_t
 };
 
 // Find the closing brace line of a block whose opening brace is on or
-// after line `from` (searching at most 2 lines), counting braces.
-static int guard_block_end( const std::vector<std::string> & lines, size_t from )
+// after line `from` (searching at most 2 lines), counting braces from `column` on
+// line `from` and from the start of every later line.
+static int guard_block_end( const std::vector<std::string> & lines, size_t from, size_t column )
 {
     int depth = 0;
     bool opened = false;
     for ( size_t i = from; i < lines.size() && i < from + 80; i++ )
     {
-        for ( size_t k = 0; k < lines[i].size(); k++ )
+        for ( size_t k = i == from ? column : 0; k < lines[i].size(); k++ )
         {
             if ( lines[i][k] == '{' )
             {
@@ -202,7 +203,8 @@ static bool uses_name( const std::string & line, const std::string & name )
     return false;
 }
 
-// whether line writes through name: a memcpy or memset into it, or an index of it
+// whether line writes through name: a memcpy or memset into it, an index or a
+// dereference of it, or a member access through it
 static bool writes_through( const std::string & line, const std::string & name )
 {
     for ( size_t at = line.find( name ); at != std::string::npos; at = line.find( name, at + 1 ) )
@@ -213,9 +215,28 @@ static bool writes_through( const std::string & line, const std::string & name )
         {
             continue;
         }
-        if ( line[after_at] == '[' )
+        if ( line[after_at] == '[' || line.compare( after_at, 2, "->" ) == 0 )
         {
             return true;
+        }
+        // a dereference: a * before the name that is not a multiplication or a declaration
+        size_t star = at;
+        while ( star > 0 && line[star - 1] == ' ' )
+        {
+            star--;
+        }
+        if ( star > 0 && line[star - 1] == '*' )
+        {
+            size_t left = star - 1;
+            while ( left > 0 && line[left - 1] == ' ' )
+            {
+                left--;
+            }
+            const char c = left > 0 ? line[left - 1] : '\0';
+            if ( !isalnum( (unsigned char) c ) && c != '_' && c != ')' && c != ']' )
+            {
+                return true;
+            }
         }
         const std::string head = trim( line.substr( 0, at ) );
         const size_t call = head.size() >= 7 ? head.size() - 7 : 0;
@@ -320,7 +341,9 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
                 continue;
             }
         }
-        const int end = guard_block_end( lines, next );
+        // a one-line snippet's guard block starts at its if, not at a brace before it
+        const size_t guard_column = next == i ? ( contains( line, want_if.c_str() ) ? line.find( want_if ) : line.find( want_if2 ) ) : 0;
+        const int end = guard_block_end( lines, next, guard_column );
         if ( end < 0 )
         {
             audit.fail( file, line_offset + i, "guard block for " + var + " has no closing brace" );
@@ -359,9 +382,8 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
         // writes nothing (a one-line snippet: nor does the rest of its line)
         if ( next == i )
         {
-            const size_t if_at = contains( line, want_if.c_str() ) ? line.find( want_if ) : line.find( want_if2 );
             int depth = 0;
-            for ( size_t k = if_at; k < line.size(); k++ )
+            for ( size_t k = guard_column; k < line.size(); k++ )
             {
                 if ( line[k] == '{' )
                 {
@@ -381,7 +403,7 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
                 }
             }
         }
-        for ( size_t j = (size_t) end + 1; j < lines.size() && lines[j].compare( 0, 1, "}" ) != 0 && !contains( lines[j], "_start_message(" ); j++ )
+        for ( size_t j = (size_t) end + 1; j < lines.size() && lines[j].compare( 0, 1, "}" ) != 0 && !( contains( lines[j], "_start_message(" ) && uses_name( lines[j].substr( 0, lines[j].find( '=' ) ), var ) ); j++ )
         {
             if ( writes_through( lines[j], var ) )
             {
@@ -697,6 +719,36 @@ static void send_safety_writes_after_the_guard_cases()
     static const char * const one_line_write_after =
         "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
         "    { uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 ); if ( p ) { sent = rocketnet_client_finish_message( client, 12 ); } p[0] = 1; }\n";
+    static const char * const deref_after =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{\n"
+        "    uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( p )\n"
+        "    {\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "    *p = 1;\n"
+        "}\n";
+    static const char * const write_after_another_start =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{\n"
+        "    uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( p )\n"
+        "    {\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "    uint8_t * q = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( q )\n"
+        "    {\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "    p[0] = 1;\n"
+        "}\n";
+    static const char * const one_line_outer_brace_write =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{ uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 ); if ( p ) { sent = rocketnet_client_finish_message( client, 12 ); }\n"
+        "    p[0] = 1;\n"
+        "}\n";
 
     rocketnet_unit_check( send_safety_failures( good ) == 0 );
     rocketnet_unit_check( send_safety_failures( index_after ) > 0 );
@@ -704,6 +756,9 @@ static void send_safety_writes_after_the_guard_cases()
     rocketnet_unit_check( send_safety_failures( one_line_good ) == 0 );
     rocketnet_unit_check( send_safety_failures( one_line_no_finish ) > 0 );
     rocketnet_unit_check( send_safety_failures( one_line_write_after ) > 0 );
+    rocketnet_unit_check( send_safety_failures( deref_after ) > 0 );
+    rocketnet_unit_check( send_safety_failures( write_after_another_start ) > 0 );
+    rocketnet_unit_check( send_safety_failures( one_line_outer_brace_write ) > 0 );
 }
 
 REGISTER_UNIT_TEST( test_example_send_safety_every_example_and_snippet );
