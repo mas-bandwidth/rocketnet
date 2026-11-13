@@ -8,8 +8,8 @@
 #ifndef ROCKETNET_SDK_ROCKETNET_SEND_QUEUE_H
 #define ROCKETNET_SDK_ROCKETNET_SEND_QUEUE_H
 
-// The arithmetic every per-queue server send shares (the XDP transport and
-// the io_uring per-queue send): which queue a destination's packets go
+// The arithmetic every per-queue server send shares (the io_uring per-queue send, and
+// the XDP transport's own send staging, which carries the same arithmetic): which queue a destination's packets go
 // through, the packet id that carries that queue so finish and abort find it
 // again, the claim of a bank's next slot, and the slot a finish or abort
 // pointer names. All pure, no platform.

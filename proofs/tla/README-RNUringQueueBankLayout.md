@@ -16,7 +16,7 @@ Status: built. sdk/rocketnet_uring_send_queue.cpp implements it and cites each a
 start is Start(t, d, ptr, pid) with the pointer and id it gives back, or StartFull(t, d,
 pid) when it returns NULL; finish and abort are Finish(t, k) when they return true,
 FinishRefused(t, k) when false; turn is Flush(n) with the queues it returns. The shared
-arithmetic is sdk/rocketnet_send_queue.h, which the XDP transport also calls. The code is
+arithmetic is sdk/rocketnet_send_queue.h, the same arithmetic the XDP transport's own send staging carries. The code is
 bound to the model by the trace check (TraceRNUringQueueBankLayout.tla,
 tests/tla_trace_bank.cpp, `tools/tla_trace_check.py --layer bank`, README-TraceCheck.md):
 its plant, the turn without its reset, is rejected at the turn onto the reused bank.
