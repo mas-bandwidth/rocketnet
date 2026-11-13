@@ -50,4 +50,4 @@ static inline int rocketnet_gso_pin_check( int cpu, int set_size, int online )
     return ROCKETNET_GSO_PIN_OK;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_GSO_PIN_H
+#endif // ROCKETNET_SDK_ROCKETNET_GSO_PIN_H
