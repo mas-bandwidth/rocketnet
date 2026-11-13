@@ -523,7 +523,7 @@
 
   (item "xdp-receive-dropped-stopped" :group "after-v1-1-landing" :area "sdk"
    :title "The xdp server counts no RECEIVE_DROPPED_STOPPED"
-   :text "The xdp operations table has no receive_drop_totals (sdk/rocketnet_driver_builtin.cpp, the NULL after xdp_begin_shutdown), so datagrams the xdp worker staged that main never took when the server stops are counted by no row, where gso and io_uring count them in RECEIVE_DROPPED_STOPPED. Since 2026-11-13 the xdp server uses the receive handoff (sdk/rocketnet_receive_handoff.h), so the count is the gso one: the tail's unread rest, main's buffer past its cursor and the worker's buffer past main's limit, once the worker has exited. An expected-class counter, so it waits past the critical-and-high fix round."
+   :text "The xdp operations table has no receive_drop_totals (sdk/rocketnet_driver_builtin.cpp, the NULL after xdp_begin_shutdown), so datagrams the xdp worker staged that main never took when the server stops are counted by no row, where gso and io_uring count them in RECEIVE_DROPPED_STOPPED. Since 2026-11-13 the xdp server uses the receive handoff (sdk/rocketnet_receive_handoff.h), so the count is the gso one: the tail's unread rest, main's buffer past its cursor, committed or not, and, when the worker moved on, the worker's buffer (rocketnet_server_gso_count_stopped), once the worker has exited. An expected-class counter, so it waits past the critical-and-high fix round."
    :date "2026-11-13" :origin "2026-11-13 review round; low severity, moved off the fix round")
 
   (item "xdp-receive-lock-busy-row" :group "after-v1-1-landing" :area "sdk"

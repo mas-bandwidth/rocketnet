@@ -852,13 +852,13 @@ jobs:
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
           socket_cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
-          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_xdp_transport_gateway_change_while_serving test_xdp_transport_over_mtu_frame_refused_ipv4 test_xdp_transport_serves_both_families test_xdp_transport_no_native_attach_refused test_xdp_transport_vlan_tag_in_data_ipv4 test_xdp_transport_vlan_tag_in_data_ipv6 test_xdp_transport_vlan_tag_stripped_ipv4 test_xdp_transport_vlan_other_vid_and_untagged_ipv4 test_xdp_transport_vlan_stacked_devices_refused test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp"
+          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_xdp_transport_gateway_change_while_serving test_xdp_transport_over_mtu_frame_refused_ipv4 test_xdp_transport_serves_both_families test_xdp_transport_no_native_attach_refused test_xdp_transport_vlan_tag_in_data_ipv4 test_xdp_transport_vlan_tag_in_data_ipv6 test_xdp_transport_vlan_tag_stripped_ipv4 test_xdp_transport_vlan_other_vid_and_untagged_ipv4 test_xdp_transport_vlan_stacked_devices_refused test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp test_receive_latency_server_xdp"
           # the other root-only xdp cases, in the same guest: the lifecycle
           # cells that fit the per-commit budget (about 2 s together, the
           # three 1000-cycle cells below take about 57 s and run nightly),
           # and the receive-weather pair, registered in development builds
           # only
-          xdp_root_cases="test_xdp_transport_posix_init_term_1000 test_xdp_transport_posix_client_create_destroy_1000 test_xdp_transport_posix_connect_disconnect_1000 test_receive_latency_server_xdp"
+          xdp_root_cases="test_xdp_transport_posix_init_term_1000 test_xdp_transport_posix_client_create_destroy_1000 test_xdp_transport_posix_connect_disconnect_1000"
           if [ "${XDP_DEV:-OFF}" = ON ]; then
             xdp_root_cases="$xdp_root_cases test_xdp_transport_linux_receive_weather_ipv4 test_xdp_transport_linux_receive_weather_ipv6"
           fi
