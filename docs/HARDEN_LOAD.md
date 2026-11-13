@@ -32,9 +32,13 @@ reliable ordered message every `--reliable-every` ticks, and one `--big-bytes` f
 With N > 0, N job threads write the unreliable messages between update and send_packets, under the threading contract
 in `rocketnet_layers.h`:
 - Each job owns a contiguous run of the connected clients, so each client has one filler.
-- Each message is written in place as one SINGLE payload: transport `start_packet`, then
+- Each message goes through the public API, as the game sends it: `rocketnet_server_start_message` on the job's
+  client, then `rocketnet_server_finish_client_message` naming that client. More than one message is open on the
+  server while the jobs run, so the finish that names no client cannot be used.
+- `--fill-api internal` writes each message in place as one SINGLE payload instead: transport `start_packet`, then
   `rocketnet_message_single_finish`, then `finish_packet`. The message goes at `frame + payload_index`, because
-  `start_packet` returns the frame.
+  `start_packet` returns the frame. It is there to measure what the public path costs over the transport's own
+  calls; `harden_ready` prints which one ran as `fill_api=`.
 - Main joins the jobs, then begins the next fill phase with a main-thread call (receive_messages, which has nothing
   left to return), then writes the reliable and big messages through the message server, then calls send_packets. A
   client has one filler per fill phase: the job that wrote its unreliable messages, then main in the next phase.

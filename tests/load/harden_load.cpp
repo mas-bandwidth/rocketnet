@@ -35,9 +35,11 @@
     threads instead of the main thread: the wide fill of rocketnet_layers.h's
     threading contract, the game's own jobs filling between update and
     send_packets. Each job owns a contiguous run of the connected clients
-    (one filler per client), writes each message in place as one SINGLE
-    payload (rocketnet_server_transport_start_packet, then
-    rocketnet_message_single_finish and finish_packet), and main joins them
+    (one filler per client), writes each message through the public API
+    (rocketnet_server_start_message, then
+    rocketnet_server_finish_client_message; --fill-api internal writes it in
+    place as one SINGLE payload through the transport instead, to compare
+    the cost), and main joins them
     before it writes the reliable and big messages through the message
     server and calls send_packets. Inbound messages from the clients are
     verified the same way. Each
@@ -449,6 +451,7 @@ struct harden_options_t
     int burst = 15;
     int burst_clients = 0;
     int fill_jobs = 0;
+    bool fill_internal = false; // --fill-api internal: the jobs call the transport directly, for a cost comparison
     bool payload_copy = false;
     int sizes[HARDEN_MAX_SIZES] = { 1200, 1200, 1200, 1100, 900, 600, 300 };
     int num_sizes = 7;
@@ -596,6 +599,18 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--fill-jobs" ) == 0 )
         {
             o->fill_jobs = atoi( v );
+        }
+        else if ( strcmp( a, "--fill-api" ) == 0 )
+        {
+            if ( strcmp( v, "internal" ) == 0 )
+            {
+                o->fill_internal = true;
+            }
+            else if ( strcmp( v, "public" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --fill-api is public or internal\n" );
+                return false;
+            }
         }
         else if ( strcmp( a, "--payload" ) == 0 )
         {
@@ -1202,6 +1217,7 @@ struct harden_fill_pool_t
     uint64_t generation = 0;
     int remaining = 0;
     bool quit = false;
+    struct rocketnet_server_t * server = NULL;
     struct rocketnet_server_transport_t * transport = NULL;
     const harden_options_t * o = NULL;
     const std::vector<harden_fill_item_t> * plan = NULL;
@@ -1228,6 +1244,27 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
         {
             // sizes cycle per client here, not across the server as on main
             const int bytes = o.sizes[slot.next[HARDEN_KIND_BURST] % (uint32_t) o.num_sizes];
+            if ( !o.fill_internal )
+            {
+                // the public API, as the game calls it: start on this job's
+                // client, finish naming the client (more than one message
+                // is open on the server while the jobs run)
+                uint8_t * m = rocketnet_server_start_message( pool->server, (uint64_t) item.slot, HARDEN_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+                if ( !m )
+                {
+                    stats.start_refused++;
+                    continue;
+                }
+                harden_write_message( m, bytes, HARDEN_KIND_BURST, item.client_id, item.connection, slot.next[HARDEN_KIND_BURST] );
+                if ( rocketnet_server_finish_client_message( pool->server, item.slot, bytes ) == 0 )
+                {
+                    stats.finish_refused++;
+                    continue;
+                }
+                slot.next[HARDEN_KIND_BURST]++;
+                stats.messages++;
+                continue;
+            }
             struct rocketnet_packet_context_t context;
             // start_packet returns the frame (as the message server reads it), not
             // the payload its header comment names: the payload is frame + payload_index
@@ -1745,8 +1782,8 @@ static int harden_server_main( const harden_options_t & o )
         printf( "harden_profile: unavailable here (Windows only; perf samples Linux)\n" );
     }
 #endif // #if defined( _WIN32 )
-    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
-            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.payload_copy ? "copy" : "pattern",
+    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d fill_api=%s payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
+            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.fill_internal ? "internal" : "public", o.payload_copy ? "copy" : "pattern",
             o.reliable_every, o.reliable_bytes, o.big_every, o.big_bytes );
     for ( int i = 0; i < o.num_sizes; i++ )
     {
@@ -1768,6 +1805,7 @@ static int harden_server_main( const harden_options_t & o )
             printf( "harden_verdict: role=server verdict=FAIL reason=fill_jobs_need_transport\n" );
             return 1;
         }
+        pool.server = server;
         pool.transport = transport;
         pool.o = &o;
         pool.slots = &slots;
