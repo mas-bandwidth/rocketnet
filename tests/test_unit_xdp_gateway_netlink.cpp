@@ -968,6 +968,8 @@ struct fake_netlink_t
     int sockets = 0;
     int closes = 0;
     socklen_t local_bytes = sizeof( struct sockaddr_nl );
+    int send_short = 0;                             // > 0: sendto takes this many bytes fewer, no error
+    int send_errno = 0;                             // nonzero: sendto fails, -1 with this errno
     bool nonblocking = false;                       // the last socket opened with SOCK_NONBLOCK
     int blocking_receives = 0;                      // reads that would wait for the kernel: a blocking socket, no MSG_DONTWAIT
 
@@ -1045,6 +1047,16 @@ static int fake_netlink_getsockname( int, struct sockaddr * address, socklen_t *
 
 static ssize_t fake_netlink_sendto( int, const void * data, size_t bytes, int, const struct sockaddr *, socklen_t )
 {
+    if ( fake_netlink->send_errno != 0 )
+    {
+        errno = fake_netlink->send_errno;
+        return -1;
+    }
+    if ( fake_netlink->send_short > 0 )
+    {
+        return (ssize_t) bytes - fake_netlink->send_short;
+    }
+
     netlink_datagram_t request;
     netlink_append( &request, data, bytes );
     fake_netlink->requests.push_back( request );
@@ -1210,6 +1222,40 @@ static void test_xdp_transport_gateway_netlink_short_local_address()
     errno = 0;
     check( rocketnet_gateway_netlink_neighbor_with( &fake_netlink_system, AF_INET, server_interface, gateway_ipv4, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
     check( error == EPROTO );
+
+    fake_netlink = NULL;
+}
+
+// a short send (fewer bytes than the request, no error) is SYSTEM with
+// EPROTO, never whatever errno an earlier call left behind (EDOM here); a
+// failed send reports its own errno
+
+static void test_xdp_transport_gateway_netlink_short_send_is_eproto()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    fake.send_short = 1;
+    fake.script.push_back( default_route_datagram() );
+
+    uint8_t gateway[16];
+    int error = -1;
+    errno = EDOM;
+    check( rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+    check( error == EPROTO );
+    check( fake.sockets == 1 && fake.closes == 1 && fake.next == 0 );
+
+    uint8_t mac[6];
+    error = -1;
+    errno = EDOM;
+    check( rocketnet_gateway_netlink_neighbor_with( &fake_netlink_system, AF_INET, server_interface, gateway_ipv4, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+    check( error == EPROTO );
+
+    fake.send_short = 0;
+    fake.send_errno = ENOBUFS;
+    error = -1;
+    errno = EDOM;
+    check( rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+    check( error == ENOBUFS );
 
     fake_netlink = NULL;
 }
@@ -1919,6 +1965,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_interrupted_dump_retried 
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_interrupted_dump_bounded );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_error_not_retried );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_short_local_address );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_short_send_is_eproto );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_asked_directly );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_missing_entry );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_reads_the_route_every_period );
