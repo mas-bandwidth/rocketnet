@@ -113,6 +113,14 @@ Ring == <<head, tail, first, last, live, order,
           [d \in live |-> prv[d]], [d \in live |-> nxt[d]],
           [d \in live |-> start[d]], [d \in live |-> len[d]], exhausted, tailUndo>>
 
+\* The fingerprint for the passing configurations (VIEW View): a descriptor
+\* that is not live holds dead span fields (a carve leaves them; Reset), and
+\* with LinkClearsNext no action and no property reads them before the link
+\* writes them, so states that differ only there are one state.  The
+\* LinkClearsNext = FALSE witness reads a dead span_next and runs without
+\* the view.
+View == <<Ring, refused, calls, fresh, admitted>>
+
 \* rn_span_round16
 Round16(b) == ((b + 15) \div 16) * 16
 

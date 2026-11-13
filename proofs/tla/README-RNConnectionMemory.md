@@ -92,11 +92,11 @@ A client owns one region; it is the same machine with one slot.
 The traces TLC printed, checked against the code by hand:
 
 - **BrokenNoReset**: `Connect(s1, c1)`, `Leave(s1)`, `Reuse(s1)`,
-  `Connect(s1, c2)`. The connected slot carries the reason `LEFT` of the
-  connection before. In the code,
-  `rn_region_carve` clears the exhausted state and its reason, every table and
-  every free list; a reuse without it leaves the previous connection's
-  bookkeeping in place. `test_reused_slot_starts_clean` checks the code's side: a
+  `Connect(s1, c1)` (5 states). The connected slot carries the reason `LEFT`
+  of the connection before. In the code, `rn_region_carve` (run by
+  `rn_endpoint_reset` when the slot is bound) clears the exhausted state and
+  its reason, every table and every free list; a bind without it leaves the
+  previous connection's bookkeeping in place. `test_reused_slot_starts_clean` checks the code's side: a
   region used to exhaustion and reset equals a fresh region byte for byte in
   its bookkeeping, and with the reset removed the test fails.
 - **BrokenCarryOn**, depth 5: `Connect(s1, c1)`, `Use(s1)`, `Exhaust(s1)`
@@ -109,6 +109,13 @@ The traces TLC printed, checked against the code by hand:
   `rn_connection_memory_decide` before any other work of the update and
   kicks. The witness shows that a caller who skips the decision, or an
   allocator that skips the guard, breaks the property.
+- **BrokenCountExhausted** (5 states): `Connect(s1, c1)`, `Use(s1)`,
+  `Exhaust(s1)`, then a start on the exhausted slot is refused and `refused`
+  goes 0 to 1. In the code `rn_endpoint_start` (sdk/rocketnet_endpoint.cpp)
+  tests `rn_region_exhausted` first and records `send_error`, on the
+  channels route before it compares `room_refusals` (461-470) and on the
+  plain route before any take (480-484); `send_refused` moves only for a
+  refusal for no room.
 
 ## Records
 

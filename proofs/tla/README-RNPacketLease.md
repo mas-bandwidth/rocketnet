@@ -19,7 +19,11 @@ concurrently during the fill phase. Only the joined main thread calls `reset`.
   makes every frame collide, the worst case. The probe steps to
   `(slot + 1) mod Capacity` for at most `Capacity` entries.
 - **Insert.** `StartInsert`, then `IUsed` (the `used` fetch-add, refusing at
-  `UsedLimit`), `ITicket`, `ILoad` (skip entries of the current epoch), `ICas`
+  `UsedLimit`), `ITicket` (the process-wide counter,
+  `rocketnet_next_packet_lease_id` in `sdk/rocketnet.cpp`, gives tickets up
+  to `TicketLimit`, `UINT64_MAX - 1` in the code, and 0 after; `insert`
+  refuses 0, its attempt still counted in `used`), `ILoad` (skip entries of
+  the current epoch), `ICas`
   (claim by compare-and-swap, or continue the probe), `IWrite` (the four fields
   in any order) and `IPublish` (the release store of active). `StartInsert`
   refuses a frame only while an unconsumed lease of it is current or an
@@ -47,7 +51,7 @@ concurrently during the fill phase. Only the joined main thread calls `reset`.
   zeroes `used`.
 - **Contract (ghost).** `issued` records each lease when `IPublish` publishes
   it, `takes` counts consumes and `gen` counts resets.
-- **Not modelled.** The ticket source's exhaustion, the real hash function
+- **Not modelled.** The real hash function
   (the model takes the worst collision case), and the memory model: a step
   reads or writes one field atomically and steps interleave in any order,
   which covers every order the C++ operations can take but not their data
@@ -65,6 +69,10 @@ every reset is done.
   once, its entry is never overwritten while its epoch is current, and every
   entry between its hash and its slot is of the current epoch, so the probe
   reaches it.
+- `TicketsUnique`: no two published leases carry one ticket. The ticket is
+  what tells two leases of one frame apart (`RCmp` continues past a ticket
+  mismatch), so a repeated ticket would let a take of one lease consume the
+  other.
 - `ProbeBound`: the entries of the current epoch never exceed
   `Capacity / 2`. `InsertFindsSlot`: insert never runs out of probes.
 - `NoRacyRead`: no thread's field read is a data race with another thread's
@@ -121,7 +129,19 @@ re-leased frame. `FrameBusy` now counts only unconsumed leases: the new
 insert probes past the consumed entry (still of the current epoch) to
 another slot, both leases stay in `Published`, and the chain to the second
 lease passes the first lease's entry. `MCRNPacketLeaseRelet.cfg` is the
-reachability witness for this.
+reachability witness for the second insert.
+
+`MCRNPacketLeaseReletWrap.cfg` reaches the take of the second lease. One
+frame hashes to the last entry (`HashSpread = 4`, frame 4 to entry 3): the
+first lease publishes at entry 3 and is taken; the second insert skips entry
+3 (consumed, of the current epoch) and wraps to entry 0; its take loads
+entry 3 first, finds the frame equal and the ticket not, continues, wraps to
+entry 0 and consumes it (32 states, every safety invariant checked on the
+way). In the code `take` compares frame and ticket and continues the probe
+on a mismatch (`sdk/rocketnet_packet_lease.h`, `RCmp`).
+`MCRNPacketLeaseSpread.cfg` is the control with frames that hash apart
+(`Frames = {3, 4}`, `HashSpread = 4`) and the counter exhausted after three
+tickets, `retired` on: it passes every invariant.
 
 ## `retired` and the reused entry
 
@@ -182,6 +202,12 @@ classification of a misuse, not a wrong take.
 | `MCRNPacketLeaseBrokenNoEpochBump.cfg` | `NoWrongSuccess` | `BumpEpoch = FALSE` |
 | `MCRNPacketLeaseBrokenEpochUnlimited.cfg` | `PublishedIntact` | `EpochLimited = FALSE` |
 | `MCRNPacketLeaseBrokenUsedOffByOne.cfg` | `ProbeBound` | `UsedLimit = 3` |
+| `MCRNPacketLeaseSpread.cfg` | pass | Frames that hash apart, the ticket counter exhausted after three, `retired` on: every invariant. |
+| `MCRNPacketLeaseReletWrap.cfg` | `NoReletTaken` | Reachability witness: a re-leased frame's second lease is taken, past the first lease's entry and across the wrap. |
+| `MCRNPacketLeaseBrokenTicketZero.cfg` | `TicketsUnique` | `ZeroRefused = FALSE` on an exhausted counter (`TicketLimit = 0`). |
+
+Every existing configuration runs with `TicketLimit = 6` and `ZeroRefused =
+TRUE`: the counter never runs out within their operations.
 
 Each reversed witness was read against the code by hand (2026-10-29):
 
@@ -206,3 +232,9 @@ Each reversed witness was read against the code by hand (2026-10-29):
   reads the fields. With the fields a plain `rocketnet_packet_context_t`, the
   read and the insert's copy into it are unordered, which is a data race. The
   code reads `std::atomic` fields relaxed (`entry_t::load`).
+- **TicketZero** (22 states). The counter is exhausted from the start; two
+  inserts each take ticket 0 and publish, and two
+  published leases carry ticket 0. The code refuses it: `insert` returns
+  false on `!ticket` (`sdk/rocketnet_packet_lease.h`, after
+  `rocketnet_next_packet_lease_id`, which returns 0 once its counter reaches
+  `UINT64_MAX`).
