@@ -48,11 +48,12 @@
 (* is delivered when complete, as a view of its span read at stride F, and *)
 (* the read index moves by one.                                            *)
 (*                                                                         *)
-(* A peer that lies.  With Forge, the outside world may put one record on  *)
-(* the wire that copies a numbered record but claims another count (2..k  *)
-(* of the largest block): what a peer whose chunk belongs to something     *)
-(* else sends.  At most one is forged, since a peer that lies the same way *)
-(* about every chunk is only sending a different message.  The held       *)
+(* A sender that lies.  With Forge, the outside world may put one record  *)
+(* on the wire that copies a numbered record but claims another count     *)
+(* (2..k of the largest block): what a remote endpoint whose chunk        *)
+(* belongs to something else sends.  At most one is forged, since a       *)
+(* sender that lies the same way about every chunk is only sending a      *)
+(* different message.  The held                                           *)
 (* index's own refusal (an insert past W entries) is RNHeldOwnership's     *)
 (* Hold; nothing here fills the index.                                     *)
 (*                                                                         *)
@@ -227,7 +228,7 @@ SendRecord(n) ==
     /\ UNCHANGED <<senderVars, receiverVars, forged>>
 
 (***************************************************************************)
-(* The outside world: a peer that lies about one chunk's count.           *)
+(* The outside world: a sender that lies about one chunk's count.         *)
 (***************************************************************************)
 ForgeRecord(n, c) ==
     /\ Forge /\ ~forged
