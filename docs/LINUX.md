@@ -509,10 +509,10 @@ startup and an `xdp` transport label alone do not establish zero-copy.
   `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` ([Environment](ENVIRONMENT.md)).
 - Queues: `num_xdp_queues`, default 7; worker CPUs start at `num_os_cpus`,
   default 1 (`sdk/rocketnet_driver_builtin.cpp`, `BUILDING.md`).
-- Memory: each queue's UMEM is 49152 frames of 4096 bytes, 192 MiB:
-  32768 send frames plus 16384 receive frames
+- Memory: each queue's UMEM is 98304 frames of 4096 bytes, 384 MiB:
+  65536 send frames plus 32768 receive frames
   (`sdk/rocketnet_constants.h`, `sdk/rocketnet_server_socket_linux.cpp`);
-  seven queues are 1,409,286,144 bytes of UMEM, within the 4096 MiB
+  seven queues are 2,818,572,288 bytes of UMEM, within the 8192 MiB
   `ROCKETNET_XDP_MEMORY_MIB` budget. UMEM is one part of the server's full
   memory plan; use [the memory planner](MEMORY.md) for the selected configuration.
 - Both families on one interface: `rocketnet_server_create` names an IPv4

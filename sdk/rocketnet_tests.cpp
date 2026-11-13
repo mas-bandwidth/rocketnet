@@ -209,15 +209,15 @@ void rocketnet_test_xdp_free_list_refuses_overflow()
     const uint64_t region_begin = 0;
     const uint64_t region_end = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
 
-    for ( int i = 0; i < 32768; i++ )
+    for ( int i = 0; i < capacity; i++ )
     {
         rocketnet_check( rocketnet_xdp_free_list_push( send_frames, &count, capacity, (uint64_t) i * ROCKETNET_XDP_FRAME_SIZE, region_begin, region_end ) );
     }
 
-    rocketnet_check( count == 32768 );
+    rocketnet_check( count == capacity );
 
     rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, 0, region_begin, region_end ) );
-    rocketnet_check( count == 32768 );
+    rocketnet_check( count == capacity );
 
     count = 0;
     rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, ROCKETNET_XDP_FRAME_SIZE * 3 + 1, region_begin, region_end ) );

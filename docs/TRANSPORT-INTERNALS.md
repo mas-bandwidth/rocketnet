@@ -185,18 +185,18 @@ create from the server's configured `max_clients`; see
 [Memory and capacity](MEMORY.md#maximum-clients).
 
 The server process batch `rocketnet_server_receive_packets_per_update`
-(`sdk/rocketnet_constants.h`, 16000 at 1000 clients) bounds packets exposed for
+(`sdk/rocketnet_constants.h`, 64000 at 1000 clients) bounds packets exposed for
 protocol processing. Datagrams discarded before that batch is returned are
 bounded per receive call by the read budget below.
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
-| portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`rocketnet_server_receive_packets_per_update`) |
-| msgx | portable batch, 256–1000 | 16000 per update |
-| loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
+| portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 64000 per update (`rocketnet_server_receive_packets_per_update`) |
+| msgx | portable batch, 256–1000 | 64000 per update |
+| loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (65536 at 1000 clients), with 64000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
 | gso | 4096 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
-| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
-| xdp | 4096 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
+| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 64000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
+| xdp | 16384 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 32768 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
 | iocp | 2048 (`rocketnet_server_iocp_send_queue_size`) | 4096 queue (`rocketnet_server_iocp_receive_queue_size`) |
 | rio | 2048 per phase (`rocketnet_server_rio_send_queue_size`) | 4096 posted receives (`rocketnet_server_rio_receives`) |
 
