@@ -1548,6 +1548,7 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
 
 void rocketnet_test_transport_udp_loopback()
 {
+    rocketnet_check( 1 == 2 ); // PLANTED-VIOLATION
     // the first packets on a real socket: the whole connect over UDP through
     // loopback, on the transports -- the IO carrying the connection
     // protocol, development keys, exactly the out-of-the-box path. real
