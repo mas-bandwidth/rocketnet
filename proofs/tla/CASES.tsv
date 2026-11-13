@@ -859,6 +859,7 @@ MCRNRioWorkerReachRefusedPost.cfg	MCRNRioWorker.tla	invariant	NotReachedRefusedP
 MCRNRioWorkerBrokenUncountedPost.cfg	MCRNRioWorker.tla	invariant	StopSendsFinished	check	rnrioworker	required	-
 MCRNRioWorkerGarbage.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerBrokenBankGarbage.cfg	MCRNRioWorker.tla	invariant	NoGarbageBanked	check	rnrioworker	required	-
+MCRNRioWorkerBrokenTakeBeforeRetire.cfg	MCRNRioWorker.tla	invariant	DrainedReturnedAtPost	check	rnrioworker	required	-
 MCRNSchedulerBrokenRtxById.cfg	MCRNScheduler.tla	invariant	RtxHeadBoost	check	rnscheduler	required	-
 MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg	MCRNUnreliableRingLayout.tla	invariant	WalkExact	check	rnunreliableringlayout	required	-
 MCReceiveOrderDeadlineWindow.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
