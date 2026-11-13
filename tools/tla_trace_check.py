@@ -954,6 +954,10 @@ def shard_table(rows, count):
     for i, pairs in enumerate(expanded):
         if not pairs:
             failures.append(f"shard {i}/{count} holds no (layer, seed) pair")
+        elif i not in homes.values():
+            # nightly, shard i runs the layers homed in it: with none it would check nothing and be red
+            failures.append(f"shard {i}/{count} is no layer's home (no row's first commit seed is in it), so its "
+                            "nightly run would hold no layer: give some layer its first commit seed there")
     return expanded, homes, failures
 
 

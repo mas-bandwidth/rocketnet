@@ -395,8 +395,10 @@ Run it before you push as "Adding a layer: the steps" below says.
 
 ## Adding a layer: the steps
 
-For a worker binding a model to its code. Everything a layer needs is its own new files;
-nothing shared is edited, so layers added on parallel branches merge without conflict.
+For a worker binding a model to its code. A layer's code, row and Trace module are its
+own new files; the only shared files it touches are row additions to `COVERAGE.tsv`,
+`CASES.tsv` and `RUNS.tsv`, each placed beside its own model's rows, so layers added on
+parallel branches seldom conflict.
 
 1. **Files you add**, all new:
    - `tests/tla_trace_<file>.cpp`: the walk, registered with `TLA_TRACE_LAYER( "<name>",
@@ -425,7 +427,7 @@ nothing shared is edited, so layers added on parallel branches merge without con
        "ghost": {"v": "why the code holds no such word"},   # only if needed
        "reach": ["Wrapped", "Full"],           # the edges a walk must show
        "steps": 400,                           # only if 400 is wrong; 100 or more
-       "commit": {1: 12},                      # per commit: seed -> shard
+       "commit": {1: 3},                       # per commit: seed -> shard, 0 .. SHARD_COUNT - 1
    }
    ```
 3. **Seeds per commit.** One seed (`{1: <shard>}`) for a new layer; all 64 nightly seeds

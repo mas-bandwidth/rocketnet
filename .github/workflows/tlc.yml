@@ -346,7 +346,8 @@ jobs:
   # so the range moves every night. The same shards as ci.yml's (SHARD_COUNT in
   # tools/tla_trace_check.py; --write-shards writes this matrix): shard I runs the
   # layers whose first commit seed is in shard I, every seed of the range, with their
-  # action coverage and reach over all of them, and builds only those layers.
+  # action coverage and reach over all of them; it builds the per-commit shard
+  # I's layers (--stems I/N), a superset of those.
   trace:
     name: TLA+ trace check (rolling seeds, shard ${{ matrix.shard }})
     runs-on: [self-hosted, Linux, X64, fleet]

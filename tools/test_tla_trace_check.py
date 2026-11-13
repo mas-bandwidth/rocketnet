@@ -96,6 +96,11 @@ class Rows(unittest.TestCase):
         self.layer("a", commit="{1: 0, 2: 0}")
         self.red("SHARDS: shard 1/2 holds no (layer, seed) pair")
 
+    def test_shard_no_layers_home(self):
+        # shard 1 holds a's later seeds only: per commit it checks them, nightly it would hold nothing
+        self.layer("a", commit="{1: 0, 2: 1}")
+        self.red("SHARDS: shard 1/2 is no layer's home")
+
     def test_unknown_key(self):
         self.layer("a", extra='"kind": "steps",')
         self.red("layer a: no row key kind")

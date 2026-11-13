@@ -1390,11 +1390,11 @@ if(ROCKETNET_BUILD_TOOLS)
     # The TLA+ trace harness (proofs/tla/README-TraceCheck.md): a seeded walk
     # of a layer's code writes its trace for TLC. Each layer is one file,
     # tests/tla_trace_<layer>.cpp, that registers itself. tla_trace takes
-    # every such file. Each layer also has a plant binary of its own,
-    # tla_trace_plant_<layer>, of that one file compiled with
-    # ROCKETNET_TLA_PLANT: the file then includes its own code with its
-    # plant, in place of the library's, so one layer's plant never touches
-    # another's trace. Every trace target compiles with the library's own
+    # every such file. Each layer also has a plant binary per plant (below),
+    # of that one file compiled with ROCKETNET_TLA_PLANT and one plant
+    # define: the file then includes its own code with that plant, in place
+    # of the library's, so one layer's plant never touches another's trace
+    # and one plant never hides another. Every trace target compiles with the library's own
     # private definitions, include directories and options (ROCKETNET_IO_URING,
     # ROCKETNET_XDP, generated/, the floating-point floor), so a planted copy
     # of library code is the code the library builds.
@@ -1422,6 +1422,11 @@ if(ROCKETNET_BUILD_TOOLS)
         endif()
     endfunction()
     file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
+    # the rows' plants lines and the layer table's size are read below: an
+    # edit of either configures again, so no build keeps stale plant binaries
+    file(GLOB rocketnet_tla_trace_rows CONFIGURE_DEPENDS tests/tla_trace_*.row)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${rocketnet_tla_trace_rows} "${CMAKE_CURRENT_SOURCE_DIR}/tests/tla_trace_record.h")
     # the harness's layer table is a fixed array (tests/tla_trace_record.h): a
     # layer past it is refused when tla_trace starts, so a layer count over it
     # is refused here first, where adding the file is
