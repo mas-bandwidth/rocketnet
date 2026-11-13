@@ -24,8 +24,11 @@ starts, refuses a job that:
     call is refused rather than trusted).
 
 A job whose `if:` is `inputs.full` (or starts with `inputs.full &&`) runs only
-in the nightly tier, and a job whose `if:` requires a tag push runs only on a
-release; neither is bounded here. Text only, no YAML library: the workflows
+in the nightly tier, and a job whose `if:` is exactly
+`github.event_name == 'push' && startsWith(github.ref, 'refs/tags/...')`
+(optionally `always() &&` first, optionally in `${{ }}`) runs only on a
+release; neither is bounded here. Any other `if:` naming a tag push, with an
+`||` or a `!`, is held to the budget. Text only, no YAML library: the workflows
 are read as lines, two-space job keys under `jobs:` and four-space job keys.
 
 Usage: check_ci_budget.py [--self-test] [workflow files...]
@@ -44,6 +47,10 @@ JOB_KEY = re.compile(r"^  ([A-Za-z0-9_][\w-]*):\s*(#.*)?$")
 JOB_PROP = re.compile(r"^    ([A-Za-z_][\w-]*):\s*(.*?)\s*$")
 TIER_EXPR = re.compile(r"^\$\{\{\s*inputs\.full\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}$")
 NIGHTLY_IF = re.compile(r"^(\$\{\{\s*)?inputs\.full(\s*&&.*)?(\s*\}\})?$")
+# the one release-only form: a tag push and nothing else, optionally behind
+# always(); an `||` or a `!` anywhere would let a branch push through
+TAG_IF = re.compile(r"^(?:\$\{\{\s*)?(?:always\(\)\s*&&\s*)?github\.event_name\s*==\s*'push'\s*&&\s*"
+                    r"startsWith\(\s*github\.ref\s*,\s*'refs/tags/[^'|!&]*'\s*\)(?:\s*\}\})?$")
 TRIGGER = re.compile(r"\b(push|pull_request)\b")
 
 
@@ -117,7 +124,7 @@ def exempt(props):
     cond = props.get("if", "")
     if NIGHTLY_IF.match(cond):
         return True
-    return "github.event_name == 'push'" in cond and "startsWith(github.ref, 'refs/tags/" in cond
+    return bool(TAG_IF.match(cond))
 
 
 def violations(name, text):
@@ -190,6 +197,9 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted]
     timeout-minutes: 30
+  release-always:
+    if: ${{ always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: [self-hosted]
   under:
     runs-on: [self-hosted]
     timeout-minutes: 1  # comment
@@ -215,7 +225,10 @@ BAD = [
     ("unreadable expression", "on:\n  push:\njobs:\n  a:\n    timeout-minutes: ${{ matrix.os == 'windows' && 5 || 2 }}\n"),
     ("reusable call", "on:\n  pull_request:\njobs:\n  a:\n    uses: ./.github/workflows/x.yml\n"),
     ("other if is not exempt", "on:\n  push:\njobs:\n  a:\n    if: github.ref == 'refs/heads/main'\n    timeout-minutes: 5\n"),
-    ("list trigger", "on:\n  - pull_request\njobs:\n  a:\n    timeout-minutes: 4\n"),
+    ("tag push or anything", "on:\n  push:\njobs:\n  a:\n    if: github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v')\n    timeout-minutes: 5\n"),
+    ("every non-tag push", "on:\n  push:\njobs:\n  a:\n    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')\n    timeout-minutes: 5\n"),
+    ("tag push or a branch", "on:\n  push:\njobs:\n  a:\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'\n    timeout-minutes: 5\n"),
+    ("list trigger","on:\n  - pull_request\njobs:\n  a:\n    timeout-minutes: 4\n"),
     ("bound in a step only", "on:\n  push:\njobs:\n  a:\n    steps:\n      - run: x\n        timeout-minutes: 1\n"),
 ]
 
