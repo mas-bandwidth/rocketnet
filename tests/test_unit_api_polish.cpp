@@ -556,11 +556,15 @@ static void test_api_polish_negative_first_update_time_is_misuse()
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
-    // the server: a negative first time is misuse; the next good time is not
+    // the server: every negative time is misuse, repeated and increasing
+    // ones included (rocketnet_update_clock_advance refuses each before the
+    // clock reads it); the next good time is not
 
     uint64_t before = rocketnet_api_misuse_count();
     rocketnet_server_update( server, -5.0 );
-    check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_server_update( server, -5.0 );
+    rocketnet_server_update( server, -4.0 );
+    check( rocketnet_api_misuse_count() == before + 3 );
     before = rocketnet_api_misuse_count();
     rocketnet_server_update( server, g_polish_index_now );
     rocketnet_server_send_packets( server );
@@ -589,7 +593,9 @@ static void test_api_polish_negative_first_update_time_is_misuse()
 
     before = rocketnet_api_misuse_count();
     rocketnet_client_update( client, -5.0 );
-    check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_client_update( client, -5.0 );
+    rocketnet_client_update( client, -4.0 );
+    check( rocketnet_api_misuse_count() == before + 3 );
     before = rocketnet_api_misuse_count();
     rocketnet_client_update( client, 0.5 );
     check( rocketnet_api_misuse_count() == before );
@@ -600,7 +606,9 @@ static void test_api_polish_negative_first_update_time_is_misuse()
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
     before = rocketnet_api_misuse_count();
     rocketnet_client_update( client, -5.0 );
-    check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_client_update( client, -5.0 );
+    rocketnet_client_update( client, -4.0 );
+    check( rocketnet_api_misuse_count() == before + 3 );
     before = rocketnet_api_misuse_count();
 
     for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )

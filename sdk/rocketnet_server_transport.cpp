@@ -4353,9 +4353,9 @@ void rocketnet_server_transport_update_receive( struct rocketnet_server_transpor
     }
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
-    // an infinity or a step backwards becomes the last good time, counted and
-    // loud in a debug build. the last good time starts at zero, the value a
-    // value-initialized transport carries.
+    // an infinity, a negative time or a step backwards becomes the last good
+    // time, counted and loud in a debug build. the last good time starts at
+    // zero, the value a value-initialized transport carries.
 
     bool time_clamped = false;
     time = rocketnet_update_clock_advance( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );

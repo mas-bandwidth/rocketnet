@@ -1723,9 +1723,9 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 // Update times are finite and non-negative, the first included (rocketnet.h
 // rocketnet_client_update). This clock starts at 0.0, as a connection's
 // message clock is seeded (rn_message_object_create), and takes every time
-// through the same advance: a negative first time is a step back from 0.0,
-// counted and logged, and the clock starts at the first time it accepts, so
-// both clocks agree.
+// through the same advance: every negative time is refused before the clock
+// reads it, counted and logged, and the clock starts at the first time it
+// accepts, so both clocks agree.
 
 static void rn_client_update_time( struct rocketnet_client_t * client, double time )
 {
