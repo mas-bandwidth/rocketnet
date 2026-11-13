@@ -735,6 +735,9 @@ struct msghdr * rocketnet_uring_queue_send_message( struct rocketnet_uring_queue
 
     return &message->message;
 #else  // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
+    (void) send;
+    (void) queue_index;
+    (void) run;
     (void) socket_ipv6;
     return NULL;
 #endif // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
