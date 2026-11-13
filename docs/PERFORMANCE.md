@@ -30,7 +30,7 @@ enkiTS for these jobs; RocketNet does not create the game threads.
 
 | Server transport | Server | Client machine and network | Thread layout |
 | --- | --- | --- | --- |
-| XDP | Latitude m4.metal.large, AMD EPYC 9254, 24 cores | Second m4.metal.large, 48 logical CPUs; Intel X710 10 GbE | Two XDP threads on CPUs 1–2; main thread on CPU 3; 20 game threads on CPUs 4–23; all 21 pool threads at real-time priority |
+| XDP | Latitude m4.metal.large, AMD EPYC 9254, 24 cores | Second m4.metal.large, 48 logical CPUs; Intel X710 10 GbE | Two XDP threads on CPUs 1–2, or one on CPU 1 in the scaling run; main thread on CPU 3; 20 game threads on CPUs 4–23; all 21 pool threads at real-time priority |
 | io_uring | AWS c6in.8xlarge, 32 vCPUs, x86, Linux 7.0 | AWS c7gn.8xlarge, 32 vCPUs, arm64; same placement, private network | Two network threads on CPUs 1–2; main thread on CPU 3; 28 game threads on CPUs 4–31, real-time priority |
 | GSO | AWS c8gn.8xlarge, Graviton4, arm64, 32 vCPUs; Ubuntu 26.04, GCC 15.2 | AWS c6gn.16xlarge, 64 vCPUs; same placement, private network | Two network threads on CPUs 1–2, or one on CPU 1 in the scaling run; main thread on CPU 3; 28 game threads on CPUs 4–31; no real-time priority |
 | IOCP | AWS m7i.16xlarge, 64 vCPUs, Windows Server 2025; MSVC Release | AWS c8gn.8xlarge, 32 vCPUs, Linux; private network | OS on CPUs 0–1; NIC receive steering on CPUs 2 and 4; two receive threads on CPUs 3 and 5; main thread on CPU 6; 57 game threads on CPUs 7–63; eight unpinned send threads |
@@ -236,10 +236,22 @@ separately.
 | Transport | Smallest passing count measured | Workload and remaining checks |
 | --- | ---: | --- |
 | GSO | 1 | Peak with game threads half busy; 100% delivery both ways |
-| XDP | 2 | Peak with and without game work; one-thread run pending |
+| XDP | 1 | Peak with game threads half busy; 100% delivery both ways; no late frames |
 | io_uring | 2 | Peak with and without game work; one-thread run pending |
 | RIO | 8 | Peak without game work; four lanes miss target; five through seven pending |
 | IOCP | 10 | Peak without game work, with small input loss; fewer-thread runs pending; loaded peak not yet passing |
+
+The one-thread XDP peak run used `f46d820ba`, 1000 players, game threads half
+busy, and the corrected frame order. One NIC queue, its interrupt, and the
+XDP thread use CPU 1; the main thread remains on CPU 3 and the 20 game
+threads on CPUs 4–23. Its sampling window is pending confirmation.
+
+| XDP network threads | Server packets/s | Frames/s | Delivery, both directions | Main mean / p99 / max (ms) | Game threads min / mean / max (ms) | Main / mean game thread | Mean game-thread time left (ms/frame) |
+| --- | ---: | ---: | --- | --- | --- | ---: | ---: |
+| 1, CPU 1 | 900,000 | 60.6 | 100% | 0.429 / 0.624 / 0.703 | 2.57 / 3.03 / 4.14 | 0.14 | 5.3 |
+
+The remaining-time figure uses the corrected average-budget calculation
+described above. The run reported no late frames.
 
 The GSO loaded-peak comparison uses library-owned network-thread pinning:
 
@@ -304,6 +316,44 @@ chooses the binary directory; `--target` builds `harden_load`, and `-j`
 sets compiler parallelism. The run commands below assume that binary is
 available at `./bin/harden_load`. The XDP profiling build's flags are recorded
 in the profiling section below.
+
+The XDP worker's exact build recipe on both machines uses absolute checkout
+and build paths, with four compiler jobs. At `f46d820ba`, the top-level
+build enables tools and development libraries by default:
+
+```sh
+cmake -S "$REPO_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+  -DROCKETNET_DEV=ON -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$REPO_DIR/bin"
+cmake --build "$BUILD_DIR" --target harden_load --parallel 4
+```
+
+`REPO_DIR` selects the measured checkout, `BUILD_DIR` its build directory,
+and `--parallel 4` sets build parallelism. Run the following provisioning
+commands from that checkout on the XDP server before starting the load.
+The recorded initial check used its existing two-queue configuration:
+
+```sh
+sudo scripts/rocketnet-provision "$SERVER_DEV" 2 verify
+```
+
+`SERVER_DEV` is the server NIC. `verify` checks without modifying the host;
+retain its output. The measured environment has the boot settings listed
+above, the `i40e` driver, queue interrupts pinned to their corresponding
+CPUs, `napi_defer_hard_irqs=2`, and `gro_flush_timeout=200000`.
+
+To select the one- or two-queue row, set `NETWORK_THREADS` to 1 or 2 and run:
+
+```sh
+sudo scripts/rocketnet-provision "$SERVER_DEV" "$NETWORK_THREADS" provision
+```
+
+`provision` changes the NIC's combined queue count and runtime settings,
+then pins the resulting queue interrupts. It checks the boot prerequisites;
+it does not apply bootloader changes or reboot the host. The measured
+one-queue row keeps the existing isolated CPU range 1–2. The checked-in
+[provisioning script](https://github.com/mas-bandwidth/rocketnet/blob/f46d820ba851bb09db3a488c7bcd9ff36b8ad2c0/scripts/rocketnet-provision)
+documents its full checks. The NIC queue count and server's
+`--num-xdp-queues` must match.
 
 The current `--game-threads N` flag counts the main thread plus N−1 game
 threads. XDP uses 21; io_uring and GSO use 29; IOCP uses 58.
@@ -423,6 +473,11 @@ replace `--game-load 0` with `--game-load 0.5`, set `--world-ms 10`, and
 add `--space-split top` if absent. Use these settings only with the listed
 loaded-row builds; the earlier builds have a different world-work stand-in.
 
+For the one-thread XDP peak row, use `f46d820ba`, the XDP peak client
+arguments, and a 21-thread server pool starting at CPU 3. Set the server to
+`--num-xdp-queues 1 --game-load 0.5 --world-ms 10 --space-split top`, retaining
+the other XDP peak arguments, after provisioning one NIC queue as above.
+
 ### Command flags
 
 | Flag | Meaning |
@@ -437,7 +492,7 @@ loaded-row builds; the earlier builds have a different world-work stand-in.
 | `--warm-seconds 20` | Delay before the server's first long-run sample; separate from the reported steady window. |
 | `--sample-seconds 60` | Interval between long-run server samples. |
 | `--payload` | `pattern` generates a verifiable body; `copy` copies a prebuilt body. |
-| `--num-xdp-queues` | Requested network queue count for XDP, io_uring, and GSO: 2 for baseline rows, 1 for GSO's one-thread run; also retained in the supplied IOCP command, whose actual thread counts are listed above. |
+| `--num-xdp-queues` | Requested network queue count for XDP, io_uring, and GSO: 2 for baseline rows, 1 for the XDP/GSO one-thread runs; also retained in the supplied IOCP command, whose actual thread counts are listed above. |
 | `--frame-shape` | Select the test's job-based frame loop. |
 | `--load` | Set the peak or average server traffic from the workload table. |
 | `--game-threads` | Pool size including the main thread. |
