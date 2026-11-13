@@ -9,7 +9,7 @@
 #define ROCKETNET_SDK_ROCKETNET_MSGX_SOCKET_TABLE_H
 
 // The macOS batched server transport's per-client socket table
-// (sdk/rocketnet_server_msgx_darwin.cpp). macOS sends a datagram on a
+// (sdk/rocketnet_server_msgx_apple.cpp). macOS sends a datagram on a
 // connected socket for about a sixth of what an unconnected socket costs per
 // destination, so the transport keeps one socket per connected client, bound
 // to the server's own port (SO_REUSEADDR|SO_REUSEPORT) and connected to the

@@ -935,6 +935,11 @@ void rocketnet_test_transport_ring_exhaustion()
 
     rocketnet_server_transport_update( server, rocketnet_platform_time() );
 
+    // msgx hands its staged banks to transmit workers: a bank comes back
+    // when its worker has sent it, so a start right after the flush may
+    // still refuse, as IOCP's may before its completions retire
+    const int sends_asynchronously = completion_capacity || strcmp( rocketnet_server_transport_io_name( server ), "msgx" ) == 0;
+
     int recovered = 0;
 
     start = rocketnet_platform_time();
@@ -942,7 +947,7 @@ void rocketnet_test_transport_ring_exhaustion()
     {
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
-        rocketnet_check( frame || completion_capacity );
+        rocketnet_check( frame || sends_asynchronously );
         if ( frame )
         {
             memcpy( frame + context.payload_index, "again", 5 );
