@@ -1346,6 +1346,10 @@ struct rocketnet_iocp_batch_t
     uint64_t tally[ROCKETNET_SERVER_IOCP_COUNTER_ROWS];
     rocketnet_receive_drop_tally_t * drops;
     rocketnet_iocp_worker_t * worker;
+    // a commit in this batch found main not started on the full bank: the
+    // rest of the batch is refused without trying again (the batch end
+    // commits once more)
+    bool held;
 };
 
 // the batch's counter growth added to the transport counters, so it is
@@ -1379,16 +1383,18 @@ static void rocketnet_iocp_commit_receive( rocketnet_iocp_worker_t * worker )
 // The bank a completed datagram goes to: the worker's own, or, when it is
 // full, the free bank it moves to if main has started on the full one (the
 // batch's counters made visible first). A full bank main has not started on
-// stays, and its datagram is refused BANK_FULL.
+// stays, and its datagram and the rest of the batch's are refused BANK_FULL
+// with no further try, so a flood costs no lock per refused datagram.
 static rocketnet_iocp_receive_buffer_t * rocketnet_iocp_receive_bank( rocketnet_iocp_batch_t * batch )
 {
     rocketnet_iocp_worker_t * worker = batch->worker;
     rocketnet_iocp_receive_buffer_t * buffer = &worker->buffers[worker->receive_handoff.worker];
-    if ( buffer->num_packets >= buffer->capacity )
+    if ( buffer->num_packets >= buffer->capacity && !batch->held )
     {
         rocketnet_iocp_batch_counters( worker->owner, batch );
         rocketnet_iocp_commit_receive( worker );
         buffer = &worker->buffers[worker->receive_handoff.worker];
+        batch->held = buffer->num_packets >= buffer->capacity;
     }
     return buffer;
 }
@@ -1656,6 +1662,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
         memset( batch.tally, 0, sizeof( batch.tally ) );
         batch.drops = &iocp->drop_tallies[worker - iocp->workers];
         batch.worker = worker;
+        batch.held = false;
 
         // proofs/tla/RNIocpRetryStop.tla Complete: each receive completion is
         // taken by this worker and reposted.
@@ -4394,6 +4401,7 @@ static void rocketnet_iocp_test_batch( rocketnet_server_iocp_t * iocp, int w, ui
     memset( batch.tally, 0, sizeof( batch.tally ) );
     batch.drops = &iocp->drop_tallies[w];
     batch.worker = worker;
+    batch.held = false;
 
     rocketnet_address_t from;
     memset( &from, 0, sizeof( from ) );
