@@ -9,7 +9,9 @@
 // zero the check reads the wall clock: here the suite's fixed clock
 // (ROCKETNET_UNIT_WALL_CLOCK); the real clock is the functional tier's case
 // test_token_time_game_clock_off_reads_the_wall_clock. The client half here
-// creates a client transport on a configured epoch; the server half drives
+// creates a client transport on a configured epoch (the admit in a development
+// build only: a production build refuses the suite's token, sealed to the
+// development server key, before the clock); the server half drives
 // the server protocol with the timestamp the server transport derives, and
 // the server transport's own reading of token_epoch_unix_seconds is
 // test_unit_token_epoch_compat.cpp's. Time is an argument starting at 1000.0;
@@ -189,8 +191,12 @@ static void test_token_time_game_clock_admits_a_fixed_token()
         check( read.token_epoch_unix_seconds == 0 );
     }
     // the client transport admits the token only by reading the configured
-    // epoch: the wall clock, real or the suite's, is long past its expiry
+    // epoch: the wall clock, real or the suite's, is long past its expiry. A
+    // production build refuses a token sealed to the development server key
+    // before it reads the clock, so the admit runs in a development build
+#if ROCKETNET_DEV
     check( token_time_game_client_create( create, expire, TOKEN_EPOCH_UNIX_SECONDS, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_OK );
+#endif // #if ROCKETNET_DEV
 
     // the server half takes its timestamp from the same epoch and game time,
     // through the functions the server transport calls (its own wiring of the

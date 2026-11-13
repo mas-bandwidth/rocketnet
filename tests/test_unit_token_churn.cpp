@@ -295,7 +295,7 @@ REGISTER_UNIT_TEST( test_server_admits_sequential_fresh_tokens_past_twice_max_cl
 // default 1 MB stack. tc_server_setup and tc_client_init reset each in full.
 
 #if ROCKETNET_DEV
-// the connection requests the server received between two snapshots
+// the connection requests the server received between two counter reads
 static uint64_t tc_requests_since( const struct rocketnet_counters_t * before, const struct rocketnet_counters_t * after )
 {
     return after->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] - before->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED];

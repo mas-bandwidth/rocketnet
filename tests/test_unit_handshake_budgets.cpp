@@ -892,7 +892,7 @@ static void budgets_honest_challenged( struct budgets_server_t * test, const str
 static void budgets_request_token_identifier( uint8_t * token_identifier, const uint8_t * request )
 {
     rocketnet_connect_token_identifier( token_identifier, request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
-                                                          ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES );
+                                                              ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES );
 }
 
 // a token bound to another address: one client connects with it, then a
