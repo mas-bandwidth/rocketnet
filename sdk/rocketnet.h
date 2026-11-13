@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.20"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.21"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        20
+    #define ROCKETNET_VERSION_PATCH                        21
 
 #else // !ROCKETNET_DEV
 
@@ -1815,7 +1815,7 @@ struct rocketnet_server_config_t
 /// Not counted, because the operating system owns it: each worker thread's
 /// stack (the platform default: pthread's default attribute, or the
 /// executable's /STACK reserve, 1 MiB by default, on Windows); on the xdp
-/// transport the page-aligned UMEM, 192 MiB per queue (49152 frames of 4096
+/// transport the page-aligned UMEM, 384 MiB per queue (98304 frames of 4096
 /// bytes), and the AF_XDP rings; on the
 /// io_uring transport its rings and each queue's provided buffer ring; kernel
 /// socket buffers. A custom transport's own memory and a
