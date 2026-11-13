@@ -90,6 +90,7 @@ static const struct receive_latency_row_t receive_latency_rows[] = {
     { "client_portable", "portable", "portable", RECEIVE_LATENCY_CLIENT },
     { "client_gso", "portable", "gso", RECEIVE_LATENCY_CLIENT },
     { "client_msgx", "portable", "msgx", RECEIVE_LATENCY_CLIENT },
+    { "client_iocp", "iocp", "iocp", RECEIVE_LATENCY_CLIENT },
 };
 
 // the phase of each send in the frame
@@ -501,6 +502,7 @@ void rocketnet_test_receive_latency_server_io_uring();
 void rocketnet_test_receive_latency_client_portable();
 void rocketnet_test_receive_latency_client_gso();
 void rocketnet_test_receive_latency_client_msgx();
+void rocketnet_test_receive_latency_client_iocp();
 
 void rocketnet_test_receive_latency_server_gso()
 {
@@ -525,4 +527,9 @@ void rocketnet_test_receive_latency_client_gso()
 void rocketnet_test_receive_latency_client_msgx()
 {
     receive_latency_run_named( "client_msgx" );
+}
+
+void rocketnet_test_receive_latency_client_iocp()
+{
+    receive_latency_run_named( "client_iocp" );
 }

@@ -13889,6 +13889,9 @@ extern void rocketnet_test_receive_latency_server_io_uring();
 extern void rocketnet_test_receive_latency_client_gso();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_receive_latency_client_portable();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_receive_latency_client_iocp();
+#endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 extern void rocketnet_test_receive_latency_client_msgx();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -16338,6 +16341,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_receive_latency_client_gso", rocketnet_test_receive_latency_client_gso, rocketnet_test_client_pin_allows_gso },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_receive_latency_client_portable", rocketnet_test_receive_latency_client_portable, rocketnet_test_client_pin_allows_portable },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_receive_latency_client_iocp", rocketnet_test_receive_latency_client_iocp, NULL },
+#endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_receive_latency_client_msgx", rocketnet_test_receive_latency_client_msgx, rocketnet_test_client_pin_allows_msgx },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
