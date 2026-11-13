@@ -8642,6 +8642,29 @@ static void rocketnet_test_server_uring_wait_sent( struct rocketnet_server_uring
     }
 }
 
+void rocketnet_test_server_uring_probe_needs_multishot()
+{
+    // a kernel with the opcodes and provided buffer rings but no multishot
+    // receive (Linux 5.19: buffer rings came in 5.19, multishot receive in
+    // 6.0) refuses the multishot RECVMSG with -EINVAL. The probe arms one, so
+    // the transport is not available there and create refuses; auto takes
+    // the next transport instead of a server that receives nothing. The seam
+    // gives the probe's receive that answer; 0 gives the kernel's back
+
+#if ROCKETNET_DEV
+    rocketnet_check( rocketnet_server_uring_available() );
+
+    rocketnet_server_uring_test_probe_multishot( -EINVAL );
+    rocketnet_check( !rocketnet_server_uring_available() );
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+    rocketnet_check( rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS ) == NULL );
+
+    rocketnet_server_uring_test_probe_multishot( 0 );
+    rocketnet_check( rocketnet_server_uring_available() );
+#endif // #if ROCKETNET_DEV
+}
+
 void rocketnet_test_server_uring_probe()
 {
     // create discovers an ephemeral port and reports it back; the queue
@@ -17110,6 +17133,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_gso_transport_receive_overflow_counted", rocketnet_test_server_gso_receive_overflow_counted, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_io_uring_transport_server_probe", rocketnet_test_server_uring_probe, rocketnet_server_uring_available },
+    { "test_io_uring_transport_probe_needs_multishot", rocketnet_test_server_uring_probe_needs_multishot, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_dual_stack", rocketnet_test_server_uring_wire_dual_stack, rocketnet_server_uring_available },

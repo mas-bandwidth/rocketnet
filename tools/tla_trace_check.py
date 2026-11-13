@@ -255,8 +255,10 @@ LAYERS = {
     "queue-send": {
         "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
         "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
-                             "length, so it never gets there"},
-        "reach": ["Full", "AgainPosted"],
+                             "length, so it never gets there",
+                     "PublishWaits": "LockRule \"wait\" only, the reversed witness: the code only tries the mutex",
+                     "PublishResumes": "LockRule \"wait\" only, the reversed witness: the code only tries the mutex"},
+        "reach": ["Full", "AgainPosted", "KeptLocked"],
         # the model's Ids grow with MaxFlush, the walk's length: each record
         # carries (steps + 1) * 4 statuses
         "steps": 200,
@@ -267,6 +269,7 @@ LAYERS = {
                                    "READ before the worker can see quit, and the worker arms no READ after it: "
                                    "a READ to cancel is left only when the write and the arm race on two threads",
                      "KernelWakeEnd": "the cancelled READ's completion: no READ is cancelled (CancelWake)"},
+        "reach": ["RecvWaits", "BoundBeforeQuit"],
     },
     "receive": {
         "modules": ["RNUringQueueReceiveLayout.tla", "TraceRNUringQueueReceiveLayout.tla"],

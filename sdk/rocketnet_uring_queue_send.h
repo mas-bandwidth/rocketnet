@@ -15,8 +15,9 @@
 //
 //   main     publish: with the game threads joined, a producer that staged anything
 //            goes to the back of the ready FIFO and the head of the free FIFO
-//            becomes the producer, reset; with no free bank the producer is
-//            kept with its slots for the next send_packets.
+//            becomes the producer, reset; with no free bank, or the mutex
+//            held by the worker (main only tries it), the producer is kept
+//            with its slots for the next send_packets.
 //   worker   claim: takes the oldest ready bank and cuts its staged slots into
 //            runs with the gather (rocketnet_send_gather.h): each run is
 //            staged slots to one destination in staged order, one send and
@@ -140,6 +141,11 @@ struct rocketnet_uring_queue_send_t
     int max_bytes;
     struct rocketnet_uring_queue_send_queue_t * queue;
     void * memory;
+    // some queue's segmented send was accepted: the transport can segment,
+    // so no queue's refusals turn segmentation off (standard/TRANSPORT.md
+    // t2.4 rule 7; each worker's table of refusers stays its own). Any
+    // worker sets it; no lock
+    std::atomic<bool> segment_accepted{ false };
 };
 
 // NULL when max_segments or max_bytes is under 1, or a mutex or the
@@ -155,10 +161,13 @@ uint64_t rocketnet_uring_queue_send_allocation_bytes( int num_queues, int slots 
 void rocketnet_uring_queue_send_destroy( struct rocketnet_uring_queue_send_t * send );
 
 // main, the game threads joined. RNUringQueueSend Publish: true when the queue staged
-// anything and a free bank replaced its producer; false keeps the producer.
+// anything and a free bank replaced its producer; false keeps the producer
+// (PublishKept), also when the worker holds the handoff mutex: main only
+// tries it and never waits.
 bool rocketnet_uring_queue_send_publish( struct rocketnet_uring_queue_send_t * send, int queue );
 
-// main: no bank published and not yet retired, and the producer empty
+// main: no bank published and not yet retired, and the producer empty; false
+// while the worker holds the handoff mutex (main only tries it)
 bool rocketnet_uring_queue_send_idle( struct rocketnet_uring_queue_send_t * send, int queue );
 
 // the worker's

@@ -25,7 +25,7 @@ S1 == [producer |-> 0, ready |-> <<>>, worker |-> -1, free |-> <<1, 2>>,
        num |-> F(0, 0, 0), st |-> F(E, E, E), dest |-> F(Z, Z, Z), pkt |-> F(Z, Z, Z),
        runs |-> {}, cq |-> <<>>, pend |-> F(0, 0, 0), status |-> Stat("none"),
        nextId |-> 1, eagains |-> 0, demand |-> 0, flushes |-> 0, kernelWrite |-> FALSE,
-       pids |-> 0]
+       pids |-> 0, locked |-> FALSE, mainWaits |-> FALSE]
 
 \* Stage(1, TRUE, 0, 0): slot 0 of bank 0 staged to destination 1 as packet 1
 S2 == [S1 EXCEPT !.num = F(1, 0, 0), !.st = F(Two("staged", "empty"), E, E),

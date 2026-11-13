@@ -181,12 +181,110 @@ struct rocketnet_server_uring_t
 
 // ---------------------------------------------------------------------------
 
+// the probe's answer: -1 not yet probed, 0 no, 1 yes
+static std::atomic<int> rocketnet_server_uring_probed{ -1 };
+
+#if ROCKETNET_DEV
+// rocketnet_server_uring_test_probe_multishot: the terminating result the
+// probe's multishot receive is given in place of the kernel's, 0 for the kernel's
+static std::atomic<int> rocketnet_server_uring_test_multishot_res{ 0 };
+#endif // #if ROCKETNET_DEV
+
+#define ROCKETNET_URING_PROBE_RECV                                           1
+#define ROCKETNET_URING_PROBE_CANCEL                                         2
+
+// a multishot RECVMSG over buffer group bgid on an unbound UDP socket, armed
+// as rocketnet_uring_receive_queue_arm arms it, then cancelled: a kernel that
+// takes it ends it with -ENOBUFS (the probe's buffer ring holds no buffer;
+// Linux 7.0 answers so) or -ECANCELED (the cancel first). One without
+// multishot receive (Linux 5.19 has provided buffer rings, multishot receive
+// came in 6.0) refuses it at prep: submission stops at that entry, so the
+// submit does not take both, and were it to, the receive would end -EINVAL;
+// either is a no. Nothing can arrive on the unbound socket, and the cancel
+// ends the receive either way, so the wait is for two completions; a wait
+// for either that passes a second is a refusal too (each completion has its
+// own second, so the probe can take up to two)
+static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int bgid )
+{
+    const int fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
+    if ( fd < 0 )
+    {
+        return false;
+    }
+
+    struct msghdr message;
+    memset( &message, 0, sizeof( message ) );
+    bool ok = false;
+    int receive_res = 0;
+    bool receive_ended = false;
+    int completions = 0;
+
+    struct io_uring_sqe * sqe = io_uring_get_sqe( ring );
+    if ( sqe )
+    {
+        memset( sqe, 0, sizeof( *sqe ) );
+        sqe->opcode = IORING_OP_RECVMSG;
+        sqe->fd = fd;
+        sqe->addr = (uint64_t) (uintptr_t) &message;
+        sqe->len = 1;
+        sqe->ioprio = IORING_RECV_MULTISHOT;
+        sqe->flags = IOSQE_BUFFER_SELECT;
+        sqe->buf_group = (uint16_t) bgid;
+        sqe->user_data = ROCKETNET_URING_PROBE_RECV;
+        struct io_uring_sqe * cancel = io_uring_get_sqe( ring );
+        if ( cancel )
+        {
+            io_uring_prep_cancel64( cancel, ROCKETNET_URING_PROBE_RECV, 0 );
+            cancel->user_data = ROCKETNET_URING_PROBE_CANCEL;
+            ok = io_uring_submit( ring ) == 2;
+        }
+    }
+
+    // the receive's last completion (no IORING_CQE_F_MORE) and the cancel's;
+    // a datagram's completion before them cannot come, and is passed over if it does
+    while ( ok && completions < 2 )
+    {
+        struct __kernel_timespec timeout;
+        timeout.tv_sec = 1;
+        timeout.tv_nsec = 0;
+        struct io_uring_cqe * cqe = NULL;
+        if ( io_uring_wait_cqe_timeout( ring, &cqe, &timeout ) != 0 || !cqe )
+        {
+            ok = false;
+            break;
+        }
+        if ( cqe->user_data == ROCKETNET_URING_PROBE_CANCEL )
+        {
+            completions++;
+        }
+        else if ( cqe->user_data == ROCKETNET_URING_PROBE_RECV && !( cqe->flags & IORING_CQE_F_MORE ) )
+        {
+            receive_res = cqe->res;
+            receive_ended = true;
+            completions++;
+        }
+        io_uring_cqe_seen( ring, cqe );
+    }
+
+#if ROCKETNET_DEV
+    const int test_res = rocketnet_server_uring_test_multishot_res.load( std::memory_order_relaxed );
+    if ( test_res != 0 )
+    {
+        receive_res = test_res;
+    }
+#endif // #if ROCKETNET_DEV
+
+    close( fd );
+    return ok && receive_ended && ( receive_res == -ENOBUFS || receive_res == -ECANCELED );
+}
+
 bool rocketnet_server_uring_available()
 {
-    // the probe: a ring, the five opcodes the workers submit, and a provided buffer ring.
-    // -1 not yet probed, 0 no, 1 yes
+    // the probe: a ring, the five opcodes the workers submit (SENDMSG,
+    // RECVMSG, ASYNC_CANCEL, the wake's READ and the retry TIMEOUT), a
+    // provided buffer ring and a multishot receive over it.
 
-    static std::atomic<int> available{ -1 };
+    std::atomic<int> & available = rocketnet_server_uring_probed;
 
     int known = available.load( std::memory_order_relaxed );
     if ( known >= 0 )
@@ -205,7 +303,7 @@ bool rocketnet_server_uring_available()
                  io_uring_opcode_supported( probe, IORING_OP_RECVMSG ) &&
                  io_uring_opcode_supported( probe, IORING_OP_ASYNC_CANCEL ) &&
                  io_uring_opcode_supported( probe, IORING_OP_READ ) &&
-                 io_uring_opcode_supported( probe, IORING_OP_POLL_ADD );
+                 io_uring_opcode_supported( probe, IORING_OP_TIMEOUT );
 
             io_uring_free_probe( probe );
         }
@@ -217,6 +315,7 @@ bool rocketnet_server_uring_available()
             struct io_uring_buf_ring * buf_ring = rocketnet_uring_receive_buf_ring_setup( &ring, 1, 0, &inverted_resv, &error );
             if ( buf_ring )
             {
+                ok = rocketnet_server_uring_probe_multishot( &ring, 0 );
                 rocketnet_uring_receive_buf_ring_free( &ring, buf_ring, 1, 0, inverted_resv );
             }
             else
@@ -852,7 +951,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
     if ( !rocketnet_server_uring_available() )
     {
-        rocketnet_error( "io_uring transport refused: this kernel does not accept the io_uring ring, opcodes or provided buffer ring the transport needs" );
+        rocketnet_error( "io_uring transport refused: this kernel does not accept the io_uring ring, opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport needs" );
         return NULL;
     }
 
@@ -1516,6 +1615,12 @@ bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ur
     return rocketnet_server_uring_send_idle( uring );
 }
 
+void rocketnet_server_uring_test_probe_multishot( int res )
+{
+    rocketnet_server_uring_test_multishot_res.store( res, std::memory_order_relaxed );
+    rocketnet_server_uring_probed.store( -1, std::memory_order_relaxed );
+}
+
 // the fakes of rocketnet_server_uring_test_place_worker
 static int uring_fake_cpus = 4;
 static bool uring_fake_without_cpu_zero = false;
@@ -1817,6 +1922,7 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_proces
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *, int, int ) {}
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ) { return true; }
+void rocketnet_server_uring_test_probe_multishot( int ) {}
 bool rocketnet_server_uring_test_place_worker( rocketnet_server_uring_test_transport_counters_t *, const struct rocketnet_server_transport_io_operations_t *, int, bool, int,
                                                int, bool, bool, bool, uint64_t *, bool *, int *, int * )
 {
