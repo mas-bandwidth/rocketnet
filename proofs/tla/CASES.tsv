@@ -374,6 +374,7 @@ MCLinkReverseWindowBrokenShort.cfg	MCLinkPatterns.tla	invariant	WindowOrderRever
 MCLinkSlotStore.cfg	MCLinkPatterns.tla	pass	-	check	link	required	-
 MCLinkSlotStoreReorders.cfg	MCLinkPatterns.tla	invariant	SurvivorsInOrder	check	link	required	-
 MCLinkSlotStoreBrokenUncounted.cfg	MCLinkPatterns.tla	invariant	StoreAccounts	check	link	required	-
+MCLinkSlotStoreBrokenNoFree.cfg	MCLinkPatterns.tla	invariant	DeliveredOnce	check	link	required	-
 MCRNDriverSendStagingBrokenRefusesSend.cfg	MCRNDriverSendStaging.tla	invariant	NoRefusedSend	check	rndriversendstaging	required	-
 MCRNServerSendFair.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-
 MCRNServerSendFairWalk.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-

@@ -28,7 +28,7 @@ CONSTANTS
 ASSUME /\ MaxSeq \in Nat \ {0}
        /\ StoreSlots \in Nat \ {0}
        /\ Defect \in {"none", "wrong_period", "skip_lost", "unreversed",
-                      "short_unreversed", "uncounted_full"}
+                      "short_unreversed", "uncounted_full", "no_free"}
 
 VARIABLES
     nextSend,
@@ -158,7 +158,9 @@ SpecReverseWindow == PatInit /\ [][NextReverseWindow]_patVars
 (* slot 1, and the next receive returns 3 before 2.  SurvivorsInOrder      *)
 (* fails here (MCLinkSlotStoreReorders.cfg), as the code does.  Defect =   *)
 (* "uncounted_full" drops a send to a full store without counting it       *)
-(* (StoreAccounts).                                                        *)
+(* (StoreAccounts); "no_free" hands a packet out and leaves its slot held, *)
+(* as a receive that skipped rocketnet_simulator_retire would             *)
+(* (DeliveredOnce).                                                        *)
 (***************************************************************************)
 Held == { s \in Slots : store[s] # 0 }
 
@@ -177,7 +179,7 @@ SlotReceive ==
     /\ Held # {}
     /\ LET s == CHOOSE h \in Held : \A g \in Held : h <= g
        IN /\ delivered' = Append(delivered, store[s])
-          /\ store' = [ store EXCEPT ![s] = 0 ]
+          /\ store' = IF Defect = "no_free" THEN store ELSE [ store EXCEPT ![s] = 0 ]
     /\ UNCHANGED <<wire, sent, pulse, nextSend, window, flushed, draining, storeRefused>>
 
 NextSlotStore == SlotSend \/ SlotReceive \/ DoneStutter

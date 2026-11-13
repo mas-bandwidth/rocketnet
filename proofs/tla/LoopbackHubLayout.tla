@@ -33,10 +33,10 @@
 (* (ROCKETNET_RED_ZONE_BYTES, poisoned in ASan builds) rounded up to the   *)
 (* alignment, and rocketnet_loopback_hub_bytes sizes the block with the    *)
 (* same carves, the server's plus Clients times a client's.  StaysInRegion *)
-(* checks that arithmetic, relative to the first queue: every slot of     *)
-(* every index lies in its queue's carve before the red zone, the red     *)
-(* zone lies in the carve, the carves are disjoint and the block holds    *)
-(* them all.                                                               *)
+(* checks that arithmetic, relative to the first queue, in every state:   *)
+(* the slots head and tail name lie in their queue's carve before the red *)
+(* zone, the red zone lies in the carve, the carves are disjoint and the  *)
+(* block holds them all.                                                   *)
 (*                                                                         *)
 (* Reversed witnesses: FullSlack = 1 is the off-by-one at capacity (the   *)
 (* full test count > capacity), and CounterMod = 8 at capacity 3 is a     *)
@@ -170,16 +170,16 @@ RingIsQueue ==
 WithinCapacity ==
     \A q \in Queues : count[q] <= Cap(q)
 
-\* the block's carve arithmetic: every slot of every index lies in its own
-\* queue's carve before the red zone, the red zone lies in the carve, no
-\* two carves overlap, and the block's size holds every carve
+\* the block's carve arithmetic: the slots head and tail name lie in their
+\* own queue's carve before the red zone, the red zone lies in the carve,
+\* no two carves overlap, and the block's size holds every carve
 StaysInRegion ==
-    /\ \A q \in Queues :
-         /\ RedZone(q) \subseteq CarveOf(q)
-         /\ CarveOf(q) \subseteq 0..BlockBytes-1
-         /\ \A i \in 0..CounterMod-1 :
-              SlotSpan(q, i) \subseteq CarveOf(q) \ RedZone(q)
-    /\ \A q1, q2 \in Queues : q1 # q2 => CarveOf(q1) \cap CarveOf(q2) = {}
+    \A q \in Queues :
+        /\ SlotSpan(q, head[q]) \subseteq CarveOf(q) \ RedZone(q)
+        /\ SlotSpan(q, tail[q]) \subseteq CarveOf(q) \ RedZone(q)
+        /\ RedZone(q) \subseteq CarveOf(q)
+        /\ CarveOf(q) \subseteq 0..BlockBytes-1
+        /\ \A q2 \in Queues \ {q} : CarveOf(q) \cap CarveOf(q2) = {}
 
 \* an empty queue has restarted both indices
 EmptyIsRestarted ==

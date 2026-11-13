@@ -33,7 +33,11 @@ destinations 0 and 2 share shard 0, which is why the walk's address predicate
 matters.
 
 Generations run modulo `GenMod` (2 in the instance); the code's are 64-bit
-and never wrap. The model keeps one stale handle per slot, the last one
+and never wrap, because `rocketnet_simulator_insert` refuses a send whose
+lowest free slot already holds generation `UINT64_MAX`: the packet is dropped
+and counted in `store_refused` (warned once), with a free slot left. The
+model does not have that refusal (it is 2^64 reuses of one slot away), so its
+`Send` drops only when no slot is free. The model keeps one stale handle per slot, the last one
 retired (`oldGen`, `oldValid`), and a reused slot's generation differs from
 it after one bump at any modulus of 2 or more, so the comparison is exact for
 that handle.
@@ -80,7 +84,9 @@ that handle.
 - **`SelectMatchesReference`**: every receive chooses the slot the selection
   rule names (the audit's comparison, at every step).
 - **`SendTakesLowest`**: send places a packet in the lowest free slot and
-  drops it only when no slot is free.
+  drops it only when no slot is free. The code also drops (and counts) a
+  send whose lowest free slot's generation is exhausted, which the model
+  leaves out (see the generations paragraph above).
 - **`NoStaleRemoval`**: a stale handle never retires a live packet.
 - **`HintBelowFree`**: every slot below `free_hint` is occupied
   (`rocketnet_simulator_audit_index`'s check).

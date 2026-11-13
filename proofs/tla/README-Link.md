@@ -42,12 +42,30 @@ them as one disjunct in its `Next`.
 
 What the path does matches what `sdk/rocketnet_network_simulator.cpp` injects: loss is
 decided when the packet is sent (`rocketnet_network_simulator_send`, the
-`packet_loss_percent` roll), a duplicate gets its own latency and jitter (the
-`duplicate_percent` branch), and delivery order is not send order (the file's header:
-"Slot-index order is not delivery-time order and it is not FIFO"). The simulator's
-"queue full, packet dropped" is a harness artefact at 4096 slots and is not modelled:
-`Capacity` disables `Send` and `Duplicate` rather than dropping, so it is a model-size
-knob and never a hidden loss source.
+`packet_loss_percent` roll), and a duplicate gets its own latency and jitter (the
+`duplicate_percent` branch).
+
+Delivery order is not send order, even with no jitter. The simulator holds each packet
+in the lowest free slot of its store (`rocketnet_simulator_insert`), and a receive
+hands out the lowest held slot that is due (`rocketnet_network_simulator_receive` and
+`_receive_any`), not the oldest packet and not the one due first. A slot freed by a
+receive is taken by the next send, below packets sent earlier and still held, so two
+packets due together can leave in the reverse of their send order (sends 1 and 2,
+receive 1, send 3: the next receive returns 3 before 2). The simulator is therefore
+`Link` with `Reordering = TRUE`; a model that runs over the simulator must not rely on
+`Reordering = FALSE`, which is an in-order path the simulator does not give.
+`SpecSlotStore` in `MCLinkPatterns` shows the slot order (`MCLinkSlotStoreReorders.cfg`
+fails `SurvivorsInOrder`, as the code does).
+
+A send to a full store is dropped and counted (`store_refused`, warned once per
+simulator), at the capacity the simulator was created with; a free slot whose
+generation is exhausted refuses the same way. `SpecSlotStore` models the store-full
+drop and its count (`StoreAccounts`). In `Link` itself `Capacity` disables `Send` and
+`Duplicate` rather than dropping: it is a model-size knob, not the store's capacity,
+and under the deterministic patterns `Link` has no store-full loss. (`Link.tla`'s own
+comment still calls the store-full drop a harness artefact that is not modelled; the
+module text is left as it is because every model that instantiates `Link` reads it
+and would need fresh records.)
 
 ### Loss patterns
 
@@ -102,28 +120,55 @@ cautions:
 and server transport configs are these two model features and nothing else; zero is off.
 
 - `Pattern = "everynth"` is `Send` losing the N-th, 2N-th, ... send (`N = BurstLen`; the
-  counter wraps at N). The code counts from the endpoint's first send in
+  counter wraps at N). The code counts every send, from the endpoint's first, in
   `rocketnet_network_simulator_send` before any random draw, so a lost send takes no
-  draw.
+  draw and is counted.
 - `ReverseWindow(w)` reverses the trailing `w` copies on the wire in place. The code
   buffers each window of W sends and emits it reversed, whole, in
   `rocketnet_network_simulator_flush_window`; the transports call it when the window
-  fills and at the end of every `send_packets` (and of the update that sends), so a
-  short window is reversed too and nothing is held across updates. A short window is
-  `ReverseWindow(w)` with `w < W`.
+  fills and at the end of every `send_packets` (and of the update that sends), and it
+  flushes any positive count, so a short window is reversed too and nothing is held
+  across updates. A short window is `ReverseWindow(w)` with `w < W`; `SpecReverseWindow`
+  flushes at any count from 1 (`FlushWindow`).
 
-Cases of `MCLinkPatterns` (`SpecEveryNth`, `SpecReverseWindow`), each invariant with a
-reversed witness that sets `Defect` to break it:
+Cases of `MCLinkPatterns` (`SpecEveryNth`, `SpecReverseWindow`, `SpecSlotStore`), each
+invariant with a reversed witness that sets `Defect` to break one rule of the code:
 
 | Invariant | Pass case | Reversed witness (`Defect`) |
 |---|---|---|
-| `EveryNthDropped` | `MCLinkEveryNth.cfg` | `MCLinkEveryNthBrokenPeriod.cfg` (`wrong_period`: drops the (N-1)-th) |
-| `WindowOrderReversed` | `MCLinkReverseWindow.cfg` | `MCLinkReverseWindowBrokenOrder.cfg` (`unreversed`: the window is delivered in send order) |
-| `SurvivorsInOrder` | `MCLinkEveryNth.cfg` (loss alone keeps order) | `MCLinkReverseWindowBreaksInOrder.cfg`: a model that relies on in-order delivery breaks under the reversal |
-| `MCPatternsTypeOK` | every case | `MCLinkEveryNthBrokenCounter.cfg` (`overrun`: the send counter jumps past `MaxSeq`) |
+| `EveryNthDropped` | `MCLinkEveryNth.cfg` | `MCLinkEveryNthBrokenPeriod.cfg` (`wrong_period`: drops the (N-1)-th); `MCLinkEveryNthBrokenCounter.cfg` (`skip_lost`: the counter does not count the send it drops, so from the N-th on every send is dropped) |
+| `WindowOrderReversed` | `MCLinkReverseWindow.cfg` (full and short windows) | `MCLinkReverseWindowBrokenOrder.cfg` (`unreversed`: every window is delivered in send order); `MCLinkReverseWindowBrokenShort.cfg` (`short_unreversed`: only full windows are reversed) |
+| `SurvivorsInOrder` | `MCLinkEveryNth.cfg` (loss alone keeps order on the wire) | `MCLinkReverseWindowBreaksInOrder.cfg`: a model that relies on in-order delivery breaks under the reversal; `MCLinkSlotStoreReorders.cfg`: the slot store itself reorders |
+| `StoreAccounts` | `MCLinkSlotStore.cfg` | `MCLinkSlotStoreBrokenUncounted.cfg` (`uncounted_full`: a send to a full store is dropped uncounted) |
+| `DeliveredOnce` | `MCLinkSlotStore.cfg` | `MCLinkSlotStoreBrokenNoFree.cfg` (`no_free`: a receive leaves its slot held, so the packet is handed out twice) |
+| `MCPatternsTypeOK` | every case | none of its own |
+
+`WindowOrderReversed` says that what the wire hands out is a prefix of the flushed
+windows, each reversed. `SpecEveryNth` and `SpecReverseWindow` deliver from `Link`'s
+wire in wire order, and the window harness drains each flushed window before the next
+send, so their order properties are about the pattern alone: how the store orders
+packets of two windows, or of two sends, due together is `SpecSlotStore`'s, and there
+the order is the slot order.
 
 `MCLinkSpecEveryNth.cfg` and `MCLinkWireFairEveryNth.cfg` run `MCLink` under `"everynth"`
 with `Spec` and `SpecWireFair`: `ResentIsDelivered` and `LinkDelivers` hold.
+
+### The live setting: `MCLinkReconfigure`
+
+A setting change is a hand-over in two steps, as `rocketnet_network_simulator_reconfigure`
+and `rocketnet_network_simulator_take_setting` do it: the caller writes a pending record
+under the simulator's mutex and returns (`MCReconfigure`), and the thread that owns the
+simulator, before a send, try-acquires the mutex and copies the record into the setting
+in force when it gets it (`Take`). A busy mutex is no `Take`: the old setting stays in
+force and the record waits, so a send may act on the old setting after the change
+(`test_network_simulator_take_setting_does_not_wait`). `SendUsesForce` holds that every
+send acts on the setting last asked for unless a change was still waiting at that send;
+`NoInFlightDrop` that a change removes nothing already in flight.
+
+| Invariant | Pass case | Reversed witness (`Defect`) |
+|---|---|---|
+| `SendUsesForce` | `MCLinkReconfigure.cfg` | `MCLinkReconfigureBrokenSetting.cfg` (`stale`: the take clears the flag without copying the record) |
+| `NoInFlightDrop` | `MCLinkReconfigure.cfg` | `MCLinkReconfigureBrokenInFlight.cfg` (`inflight`: a change to `"lose"` clears the wire) |
 
 ## What the module abstracts away
 
@@ -272,5 +317,5 @@ original parameters and is not a completed proof.
 | 15 | `MCLinkEveryNthBrokenPeriod.cfg` | invariant / EveryNthDropped |
 | 16 | `MCLinkReverseWindow.cfg` | pass |
 | 17 | `MCLinkReverseWindowBrokenOrder.cfg` | invariant / WindowOrderReversed |
-| 18 | `MCLinkEveryNthBrokenCounter.cfg` | invariant / MCPatternsTypeOK |
+| 18 | `MCLinkEveryNthBrokenCounter.cfg` | invariant / EveryNthDropped (MCPatternsTypeOK until 2026-11-13, when the witness moved from a harness overrun to the send counter) |
 | 19 | `MCLinkReverseWindowBreaksInOrder.cfg` | invariant / SurvivorsInOrder |
