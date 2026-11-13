@@ -450,9 +450,13 @@ ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNE
 # touch, so the loop must not wait on the load, the listen line or the
 # clients (proofs/tla/RNLiveFleetRun.tla, HeartbeatFromArm). teardown stops it;
 # an orchestrator killed without its trap (SIGKILL) runs no teardown, so the
-# loop also ends with it ($$ is this script's pid, also in the subshell) and
-# the watchdog then fires (OrchestratorDies).
-( while [ ! -f "$tmp/stop-heartbeat" ] && kill -0 "$$" 2>/dev/null; do
+# loop also ends when this script is gone or a zombie ($$ is this script's
+# pid, also in the subshell; kill -0 passes on a zombie) and the watchdog
+# then fires (OrchestratorDies).
+( while [ ! -f "$tmp/stop-heartbeat" ]; do
+      case $( ps -o stat= -p "$$" 2>/dev/null | tr -d ' ' ) in
+          ''|Z*) break ;;
+      esac
       ssh -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" touch "~/rocketnet-live/heartbeat" >/dev/null 2>&1
       sleep 5
   done ) &
