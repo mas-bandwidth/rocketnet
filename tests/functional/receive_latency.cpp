@@ -357,15 +357,15 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 
         // client direction: the clients update late in each frame, two frames
         // past the server's last send
-#if ROCKETNET_DEV
-        const uint64_t opens_before = rocketnet_crypto_tally_get().aead_open;
-#endif // #if ROCKETNET_DEV
         for ( int j = 0; j < frames + 2; j++ )
         {
             const double now = receive_latency_wait_until( start + ( j + RECEIVE_LATENCY_CLIENT_PHASE ) / rate );
             client_update[(size_t) j] = now;
             for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
             {
+#if ROCKETNET_DEV
+                const uint64_t opens_before = rocketnet_crypto_tally_get().aead_open;
+#endif // #if ROCKETNET_DEV
                 rocketnet_client_update( clients[c], now );
                 const struct rocketnet_message_batch_t * batch;
                 while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL )
@@ -386,12 +386,11 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
                     }
                 }
                 rocketnet_client_send_packets( clients[c] );
-            }
-        }
 #if ROCKETNET_DEV
-        client_thread_opens = rocketnet_crypto_tally_get().aead_open - opens_before;
+                client_thread_opens += rocketnet_crypto_tally_get().aead_open - opens_before;
 #endif // #if ROCKETNET_DEV
-    } );
+            }
+        } } );
 
     // the server, on an absolute schedule
 
