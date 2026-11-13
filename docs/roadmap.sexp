@@ -721,9 +721,6 @@
    :text "MCLoopbackQueue.cfg (Capacity 4, BacklogMax 2) never fills the queue, so Send's full-drop branch is never explored (COVERAGE.tsv says so), and Drop does not increment dropped although loopback_client_receive and loopback_server_receive_batch count it. Give the cfg a backlog that reaches the drop and model the counter, with a reversed witness of an uncounted drop."
    :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-10 (read, not run)")
 
-   :text "RNOrderingWrap (the delivery reservation, the duplicate's reservation and the deferral in rn_ordered_receive), RNWindow and RNWindowLayout (rn_window_receive_accept) and RNHeldOwnership have no tests/tla_trace_*.cpp walk. rn_window_receive_duplicate is in no model's actions: it repeats Accept's duplicate test, and it agrees with rn_window_receive_accept only by reading the two functions: tools/tla_trace_check.py does not check the code's receive path against them, so an action reordered in the code stays green against the model. Give the channel receive path a trace walk that emits Receive, ReceiveDuplicate and ReceivePartial with the read index, the held set and the deliveries, checked against RNOrderingWrap."
-   :date "2026-11-13" :origin "Ordered duplicate scan fix")
-
   (item "ci-functional-step-name-per-os" :group "review-v1-2" :area "github"
    :title "The functional suite step says 'on Linux' on the macOS runner"
    :text "One step of .github/workflows/ci.yml, 'Run functional suite (automatic transport order — the fall, on Linux; RSS enforced)', runs on the Linux and the macOS rows, so docs/PLATFORMS.md's macOS 27 row, which must name the step word for word (tools/check_platform_policy.py), reads 'on Linux'. Rename the step so it names no OS (or give each OS its own step), and change tools/planted_violations.tsv and both PLATFORMS.md rows in the same commit."
