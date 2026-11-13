@@ -105,7 +105,7 @@ VARIABLES
 
 hist == << left, lastC, lastS, bad >>
 vars == << count, client, slot, gen, live, tOpen, tGen, order, pc, cursor, hd, scan, run, attempts,
-           hist, quit, retries, stalls, retires >>
+           left, lastC, lastS, bad, quit, retries, stalls, retires >>
 bank == << count, client, slot, gen, live, tGen >>
 
 Min(a, b) == IF a < b THEN a ELSE b
