@@ -116,8 +116,8 @@ ROCKETNET_SERVER_NUM_OS_CPUS=1`), on the build in
 | `total_public_required_bytes` | 42,130,217,245 |
 | `server_public_required_bytes` (one block) | 20,057,063,245 |
 
-The touched memory is a measurement of an earlier source, whose server plan
-was larger: peak RSS 1,687,416 kB in a 64G guest and 1,701,968 kB in a 24G
+The touched memory is a measurement of an earlier source, whose plan
+differed: peak RSS 1,687,416 kB in a 64G guest and 1,701,968 kB in a 24G
 guest, and a 16G guest refused the server create with `OUT_OF_MEMORY`.
 
 The step sizes the guest as `need = server plan + 1000 * touched_per_client_bytes`
@@ -642,8 +642,12 @@ for t in portable gso io_uring xdp loopback; do
   ./bin/transport_memory 1000 1416 "$t" 0 --plan-only
 done
 ./bin/transport_memory 1000 1416 xdp 7 --plan-only
+./bin/transport_memory 1000 1416 io_uring 4 --plan-only
 # Socket buffer and XDP ring requests:
-./bin/transport_memory 1000 1416 gso 0 --session-plan-only
+for t in portable gso io_uring xdp; do
+  ./bin/transport_memory 1000 1416 "$t" 0 --session-plan-only
+done
+./bin/transport_memory 1000 1416 xdp 7 --session-plan-only
 ```
 
 `bin/load` still performs its brief local warm-up connection cycle before the
@@ -837,12 +841,11 @@ directions:
      4-byte fields and one pointer) stay untouched until messages actually
      occupy those slots.
    - The Linux kernel only faults physical pages into Resident Set Size (RSS)
-     when bytes are written. An earlier recorded Linux x86-64 run of
-     `./bin/transport_memory 1000 1416 portable` allocated
-     `live_allocator_bytes = 495,178,594` (472.24 MiB) of transport arenas at
-     startup, while `process_peak_rss_bytes` after `create` and `start` is only
-     `53,215,232` bytes (50.75 MiB) until clients connect and fill their
-     message rings. Capacity planning must size host RAM for the
+     when bytes are written. In an earlier recorded Linux x86-64 run of
+     `./bin/transport_memory 1000 1416 portable`, `process_peak_rss_bytes`
+     after `create` and `start` was only `53,215,232` bytes (50.75 MiB), a
+     tenth of the portable transport's allocator plan in Table 4, until
+     clients connect and fill their message rings. Capacity planning must size host RAM for the
      touched working set under peak load plus the OS/kernel resources below,
      never from idle startup RSS.
 

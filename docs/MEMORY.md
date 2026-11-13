@@ -105,7 +105,7 @@ client at 10 Hz (10 * 1,500 * 8 = 120,000 bits/s, about 120 kbps). The
 per-client send budget is 256 kbps (256 / 120 = 2.13). The largest message
 is `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1` (1,415 bytes). That is above every
 one-record limit (`rocketnet_max_unfragmented_message_bytes`: 1,411 bytes for
-`UNRELIABLE`, less for the other modes), so a 1,415-byte message is sent in up
+`UNRELIABLE` and `UNRELIABLE_WITH_ACK_RECEIPT`, less for the other modes), so a 1,415-byte message is sent in up
 to two parts, and an unreliable one is sent as its reliable type. Over the
 default 10 s connection timeout, that rate is 100 messages; a 1,415-byte
 message can take two window numbers, so the reliable window is 256. The receive buffer is 142,400
@@ -333,8 +333,9 @@ own queue. Each GSO queue has three send banks of 16384 slots, one of them
 taking sends at a time. Each io_uring queue has three send banks, one of them
 taking sends at a time; a bank's slots are sized at create from the client
 count and the queue count (twice the queue's share of 18 packets a client an
-update), at least 4096 and at most 32768. So adding queues adds send room,
-though one queue's room still bounds what one update stages to the
+update), at least 4096 and at most 32768. Adding GSO queues adds send room;
+adding io_uring queues splits the same total between them until a queue
+reaches the 4096 floor. One queue's room bounds what one update stages to the
 destinations that hash to it. Each staged transport reports its remaining room
 (`rocketnet_server_transport_send_capacity_available`), so the message
 layer's send pass stops where the next unserved client waits and resumes
