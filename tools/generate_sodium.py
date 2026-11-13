@@ -125,12 +125,12 @@ UPSTREAM_ADAPTATIONS = {
 # the stored value's pattern, the number of stores cast: a re-vendor that
 # changes the count fails, as a conversion does)
 NARROWING_STORES = {
-    'crypto_core/ed25519/ref10/fe_25_5/fe.h': [('fe25519_tobytes(', 's', 'unsigned char', r'.*>>.*', 0)],
+    'crypto_core/ed25519/ref10/fe_25_5/fe.h': [('fe25519_tobytes(', 's', 'unsigned char', r'.*>>.*', 32)],
     'crypto_core/ed25519/ref10/ed25519_ref10.c': [
-        ('sc25519_mul(', 's', 'unsigned char', r'.*>>.*', 0), ('sc25519_muladd(', 's', 'unsigned char', r'.*>>.*', 0),
-        ('sc25519_reduce(', 's', 'unsigned char', r'.*>>.*', 0), ('slide_vartime(', 'r', 'signed char', r'cmp', 0)],
+        ('sc25519_mul(', 's', 'unsigned char', r'.*>>.*', 32), ('sc25519_muladd(', 's', 'unsigned char', r'.*>>.*', 32),
+        ('sc25519_reduce(', 's', 'unsigned char', r'.*>>.*', 32), ('slide_vartime(', 'r', 'signed char', r'cmp', 2)],
     'crypto_stream/salsa20/ref/salsa20_ref.c': [
-        ('stream_ref(', 'in', 'unsigned char', r'u', 0), ('stream_ref_xor_ic(', 'in', 'unsigned char', r'u', 0)],
+        ('stream_ref(', 'in', 'unsigned char', r'u', 1), ('stream_ref_xor_ic(', 'in', 'unsigned char', r'u', 1)],
 }
 
 
@@ -479,12 +479,12 @@ int _crypto_stream_salsa20_pick_best_implementation(void);
     # original translation-unit boundary, just as a separate build would.
     push = '#if defined(__GNUC__) && !defined(__clang__)\n#pragma GCC push_options\n#endif\n'
     pop = '\n#if defined(__GNUC__) && !defined(__clang__)\n#pragma GCC pop_options\n#endif\n'
-    source = replace_counted(source, '#include "sodium.h"', '#include "sodium.h"\n#if defined(HAVE_AVXINTRIN_H)\n#include <immintrin.h>\n#endif', -1, 'sodium.c')
+    source = replace_counted(source, '#include "sodium.h"', '#include "sodium.h"\n#if defined(HAVE_AVXINTRIN_H)\n#include <immintrin.h>\n#endif', 1, 'sodium.c')
     sections = re.split(r'(?=/\* =+ sodium_[^\n]+\.c =+ \*/)', source)
     source = sections[0] + ''.join(push + unit + pop for unit in sections[1:])
     # This standard feature-test macro belongs to the whole translation
     # unit; undefining it is itself diagnosed by GCC.
-    source = replace_counted(source, '#undef __STDC_WANT_LIB_EXT1__\n', '', -1, 'sodium.c')
+    source = replace_counted(source, '#undef __STDC_WANT_LIB_EXT1__\n', '', 1, 'sodium.c')
     for path in manifest['sources']:
         names = manifest['renames'].get(path, [])
         # a rename is a #define over the file's text: one whose identifier
