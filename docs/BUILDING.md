@@ -159,12 +159,15 @@ without CMake, compile with `-DROCKETNET_DEV=0` for a production archive (and
 value) so `rocketnet.h` matches the archive, and link against the C++ standard
 library runtime (`-lstdc++` on Linux, `-lc++` on macOS) and the required
 platform libraries (on Linux: `-lbpf -lxdp -luring -lstdc++ -lpthread -lm`,
-where `-lbpf -lxdp` apply only when the library was built with XDP and
+where `-lbpf -lxdp` apply only when the library was built with XDP, with
+`-lxdp` omitted for the legacy-libbpf provider (Ubuntu 22.04, which has no
+libxdp; `-lbpf` alone carries AF_XDP there), and
 `-luring` applies only when the library was built with `io_uring`; on macOS:
 `-lc++ -lpthread -lm -framework CoreFoundation`).
 
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
-Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
+Threads and the Linux bpf/xdp and liburing dependencies (liburing when the
+library was built with `io_uring`) on the consuming machine. Sodium
 is compiled into each SDK library with private symbol names; no sodium header,
 DLL or package is required by consumers. Dependency metadata contains no
 producer paths. Shared consumers inherit the Windows DLL import definition.

@@ -47,7 +47,8 @@ the strict set itself. These directory-scoped options apply to RocketNet's own
 targets and do not propagate through the installed package or namespaced
 targets into a consuming project.
 
-Binaries and libraries land in `bin/`. On macOS, [docs/MACOS.md](MACOS.md)
+Shared libraries and executables land in `bin/`; static archives (and Windows
+import libraries) stay in the build tree. On macOS, [docs/MACOS.md](MACOS.md)
 is the guide: the build, the two transports and how to pin them, the client's
 threads and App Nap, socket errors, the file-descriptor limit, the application
 firewall prompt, lldb, fuzz corpus replay, and the commands that verify a Mac.
@@ -94,7 +95,11 @@ sibling binary that does), belongs in the functional suite:
     ./bin/functional
 
 Each functional case targets completion within **60 seconds**, with a hard
-**120-second maximum**, including Debug, sanitizer and emulated builds. Cases
+**120-second maximum** times `ROCKETNET_TEST_CASE_TIME_SCALE` (unset, the
+scale is 1). The legs that set it are named in `tests/time_scale.h`: the
+nightly macOS TSan runs (30), the nightly Linux threaded TSan leg (4), the
+Linux Debug and LSan functional runs (2) and the Windows development Debug run
+(2, or 4 nightly). `ROCKETNET_NIGHTLY_NO_TIMEOUT=1` removes the limit. Cases
 should stop as soon as their correctness checks finish; they do not wait out
 that budget. The live message matrix reports elapsed time against both bounds,
 while preserving delivery, ordering, receipt and cleanup checks. This budget
@@ -276,9 +281,10 @@ To build a universal (arm64 and x86_64) library and the suites:
     cmake --build build-universal --clean-first --parallel 4
     lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
 
-Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
+Both `lipo -info` lines name `x86_64 arm64`. The shared libraries and executables of
 every build tree land in the checkout's `bin/` (`CMakeLists.txt`), so `--clean-first` relinks
-them against the universal objects when a native build ran first; without it
+them against the universal objects when a native build ran first (the static
+archive is in the build tree itself); without it
 CMake sees the newer native files and skips the link. To read the deployment
 target on
 each slice:
@@ -289,9 +295,9 @@ each slice:
 Both print `minos 12.0`; the static archive carries the same load command in
 each member, read after `lipo -thin <arch>` and `ar -x`. CMake compiles each
 architecture in its own clang pass, so the vendored sodium builds its x86 asm
-into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
-is embedded once with the host `xxd` and the generated header is
-architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
+into the x86_64 slice and its ARM path into the arm64 slice. The XDP object is
+not built on macOS (Linux only), so a universal build embeds none.
+The `-fcf-protection` hardening option is x86-only, so
 the compiler-flag check (`CMakeLists.txt`) drops it for a fat compile while the stack protector
 and the other Release flags stay on both slices.
 
