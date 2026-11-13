@@ -12,7 +12,7 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. At this revision, the full label is
-`"v1.1.9"` and the integers are `1.1.9`. The development branch uses
+`"v1.1.10"` and the integers are `1.1.10`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The header label does not identify the current checkout as a release. Check
@@ -22,7 +22,7 @@ Advancing a label alone neither tags nor publishes a release.
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.1.9` and
+version. It exports `RocketNet_VERSION_STRING` as `v1.1.10` and
 `RocketNet_VERSION_PRERELEASE` as an empty string. There is no separate public
 prerelease macro.
 
@@ -137,6 +137,15 @@ rows: both `tools/release.py` and the second
 check on the tag skip them for a point release and print each as `MINOR ONLY`.
 The nightly tier still runs on `main`'s schedule; none of it is deleted or
 muted, and a red in it is fixed in the next point release.
+
+Inside the per-commit tier, from v1.1.10 a point release and every landing
+(`tools/land.py` without `--full`) are light: the jobs a `full` row names
+(functional suites, transport matrix, happy path, sanitizer legs, fuzz smoke)
+still run on every commit and are printed with their result, but do not gate;
+the light jobs (builds and unit suites on every platform, lint, checks,
+instruction count, static analysis, docs, Release Check) do. A red FULL job is
+fixed in the next point release. A minor or major release and a pre-release
+hold every job.
 
 A version is judged by the gates in force for it: the gates that were the
 release requirement from v1.0.0-preview-6 (the per-commit runs green, Nightly

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Land a pull request into main only when every per-commit check on its exact head is green.
 
-  python3 tools/land.py <pr number> [--dry-run] [--repo owner/name]
+  python3 tools/land.py <pr number> [--dry-run] [--full] [--repo owner/name]
+
+Light by default: the jobs a `full` row in tools/release_gates.txt names are
+printed with their result but do not gate the landing (owner, 2026-11-13:
+point releases and their landings have light tests only); --full holds them too.
 
 A per-commit job that runs past its two-minute timeout-minutes concludes
 `cancelled`, not `failure`, so a red mark never appears and a merge that only
@@ -11,7 +15,8 @@ looks for failures goes ahead without a verdict. This tool merges only when:
     main's current head (main is an ancestor of the head: strict);
   - for every `pull_request` gate in tools/release_gates.txt, on exactly the
     head commit, the newest completed run (its newest attempt) has every job
-    `success`, except jobs a `skip` row names (skipped by their own `if:`);
+    `success`, except jobs a `skip` row names (skipped by their own `if:`)
+    and, without --full, jobs a `full` row names (printed, not gating);
     cancelled, timed out, skipped without a row, missing, queued, in progress
     and failure all refuse, by name;
   - every required job name in .github/rulesets/main.json (main's) appears.
@@ -44,7 +49,7 @@ POLL_SECONDS = 20
 MERGE_METHOD = "merge"
 
 
-def judge(api, repo, number, out, gates, cap, slack, local_ruleset=None):
+def judge(api, repo, number, out, gates, cap, slack, local_ruleset=None, full=False):
     """Print the verdict; return (ok, plan) where plan lists cap-cancelled reruns or None."""
     pr = api.get(f"/repos/{repo}/pulls/{number}")
     sha = pr["head"]["sha"]
@@ -74,7 +79,7 @@ def judge(api, repo, number, out, gates, cap, slack, local_ruleset=None):
         print(f"NOTE  {rg.MAIN} has no {rg.RULESET_PATH} yet; holding the head to this checkout's", file=out)
     if contexts is None:
         say(False, f"{rg.RULESET_PATH} is missing on {rg.MAIN}: no list of required job names to hold the head to")
-    verdicts, _ = rg.evaluate(ctx, gates, ("pull_request",), None, contexts, label)
+    verdicts, _ = rg.evaluate(ctx, gates, ("pull_request",), None, contexts, label, light=not full)
     rerun, other = {}, []
     for verdict in verdicts:
         print(verdict.line(), file=out)
@@ -125,9 +130,9 @@ def rerun_text(number, sha, rerun, cap):
 
 
 def land(api, repo, number, dry_run=False, out=sys.stdout, gates=None, sleep=time.sleep, clock=time.monotonic,
-         cap=CAP_SECONDS, slack=CAP_SLACK_SECONDS, wait_minutes=WAIT_MINUTES, local_ruleset=None):
+         cap=CAP_SECONDS, slack=CAP_SLACK_SECONDS, wait_minutes=WAIT_MINUTES, local_ruleset=None, full=False):
     gates = gates if gates is not None else rg.load_gates()
-    ok, rerun, sha = judge(api, repo, number, out, gates, cap, slack, local_ruleset)
+    ok, rerun, sha = judge(api, repo, number, out, gates, cap, slack, local_ruleset, full)
     if rerun:
         text = rerun_text(number, sha, rerun, cap)
         if dry_run:
@@ -151,7 +156,7 @@ def land(api, repo, number, dry_run=False, out=sys.stdout, gates=None, sleep=tim
                 print(f"REFUSE: the re-run did not finish within {wait_minutes} minutes", file=out)
                 return 1
             sleep(POLL_SECONDS)
-        ok, rerun, sha2 = judge(api, repo, number, out, gates, cap, slack, local_ruleset)
+        ok, rerun, sha2 = judge(api, repo, number, out, gates, cap, slack, local_ruleset, full)
         if rerun or sha2 != sha:
             if rerun:
                 print("REFUSE: cancelled again after the one re-run", file=out)
@@ -171,10 +176,12 @@ def main(argv):
     parser.add_argument("number", type=int)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--repo", default=rg.REPOSITORY)
+    parser.add_argument("--full", action="store_true", help="hold the FULL jobs too (a minor release's landing)")
     args = parser.parse_args(argv[1:])
     try:
         api = rg.Api(rg.token_from_environment())
-        return land(api, args.repo, args.number, args.dry_run, local_ruleset=rg.ROOT / rg.RULESET_PATH)
+        return land(api, args.repo, args.number, args.dry_run, local_ruleset=rg.ROOT / rg.RULESET_PATH,
+                    full=args.full)
     except (rg.ApiError, rg.GatesError) as error:
         print(f"ERROR: {error}")
         return 2

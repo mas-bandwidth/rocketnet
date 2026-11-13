@@ -32,7 +32,7 @@ RULESET_PATH = ".github/rulesets/main.json"
 REPOSITORY = "mas-bandwidth/rocketnet"
 MAIN = "main"
 
-KINDS = ("run", "run-if-ran", "jobs", "jobs-if-ran", "job", "skip", "tlc-rerun", "tag")
+KINDS = ("run", "run-if-ran", "jobs", "jobs-if-ran", "job", "skip", "full", "tlc-rerun", "tag")
 EVENTS = ("push", "pull_request", "nightly", "tag")
 VERSION = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$")
 SLICE = re.compile(r"^TLC re-run slice (\d+)/(\d+)$")
@@ -363,23 +363,28 @@ def deciding_run(ctx, gate, event):
     return run, None, note
 
 
-def judge_run(ctx, gate, event):
+def judge_run(ctx, gate, event, light_jobs=False):
     run, red, note = deciding_run(ctx, gate, event)
     if red:
         return red
     conclusion = run.get("conclusion")
     ok = conclusion == "success"
+    if not ok and light_jobs:
+        # a red FULL job turns the whole run red; the workflow's jobs gate
+        # judges it job by job, holding only the LIGHT jobs
+        return Verdict(gate, True, f"{describe(run)}{note}: {conclusion}; light: judged job by job by its jobs gate",
+                       runs=[run])
     return Verdict(gate, ok, f"{describe(run)}{note}: {conclusion}", runs=[run])
 
 
-def judge_jobs(ctx, gate, event, skips):
+def judge_jobs(ctx, gate, event, skips, full=frozenset()):
     run, red, note = deciding_run(ctx, gate, event)
     if red:
         return red
     jobs = ctx.jobs(run["id"])
     if not jobs:
         return Verdict(gate, False, f"{describe(run)}{note}: ZERO jobs reported", runs=[run])
-    good, skipped, bad = 0, 0, []
+    good, skipped, bad, full_red = 0, 0, [], []
     for job in jobs:
         name = job.get("name", "")
         conclusion = job.get("conclusion") if job.get("status") == "completed" else job.get("status")
@@ -387,11 +392,18 @@ def judge_jobs(ctx, gate, event, skips):
             good += 1
         elif conclusion == "skipped" and name in skips:
             skipped += 1
+        elif name in full:
+            full_red.append((name, conclusion, seconds(job)))
         else:
             if conclusion == "skipped":
                 conclusion = "skipped (no skip row in tools/release_gates.txt)"
             bad.append((name, conclusion, seconds(job), run))
     detail = f"{describe(run)}{note}: {good} success, {skipped} skipped as listed"
+    if full:
+        detail += f"; light: {len(full)} FULL jobs do not gate"
+    if full_red:
+        detail += ("; FULL NOT GREEN (does not gate; record it for the next point release): "
+                   + "; ".join(f"{n}: {c}" + (f" ({s} s)" if s is not None else "") for n, c, s in full_red))
     if bad:
         detail += "; RED: " + "; ".join(f"{n}: {c}" + (f" ({s} s)" if s is not None else "") for n, c, s, _ in bad)
     return Verdict(gate, not bad, detail, red=bad, runs=[run])
@@ -488,24 +500,30 @@ def judge_required(ctx, names, event, workflows, label):
     return Verdict(label, not missing, detail, red=[(n, "missing", None, None) for n in missing])
 
 
-def evaluate(ctx, gates, events, version=None, contexts=None, contexts_label=""):
+def evaluate(ctx, gates, events, version=None, contexts=None, contexts_label="", light=False):
     """[Verdict] for every gate with one of events, in force for version (None: all in force).
-    Also returns the gates left out as not in force."""
+    Also returns the gates left out as not in force. light: the jobs `full` rows in
+    force name are printed with their result but do not gate (a point release and
+    its landing); otherwise they gate like every other job."""
     verdicts, not_in_force = [], []
     for event in events:
         rows = [g for g in gates if event in g.events]
         active = [g for g in rows if version is None or g.in_force(version)]
         not_in_force += [g for g in rows if g not in active and g not in not_in_force]
-        skips = {}
+        skips, full = {}, {}
         for g in active:
             if g.kind == "skip":
                 skips.setdefault(g.workflow, set()).add(g.job)
+            elif g.kind == "full" and light:
+                full.setdefault(g.workflow, set()).add(g.job)
+        judged = {g.workflow for g in active if g.kind in ("jobs", "jobs-if-ran")}
         jobs_workflows = []
         for g in active:
             if g.kind in ("run", "run-if-ran"):
-                verdicts.append(judge_run(ctx, g, event))
+                verdicts.append(judge_run(ctx, g, event, g.workflow in full and g.workflow in judged))
             elif g.kind in ("jobs", "jobs-if-ran"):
-                verdicts.append(judge_jobs(ctx, g, event, skips.get(g.workflow, set())))
+                verdicts.append(judge_jobs(ctx, g, event, skips.get(g.workflow, set()),
+                                           frozenset(full.get(g.workflow, ()))))
                 jobs_workflows.append(g.workflow)
             elif g.kind == "job":
                 verdicts.append(judge_job(ctx, g, event))
@@ -570,7 +588,7 @@ def judge_release(api, repo, version, ref, out, stage="pre", gates=None, now=Non
     contexts = required_contexts(api, repo, sha)
     point = is_point_release(version)
     verdicts, not_in_force = evaluate(ctx, gates, ("push",) if point else ("push", "nightly"), version, contexts,
-                                      f"{RULESET_PATH} at the commit")
+                                      f"{RULESET_PATH} at the commit", light=point)
     if point:
         for g in gates:
             if "nightly" in g.events and g.in_force(version):
