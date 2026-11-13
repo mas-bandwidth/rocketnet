@@ -305,7 +305,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 #else // #if defined( __aarch64__ )
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609649395ULL )
 #endif // #if defined( __aarch64__ )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141650 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141714 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

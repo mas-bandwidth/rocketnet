@@ -4,6 +4,7 @@
 */
 
 #include "test_unit_registry.h"
+#include "suite_runner.h"
 
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_server_gso.h"
@@ -35,6 +36,15 @@ static void test_server_gso_worker_handoff()
 
 REGISTER_UNIT_TEST( test_server_gso_worker_handoff );
 
+// At stop, the datagrams the workers received that main never took are
+// counted RECEIVE_DROP_STOPPED (proofs/tla/RNGsoHandoff.tla StopCount).
+static void test_server_gso_stop_counts_unreceived()
+{
+    check( rocketnet_server_gso_test_stop_counts_unreceived() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_stop_counts_unreceived );
+
 // A refused sendmmsg through the send-failure seam: an errno other than a
 // full socket's drops one message and sends the rest.
 static void test_server_gso_send_refusals()
@@ -54,8 +64,8 @@ static void test_server_gso_send_full_keeps_rest()
 
 REGISTER_UNIT_TEST( test_server_gso_send_full_keeps_rest );
 
-// A full socket after stop: the TX worker must leave its EAGAIN retry once
-// send_quit is set, or the transport never reports stopped.
+// A full socket after stop: the queue worker must leave its EAGAIN retry once
+// quit is set, or the transport never reports stopped.
 static void test_server_gso_send_retry_quit()
 {
     check( rocketnet_server_gso_test_send_retry_quit() );
@@ -63,9 +73,101 @@ static void test_server_gso_send_retry_quit()
 
 REGISTER_UNIT_TEST( test_server_gso_send_retry_quit );
 
+// Per-queue staging (proofs/tla/RNGsoQueueBankLayout.tla): a destination's
+// packets are staged on, and sent from, the queue its address hashes to.
+static void test_server_gso_send_queues()
+{
+    check( rocketnet_server_gso_test_send_queues() );
+}
+
+// the case opens four queues, each holding its send banks and receive buffers
+// at the transport's own sizes: the bound is the plan of those plus a margin
+static long gso_send_queues_rss_bound_mb()
+{
+    return suite_rss_bound_mb( rocketnet_server_gso_test_open_bytes( 4 ), 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_server_gso_send_queues, gso_send_queues_rss_bound_mb );
+
+// a refused worker pin is the public row GSO_PIN_REFUSALS, by value
+static void test_server_gso_pin_refusal_is_counted()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso != NULL );
+    uint64_t counters[ROCKETNET_NUM_COUNTERS] = {};
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 0 );
+    rocketnet_server_gso_test_refused_pin( gso );
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 1 );
+    check( rocketnet_server_gso_pin_refusals( gso ) == 1 );
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_pin_refusal_is_counted );
+REGISTER_UNIT_TEST( test_server_gso_send_queues );
+
+#if ROCKETNET_XDP
+// sdk/rocketnet_server_socket_linux.cpp, built with XDP only
+int rocketnet_server_socket_send_queue( const struct rocketnet_address_t * to, int num_queues );
+#endif // #if ROCKETNET_XDP
+
+// The gso queue hash is the XDP transport's, so a client keeps its queue
+// whichever of the two serves it: each answer is in range, one destination
+// always maps to one queue, one queue means queue 0, and with XDP built the
+// two functions agree on every destination tried.
+static void test_server_gso_send_queue_hash()
+{
+    struct rocketnet_address_t client;
+    memset( &client, 0, sizeof( client ) );
+    client.type = ROCKETNET_ADDRESS_IPV4;
+    client.data.ipv4[0] = 198;
+    client.data.ipv4[1] = 51;
+    client.data.ipv4[2] = 100;
+    client.data.ipv4[3] = 7;
+    client.port = 50000;
+
+    check( rocketnet_server_gso_send_queue( &client, 1 ) == 0 );
+    const int queue = rocketnet_server_gso_send_queue( &client, 4 );
+    check( queue >= 0 && queue < 4 );
+    check( rocketnet_server_gso_send_queue( &client, 4 ) == queue );
+
+    bool seen[4] = { false, false, false, false };
+    for ( int family = 0; family < 2; family++ )
+    {
+        memset( &client, 0, sizeof( client ) );
+        client.type = family == 0 ? ROCKETNET_ADDRESS_IPV4 : ROCKETNET_ADDRESS_IPV6;
+        client.data.ipv4[0] = 10;
+        if ( family == 1 )
+        {
+            client.data.ipv6[0] = 0x2001;
+            client.data.ipv6[7] = 9;
+        }
+        for ( int i = 0; i < 256; i++ )
+        {
+            client.port = (uint16_t) ( 1000 + i * 251 );
+            for ( int queues = 1; queues <= ROCKETNET_GSO_MAX_QUEUES; queues++ )
+            {
+                const int q = rocketnet_server_gso_send_queue( &client, queues );
+                check( q >= 0 && q < queues );
+                if ( queues == 4 && q >= 0 && q < 4 )
+                {
+                    seen[q] = true;
+                }
+#if ROCKETNET_XDP
+                check( q == rocketnet_server_socket_send_queue( &client, queues ) );
+#endif // #if ROCKETNET_XDP
+            }
+        }
+    }
+    check( seen[0] && seen[1] && seen[2] && seen[3] );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_queue_hash );
+
 // A full socket once shutdown has begun, before stop: the server asks for
-// stop only when send_idle is true, so the TX worker must give up on the
-// full socket without send_quit and go on to the next bank.
+// stop only when send_idle is true, so the queue worker must give up on the
+// full socket without quit and go on to the next bank.
 bool rocketnet_server_gso_test_send_shutdown_full();
 
 static void test_server_gso_send_shutdown_full()
@@ -125,6 +227,15 @@ static void test_server_gso_gro_cmsg_faults_counted()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_gro_cmsg_faults_counted );
+
+// the worker's prefilter before banking (sdk/rocketnet_receive_prefilter.h):
+// garbage takes no slot and each drop is counted by reason
+static void test_server_gso_drain_prefilter()
+{
+    check( rocketnet_server_gso_test_drain_prefilter() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_drain_prefilter );
 
 static void test_server_gso_receive_backoff()
 {
@@ -357,6 +468,113 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_keeps_other_destinations );
+
+// the worker gathers a bank by destination before it sends: packets to two
+// destinations staged interleaved (a game server's update loop, one packet
+// per client per pass) still leave as one segmented send per destination
+static void test_server_gso_send_gathers_interleaved_destinations()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso );
+
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_segment_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+    for ( int i = 0; i < 3; i++ )
+    {
+        gso_segment_stage( gso, 40000, 1 );
+        gso_segment_stage( gso, 40001, 1 );
+    }
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+
+    check( socket.segmented == 2 );
+    check( socket.plain_packets == 0 );
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] == 6 );
+    check( counters[ROCKETNET_COUNTER_GSO_GSO_SENDS] == 2 );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
+
+    // segmentation off: the same bank leaves as six plain datagrams
+    rocketnet_server_gso_test_set_features( gso, 0 );
+    memset( &socket, 0, sizeof( socket ) );
+    for ( int i = 0; i < 3; i++ )
+    {
+        gso_segment_stage( gso, 40000, 1 );
+        gso_segment_stage( gso, 40001, 1 );
+    }
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+    check( socket.segmented == 0 );
+    check( socket.plain_packets == 6 );
+
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_gathers_interleaved_destinations );
+
+// the first port from first whose destination stages on queue q of num_queues
+static uint16_t gso_segment_port_on_queue( uint16_t first, int q, int num_queues )
+{
+    for ( int port = first; port < 65535; port++ )
+    {
+        struct rocketnet_address_t to;
+        memset( &to, 0, sizeof( to ) );
+        to.type = ROCKETNET_ADDRESS_IPV4;
+        to.data.ipv4[0] = 127;
+        to.data.ipv4[3] = 1;
+        to.port = (uint16_t) port;
+        if ( rocketnet_server_gso_send_queue( &to, num_queues ) == q )
+        {
+            return (uint16_t) port;
+        }
+    }
+    check( false );
+    return 0;
+}
+
+// a segmented send one queue had accepted shows the transport can segment:
+// refusals by any number of destinations on another queue stay theirs, and
+// the tier stays on for every queue
+static void test_server_gso_segment_accepted_on_any_queue()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 2 );
+    check( gso );
+
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_segment_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+    gso_segment_stage( gso, gso_segment_port_on_queue( 40000, 0, 2 ), 2 );
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+    check( socket.segmented == 1 );
+
+    uint16_t port = 41000;
+    for ( int i = 0; i < 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD; i++ )
+    {
+        port = gso_segment_port_on_queue( port, 1, 2 );
+        memset( &socket, 0, sizeof( socket ) );
+        socket.refuse_segment = 100;
+        gso_segment_stage( gso, port, 2 );
+        check( rocketnet_server_gso_test_flush_staged( gso ) );
+        check( socket.plain_packets == 2 );
+        check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
+        port++;
+    }
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] == 0 );
+
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_segment_accepted_on_any_queue );
 
 // a refused segmented run is resent plain, and that plain send fails too. a
 // full socket stops the resend at the first unsent packet with nothing
@@ -724,5 +942,68 @@ static void test_server_gso_segment_runs_gather_their_own_packets()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_segment_runs_gather_their_own_packets );
+
+// The socket buffer decision (rocketnet_server_gso_buffer_step): a grant at or
+// past the request is taken; a short grant asks once more with the force
+// option; a grant still short after it is named at start.
+static void test_server_gso_buffer_step()
+{
+    check( rocketnet_server_gso_buffer_step( 25000000, 25000000, false ) == ROCKETNET_SERVER_GSO_BUFFER_GRANTED );
+    check( rocketnet_server_gso_buffer_step( 25000000, 26000000, false ) == ROCKETNET_SERVER_GSO_BUFFER_GRANTED );
+    check( rocketnet_server_gso_buffer_step( 25000000, 4194304, false ) == ROCKETNET_SERVER_GSO_BUFFER_FORCE );
+    check( rocketnet_server_gso_buffer_step( 25000000, 4194304, true ) == ROCKETNET_SERVER_GSO_BUFFER_SHORT );
+    check( rocketnet_server_gso_buffer_step( 25000000, 25000000, true ) == ROCKETNET_SERVER_GSO_BUFFER_GRANTED );
+    check( rocketnet_server_gso_buffer_step( 1000000, 0, false ) == ROCKETNET_SERVER_GSO_BUFFER_FORCE );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_buffer_step );
+
+// The start line for each buffer: asked and got always; a short grant is a
+// warning naming why the force option did not raise it and the exact sysctl
+// and value the operator sets; a grant met, plainly or by force, is not.
+static void test_server_gso_buffer_note()
+{
+    char line[512];
+
+    // the a02 host: rmem_max 4 MB, no CAP_NET_ADMIN
+    check( rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), true, 25000000, 4194304, true, EPERM ) );
+    check( strstr( line, "receive buffer asked 25000000 bytes, got 4194304" ) != NULL );
+    check( strstr( line, "SO_RCVBUFFORCE refused: the process lacks CAP_NET_ADMIN" ) != NULL );
+    check( strstr( line, "set sysctl net.core.rmem_max=25000000" ) != NULL );
+
+    // the same on the send side names its own option and sysctl
+    check( rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), false, 1000000, 212992, true, EPERM ) );
+    check( strstr( line, "send buffer asked 1000000 bytes, got 212992" ) != NULL );
+    check( strstr( line, "SO_SNDBUFFORCE refused" ) != NULL );
+    check( strstr( line, "set sysctl net.core.wmem_max=1000000" ) != NULL );
+    check( strstr( line, "rmem_max" ) == NULL );
+
+    // another refusal is named by its errno
+    check( rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), true, 25000000, 4194304, true, EINVAL ) );
+    char errno_text[64];
+    snprintf( errno_text, sizeof( errno_text ), "SO_RCVBUFFORCE refused: errno %d", EINVAL );
+    check( strstr( line, errno_text ) != NULL );
+
+    // force taken and the kernel still short
+    check( rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), true, 25000000, 4194304, true, 0 ) );
+    check( strstr( line, "SO_RCVBUFFORCE taken and still short" ) != NULL );
+
+    // met by the plain request: information, no sysctl
+    check( !rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), true, 25000000, 25000000, false, 0 ) );
+    check( strstr( line, "receive buffer asked 25000000 bytes, got 25000000" ) != NULL );
+    check( strstr( line, "sysctl" ) == NULL );
+
+    // met by the force option: information that says so
+    check( !rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), true, 25000000, 25000000, true, 0 ) );
+    check( strstr( line, "past net.core.rmem_max with SO_RCVBUFFORCE" ) != NULL );
+
+    // a line that does not fit is cut and terminated
+    char small[16];
+    memset( small, 'x', sizeof( small ) );
+    check( rocketnet_server_gso_buffer_note( small, (int) sizeof( small ), true, 25000000, 4194304, true, EPERM ) );
+    check( small[sizeof( small ) - 1] == '\0' );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_buffer_note );
 
 #endif
