@@ -81,8 +81,12 @@ def source_check(header_path, tests_path):
 
 # What a production build (ROCKETNET_DEV=0) compiles out (sdk/rocketnet_test_seams.h):
 # a defined symbol naming any of these in the production archive or shared
-# library is development or test code that reached production.
+# library is development or test code that reached production. Every
+# rocketnet_dev_ name is a development seam (rocketnet_test_seams.h), save the
+# published development public keys in DEVELOPMENT_SYMBOL_EXCEPTIONS, which a
+# production server compares against to refuse them.
 DEVELOPMENT_SYMBOL_PARTS = (
+    "rocketnet_dev_",
     "_for_test", "network_simulator", "dev_server_secret_key", "dev_backend_secret_key",
     "server_transport_dev_config", "set_test_timestamp", "client_create_testing",
     "test_stall_destroy", "test_bound_port", "create_step_driven_at_timestamp",
@@ -97,8 +101,10 @@ DEVELOPMENT_SYMBOL_PARTS = (
 )
 
 # The production allocator keeps the caller-block path; only the self-allocating
-# create is development code.
-DEVELOPMENT_SYMBOL_EXCEPTIONS = ("rn_arena_create_in_block",)
+# create is development code. The development public keys stay in production:
+# the server refuses a config that carries them.
+DEVELOPMENT_SYMBOL_EXCEPTIONS = ("rn_arena_create_in_block", "rocketnet_dev_server_public_key",
+                                 "rocketnet_dev_backend_public_key")
 
 
 def development_symbols(defined):

@@ -186,6 +186,22 @@ class CheckExportsDevelopmentCodeTest(unittest.TestCase):
         }
         self.assertEqual(check_exports.development_symbols(defined), sorted(defined))
 
+    def test_every_dev_seam_is_a_development_symbol(self):
+        # the seams rocketnet_test_seams.h declares, mangled and plain: none
+        # names a specific part, so only the generic rocketnet_dev_ part holds them
+        defined = {
+            "_rocketnet_dev_set_sequence_taken_hook",
+            "_rocketnet_dev_session_sequence_taken",
+            "rocketnet_dev_set_link_stop_wait_hold_hook",
+            "rocketnet_dev_set_server_keygen_failure",
+            "__Z31rocketnet_dev_set_hash_key_seedy",
+            "rocketnet_dev_hash_key_seed",
+            "rocketnet_dev_seed_hash_key",
+            "rocketnet_dev_fail_disconnect_sealed_writes",
+            "rocketnet_dev_token_claim_probe_steps",
+        }
+        self.assertEqual(check_exports.development_symbols(defined), sorted(defined))
+
     def test_production_symbols_are_not_development_symbols(self):
         defined = {
             "_rocketnet_dev_server_public_key",
