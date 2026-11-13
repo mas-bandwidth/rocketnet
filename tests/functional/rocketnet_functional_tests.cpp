@@ -7791,7 +7791,22 @@ void rocketnet_test_server_gso_worker_pin()
         rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == 0 );
         rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
     }
-    else
+    // a num_os_cpus below 0 is read as 1 by the transport itself: the OS keeps cpu 0
+    if ( online >= 1 + queues )
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, -7 );
+        rocketnet_check( gso );
+        rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
+        for ( int q = 0; q < queues; q++ )
+        {
+            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
+        }
+        rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+    }
+
+    if ( online < 1 + queues )
     {
         printf( "test_gso_transport_worker_pin: %d cpus online, the placement needs %d; refusal paths only\n", online, 1 + queues );
         fflush( stdout );
