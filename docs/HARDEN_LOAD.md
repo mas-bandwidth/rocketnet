@@ -155,7 +155,9 @@ run that ended inside `--warm-seconds` prints `harden_resources: none`.
 
 **Every role's verdict.** `scripts/harden-pair` exits 0 only when the reconcile passes and every role it started
 printed its own `harden_verdict: ... verdict=PASS` and no FAIL: a server that failed only on flatness or conservation
-fails the cell, and so does a role that never printed a verdict.
+fails the cell, and so does a role that never printed a verdict. Each role must also exit 0 (a Linux role writes its
+exit status beside its log; a Windows server's is its ssh session's): a role that printed PASS and then failed, a
+sanitizer report at exit or a crash in teardown, fails the cell, and so does one still running 60 s past the end.
 
 Host-wide kernel counters include traffic that is not the cell's. Run cells on hosts that carry nothing else.
 

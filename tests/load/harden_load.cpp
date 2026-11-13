@@ -2390,9 +2390,14 @@ static int harden_server_main( const harden_options_t & o )
             uint8_t * p = rocketnet_server_start_message( server, (uint64_t) i, HARDEN_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.reliable_bytes );
             if ( p )
             {
-                harden_write_message( p, o.reliable_bytes, HARDEN_KIND_RELIABLE, id, connection, slot.next[HARDEN_KIND_RELIABLE]++ );
-                rocketnet_server_finish_message( server, o.reliable_bytes );
-                w.messages++;
+                // the sequence is taken only by a message that was queued: the
+                // reliable stream's sequences stay contiguous from 0
+                harden_write_message( p, o.reliable_bytes, HARDEN_KIND_RELIABLE, id, connection, slot.next[HARDEN_KIND_RELIABLE] );
+                if ( rocketnet_server_finish_message( server, o.reliable_bytes ) != 0 )
+                {
+                    slot.next[HARDEN_KIND_RELIABLE]++;
+                    w.messages++;
+                }
             }
             else
             {
@@ -2404,9 +2409,12 @@ static int harden_server_main( const harden_options_t & o )
             uint8_t * p = rocketnet_server_start_message( server, (uint64_t) i, HARDEN_CHANNEL_BIG, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.big_bytes );
             if ( p )
             {
-                harden_write_message( p, o.big_bytes, HARDEN_KIND_BIG, id, connection, slot.next[HARDEN_KIND_BIG]++ );
-                rocketnet_server_finish_message( server, o.big_bytes );
-                w.messages++;
+                harden_write_message( p, o.big_bytes, HARDEN_KIND_BIG, id, connection, slot.next[HARDEN_KIND_BIG] );
+                if ( rocketnet_server_finish_message( server, o.big_bytes ) != 0 )
+                {
+                    slot.next[HARDEN_KIND_BIG]++;
+                    w.messages++;
+                }
             }
             else
             {
@@ -3497,9 +3505,12 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
                             uint8_t * p = rocketnet_client_start_message( c.client, HARDEN_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, HARDEN_INPUT_RELIABLE_BYTES );
                             if ( p )
                             {
-                                harden_write_message( p, HARDEN_INPUT_RELIABLE_BYTES, HARDEN_KIND_INPUT_RELIABLE, c.client_id, c.connection_serial, c.next_input_reliable++ );
-                                rocketnet_client_finish_message( c.client, HARDEN_INPUT_RELIABLE_BYTES );
-                                inputs_sent++;
+                                harden_write_message( p, HARDEN_INPUT_RELIABLE_BYTES, HARDEN_KIND_INPUT_RELIABLE, c.client_id, c.connection_serial, c.next_input_reliable );
+                                if ( rocketnet_client_finish_message( c.client, HARDEN_INPUT_RELIABLE_BYTES ) != 0 )
+                                {
+                                    c.next_input_reliable++;
+                                    inputs_sent++;
+                                }
                             }
                             else
                             {

@@ -415,7 +415,7 @@ static inline int split_verify_stream_final( const struct split_verify_stream_t 
            nothing newer, and it is resent until acknowledged, so after the
            drain it is delivered: missing, it is a loss, never a skip */
         result->final_missing = ( sent > 0 && sent <= SPLIT_VERIFY_MAX_SEQUENCE && !split_verify_stream_has( stream, sent ) ) ? 1u : 0u;
-        result->skipped = short_by - result->final_missing;
+        result->skipped = short_by > result->final_missing ? short_by - result->final_missing : 0;
     }
     else
     {

@@ -153,6 +153,7 @@ static void test_harden_stream_reliable_starts_at_zero()
     harden_stream_test_take_reliable( &t, &w, 1, 1, 2 );
     check( w.reliable_gaps == 1 );
     check( w.errors == 1 );
+    check( w.head[HARDEN_KIND_RELIABLE] == 0 );
 
     // the next connection (a churner back) starts again at 0: clean
 

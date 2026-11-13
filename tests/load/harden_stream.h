@@ -110,7 +110,12 @@ static inline void harden_stream_take( harden_stream_t * stream, const harden_me
         stream->started = true;
         stream->client_id = m->client_id;
         stream->connection = m->connection;
-        v->head[m->kind] += m->sequence;
+        if ( !reliable )
+        {
+            // an unreliable kind's messages before the first taken are the
+            // head: lost before this end could take them, counted, never failed
+            v->head[m->kind] += m->sequence;
+        }
         stream->expected = m->sequence;
         stream->first = m->sequence;
     }

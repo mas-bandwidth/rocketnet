@@ -370,9 +370,13 @@ if [ -n "$profile_seconds" ]; then
 fi
 if [ "$server_os" = windows ]; then
     # in the foreground of a session this machine holds open in the background
+    # (its exit status is this ssh's, waited for below)
     on_shell "$server_host" "cd $(printf '%q' "$run_dir") && $server_runner $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null" > "$out/ssh-server.txt" 2>&1 &
+    server_ssh_pid=$!
 else
-    on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup $server_runner $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-server.txt" 2>&1 &
+    # each Linux role writes its exit status beside its log when it exits
+    server_line="$server_runner $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null; echo \$? > server.status"
+    on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && rm -f server.status && nohup bash -c $(printf '%q' "$server_line") > /dev/null 2>&1 < /dev/null &" < /dev/null > "$out/ssh-server.txt" 2>&1 &
 fi
 key=""
 # one remote wait (10 s) for the ready line, not one ssh round trip per look
@@ -383,26 +387,31 @@ if [ -z "$key" ]; then
     exit 1
 fi
 
-on_shell "$client_host" "ulimit -n 65536; cd $(printf '%q' "$client_run_dir") && nohup $(printf '%q ' "$client_tool" clients --address "$address" --key "$key" \
-    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") $client_extra $client_stray_args > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
+clients_line="$(printf '%q ' "$client_tool" clients --address "$address" --key "$key" \
+    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") $client_extra $client_stray_args > clients.log 2>&1 < /dev/null; echo \$? > clients.status"
+on_shell "$client_host" "ulimit -n 65536; cd $(printf '%q' "$client_run_dir") && rm -f clients.status && nohup bash -c $(printf '%q' "$clients_line") > /dev/null 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
 
 if [ "$hostile" = "1" ]; then
     # after the players are on: the replay kind needs their packets on the wire
     sleep "$join_seconds"
-    on_shell "$client_host" "cd $(printf '%q' "$client_run_dir") && sudo -n sh -c 'ulimit -n 65536; nohup $(printf '%q ' "$client_tool" hostile --address "$address" --key "$key" \
-        --end-at "$end_at" --pps "$hostile_pps" --sockets 256 --kinds garbage,prefixed,truncated,badsig,expired,reqreplay,replay --capture-dev "$client_dev") > hostile.log 2>&1 < /dev/null &'" < /dev/null > "$out/ssh-hostile.txt" 2>&1 &
+    hostile_line="$(printf '%q ' "$client_tool" hostile --address "$address" --key "$key" \
+        --end-at "$end_at" --pps "$hostile_pps" --sockets 256 --kinds garbage,prefixed,truncated,badsig,expired,reqreplay,replay --capture-dev "$client_dev") > hostile.log 2>&1 < /dev/null; echo \$? > hostile.status"
+    hostile_root="rm -f hostile.status; ulimit -n 65536; nohup bash -c $(printf '%q' "$hostile_line") > /dev/null 2>&1 < /dev/null &"
+    on_shell "$client_host" "cd $(printf '%q' "$client_run_dir") && sudo -n bash -c $(printf '%q' "$hostile_root")" < /dev/null > "$out/ssh-hostile.txt" 2>&1 &
 fi
 
 # every role ends by itself after its last cut (end_at + 3 quiet periods);
 # looked for by process name: a command-line pattern matches the remote shell
 # running pgrep, which carries the same words
 deadline=$(( end_at + 60 ))
+timed_out=0
 while :; do
     running=$(server_running)
     running=$(( running + $(on_shell "$client_host" "pgrep -x harden_load | wc -l") ))
     [ "$running" -eq 0 ] && break
     if [ "$(date +%s)" -gt "$deadline" ]; then
         echo "harden-pair: roles still running 60 s past the end; stopping them" >&2
+        timed_out=1
         break
     fi
     sleep 2
@@ -429,8 +438,7 @@ if ! grep -h "harden_verdict" "$out"/*.log | tee -a "$out/reconcile.txt"; then
 fi
 # and each role started here is judged by its own verdict: its PASS line in
 # its own log and no FAIL (the reconcile judges the chains and the players,
-# not a server's flatness or conservation, and the roles' exit statuses stay
-# on their machines)
+# not a server's flatness or conservation)
 roles="server:server.log clients:clients.log"
 if [ "$hostile" = "1" ]; then
     roles="$roles hostile:hostile.log"
@@ -440,6 +448,33 @@ for pair in $roles; do
     log="$out/${pair#*:}"
     if ! grep -q "^harden_verdict: role=$role verdict=PASS" "$log" || grep -q "^harden_verdict: .*verdict=FAIL" "$log"; then
         echo "harden-pair: role $role did not print a PASS verdict alone" | tee -a "$out/reconcile.txt"
+        status=1
+    fi
+done
+# and by its exit status: a role that printed PASS and then failed (a
+# sanitizer report at exit, a crash in teardown) or never exited fails the
+# cell. A Linux role's status file is written just after its process ends,
+# so the read waits up to 5 s for it; "none" is a role with no status
+role_exit()
+{
+    on_shell "$1" "cd $(printf '%q' "$2") && for i in \$(seq 1 50); do [ -s $3 ] && break; sleep 0.1; done; cat $3 2>/dev/null || echo none"
+}
+if [ "$server_os" = windows ]; then
+    server_exit=none
+    if [ "$timed_out" = 0 ]; then
+        server_exit=0
+        wait "$server_ssh_pid" || server_exit=$?
+    fi
+else
+    server_exit=$(role_exit "$server_host" "$run_dir" server.status)
+fi
+exits="server:$server_exit clients:$(role_exit "$client_host" "$client_run_dir" clients.status)"
+if [ "$hostile" = "1" ]; then
+    exits="$exits hostile:$(role_exit "$client_host" "$client_run_dir" hostile.status)"
+fi
+for pair in $exits; do
+    if [ "${pair#*:}" != 0 ]; then
+        echo "harden-pair: role ${pair%%:*} exited ${pair#*:}" | tee -a "$out/reconcile.txt"
         status=1
     fi
 done
