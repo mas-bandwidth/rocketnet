@@ -153,7 +153,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (aws-win-iocp-1, MSVC, Release, DEV=ON), measured.
 // The appended counter XDP_PIN_REFUSALS adds one 64-byte rounding to the
 // client: actual=15394284 (the Windows unit job, MSVC, Release, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566111 )
+// The appended counter RECEIVE_DROPPED_RETIRED adds 64 to the server:
+// actual=1528614751 (the Windows unit job, run 43448217775).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566175 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -346,9 +348,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter IOCP_PIN_REFUSALS adds 64 to the server (one 64-byte
 // rounding): actual=5644858567 (hetzner1, gcc, Debug, DEV ON); arm64 the same
 // 64, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810047ULL )
+// The appended counter RECEIVE_DROPPED_RETIRED adds 64 to the server:
+// actual=5644858631 (the Linux Debug unit job, run 43448217775); arm64 the
+// same 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810111ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809991ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810055ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
