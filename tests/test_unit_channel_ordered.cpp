@@ -38,9 +38,14 @@
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// messages: an id in the first 8 bytes, the rest a function of (id, length), so
-// every delivery is verified byte for byte without keeping the sent bytes
+// messages: an 8-byte header holding the id (low 40 bits) and the length the
+// sender wrote (high 24 bits), the rest a function of (id, offset), so every
+// delivery is verified whole, byte for byte and at its sent length, without
+// keeping the sent bytes: a delivery cut short keeps a correct prefix but
+// not the length its header names
 // ---------------------------------------------------------------------------
+
+#define PATTERN_ID_BITS 40
 
 static uint8_t pattern_byte( uint64_t id, uint32_t i )
 {
@@ -55,7 +60,9 @@ static void pattern_fill( uint8_t * data, uint64_t id, uint32_t bytes )
     }
     if ( bytes >= 8 )
     {
-        memcpy( data, &id, 8 );
+        check( id < ( 1ULL << PATTERN_ID_BITS ) && bytes < ( 1U << ( 64 - PATTERN_ID_BITS ) ) );
+        const uint64_t header = id | ( (uint64_t) bytes << PATTERN_ID_BITS );
+        memcpy( data, &header, 8 );
     }
 }
 
@@ -66,8 +73,13 @@ static bool pattern_verify( const uint8_t * data, uint32_t bytes, uint64_t * out
         return false;
     }
 
-    uint64_t id;
-    memcpy( &id, data, 8 );
+    uint64_t header;
+    memcpy( &header, data, 8 );
+    const uint64_t id = header & ( ( 1ULL << PATTERN_ID_BITS ) - 1 );
+    if ( ( header >> PATTERN_ID_BITS ) != bytes )
+    {
+        return false;                                   // not the length the sender wrote
+    }
     for ( uint32_t i = 8; i < bytes; i++ )
     {
         if ( data[i] != pattern_byte( id, i ) )
@@ -834,7 +846,9 @@ static void test_small_packed_and_resent_until_packet_acked()
         wire_packet_t sent[4];
         check( write_packets( c, 1.0, sent, 4 ) == 1 );
         check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
-        check( write_packets( c, 1.6, sent, 4 ) >= 0 );                  // resent, still inside the timeout
+        const uint64_t resent = counter( c, ROCKETNET_COUNTER_MESSAGE_RESENT );
+        check( write_packets( c, 1.6, sent, 4 ) == 1 );                  // resent, still inside the timeout
+        check( counter( c, ROCKETNET_COUNTER_MESSAGE_RESENT ) == resent + 1 );
         check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
         check( write_packets( c, 2.5, sent, 4 ) == 0 );                  // past it: nothing more is sent
         check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
@@ -3146,12 +3160,15 @@ static void test_rnchannel_witness_replays_ordered()
         const int count = write_packets( m.a, m.now, again, 4 );       // nothing was acked: every number resends
         check( count >= 1 );
 
+        // every packet of the resend opens at the receiver (write_packets gives
+        // each a packet id past model_setup's 1 .. 5, so none is a replay)
+
         const uint64_t duplicates = counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE );
         for ( int p = 0; p < count; p++ )
         {
-            if ( again[p].bytes > 0 && again[p].id >= 6 )
+            if ( again[p].bytes > 0 )
             {
-                open_packet( m.b, &again[p] );
+                check( open_packet( m.b, &again[p] ) );
             }
         }
         check( counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > duplicates );
@@ -3374,10 +3391,23 @@ static void test_ordered_record_sent_at_zero_waits_for_its_resend()
 
     check( write_packets( a, delay + 1.0 / 60.0, first, 4 ) == 0 );
 
-    // the first send is recorded once, at 0.0, and no reliable timeout
+    // the first send is recorded once, at 0.0, and the reliable timeout runs
+    // from it: it fires exactly one timeout after 0.0, not after the resend.
+    // Opted in (test_channel_ordered_cases_opted_in) the timeout is the
+    // config's; at the default there is none, so this run sets one second on
+    // the window, past the resend, to check the same boundary
 
-    check( rn_window_ack_check_timeout( &a->ordered.ack, delay ) == 0 );
     check( a->ordered.ack.oldest_first_send == 0.0 );
+    double timeout = (double) g_node_reliable_timeout_ms / 1000.0;
+    if ( g_node_reliable_timeout_ms <= 0 )
+    {
+        check( a->ordered.ack.reliable_timeout == 0.0 );
+        timeout = 1.0;
+        a->ordered.ack.reliable_timeout = timeout;
+    }
+    check( timeout > delay + 1.0 / 60.0 );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, timeout - 1.0 / 60.0 ) == 0 );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, timeout ) == 1 );
 
     node_free( a );
 }
@@ -4303,6 +4333,9 @@ static void test_channel_ordered_cases_opted_in()
         test_large_between_small_keeps_order_one_payload_per_write,
         test_large_between_small_keeps_order_with_refused_packets,
         test_reservation_counts_the_held_run_past_2_to_the_24,
+        test_reservation_takes_a_packet_that_fits_exactly,
+        test_reservation_of_control_and_unordered_records,
+        test_duplicates_at_the_read_index_never_scan_the_held_run,
         test_chunks_placed_by_index_not_arrival,
         test_no_partial_delivery,
         test_hostile_chunk_count_or_index_kicks,
