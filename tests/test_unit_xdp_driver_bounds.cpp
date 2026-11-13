@@ -30,9 +30,10 @@ static const uint8_t bounds_gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0
 
 static int bounds_send( uint8_t * frame, const uint8_t * staged, size_t packet_bytes, uint64_t * refused )
 {
+    // a failed parse fails here, never as a build from unset addresses
     rocketnet_address_t source, destination;
-    rocketnet_address_parse( &source, "192.168.1.10:40000" );
-    rocketnet_address_parse( &destination, "192.168.1.20:40001" );
+    rocketnet_unit_check( rocketnet_address_parse( &source, "192.168.1.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &destination, "192.168.1.20:40001" ) );
 
     const int copied = rocketnet_xdp_send_copy( frame, ROCKETNET_XDP_FRAME_SIZE, ROCKETNET_ADDRESS_IPV4, staged, packet_bytes, refused );
     if ( copied < 0 )
@@ -120,8 +121,8 @@ static int bounds_receive( const uint8_t * umem, uint64_t addr, uint32_t len, st
 static void bounds_write_frame( uint8_t * umem, uint64_t addr, int payload_bytes )
 {
     rocketnet_address_t source, destination;
-    rocketnet_address_parse( &source, "192.168.1.20:40001" );
-    rocketnet_address_parse( &destination, "192.168.1.10:40000" );
+    rocketnet_unit_check( rocketnet_address_parse( &source, "192.168.1.20:40001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &destination, "192.168.1.10:40000" ) );
 
     const int header_bytes = rocketnet_xdp_frame_header_bytes( ROCKETNET_ADDRESS_IPV4 );
     memset( umem + addr + header_bytes, 0x3C, (size_t) payload_bytes );
