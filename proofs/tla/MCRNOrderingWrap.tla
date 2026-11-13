@@ -5,7 +5,9 @@
 (* wraps itself) and a delivery table of two.  MCRNOrderingWrap.cfg is the *)
 (* passing control; MCRNOrderingWrapBrokenUnmasked.cfg compares the masked *)
 (* ordering with the unmasked counter in the reservation and must violate  *)
-(* NoExhaust (README-RNOrderingWrap.md).                                   *)
+(* NoExhaust; ...BrokenSeqHold.cfg, ...BrokenDupRun.cfg and               *)
+(* ...BrokenPartialRun.cfg must violate NeverDeferWithRoom                 *)
+(* (README-RNOrderingWrap.md).                                             *)
 (***************************************************************************)
 EXTENDS RNOrderingWrap
 
