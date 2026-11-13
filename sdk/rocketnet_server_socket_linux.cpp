@@ -65,6 +65,11 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_xdp_replay_sink.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_free_list.h"
+#include "rocketnet_receive_handoff.h"
+#include "rocketnet_read_write.h"
+#if ROCKETNET_DEV
+#include "rocketnet_receive_delivery_check.h"
+#endif // #if ROCKETNET_DEV
 #include "rocketnet_xdp_receive_pass.h"
 #include "rocketnet_xdp_socket_config.h"
 #include "rocketnet_gateway_netlink.h"
@@ -85,7 +90,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #error "ROCKETNET_TLA_XDP_REPLAY_WINDOW is defined outside the trace check's targets"
 #endif
 
-#if !defined( ROCKETNET_TLA_PLANT ) && ( defined( ROCKETNET_XDP_RECEIVE_RING_PLANT ) || defined( ROCKETNET_XDP_REPLAY_PLANT ) || defined( ROCKETNET_XDP_REPLAY_MARKS_PLANT ) || defined( ROCKETNET_XDP_REPLY_MACS_PLANT ) || defined( ROCKETNET_XDP_GATEWAY_REFRESH_PLANT ) )
+#if !defined( ROCKETNET_TLA_PLANT ) && ( defined( ROCKETNET_XDP_RECEIVE_RING_PLANT ) || defined( ROCKETNET_XDP_REPLAY_PLANT ) || defined( ROCKETNET_XDP_REPLAY_MARKS_PLANT ) || defined( ROCKETNET_XDP_REPLY_MACS_PLANT ) || defined( ROCKETNET_XDP_GATEWAY_REFRESH_PLANT ) || defined( ROCKETNET_XDP_RECEIVE_HANDOFF_PLANT ) )
 #error "an XDP trace plant is defined outside the trace check's plant binaries"
 #endif
 
@@ -298,7 +303,12 @@ struct rocketnet_server_xdp_socket_t
     uint8_t padding_5[4096];
 
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
-    rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> receive_handoff;
+
+    // the receive handoff over receive_buffer (sdk/rocketnet_receive_handoff.h,
+    // proofs/tla/RNReceiveHandoff.tla): the roles and committed counts under
+    // receive_mutex, main's cursors main's alone; the worker's own index,
+    // worker, and its committed count only the worker changes
+    struct rocketnet_receive_handoff_t receive_handoff = rocketnet_receive_handoff_initial();
 
     // send_handoff.ready_count as of the last change, stored under send_mutex
     // by the publish (main) and the claim (this queue's xdp thread). The xdp
@@ -307,11 +317,10 @@ struct rocketnet_server_xdp_socket_t
     // main needs to publish (rocketnet_xdp_handoff_lock)
     std::atomic<int> send_ready{ 0 };
 
-    // a publish or drain main puts off because the lock stayed held through
-    // every try (rocketnet_xdp_handoff_lock) leaves the producer staged for
-    // the next call; nothing counts it
-    int receive_held_index = -1; // game view; returned at the next receive call
-    uint32_t receive_read_index = 0;
+    // a publish main puts off because the lock stayed held through every
+    // try (rocketnet_xdp_handoff_lock) leaves the producer staged for the
+    // next call, and a receive call that finds the receive lock held reads
+    // only what it already holds; nothing counts either
 
     uint8_t padding_6[4096];
 
@@ -3447,6 +3456,32 @@ uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_
     return server_socket->replay_greetings_held;
 }
 
+static_assert( ROCKETNET_XDP_NUM_BUFFERS == ROCKETNET_RECEIVE_HANDOFF_BUFFERS, "the receive handoff's roles index receive_buffer" );
+
+// proofs/tla/RNReceiveHandoff.tla Commit: the end of an XDP worker pass. Under
+// the receive mutex the worker makes its buffer's count visible to main and,
+// when main has started on that buffer, moves to the free one, which main
+// emptied before freeing it. The worker reads its own committed count
+// outside the mutex (only the worker writes it) and commits only when the
+// pass staged past it, or when its buffer is full and must move before the
+// worker can stage again: an idle busy-poll pass takes no lock, and a full
+// one whose buffer main has not started on takes it each pass until main
+// starts on it (the old publish took it each pass with packets). Only
+// indices and counts move under the mutex. Returns true when it committed.
+static bool rocketnet_server_socket_end_receive_pass( rocketnet_server_xdp_socket_t * socket )
+{
+    struct rocketnet_receive_handoff_t * handoff = &socket->receive_handoff;
+    const uint32_t count = socket->receive_buffer[handoff->worker].num_packets;
+    if ( count == 0 || ( count == handoff->committed[handoff->worker] && count < (uint32_t) ROCKETNET_XDP_RECV_QUEUE_SIZE ) )
+    {
+        return false;
+    }
+    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+    rocketnet_receive_handoff_commit( handoff, count );
+    rocketnet_platform_mutex_release( &socket->receive_mutex );
+    return true;
+}
+
 #if ROCKETNET_DEV
 // A fixture's server socket in the caller's raw storage, with its sized parts
 // for the default configuration; the destruct frees them and leaves the
@@ -3579,28 +3614,33 @@ bool rocketnet_server_socket_test_buffer_exchange()
         valid &= socket->send_buffer[0].packet_info[0].packet_bytes == 64;
     }
 
+    // the worker commits one staged packet and moves on (main shares its
+    // buffer); main's call returns it in place, from the buffer the worker left
     socket->receive_buffer[0].num_packets = 1;
     socket->receive_buffer[0].packet_bytes[0] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
     socket->receive_buffer[0].from[0] = to;
-    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
-    valid &= socket->receive_handoff.publish();
-    rocketnet_platform_mutex_release( &socket->receive_mutex );
+    valid &= rocketnet_server_socket_end_receive_pass( socket );
+    valid &= socket->receive_handoff.worker == 1;
     rocketnet_server_socket_receive_packets( server );
-    valid &= socket->receive_held_index == 0;
+    valid &= socket->receive_handoff.tail == 0 && socket->receive_handoff.main == 1;
     valid &= server->process_packets.num_packets == 1;
     valid &= server->process_packets.packet_data[0] == socket->receive_buffer[0].packet_data[0];
 
-    // A failed game-thread try-lock may clear the expired view, but it must
-    // retain ownership and retry recycling on the following call.
+    // A failed game-thread try-lock may empty the expired, finished tail, but
+    // the roles stay as they were until a call takes the lock.
 
     rocketnet_platform_mutex_acquire( &socket->receive_mutex );
     rocketnet_server_socket_receive_packets( server );
-    valid &= socket->receive_held_index == 0;
+    valid &= socket->receive_handoff.tail == 0;
     valid &= socket->receive_buffer[0].num_packets == 0;
+    valid &= server->process_packets.num_packets == 0;
     rocketnet_platform_mutex_release( &socket->receive_mutex );
     rocketnet_server_socket_receive_packets( server );
-    valid &= socket->receive_held_index == -1;
+    valid &= socket->receive_handoff.tail == 0 && socket->receive_handoff.free == 2;
     valid &= socket->receive_buffer[0].num_packets == 0;
+
+    // an idle pass commits nothing
+    valid &= !rocketnet_server_socket_end_receive_pass( socket );
 
     if ( socket->send_mutex.ok )
     {
@@ -3615,6 +3655,386 @@ bool rocketnet_server_socket_test_buffer_exchange()
     rocketnet_free( NULL, socket_storage );
     rocketnet_free( NULL, server_storage );
 
+    return valid;
+}
+
+// The receive handoff on a one-queue fixture with no kernel resources: the
+// receive delivery check (sdk/rocketnet_receive_delivery_check.h) and the
+// trace check's walk (tests/tla_trace_receive_handoff_xdp.cpp) step the
+// worker's passes and main's calls on the calling thread. A pass stages
+// datagrams into the worker's buffer as rocketnet_xdp_receive_take does and
+// ends as the worker's pass does (rocketnet_server_socket_end_receive_pass);
+// a call is rocketnet_server_socket_receive_packets. Each datagram carries its
+// id in its first four bytes.
+
+struct rocketnet_server_socket_test_receive_t
+{
+    void * server_storage;
+    void * socket_storage;
+    rocketnet_server_socket_t * server;
+    rocketnet_server_xdp_socket_t * socket;
+};
+
+struct rocketnet_server_socket_test_receive_t * rocketnet_server_socket_test_receive_open()
+{
+    auto * fixture = (struct rocketnet_server_socket_test_receive_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_server_socket_test_receive_t ) );
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !fixture || !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        rocketnet_free( NULL, fixture );
+        return NULL;
+    }
+
+    fixture->server_storage = server_storage;
+    fixture->socket_storage = socket_storage;
+    fixture->server = rocketnet_server_socket_test_construct( server_storage );
+    // default-initialized: the members with initializers are set, and the
+    // staging arrays (hundreds of MB) are left untouched until a pass writes
+    // a slot, so the fixture's resident cost is the slots it uses
+    fixture->socket = new ( socket_storage ) rocketnet_server_xdp_socket_t;
+    fixture->server->num_queues = 1;
+    fixture->server->socket = fixture->socket;
+
+    if ( !rocketnet_platform_mutex_create( &fixture->socket->receive_mutex ) )
+    {
+        fixture->socket->~rocketnet_server_xdp_socket_t();
+        rocketnet_server_socket_test_destruct( fixture->server );
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        rocketnet_free( NULL, fixture );
+        return NULL;
+    }
+
+    return fixture;
+}
+
+void rocketnet_server_socket_test_receive_close( struct rocketnet_server_socket_test_receive_t * fixture )
+{
+    if ( !fixture )
+    {
+        return;
+    }
+    rocketnet_platform_mutex_destroy( &fixture->socket->receive_mutex );
+    fixture->socket->~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( fixture->server );
+    rocketnet_free( NULL, fixture->socket_storage );
+    rocketnet_free( NULL, fixture->server_storage );
+    rocketnet_free( NULL, fixture );
+}
+
+bool rocketnet_server_socket_test_receive_bank( struct rocketnet_server_socket_test_receive_t * fixture, uint32_t first, int count )
+{
+    rocketnet_assert( fixture );
+    rocketnet_server_socket_receive_buffer_t * buffer = &fixture->socket->receive_buffer[fixture->socket->receive_handoff.worker];
+    if ( count < 0 || (uint64_t) buffer->num_packets + (uint64_t) count > (uint64_t) ROCKETNET_XDP_RECV_QUEUE_SIZE )
+    {
+        return false;
+    }
+    for ( int i = 0; i < count; i++ )
+    {
+        const uint32_t index = buffer->num_packets;
+        buffer->from[index] = {};
+        buffer->from[index].type = ROCKETNET_ADDRESS_IPV4;
+        memset( buffer->eth[index], 0, ETH_ALEN );
+        buffer->packet_bytes[index] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+        memset( buffer->packet_data[index], 0, (size_t) ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+        uint8_t * stamp = buffer->packet_data[index];
+        rocketnet_write_uint32( &stamp, first + (uint32_t) i );
+        buffer->num_packets++;
+    }
+    return true;
+}
+
+bool rocketnet_server_socket_test_receive_end_pass( struct rocketnet_server_socket_test_receive_t * fixture )
+{
+    rocketnet_assert( fixture );
+    return rocketnet_server_socket_end_receive_pass( fixture->socket );
+}
+
+int rocketnet_server_socket_test_receive_call( struct rocketnet_server_socket_test_receive_t * fixture, int budget, bool busy, uint32_t * first )
+{
+    rocketnet_assert( fixture );
+    rocketnet_assert( first );
+    rocketnet_server_socket_t * server = fixture->server;
+    const int capacity = server->process_packets.capacity;
+    server->process_packets.capacity = budget < capacity ? budget : capacity;
+    if ( busy )
+    {
+        rocketnet_platform_mutex_acquire( &fixture->socket->receive_mutex );
+    }
+    rocketnet_server_socket_receive_packets( server );
+    if ( busy )
+    {
+        rocketnet_platform_mutex_release( &fixture->socket->receive_mutex );
+    }
+    server->process_packets.capacity = capacity;
+    const int count = server->process_packets.num_packets;
+    *first = 0;
+    for ( int i = 0; i < count; i++ )
+    {
+        const uint8_t * stamp = server->process_packets.packet_data[i];
+        const uint32_t id = rocketnet_read_uint32( &stamp );
+        if ( i == 0 )
+        {
+            *first = id;
+        }
+        else if ( id != *first + (uint32_t) i )
+        {
+            return -1;
+        }
+    }
+    return count;
+}
+
+void rocketnet_server_socket_test_receive_state( struct rocketnet_server_socket_test_receive_t * fixture, struct rocketnet_server_socket_test_receive_state_t * state )
+{
+    rocketnet_assert( fixture );
+    rocketnet_assert( state );
+    const struct rocketnet_receive_handoff_t * handoff = &fixture->socket->receive_handoff;
+    state->worker = handoff->worker;
+    state->main = handoff->main;
+    state->tail = handoff->tail;
+    state->free = handoff->free;
+    state->main_cursor = handoff->main_cursor;
+    state->main_limit = handoff->main_limit;
+    state->tail_cursor = handoff->tail_cursor;
+    state->tail_end = handoff->tail_end;
+    state->consecutive = true;
+    for ( int b = 0; b < ROCKETNET_RECEIVE_HANDOFF_BUFFERS; b++ )
+    {
+        const rocketnet_server_socket_receive_buffer_t * buffer = &fixture->socket->receive_buffer[b];
+        state->committed[b] = handoff->committed[b];
+        state->count[b] = buffer->num_packets;
+        state->first[b] = 0;
+        for ( uint32_t i = 0; i < buffer->num_packets; i++ )
+        {
+            const uint8_t * stamp = buffer->packet_data[i];
+            const uint32_t id = rocketnet_read_uint32( &stamp );
+            if ( i == 0 )
+            {
+                state->first[b] = id;
+            }
+            else if ( id != state->first[b] + i )
+            {
+                state->consecutive = false;
+            }
+        }
+    }
+    state->capacity = fixture->server->process_packets.capacity;
+}
+
+// one fixture for every script: opened once, then its handoff and buffers
+// put back as a new socket has them
+static bool rocketnet_server_socket_test_delivery_reset( void * user )
+{
+    auto ** fixture = (struct rocketnet_server_socket_test_receive_t **) user;
+    if ( !*fixture )
+    {
+        *fixture = rocketnet_server_socket_test_receive_open();
+        return *fixture != NULL;
+    }
+    rocketnet_server_xdp_socket_t * socket = ( *fixture )->socket;
+    socket->receive_handoff = rocketnet_receive_handoff_initial();
+    for ( int b = 0; b < ROCKETNET_XDP_NUM_BUFFERS; b++ )
+    {
+        socket->receive_buffer[b].num_packets = 0;
+    }
+    ( *fixture )->server->process_packets.num_packets = 0;
+    return true;
+}
+
+static bool rocketnet_server_socket_test_delivery_pass( void * user, uint32_t first, int count )
+{
+    auto ** fixture = (struct rocketnet_server_socket_test_receive_t **) user;
+    if ( !rocketnet_server_socket_test_receive_bank( *fixture, first, count ) )
+    {
+        return false;
+    }
+    rocketnet_server_socket_end_receive_pass( ( *fixture )->socket );
+    return true;
+}
+
+static int rocketnet_server_socket_test_delivery_call( void * user, uint32_t * ids, int capacity )
+{
+    auto ** fixture = (struct rocketnet_server_socket_test_receive_t **) user;
+    rocketnet_server_socket_t * server = ( *fixture )->server;
+    rocketnet_server_socket_receive_packets( server );
+    const int count = server->process_packets.num_packets;
+    if ( count > capacity )
+    {
+        return -1;
+    }
+    for ( int i = 0; i < count; i++ )
+    {
+        const uint8_t * stamp = server->process_packets.packet_data[i];
+        ids[i] = rocketnet_read_uint32( &stamp );
+    }
+    return count;
+}
+
+bool rocketnet_server_socket_test_receive_delivery()
+{
+    struct rocketnet_server_socket_test_receive_t * fixture = NULL;
+    struct rocketnet_receive_delivery_rig_t rig = { reinterpret_cast<void *>( &fixture ), rocketnet_server_socket_test_delivery_pass, rocketnet_server_socket_test_delivery_call };
+    const bool valid = rocketnet_receive_delivery_check_all( &rig, "xdp server", rocketnet_server_socket_test_delivery_reset );
+    rocketnet_server_socket_test_receive_close( fixture );
+    return valid;
+}
+
+// Two queues and a budget of one: the call fills its budget on queue 0, and
+// queue 1, which it reaches after, returns nothing but still has its roles
+// brought up to date (its worker had left the buffer main shared), as the
+// old claim still recycled; the next call starts at queue 1 and returns its
+// datagram first. Default-initialized sockets, so only the slots written are
+// touched.
+bool rocketnet_server_socket_test_receive_budget_spent()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, 2 * sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    rocketnet_server_socket_t * server = rocketnet_server_socket_test_construct( server_storage );
+    auto * sockets = (rocketnet_server_xdp_socket_t *) socket_storage;
+    new ( &sockets[0] ) rocketnet_server_xdp_socket_t;
+    new ( &sockets[1] ) rocketnet_server_xdp_socket_t;
+    server->num_queues = 2;
+    server->socket = sockets;
+
+    bool valid = rocketnet_platform_mutex_create( &sockets[0].receive_mutex );
+    const bool second = rocketnet_platform_mutex_create( &sockets[1].receive_mutex );
+    valid &= second;
+
+    if ( valid )
+    {
+        struct rocketnet_server_socket_test_receive_t fixture = { NULL, NULL, server, &sockets[0] };
+        valid &= rocketnet_server_socket_test_receive_bank( &fixture, 1, 2 );
+        valid &= rocketnet_server_socket_end_receive_pass( &sockets[0] );
+        fixture.socket = &sockets[1];
+        valid &= rocketnet_server_socket_test_receive_bank( &fixture, 101, 1 );
+        valid &= rocketnet_server_socket_end_receive_pass( &sockets[1] );
+        valid &= sockets[1].receive_handoff.worker == 1 && sockets[1].receive_handoff.main == 0;
+
+        server->receive_start_queue = 0;
+        uint32_t first = 0;
+        valid &= rocketnet_server_socket_test_receive_call( &fixture, 1, false, &first ) == 1 && first == 1;
+
+        // queue 1 returned nothing, and main there moved on to the worker's buffer
+        const struct rocketnet_receive_handoff_t * later = &sockets[1].receive_handoff;
+        valid &= later->main == 1 && later->tail == 0 && later->tail_cursor == 0 && later->tail_end == 1;
+        valid &= server->receive_start_queue == 1;
+
+        // queue 1's datagram, then the rest of queue 0's
+        rocketnet_server_socket_receive_packets( server );
+        valid &= server->process_packets.num_packets == 2;
+        if ( server->process_packets.num_packets == 2 )
+        {
+            const uint8_t * stamp = server->process_packets.packet_data[0];
+            valid &= rocketnet_read_uint32( &stamp ) == 101;
+            stamp = server->process_packets.packet_data[1];
+            valid &= rocketnet_read_uint32( &stamp ) == 2;
+        }
+    }
+
+    for ( int q = 0; q < 2; q++ )
+    {
+        if ( sockets[q].receive_mutex.ok )
+        {
+            rocketnet_platform_mutex_destroy( &sockets[q].receive_mutex );
+        }
+    }
+    sockets[1].~rocketnet_server_xdp_socket_t();
+    sockets[0].~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( server );
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+    return valid;
+}
+
+// Two queues and a budget of two, queue 0 staging exactly two datagrams
+// before every call and queue 1 holding one: the budget ends on queue 0's
+// last datagram, so the next call starts at queue 1
+// (proofs/tla/RNGsoRecvWalk.tla NoQueueStarves, the reversed witness
+// MCRNGsoRecvWalkBrokenFillAtNextQueue.cfg). Recording queue 1, which the
+// call reached with no budget left, as where the budget ended started every
+// call at queue 0 again, and queue 1's datagram waited for as long as queue 0
+// kept arriving two at a time.
+bool rocketnet_server_socket_test_receive_budget_exact()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, 2 * sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    rocketnet_server_socket_t * server = rocketnet_server_socket_test_construct( server_storage );
+    auto * sockets = (rocketnet_server_xdp_socket_t *) socket_storage;
+    new ( &sockets[0] ) rocketnet_server_xdp_socket_t;
+    new ( &sockets[1] ) rocketnet_server_xdp_socket_t;
+    server->num_queues = 2;
+    server->socket = sockets;
+
+    bool valid = rocketnet_platform_mutex_create( &sockets[0].receive_mutex );
+    const bool second = rocketnet_platform_mutex_create( &sockets[1].receive_mutex );
+    valid &= second;
+
+    if ( valid )
+    {
+        struct rocketnet_server_socket_test_receive_t fixture = { NULL, NULL, server, &sockets[1] };
+        valid &= rocketnet_server_socket_test_receive_bank( &fixture, 101, 1 );
+        rocketnet_server_socket_end_receive_pass( &sockets[1] );
+        fixture.socket = &sockets[0];
+
+        server->receive_start_queue = 0;
+        const int capacity = server->process_packets.capacity;
+        server->process_packets.capacity = 2;
+
+        // queue 1's datagram is returned within one call per queue
+        int served = 0;
+        uint32_t next = 1;
+        for ( int call = 1; call <= 4 && valid; call++ )
+        {
+            valid &= rocketnet_server_socket_test_receive_bank( &fixture, next, 2 );
+            rocketnet_server_socket_end_receive_pass( &sockets[0] );
+            next += 2;
+            rocketnet_server_socket_receive_packets( server );
+            valid &= server->process_packets.num_packets == 2;
+            for ( int i = 0; i < server->process_packets.num_packets; i++ )
+            {
+                const uint8_t * stamp = server->process_packets.packet_data[i];
+                if ( rocketnet_read_uint32( &stamp ) == 101 && served == 0 )
+                {
+                    served = call;
+                }
+            }
+        }
+        valid &= served >= 1 && served <= 2;
+
+        server->process_packets.capacity = capacity;
+    }
+
+    for ( int q = 0; q < 2; q++ )
+    {
+        if ( sockets[q].receive_mutex.ok )
+        {
+            rocketnet_platform_mutex_destroy( &sockets[q].receive_mutex );
+        }
+    }
+    sockets[1].~rocketnet_server_xdp_socket_t();
+    sockets[0].~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( server );
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
     return valid;
 }
 
@@ -4853,8 +5273,9 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
 }
 
 // main takes a queue's receive lock in a few tries, never a wait
-// (rocketnet_xdp_handoff_lock); a drain put off is counted and the queue's
-// staged packets wait for the next call
+// (rocketnet_xdp_handoff_lock); a call that finds it held reads only what it
+// already holds, and the next call that takes it with no backlog catches up
+// (nothing counts the miss)
 
 static bool rocketnet_server_socket_receive_lock( rocketnet_server_xdp_socket_t * socket )
 {
@@ -4866,8 +5287,44 @@ static bool rocketnet_server_socket_receive_lock( rocketnet_server_xdp_socket_t 
     return false;
 }
 
-// proofs/tla/RNXdpReceiveRing.tla Drain: the application takes the buffer the XDP
-// worker staged, claimed under the receive mutex
+// main returns a queue's staged packets in place, from cursor up to end,
+// within the call's budget; false when the budget has ended, including on the
+// range's own last packet: then this queue, not the next one holding packets,
+// is where the budget ended (proofs/tla/RNGsoRecvWalk.tla Receive)
+static bool rocketnet_server_socket_take_range( rocketnet_server_socket_t * server_socket, rocketnet_server_socket_receive_buffer_t * receive_buffer,
+                                                uint32_t * cursor, uint32_t end )
+{
+    for ( uint32_t i = *cursor; i < end; i++ )
+    {
+        if ( server_socket->process_packets.num_packets >= server_socket->process_packets.capacity )
+        {
+            return false;
+        }
+
+        uint8_t * eth = receive_buffer->eth[i];
+        rocketnet_address_t from = receive_buffer->from[i];
+        uint8_t * packet_data = receive_buffer->packet_data[i];
+        const int packet_bytes = (int) receive_buffer->packet_bytes[i];
+
+        rocketnet_assert( packet_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+        rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
+        *cursor = i + 1;
+    }
+    return server_socket->process_packets.num_packets < server_socket->process_packets.capacity;
+}
+
+// proofs/tla/RNXdpReceiveRing.tla Drain and proofs/tla/RNReceiveHandoff.tla Call
+// (bound by the trace check tests/tla_trace_receive_handoff_xdp.cpp): the
+// application takes what the XDP worker staged. Per queue the previous call's
+// view has expired, so a finished tail is emptied for the worker's later use;
+// then a few tries of the receive mutex bring main up to what the worker has
+// committed (rocketnet_receive_handoff_begin), and main returns the tail of
+// the buffer the worker left, then its own buffer up to the committed count,
+// read in place. A held mutex leaves main returning what it already held; the
+// next call that takes it with no backlog catches up. Once the budget has
+// ended on an earlier queue, a later queue still has its finished tail
+// emptied and its roles brought up to date (a call that returns nothing),
+// as the old claim still recycled, so its worker can move on.
 
 void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server_socket )
 {
@@ -4891,63 +5348,42 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     {
         const int queue = rocketnet_xdp_drain_queue( server_socket->receive_start_queue, step, num_queues );
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+        struct rocketnet_receive_handoff_t * handoff = &socket->receive_handoff;
 
-        // Last call's view has expired. A partly consumed buffer remains
-        // owned here with its cursor; a finished one may be reset outside
-        // the lock and returned before the next FIFO buffer is claimed.
-
-        if ( socket->receive_held_index >= 0 &&
-             socket->receive_read_index >= socket->receive_buffer[socket->receive_held_index].num_packets )
+        if ( rocketnet_receive_handoff_tail_finished( handoff ) )
         {
-            socket->receive_buffer[socket->receive_held_index].num_packets = 0;
-            if ( !rocketnet_server_socket_receive_lock( socket ) )
-            {
-                continue;
-            }
-            socket->receive_handoff.recycle( socket->receive_held_index );
-            socket->receive_held_index = socket->receive_handoff.claim();
-            socket->receive_read_index = 0;
-            rocketnet_platform_mutex_release( &socket->receive_mutex );
+            socket->receive_buffer[handoff->tail].num_packets = 0;
         }
-        else if ( socket->receive_held_index < 0 )
+
+        if ( rocketnet_server_socket_receive_lock( socket ) )
         {
-            if ( !rocketnet_server_socket_receive_lock( socket ) )
+#if defined( ROCKETNET_XDP_RECEIVE_HANDOFF_PLANT )
+            // the trace check's plant (tests/tla_trace_receive_handoff_xdp.cpp):
+            // main reads only a buffer the worker has left, as the old FIFO
+            // claim did (proofs/tla/RNReceiveHandoff.tla ReadOnlyLeft)
+            const uint32_t seen = handoff->main_limit;
+            const int left = rocketnet_receive_handoff_begin( handoff );
+            if ( handoff->main == handoff->worker )
             {
-                continue;
+                handoff->main_limit = left >= 0 ? 0 : seen;
             }
-            socket->receive_held_index = socket->receive_handoff.claim();
-            socket->receive_read_index = 0;
+#else  // #if defined( ROCKETNET_XDP_RECEIVE_HANDOFF_PLANT )
+            rocketnet_receive_handoff_begin( handoff );
+#endif // #if defined( ROCKETNET_XDP_RECEIVE_HANDOFF_PLANT )
             rocketnet_platform_mutex_release( &socket->receive_mutex );
         }
 
-        if ( socket->receive_held_index < 0 )
-        {
-            continue;
-        }
-        // the budget already ended on an earlier queue: still recycle this
-        // one, and take no packet from it
+        // the budget already ended on an earlier queue: take no packet here
 
         if ( filled_queue >= 0 )
         {
             continue;
         }
-        rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_held_index];
-        for ( uint32_t i = socket->receive_read_index; i < receive_buffer->num_packets; i++ )
+
+        if ( !rocketnet_server_socket_take_range( server_socket, &socket->receive_buffer[handoff->tail], &handoff->tail_cursor, handoff->tail_end ) ||
+             !rocketnet_server_socket_take_range( server_socket, &socket->receive_buffer[handoff->main], &handoff->main_cursor, handoff->main_limit ) )
         {
-            if ( server_socket->process_packets.num_packets >= server_socket->process_packets.capacity )
-            {
-                filled_queue = queue;
-                break;
-            }
-
-            uint8_t * eth = receive_buffer->eth[i];
-            rocketnet_address_t from = receive_buffer->from[i];
-            uint8_t * packet_data = receive_buffer->packet_data[i];
-            const int packet_bytes = (int) receive_buffer->packet_bytes[i];
-
-            rocketnet_assert( packet_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
-            rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
-            socket->receive_read_index = i + 1;
+            filled_queue = queue;
         }
     }
 
@@ -4955,6 +5391,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     {
         // the budget ended on filled_queue: the next call starts after it.
         // a call that did not fill the budget still advances by one.
+        // proofs/tla/RNGsoRecvWalk.tla Receive and NoQueueStarves.
         const int origin = filled_queue >= 0 ? filled_queue : server_socket->receive_start_queue;
         server_socket->receive_start_queue = rocketnet_xdp_drain_queue( origin, 1, num_queues );
     }
@@ -5035,7 +5472,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         uint32_t receive_index;
 
         rocketnet_server_socket_receive_buffer_t * receive_buffer =
-            &socket->receive_buffer[socket->receive_handoff.producer];
+            &socket->receive_buffer[socket->receive_handoff.worker];
         uint32_t num_packets = rocketnet_xdp_receive_peek( &socket->receive_queue, receive_buffer, ROCKETNET_XDP_RECV_QUEUE_SIZE, &pending_return, &receive_index );
 
         if ( num_packets > 0 )
@@ -5058,6 +5495,9 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             // The frame ownership is modelled in proofs/tla/RNXdpReceiveRing.tla;
             // the loop below is its Take, one descriptor read and its frame
             // held while the staging buffer has room (sdk/rocketnet_xdp_receive_pass.h).
+            // The staging is proofs/tla/RNReceiveHandoff.tla Bank: the worker
+            // appends at or past its buffer's committed count, outside the
+            // receive mutex.
 
             uint32_t num_consumed = 0;
 
@@ -5102,16 +5542,11 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             return_pending_frames();
         }
 
-        // The worker finished every write before publishing this buffer.
-        // If no spare exists it retains the producer and stops peeking once
-        // full; the kernel RX ring supplies backpressure without overwrites.
+        // The worker finished every write of the pass before committing it.
+        // A full buffer main has not started on is kept, and the worker stops
+        // peeking; the kernel RX ring supplies backpressure without overwrites.
 
-        if ( receive_buffer->num_packets > 0 )
-        {
-            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
-            socket->receive_handoff.publish();
-            rocketnet_platform_mutex_release( &socket->receive_mutex );
-        }
+        rocketnet_server_socket_end_receive_pass( socket );
 
         // mark any completed send packet frames as free to be reused
 
