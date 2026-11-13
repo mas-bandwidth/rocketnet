@@ -3990,6 +3990,12 @@ static void rocketnet_server_transport_abort_create( struct rocketnet_server_tra
         {
             rocketnet_error( "server transport create: the worker has not exited after %.1f seconds; the server keeps the transport, not freed, until it has",
                              RN_SERVER_ABORT_CREATE_WAIT_SECONDS );
+            // the I/O worker never reads the protocol: its keys are wiped
+            // now, so a transport whose worker never exits does not keep
+            // them; the owner's destroy wipes them again
+            sodium_memzero( transport->protocol.server_secret_key, sizeof( transport->protocol.server_secret_key ) );
+            sodium_memzero( transport->protocol.cookie_key, sizeof( transport->protocol.cookie_key ) );
+            sodium_memzero( transport->protocol.previous_cookie_key, sizeof( transport->protocol.previous_cookie_key ) );
             rocketnet_assert( *retained == NULL );
             *retained = transport;
             return;
