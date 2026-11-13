@@ -24,10 +24,11 @@
 //   load              rocketnet_server_gso_send_queue, then the lane's producer
 //                     and counter as start reads them      Load(t, d, q)
 //   start_packet      rocketnet_server_gso_start_packet    Claim(t, r)
-//   reload            a counter another thread moved since the load: the
-//                     compare-and-swap that lost, which compare_exchange_weak
-//                     reloads inside the one call; the walk calls nothing and
-//                     reads the counter again              Claim(t, None)
+//   reload            the library's own compare-and-swap lost inside
+//                     start_packet to the other loaded thread, which the
+//                     walk runs from the claim hook between start's load and
+//                     its compare-and-swap; recorded only when the library's
+//                     loss count moved                     Claim(t, None)
 //   finish_packet     rocketnet_server_gso_finish_packet with the pointer k
 //                     bytes off the one start returned     Finish(t, k)
 //   finish_abort      finish_packet at the exact pointer (so the abort's 0
@@ -186,7 +187,10 @@ static bool gso_locate( const gso_walk_t & walk, const uint8_t * pointer, int * 
 }
 
 // RNGsoQueueBankLayout own: the producer, a bank in the lane's free FIFO, or
-// the worker's (published, taken, not yet returned)
+// the worker's (published in the lane's ready FIFO; the walk's take and
+// return are one step, so between records no bank is held taken). Each is
+// read from the lane; a bank in none of them is "lost", a value the model
+// has not, so the trace check rejects a library that loses a bank
 static std::string gso_own( const struct rocketnet_server_gso_test_send_lane_t & lane, int b )
 {
     if ( b == lane.producer )
@@ -200,7 +204,14 @@ static std::string gso_own( const struct rocketnet_server_gso_test_send_lane_t &
             return "\"free\"";
         }
     }
-    return "\"worker\"";
+    for ( int i = 0; i < lane.ready_count; i++ )
+    {
+        if ( lane.ready_banks[( lane.ready_head + i ) % GSO_BANKS] == b )
+        {
+            return "\"worker\"";
+        }
+    }
+    return "\"lost\"";
 }
 
 // the next finish's packet_bytes, 1..ROCKETNET_RECEIVE_CEILING: distinct for a
@@ -350,15 +361,17 @@ static void gso_take_claim( gso_walk_t & walk, int t, const uint8_t * frame, uin
 
     // the slot and the queue the id names are the code's own answers
     // (rocketnet_server_gso_send_slot, the id's low part), not a test copy of
-    // the rule; a refusal there leaves the pointer's own geometry for the claim
+    // the rule. The code refusing the pointer its own start returned is no
+    // slot at all: the claim is out of bounds (the walk computes no slot of
+    // its own)
     int id_queue = 0;
     const int code_slot = rocketnet_server_gso_test_send_slot( walk.gso, pid, frame, &id_queue );
     c.q = q;
     c.b = b;
-    c.slot = code_slot >= 0 ? code_slot : (int) ( offset / ROCKETNET_FRAME_STRIDE );
+    c.slot = code_slot;
     c.id_queue = id_queue;
     c.ptr = gso_addr( q, b ) + offset;
-    if ( c.slot >= GSO_SLOTS )
+    if ( c.slot < 0 || c.slot >= GSO_SLOTS )
     {
         walk.oob = true;
         return;
@@ -374,10 +387,10 @@ static void gso_take_claim( gso_walk_t & walk, int t, const uint8_t * frame, uin
     }
 }
 
-// RNGsoQueueBankLayout Claim(t, r): the second half. A counter another
-// thread moved since the load is the compare-and-swap that lost: op reload,
-// no call, r = None. Otherwise the code's start is called; r is what it
-// returned, the pointer (as the model addresses it) and id, or None for NULL.
+// RNGsoQueueBankLayout Claim(t, r): the second half. The code's start is
+// called; r is what it returned, the pointer (as the model addresses it) and
+// id, or None for NULL. A lost compare-and-swap is recorded only from the
+// library's own loss count (below).
 // the second claimer the walk runs inside the library's start_packet, between
 // its load of the producer's count and its compare-and-swap
 // (rocketnet_server_gso_test_set_claim_hook): thread u's whole claim, recorded
@@ -425,28 +438,33 @@ static std::string gso_claim( gso_walk_t & walk, int t, const char ** op, const 
     gso_load_t & l = walk.load[t];
     const struct rocketnet_server_gso_test_send_lane_t & lane = walk.lane[l.q];
 
+    // a load the counter has moved past: only a claim the walk ran outside
+    // the library's own call can leave one (the hook below always runs the
+    // other loaded thread inside this call), so the walk records no step the
+    // library did not take: it ends here (the caller decides whether that is
+    // the record budget's tail or a walk defect)
     if ( l.i < GSO_SLOTS && lane.num_packets[l.b] != l.i )
     {
-        l.b = lane.producer;
-        l.i = lane.num_packets[lane.producer];
-        walk.steps_reload++;
-        *op = "reload";
-        return gso_args( { tla_int( t ), gso_none() } );
+        *op = "stale";
+        return std::string();
     }
 
-    // another thread that loaded the same counter claims inside this call: the
+    // the other thread, when it loaded the same counter, always claims inside
+    // this call (between start's load and its compare-and-swap): the
     // library's compare-and-swap then loses and reloads on its own, which the
-    // trace records as the model's reload step; a library that stored blindly
-    // (no loss) takes the same slot, and the state it records no model step reaches
+    // trace records as the model's reload step (at the last slot the reload
+    // finds the bank full and start refuses); a library that stored blindly
+    // (no loss) takes the same slot, and the state it records no model step
+    // reaches
     gso_hook_t hook = {};
     int loss_before = 0;
-    if ( walk.records && (int) walk.records->size() + 3 <= walk.max_records && l.i >= 0 && l.i + 1 < GSO_SLOTS && lane.num_packets[l.b] == l.i )
+    if ( walk.records && (int) walk.records->size() + 3 <= walk.max_records && l.i >= 0 && l.i < GSO_SLOTS && lane.num_packets[l.b] == l.i )
     {
         for ( size_t k = 0; k < others.size(); k++ )
         {
             const int u = others[k];
             const gso_load_t & lu = walk.load[u];
-            if ( u != t && lu.q == l.q && lu.b == l.b && lu.i == l.i && walk.random->below( 2 ) == 0 )
+            if ( u != t && lu.q == l.q && lu.b == l.b && lu.i == l.i )
             {
                 hook.walk = &walk;
                 hook.u = u;
@@ -772,6 +790,19 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
         {
             args = gso_claim( walk, can_claim[(size_t) ( pick - n_load )], &op, can_claim );
             act = "Claim";
+            if ( strcmp( op, "stale" ) == 0 )
+            {
+                // only the record budget's last records skip the hook; a stale
+                // load before them is a walk that ran a claim outside the
+                // library's call
+                if ( (int) records.size() + 3 <= walk.max_records )
+                {
+                    fprintf( stderr, "tla_trace: gso: a load went stale before the record budget's tail at step %d\n", step );
+                    rocketnet_server_gso_test_close( walk.gso );
+                    return 1;
+                }
+                break;
+            }
         }
         else if ( pick < n_load + n_claim + n_finish )
         {

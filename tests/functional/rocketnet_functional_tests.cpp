@@ -7892,6 +7892,7 @@ void rocketnet_test_server_gso_worker_pin()
         for ( int q = 0; q < queues; q++ )
         {
             rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
+            rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( gso, q ) == 0 );
         }
         rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == 0 );
         rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
@@ -7909,6 +7910,27 @@ void rocketnet_test_server_gso_worker_pin()
             rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == ROCKETNET_GSO_PIN_NONE );
         }
         rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) >= queues );
+        // where a refused worker runs, read from the worker thread itself:
+        // confined away from cpu 0 wherever this process may run on another
+        // cpu (the allowed set, not the online count)
+        cpu_set_t allowed;
+        CPU_ZERO( &allowed );
+        bool other_cpu = false;
+        if ( sched_getaffinity( 0, sizeof( allowed ), &allowed ) == 0 )
+        {
+            for ( int cpu = 1; cpu < CPU_SETSIZE && cpu < online; cpu++ )
+            {
+                other_cpu = other_cpu || CPU_ISSET( (size_t) cpu, &allowed );
+            }
+        }
+        if ( other_cpu )
+        {
+            for ( int q = 0; q < queues; q++ )
+            {
+                rocketnet_check( rocketnet_server_gso_test_worker_allows_cpu0( gso, q ) == 0 );
+            }
+            rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == queues );
+        }
         rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
     }
 

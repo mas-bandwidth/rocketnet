@@ -442,6 +442,8 @@ struct rocketnet_server_gso_test_send_lane_t
     int free_banks[ROCKETNET_GSO_TX_BANKS];
     int free_head;
     int free_count;
+    int ready_banks[ROCKETNET_GSO_TX_BANKS]; // the published banks, oldest at ready_head
+    int ready_head;
     int ready_count;
     int num_packets[ROCKETNET_GSO_TX_BANKS];
     const uint8_t * first[ROCKETNET_GSO_TX_BANKS];      // each bank's slot 0
@@ -455,6 +457,10 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_test_open_slots( int num_qu
 uint64_t rocketnet_server_gso_test_open_bytes( int num_queues );
 bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, int queue_index, struct rocketnet_server_gso_test_send_lane_t * lane );
 void rocketnet_server_gso_test_refused_pin( struct rocketnet_server_gso_t * gso );
+// Where queue queue_index's running worker may run, read from the thread
+// itself (pthread_getaffinity_np): 1 when its mask allows cpu 0, 0 when it
+// does not, -1 when there is no such worker or the read failed.
+int rocketnet_server_gso_test_worker_allows_cpu0( struct rocketnet_server_gso_t * gso, int queue_index );
 int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot );
 int rocketnet_server_gso_test_send_slot( struct rocketnet_server_gso_t * gso, uint64_t packet_id, const uint8_t * packet_data, int * queue_out );
 int rocketnet_server_gso_test_take_send( struct rocketnet_server_gso_t * gso, int queue_index, bool * final );

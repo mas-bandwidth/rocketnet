@@ -2850,10 +2850,12 @@ bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, i
     lane->turn = send->turn;
     lane->free_head = send->free_head;
     lane->free_count = send->free_count;
+    lane->ready_head = send->ready_head;
     lane->ready_count = send->ready_count;
     for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
     {
         lane->free_banks[b] = send->free_banks[b];
+        lane->ready_banks[b] = send->ready[b];
         lane->num_packets[b] = send->banks[b].num_packets.load( std::memory_order_relaxed );
         lane->first[b] = send->banks[b].data[0];
     }
@@ -2882,6 +2884,21 @@ void rocketnet_server_gso_test_refused_pin( struct rocketnet_server_gso_t * gso 
     rocketnet_assert( gso );
     gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
     gso->queues[0].pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
+}
+
+int rocketnet_server_gso_test_worker_allows_cpu0( struct rocketnet_server_gso_t * gso, int queue_index )
+{
+    if ( !gso || queue_index < 0 || queue_index >= gso->num_queues || !gso->queues[queue_index].thread )
+    {
+        return -1;
+    }
+    cpu_set_t mask;
+    CPU_ZERO( &mask );
+    if ( pthread_getaffinity_np( gso->queues[queue_index].thread->handle, sizeof( mask ), &mask ) != 0 )
+    {
+        return -1;
+    }
+    return CPU_ISSET( 0, &mask ) ? 1 : 0;
 }
 
 int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot )
