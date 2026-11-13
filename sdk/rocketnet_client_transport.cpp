@@ -3210,9 +3210,10 @@ static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * 
     return rocketnet_platform_mutex_try_acquire( &client_transport->mutex );
 }
 
-// proofs/tla/RNReceiveHandoff.tla Call (bound by the trace check
-// tests/tla_trace_client_receive_handoff.cpp): the I/O core's expose on the
-// BASE path (rocketnet_client_io_expose): every record the receive worker
+// proofs/tla/RNReceiveHandoff.tla Call: the I/O core's expose on the BASE
+// path (rocketnet_client_io_expose), through the same shared helpers the trace
+// check tests/tla_trace_client_receive_handoff.cpp binds (this function itself
+// is covered by the unit tests, not the trace walk): every record the receive worker
 // committed before this call took the mutex, within the packet budget. The
 // worker polls, so a full buffer it keeps is left at its next poll and needs
 // no wake.
@@ -4335,8 +4336,10 @@ void rocketnet_client_ack_stats_public_client_for_test_free( struct rocketnet_cl
 }
 #endif // #if ROCKETNET_DEV
 
-// proofs/tla/RNReceiveHandoff.tla Commit (bound by the trace check
-// tests/tla_trace_client_receive_handoff.cpp) on the BASE path: the receive
+// proofs/tla/RNReceiveHandoff.tla Commit on the BASE path (the shared
+// rocketnet_receive_handoff_commit the trace check
+// tests/tla_trace_client_receive_handoff.cpp binds; this function and the
+// worker loop's cadence are covered by the unit tests): the receive
 // worker makes its buffer's count visible to update under the mutex and, when
 // update has started on its buffer, moves to the free one, which update
 // emptied before freeing it. Otherwise it keeps its buffer and appends to it
