@@ -95,6 +95,27 @@ class RunStaticGateTest(unittest.TestCase):
         self.assertIn("static gate passed", out)
         self.assertEqual(self.headers_built, [True], out)
 
+    def test_generated_headers_build_their_target(self):
+        # the real function, over a stubbed subprocess.run: it builds the
+        # rocketnet_xdp_header target in BUILD, and a nonzero exit is False
+        build = self.saved["build_generated_headers"]
+        calls = []
+
+        class Result:
+            def __init__(self, code):
+                self.returncode = code
+                self.stdout = "ninja: error\n"
+
+        saved_run = run_static.subprocess.run
+        try:
+            for code, want in ((0, True), (1, False)):
+                run_static.subprocess.run = lambda argv, code=code, **kw: calls.append(argv) or Result(code)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(build(), want)
+        finally:
+            run_static.subprocess.run = saved_run
+        self.assertEqual(calls[0], ["cmake", "--build", run_static.BUILD, "--target", "rocketnet_xdp_header"])
+
     def test_generated_headers_failing_to_build_fails(self):
         # the xdp transport's generated header is built before any unit is
         # analyzed; a build that cannot write it is an incomplete run

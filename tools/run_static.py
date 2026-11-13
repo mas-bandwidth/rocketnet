@@ -53,8 +53,8 @@ READ_WRITE_HEADER = "rocketnet_read_write.h"
 # shrinks analyses less while printing the same verdict, so it fails
 # instead. A file that leaves the parser set on purpose lowers its floor in
 # the same change.
-READ_WRITE_FLOOR = 7
-PARSER_FILE_FLOOR = 9
+READ_WRITE_FLOOR = 9
+PARSER_FILE_FLOOR = 11
 
 LOCATION = re.compile(r"^(.+?):(\d+):(\d+):\s+(warning|error|fatal error):\s+(.*)$")
 OPTION = re.compile(r"\s*\[(-W[A-Za-z0-9_.=+-]+)\]\s*$")
