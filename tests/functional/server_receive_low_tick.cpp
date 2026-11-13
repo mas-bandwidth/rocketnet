@@ -83,6 +83,9 @@ static void server_receive_low_tick_check( bool condition, const char * expressi
 
 #define server_receive_low_tick_require( condition ) server_receive_low_tick_check( (condition), #condition, __LINE__ )
 
+#define ROCKETNET_COUNTERS_CHECK server_receive_low_tick_require
+#include "../counters_expect.h"
+
 // the log lines of the case, captured through the library's log callback
 static char server_receive_low_tick_log[16384];
 static char server_receive_low_tick_log_read_copy[16384];
@@ -461,7 +464,7 @@ static uint64_t server_receive_low_tick_refusals( const struct rocketnet_counter
 
     for ( int i = 0; i < rocketnet_num_counters(); ++i )
     {
-        if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL )
+        if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL && !rocketnet_counter_aliases_shared_row( i ) )
         {
             total += rocketnet_counter_value( counters, i );
         }
