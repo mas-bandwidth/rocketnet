@@ -7705,9 +7705,21 @@ void rocketnet_test_server_gso_pin_refusals_reach_server_counters()
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_check( refused >= 2 );
-    // exact where the machine allows the confinement that follows a refused
-    // pin (a second cpu to confine to): one refusal for each queue worker
-    if ( sysconf( _SC_NPROCESSORS_ONLN ) >= 2 )
+    // exact where the confinement that follows a refused pin can succeed: this
+    // process may run on some cpu other than cpu 0 (the allowed set, not the
+    // online count: a runner's cpuset may allow only cpu 0), so one refusal
+    // for each queue worker
+    cpu_set_t allowed;
+    CPU_ZERO( &allowed );
+    bool other_cpu = false;
+    if ( sched_getaffinity( 0, sizeof( allowed ), &allowed ) == 0 )
+    {
+        for ( int cpu = 1; cpu < CPU_SETSIZE && cpu < sysconf( _SC_NPROCESSORS_ONLN ); cpu++ )
+        {
+            other_cpu = other_cpu || CPU_ISSET( (size_t) cpu, &allowed );
+        }
+    }
+    if ( other_cpu )
     {
         rocketnet_platform_sleep( 0.05 );
         rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 2 );

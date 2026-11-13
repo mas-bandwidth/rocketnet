@@ -346,7 +346,7 @@ struct rocketnet_server_gso_t
 
     struct rocketnet_server_socket_process_packets_t process_packets;
     int max_clients;                    // the server's configured client count: sizes the view and the socket receive buffers
-    int num_os_cpus = 0;                // the server's num_os_cpus: the workers pin to num_os_cpus + queue; 0 pins nothing
+    int num_os_cpus = 0;                // the server's num_os_cpus: the workers pin to num_os_cpus + queue; below 1 reads as 1 (the OS keeps cpu 0)
     std::atomic<int> pin_refusals{ 0 }; // pins the workers asked for and the system refused
 
 #if ROCKETNET_DEV
@@ -1316,7 +1316,7 @@ static void rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t 
 // queue. A refusal is a warning naming the queue and the cpu, counted in
 // pin_refusals (rocketnet_server_gso_pin_refusals), and the queue's pin_cpu
 // stays NONE: a worker is reported pinned only when pthread_setaffinity_np
-// said so. num_os_cpus 0 pins nothing (the transport driven directly). The
+// said so. num_os_cpus below 1 reads as 1 (the OS keeps cpu 0). The
 // priority is set by the creator (rocketnet_platform_server_thread_priority).
 
 static void rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t * queue )
