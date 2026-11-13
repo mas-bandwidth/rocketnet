@@ -17,7 +17,7 @@
 (* answers each run ok (sent or failed), full (-EAGAIN, and -EINTR,        *)
 (* -ENOBUFS, -ENOMEM: KernelAgain) or a segment refusal.  A full answer    *)
 (* hands the run back and blocks submits until the worker's retry timer    *)
-(* (a 1 ms timeout on its ring) fires or, before the stop, main wakes it:  *)
+(* (a 1 ms timeout on its ring) fires or, before shutdown, main wakes it: *)
 (* the gso worker's wait.  Never POLLOUT: a socket reports room while the  *)
 (* device queue behind it refuses (-ENOBUFS), and a poll for it would      *)
 (* spin.  A refusal hands the run back as one run a packet, sent again     *)
@@ -106,7 +106,7 @@ VARIABLES stopping,   \* the server is stopping (rocketnet_server_transport_stop
           cOk,        \* ok (sent or failed) completions posted, not reaped
           cAgain,     \* full completions posted, not reaped
           cRef,       \* segment refusals posted, not reaped
-          blocked,    \* a run came back full: no submit until the timer fires (or main's wake, before the stop)
+          blocked,    \* a run came back full: no submit until the timer fires (or main's wake, before shutdown)
           timer,      \* the retry timer: "none", "armed" or "posted" (its completion ready)
           recv,       \* the multishot receive: "armed", "cancelling", "posted" (its last completion ready) or "ended"
           wakeRead,   \* the eventfd READ: "none", "armed", "cancelling" or "posted"
@@ -288,12 +288,13 @@ ReapRecvEnd ==
     /\ recv' = "ended"
     /\ UNCHANGED <<stopping, shutdown, quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, timer, wakeRead, wakeCount, agains, againsBefore, refusals, recvEnds, p>>
 
-\* main's wake: before the stop it also ends a wait (main published, or
-\* began the shutdown); once quit is seen only the timer does
+\* main's wake: until shutdown it also ends a wait (main published); from
+\* shutdown on only the timer does, so each counted wait is a whole retry
+\* period however often main wakes the worker
 ReapWake ==
     /\ Awake /\ wakeRead = "posted"
     /\ wakeRead' = "none"
-    /\ blocked' = (blocked /\ seen)
+    /\ blocked' = (blocked /\ shutdown)
     /\ UNCHANGED <<stopping, shutdown, quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, timer, recv, wakeCount, agains, againsBefore, refusals, recvEnds, p>>
 
 \* a cancel's own completion reaped: nothing of these variables changes

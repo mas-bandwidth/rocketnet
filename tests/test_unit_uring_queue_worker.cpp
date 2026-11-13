@@ -8,7 +8,7 @@
 // worker sleeps only with its wake read armed, submits the runs of what main
 // publishes, stops submitting after a full answer (-EAGAIN, -EINTR,
 // -ENOBUFS, -ENOMEM: every packet kept) until its retry timer fires (or,
-// before the stop, main's wake), never a POLLOUT poll; once shutdown has
+// before shutdown, main's wake), never a POLLOUT poll; once shutdown has
 // begun counts its waits, starting again when a run is done or a bank
 // claimed, and abandons what waits once the socket has stayed full past its
 // bound, so the queue turns idle before the stop; after the stop cancels its
@@ -568,7 +568,7 @@ static uint64_t worker_test_timer()
 
 // RNUringQueueWorker ReapAgain, ArmTimer and ReapTimer: a full answer hands
 // the run back and arms the retry timer (a 1 ms timeout, never a POLLOUT
-// poll); nothing is submitted until the timer fires or, before the stop,
+// poll); nothing is submitted until the timer fires or, before shutdown,
 // main's wake comes, then the same run goes first
 
 static void test_uring_queue_worker_again_waits_for_the_timer()
@@ -618,7 +618,7 @@ static void test_uring_queue_worker_again_waits_for_the_timer()
     check( rocketnet_uring_queue_send_idle( t.send, 0 ) );
     check( t.worker.agains == 0 );
 
-    // before the stop main's wake ends the wait too: the run goes again with
+    // before shutdown main's wake ends the wait too: the run goes again with
     // the timer still in the kernel, and the timer's completion, when it
     // comes, is the worker's, not stray
     t.stage( 1, 100 );
@@ -866,7 +866,17 @@ static void test_uring_queue_worker_shutdown_drains_a_full_socket()
     t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), 8, 0 );
     check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
     check( !t.worker.seen );
-    check( t.sends().size() == 4 );     // the wake ended the wait: both runs again
+
+    // from shutdown on main's wakes (its last disconnect batches) do not end
+    // a wait: only the timer does, so each counted wait is a whole period
+    for ( int i = 0; i < 3; i++ )
+    {
+        t.post( rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), 8, 0 );
+        check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    }
+    check( t.worker.blocked );
+    check( t.sends().size() == 2 );
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_STRAY ) == 0 );
 
     // the socket stays full: every run answers full, and the worker waits on
     // its timer between tries
@@ -889,15 +899,18 @@ static void test_uring_queue_worker_shutdown_drains_a_full_socket()
         }
     }
 
-    // the bound reached: both runs abandoned and counted, the bank retired,
-    // the queue idle, the worker still running (no stop yet)
+    // the bound reached after exactly max_retry counted waits (the wait
+    // before shutdown does not count): both runs abandoned and counted, the
+    // bank retired, the queue idle, the worker still running (no stop yet).
+    // Four timers in all, the last armed by the third counted wait's refusal
     check( rocketnet_uring_queue_send_idle( t.send, 0 ) );
     check( t.worker.agains == 3 );
-    check( waits <= 3 );
+    check( waits == 4 );
+    check( answered == 8 );
     check( t.send_counter( ROCKETNET_URING_QUEUE_SEND_COUNTER_ABANDONED ) == 3 );
     check( t.send_counter( ROCKETNET_URING_QUEUE_SEND_COUNTER_SENT ) == 0 );
     check( t.of( IORING_OP_POLL_ADD ).size() == 0 );
-    check( (int) t.of( IORING_OP_TIMEOUT ).size() <= 1 + 3 );
+    check( t.of( IORING_OP_TIMEOUT ).size() == 4 );
     const std::vector<uint64_t> rows = worker_test_rows( t );
     check( rows[ROCKETNET_COUNTER_URING_SEND_DROPPED] == 3 );
     check( rows[ROCKETNET_COUNTER_URING_SEND_DEFERRED] == t.counter( ROCKETNET_URING_WORKER_COUNTER_SOCKET_FULL ) );
@@ -1005,7 +1018,10 @@ static void test_uring_queue_worker_retry_bound_resets_on_progress()
     s.publish();
     check( s.settle() == ROCKETNET_URING_WORKER_SLEEP );
     check( s.worker.agains == 0 );
-    check( s.sends().size() == 2 );     // claimed and sent, not abandoned
+    check( s.sends().size() == 1 );     // claimed; the wait the abandon left goes on to its timer
+    s.post( worker_test_timer(), -ETIME, 0 );
+    check( s.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( s.sends().size() == 2 );     // sent, not abandoned
     s.post( s.sends()[1].user_data, 100, 0 );
     check( s.settle() == ROCKETNET_URING_WORKER_SLEEP );
     check( s.send_counter( ROCKETNET_URING_QUEUE_SEND_COUNTER_SENT ) == 1 );
@@ -1078,7 +1094,8 @@ static void test_uring_queue_worker_stop_abandons_a_full_socket()
     t.post( t.sends()[3].user_data, -EAGAIN, 0 );
     check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
     check( t.worker.agains == 2 );
-    check( t.send_counter( ROCKETNET_URING_QUEUE_SEND_COUNTER_ABANDONED ) == ( worker_test_iovecs( t.sends()[3] ) == 2 ? 2u : 1u ) );
+    check( t.send_counter( ROCKETNET_URING_QUEUE_SEND_COUNTER_ABANDONED ) == (uint64_t) worker_test_iovecs( t.sends()[3] ) );
+    check( t.send_counter( ROCKETNET_URING_QUEUE_SEND_COUNTER_SENT ) == 0 );
     check( rocketnet_uring_queue_send_held( t.send, 0 ) >= 0 );     // one run is still the kernel's
 
     // the last run in the kernel answers full too: abandoned, the bank
