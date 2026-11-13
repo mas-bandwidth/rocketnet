@@ -19,6 +19,7 @@
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_receive_prefilter.h"
+#include "rocketnet_read_write.h"
 #include "rocketnet_receive_handoff.h"
 #if ROCKETNET_DEV
 #include "rocketnet_receive_delivery_check.h"
@@ -4414,7 +4415,8 @@ static void rocketnet_iocp_test_batch( rocketnet_server_iocp_t * iocp, int w, ui
     {
         uint8_t datagram[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES] = {};
         const uint32_t id = first + (uint32_t) i;
-        memcpy( datagram, &id, sizeof( id ) );
+        uint8_t * stamp = datagram;
+        rocketnet_write_uint32( &stamp, id );
         rocketnet_iocp_bank_datagram( &batch, from, datagram, (int) sizeof( datagram ) );
     }
 
@@ -4432,7 +4434,8 @@ static int rocketnet_iocp_test_view_ids( rocketnet_server_iocp_t * iocp, uint32_
     }
     for ( int i = 0; i < view->num_packets; ++i )
     {
-        memcpy( &ids[i], view->packet_data[i], sizeof( ids[i] ) );
+        const uint8_t * stamp = view->packet_data[i];
+        ids[i] = rocketnet_read_uint32( &stamp );
     }
     return view->num_packets;
 }

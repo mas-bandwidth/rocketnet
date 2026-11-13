@@ -19,6 +19,7 @@
 #include "rocketnet_rio_layout.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_receive_prefilter.h"
+#include "rocketnet_read_write.h"
 #include "rocketnet_receive_handoff.h"
 #if ROCKETNET_DEV
 #include "rocketnet_receive_delivery_check.h"
@@ -2817,7 +2818,8 @@ static ULONG WINAPI rocketnet_rio_delivery_test_dequeue( RIO_CQ cq, PRIORESULT r
         const int slice = (int) ( id % (uint32_t) rio->receives );
         uint8_t * data = rio->region + rocketnet_rio_receive_slice_offset( &rio->layout, slice );
         memset( data, 0, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
-        memcpy( data, &id, sizeof( id ) );
+        uint8_t * stamp = data;
+        rocketnet_write_uint32( &stamp, id );
         results[taken].Status = 0;
         results[taken].BytesTransferred = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
         results[taken].RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice );
@@ -2861,7 +2863,8 @@ static int rocketnet_rio_delivery_test_call( void * user, uint32_t * ids, int ca
     }
     for ( int i = 0; i < view->num_packets; ++i )
     {
-        memcpy( &ids[i], view->packet_data[i], sizeof( ids[i] ) );
+        const uint8_t * stamp = view->packet_data[i];
+        ids[i] = rocketnet_read_uint32( &stamp );
     }
     return view->num_packets;
 }
