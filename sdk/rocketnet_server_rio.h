@@ -157,6 +157,22 @@ int rocketnet_server_rio_send_room( rocketnet_server_rio_t * rio );
 // the lanes, the lane a destination's frames are staged in, and one lane's
 // send_room (the server's per-queue protocol send reserve)
 int rocketnet_server_rio_lanes( rocketnet_server_rio_t * rio );
+// where a lane's worker runs, as its worker found it: PINNED to *mask in
+// *group, NOT_ASKED (one lane, or the development knob "none"), REFUSED
+// (SetThreadGroupAffinity failed; *error is its Win32 error) or PENDING (the
+// worker has not reached it yet). Create waits for every lane's answer and
+// logs it; a start can read it here.
+enum
+{
+    ROCKETNET_RIO_PLACEMENT_PENDING = 0,
+    ROCKETNET_RIO_PLACEMENT_PINNED = 1,
+    ROCKETNET_RIO_PLACEMENT_NOT_ASKED = 2,
+    ROCKETNET_RIO_PLACEMENT_REFUSED = 3,
+};
+int rocketnet_server_rio_lane_placement( rocketnet_server_rio_t * rio, int lane, uint64_t * mask, int * group, unsigned long * error );
+// the lanes whose failed create gave up its bounded drain and leaked its
+// socket, registered region and queues to the kernel, in this process
+uint64_t rocketnet_server_rio_create_leaks();
 int rocketnet_server_rio_lane_of( rocketnet_server_rio_t * rio, const rocketnet_address_t * to );
 int rocketnet_server_rio_lane_send_room( rocketnet_server_rio_t * rio, int lane );
 // true once the open fill phase is empty, every other phase is idle and no
