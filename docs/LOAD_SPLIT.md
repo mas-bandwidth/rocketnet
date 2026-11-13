@@ -11,8 +11,12 @@ configuration and validation work.
 Build the **same exact source revision** on every host with the development
 SDK and tools enabled. Keep the default server/client configuration; the only
 accepted nonempty `ROCKETNET_SERVER_*` and `ROCKETNET_CLIENT_*` environment
-settings are the transport selectors and the server's AF_XDP core layout,
-`ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`. Nonempty `ROCKETNET_DEV_*` overrides
+settings are the transport selectors and the server's core layout: each
+transport's network thread count (`ROCKETNET_SERVER_NUM_XDP_THREADS`,
+`ROCKETNET_SERVER_NUM_GSO_WORKERS`, `ROCKETNET_SERVER_NUM_IO_URING_WORKERS`,
+`ROCKETNET_SERVER_NUM_RIO_LANES`, `ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS`,
+`ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS`, `ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS`)
+and `ROCKETNET_SERVER_NUM_OS_CPUS`. Nonempty `ROCKETNET_DEV_*` overrides
 are refused. Choose an explicit aggregate limit in kbps below the measured
 server and client host link capacity; the program does not invent a link rate.
 

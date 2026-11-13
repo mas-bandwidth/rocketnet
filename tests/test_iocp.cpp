@@ -2833,9 +2833,12 @@ static void test_iocp_endpoints_share_by_processor()
     }
     CHECK( rocketnet_server_iocp_worker_placement( transport, 4, NULL, NULL, NULL ) == ROCKETNET_IOCP_PLACEMENT_PENDING );
 
-    // the probe: a second create at the port the first holds is refused
+    // the probe: a second create at the port the first holds is refused,
+    // naming the refused bind as rio does
     rocketnet_address_t again = bind;
-    CHECK( !rocketnet_server_iocp_create( NULL, &again, 2, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    int again_status = ROCKETNET_STATUS_OK;
+    CHECK( !rocketnet_server_iocp_create( NULL, &again, 2, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 0, &again_status ) );
+    CHECK( again_status == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
 
     SOCKET thief;
     const bool stolen = port_thief_binds( &bind, &thief );
@@ -3920,6 +3923,40 @@ static void test_rio_lanes_refuse_a_held_port()
     printf( "test_rio_transport_lanes_refuse_a_held_port\n" );
 }
 
+// The same for iocp: a port another socket holds, with or without
+// SO_REUSEADDR, is refused as TRANSPORT_BIND_REFUSED with one worker (its
+// own exclusive bind) and with two (the exclusive probe), as rio's lanes are.
+static void test_iocp_workers_refuse_a_held_port()
+{
+    for ( int reuse = 0; reuse < 2; ++reuse )
+    {
+        SOCKET holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+        CHECK( holder != INVALID_SOCKET );
+        BOOL enabled = TRUE;
+        if ( reuse )
+        {
+            CHECK( setsockopt( holder, SOL_SOCKET, SO_REUSEADDR, (const char *) &enabled, sizeof( enabled ) ) == 0 );
+        }
+        sockaddr_in a = {};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        CHECK( bind( holder, (sockaddr *) &a, sizeof( a ) ) == 0 );
+        int bytes = sizeof( a );
+        CHECK( getsockname( holder, (sockaddr *) &a, &bytes ) == 0 );
+
+        for ( int workers : { 1, 2 } )
+        {
+            rocketnet_address_t at = address( "127.0.0.1:0" );
+            at.port = ntohs( a.sin_port );
+            int status = ROCKETNET_STATUS_OK;
+            CHECK( !rocketnet_server_iocp_create( NULL, &at, workers, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 0, &status ) );
+            CHECK( status == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
+        closesocket( holder );
+    }
+    printf( "test_iocp_transport_workers_refuse_a_held_port\n" );
+}
+
 // The lanes' receives of port_thief_steals' 8 datagrams (marked 0x5A, 0..7):
 // how many distinct ones the transport hands up within a second.
 static int rio_lanes_take( rocketnet_server_rio_t * rio, int n )
@@ -4288,6 +4325,7 @@ static const fault_case_t fault_cases[] = {
     { "test_windows_transports_sized_by_max_clients", test_windows_transports_sized_by_max_clients },
     { "test_rio_transport_lanes_send_and_receive", test_rio_lanes_send_and_receive },
     { "test_rio_transport_lanes_refuse_a_held_port", test_rio_lanes_refuse_a_held_port },
+    { "test_iocp_transport_workers_refuse_a_held_port", test_iocp_workers_refuse_a_held_port },
     { "test_rio_transport_lanes_later_binder_receives_nothing", test_rio_lanes_later_binder_receives_nothing },
     { "test_rio_transport_lanes_prefilter_counts_drops", test_rio_lanes_prefilter_counts_drops },
     { "test_rio_transport_lanes_finish_refuses_foreign_ids", test_rio_lanes_finish_refuses_foreign_ids },

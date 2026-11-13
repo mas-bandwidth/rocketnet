@@ -3965,7 +3965,7 @@ static void posix_xdp_weather( int ipv6 )
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
-    server_config.num_xdp_queues = 1;
+    server_config.num_xdp_threads = 1;
     server_config.num_os_cpus = 1;
     snprintf( server_config.transport, sizeof( server_config.transport ), "xdp" );
 

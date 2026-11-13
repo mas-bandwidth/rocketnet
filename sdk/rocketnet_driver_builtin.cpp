@@ -2289,8 +2289,8 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
 
 static void * msgx_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    return rocketnet_server_msgx_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients,
-                                         config->transport->packet_filter, config->status );
+    const int workers = rocketnet_network_threads_count( config->transport->num_msgx_transmit_workers, ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS );
+    return rocketnet_server_msgx_create( context, bind, workers, config->transport->max_clients, config->transport->packet_filter, config->status );
 }
 
 static void msgx_destroy( void * transport ) { rocketnet_server_msgx_destroy( (rocketnet_server_msgx_t *) transport ); }
@@ -2364,17 +2364,13 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
 uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_socket_t * server_socket );
 #endif // #if ROCKETNET_XDP
 
+// gso runs num_gso_workers queue workers (the config table has refused a
+// value outside 1 .. ROCKETNET_GSO_MAX_WORKERS; zero is the default)
 static void * gso_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    if ( config->transport->num_xdp_queues > ROCKETNET_GSO_MAX_QUEUES )
-    {
-        rocketnet_warn( "gso transport refused: num_xdp_queues %d is past the gso transport's %d queue geometry",
-                        config->transport->num_xdp_queues, ROCKETNET_GSO_MAX_QUEUES );
-        return NULL;
-    }
-
+    const int workers = rocketnet_network_threads_count( config->transport->num_gso_workers, ROCKETNET_GSO_DEFAULT_WORKERS );
     const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
-    return rocketnet_server_gso_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+    return rocketnet_server_gso_create_pinned( context, bind, workers, config->transport->max_clients, 0, os_cpus, config->status,
                                                config->transport->packet_filter );
 }
 
@@ -2432,17 +2428,13 @@ extern const rocketnet_transport_backend_t rocketnet_gso_transport = { &gso_oper
 #include "rocketnet_server_uring.h"
 
 void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large ); // rocketnet_server_uring_receive_drops in sdk/rocketnet_server_uring_linux.cpp
+// io_uring runs num_io_uring_workers workers (the config table has refused a
+// value outside 1 .. ROCKETNET_IO_URING_MAX_WORKERS; zero is the default)
 static void * io_uring_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    if ( config->transport->num_xdp_queues > ROCKETNET_URING_MAX_QUEUES )
-    {
-        rocketnet_warn( "io_uring transport refused: num_xdp_queues %d is past the io_uring transport's %d queue geometry",
-                        config->transport->num_xdp_queues, ROCKETNET_URING_MAX_QUEUES );
-        return NULL;
-    }
-
+    const int workers = rocketnet_network_threads_count( config->transport->num_io_uring_workers, ROCKETNET_IO_URING_DEFAULT_WORKERS );
     const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
-    return rocketnet_server_uring_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+    return rocketnet_server_uring_create_pinned( context, bind, workers, config->transport->max_clients, 0, os_cpus, config->status,
                                                  config->transport->packet_filter );
 }
 
@@ -2502,7 +2494,7 @@ extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_
 #if ROCKETNET_XDP
 static void * xdp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
 {
-    const int queues = config->transport->num_xdp_queues > 0 ? config->transport->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;
+    const int queues = rocketnet_network_threads_count( config->transport->num_xdp_threads, ROCKETNET_XDP_DEFAULT_THREADS );
     const int cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1;
 
     // the backend retains its existing verify-and-bind preflight and commit
@@ -2632,33 +2624,89 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 #if ROCKETNET_DEV
 // Test seam: a unit test swaps the create iocp_create calls, so it reads the
 // arguments the transport is created with and no socket is opened. NULL restores it.
-typedef rocketnet_server_iocp_t * iocp_create_function_t( void *, rocketnet_address_t *, int, int, int, int, int * );
-static iocp_create_function_t * iocp_create_function = rocketnet_server_iocp_create;
+typedef rocketnet_server_iocp_t * iocp_create_function_t( void *, rocketnet_address_t *, int, int, int, int, int, int * );
+static iocp_create_function_t * iocp_create_function = rocketnet_server_iocp_create_threads;
 
 void rocketnet_server_iocp_set_create_for_test( iocp_create_function_t * function )
 {
-    iocp_create_function = function ? function : rocketnet_server_iocp_create;
+    iocp_create_function = function ? function : rocketnet_server_iocp_create_threads;
 }
 #endif // #if ROCKETNET_DEV
 
-static int iocp_workers( int num_xdp_queues )
+// A bind address several sockets can share by processor: neither the
+// wildcard (0.0.0.0, ::) nor IPv4-mapped, the two the RIO lanes and the IOCP
+// workers refuse when there is more than one. Any other type is neither.
+static bool builtin_bind_takes_several( const rocketnet_address_t * bind )
 {
-    return num_xdp_queues > 1 ? num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
+    if ( bind->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        return bind->data.ip != 0;
+    }
+    rocketnet_address_t copy = *bind;
+    if ( bind->type != ROCKETNET_ADDRESS_IPV6 || rocketnet_address_is_ipv4_in_ipv6( &copy ) )
+    {
+        return false;
+    }
+    for ( int i = 0; i < 8; ++i )
+    {
+        if ( bind->data.ipv6[i] != 0 )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The same answer from the config alone, for the memory plan: a bind address
+// field set to an address several sockets can share. Unset, both fields, is
+// the wildcard (rocketnet_server_transport_resolve_bind_address).
+static bool builtin_config_binds_several( const rocketnet_server_transport_config_t * config )
+{
+    const char * fields[] = { config->bind_ipv4_address, config->bind_ipv6_address };
+    for ( int i = 0; i < 2; ++i )
+    {
+        rocketnet_address_t address;
+        if ( fields[i][0] != '\0' && rocketnet_address_parse( &address, fields[i] ) && builtin_bind_takes_several( &address ) )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// the completion workers: num_iocp_completion_workers when asked; else the
+// default on a bind address the workers can share, and one on the wildcard
+static int iocp_workers( int asked, bool several )
+{
+    return rocketnet_network_threads_per_socket( asked, ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS, several ? 0 : 1 );
 }
 
 static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    const int workers = iocp_workers( config->transport->num_xdp_queues );
-    if ( workers > ROCKETNET_IOCP_MAX_WORKERS )
+    const int asked = config->transport->num_iocp_completion_workers;
+    const bool several = builtin_bind_takes_several( bind );
+    const int workers = iocp_workers( asked, several );
+    if ( workers < 1 || workers > ROCKETNET_IOCP_MAX_WORKERS )
     {
-        rocketnet_warn( "iocp transport refused: num_xdp_queues %d is past the iocp transport's %d workers", workers, ROCKETNET_IOCP_MAX_WORKERS );
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+        rocketnet_warn( "iocp transport refused: num_iocp_completion_workers %d is outside 1..%d", asked, ROCKETNET_IOCP_MAX_WORKERS );
         return NULL;
     }
+    if ( asked == 0 && !several )
+    {
+        rocketnet_warn( "iocp transport: running 1 completion worker because the bind address is the wildcard or IPv4-mapped. "
+                        "The default of %d completion workers and %d send threads needs a specific local address: to reach 10 Gb/s set "
+                        "bind_ipv4_address or bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the "
+                        "network card's address. To run 1 completion worker without this warning, set num_iocp_completion_workers "
+                        "(ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS) to 1",
+                        ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS, ROCKETNET_IOCP_DEFAULT_SEND_THREADS );
+    }
+    const int send_threads = config->transport->num_iocp_send_threads;
 
 #if ROCKETNET_DEV
-    rocketnet_server_iocp_t * iocp = iocp_create_function( context, bind, workers, config->transport->max_clients, 0, 0, config->status );
+    rocketnet_server_iocp_t * iocp = iocp_create_function( context, bind, workers, send_threads, config->transport->max_clients, 0, 0, config->status );
 #else // #if ROCKETNET_DEV
-    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( context, bind, workers, config->transport->max_clients, config->status );
+    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create_threads( context, bind, workers, send_threads, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
 
     // the completion workers refuse what main's stateless rungs would, before
@@ -2742,19 +2790,48 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 
 #include "rocketnet_server_rio.h"
 
-// num_xdp_queues is the lane count (0 is one lane); every lane's worker
-// prefilters with the server's packet filter
+// The lanes the server asks the transport for: num_rio_lanes when asked; else
+// ROCKETNET_RIO_DEFAULT_LANES on a bind address the lanes can share, and 0 (the
+// transport's one lane) on the wildcard. The development library's
+// ROCKETNET_TEST_RIO_LANES keeps its meaning: with it set, nothing asked on a
+// shareable address is left to the transport, which reads it.
+static int rio_lanes( int asked, bool several )
+{
+    if ( asked != 0 || !several )
+    {
+        return asked;
+    }
+#if ROCKETNET_DEV
+    char test_lanes[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_LANES", test_lanes, sizeof( test_lanes ) ) > 0 )
+    {
+        return 0;
+    }
+#endif // #if ROCKETNET_DEV
+    return ROCKETNET_RIO_DEFAULT_LANES;
+}
+
+// every lane's worker prefilters with the server's packet filter
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    if ( !rocketnet_server_rio_lane_count( config->transport->num_xdp_queues ) )
+    const int asked = config->transport->num_rio_lanes;
+    if ( !rocketnet_server_rio_lane_count( asked ) )
     {
         rocketnet_create_status( config->status, ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
-        rocketnet_warn( "rio transport refused: num_xdp_queues %d is past the rio transport's %d lanes",
-                        config->transport->num_xdp_queues, ROCKETNET_RIO_MAX_LANES );
+        rocketnet_warn( "rio transport refused: num_rio_lanes %d is outside 1..%d", asked, ROCKETNET_RIO_MAX_LANES );
         return NULL;
     }
+    const bool several = builtin_bind_takes_several( bind );
+    if ( asked == 0 && !several )
+    {
+        rocketnet_warn( "rio transport: running 1 lane because the bind address is the wildcard or IPv4-mapped. "
+                        "The default of %d lanes needs a specific local address: to reach 10 Gb/s set bind_ipv4_address or "
+                        "bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the network "
+                        "card's address. To run 1 lane without this warning, set num_rio_lanes (ROCKETNET_SERVER_NUM_RIO_LANES) to 1",
+                        ROCKETNET_RIO_DEFAULT_LANES );
+    }
     rocketnet_server_rio_options_t options;
-    options.lanes = config->transport->num_xdp_queues;
+    options.lanes = rio_lanes( asked, several );
     options.packet_filter = config->transport->packet_filter;
 #if ROCKETNET_DEV
     return rocketnet_server_rio_create( context, bind, config->transport->max_clients, 0, config->status, &options );
@@ -2867,7 +2944,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     {
         // the staged msgx server: its workers' banks, the receive banks and
         // the socket table; a shared socket, a kqueue and a socket per client
-        const int workers = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_MSGX_DEFAULT_WORKERS;
+        const int workers = rocketnet_network_threads_count( config->num_msgx_transmit_workers, ROCKETNET_MSGX_DEFAULT_WORKERS );
         plan.transport_io_bytes = rocketnet_server_msgx_allocation_bytes( workers, config->max_clients );
         plan.worker_threads = workers + 1;
         plan.sockets = 1 + config->max_clients;
@@ -2896,14 +2973,15 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     else if ( strcmp( transport, "gso" ) == 0 )
     {
-        const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_GSO_DEFAULT_QUEUES;
+        // a worker per queue, each with its own socket (rocketnet_server_gso_create)
+        const int queues = rocketnet_network_threads_count( config->num_gso_workers, ROCKETNET_GSO_DEFAULT_QUEUES );
         plan.transport_io_bytes = rocketnet_server_gso_allocation_bytes( queues, config->max_clients );
-        plan.worker_threads = queues + 1;
+        plan.worker_threads = queues;
         plan.sockets = queues;
     }
     else if ( strcmp( transport, "io_uring" ) == 0 )
     {
-        const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
+        const int queues = rocketnet_network_threads_count( config->num_io_uring_workers, ROCKETNET_URING_DEFAULT_QUEUES );
         plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes( queues, config->max_clients );
         plan.mapped_ring_bytes = rocketnet_server_uring_mapped_bytes( queues );
         plan.worker_threads = queues; // a worker per queue owns its ring
@@ -2912,7 +2990,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 #if ROCKETNET_XDP
     else if ( strcmp( transport, "xdp" ) == 0 )
     {
-        const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;
+        const int queues = rocketnet_network_threads_count( config->num_xdp_threads, ROCKETNET_XDP_DEFAULT_QUEUES );
         plan.transport_io_bytes = rocketnet_server_xdp_allocation_bytes( queues, config->max_clients );
         plan.umem_bytes = rocketnet_xdp_umem_bytes( queues );
         plan.worker_threads = queues;
@@ -2923,30 +3001,35 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if ( strcmp( transport, "iocp" ) == 0 )
     {
-        // the completion workers (iocp_workers), each with its own socket,
-        // plus the send threads the lanes get (at most ROCKETNET_IOCP_SEND_THREADS,
-        // one for a one-lane server). The plan refuses what create refuses
-        // for want of a size: more workers than ROCKETNET_IOCP_MAX_WORKERS.
+        // the completion workers (iocp_workers: the default on a bind address
+        // field the workers can share, else one), each with its own socket,
+        // plus the send threads (num_iocp_send_threads, default
+        // ROCKETNET_IOCP_SEND_THREADS or the lanes when fewer). The plan
+        // refuses what create refuses for want of a size: workers outside
+        // 1..ROCKETNET_IOCP_MAX_WORKERS, send threads past the lanes.
 
-        const int workers = iocp_workers( config->num_xdp_queues );
-        if ( workers > ROCKETNET_IOCP_MAX_WORKERS )
+        const int workers = iocp_workers( config->num_iocp_completion_workers, builtin_config_binds_several( config ) );
+        if ( workers < 1 || workers > ROCKETNET_IOCP_MAX_WORKERS )
         {
             return false;
         }
-        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( workers, config->max_clients );
-        if ( !plan.transport_io_bytes )
+        const int send_threads =
+            rocketnet_server_iocp_send_threads_for( config->num_iocp_send_threads, rocketnet_server_iocp_send_lanes( config->max_clients ) );
+        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes_threads( workers, config->num_iocp_send_threads, config->max_clients );
+        if ( !plan.transport_io_bytes || !send_threads )
         {
             return false;
         }
-        plan.worker_threads = workers + rocketnet_server_iocp_send_threads( rocketnet_server_iocp_send_lanes( config->max_clients ) );
+        plan.worker_threads = workers + send_threads;
         plan.sockets = workers;
     }
     else if ( strcmp( transport, "rio" ) == 0 )
     {
         // a socket, an I/O worker and a registered region per lane
-        // (num_xdp_queues; rocketnet_server_rio_create)
+        // (rio_lanes: num_rio_lanes, else the default on a bind address field
+        // the lanes can share, else one; rocketnet_server_rio_create)
 
-        const int lanes = rocketnet_server_rio_lane_count( config->num_xdp_queues );
+        const int lanes = rocketnet_server_rio_lane_count( rio_lanes( config->num_rio_lanes, builtin_config_binds_several( config ) ) );
         plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes( config->max_clients, lanes );
 
         // each lane's registered region is one rocketnet_malloc

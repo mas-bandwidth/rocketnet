@@ -12,7 +12,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
 - [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (5)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
-- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (8)
+- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (7)
 - [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (18)
 
 ## Audit items not yet fixed
@@ -93,7 +93,7 @@ From: #1047 merge with the rebuilt io_uring
 
 ### The io_uring provided buffers are 264 MiB a queue whatever the GRO tier
 
-With ROCKETNET_SERVER_TRANSPORT=io_uring forced over the whole functional suite, test_lifecycle_transport peaks at 1269 MB resident against 698 MB, which is the suite's per-case bound (suite_case_rss_mb), not a plan bound. The cause is the receive buffers: 4096 buffers of 66 KiB a queue (ROCKETNET_URING_RECV_BUFFERS, ROCKETNET_URING_RECV_BUFFER_BYTES), 264 MiB a queue and four queues by default, made resident once the multishot writes into them, whether or not UDP_GRO was granted. Size the buffers by the tier (a buffer need only hold a whole datagram without GRO) or lower the count, and say so in the plan.
+With ROCKETNET_SERVER_TRANSPORT=io_uring forced over the whole functional suite, test_lifecycle_transport peaks at 1269 MB resident against 698 MB, which is the suite's per-case bound (suite_case_rss_mb), not a plan bound. The cause is the receive buffers: 4096 buffers of 66 KiB a queue (ROCKETNET_URING_RECV_BUFFERS, ROCKETNET_URING_RECV_BUFFER_BYTES), 264 MiB a queue and two queues by default (num_io_uring_workers), made resident once the multishot writes into them, whether or not UDP_GRO was granted. Size the buffers by the tier (a buffer need only hold a whole datagram without GRO) or lower the count, and say so in the plan.
 
 From: Piece L (io_uring), amd-3 run and cold reader
 
@@ -450,12 +450,6 @@ From: Piece L (io_uring), gate at ad93b2ad6
 The split server update (update_receive, update_client, update_finish) landed as an opt-in; rocketnet runs no job system of its own. If a measured row shows the game's own job system cannot spread the update well enough through the public calls, add box3d-style task callbacks to the server config, off by default (see how box3d and fixed3d do it), and not before.
 
 From: Owner rulings on piece I, 2026-11-13 (V12-ON-MAIN)
-
-### Windows: RIO and IOCP reach their measured thread counts only with a specific bind address
-
-RIO with more than one lane and IOCP with more than one completion worker refuse the wildcard bind, so a server bound to the wildcard runs one RIO lane or one IOCP completion worker. The peak row needs 6 RIO lanes and 2 IOCP completion workers with 2 send threads (AWS m7i.16xlarge rows, 2026-11-13). Either make the measured count the default when the server binds a specific address and say plainly that the wildcard runs one, or lift the wildcard refusal.
-
-From: Network threads per transport survey on main 5488a5443
 
 ### scripts/space-frame-row runs XDP only
 

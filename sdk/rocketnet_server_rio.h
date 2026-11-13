@@ -14,8 +14,9 @@
 #include "rocketnet_rio_layout.h"
 
 // The Windows Registered I/O (RIO) server transport. It runs one or more
-// lanes (the server's num_xdp_queues, default 1, at most
-// ROCKETNET_RIO_MAX_LANES). A lane is one UDP socket opened with
+// lanes (the server's num_rio_lanes: default ROCKETNET_RIO_DEFAULT_LANES on a
+// specific bind address and one on the wildcard, chosen by the server's driver;
+// at most ROCKETNET_RIO_MAX_LANES; create itself takes 0 as one lane). A lane is one UDP socket opened with
 // WSA_FLAG_REGISTERED_IO, one registered region carved by
 // sdk/rocketnet_rio_layout.h into send frames, send address slots, receive
 // slices and receive address slots, one send completion queue, one receive

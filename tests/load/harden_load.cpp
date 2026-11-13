@@ -472,7 +472,16 @@ struct harden_options_t
     double quiet_seconds = 1.5;
     double end_at = 0.0;
     int token_timeout = 5;
-    int num_xdp_queues = 0;
+    // each transport's network thread count (0: its default): --num-xdp-threads,
+    // --num-gso-workers, --num-io-uring-workers, --num-rio-lanes,
+    // --num-iocp-completion-workers, --num-iocp-send-threads, --num-msgx-transmit-workers
+    int num_xdp_threads = 0;
+    int num_gso_workers = 0;
+    int num_io_uring_workers = 0;
+    int num_rio_lanes = 0;
+    int num_iocp_completion_workers = 0;
+    int num_iocp_send_threads = 0;
+    int num_msgx_transmit_workers = 0;
     double pps = 100000.0;
     int sockets = 64;
     int warm_seconds = 60;
@@ -783,9 +792,33 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         {
             o->token_timeout = atoi( v );
         }
-        else if ( strcmp( a, "--num-xdp-queues" ) == 0 )
+        else if ( strcmp( a, "--num-xdp-threads" ) == 0 )
         {
-            o->num_xdp_queues = atoi( v );
+            o->num_xdp_threads = atoi( v );
+        }
+        else if ( strcmp( a, "--num-gso-workers" ) == 0 )
+        {
+            o->num_gso_workers = atoi( v );
+        }
+        else if ( strcmp( a, "--num-io-uring-workers" ) == 0 )
+        {
+            o->num_io_uring_workers = atoi( v );
+        }
+        else if ( strcmp( a, "--num-rio-lanes" ) == 0 )
+        {
+            o->num_rio_lanes = atoi( v );
+        }
+        else if ( strcmp( a, "--num-iocp-completion-workers" ) == 0 )
+        {
+            o->num_iocp_completion_workers = atoi( v );
+        }
+        else if ( strcmp( a, "--num-iocp-send-threads" ) == 0 )
+        {
+            o->num_iocp_send_threads = atoi( v );
+        }
+        else if ( strcmp( a, "--num-msgx-transmit-workers" ) == 0 )
+        {
+            o->num_msgx_transmit_workers = atoi( v );
         }
         else if ( strcmp( a, "--pps" ) == 0 )
         {
@@ -2283,10 +2316,14 @@ static int harden_server_main( const harden_options_t & o )
     config.max_clients = o.max_clients;
     config.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
     config.handshake_deadline_seconds = 10;
-    if ( o.num_xdp_queues > 0 )
-    {
-        config.num_xdp_queues = o.num_xdp_queues;
-    }
+    // zero keeps each count's default (or its environment variable)
+    config.num_xdp_threads = o.num_xdp_threads;
+    config.num_gso_workers = o.num_gso_workers;
+    config.num_io_uring_workers = o.num_io_uring_workers;
+    config.num_rio_lanes = o.num_rio_lanes;
+    config.num_iocp_completion_workers = o.num_iocp_completion_workers;
+    config.num_iocp_send_threads = o.num_iocp_send_threads;
+    config.num_msgx_transmit_workers = o.num_msgx_transmit_workers;
     memcpy( config.backend_public_key, dev_backend_key, sizeof( config.backend_public_key ) );
     if ( !o.transport.empty() )
     {

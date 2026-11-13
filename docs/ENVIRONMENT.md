@@ -60,7 +60,7 @@ Process-wide and platform-specific controls:
 | --- | --- |
 | `ROCKETNET_TEST_XDP_FAIL_AT_QUEUE` | Development libraries only (DEV=1): fail XDP queue creation at the named queue index. Production libraries do not recognize this variable. |
 | `ROCKETNET_TEST_GSO_PLAIN` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_gso_linux.cpp`: `1` forces the plain GSO send path. A production build (`ROCKETNET_DEV=0`) does not recognize this variable. |
-| `ROCKETNET_TEST_RIO_LANES` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: `2` to `32` runs every RIO server that leaves the lane count to the transport (`num_xdp_queues` unset) on that many lanes, except a wildcard bind, which keeps one; one lane asked for explicitly stays one. A production build (`ROCKETNET_DEV=0`) does not recognize this variable. |
+| `ROCKETNET_TEST_RIO_LANES` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: `2` to `32` runs every RIO server that leaves the lane count to the transport (`num_rio_lanes` unset) on that many lanes in place of the default, except a wildcard bind, which keeps one; one lane asked for explicitly stays one. A production build (`ROCKETNET_DEV=0`) does not recognize this variable. |
 | `ROCKETNET_TEST_RIO_LANES_PLANT` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: set to anything, every RIO transport makes one lane whatever was asked. The plant control of a hand run of the RIO server cases on four lanes: every check of the lanes actually made must fail under it (no CI step runs it). A production build does not recognize this variable. |
 | `ROCKETNET_TEST_RIO_PIN` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: places a RIO lane's worker for a measurement: `rss` on the RSS processor, `core` on the whole core, `none` unpinned; unset is the default (the core's other logical processors). A production build does not recognize this variable. |
 | `ROCKETNET_TEST_RIO_LAYOUT` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: `R0,R1,..` `/` `W0,W1,..` places RIO lane i's socket on processor Ri (SIO_CPU_AFFINITY) and its worker on processor Wi alone, processor group 0, with more than one lane, for a measurement in the layout a game runs; a shorter list or a processor past group 0 keeps the default placement and says so. A production build does not recognize this variable. |
@@ -71,6 +71,49 @@ Development token support is an API helper, not an environment variable.
 Development builds expose `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` and
 `rocketnet_create_dev_connect_token`; see `sdk/rocketnet.h`. The public
 development key must not be used for production.
+
+## Network threads, per transport
+
+Each server transport that has a thread count to choose has its own config
+field and its own variable; no setting is shared between transports, and a
+transport reads only its own. Zero, or the variable unset, is the transport's
+default: the count that passed 1000 players and 10 Gb/s on a good machine (the
+rows are named beside each default in `sdk/rocketnet_network_threads.h`). The
+variable wins over the field, with an `INFO` line, like every other override.
+A value outside the range, or a variable that is not a number, is refused at
+create (`CONFIG_OUT_OF_RANGE` or `CONFIG_ENV_INVALID`), never clamped.
+
+| Variable | Config field | Transport | Default | Range |
+| --- | --- | --- | --- | --- |
+| `ROCKETNET_SERVER_NUM_XDP_THREADS` | `num_xdp_threads` | `xdp` (Linux) | 1 | 1 .. 1024 |
+| `ROCKETNET_SERVER_NUM_GSO_WORKERS` | `num_gso_workers` | `gso` (Linux) | 1 | 1 .. 32 |
+| `ROCKETNET_SERVER_NUM_IO_URING_WORKERS` | `num_io_uring_workers` | `io_uring` (Linux) | 2 | 1 .. 32 |
+| `ROCKETNET_SERVER_NUM_RIO_LANES` | `num_rio_lanes` | `rio` (Windows) | 5 on a bind address; 1 on the wildcard | 1 .. 32 |
+| `ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS` | `num_iocp_completion_workers` | `iocp` (Windows) | 2 on a bind address; 1 on the wildcard | 1 .. 32 |
+| `ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS` | `num_iocp_send_threads` | `iocp` (Windows) | 2, or the send lanes when fewer | 1 .. 16, and at most the send lanes (8 at 1000 clients) |
+| `ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS` | `num_msgx_transmit_workers` | `msgx` (macOS) | 3, plus one receive worker | 1 .. 16 |
+
+`portable` and `loopback` have no count to choose: `portable` runs two fixed
+threads, `loopback` none.
+
+The one variable these replace is retired: it is not read, and a server create
+that finds it set logs one warning naming the variables above.
+
+| Variable | Status |
+| --- | --- |
+| `ROCKETNET_SERVER_NUM_XDP_QUEUES` | retired, no effect: a warning at server create when set |
+
+The machine must match on one transport only: `xdp` runs one thread per NIC
+queue, and refuses to start when the NIC's combined queue count is not
+`num_xdp_threads` (`scripts/rocketnet-provision` sets it; see
+[`docs/DEPLOYING.md`](DEPLOYING.md)). The others need no machine setting.
+
+On Windows, more than one RIO lane or IOCP completion worker needs a specific
+bind address. With nothing asked and a wildcard bind (no
+`ROCKETNET_SERVER_BIND_IPV4_ADDRESS` or `ROCKETNET_SERVER_BIND_IPV6_ADDRESS`),
+`rio` and `iocp` run one lane or one completion worker and log one warning
+naming the bind address variables; a count above 1 asked for on the wildcard is
+refused with `INVALID_ADDRESS`.
 
 ## Resolution order, freeze point, and planner parity
 
@@ -134,7 +177,7 @@ development key must not be used for production.
     defines it for the library and for every file that includes
     `rocketnet.h`, with the same value.
   - `-DROCKETNET_XDP_MEMORY_MIB` (default `8192` MiB) bounds planned AF_XDP
-    transport + UMEM memory across `num_xdp_queues`.
+    transport + UMEM memory across `num_xdp_threads`.
 
 ## Operational tuning with environment overrides
 
@@ -147,11 +190,10 @@ include:
   machines or containers that do not use `xdp` or `io_uring`, so both
   `rocketnet_server_required_memory` and `rocketnet_server_create` size for the
   intended transport rather than reserving worst-case `xdp` allocator headroom.
-  When using `xdp`, tune queue and CPU count only through the supported
-  `ROCKETNET_SERVER_NUM_XDP_QUEUES` (`1 .. 1024`) and
-  `ROCKETNET_SERVER_NUM_OS_CPUS` (`1 .. 256`) overrides. The same queue count
-  applies to `gso` and `io_uring`, but `gso` and `io_uring` refuse a value
-  above `32`. Preserve the pinned
+  Each transport's network thread count is its own variable (the table in
+  [Network threads, per transport](#network-threads-per-transport)), and
+  `ROCKETNET_SERVER_NUM_OS_CPUS` (`1 .. 256`) sets the cores left to the
+  operating system before the Linux transports' threads. Preserve the pinned
   AF_XDP geometry: 4,096-byte frames, a 16,384-entry send queue, 32,768-entry
   receive queue and fill set, a 65,536-entry fill ring, and 98,304 UMEM frames
   per queue.

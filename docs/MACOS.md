@@ -129,8 +129,20 @@ fails is a refused destination and pauses as above.
 **portable** uses per-packet `sendto` / `recvmsg` calls
 (`rocketnet_platform_socket_send_packet` and
 `rocketnet_platform_socket_receive_packet` in the macOS section of
-`sdk/rocketnet_platform.cpp`). Both macOS server transports run one transmit
-worker and one receive worker. The caller copies borrowed, sealed send frames
+`sdk/rocketnet_platform.cpp`). **Server threads.** The `msgx` server runs
+`num_msgx_transmit_workers` transmit workers
+(`ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS`, default 3, 1 to 16, refused
+above that) and one receive worker, a socket for each connected client and
+one shared socket (`sdk/rocketnet_server_msgx.h`); the `portable` server runs
+one transmit worker and one receive worker, and has no count to set. macOS
+gives no thread a core: neither transport pins its threads, and the scheduler
+places them. The default of 3 transmit workers is what was measured on
+2026-11-13 (main 5366e4f13, players on a Linux machine over 10 GbE): an M5 Pro
+Mac mini server sent the whole peak, 900k packets a second, to 1000 players
+at 3. An M3 Ultra Mac Studio server topped out at 694k a second at 2 and sent
+less as workers were added (678k at 1, 660k at 3, 492k at 6), each worker near
+fully busy in the kernel's send path. More workers are not more throughput on
+every Mac; measure yours. In the `portable` server the caller copies borrowed, sealed send frames
 into one of three owned TX banks outside the lock; a try-lock publishes bank
 indices to the transmit worker. The receive worker reads datagrams into three
 owned RX banks and publishes them to the caller, which copies their packets and

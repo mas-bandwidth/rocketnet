@@ -14,6 +14,12 @@ binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').reso
 # the default config, which must plan and create.
 profiles = [(1, 1416), (2, 1416), (1000, 1416)]
 transports = ['portable']
+# The workers each transport plans at one queue (the probe's last argument):
+# portable and msgx a receive and a transmit worker; one-queue IOCP a
+# completion worker and a send thread; GSO one worker a queue that receives
+# and sends (sdk/rocketnet_server_gso_linux.cpp starts one thread a queue).
+# Statistics run no thread. The native planner must include every worker.
+one_queue_workers = {'portable': 2, 'msgx': 2, 'iocp': 2, 'gso': 1}
 if sys.platform == 'darwin':
     transports.append('msgx')
 elif sys.platform == 'win32':
@@ -44,10 +50,7 @@ for transport in transports:
         assert observed['peak_allocator_bytes'] <= plan['planned_bytes'], (
             transport, profile, 'planned_bytes', plan['planned_bytes'],
             'peak_allocator_bytes', observed['peak_allocator_bytes'])
-        # Portable/msgx have separate RX and TX workers; one-queue GSO/IOCP
-        # add a TX worker to their RX worker. Statistics run no thread. The
-        # native planner must include every worker.
-        assert plan['worker_threads'] == 2
+        assert plan['worker_threads'] == one_queue_workers[transport], (transport, plan['worker_threads'])
         # msgx keeps a connected socket per client beside the shared one
         assert plan['sockets'] == (1 + profile[0] if transport == 'msgx' else 1), (transport, profile, plan['sockets'])
         # Startup shims can be freed before this observation, even for
@@ -79,9 +82,7 @@ for transport in transports:
             assert 0 < row['first_cycle_peak_bytes'] <= row['required_bytes'], (transport, profile, row)
             assert row['second_cycle_peak_bytes'] == row['first_cycle_peak_bytes'], (transport, profile, row)
         assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
-        # portable, msgx, one-queue gso and iocp each plan two workers;
-        # statistics run no thread
-        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 2
+        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == one_queue_workers[transport], (transport, server)
     # The light rows: the public light presets, each created with an
     # allocator exposing exactly its public required_memory bytes in one
     # guarded block. Sufficiency is the arena's own evidence (peak at or
@@ -106,7 +107,7 @@ for transport in transports:
             assert row['invalid_frees'] == 0, (transport, profile, row)
             assert row['canaries_ok'] is True, (transport, profile, row)
         assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
-        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 2
+        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == one_queue_workers[transport], (transport, server)
 if sys.platform.startswith('linux'):
     xdp, = run(1000, 1416, 'xdp', 7, '--plan-only')
     # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.

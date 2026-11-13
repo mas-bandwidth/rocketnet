@@ -80,9 +80,9 @@
 #                             B1's nosmt; the runtime echo lives here, never
 #                             in the library.
 #   R7. queue count           the NIC's combined channel count equals the
-#                             queue count the server is configured for
+#                             server's XDP thread count, num_xdp_threads
 #                             (ethtool -L; a NIC without channel support
-#                             passes).
+#                             passes). Read it with `ethtool -l <iface>`.
 #   R8. real-time throttle    kernel.sched_rt_runtime_us = -1 on a kernel
 #                             with the real-time throttle (before 6.12, or
 #                             built with CONFIG_RT_GROUP_SCHED): each xdp
@@ -101,7 +101,13 @@
 #                             checkable from shell, and nothing to perform.
 #
 # usage:
-#   rocketnet-provision <interface> <num_queues> [verify|repin|sweep|selftest] [isolated-range]
+#   rocketnet-provision <interface> [num_queues] [verify|repin] [isolated-range]
+#   rocketnet-provision sweep | selftest
+#
+#     num_queues:          the server's XDP thread count (num_xdp_threads). Left
+#                          out, it is ROCKETNET_SERVER_NUM_XDP_THREADS when set,
+#                          else the library default (1); an argument that
+#                          differs from a set variable is refused
 #
 #     provision (default): perform the runtime tier idempotently, verify the
 #                          boot tier, loud either way. R7 runs before R4:
@@ -159,9 +165,48 @@ if [ "${1:-}" = "sweep" ] || [ "${1:-}" = "selftest" ]; then
     WANT_RANGE="1-15"
 else
     INTERFACE="${1:-}"
-    NUM_QUEUES="${2:-}"
-    MODE="${3:-provision}"
-    WANT_RANGE="${4:-1-15}"
+    case "${2:-}" in
+        ''|provision|verify|repin)
+            # no queue count given: the server's own (the environment
+            # variable, else the library default), below
+            NUM_QUEUES=""
+            MODE="${2:-provision}"
+            WANT_RANGE="${3:-1-15}"
+            ;;
+        *)
+            NUM_QUEUES="$2"
+            MODE="${3:-provision}"
+            WANT_RANGE="${4:-1-15}"
+            ;;
+    esac
+fi
+
+# THE QUEUE COUNT is the server's XDP thread count, one NIC queue each, so the
+# NIC and the server agree when the number is set once. Without an argument
+# it is the server's: ROCKETNET_SERVER_NUM_XDP_THREADS when set (the variable
+# the server reads; pass it through sudo: `sudo ROCKETNET_SERVER_NUM_XDP_THREADS=2
+# scripts/rocketnet-provision eno1`), else the library default below. An
+# argument that differs from a set variable is refused: the server would run
+# the variable's count on a NIC provisioned for the argument's.
+
+ROCKETNET_XDP_DEFAULT_THREADS=1   # sdk/rocketnet_network_threads.h; tools/check_public_header.py keeps the two equal
+
+if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ] || [ "$MODE" = "repin" ]; then
+    THREADS_ENV="${ROCKETNET_SERVER_NUM_XDP_THREADS:-}"
+    if [ -n "$THREADS_ENV" ]; then
+        case "$THREADS_ENV" in
+            *[!0-9]*|0*) echo "ROCKETNET_SERVER_NUM_XDP_THREADS='$THREADS_ENV' is not a count from 1 (the server refuses it too)" >&2; exit 2 ;;
+        esac
+        if [ -n "$NUM_QUEUES" ] && [ "$NUM_QUEUES" != "$THREADS_ENV" ]; then
+            echo "num_queues $NUM_QUEUES differs from ROCKETNET_SERVER_NUM_XDP_THREADS=$THREADS_ENV: the server would run $THREADS_ENV XDP threads on a NIC of $NUM_QUEUES queues; give one number" >&2
+            exit 2
+        fi
+        NUM_QUEUES="$THREADS_ENV"
+        echo "rocketnet-provision: queue count $NUM_QUEUES from ROCKETNET_SERVER_NUM_XDP_THREADS"
+    elif [ -z "$NUM_QUEUES" ] && [ -n "$INTERFACE" ]; then
+        NUM_QUEUES="$ROCKETNET_XDP_DEFAULT_THREADS"
+        echo "rocketnet-provision: queue count $NUM_QUEUES, the server's default XDP thread count (num_xdp_threads unset)"
+    fi
 fi
 
 case "$MODE" in
@@ -209,7 +254,7 @@ fi
 
 if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ] || [ "$MODE" = "repin" ]; then
     if [ -z "$INTERFACE" ] || [ -z "$NUM_QUEUES" ]; then
-        echo "usage: rocketnet-provision <interface> <num_queues> [verify|repin|sweep|selftest] [isolated-range]   (or: rocketnet-provision sweep | selftest)" >&2
+        echo "usage: rocketnet-provision <interface> [num_queues] [verify|repin] [isolated-range]   (or: rocketnet-provision sweep | selftest)" >&2
         exit 2
     fi
 fi
@@ -723,6 +768,10 @@ xdp_device_resolve()
 
 if [ "$MODE" = "selftest" ]; then
     PASS=1
+
+    # the child runs give their queue counts as arguments: a count the
+    # caller's environment carries must not steer them
+    unset ROCKETNET_SERVER_NUM_XDP_THREADS
 
     # the watchdog: a mutation that HANGS instead of failing must still
     # end red -- the killer fires only if the selftest overruns its bound
@@ -1375,6 +1424,21 @@ STUB
     expect_case "stub root refused by provision" $? 2 "$OUT" "only verify reads a stub root"
     OUT="$( ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 2 repin 2>&1 )"
     expect_case "stub root refused by repin" $? 2 "$OUT" "only verify reads a stub root"
+
+    # the queue count is the server's XDP thread count: no argument takes
+    # ROCKETNET_SERVER_NUM_XDP_THREADS, else the library default (1); an
+    # argument that differs from the variable, or a variable that is not a
+    # count, is refused before anything is read
+    stub_root_met "$SR"
+    OUT="$( ROCKETNET_SERVER_NUM_XDP_THREADS=2 ROCKETNET_PROVISION_STUB_ROOT="$SR" PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface2 verify 2>&1 )"
+    expect_case "queue count from ROCKETNET_SERVER_NUM_XDP_THREADS" $? 0 "$OUT" "queue count 2 from ROCKETNET_SERVER_NUM_XDP_THREADS" 0
+    OUT="$( ROCKETNET_PROVISION_STUB_ROOT="$SR" PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface2 verify 2>&1 )"
+    expect_case "queue count defaults to the server's default" $? 1 "$OUT" "queue count 1, the server's default XDP thread count" 1 "verify passed"
+    expect_case "default queue count checked against the NIC" 1 1 "$OUT" "combined queue count is 2, want 1 (R7)"
+    OUT="$( ROCKETNET_SERVER_NUM_XDP_THREADS=3 ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 2 verify 2>&1 )"
+    expect_case "queue count argument differing from the variable refused" $? 2 "$OUT" "num_queues 2 differs from ROCKETNET_SERVER_NUM_XDP_THREADS=3"
+    OUT="$( ROCKETNET_SERVER_NUM_XDP_THREADS=two ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 verify 2>&1 )"
+    expect_case "queue count variable that is not a count refused" $? 2 "$OUT" "is not a count from 1"
 
     # --- the pair-level pins kept from round eleven: the parser sees only
     # what the query's stdout carried ---

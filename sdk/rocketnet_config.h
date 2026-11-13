@@ -121,6 +121,14 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
 
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 
+// ROCKETNET_SERVER_NUM_XDP_QUEUES is retired: each transport has its own
+// thread count now (sdk/rocketnet_network_threads.h). The server env pass
+// calls this once a create; when the retired variable is present (set, even
+// empty) it logs one warning that it is no longer read, naming the
+// variables that replace it, and returns true. It changes nothing else.
+
+bool rocketnet_config_warn_retired_server_env( void );
+
 void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 

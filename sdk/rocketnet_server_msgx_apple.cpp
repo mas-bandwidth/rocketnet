@@ -1379,7 +1379,8 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
     }
     if ( num_workers > ROCKETNET_MSGX_MAX_WORKERS || num_workers + 1 > ROCKETNET_MSGX_TABLE_MAX_HOLDERS )
     {
-        rocketnet_error( "msgx transport num_queues %d is out of range (1 to %d)", num_workers, ROCKETNET_MSGX_MAX_WORKERS );
+        rocketnet_error( "msgx transport refused: num_msgx_transmit_workers %d is out of range (1 to %d)", num_workers, ROCKETNET_MSGX_MAX_WORKERS );
+        rocketnet_create_status( status, ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
         return NULL;
     }
     if ( max_clients < 1 || max_clients > ROCKETNET_MSGX_TABLE_MAX_SLOTS )

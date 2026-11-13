@@ -306,7 +306,7 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
             config.max_clients = 4;
         }
 
-        config.num_xdp_queues = 1;
+        config.num_xdp_threads = 1;
         config.num_os_cpus = 1;
         snprintf( config.transport, sizeof( config.transport ), "xdp" );
         posix_hard_killed_require( posix_hk_xdp_address[0] != '\0' );

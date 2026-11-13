@@ -19,6 +19,7 @@
 
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
+#include "rocketnet_network_threads.h"
 
 #ifndef ROCKETNET_XDP
 #ifdef __linux__
@@ -478,9 +479,9 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_PATTERNS, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2
 
 // the server transport config table -- the single declaration everything
-// derives from, per the config system comment above. num_xdp_queues' range
-// here is structural; the tighter bounds are per transport, enforced at the
-// transport rung (ROCKETNET_GSO_MAX_QUEUES)
+// derives from, per the config system comment above. Each network thread
+// count's range here is its transport's own limit
+// (sdk/rocketnet_network_threads.h)
 
 // the default max_clients: 1000, the supported server size, or the build's
 // ROCKETNET_MAX_CLIENTS when that is smaller (512 .. 999). A build for more clients
@@ -522,7 +523,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     BYTES_FIELD(  backend_public_key,   32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
     BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_NO_ENV )               \
     BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET | ROCKETNET_CONFIG_NO_ENV )    \
-    INT_FIELD(    num_xdp_queues,        0,                              1, 1024,                                              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_xdp_threads,       0,                              1, ROCKETNET_XDP_MAX_THREADS,                         ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_os_cpus,           0,                              1, 256,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
     STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )                          \
@@ -544,9 +545,22 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     STRING_FIELD( bind_ipv4_address,     ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
     STRING_FIELD( bind_ipv6_address,     ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )
 
+// revision 7: each server transport's own network thread count (num_xdp_threads,
+// the first of them, keeps num_xdp_queues' slot in revision 1). Zero is the
+// transport's measured default (sdk/rocketnet_network_threads.h); every other
+// value is the table's range, the transport's own limit, refused at create
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
+    INT_FIELD(    num_gso_workers,             0,                         1, ROCKETNET_GSO_MAX_WORKERS,                        ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_io_uring_workers,        0,                         1, ROCKETNET_IO_URING_MAX_WORKERS,                   ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_rio_lanes,               0,                         1, ROCKETNET_RIO_MAX_LANES,                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_iocp_completion_workers, 0,                         1, ROCKETNET_IOCP_MAX_COMPLETION_WORKERS,            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_iocp_send_threads,       0,                         1, ROCKETNET_IOCP_MAX_SEND_THREADS,                  ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_msgx_transmit_workers,   0,                         1, ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS,              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
+
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
-    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
 
 /** @brief Size in bytes of the server transport config before token_epoch_unix_seconds. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
@@ -564,8 +578,10 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, loopback_hub ) + sizeof( void * ), sizeof( uint64_t ) )
 /** @brief Server transport config revision 6, in bytes: the local bind addresses, appended. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, bind_ipv6_address ) + ROCKETNET_MAX_ADDRESS_STRING_LENGTH, sizeof( uint64_t ) )
+/** @brief Server transport config revision 7, in bytes: each server transport's network thread count, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, num_msgx_transmit_workers ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Known server transport config sizes, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7
 
 // the largest build-specific channel count: a WIDE record carries a u16 channel
 
