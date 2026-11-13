@@ -819,19 +819,43 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
         }
         else if ( choice < 36 )
         {
-            // a forgery: behind, at or ahead of what the session sent
+            // a forgery: behind, at or ahead of what the session sent; three
+            // times in four, where the kernel holds a mark more than the window
+            // ahead at some address, a replay to that address the window puts
+            // behind the mark (so the walk reaches the drop rule)
             if ( (int) walk.net.size() >= RP_MAX_IN_FLIGHT )
             {
                 continue;
             }
-            const int seq = 1 + random.below( walk.sent[a] + 3 );
-            rp_packet_t p = { a, seq, walk.session[a], false, false, 1 };
+            int forged = a;
+            int seq = 1 + random.below( walk.sent[a] + 3 );
+            if ( random.below( 4 ) != 0 )
+            {
+                std::vector<int> behind;
+                std::vector<uint32_t> behind_high_water;
+                for ( int b = 0; b < RP_ADDRESSES; b++ )
+                {
+                    uint32_t kernel_high_water = 0;
+                    if ( rocketnet_xdp_host_get_replay_entry( &walk.key[b], &kernel_high_water ) && kernel_high_water > (uint32_t) ROCKETNET_XDP_REPLAY_WINDOW )
+                    {
+                        behind.push_back( b );
+                        behind_high_water.push_back( kernel_high_water );
+                    }
+                }
+                if ( !behind.empty() )
+                {
+                    const size_t k = (size_t) random.below( (int) behind.size() );
+                    forged = behind[k];
+                    seq = 1 + random.below( (int) ( behind_high_water[k] - (uint32_t) ROCKETNET_XDP_REPLAY_WINDOW ) );
+                }
+            }
+            rp_packet_t p = { forged, seq, walk.session[forged], false, false, 1 };
             if ( rp_in_net( p ) )
             {
                 continue;
             }
             walk.net.push_back( p );
-            records.push_back( tla_step( "forge", "Forge", rp_args( a, tla_int( seq ) ), rp_state() ) );
+            records.push_back( tla_step( "forge", "Forge", rp_args( forged, tla_int( seq ) ), rp_state() ) );
         }
         else if ( choice < 40 )
         {
