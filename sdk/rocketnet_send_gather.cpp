@@ -61,7 +61,7 @@ bool rocketnet_send_gather_scratch_init( struct rocketnet_send_gather_scratch_t 
 
 static inline const struct rocketnet_address_t * rocketnet_send_gather_to( const struct rocketnet_address_t * to, size_t to_stride, int slot )
 {
-    return (const struct rocketnet_address_t *) ( (const uint8_t *) to + (size_t) slot * to_stride );
+    return reinterpret_cast<const struct rocketnet_address_t *>( reinterpret_cast<const uint8_t *>( to ) + (size_t) slot * to_stride );
 }
 
 static inline int rocketnet_send_gather_bytes( const int * packet_bytes, size_t bytes_stride, int slot )
@@ -74,7 +74,7 @@ static inline int rocketnet_send_gather_bytes( const int * packet_bytes, size_t 
 int rocketnet_send_gather_home( const struct rocketnet_address_t * address, int buckets )
 {
     uint64_t hash = 0xCBF29CE484222325ULL;
-    const uint8_t * bytes = (const uint8_t *) &address->data;
+    const uint8_t * bytes = reinterpret_cast<const uint8_t *>( &address->data );
     const int address_bytes = address->type == ROCKETNET_ADDRESS_IPV6 ? 16 : 4;
     for ( int i = 0; i < address_bytes; i++ )
     {

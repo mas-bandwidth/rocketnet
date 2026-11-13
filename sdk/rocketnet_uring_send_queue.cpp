@@ -33,7 +33,7 @@ static bool rocketnet_uring_send_queues_layout( int num_queues, int slots, rocke
     rocketnet_carve( carve, 1, sizeof( struct rocketnet_uring_send_queues_t ) );
     layout->queue = rocketnet_carve( carve, (uint64_t) num_queues, sizeof( struct rocketnet_uring_send_queue_t ) );
     layout->slot = rocketnet_carve( carve, banks * (uint64_t) slots, sizeof( struct rocketnet_uring_send_slot_t ) );
-    layout->data = rocketnet_carve( carve, banks * (uint64_t) slots, ROCKETNET_FRAME_STRIDE, 16 );
+    layout->data = rocketnet_carve( carve, banks * (uint64_t) slots, (uint64_t) ROCKETNET_FRAME_STRIDE, 16 );
     layout->bytes = carve.bytes;
     return !carve.failed && carve.bytes <= SIZE_MAX;
 }
@@ -85,10 +85,10 @@ struct rocketnet_uring_send_queues_t * rocketnet_uring_send_queues_create( void 
     queues->packet_id.store( 0 );
     queues->refused.store( 0 );
     queues->refused_pointer.store( 0 );
-    queues->queue = (struct rocketnet_uring_send_queue_t *) ( base + layout.queue );
+    queues->queue = reinterpret_cast<struct rocketnet_uring_send_queue_t *>( base + layout.queue );
     queues->memory = base;
 
-    struct rocketnet_uring_send_slot_t * slot = (struct rocketnet_uring_send_slot_t *) ( base + layout.slot );
+    struct rocketnet_uring_send_slot_t * slot = reinterpret_cast<struct rocketnet_uring_send_slot_t *>( base + layout.slot );
     uint8_t * data = base + layout.data;
 
     for ( int q = 0; q < num_queues; q++ )
@@ -100,7 +100,7 @@ struct rocketnet_uring_send_queues_t * rocketnet_uring_send_queues_create( void 
             const size_t bank = (size_t) q * ROCKETNET_URING_SEND_BANKS + (size_t) b;
             queue->bank[b].num_packets.store( 0 );
             queue->bank[b].slot = slot + bank * (size_t) slots;
-            queue->bank[b].data = data + bank * (size_t) slots * ROCKETNET_FRAME_STRIDE;
+            queue->bank[b].data = data + bank * (size_t) slots * (size_t) ROCKETNET_FRAME_STRIDE;
         }
     }
 
@@ -156,7 +156,7 @@ uint8_t * rocketnet_uring_send_queues_start( struct rocketnet_uring_send_queues_
     bank->slot[index].to = *to;
     bank->slot[index].packet_bytes = 0;
 
-    return bank->data + (size_t) index * ROCKETNET_FRAME_STRIDE;
+    return bank->data + (size_t) index * (size_t) ROCKETNET_FRAME_STRIDE;
 }
 
 // proofs/tla/RNUringQueueBankLayout.tla Finish(t, k), or FinishRefused(t, k)

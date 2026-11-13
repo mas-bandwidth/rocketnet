@@ -30,7 +30,7 @@
 inline int rocketnet_send_queue_of( const rocketnet_address_t * to, int num_queues )
 {
     uint64_t hash = 0xCBF29CE484222325ULL;
-    const uint8_t * address = (const uint8_t *) &to->data;
+    const uint8_t * address = reinterpret_cast<const uint8_t *>( &to->data );
     const int address_bytes = to->type == ROCKETNET_ADDRESS_IPV6 ? 16 : 4;
     for ( int i = 0; i < address_bytes; i++ )
     {
