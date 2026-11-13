@@ -80,17 +80,16 @@ Act(a, x) == CASE a = "KernelReceive" -> KernelReceive
 Matches(r) == IF DOMAIN r.state = {} THEN TRUE ELSE VarsRec' = r.state
 
 \* the invariants MCRNXdpReceiveRing.cfg checks, on every state the code
-\* reaches; FillNeverEmptyWhileFramesFree only at a fill ring of twice the
-\* frames (at the frames' size it is MCRNXdpReceiveRingBrokenFillOfTheFrames,
-\* false by design)
+\* reaches; the two that rest on every flush fitting only at a fill ring of
+\* twice the frames (at the frames' size a flush can find no room, which is
+\* MCRNXdpReceiveRingBrokenFillOfTheFrames: false by design there)
 TraceInvariant ==
     /\ TypeOK
     /\ FrameConservation
     /\ StagingInBounds
     /\ PendingInBounds
     /\ ConsumerNotBehind
-    /\ PendingReturnedEachPass
-    /\ (FillSize >= 2 * Cardinality(Frames) => FillNeverEmptyWhileFramesFree)
+    /\ (FillSize >= 2 * Cardinality(Frames) => PendingReturnedEachPass /\ FillNeverEmptyWhileFramesFree)
 
 \* record 1's fill order when it is one; any other is a mismatch for
 \* rejected below, never an empty set of initial states
