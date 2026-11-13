@@ -23,6 +23,8 @@
 
   (group "after-v1-0-1" :title "Found while preparing v1.0.1"
    :text "Defects, gaps and measurements found by the v1.0.1 review and test campaign that a point release does not carry. Each is checked at the cited code first.")
+  (group "trace-check" :title "Trace check: gaps the README declares"
+   :text "What proofs/tla/README-TraceCheck.md says the trace check trusts rather than enforces (v2, 2026-11-12, after three cold reads). Each item says what enforcing it would take.")
   (group "decisions" :title "Decisions for Glenn"
    :text "Choices that change behavior, remove machinery, or touch repository and fleet settings.")
  )
@@ -234,4 +236,19 @@
    :title "Private 10G link for XDP packet blaster and bare-metal LAN runs"
    :text "The XDP packet blaster, bare-metal XDP LAN runs and the zero-copy load_split ladder need a private 10G link between the XDP bench and a second 10G machine; today the XDP bench's only cabled port is its uplink."
    :date "2026-11-10" :origin "Owner request, 2026-11-10; docs/runs/xdp-zero-copy.md")
+
+  (item "trace-spec-invariants" :group "trace-check" :area "proofs"
+   :title "Check the spec's own invariants on every trace"
+   :text "The trace cfg allows INVARIANT TraceConsistent only, so the spec's invariants are checked at the model's small sizes and never on the trace at the code's real sizes: code that follows a model which is wrong at 4096 slots passes. Enforcing it: an invariants list in each LAYERS row, the checker verifying each is a plain state predicate of the spec (the reach-predicate check already does this) and allowing INVARIANT lines for exactly those names, the writer emitting them, and a planted row whose model breaks an invariant only past its TLC size. Cost per layer: no extra TLC run, since the invariants are evaluated in the clean trace's existing run, once per record (401 at the default 400 steps). An invariant over a fixed array costs about slots x records evaluations, about 1.6 million for a 4096-slot ring at 400 steps, a few seconds on the bench and unmeasured until the first such layer lands. A plant trace stops at its rejection, and the plant run must not take the invariants, or a planted invariant break could stand in for the trace rejection the plant must cause."
+   :date "2026-11-12" :origin "Trace check v2, third cold reader (README 'What the check trusts')")
+
+  (item "trace-library-copy" :group "trace-check" :area "tools"
+   :title "Refuse a copy of library code in a layer's test file"
+   :text "The walk must call the library, not a copy of it left in tests/tla_trace_<layer>.cpp beside a real sdk include. Today a reviewer checks this by reading the file. Enforcing it: after the clean build, run nm on the layer's object file and refuse any defined symbol with the library's prefix (rocketnet_) or any name the sdk files define. Also refuse a layer file that defines a function an sdk header declares. This needs the object path from CMake ($<TARGET_OBJECTS:tla_trace>, written next to tla_trace_config.txt) and nm or dumpbin on each OS. Add a planted row that copies one sdk function into the example."
+   :date "2026-11-12" :origin "Trace check v2, third cold reader")
+
+  (item "trace-config-per-source" :group "trace-check" :area "tools"
+   :title "Read the trace binaries' configuration from the layer's own unit"
+   :text "CONFIG is printed by tests/tla_trace.cpp, so a COMPILE_DEFINITIONS set on one layer's source file, or a configuration macro without the ROCKETNET_ prefix, changes the layer's code without the checker seeing it. Enforcing it: CMake refuses source-file COMPILE_DEFINITIONS on tests/tla_trace_*.cpp. Each layer's walk prints CONFIG through a macro in tla_trace_record.h expanded in its own unit. The macro list is every identifier an #if of the included sdk files tests, read from those files, not a fixed list of ROCKETNET_ names. Add planted rows for a per-source define and for an unprefixed macro."
+   :date "2026-11-12" :origin "Trace check v2, third cold reader")
  ))
