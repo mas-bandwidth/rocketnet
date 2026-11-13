@@ -706,8 +706,16 @@ refusal is counted for that connection, and the connection stays up; what to
 do about it is the game's decision
 ([refused sends](ERRORS-AND-LOGGING.md#53-refused-sends-can_send_message-vs-failed-start_message-full-queues-and-wire-budgets)).
 Unreliable messages sent into a dark direction are lost. After the outage,
-every reliable message the application started and finished is delivered
-exactly once and in its channel's order. The backlog drains at the send budget when
+every `RELIABLE` and `RELIABLE_ORDERED` message the application started and
+finished, with their receipt forms, is delivered exactly once, the ordered
+ones in send order; a `RELIABLE_SEQUENCED` message is dropped instead when a
+newer one on its channel supersedes it or reaches the application first
+([CHANNELS.md](CHANNELS.md#reliability)). That holds while the sent-packet map
+holds every tracked packet sent between a send and the processing of its
+acknowledgement; past that, messages already delivered stay
+delivered, but messages waiting for the reliable window wait as long as the
+excess lasts, or until `reliable_message_timeout_ms`, when set, ends the
+connection ([CHANNELS.md](CHANNELS.md#receipts-and-stats)). The backlog drains at the send budget when
 each end updates at least every 100 ms (the send budget holds 100 ms of credit,
 or one maximum packet when that is more;
 [MESSAGES.md m9.4](../standard/MESSAGES.md#m9.4)); a slower update rate drains it more slowly.
