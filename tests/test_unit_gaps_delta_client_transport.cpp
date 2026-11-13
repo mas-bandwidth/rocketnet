@@ -18,6 +18,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_message_object.h"
 #include "rocketnet_wire.h"
 
 #include <stdint.h>
@@ -261,10 +262,13 @@ static void test_delta_client_hand_off_bytes_reach_the_bandwidth_window()
     // over a second of quiet: every earlier stats frame leaves the window, and
     // the update at t starts a frame of its own
 
-    const double t = pair.time + 1.05;
+    // (the transport's clock is the public clock less the client's origin)
+
+    public_step_now = pair.time + 1.05;
+    const double t = public_step_now - rocketnet_client_message_client( pair.client )->object.clock_origin;
     rocketnet_client_transport_update( transport, t );
     rocketnet_client_transport_send_packets( transport );
-    printf( "delta bandwidth: state %d\n", rocketnet_client_transport_state( transport ) );
+    rocketnet_unit_check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     struct rocketnet_client_transport_stats_t start;
     rocketnet_client_transport_stats( transport, &start );
