@@ -1408,4 +1408,119 @@ static void test_uring_queue_worker_reaps_a_batch_a_pass()
 
 REGISTER_UNIT_TEST( test_uring_queue_worker_reaps_a_batch_a_pass );
 
+// The worker thread's own loop, rocketnet_uring_queue_worker_run, over a
+// kernel whose submits answer from a script: each answer in results in turn
+// (past its end, the count handed over), the stop's last completions posted
+// after the submit numbered drain_after, and a bound that fails the case
+// rather than hang it. The log sink counts what the loop says.
+
+static struct
+{
+    std::vector<int> results;
+    int drain_after;
+    int calls;
+    int waits;
+    int logged;
+    int last_level;
+} worker_test_script;
+
+static int worker_test_script_submit( void * context, bool wait )
+{
+    worker_test_kernel_t * k = (worker_test_kernel_t *) context;
+    const int handed = worker_test_submit( context, wait );
+    const int call = worker_test_script.calls++;
+    worker_test_script.waits += wait ? 1 : 0;
+    check( worker_test_script.calls <= 64 );
+    if ( call + 1 == worker_test_script.drain_after )
+    {
+        struct rocketnet_uring_queue_worker_completion_t receive = { rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), -ECANCELED, 0 };
+        struct rocketnet_uring_queue_worker_completion_t wake = { rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), -ECANCELED, 0 };
+        k->ready.push_back( receive );
+        k->ready.push_back( wake );
+    }
+    return call < (int) worker_test_script.results.size() ? worker_test_script.results[(size_t) call] : handed;
+}
+
+static void worker_test_script_log( void * context, rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) message;
+    (void) length;
+    worker_test_script.logged++;
+    worker_test_script.last_level = (int) level;
+}
+
+// runs a stopped worker to its exit over the scripted submits; returns the
+// SUBMITS counter
+static uint64_t worker_test_script_run( const std::vector<int> & results, int drain_after )
+{
+    worker_test_t t( 4, 8, 2 );
+    check( t.ok );
+    struct rocketnet_uring_queue_worker_config_t config = t.config_for( 8, 2, true, false );
+    config.kernel.submit = worker_test_script_submit;
+    check( rocketnet_uring_queue_worker_init( &t.worker, &config ) );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );        // receive and wake read armed
+    rocketnet_uring_queue_worker_stop( &t.worker );
+
+    worker_test_script.results = results;
+    worker_test_script.drain_after = drain_after;
+    worker_test_script.calls = 0;
+    worker_test_script.waits = 0;
+    worker_test_script.logged = 0;
+    worker_test_script.last_level = -1;
+
+    const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
+    rocketnet_log_function( worker_test_script_log, NULL );
+    rocketnet_uring_queue_worker_run( &t.worker );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
+
+    check( t.of( IORING_OP_ASYNC_CANCEL ).size() == 2 );
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_STRAY ) == 0 );
+    return t.counter( ROCKETNET_URING_WORKER_COUNTER_SUBMITS );
+}
+
+static void test_uring_queue_worker_run_retries_refused_submits()
+{
+    // EINTR, EAGAIN and EBUSY are retried in silence; the loop submits
+    // (waiting: nothing else to do) until the stop's completions come, and
+    // exits on the pass after, with no submit of its own
+    uint64_t submits = worker_test_script_run( { -EINTR, -EAGAIN, -EBUSY }, 4 );
+    check( submits == 4 );
+    check( worker_test_script.calls == 4 );
+    check( worker_test_script.waits == 4 );
+    check( worker_test_script.logged == 0 );
+
+    // any other refusal is retried too and logged once, as an error, however
+    // often it repeats
+    submits = worker_test_script_run( { -ENOMEM, -ENOMEM, -EINTR, -EPERM }, 5 );
+    check( submits == 5 );
+    check( worker_test_script.calls == 5 );
+    check( worker_test_script.logged == 1 );
+    check( worker_test_script.last_level == (int) ROCKETNET_LOG_LEVEL_ERROR );
+
+    // a clean run says nothing
+    submits = worker_test_script_run( {}, 1 );
+    check( submits == 1 );
+    check( worker_test_script.logged == 0 );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_worker_run_retries_refused_submits );
+
 #endif // #if defined( __linux__ ) && defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT )
+
+// Linux without liburing (ROCKETNET_IO_URING off), or with uapi headers older
+// than IORING_RECV_MULTISHOT, compiles every case above out: one SKIPPED line
+// says so rather than dropping them in silence. CI installs liburing, so
+// every CI leg runs the cases. Run by name (--run), it only confirms this
+// build compiled them out.
+#if defined( __linux__ ) && !( defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT ) )
+#define ROCKETNET_IO_URING_WITH_RECV_MULTISHOT 0
+static void test_uring_queue_worker_every_case()
+{
+    rocketnet_unit_check( !ROCKETNET_IO_URING_WITH_RECV_MULTISHOT );
+}
+REGISTER_UNIT_TEST( test_uring_queue_worker_every_case );
+UNIT_TEST_SKIPPED_UNLESS( test_uring_queue_worker_every_case, ROCKETNET_IO_URING_WITH_RECV_MULTISHOT );
+#endif // #if defined( __linux__ ) && !( defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT ) )

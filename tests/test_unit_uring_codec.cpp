@@ -654,3 +654,16 @@ REGISTER_UNIT_TEST( test_uring_gso_message_stride_and_tail );
 REGISTER_UNIT_TEST( test_uring_recvmsg_gro_stride );
 
 #endif // #if ROCKETNET_URING_CODEC_ACTIVE
+
+// Linux with uapi headers older than IORING_RECV_MULTISHOT compiles every
+// case above out: one SKIPPED line says so rather than dropping them in
+// silence. CI installs liburing, so every CI leg runs the cases. Run by
+// name (--run), it only confirms this build compiled them out.
+#if defined( __linux__ ) && !ROCKETNET_URING_CODEC_ACTIVE
+static void test_io_uring_transport_codec_every_case()
+{
+    rocketnet_unit_check( !ROCKETNET_URING_CODEC_ACTIVE );
+}
+REGISTER_UNIT_TEST( test_io_uring_transport_codec_every_case );
+UNIT_TEST_SKIPPED_UNLESS( test_io_uring_transport_codec_every_case, ROCKETNET_URING_CODEC_ACTIVE );
+#endif // #if defined( __linux__ ) && !ROCKETNET_URING_CODEC_ACTIVE
