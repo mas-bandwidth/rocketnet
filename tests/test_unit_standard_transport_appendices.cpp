@@ -303,12 +303,12 @@ static void test_standard_transport_appendices_vectors()
     }
     rocketnet_unit_check( auto_count > 0 );
 
-    struct rocketnet_transport_ladder_t from_null;
-    struct rocketnet_transport_ladder_t from_empty;
-    struct rocketnet_transport_ladder_t from_word;
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( NULL, available, num_available, &from_null, true ) );
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( "", available, num_available, &from_empty, true ) );
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( "auto", available, num_available, &from_word, true ) );
+    struct rocketnet_transport_order_t from_null;
+    struct rocketnet_transport_order_t from_empty;
+    struct rocketnet_transport_order_t from_word;
+    rocketnet_unit_check( rocketnet_transport_order_parse( NULL, available, num_available, &from_null, true ) );
+    rocketnet_unit_check( rocketnet_transport_order_parse( "", available, num_available, &from_empty, true ) );
+    rocketnet_unit_check( rocketnet_transport_order_parse( "auto", available, num_available, &from_word, true ) );
     rocketnet_unit_check( from_null.num_candidates == auto_count );
     rocketnet_unit_check( from_empty.num_candidates == auto_count );
     rocketnet_unit_check( from_word.num_candidates == auto_count );
@@ -321,8 +321,8 @@ static void test_standard_transport_appendices_vectors()
 
     const char * pin_name = rocketnet_transport_name( auto_ids[0] );
     rocketnet_unit_check( pin_name != NULL );
-    struct rocketnet_transport_ladder_t pinned;
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( pin_name, available, num_available, &pinned, true ) );
+    struct rocketnet_transport_order_t pinned;
+    rocketnet_unit_check( rocketnet_transport_order_parse( pin_name, available, num_available, &pinned, true ) );
     rocketnet_unit_check( pinned.num_candidates == 1 );
     rocketnet_unit_check( pinned.candidates[0] == auto_ids[0] );
 
@@ -334,8 +334,8 @@ static void test_standard_transport_appendices_vectors()
         rocketnet_unit_check( name != NULL );
         rocketnet_unit_check( append_transport_name( reversed, (int) sizeof( reversed ), name ) == 0 );
     }
-    struct rocketnet_transport_ladder_t explicit_list;
-    rocketnet_unit_check( rocketnet_transport_ladder_parse( reversed, available, num_available, &explicit_list, true ) );
+    struct rocketnet_transport_order_t explicit_list;
+    rocketnet_unit_check( rocketnet_transport_order_parse( reversed, available, num_available, &explicit_list, true ) );
     rocketnet_unit_check( explicit_list.num_candidates == auto_count );
     for ( int i = 0; i < auto_count; i++ )
     {

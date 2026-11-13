@@ -57,8 +57,8 @@ leg windows-dev-appverif-rio Windows rio
 
 reason rocketnet_test_a_transport_pin_is_set_and_not_xdp the case checks that an env pin is honoured, so it has nothing to check unpinned (the pinned step after each unpinned run runs it with --run); under an xdp server pin its port-zero server cannot start
 reason rocketnet_test_no_transport_pin_is_set the shared-object hub runs on the default ladder; under a pin it has no meaning, and the leg's unpinned twin runs it
-reason rocketnet_test_server_pin_allows_auto the row exercises the server's auto ladder, which this leg's server pin replaces; the leg's unpinned twin runs it
-reason rocketnet_test_client_pin_allows_auto the row exercises the client's auto ladder, which this leg's client pin replaces; the leg's unpinned twin runs it
+reason rocketnet_test_server_pin_allows_auto the row exercises the server's automatic transport order, which this leg's server pin replaces; the leg's unpinned twin runs it
+reason rocketnet_test_client_pin_allows_auto the row exercises the client's automatic transport order, which this leg's client pin replaces; the leg's unpinned twin runs it
 reason rocketnet_test_server_pin_allows_gso the row selects the gso rung, which this leg's server pin excludes; the unpinned Linux legs run it
 reason rocketnet_test_server_pin_allows_io_uring the row selects the io_uring rung, which this leg's server pin excludes; the unpinned Linux legs run it
 reason rocketnet_test_server_pin_allows_xdp the row selects the xdp rung, which this leg's server pin excludes; the unpinned legs run it

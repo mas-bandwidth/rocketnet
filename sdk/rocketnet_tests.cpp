@@ -11610,7 +11610,7 @@ void rocketnet_test_client_id_free_after_clean_disconnect()
 }
 
 // ----------------------------------------------------------------
-//        the config table and the transport ladder
+//        the config table and the transport list
 // ----------------------------------------------------------------
 
 // Each case restores the in-memory table state it found, so cases remain
@@ -12980,50 +12980,50 @@ void rocketnet_test_config_validation()
 #endif // #if ROCKETNET_DEV
 }
 
-void rocketnet_test_transport_ladder_parse()
+void rocketnet_test_transport_order_parse()
 {
     const int linux_server[] = { ROCKETNET_TRANSPORT_XDP, ROCKETNET_TRANSPORT_GSO, ROCKETNET_TRANSPORT_PORTABLE };
     const int mac_endpoint[] = { ROCKETNET_TRANSPORT_MSGX, ROCKETNET_TRANSPORT_PORTABLE };
 
-    struct rocketnet_transport_ladder_t ladder;
+    struct rocketnet_transport_order_t ladder;
 
     // auto -- and its spellings NULL, "", and whitespace -- expands to the
     // availability order
 
-    rocketnet_check( rocketnet_transport_ladder_parse( NULL, linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( NULL, linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 && ladder.num_skipped == 0 );
     rocketnet_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP && ladder.candidates[1] == ROCKETNET_TRANSPORT_GSO && ladder.candidates[2] == ROCKETNET_TRANSPORT_PORTABLE );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "auto", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "auto", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "  auto  ", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "  auto  ", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 );
 
     // a one-element list is a pin; an explicit list is exactly that list,
     // in exactly that order, with no implicit floor appended
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "gso", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "gso", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "gso,xdp", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "gso,xdp", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
     rocketnet_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO && ladder.candidates[1] == ROCKETNET_TRANSPORT_XDP );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( " gso , portable ", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( " gso , portable ", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
 
     // known names absent here are skipped softly, so one fleet-wide line
     // deploys unmodified to heterogeneous boxes
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "xdp,gso,msgx,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "xdp,gso,msgx,portable", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 3 && ladder.num_skipped == 1 );
     rocketnet_check( ladder.skipped[0] == ROCKETNET_TRANSPORT_MSGX );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "xdp,gso,msgx,portable", mac_endpoint, 2, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "xdp,gso,msgx,portable", mac_endpoint, 2, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 && ladder.num_skipped == 2 );
     rocketnet_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_MSGX && ladder.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
 
@@ -13031,26 +13031,26 @@ void rocketnet_test_transport_ladder_parse()
     // endpoint: the parse falls to the availability order, loudly, so a
     // fleet-wide line never bricks an endpoint it was not addressing
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "xdp", mac_endpoint, 2, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "xdp", mac_endpoint, 2, &ladder ) );
     rocketnet_check( ladder.num_skipped == 1 && ladder.skipped[0] == ROCKETNET_TRANSPORT_XDP );
     rocketnet_check( ladder.num_candidates == 2 );
     rocketnet_check( ladder.candidates[0] == ROCKETNET_TRANSPORT_MSGX && ladder.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
 
     // typos are not skips: a name in no transport set fails loudly
 
-    rocketnet_check( !rocketnet_transport_ladder_parse( "protable", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "GSO", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "gso,,portable", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( ",", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "auto,gso", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "protable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "GSO", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "gso,,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( ",", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "auto,gso", linux_server, 3, &ladder ) );
     // one past ROCKETNET_MAX_TRANSPORT_CANDIDATES (16), available and skipped
-    rocketnet_check( !rocketnet_transport_ladder_parse( "portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_order_parse( "msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx", linux_server, 3, &ladder ) );
 
     // duplicates of an available name are allowed: trying a rung twice is
     // the operator's list, honored as written
 
-    rocketnet_check( rocketnet_transport_ladder_parse( "gso,gso", linux_server, 3, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( "gso,gso", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
 }
 
@@ -13074,8 +13074,8 @@ void rocketnet_test_portable_server_release_gate()
 
     rocketnet_check( portable_server && portable_client );
 
-    struct rocketnet_transport_ladder_t ladder;
-    rocketnet_check( rocketnet_transport_ladder_parse( "auto", servers, server_count, &ladder ) );
+    struct rocketnet_transport_order_t ladder;
+    rocketnet_check( rocketnet_transport_order_parse( "auto", servers, server_count, &ladder ) );
 
     bool portable_in_auto = false;
     for ( int i = 0; i < ladder.num_candidates; ++i )
@@ -13084,7 +13084,7 @@ void rocketnet_test_portable_server_release_gate()
     }
     rocketnet_check( portable_in_auto );
 
-    rocketnet_check( rocketnet_transport_ladder_parse( " portable ", servers, server_count, &ladder ) );
+    rocketnet_check( rocketnet_transport_order_parse( " portable ", servers, server_count, &ladder ) );
     rocketnet_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
 }
 
@@ -14703,7 +14703,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
 #endif // #if ROCKETNET_DEV
     { "test_handshake_deadline_is_configured", rocketnet_test_handshake_deadline_is_configured },
     { "test_config_validation", rocketnet_test_config_validation },
-    { "test_transport_ladder_parse", rocketnet_test_transport_ladder_parse },
+    { "test_transport_order_parse", rocketnet_test_transport_order_parse },
     { "test_portable_server_release_gate", rocketnet_test_portable_server_release_gate },
     { "test_server_port_zero_needs_a_discovering_transport", rocketnet_test_server_port_zero_needs_a_discovering_transport },
 #if ROCKETNET_XDP
