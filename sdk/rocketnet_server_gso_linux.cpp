@@ -1703,7 +1703,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
     gso->num_queues = num_queues;
     // the OS keeps cpu 0 on Linux: a count below 1 is read as 1, here and not
     // only in the builtin driver, so no worker is ever left free to run on cpu 0
-    gso->num_os_cpus = num_os_cpus < 1 ? 1 : num_os_cpus;
+    gso->num_os_cpus = rocketnet_gso_pin_os_cpus( num_os_cpus );
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     if ( packet_filter )
     {
@@ -3142,7 +3142,7 @@ bool rocketnet_server_gso_test_place_worker( struct rocketnet_server_gso_t * gso
     {
         return false;
     }
-    gso->num_os_cpus = num_os_cpus > 1 ? num_os_cpus : 1;
+    gso->num_os_cpus = rocketnet_gso_pin_os_cpus( num_os_cpus );
     gso_fake_cpus = cpus;
     gso_fake_without_cpu_zero = without_cpu_zero;
     gso_fake_refuse_pin = refuse_pin;

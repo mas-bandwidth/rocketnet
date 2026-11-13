@@ -30,18 +30,19 @@ static void test_uring_pin_cpu_placement()
 // "the OS on core 0 is law on linux" (owner, 2026-11-13): the placement never
 // chooses cpu 0 for any worker, whatever the queue and the number of cpus left
 // to the OS. The server's default num_os_cpus is 1 (the builtin driver passes
-// 1 when the config says 0), and the transport driven directly with 0 pins
-// nothing at all; the placement is only asked with a positive count.
+// 1 when the config says 0), and a count below 1 given directly is clamped to
+// 1 by the placement itself (rocketnet_uring_pin_os_cpus).
 
 static void test_uring_pin_never_chooses_core_zero()
 {
-    for ( int num_os_cpus = 1; num_os_cpus <= 8; num_os_cpus++ )
+    for ( int num_os_cpus = -2; num_os_cpus <= 8; num_os_cpus++ )
     {
+        const int os_cpus = num_os_cpus < 1 ? 1 : num_os_cpus;
         for ( int queue = 0; queue < ROCKETNET_URING_PIN_TEST_MAX_QUEUES; queue++ )
         {
             const int cpu = rocketnet_uring_pin_cpu( queue, num_os_cpus );
             check( cpu >= 1 );
-            check( cpu == num_os_cpus + queue );
+            check( cpu == os_cpus + queue );
         }
     }
 }

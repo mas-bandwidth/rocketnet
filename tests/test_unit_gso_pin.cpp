@@ -38,15 +38,24 @@ static void test_gso_pin_check_refusals()
     check( rocketnet_gso_pin_check( 1, 1024, 1 ) == ROCKETNET_GSO_PIN_OFFLINE );
 }
 
-// the OS owns cpu 0 on Linux: with the server's default num_os_cpus (1, the
-// builtin driver's value for any setting below 1) no queue's worker is ever
-// placed on cpu 0, however many queues there are
+// the OS owns cpu 0 on Linux: a num_os_cpus below 1 reads as 1 (the
+// transport's create and its test seam take rocketnet_gso_pin_os_cpus, and the
+// placement clamps through it too), so no queue's worker is ever placed on
+// cpu 0, whatever the setting and however many queues there are
 static void test_gso_pin_never_cpu_zero()
 {
-    for ( int queue = 0; queue < 64; queue++ )
+    check( rocketnet_gso_pin_os_cpus( 0 ) == 1 );
+    check( rocketnet_gso_pin_os_cpus( -5 ) == 1 );
+    check( rocketnet_gso_pin_os_cpus( 1 ) == 1 );
+    check( rocketnet_gso_pin_os_cpus( 3 ) == 3 );
+    for ( int num_os_cpus = -5; num_os_cpus <= 8; num_os_cpus++ )
     {
-        check( rocketnet_gso_pin_cpu( queue, 1 ) == 1 + queue );
-        check( rocketnet_gso_pin_cpu( queue, 1 ) != 0 );
+        const int os_cpus = num_os_cpus < 1 ? 1 : num_os_cpus;
+        for ( int queue = 0; queue < 64; queue++ )
+        {
+            check( rocketnet_gso_pin_cpu( queue, num_os_cpus ) == os_cpus + queue );
+            check( rocketnet_gso_pin_cpu( queue, num_os_cpus ) >= 1 );
+        }
     }
 }
 
