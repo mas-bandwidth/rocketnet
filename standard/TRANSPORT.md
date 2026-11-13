@@ -3797,7 +3797,7 @@ The registry of counters, in index order, is:
 | `URING_RECEIVE_DROPPED_NO_BUFFER` | `refusal` | `none` |
 | `URING_RECEIVE_REARM_FAILED` | `refusal` | `none` |
 | `URING_GSO_SENDS` | `expected` | `none` |
-| `URING_GSO_FALLBACKS` | `refusal` | `none` |
+| `URING_GSO_FALLBACKS` | `expected` | `none` |
 | `URING_GRO_BATCHES` | `expected` | `none` |
 | `URING_GRO_CMSG_FAULTS` | `refusal` | `none` |
 | `IOCP_SEND_COMPLETED` | `expected` | `none` |
@@ -3810,7 +3810,7 @@ The registry of counters, in index order, is:
 | `IOCP_COMPLETION_BATCHES` | `expected` | `none` |
 | `IOCP_USO_SENDS` | `expected` | `none` |
 | `IOCP_URO_BATCHES` | `expected` | `none` |
-| `IOCP_USO_FALLBACKS` | `refusal` | `none` |
+| `IOCP_USO_FALLBACKS` | `expected` | `none` |
 | `RIO_PACKETS_SENT` | `expected` | `none` |
 | `RIO_PACKETS_RECEIVED` | `expected` | `none` |
 | `RIO_SEND_FULL` | `refusal` | `none` |
@@ -3965,13 +3965,13 @@ c6 d9 00 00 00 18 62 20 fd 00 00 00 3f 54 16 85
 00 00 00 d6 b3 6f 47 00 00 00 a7 b8 3d 12 01 00
 00 9b d6 0d f4 01 00 00 11 ae 54 4d 01 00 00 34
 c7 86 56 00 00 00 de bd d7 13 00 00 00 de 1b fe
-8a 01 00 00 0a 8a 1e 7f 00 00 00 78 1a 4f 7d 01
+8a 01 00 00 0a 8a 1e 7f 01 00 00 78 1a 4f 7d 01
 00 00 46 6a 51 94 00 00 00 af a7 9e 56 01 00 00
 8b 78 7a f1 00 00 00 f6 62 a5 c4 01 00 00 b1 a1
 85 38 00 00 00 98 9f b0 ca 00 00 00 d9 6d c2 32
 00 00 00 d6 08 07 de 00 00 00 96 08 d9 fc 01 00
 00 9c ce fc 4d 01 00 00 c6 51 bf 7f 01 00 00 00
-b0 c8 9c 00 00 00 da 8a 2b 51 01 00 00 37 df 03
+b0 c8 9c 01 00 00 da 8a 2b 51 01 00 00 37 df 03
 d7 01 00 00 1c 31 f2 57 00 00 00 d4 1f 4d 66 00
 00 00 69 7d ae d0 01 00 00 05 4c ed e0 00 00 00
 2a 63 c3 16 00 00 00 6f 54 6f 12 00 00 00 62 5c
