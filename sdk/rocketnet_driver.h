@@ -306,4 +306,8 @@ inline bool rocketnet_server_transport_io_has( const rocketnet_server_transport_
     return ( transport.operations->flags & flag ) != 0;
 }
 
+// the allocation the portable client's I/O record is, as the client memory
+// plan counts it (built where the platform has a wake)
+uint64_t rocketnet_portable_io_client_allocation_bytes();
+
 #endif // ROCKETNET_SDK_ROCKETNET_DRIVER_H

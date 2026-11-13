@@ -195,6 +195,9 @@ extern std::atomic<bool> rocketnet_client_gso_test_disable_gro;
 extern std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches;
 #endif // #if ROCKETNET_DEV
 
+// the allocation the gso client's I/O record is, as the memory plan counts it
+uint64_t rocketnet_client_gso_io_allocation_bytes();
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 #endif // ROCKETNET_SDK_ROCKETNET_CLIENT_GSO_H

@@ -16,6 +16,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_driver.h"
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_client_gso.h"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -1222,71 +1223,13 @@ struct rocketnet_client_memory_plan_t
 // connection, so the plan carries its bytes.
 #define ROCKETNET_CLIENT_LINK_SIMULATOR_SLOTS 512
 
-#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
-struct rocketnet_portable_io_client_layout_t
-{
-    void * context;
-    void * socket;
-    void * wake;
-};
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
-
-// Mirrors of the native client I/O records, member for member, so the plan
-// counts the bytes their creates allocate: the gso client's one record
-// (sdk/rocketnet_client_gso_linux.cpp rocketnet_client_gso_io_t), beside its
-// platform socket and wake, and the iocp client's one record
-// (sdk/rocketnet_client_iocp_windows.cpp rocketnet_client_iocp_io_t), beside
-// its platform socket. The lifecycle cases measure them against the plan.
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-struct rocketnet_client_gso_io_layout_t
-{
-    void * context;
-    rocketnet_platform_socket_t * socket;
-    rocketnet_platform_wake_t * wake;
-    rocketnet_client_gso_t gso;
-};
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-struct rocketnet_client_iocp_receive_layout_t
-{
-    OVERLAPPED overlapped;
-    WSABUF buffers[2];
-    DWORD flags;
-    INT from_bytes;
-    sockaddr_storage from;
-    int index;
-};
-struct rocketnet_client_iocp_io_layout_t
-{
-    void * context;
-    rocketnet_platform_socket_t * socket;
-    bool ipv6;
-    HANDLE port;
-    rocketnet_client_iocp_t core;
-    rocketnet_client_iocp_receive_layout_t receives[ROCKETNET_CLIENT_IOCP_RECEIVES];
-    OVERLAPPED_ENTRY entries[ROCKETNET_CLIENT_IOCP_RECEIVES + 1];
-    uint8_t buffers[ROCKETNET_CLIENT_IOCP_RECEIVES * ROCKETNET_CLIENT_IOCP_RECEIVE_BYTES];
-    uint8_t overflow[ROCKETNET_CLIENT_IOCP_OVERFLOW_BYTES];
-};
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// The plan counts each I/O record by its owner's byte helper
+// (rocketnet_portable_io_client_allocation_bytes, rocketnet_client_gso_io_allocation_bytes,
+// rocketnet_client_iocp_io_allocation_bytes), beside the platform socket, wake
+// and thread helpers, never by a copy of the record's layout, so the plan
+// cannot drift from what create allocates.
 
 #if ROCKETNET_DEV
-// The memory plan seam allocates this mirror of the platform thread_record_t
-// (the thread and its shim, one allocation, sdk/rocketnet_platform.cpp) that
-// rocketnet_platform_thread_create allocates, so the seam allocates the bytes
-// rocketnet_platform_thread_allocation_bytes counts.
-struct rocketnet_thread_shim_layout_t
-{
-    void * context;
-    void * real_thread_data;
-    void * real_thread_function;
-};
-struct rocketnet_thread_record_layout_t
-{
-    rocketnet_platform_thread_t thread;
-    rocketnet_thread_shim_layout_t shim;
-};
-
 // Test seam for socket-free, thread-free client memory plan unit testing.
 static bool rocketnet_client_memory_plan_seam_enabled = false;
 
@@ -1312,7 +1255,7 @@ static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * cont
 #if ROCKETNET_DEV
     if ( rocketnet_client_memory_plan_seam_enabled )
     {
-        void * record = rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
+        void * record = rocketnet_malloc( context, (size_t) ( rocketnet_platform_thread_allocation_bytes() - rocketnet_allocation_overhead() ) );
         if ( !record )
         {
             rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
@@ -1427,9 +1370,8 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         if ( strcmp( transport, "gso" ) == 0 )
         {
-            plan.transport_io_bytes = rocketnet_memory_allocations( { sizeof( rocketnet_platform_socket_t ),
-                                                                      sizeof( rocketnet_client_gso_io_layout_t ) } );
-            if ( !plan.transport_io_bytes || !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
+            plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
+            if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_client_gso_io_allocation_bytes() ) || !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
             {
                 return false;
             }
@@ -1439,16 +1381,18 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             if ( strcmp( transport, "iocp" ) == 0 )
         {
-            plan.transport_io_bytes = rocketnet_memory_allocations( { sizeof( rocketnet_platform_socket_t ),
-                                                                      sizeof( rocketnet_client_iocp_io_layout_t ) } );
+            plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
+            if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_client_iocp_io_allocation_bytes() ) )
+            {
+                return false;
+            }
         }
         else
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         {
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
-            plan.transport_io_bytes = rocketnet_memory_allocations( { sizeof( rocketnet_platform_socket_t ),
-                                                                      sizeof( rocketnet_portable_io_client_layout_t ) } );
-            if ( !plan.transport_io_bytes || !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
+            plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
+            if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_portable_io_client_allocation_bytes() ) || !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
             {
                 return false;
             }
@@ -2293,7 +2237,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
                 void * wake;
             };
             rocketnet_portable_seam_client_t * seam_client = (rocketnet_portable_seam_client_t *)
-                rocketnet_malloc( client_transport->context, sizeof( rocketnet_portable_io_client_layout_t ) );
+                rocketnet_malloc( client_transport->context, (size_t) ( rocketnet_portable_io_client_allocation_bytes() - rocketnet_allocation_overhead() ) );
             if ( !seam_client )
             {
                 if ( status )
@@ -4732,4 +4676,14 @@ uint64_t rocketnet_client_transport_count_final( struct rocketnet_client_transpo
     }
     rocketnet_client_transport_count_sent( client_transport, packets, bytes );
     return committed;
+}
+
+// The plan less the family race: what a one-family create allocates (its
+// transport, its one socket's I/O, its thread, its simulator), the two-family
+// plan without the race block and the second socket. 0 where there is no plan.
+
+uint64_t rocketnet_client_transport_required_memory_one_family( const rocketnet_client_transport_config_t * config, const char * transport )
+{
+    rocketnet_client_memory_plan_t plan;
+    return rocketnet_client_transport_memory_plan( config, transport, plan ) ? plan.total_bytes - plan.race_bytes : 0;
 }
