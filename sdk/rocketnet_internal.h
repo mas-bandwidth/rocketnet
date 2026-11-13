@@ -557,10 +557,21 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    num_iocp_send_threads,       0,                         1, ROCKETNET_IOCP_MAX_SEND_THREADS,                  ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_msgx_transmit_workers,   0,                         1, ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS,              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
 
+// revision 8: whether each Linux transport that places its network threads
+// from cpu 0 up keeps cpu 0 for the OS. Zero is the default (reserved);
+// ROCKETNET_CPU_0_RESERVED (1) and ROCKETNET_CPU_0_NOT_RESERVED (2) are the
+// range, anything else refused at create. xdp, rio, iocp and msgx have none
+// (rocketnet.h, gso_reserve_cpu_0)
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V4( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
+    INT_FIELD(    gso_reserve_cpu_0,           0,                         ROCKETNET_CPU_0_RESERVED, ROCKETNET_CPU_0_NOT_RESERVED, ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    io_uring_reserve_cpu_0,      0,                         ROCKETNET_CPU_0_RESERVED, ROCKETNET_CPU_0_NOT_RESERVED, ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    portable_reserve_cpu_0,      0,                         ROCKETNET_CPU_0_RESERVED, ROCKETNET_CPU_0_NOT_RESERVED, ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
+
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
-    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V4( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
 
 /** @brief Size in bytes of the server transport config before token_epoch_unix_seconds. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
@@ -580,8 +591,10 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, bind_ipv6_address ) + ROCKETNET_MAX_ADDRESS_STRING_LENGTH, sizeof( uint64_t ) )
 /** @brief Server transport config revision 7, in bytes: each server transport's network thread count, appended. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, num_msgx_transmit_workers ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Server transport config revision 8, in bytes: each Linux transport's cpu 0 reservation, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_8 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, portable_reserve_cpu_0 ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Known server transport config sizes, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_8
 
 // the largest build-specific channel count: a WIDE record carries a u16 channel
 

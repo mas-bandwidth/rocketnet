@@ -106,15 +106,20 @@ machine.
 | Transport | Network threads (default) | Where they run | Machine setting that must match |
 | --- | --- | --- | --- |
 | `xdp` | `num_xdp_threads` (1), one per NIC queue | thread `q` on cpu `num_os_cpus + q`, never cpu 0 | the NIC's combined queue count: [below](#xdp-match-the-nic-queues-to-the-threads) |
-| `gso` | `num_gso_workers` (1), one per socket | worker `q` on cpu `num_os_cpus + q`, never cpu 0 | none |
-| `io_uring` | `num_io_uring_workers` (2), one per socket and ring | worker `q` on cpu `num_os_cpus + q`, never cpu 0 | none |
+| `gso` | `num_gso_workers` (1), one per socket | worker `q` on cpu `num_os_cpus + q`, not cpu 0 by default (`gso_reserve_cpu_0`) | none |
+| `io_uring` | `num_io_uring_workers` (2), one per socket and ring | worker `q` on cpu `num_os_cpus + q`, not cpu 0 by default (`io_uring_reserve_cpu_0`) | none |
 | `iocp` | `num_iocp_completion_workers` (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` (2) | worker `w` on the first processor of core `w`, the send threads on the cores after | none; a bind address for more than one worker ([WINDOWS.md](WINDOWS.md#to-reach-10-gbs-on-windows-set-a-bind-address)) |
 | `rio` | `num_rio_lanes` (5 on a bind address, 1 on the wildcard), one worker a lane | lane `l` on core `l` from core 0 | none; a bind address for more than one lane |
 | `msgx` | `num_msgx_transmit_workers` (3) and one receive worker | where macOS puts them | none |
-| `portable` | 2, fixed | where the OS puts them | none |
+| `portable` | 2, fixed | Linux: send worker on cpu `num_os_cpus`, receive worker on `num_os_cpus + 1`, not cpu 0 by default (`portable_reserve_cpu_0`); elsewhere where the OS puts them | none |
 
-A value past a transport's limit is refused at create, never clamped. The
-priorities each thread takes are in
+A value past a transport's limit is refused at create, never clamped. On
+Linux, `gso`, `io_uring` and `portable` each have a setting that gives cpu 0
+to their threads instead, thread `q` on cpu `q`
+([ENVIRONMENT.md](ENVIRONMENT.md#cpu-0-per-linux-transport)); `xdp` keeps cpu 0
+for its provisioning's housekeeping and interrupts. A pin the machine refuses
+never stops a server: it is warned, counted and the thread asks for no
+real-time priority. The priorities each thread takes are in
 [the implementation reference](TRANSPORT-INTERNALS.md#server-network-threads-and-their-priority).
 
 ### XDP: match the NIC queues to the threads
