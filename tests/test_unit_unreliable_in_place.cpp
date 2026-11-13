@@ -488,10 +488,23 @@ static uint64_t ip_counter( const rocketnet_counters_t * counters, int counter )
 
 static const int ip_modes[3] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT };
 
+// one message written in place: where start pointed, the frame it lay in when
+// handed out, and what was written there
+struct ip_in_place_t
+{
+    const ip_end_t * end;
+    const uint8_t * p;
+    uint64_t frame_id;
+    int bytes;
+    uint32_t id;
+};
+
 // start, write the pattern, finish on one end; check the start pointer lies in
-// the frame handed out at start and in the frame finished, with the pattern at
-// that address in what went on the wire
-static void ip_send_in_place( ip_pair_t * pair, bool from_server, int mode, int channel, int bytes, uint32_t id )
+// the frame handed out at start. The record is sealed at the end's next flush
+// or full frame, so the rest is ip_check_on_wire's, after that flush: that
+// same frame is the one finished, the pointer lies in it, and the packet that
+// went on the wire from it holds the pattern at the pointer's offset.
+static ip_in_place_t ip_send_in_place( ip_pair_t * pair, bool from_server, int mode, int channel, int bytes, uint32_t id )
 {
     ip_end_t * e = from_server ? &pair->net->server : &pair->net->client;
     const size_t handed_before = e->handed.size();
@@ -500,6 +513,8 @@ static void ip_send_in_place( ip_pair_t * pair, bool from_server, int mode, int 
     check( p != NULL );
     check( e->handed.size() == handed_before || e->handed.size() == handed_before + 1 );
     check( !e->handed.empty() && ip_inside( p, bytes, e->handed.back() ) );
+
+    ip_in_place_t sent = { e, p, e->handed.back().id, bytes, id };
 
     ip_fill( p, id, bytes );
     const uint32_t serial = from_server ? rocketnet_message_server_finish( pair->server, 0, bytes )
@@ -511,7 +526,46 @@ static void ip_send_in_place( ip_pair_t * pair, bool from_server, int mode, int 
     uint8_t expected[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     ip_fill( expected, id, bytes );
     check( memcmp( p, expected, (size_t) bytes ) == 0 );
+
+    return sent;
 }
+
+// after the end's flush: the frame handed out around the record is the frame
+// finished (it holds [p, p + bytes)), and the packet that went on the wire
+// from it holds the bytes the game wrote at p, at p's offset: written in the
+// packet buffer, not copied into another frame at seal
+static void ip_check_on_wire( const ip_in_place_t & sent )
+{
+    const ip_end_t * e = sent.end;
+    const ip_buffer_t * frame = NULL;
+    for ( size_t i = 0; i < e->finished.size(); i++ )
+    {
+        if ( e->finished[i].id == sent.frame_id )
+        {
+            frame = &e->finished[i];
+        }
+    }
+    check( frame != NULL );
+    check( ip_inside( sent.p, sent.bytes, *frame ) );
+
+    const ip_packet_t * packet = NULL;
+    for ( size_t i = 0; i < e->sent.size(); i++ )
+    {
+        if ( e->sent[i].id == sent.frame_id )
+        {
+            packet = &e->sent[i];
+        }
+    }
+    check( packet != NULL );
+
+    const size_t offset = (size_t) ( sent.p - frame->address );
+    check( offset + (size_t) sent.bytes <= packet->data.size() );
+
+    std::vector<uint8_t> expected( (size_t) sent.bytes );
+    ip_fill( expected.data(), sent.id, sent.bytes );
+    check( memcmp( packet->data.data() + offset, expected.data(), (size_t) sent.bytes ) == 0 );
+}
+
 
 static bool ip_got( const std::vector<ip_received_t> & got, int channel, uint32_t id, int bytes )
 {
@@ -543,10 +597,11 @@ static void test_unreliable_fit_is_written_in_the_packet()
         const bool from_server = side == 1;
         std::vector<ip_received_t> server_got, client_got;
 
+        ip_in_place_t sent[3];
         for ( int m = 0; m < 3; m++ )
         {
             const int bytes = m == 1 ? 1400 : 200 + m;                     // a sequenced one at the frame's edge
-            ip_send_in_place( &pair, from_server, ip_modes[m], 2, bytes, (uint32_t) ( 10 * side + m ) );
+            sent[m] = ip_send_in_place( &pair, from_server, ip_modes[m], 2, bytes, (uint32_t) ( 10 * side + m ) );
         }
 
         if ( from_server )
@@ -557,6 +612,14 @@ static void test_unreliable_fit_is_written_in_the_packet()
         {
             rocketnet_message_client_send_packets( pair.client );
         }
+
+        // buffer identity: each went on the wire from the frame it was written in
+
+        for ( int m = 0; m < 3; m++ )
+        {
+            ip_check_on_wire( sent[m] );
+        }
+
         ip_step( &pair, &server_got, &client_got );
         const std::vector<ip_received_t> & got = from_server ? client_got : server_got;
         check( got.size() == 3 );
@@ -587,16 +650,26 @@ static void test_unreliable_fit_has_no_message_copy()
 
     const uint64_t before = rn_message_payload_copy_count();
 
+    ip_in_place_t sent[6];
     for ( int m = 0; m < 3; m++ )
     {
-        ip_send_in_place( &pair, false, ip_modes[m], 1, 300, 40 + (uint32_t) m );
-        ip_send_in_place( &pair, true, ip_modes[m], 1, 300, 50 + (uint32_t) m );
+        sent[2 * m] = ip_send_in_place( &pair, false, ip_modes[m], 1, 300, 40 + (uint32_t) m );
+        sent[2 * m + 1] = ip_send_in_place( &pair, true, ip_modes[m], 1, 300, 50 + (uint32_t) m );
     }
 
     rocketnet_message_client_send_packets( pair.client );
     rocketnet_message_server_send_packets( pair.server );
 
     check( rn_message_payload_copy_count() == before );
+
+    // and the counter is not the only witness: each went on the wire from the
+    // frame it was written in (a copy the counter does not see, such as one
+    // into another frame at seal, fails here)
+
+    for ( int k = 0; k < 6; k++ )
+    {
+        ip_check_on_wire( sent[k] );
+    }
 
     // a reliable send keeps its record copy into the frame (resends need the record)
 
@@ -1103,10 +1176,73 @@ static enum rocketnet_status_t ip_write_connect_token( const char * server_addre
     return rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, connect_token ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
 
+// The channel harness writes a pcapng capture and appends to a seed record
+// where the inherited environment names them (ROCKETNET_PCAPNG_CAPTURE_DIR,
+// ROCKETNET_CHANNEL_SEED_RECORD; the capture also reads /proc/self/cmdline
+// for its name). A unit case writes nothing outside its working directory
+// and reads no host file, so this case runs the harness with both unset in
+// the process environment, where the harness reads them, and puts them back
+// after.
+
+#define IP_HARNESS_QUIET_NAMES 2
+#define IP_HARNESS_QUIET_VALUE_BYTES 4096
+
+struct ip_harness_quiet_t
+{
+    int had[IP_HARNESS_QUIET_NAMES];
+    char value[IP_HARNESS_QUIET_NAMES][IP_HARNESS_QUIET_VALUE_BYTES];
+};
+
+static const char * const ip_harness_quiet_names[IP_HARNESS_QUIET_NAMES] = { "ROCKETNET_PCAPNG_CAPTURE_DIR", "ROCKETNET_CHANNEL_SEED_RECORD" };
+
+static void ip_process_env_set( const char * name, const char * value )
+{
+#if defined( _WIN32 )
+    check( _putenv_s( name, value ) == 0 );
+#else
+    check( setenv( name, value, 1 ) == 0 );
+#endif // #if defined( _WIN32 )
+}
+
+static void ip_process_env_unset( const char * name )
+{
+#if defined( _WIN32 )
+    check( _putenv_s( name, "" ) == 0 );
+#else
+    check( unsetenv( name ) == 0 );
+#endif // #if defined( _WIN32 )
+}
+
+static void ip_harness_quiet_begin( ip_harness_quiet_t * quiet )
+{
+    for ( int i = 0; i < IP_HARNESS_QUIET_NAMES; i++ )
+    {
+        quiet->had[i] = rocketnet_test_getenv( ip_harness_quiet_names[i], quiet->value[i], sizeof( quiet->value[i] ) );
+        ip_process_env_unset( ip_harness_quiet_names[i] );
+        char probe[8];
+        check( !rocketnet_test_getenv( ip_harness_quiet_names[i], probe, sizeof( probe ) ) );
+    }
+}
+
+static void ip_harness_quiet_end( const ip_harness_quiet_t * quiet )
+{
+    for ( int i = 0; i < IP_HARNESS_QUIET_NAMES; i++ )
+    {
+        if ( quiet->had[i] )
+        {
+            ip_process_env_set( ip_harness_quiet_names[i], quiet->value[i] );
+        }
+    }
+}
+
 static void test_unreliable_fit_in_place_every_transport()
 {
+    ip_harness_quiet_t quiet;
+    ip_harness_quiet_begin( &quiet );
+
     rocketnet_channel_harness_t h;
     check( rocketnet_channel_harness_create( &h ) );
+    check( !rocketnet_channel_capture().active );                         // no capture file, no /proc read
     check( rocketnet_channel_harness_connect( &h, 600 ) );
     for ( int i = 0; i < 4; i++ )
     {
@@ -1175,6 +1311,7 @@ static void test_unreliable_fit_in_place_every_transport()
     }
 
     rocketnet_channel_harness_destroy( &h );
+    ip_harness_quiet_end( &quiet );
 }
 
 // A burst of start/finish sends as fast as the caller can make them, many
@@ -1213,7 +1350,9 @@ static void test_message_burst_start_finish_delivers_every_message()
             uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
             check( p != NULL );
 
+            // the whole id up front: ip_fill alone repeats every 256 ids
             ip_fill( p, id, bytes );
+            memcpy( p, &id, sizeof( id ) );
             check( rocketnet_message_client_finish( pair.client, bytes ) != 0 );
 
             id++;
@@ -1236,6 +1375,7 @@ static void test_message_burst_start_finish_delivers_every_message()
     for ( uint32_t k = 0; k < id && k < server_got.size(); k++ )
     {
         ip_fill( expected.data(), k, bytes );
+        memcpy( expected.data(), &k, sizeof( k ) );
         check( server_got[k].channel == 1 );
         check( server_got[k].bytes.size() == (size_t) bytes && memcmp( server_got[k].bytes.data(), expected.data(), (size_t) bytes ) == 0 );
     }

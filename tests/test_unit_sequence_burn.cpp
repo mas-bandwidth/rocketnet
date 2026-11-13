@@ -751,15 +751,59 @@ static void test_sequence_burn_server_finish_populates_sequence()
 
 REGISTER_UNIT_TEST( test_sequence_burn_server_finish_populates_sequence );
 
+// A server abort or a refused finish (0 bytes) commits nothing: no sequence
+// is spent and nothing enters the server's outbound history, so neither can
+// move the server's per-client loss, the stat a burned server sequence
+// would move (sent and never acked over the older half of the server's sent
+// window, sdk/rocketnet_ack.cpp rocketnet_ack_compute_stats). The run puts
+// the act between two real packets, checks the next real packet takes the
+// sequence right after the last, then sends past half the sent window so the
+// act's place in the history is loss eligible, and reads the server's loss.
+// The positive control commits a real packet and spoils its sealed bytes
+// before the flush, so the client never opens it and never acks it: a
+// committed sequence that is never acked does count as loss over the same
+// window.
+
 enum sequence_burn_uncommitted_kind_t
 {
     BURN_UNCOMMITTED_NONE = 0,
     BURN_UNCOMMITTED_ABORT,
-    BURN_UNCOMMITTED_REFUSED_FINISH
+    BURN_UNCOMMITTED_REFUSED_FINISH,
+    BURN_UNCOMMITTED_LOST_CONTROL
 };
 
-static float sequence_burn_server_uncommitted_loss( int kind )
+#define BURN_LOSS_PER_ROUND 32
+
+struct sequence_burn_uncommitted_t
 {
+    float server_loss;              // server per-client stat packet loss, %
+    uint64_t before;                // the last real sequence before the act
+    uint64_t after;                 // the first real sequence after it
+    uint64_t did_not_open;          // CLIENT_PAYLOAD_DID_NOT_OPEN on the client
+};
+
+static uint64_t sequence_burn_server_finish_one( struct sequence_burn_pair_t * pair, uint8_t fill, uint8_t ** out_frame = NULL )
+{
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_transport_start_packet( pair->server, 0, BURN_SMALL_BYTES, &context );
+    rocketnet_unit_check( frame != NULL );
+    if ( !frame )
+    {
+        return 0;
+    }
+    memset( frame, fill, BURN_SMALL_BYTES );
+    rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair->server, &context, BURN_SMALL_BYTES ) > 0 );
+    if ( out_frame )
+    {
+        *out_frame = frame;
+    }
+    return context.sequence;
+}
+
+static void sequence_burn_server_uncommitted_run( int kind, struct sequence_burn_uncommitted_t * result )
+{
+    memset( result, 0, sizeof( *result ) );
+
     struct sequence_burn_pair_t pair;
     rocketnet_unit_check( sequence_burn_pair_setup( &pair ) );
 
@@ -778,61 +822,118 @@ static float sequence_burn_server_uncommitted_loss( int kind )
 
     rocketnet_unit_check( connected );
 
-    if ( kind != BURN_UNCOMMITTED_NONE )
+    pair.time += 0.01;
+    sequence_burn_clock = pair.time;
+    rocketnet_server_transport_update( pair.server, pair.time );
+    rocketnet_client_transport_update( pair.client, pair.time );
+
+    // a real packet, the act, a real packet: all in one fill
+
+    result->before = sequence_burn_server_finish_one( &pair, 0xB1 );
+
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = NULL;
+    if ( kind == BURN_UNCOMMITTED_ABORT || kind == BURN_UNCOMMITTED_REFUSED_FINISH )
     {
-        struct rocketnet_packet_context_t context;
-        uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, BURN_SMALL_BYTES, &context );
+        frame = rocketnet_server_transport_start_packet( pair.server, 0, BURN_SMALL_BYTES, &context );
         rocketnet_unit_check( frame != NULL );
         if ( frame )
         {
+            memset( frame, 0xB0, BURN_SMALL_BYTES );
             if ( kind == BURN_UNCOMMITTED_ABORT )
             {
                 rocketnet_server_transport_abort_packet( pair.server, &context );
             }
             else
             {
-                memset( frame, 0xB0, BURN_SMALL_BYTES );
                 rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, 0 ) == 0 );
             }
         }
     }
+    else if ( kind == BURN_UNCOMMITTED_LOST_CONTROL )
+    {
+        // committed, then its sealed bytes spoiled before the flush: sent, never opened, never acked
+
+        const uint64_t lost = sequence_burn_server_finish_one( &pair, 0xB2, &frame );
+        rocketnet_unit_check( lost == result->before + 1 );
+        if ( frame )
+        {
+            frame[0] ^= 0xFF;
+        }
+    }
+
+    result->after = sequence_burn_server_finish_one( &pair, 0xB3 );
 
     rocketnet_server_transport_send_packets( pair.server );
     rocketnet_client_transport_send_packets( pair.client );
 
-    struct sequence_burn_measures_t measures;
-    memset( &measures, 0, sizeof( measures ) );
+    // past half the sent window, so the act's place in the history is loss
+    // eligible, then rounds with no payload for the last acks
 
-    for ( int round = 0; round < BURN_ROUNDS + BURN_SETTLE_ROUNDS; round++ )
+    const uint64_t eligible_at = result->after + ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 + BURN_LOSS_PER_ROUND;
+    uint64_t highest = result->after;
+    for ( int round = 0; round < 4 * ROCKETNET_SENT_PACKET_BUFFER_SIZE / BURN_LOSS_PER_ROUND && highest < eligible_at; round++ )
     {
-        sequence_burn_round( &pair, BURN_SIDE_SERVER, false, round, NULL, &measures );
+        pair.time += 0.01;
+        sequence_burn_clock = pair.time;
+        rocketnet_server_transport_update( pair.server, pair.time );
+        rocketnet_client_transport_update( pair.client, pair.time );
+
+        for ( int i = 0; i < BURN_LOSS_PER_ROUND; i++ )
+        {
+            highest = sequence_burn_server_finish_one( &pair, (uint8_t) ( 0xC0 + ( round & 0x0F ) ) );
+        }
+
+        rocketnet_server_transport_send_packets( pair.server );
+        rocketnet_client_transport_send_packets( pair.client );
+    }
+    rocketnet_unit_check( highest >= eligible_at );
+
+    struct sequence_burn_measures_t ignored;
+    memset( &ignored, 0, sizeof( ignored ) );
+    for ( int round = 0; round < BURN_SETTLE_ROUNDS; round++ )
+    {
+        sequence_burn_round( &pair, BURN_SIDE_SERVER, false, -1, NULL, &ignored );
     }
 
-    struct rocketnet_client_transport_stats_t client_stats;
-    rocketnet_client_transport_stats( pair.client, &client_stats );
+    struct rocketnet_server_transport_client_stats_t server_stats;
+    rocketnet_server_transport_client_stats( pair.server, 0, &server_stats );
+    result->server_loss = server_stats.packet_loss;
+    result->did_not_open = rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN];
+
     sequence_burn_pair_teardown( &pair );
-
-    return client_stats.packet_loss;
 }
 
-static void test_sequence_burn_server_abort_does_not_count_as_loss()
+static void sequence_burn_server_uncommitted_compare( int kind )
 {
-    const float control = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_NONE );
-    const float burned = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_ABORT );
-    rocketnet_unit_check( control == 0.0f );
-    rocketnet_unit_check( burned == control );
+    struct sequence_burn_uncommitted_t control;
+    struct sequence_burn_uncommitted_t burned;
+    struct sequence_burn_uncommitted_t lost;
+    sequence_burn_server_uncommitted_run( BURN_UNCOMMITTED_NONE, &control );
+    sequence_burn_server_uncommitted_run( kind, &burned );
+    sequence_burn_server_uncommitted_run( BURN_UNCOMMITTED_LOST_CONTROL, &lost );
+
+    // the act spends no sequence: the next real packet takes the one after the last
+
+    rocketnet_unit_check( control.after == control.before + 1 );
+    rocketnet_unit_check( burned.after == burned.before + 1 );
+
+    // and counts as no loss on the server, where a burn would show
+
+    rocketnet_unit_check( control.server_loss == 0.0f && control.did_not_open == 0 );
+    rocketnet_unit_check( burned.server_loss == control.server_loss );
+    rocketnet_unit_check( burned.did_not_open == 0 );
+
+    // the control the window can see: one committed packet never acked is loss
+
+    rocketnet_unit_check( lost.after == lost.before + 2 );
+    rocketnet_unit_check( lost.did_not_open == 1 );
+    rocketnet_unit_check( lost.server_loss > 0.0f );
 }
 
+static void test_sequence_burn_server_abort_does_not_count_as_loss() { sequence_burn_server_uncommitted_compare( BURN_UNCOMMITTED_ABORT ); }
 REGISTER_UNIT_TEST( test_sequence_burn_server_abort_does_not_count_as_loss );
-
-static void test_sequence_burn_server_refused_finish_does_not_count_as_loss()
-{
-    const float control = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_NONE );
-    const float burned = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_REFUSED_FINISH );
-    rocketnet_unit_check( control == 0.0f );
-    rocketnet_unit_check( burned == control );
-}
-
+static void test_sequence_burn_server_refused_finish_does_not_count_as_loss() { sequence_burn_server_uncommitted_compare( BURN_UNCOMMITTED_REFUSED_FINISH ); }
 REGISTER_UNIT_TEST( test_sequence_burn_server_refused_finish_does_not_count_as_loss );
 
 // ---- the reliable channel and its resend delay over real refused starts -------------
@@ -874,7 +975,12 @@ struct sequence_burn_message_measures_t
     int large_sent;
     int large_received;
     int reliable_in_order;          // 1 while every received small reliable message carries the next index
-    int unreliable_received;        // unreliable messages marked 0xE3
+    int large_in_order;             // 1 while every received large message carries the next large index
+    int unreliable_received;        // unreliable messages marked 0xE3, each a new id, at unreliable_bytes
+    int unreliable_bytes;           // the length this case sends its unreliable messages at
+    int unreliable_duplicate;       // an unreliable id received a second time
+    uint64_t unreliable_seen;       // the unreliable ids (data[1], below 64) received
+    int unexpected;                 // deliveries that are none of the messages above, whole
     int layer_refused;              // the layer's own start_packet calls the transport refused
     uint64_t ring_full;             // SEND_RING_FULL on the sender's transport
     uint64_t resent;                // MESSAGE_RESENT on the sender
@@ -985,6 +1091,24 @@ static void sequence_burn_message_pair_teardown( struct sequence_burn_message_pa
     rn_test_message_server_stop_and_destroy( pair->server );
 }
 
+// a large message: 0xE2, three zero bytes, its 32-bit large index, then 0x5A
+// to BURN_MESSAGE_LARGE_BYTES; every byte is checked, not only the length
+static bool sequence_burn_message_is_large( const uint8_t * data, int bytes )
+{
+    if ( bytes != BURN_MESSAGE_LARGE_BYTES || data[0] != 0xE2 || data[1] != 0 || data[2] != 0 || data[3] != 0 )
+    {
+        return false;
+    }
+    for ( int i = 8; i < bytes; i++ )
+    {
+        if ( data[i] != 0x5A )
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 static uint32_t sequence_burn_message_send( struct sequence_burn_message_pair_t * pair, int side, const uint8_t * data, int bytes )
 {
     if ( side == BURN_SIDE_SERVER )
@@ -1014,15 +1138,30 @@ static void sequence_burn_message_step( struct sequence_burn_message_pair_t * pa
             {
                 break;
             }
-            if ( bytes == BURN_MESSAGE_LARGE_BYTES && data[0] == 0xE2 )
+            // each delivery is matched whole: its marker, its length, and its
+            // identity (an index or an id); anything else is counted unexpected
+
+            if ( sequence_burn_message_is_large( data, bytes ) )
             {
+                uint32_t index = 0;
+                memcpy( &index, data + 4, sizeof( index ) );
+                if ( (int) index != m->large_received )
+                {
+                    m->large_in_order = 0;
+                }
                 m->large_received++;
             }
-            if ( bytes >= 1 && data[0] == 0xE3 )
+            else if ( bytes >= 2 && data[0] == 0xE3 && bytes == m->unreliable_bytes && data[1] < 64 )
             {
+                const uint64_t bit = 1ULL << data[1];
+                if ( m->unreliable_seen & bit )
+                {
+                    m->unreliable_duplicate++;
+                }
+                m->unreliable_seen |= bit;
                 m->unreliable_received++;
             }
-            if ( bytes == 8 && data[0] == 0xE1 )
+            else if ( bytes == 8 && data[0] == 0xE1 && data[1] == 0 && data[2] == 0 && data[3] == 0 )
             {
                 uint32_t index = 0;
                 memcpy( &index, data + 4, sizeof( index ) );
@@ -1031,6 +1170,10 @@ static void sequence_burn_message_step( struct sequence_burn_message_pair_t * pa
                     m->reliable_in_order = 0;
                 }
                 m->reliable_received++;
+            }
+            else
+            {
+                m->unexpected++;
             }
             if ( side == BURN_SIDE_SERVER )
             {
@@ -1055,7 +1198,10 @@ static void sequence_burn_message_step( struct sequence_burn_message_pair_t * pa
         {
             static uint8_t large[BURN_MESSAGE_LARGE_BYTES];
             memset( large, 0x5A, sizeof( large ) );
+            memset( large, 0, 8 );
             large[0] = 0xE2;
+            const uint32_t large_index = (uint32_t) m->large_sent;
+            memcpy( large + 4, &large_index, sizeof( large_index ) );
             rocketnet_unit_check( sequence_burn_message_send( pair, side, large, sizeof( large ) ) != 0 );
             m->large_sent++;
             sequence_burn_seam_armed = burn ? 1 : 0;
@@ -1071,6 +1217,7 @@ static void sequence_burn_message_run( int side, bool burn, struct sequence_burn
 {
     memset( m, 0, sizeof( *m ) );
     m->reliable_in_order = 1;
+    m->large_in_order = 1;
 
     struct sequence_burn_message_pair_t pair;
     rocketnet_unit_check( sequence_burn_message_pair_setup( &pair ) );
@@ -1158,6 +1305,8 @@ static void sequence_burn_message_compare( int side, const char * name )
         rocketnet_unit_check( m->reliable_received == m->reliable_sent );
         rocketnet_unit_check( m->large_received == m->large_sent );
         rocketnet_unit_check( m->reliable_in_order == 1 );
+        rocketnet_unit_check( m->large_in_order == 1 );
+        rocketnet_unit_check( m->unreliable_received == 0 && m->unexpected == 0 );
     }
 
     // no resend and no duplicate beyond the control's
@@ -1286,6 +1435,8 @@ static void test_server_written_first_packet_refused_start_is_due_again()
     struct sequence_burn_message_measures_t m;
     memset( &m, 0, sizeof( m ) );
     m.reliable_in_order = 1;
+    m.large_in_order = 1;
+    m.unreliable_bytes = 8;
 
     // ten rounds of one small reliable message each: the bucket is short
     // after them, and still pays a small packet
@@ -1345,7 +1496,8 @@ static void test_server_written_first_packet_refused_start_is_due_again()
     rocketnet_unit_check( m.reliable_received == m.reliable_sent );
     rocketnet_unit_check( m.reliable_in_order == 1 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED] == send_failed );
-    rocketnet_unit_check( m.unreliable_received == 1 );
+    rocketnet_unit_check( m.unreliable_received == 1 && m.unreliable_seen == 1 && m.unreliable_duplicate == 0 );
+    rocketnet_unit_check( m.unexpected == 0 );
 
     sequence_burn_message_pair_teardown( &pair );
 }
@@ -1420,6 +1572,8 @@ static void refused_start_keeps_unreliable( int side, int mode, bool with_reliab
     struct sequence_burn_message_measures_t m;
     memset( &m, 0, sizeof( m ) );
     m.reliable_in_order = 1;
+    m.large_in_order = 1;
+    m.unreliable_bytes = 2;
 
     // three rounds of one small reliable message each: the bucket is short
     // after them (a packet is written first), and still pays a 16-record packet
@@ -1528,6 +1682,8 @@ static void refused_start_keeps_unreliable( int side, int mode, bool with_reliab
     }
 
     rocketnet_unit_check( m.unreliable_received == REFUSED_START_UNRELIABLE );
+    rocketnet_unit_check( m.unreliable_seen == ( 1ULL << REFUSED_START_UNRELIABLE ) - 1 && m.unreliable_duplicate == 0 );
+    rocketnet_unit_check( m.unexpected == 0 );
     rocketnet_unit_check( m.reliable_received == m.reliable_sent );
     rocketnet_unit_check( m.reliable_in_order == 1 );
     rocketnet_unit_check( sender->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED] == send_failed );

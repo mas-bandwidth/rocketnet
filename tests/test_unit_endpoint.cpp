@@ -89,6 +89,7 @@ struct ep_side_t
     uint32_t next_index;                    // the next message index to send
     int kind_of[EP_MESSAGES];               // what each sent message was
     int channel_of[EP_MESSAGES];
+    int bytes_of[EP_MESSAGES];              // and its length: a delivery is the whole message or a failure
     int sent[EP_MESSAGES];
     int delivered[EP_MESSAGES];             // of the other side's messages
     uint32_t ordered_next[EP_ORDERED_CHANNELS];  // per channel: how many ordered messages were delivered
@@ -154,6 +155,7 @@ static void ep_side_create( ep_side_t * side, const rocketnet_message_config_t *
     side->next_index = 0;
     memset( side->kind_of, 0, sizeof( side->kind_of ) );
     memset( side->channel_of, 0, sizeof( side->channel_of ) );
+    memset( side->bytes_of, 0, sizeof( side->bytes_of ) );
     memset( side->sent, 0, sizeof( side->sent ) );
     memset( side->delivered, 0, sizeof( side->delivered ) );
     memset( side->ordered_next, 0, sizeof( side->ordered_next ) );
@@ -204,6 +206,7 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     check( rn_endpoint_error( &from->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
     from->kind_of[index] = kind;
     from->channel_of[index] = channel;
+    from->bytes_of[index] = bytes;
     from->sent[index] = 1;
     if ( kind == EP_KIND_ORDERED )
     {
@@ -222,6 +225,10 @@ static void ep_deliver( ep_side_t * side, ep_side_t * remote, const rn_delivery_
     memcpy( &index, delivery->data, 4 );
     check( index < EP_MESSAGES );
     check( remote->sent[index] );                                 // only what the other side sent
+
+    // the whole message, by the sender's ledger: a delivery of the right
+    // index and a correct prefix but the wrong length fails here
+    check( delivery->bytes == remote->bytes_of[index] );
 
     const int kind = delivery->data[4];
     check( kind == remote->kind_of[index] );
@@ -675,8 +682,10 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 
 // R6 (standard/MESSAGES.md m9.4; proofs/tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
 // an uncapped endpoint's large sequenced state, larger than one packet, is
-// written whole and never touches the bucket: no charge, no settle, no
-// refusal, no drop. Simulated time from 1000.0; no transport but this loop.
+// promoted at start to its reliable twin and fragmented across ordinary
+// bounded packets (no packet larger than one), and never touches the
+// bucket: no charge, no settle, no refusal, no drop. Simulated time from
+// 1000.0; no transport but this loop.
 
 static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
 {
@@ -721,7 +730,6 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
 
     static uint8_t frame[4 * ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint64_t packet_id = 1;
-    int large_written = 0;
     int bounded_packets_written = 0;
 
     for ( int i = 0; i < 16; i++ )
@@ -733,31 +741,20 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
         }
         check( request > 0 && request <= (int) sizeof( frame ) );
 
+        // an oversized code-1 send has been promoted and fragmented across
+        // ordinary bounded reliable packets: no packet is wider than one, even
+        // into a frame four packets wide; uncapped budget still charges none
+
         const int written = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), packet_id, now );
-        if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-        {
-            large_written++;
-        }
-        else if ( written > 0 )
+        check( written <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+        if ( written > 0 )
         {
             bounded_packets_written++;
-        }
-
-        // an oversized code-1 send has been promoted and fragmented across
-        // ordinary bounded reliable packets; uncapped budget still charges none
-
-        if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-        {
-            rn_endpoint_packet_sent( &endpoint, packet_id, written + 64, now );
-        }
-        else if ( written > 0 )
-        {
             rn_endpoint_packet_sent( &endpoint, packet_id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, written ), now );
         }
         packet_id++;
     }
 
-    check( large_written == 0 );
     check( bounded_packets_written > 1 );                              // reliable fragmentation, not a wide unreliable record
     check( endpoint.unreliable_count == 0 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 0 );

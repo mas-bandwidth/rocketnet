@@ -1525,9 +1525,21 @@ UNIT_TEST_SKIPPED_UNLESS( test_receive_cursor_single_then_batch_across_connectio
 
 // ---------------------------------------------------------------------------
 // both shipped types end to end over the pair, both directions, with loss:
-// every reliable ordered message delivered once, in order, byte exact; the
-// unreliable ones at most once
+// every reliable ordered message delivered once, in order, byte exact and at
+// its sent length; the unreliable ones at most once, whole. The ledger keeps
+// each message's identity and length. A message too short to carry its
+// identity (the 1-byte size) is identified by its place in its channel's
+// ordered sequence and its one byte (the id's low byte), so it is in the
+// ledger like the rest.
 // ---------------------------------------------------------------------------
+
+struct mo_ledger_entry_t
+{
+    uint32_t id;                        // the id, or for a message shorter than 4 bytes its first byte
+    uint32_t bytes;
+
+    bool operator==( const mo_ledger_entry_t & other ) const { return id == other.id && bytes == other.bytes; }
+};
 
 static void mo_end_to_end_up()
 {
@@ -1539,8 +1551,12 @@ static void mo_end_to_end_up()
     const int num_sizes = (int) ( sizeof( sizes ) / sizeof( sizes[0] ) );
 
     uint32_t next_id = 1;
-    std::vector<uint32_t> sent_ordered[MO_MAX_SLOTS][4];         // client slot -> channel -> ids, to the server
-    std::vector<uint32_t> got_ordered[MO_MAX_SLOTS][4];
+    std::vector<mo_ledger_entry_t> sent_ordered[MO_MAX_SLOTS][4];         // client slot -> channel -> messages, to the server
+    std::vector<mo_ledger_entry_t> got_ordered[MO_MAX_SLOTS][4];
+    const uint32_t ids = 1024;                                           // every id this case gives is below it
+    std::vector<uint8_t> down_open( ids, 0 );                            // by id: a server send down not yet received
+    std::vector<uint8_t> unreliable_open( ids, 0 );                      // by id - 900000: an unreliable send not yet received
+    uint32_t down_sent = 0, down_got = 0;
     uint32_t unreliable_sent = 0, unreliable_got = 0;
 
     uint32_t loss_random = 0x12345678u; // fixed seed: reproducible 1/7 random loss
@@ -1569,33 +1585,38 @@ static void mo_end_to_end_up()
 
                 uint8_t * p = rocketnet_message_client_start( pair.clients[c], channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) bytes );
                 check( p );
+                mo_ledger_entry_t entry = { id, bytes };
                 if ( bytes >= 4 )
                 {
                     mo_fill( p, id, bytes );
                 }
                 else
                 {
-                    memset( p, 0xAB, bytes );
+                    memset( p, (int) ( id & 0xFF ), bytes );
+                    entry.id = id & 0xFF;
                 }
                 check( rocketnet_message_client_finish( pair.clients[c], (int) bytes ) != 0 );
-                if ( bytes >= 4 )
-                {
-                    sent_ordered[c][channel].push_back( id );
-                }
+                sent_ordered[c][channel].push_back( entry );
 
                 // the server sends down
 
                 const uint32_t down_id = next_id++;
+                check( down_id < ids );
                 uint8_t * q = rocketnet_message_server_start( pair.server, c, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 600 );
                 check( q );
                 mo_fill( q, down_id, 600 );
                 check( rocketnet_message_server_finish( pair.server, c, 600 ) != 0 );
+                down_open[down_id] = 1;
+                down_sent++;
 
                 // and an unreliable one
 
+                const uint32_t unreliable_id = next_id++;
+                check( unreliable_id < ids );
                 uint8_t u[100];
-                mo_fill( u, 900000 + next_id++, sizeof( u ) );
+                mo_fill( u, 900000 + unreliable_id, sizeof( u ) );
                 check( rocketnet_message_client_send( pair.clients[c], channel, ROCKETNET_RELIABILITY_UNRELIABLE, u, (int) sizeof( u ) ) != 0 );
+                unreliable_open[unreliable_id] = 1;
                 unreliable_sent++;
             }
         }
@@ -1603,11 +1624,22 @@ static void mo_end_to_end_up()
         std::vector<mo_received_t> server_got, client_got;
         mo_step( &pair, &server_got, &client_got, 0.02 );
 
+        // up: every delivery is in the ledger, whole: an unreliable one at
+        // most once, a reliable one appended to its channel's sequence by id
+        // and length
+
         for ( size_t i = 0; i < server_got.size(); i++ )
         {
             const mo_received_t & r = server_got[i];
             if ( r.bytes.size() < 4 )
             {
+                check( !r.bytes.empty() );
+                mo_ledger_entry_t entry = { r.bytes[0], (uint32_t) r.bytes.size() };
+                for ( size_t k = 1; k < r.bytes.size(); k++ )
+                {
+                    check( r.bytes[k] == r.bytes[0] );
+                }
+                got_ordered[r.slot][r.channel].push_back( entry );
                 continue;
             }
 
@@ -1615,26 +1647,37 @@ static void mo_end_to_end_up()
             check( mo_verify( r.bytes, &id ) );
             if ( id >= 900000 )
             {
+                check( id - 900000 < ids && unreliable_open[id - 900000] == 1 );
+                check( r.bytes.size() == 100 );
+                unreliable_open[id - 900000] = 0;
                 unreliable_got++;
             }
             else
             {
-                got_ordered[r.slot][r.channel].push_back( id );
+                mo_ledger_entry_t entry = { id, (uint32_t) r.bytes.size() };
+                got_ordered[r.slot][r.channel].push_back( entry );
             }
         }
 
-        // the server's sends down arrive byte exact (their order per client is
-        // mo_ordered_down_in_order's)
+        // down: the server's sends arrive byte exact, whole, once each (their
+        // order per client is mo_ordered_down_in_order's)
 
         for ( size_t i = 0; i < client_got.size(); i++ )
         {
             uint32_t id = 0;
             check( mo_verify( client_got[i].bytes, &id ) );
-            (void) id;
+            check( client_got[i].bytes.size() == 600 );
+            check( id < ids && down_open[id] == 1 );
+            if ( id < ids )
+            {
+                down_open[id] = 0;
+            }
+            down_got++;
         }
     }
 
-    // every reliable ordered message, per client and channel: once, in order
+    // every reliable ordered message, per client and channel: once, in order,
+    // at its length, the 1-byte ones included
 
     for ( int c = 0; c < 2; c++ )
     {
@@ -1644,6 +1687,7 @@ static void mo_end_to_end_up()
         }
     }
 
+    check( down_got == down_sent );
     check( unreliable_got <= unreliable_sent );
     check( unreliable_got > 0 );
 
@@ -2881,7 +2925,8 @@ static void test_message_objects_no_allocation_after_create()
         rocketnet_message_client_destroy( in_block );
 
         // the hot path: sends both types, writes, resends under loss, acks,
-        // receives, releases, ring holds and drains, a kick and a slot reset
+        // receives, releases, ring holds and drains, a refused start, a kick,
+        // the O(1) slot release and the lazy re-carve at the next bind
 
         const uint64_t calls = mo_mallocs + mo_frees;
         mo_step( &pair );
@@ -2910,7 +2955,7 @@ static void test_message_objects_no_allocation_after_create()
             mo_step( &pair, NULL, NULL, 0.03 );
         }
 
-        // a kick and a reset, still allocation free
+        // a full send side: a refusal (m1.7), not a kick, still allocation free
 
         while ( rocketnet_message_server_start( pair.server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000 ) )
         {
@@ -2918,6 +2963,28 @@ static void test_message_objects_no_allocation_after_create()
         }
         pair.time += 0.01;
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( mo_mallocs + mo_frees == calls );
+
+        // a kick: slot 1's region exhausted (the receive side's invariant
+        // break, reached here by rn_region_exhaust directly), the next start
+        // ends the connection; the update frees the slot in O(1); the slot is
+        // carved lazily when it is bound again. Still allocation free.
+
+        rn_message_connection_t * slot = mo_server_slot( &pair, 1 );
+        rn_region_exhaust( slot->region );
+        check( rocketnet_message_server_start( pair.server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) == NULL );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_KICKED );
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_FREE );
+
+        const uint64_t carves = slot->region->carves;
+        mo_net_connect( pair.net, 1 );
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+        check( slot->region->carves == carves + 1 );
+        check( !rn_region_exhausted( slot->region ) );
         check( mo_mallocs + mo_frees == calls );
 
         mo_pair_teardown( &pair );
@@ -6092,8 +6159,8 @@ REGISTER_UNIT_TEST( test_region_reset_keeps_payload_bytes );
 
 #if ROCKETNET_DEV
 // ---------------------------------------------------------------------------
-// destroy before the owned transport has stopped: an error line and one
-// counted misuse, then destroy stops the transport itself, steps it until it
+// destroy before the owned transport has stopped: one error line (captured)
+// and one counted misuse, then destroy stops the transport itself, steps it until it
 // reports stopped, destroys it, and frees the object's block. Nothing leaks:
 // the counting allocator's frees match its mallocs. Mutation that must bite:
 // return from destroy while the transport runs; the link is never destroyed
@@ -6143,9 +6210,20 @@ static void test_message_object_destroy_before_stop_finishes_the_shutdown()
         check( object != NULL );
         check( mo_mallocs > mallocs );
 
+        const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+        g_mo_error_lines = 0;
+        g_mo_last_line[0] = '\0';
+        rocketnet_log_function( mo_log_capture, NULL );
+
         const uint64_t misuse = rocketnet_api_misuse_count();
         rn_message_object_destroy( object );
 
+        rocketnet_log_function( NULL, NULL );
+        rocketnet_log_level( saved_level );
+
+        check( g_mo_error_lines == 1 );
+        check( strstr( g_mo_last_line, "destroy: the transport is not stopped" ) != NULL );
         check( rocketnet_api_misuse_count() == misuse + 1 );
         check( mo_early_stops == 1 );
         check( mo_early_updates_after_stop == 1 );
@@ -6195,7 +6273,6 @@ static void test_message_objects_cases_opted_in()
         test_slot_bound_this_update_keeps_its_first_payload,
         test_previous_connection_payload_dropped_after_reconnect,
         test_previous_connection_ack_dropped_after_reconnect,
-        test_region_reset_keeps_payload_bytes,
     };
     g_mo_reliable_timeout_ms = 120000;
     for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )

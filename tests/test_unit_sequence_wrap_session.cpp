@@ -266,11 +266,15 @@ static bool sequence_wrap_pair_setup( struct sequence_wrap_pair_t * pair )
     return pair->client != NULL;
 }
 
+// each message is 8 bytes: 0x5E, three zero bytes, then its 32-bit index.
+// Every delivery is checked whole against that: one that is not exactly the
+// next message (wrong length, header or index) is counted, never skipped.
 struct sequence_wrap_direction_t
 {
     int sent;
     int received;
     int in_order;
+    int unexpected;                 // deliveries that are not a whole message of this direction
 };
 
 static void sequence_wrap_drain( struct sequence_wrap_pair_t * pair, int at_client, struct sequence_wrap_direction_t * d )
@@ -286,16 +290,23 @@ static void sequence_wrap_drain( struct sequence_wrap_pair_t * pair, int at_clie
             break;
         }
 
-        if ( d && bytes == 8 && data[0] == 0x5E )
+        if ( d )
         {
-            uint32_t index = 0;
-            memcpy( &index, data + 4, sizeof( index ) );
-            if ( (int) index != d->received )
+            if ( bytes == 8 && data[0] == 0x5E && data[1] == 0 && data[2] == 0 && data[3] == 0 )
             {
-                d->in_order = 0;
-            }
+                uint32_t index = 0;
+                memcpy( &index, data + 4, sizeof( index ) );
+                if ( (int) index != d->received )
+                {
+                    d->in_order = 0;
+                }
 
-            d->received++;
+                d->received++;
+            }
+            else
+            {
+                d->unexpected++;
+            }
         }
 
         if ( at_client )
@@ -430,8 +441,8 @@ static void test_sequence_wrap_session_both_directions( void )
     objects[1]->link.finish_packet = sequence_wrap_client_finish;
     objects[1]->link.acked = sequence_wrap_client_acked;
 
-    struct sequence_wrap_direction_t to_client = { 0, 0, 1 };
-    struct sequence_wrap_direction_t to_server = { 0, 0, 1 };
+    struct sequence_wrap_direction_t to_client = { 0, 0, 1, 0 };
+    struct sequence_wrap_direction_t to_server = { 0, 0, 1, 0 };
 
     for ( int step = 0; step < SEQUENCE_WRAP_STEPS + SEQUENCE_WRAP_SETTLE; step++ )
     {
@@ -444,11 +455,11 @@ static void test_sequence_wrap_session_both_directions( void )
         objects[side]->link.acked = sequence_wrap_seams[side].acked_next;
     }
 
-    // every message delivered once, in order, both ways
+    // every message delivered once, whole, in order, both ways, and nothing else
 
     check( to_client.sent == SEQUENCE_WRAP_STEPS && to_server.sent == SEQUENCE_WRAP_STEPS );
-    check( to_client.received == to_client.sent && to_client.in_order == 1 );
-    check( to_server.received == to_server.sent && to_server.in_order == 1 );
+    check( to_client.received == to_client.sent && to_client.in_order == 1 && to_client.unexpected == 0 );
+    check( to_server.received == to_server.sent && to_server.in_order == 1 && to_server.unexpected == 0 );
 
     const double low = SEQUENCE_WRAP_DT - 1e-9;
     const double high = 4.0 * SEQUENCE_WRAP_DT + 1e-9;
@@ -577,8 +588,8 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
 
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_EDGE_START );
 
-    struct sequence_wrap_direction_t to_client = { 0, 0, 1 };
-    struct sequence_wrap_direction_t to_server = { 0, 0, 1 };
+    struct sequence_wrap_direction_t to_client = { 0, 0, 1, 0 };
+    struct sequence_wrap_direction_t to_server = { 0, 0, 1, 0 };
 
     for ( int step = 0; step < SEQUENCE_WRAP_EDGE_STEPS + SEQUENCE_WRAP_SETTLE; step++ )
     {
@@ -592,8 +603,8 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     }
 
     check( to_client.sent == SEQUENCE_WRAP_EDGE_STEPS && to_server.sent == SEQUENCE_WRAP_EDGE_STEPS );
-    check( to_client.received == to_client.sent && to_client.in_order == 1 );
-    check( to_server.received == to_server.sent && to_server.in_order == 1 );
+    check( to_client.received == to_client.sent && to_client.in_order == 1 && to_client.unexpected == 0 );
+    check( to_server.received == to_server.sent && to_server.in_order == 1 && to_server.unexpected == 0 );
 
     for ( int side = 0; side < 2; side++ )
     {
