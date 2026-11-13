@@ -408,7 +408,7 @@ All four comparisons report `players=PASS frame_aim=MET` but
 at peak and in both average rows, but miss loaded peak. The two-send pool
 has 14 threads including main, versus 13 in the three-send rows; this is
 the smallest accepted count among these measured configurations, not an
-isolated thread-count experiment. The recorded m42 `ps -M` snapshot shows
+isolated thread-count experiment. The recorded m42 `ps -M` reading shows
 send workers at 95.8% and 93.7% CPU, and receive at 11.4%.
 
 IOCP's loaded-peak thread-count sweep reported:
@@ -990,7 +990,7 @@ PY
 
 For this XDP layout, identify the main thread on CPU 3, two XDP threads on
 CPUs 1–2, and 20 game threads on CPUs 4–23. Field 39 is the last CPU used,
-so this snapshot complements the startup affinity logs; it does not prove
+so this reading complements the startup affinity logs; it does not prove
 an affinity mask. See the [Linux stat-field reference](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html).
 
 When `harden_tick` reaches t=40, record the following eight seconds. Use a
@@ -1191,7 +1191,7 @@ are preserved as supplied; their exact exported symbol names are pending.
 
 ### macOS thread CPU observations
 
-The final m41 and m42 cells include `ps -M` snapshots, recorded around
+The final m41 and m42 cells include `ps -M` readings, recorded around
 t=55 s by the run owner. m41's three send workers report 86.7%, 88.1%, and
 90.7% CPU, with the receive worker at 13.1%. m42's two send workers report
 95.8% and 93.7%, with receive at 11.4%. These are thread CPU observations,
