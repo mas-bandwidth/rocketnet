@@ -79,6 +79,29 @@ check)", and the count in the title raised to match.
   models the encryption map as a function from source address to mapping;
   RNOpenAddress models the hashed table's layout: ...".
 
+## Late rows on these modules that belong to R or M14
+
+- MA005: all 26 `MCRNSecurityTables*.cfg` (the 21 the row counted plus
+  this branch's `BrokenOrderInPlace`, `BrokenTakeLiveHead` and `Race`, and
+  two more) set `CHECK_DEADLOCK FALSE`, and all 26 CASES.tsv
+  rows say `check`. What the directive does in each: TLC's deadlock check is
+  off. Under `Spec` (14 cfgs) and `ClaimsSpec` (3) the clock stops at
+  `MaxClock`, so every behaviour ends in a state with no successor, which a
+  deadlock check would report; under `FloodSpec`, `FloodSpecWeakHonest`,
+  `ChargeSpec` and `RepeatSpec` (9) the directive only turns the check off.
+  The invariants and properties each cfg lists are checked either way.
+  The deadlock column for all 26 should be `ignore-terminal` (R), and the
+  checker rule is M14's. This branch did not change the column.
+- MA006: ClientConnection and ServerConnection state their delivery
+  fairness through named operators (`DeliveryFairTyped`). Both groups have
+  temporal witnesses that fail under that fairness: ClientConnection
+  `WOnceFirstkind`, `WOnceAlternate` and `WAnysend` (Connects);
+  ServerConnection `BrokenIpv6OnlyMatch`, `BrokenOneFamilyServed`,
+  `BrokenOnceKeepAlive`, `BrokenNoTimeout` and `BrokenNoDeadline`. The
+  checker hole is M14's.
+- MA032: `proofs/tla/RUNS-ServerConnection.tsv` is still present and still
+  read by nothing; R deletes it.
+
 ## sdk comment re-citations for package C
 
 Line numbers at this branch's head.
