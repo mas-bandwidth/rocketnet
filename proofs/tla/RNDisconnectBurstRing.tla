@@ -424,17 +424,22 @@ SealedFallFromHead ==
 \* the cursor names a waiting burst or the end of the pass
 CursorInRange == cursor <= count
 
-\* a waiting burst that was not abandoned holds its own seals, fewer than K.
-\* An abandoned one is marked complete and was sent fewer than K. A burst
-\* that left ended exactly one way: sealed whole (exactly K sent), abandoned
-\* for its destination, or dropped for room (each fewer than K sent).
+\* a waiting burst that was not abandoned holds its own seals, fewer than K
+\* with one send queue. With several, a burst sealed whole can wait behind a
+\* head passed over for its full queue, since only the head pops
+\* (sdk/rocketnet_server_transport.cpp, the drain's pop loop), so it holds
+\* exactly K. An abandoned one is marked complete and was sent fewer than K.
+\* A burst that left ended exactly one way: sealed whole (exactly K sent),
+\* abandoned for its destination, or dropped for room (each fewer than K
+\* sent).
 ExactSeals ==
     /\ \A p \in 0..(count - 1) : LET b == bid[At(p)] IN
           /\ b \in Ids
           /\ b \notin dropped
           /\ IF b \in abandoned
              THEN sealed[At(p)] = K /\ seals[b] < K
-             ELSE sealed[At(p)] = seals[b] /\ seals[b] < K
+             ELSE /\ sealed[At(p)] = seals[b]
+                  /\ (seals[b] < K \/ (Queues > 1 /\ seals[b] = K))
     /\ \A b \in gone : b \in Ids
           /\ ~(b \in abandoned /\ b \in dropped)
           /\ IF b \in abandoned \/ b \in dropped THEN seals[b] < K ELSE seals[b] = K

@@ -124,7 +124,10 @@ is the same loop with a larger allowance.
   complete (`HeadNotComplete`).
 - **`CursorInRange`**: the cursor is at most `count`.
 - **`ExactSeals`**: a waiting burst that was not abandoned holds its own
-  seals, fewer than `K`. An abandoned one is marked complete and was sent
+  seals, fewer than `K` with one send queue. With several, a burst sealed
+  whole can wait behind a head passed over for its full queue, since only
+  the head pops, and then holds exactly `K` (its key stays until it reaches
+  the head; the drain passes it over). An abandoned one is marked complete and was sent
   fewer than `K`. A burst that left ended exactly one way: sealed whole
   (exactly `K` sent), abandoned for its destination, or dropped for room
   (each fewer than `K` sent).
