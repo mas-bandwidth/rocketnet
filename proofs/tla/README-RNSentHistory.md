@@ -19,22 +19,42 @@ told apart by what the sender knows:
 
 The write never refuses the send (STANDARD.md "Replay window sizing": an
 implementation MUST NOT throttle sends to preserve history). The sum of the two
-counts is the count of overwritten unacknowledged records the standard names.
+eviction counts is the count of overwritten unacknowledged records the
+standard names.
+
+The fourth outcome is the stale refusal (`REFUSED_STALE`): the fill-phase
+threads take sequences in order but record them concurrently (each record
+under `sent_lock`, the high-water mark an atomic max), so a writer that stalls
+while the others record a ring's worth of later sequences finds its slot
+holding a newer sequence, or itself a ring or more behind the highest recorded
+sequence. The write is refused, the ring is left alone, the packet is still
+transmitted, and `rocketnet_ack_count_sent_result` counts it on
+`SEND_HISTORY_OVERFLOW`. These are the four outcomes `sdk/rocketnet_ack.h`
+lists (`enum rocketnet_ack_sent_result_t`).
 
 ## What the model has
 
 - Constants: `N`, `Threshold`, `MaxSeq`, `MaxLoss`, `Flight`, `AckRange`,
-  `AckSlots` and two defect switches, `CountEveryUnacked` and `RefuseWhenFull`.
-- Variables: the ring (`seq`, `acked` per record), `largestAcked`, the packets
-  in flight, the receiver's received set, the ack blocks in flight, the sequences
+  `AckSlots`, `Writers` (sequences taken and not yet recorded at once; 1 is
+  the single in-order writer) and three defect switches, `CountEveryUnacked`,
+  `RefuseWhenFull` and `WriteStale`.
+- Variables: the sequences sent so far, the ring (`seq`, `acked` per record),
+  `highest` (the highest recorded sequence), `largestAcked`, the packets in
+  flight, the receiver's received set, the ack blocks in flight, the sequences
   the path lost, and ghost sets for what was acknowledged, evicted unacked,
-  counted lost and counted overflow (the counters are their cardinalities).
-- Actions: `Send` (always enabled below `MaxSeq`; evicts and classifies),
+  counted lost, counted overflow and refused stale (the counters are their
+  cardinalities; `SEND_HISTORY_OVERFLOW` is overflow plus stale).
+- Actions: `Send(s)` (a writer records `s` while fewer than `Writers`
+  sequences below it are unsent, so records land in any order among those;
+  always enabled for the lowest unsent sequence; refuses a stale write and
+  leaves the ring alone, else evicts and classifies; transmits either way),
   `Deliver` (any in-flight packet, any order), `Lose` (at most `MaxLoss`, never
   `Threshold + 1` consecutive sequences), `ReceiverAck` (a block restating the
   receiver's received set inside its window), `ReceiveAck` (any block, any order,
-  any delay; marks the records still held and unacked, folds `largestAcked`
-  over exactly those; a block naming an evicted sequence is ignored), `Done`.
+  any delay, but only between fill phases, when the sent sequences are a prefix
+  `1..k`: the update thread never overlaps the fill phase; marks the records
+  still held and unacked, folds `largestAcked` over exactly those; a block
+  naming an evicted sequence is ignored), `Done`.
 - `healthy` is a history variable: it stays true while every send was at most
   `Flight` ahead of `largestAcked`. `N - Flight >= Threshold` is assumed (4096
   against a bandwidth-delay product of tens to a couple of hundred packets).
@@ -46,8 +66,10 @@ counts is the count of overwritten unacknowledged records the standard names.
 | `EveryEvictionClassified` | an unacked eviction counts exactly one of lost and overflow; nothing else is counted |
 | `LostImpliesLaterAcked` | a sequence counted lost has a sequence at least `Threshold` above it that the receiver received and the sender marked acknowledged |
 | `LargestAckedIsMaximum` | `largestAcked` is the maximum sequence ever marked acknowledged |
-| `NoOverflowUnderBoundedLoss` | on a healthy path with bounded, isolated loss, overflow stays zero |
-| `SendNeverRefused` | whenever a sequence is left, `Send` is enabled |
+| `NoOverflowUnderBoundedLoss` | on a healthy path with bounded, isolated loss, overflow (unknown evictions and stale refusals) stays zero |
+| `SendNeverRefused` | whenever a sequence is left, a `Send` is enabled |
+| `RingHoldsNewest` | every slot holds the newest sequence written to it: a stale write never replaces a newer record |
+| `EverySendTransmitted` | every sent sequence, recorded or refused, was transmitted |
 
 ## Running it
 
@@ -59,13 +81,24 @@ cd tla
 java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistory.cfg MCRNSentHistory.tla
 java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistoryBrokenCountEveryUnacked.cfg MCRNSentHistory.tla
 java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistoryBrokenRefuseWhenFull.cfg MCRNSentHistory.tla
+java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistoryWriters.cfg MCRNSentHistory.tla
+java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistoryBrokenWriteStale.cfg MCRNSentHistory.tla
+java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistoryReachStale.cfg MCRNSentHistory.tla
 ```
 
 Recorded runs are `tlacheck run --group rnsenthistory` rows in `RUNS.tsv`.
 `MCRNSentHistory.cfg` is `N = 4`, `Threshold = 2`, `MaxSeq = 7`, `MaxLoss = 2`,
-`Flight = 2`, `AckRange = 4`, `AckSlots = 2`: the ring laps once. It passes
-every property: 3,579,879 states generated, 695,433 distinct, depth 27, no
-error.
+`Flight = 2`, `AckRange = 4`, `AckSlots = 2`, `Writers = 1`: the ring laps
+once. It passes every property: 3,579,879 states generated, 695,433 distinct,
+depth 27, no error. `MCRNSentHistoryWriters.cfg` is the same with
+`Writers = 2`: two concurrent writers, records in any order among the
+outstanding sequences; it passes every property (8,741,025 generated,
+1,711,261 distinct, depth 27), stale refusals included:
+`MCRNSentHistoryReachStale.cfg` fails the reach predicate `NoStaleRefusal`
+on it, so a stale refusal is reached, and `NoOverflowUnderBoundedLoss` still
+holds there because a writer a ring behind is never on a healthy path (acks
+are applied only between fill phases, so `largestAcked` is below every
+outstanding sequence).
 
 ## Reversed witnesses
 
@@ -94,8 +127,18 @@ counts sequence 1 lost (`3 >= 1 + 2`) and `overflowSet` stays empty.
 **`MCRNSentHistoryBrokenRefuseWhenFull.cfg`** (`RefuseWhenFull = TRUE`: `Send`
 disabled while every record is unacked) fails `SendNeverRefused`, exit 12, in
 five states: `Send 1` to `Send 4` fill the ring with unacknowledged records, and
-at `next = 5 <= MaxSeq` `Send` is not enabled. The code never refuses: all eight
+with 5 still unsent no `Send` is enabled. The code never refuses: all eight
 callers count the result and still transmit.
+
+**`MCRNSentHistoryBrokenWriteStale.cfg`** (`WriteStale = TRUE`: no stale
+refusal; `MCRNSentHistoryWriters.cfg` with one line changed) fails
+`RingHoldsNewest`, exit 12, in six states: one writer takes 1 and stalls, the
+other records 2, 3, 4 and 5 (5 into slot 1), then 1 is written into slot 1 and
+replaces 5. By hand against the code: `rocketnet_ack_endpoint_record_sent_classified`
+returns `REFUSED_STALE` before touching the record when the slot is written and
+holds `record->sequence >= sequence` (here 5 >= 1); without that test the write
+of 1 would replace 5's record and its packet id, and an ack for 5 would then
+find nothing to mark.
 
 ## Mutation controls run by hand
 
@@ -124,9 +167,10 @@ scratch copy and failed on the named property, so each property is not vacuous:
 
 Duplicate delivery (a duplicate ack block is a no-op), ack-block loss (a lost
 block is a delayed one that never arrives, and the next block restates), the
-wrapping of the 32-bit wire sequence, keep-alive marking and
-the concurrent writers behind `sent_lock` (the stale-writer refusal is
-`REFUSED_STALE`, counted overflow; the model has the single in-order writer).
+wrapping of the 32-bit wire sequence and keep-alive marking. The concurrent
+writers are modelled at the grain of whole records (each record is written
+under `sent_lock`, so no half-written record is observable); `Writers` bounds
+how many sequences are outstanding at once.
 `LostImpliesLaterAcked` is the reordering reading of RFC 9002 6.1.1: a packet
 delayed past the threshold counts lost, and a later ack for it is ignored once
 its record is gone.
