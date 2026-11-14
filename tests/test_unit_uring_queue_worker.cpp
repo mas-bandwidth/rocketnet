@@ -1540,6 +1540,7 @@ static void test_uring_queue_worker_one_destination_refusing_many_runs_keeps_seg
 
     // the refuser's packets went out again one a run; drain them
     std::vector<struct io_uring_sqe> again = t.sends( 0 );
+    check( (int) again.size() == runs_wanted + packets );
     for ( size_t i = runs.size(); i < again.size(); i++ )
     {
         check( !worker_test_segmented( again[i] ) );
