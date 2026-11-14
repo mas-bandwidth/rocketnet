@@ -1578,9 +1578,10 @@ void rocketnet_test_transport_start_finish_shape()
     // (tests/kernel_drops.h).
     //
     // Each way runs in rounds. A round is the case's wait, round_seconds of
-    // wall clock, and at most round_passes passes. That pass count is the
-    // wait at the loop's 1 ms sleep per pass, so it ends a round only if the
-    // sleeps return early. A datagram later than its round is missing, as
+    // wall clock, and that alone ends it. There is no pass budget: a 5 s
+    // round took 3615 to 4199 passes on the studio under the looping suite,
+    // so a budget near 5000 would end rounds early wherever the 1 ms sleep
+    // is closer to 1 ms. A datagram later than its round is missing, as
     // before. At the end of a round with the datagram missing, the case prints
     // the round's state and fails by name if the client is no longer
     // connected. Otherwise it asks the loss gate, and the datagram is
@@ -1598,7 +1599,6 @@ void rocketnet_test_transport_start_finish_shape()
     // (2 + resends) rounds: 25 s, inside the runner's 120 s case limit.
 
     const double round_seconds = 5.0;
-    const int round_passes = 5000;
 
     struct rocketnet_loss_gate_t gate;
     rocketnet_loss_gate_begin( &gate, __func__ );
@@ -1628,21 +1628,22 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
 
+        // exactly those bytes, and no more copies than were sent
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         int packet_bytes;
         while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof( packet ) ) ) > 0 )
         {
             rocketnet_check( packet_bytes == 5 );
             rocketnet_check( memcmp( packet, "shape", 5 ) == 0 );
-            received = 1;
+            received++;
         }
+        rocketnet_check( received <= shape_sends );
 
-        if ( !received && ( rocketnet_platform_time() - start >= round_seconds || round_pass >= round_passes ) )
+        if ( !received && rocketnet_platform_time() - start >= round_seconds )
         {
             const int state = rocketnet_client_transport_state( client );
-            printf( "%s: the client has not received the server's packet: round %d ended (%s) after %d passes, %.3f s, %d sent, client state %d\n",
-                    __func__, shape_sends, round_pass >= round_passes ? "pass budget" : "time budget", round_pass, rocketnet_platform_time() - start,
-                    shape_sends, state );
+            printf( "%s: the client has not received the server's packet: round %d ended after %d passes, %.3f s, %d sent, client state %d\n",
+                    __func__, shape_sends, round_pass, rocketnet_platform_time() - start, shape_sends, state );
             fflush( stdout );
             rocketnet_check( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_check( rocketnet_loss_gate_resend( &gate, 1 ) );
@@ -1653,9 +1654,9 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_platform_sleep( 0.001 );
     }
 
-    // the reply: one payload, exactly those bytes. After a resend the late
-    // original and the resend may land in the same update, so the count is
-    // held to one only while the reply has been sent once
+    // the reply: exactly those bytes, and no more copies than were sent. After
+    // a resend the late original and the resend may land in the same update,
+    // so the count is held to the number of sends: one before any resend
 
     bool replied = false;
     int reply_sends = 0;
@@ -1690,16 +1691,15 @@ void rocketnet_test_transport_start_finish_shape()
                 uint8_t * payload = rocketnet_server_transport_payload( server, i, &index, &bytes );
                 rocketnet_check( payload && index == 0 && bytes == 5 && memcmp( payload, "reply", 5 ) == 0 );
             }
-            rocketnet_check( reply_sends > 1 || num_payloads == 1 );
+            rocketnet_check( num_payloads <= reply_sends );
             replied = true;
         }
 
-        if ( !replied && ( rocketnet_platform_time() - start >= round_seconds || round_pass >= round_passes ) )
+        if ( !replied && rocketnet_platform_time() - start >= round_seconds )
         {
             const int state = rocketnet_client_transport_state( client );
-            printf( "%s: the server has not received the client's reply: round %d ended (%s) after %d passes, %.3f s, %d sent, client state %d\n",
-                    __func__, reply_sends, round_pass >= round_passes ? "pass budget" : "time budget", round_pass, rocketnet_platform_time() - start,
-                    reply_sends, state );
+            printf( "%s: the server has not received the client's reply: round %d ended after %d passes, %.3f s, %d sent, client state %d\n",
+                    __func__, reply_sends, round_pass, rocketnet_platform_time() - start, reply_sends, state );
             fflush( stdout );
             rocketnet_check( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_check( rocketnet_loss_gate_resend( &gate, 1 ) );
