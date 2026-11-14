@@ -12,7 +12,8 @@
 #include "rocketnet_connect_token.h"
 #include "loopback_hub.h"
 
-#define CHECK( x ) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
+// check_passed is not const: MSVC 14.29 and older warn C4127 on a constant condition
+#define CHECK( x ) do { bool check_passed = !!(x); if ( !check_passed ) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
 // The fake staged frame must satisfy the public packet lease's 16-byte
 // alignment contract. Its intentional struct padding triggers MSVC C4324.
