@@ -162,6 +162,16 @@ failed allocation inside a candidate's create is not a refusal: start ends
 with `ROCKETNET_STATUS_OUT_OF_MEMORY` and does not fall to `gso`
 (`sdk/rocketnet_server_transport.cpp`).
 
+On cloud VMs a network thread can go without its processor for tens of
+milliseconds, with its pinning correct: on an AWS c8gn.8xlarge at 1000 players
+(2026-11-14), `gso` and `io_uring` rows showed receive gaps of 50 ms and more,
+seen as a burst of late input, and one run refused 701 sends in the second
+of a 70-107 ms gap; the other gaps refused none. Granting `CAP_SYS_NICE` lets
+the library run its pinned network workers at `SCHED_RR`; the two granted
+rows there had a worst receive wait of 33.7-35.8 ms, too few rows to say the
+grant removes the gaps, and the cpu steal time read 0 on every cpu in the one
+window sampled, which held no gap.
+
 **How start walks it.** Public create parses the list; server start tries
 candidates left to right and the first grant wins (`sdk/rocketnet_server_transport.cpp`). Each refusal logs a warning,
 `server transport <name> refused. trying the next candidate`
