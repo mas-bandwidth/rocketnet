@@ -8,3 +8,4 @@ MCClientConnectionReachSFirstkind.cfg	240	72.408	75.7	bench-xdp-9
 MCServerStopSpreadBrokenNoAbandon.cfg	150	69.749	72.586	bench-xdp-9
 MCRNUringQueueSendLive.cfg	200	81.711	84.272	bench-xdp-8
 MCRNUringQueueSend.cfg	160	72.584	72.584	amd-3
+MCRNXdpReplayReconnect.cfg	200	97.567	97.567	record

@@ -5081,6 +5081,39 @@ bool rocketnet_server_socket_test_replay_marks()
         rocketnet_server_socket_replay_commit( server );
         valid &= !server->replay_hold_all_greetings;
 
+        // proofs/tla/RNServerReplaySlots.tla ZeroMarkWaitsForForgets: a zero
+        // mark waits while the forget array is full, and holds every
+        // keep-alive; a mark of an opened session is still queued
+
+        for ( uint32_t i = 0; i < server->replay_marks->capacity; i++ )
+        {
+            rocketnet_address_t c = a;
+            c.port = (uint16_t) ( 4000 + i );
+            rocketnet_xdp_replay_marks_forget( server->replay_marks, &c );
+        }
+
+        valid &= !rocketnet_server_socket_replay_mark( server, &a, 0 );
+        valid &= server->replay_marks->refused == 1;
+        valid &= rocketnet_server_socket_replay_mark( server, &b, 5 );
+        valid &= server->replay_marks->mark_count == 1;
+        rocketnet_server_socket_replay_commit( server );
+        valid &= server->replay_hold_all_greetings;
+
+        // the kernel refused b's mark and every forget, so both stay kept:
+        // a zero mark of b waits too, kept key or not, and leaves b's kept
+        // mark as it was; it holds every keep-alive
+
+        valid &= server->replay_marks->forget_count == server->replay_marks->capacity;
+        const uint32_t refused_kept = server->replay_marks->refused;
+        valid &= !rocketnet_server_socket_replay_mark( server, &b, 0 );
+        valid &= server->replay_marks->refused == refused_kept + 1;
+        valid &= server->replay_marks->mark_count == 1 && server->replay_marks->mark_values[0].high_water == 5;
+        rocketnet_server_socket_replay_commit( server );
+        valid &= server->replay_hold_all_greetings;
+        rocketnet_xdp_replay_marks_reset( server->replay_marks );
+        rocketnet_server_socket_replay_commit( server );
+        valid &= !server->replay_hold_all_greetings;
+
         server->num_queues = 0;
         server->socket = NULL;
         socket->~rocketnet_server_xdp_socket_t();

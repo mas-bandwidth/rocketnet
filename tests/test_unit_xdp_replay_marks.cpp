@@ -939,6 +939,137 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
     rocketnet_encryption_map_destroy( map );
 }
 
+// The walk over the XDP sink's own mark (rocketnet_xdp_replay_sink_mark),
+// with the flag the socket's commit turns into holding every greeting.
+
+struct replay_xdp_sink_fake_t
+{
+    struct rocketnet_xdp_replay_marks_t * marks;
+    bool zero_mark_refused;
+};
+
+static bool replay_xdp_sink_fake_forget( void * context, const struct rocketnet_address_t * address )
+{
+    return rocketnet_xdp_replay_marks_forget( ( (replay_xdp_sink_fake_t *) context )->marks, address );
+}
+
+static bool replay_xdp_sink_fake_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
+{
+    replay_xdp_sink_fake_t * fake = (replay_xdp_sink_fake_t *) context;
+    return rocketnet_xdp_replay_sink_mark( fake->marks, address, high_water, &fake->zero_mark_refused );
+}
+
+static bool replay_marks_pending_mark_of( const struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
+{
+    struct rocketnet_server_xdp_replay_key_t key;
+    rocketnet_xdp_replay_key_from_address( address, &key );
+    for ( uint32_t i = 0; i < marks->mark_count; i++ )
+    {
+        if ( memcmp( &marks->mark_keys[i], &key, sizeof( key ) ) == 0 )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void test_xdp_transport_replay_marks_full_forgets_hold_a_kept_key_zero_mark()
+{
+    // proofs/tla/RNServerReplaySlots.tla ZeroMarkWaitsForForgets,
+    // GreetedSlotHasEntry; proofs/tla/RNXdpReplay.tla QueueRefusable: while
+    // the forget array is full, the XDP sink refuses a zero mark even of a
+    // key whose kept mark it would replace in place. Otherwise a slot that
+    // moved to that key with its old forget refused records a skip mark
+    // there; when it moves again with both forgets refused, the walk marks
+    // nothing at the third address and nothing holds its greeting, so the
+    // session is greeted with no kernel entry.
+
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
+    struct rocketnet_server_replay_marks_t * walk = rocketnet_server_replay_marks_create( NULL, 1 );
+    rocketnet_unit_check( map && slots && walk );
+
+    static struct rocketnet_xdp_replay_marks_t marks;
+    rocketnet_xdp_replay_marks_bind( &marks, replay_marks_forgets, replay_marks_mark_keys, replay_marks_mark_values, 2 );
+
+    struct replay_fake_map_t kernel;
+    memset( &kernel, 0, sizeof( kernel ) );
+
+    replay_xdp_sink_fake_t fake = { &marks, false };
+    struct rocketnet_server_replay_sink_t sink;
+    sink.context = &fake;
+    sink.forget = replay_xdp_sink_fake_forget;
+    sink.mark = replay_xdp_sink_fake_mark;
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0, sizeof( user_data ) );
+
+    const struct rocketnet_address_t a1 = replay_marks_ipv4( 50001 );
+    const struct rocketnet_address_t a2 = replay_marks_ipv4( 50002 );
+    const struct rocketnet_address_t a3 = replay_marks_ipv4( 50003 );
+
+    const bool all_failed[2] = { true, true };
+    const bool none_applied[2] = { false, false };
+
+    // the slot's session at A1 is seen and its zero mark lands
+
+    int mapping = rocketnet_encryption_map_add( map, &a1, 1005.0 );
+    rocketnet_unit_check( mapping >= 0 );
+    int slot = rocketnet_client_slots_assign( slots, 100, mapping, rocketnet_encryption_map_owner_generation( map, mapping ), user_data );
+    rocketnet_unit_check( slot == 0 );
+    rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( !fake.zero_mark_refused && marks.mark_count == 0 && marks.forget_count == 0 );
+
+    // two forgets the kernel keeps refusing fill the forget array, and a
+    // mark of A2 the kernel refused is kept. The state is planted: in a run
+    // another slot's record would name A2 and owe its forget; the greeting
+    // checked here does not depend on who owns that entry
+
+    const struct rocketnet_address_t x = replay_marks_ipv4( 60000 );
+    const struct rocketnet_address_t y = replay_marks_ipv4( 60001 );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &x ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &y ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a2, 5 ) );
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, all_failed, none_applied );
+    rocketnet_unit_check( marks.forget_count == 2 && marks.mark_count == 1 );
+
+    // the slot moves to A2: its forget of A1 is refused, so the walk asks the
+    // skip's zero mark of A2, which waits although A2's mark is kept
+
+    rocketnet_client_slots_release( slots, slot );
+    rocketnet_encryption_map_remove_current( map, mapping );
+    mapping = rocketnet_encryption_map_add( map, &a2, 1005.0 );
+    rocketnet_unit_check( mapping >= 0 );
+    rocketnet_client_slots_publish( slots );
+    slot = rocketnet_client_slots_assign( slots, 200, mapping, rocketnet_encryption_map_owner_generation( map, mapping ), user_data );
+    rocketnet_unit_check( slot == 0 );
+
+    rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+    rocketnet_unit_check( fake.zero_mark_refused );
+    rocketnet_unit_check( marks.mark_count == 1 && marks.mark_values[0].high_water == 5 );
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, all_failed, none_applied );
+    fake.zero_mark_refused = false;
+
+    // the slot moves to A3 with every forget refused: its session is either
+    // marked or its greeting held, never greeted with no entry
+
+    rocketnet_client_slots_release( slots, slot );
+    rocketnet_encryption_map_remove_current( map, mapping );
+    mapping = rocketnet_encryption_map_add( map, &a3, 1005.0 );
+    rocketnet_unit_check( mapping >= 0 );
+    rocketnet_client_slots_publish( slots );
+    slot = rocketnet_client_slots_assign( slots, 300, mapping, rocketnet_encryption_map_owner_generation( map, mapping ), user_data );
+    rocketnet_unit_check( slot == 0 );
+
+    rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+    rocketnet_unit_check( fake.zero_mark_refused || replay_marks_pending_mark_of( &marks, &a3 ) );
+
+    rocketnet_server_replay_marks_destroy( walk );
+    rocketnet_client_slots_destroy( slots );
+    rocketnet_encryption_map_destroy( map );
+}
+
 // a fake kernel map for the commit's apply: missing[i] stops a batch at
 // entry i, as the kernel's generic batch stops at a missing key (a delete)
 // or a refusal; a single call of a missing entry fails unless absent_ok (a
@@ -1046,3 +1177,4 @@ REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_reconnect_admits_the_new_session );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_full_forgets_hold_a_kept_key_zero_mark );

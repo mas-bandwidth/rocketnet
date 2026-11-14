@@ -3246,6 +3246,20 @@ ahead of the window's high-water mark, so the prefilter drops only packets the
 window would refuse; a reordered packet the window accepts is never dropped
 in the kernel. The prefilter never advances the mark.
 
+Such a prefilter MAY also drop a session packet whose source address and port
+holds no mark: no session the endpoint has greeted, so the endpoint would
+refuse it unopened. It MAY do so only while the endpoint holds a session's
+first keep-alive until that session's first mark is in the prefilter, since a
+client sends no session packet before its first keep-alive, and only while it
+keeps a mark for each greeted session for that session's life: a mark the
+endpoint deletes or fails to write leaves a live session's packets dropped
+until a later mark lands, which an implementation MUST confine to the paths
+where its own mark storage is full. One packet the
+endpoint would have acted on can then be dropped: a disconnect from a client
+that gives up after the endpoint took its connection response and before the
+first mark lands. The slot then ends at its timeout, the same outcome as a
+lost disconnect, which this standard already allows.
+
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
 | fresh | sequence received | open succeeds | set the bit; high-water mark = sequence | tracking |
@@ -3995,6 +4009,7 @@ The registry of counters, in index order, is:
 | `URING_RECEIVE_DROPPED_SOCKET` | `refusal` | `none` |
 | `RECEIVE_DROPPED_RETIRED` | `expected` | `none` |
 | `PORTABLE_PIN_REFUSALS` | `refusal` | `none` |
+| `XDP_KERNEL_DROPPED_NO_SESSION` | `expected` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -4180,7 +4195,7 @@ d7 01 00 00 1c 31 f2 57 00 00 00 d4 1f 4d 66 00
 de 00 00 00 d2 0c a4 a8 00 00 00 48 5b 6f 96 00
 00 00 11 00 6a 39 00 00 00 2a 89 85 22 00 00 00
 8b 63 94 cc 00 00 00 dd 5b 1f d0 01 00 00 4a 27
-5c 44 00 00 00
+5c 44 00 00 00 65 b8 a7 43 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

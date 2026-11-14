@@ -275,7 +275,9 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // it). The handshake sends the next packet in the step a reply advances the
 // client (TRANSPORT.md t11 rule 7); before that it waited out the send
 // interval, and the steps were 24 and 26 with the same packets and counters.
-// The hashes cover every counter of the registry in index order.
+// The hashes cover every counter of the registry in index order, so an
+// appended counter re-pins them (XDP_KERNEL_DROPPED_NO_SESSION: the packet
+// and byte counts did not move).
 // Without the simulator the client reads a datagram at the update after it
 // was received, not the one after that (sdk/rocketnet_receive_handoff.h), so
 // within the run's last step it receives one datagram more and answers it:

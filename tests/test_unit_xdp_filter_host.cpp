@@ -362,8 +362,10 @@ static struct rocketnet_server_xdp_replay_key_t xdp_host_client_key( int family,
 
 // One row: a frame, the receive queue it arrives on, the socket slot that
 // is populated (-1: none), the configuration, the replay map entry for the
-// client's address and port 50000 in the frame's family (none unless
-// replay_entry), and what must happen.
+// client's address and port 50000 in the frame's family (present unless
+// replay_entry is cleared: a session packet from a source with no entry
+// drops, DROPPED_NO_SESSION, so a row that is about anything else sends from
+// a greeted session), and what must happen.
 
 struct xdp_host_row_t
 {
@@ -372,7 +374,7 @@ struct xdp_host_row_t
     uint32_t queue = 0;
     int populated_slot = 0;
     xdp_host_config_t config;
-    bool replay_entry = false;
+    bool replay_entry = true;
     uint32_t replay_high_water = 0;
     int want_verdict = XDP_HOST_REDIRECT;
     int want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
@@ -630,8 +632,11 @@ static void test_xdp_transport_host_redirect_needs_a_populated_slot()
 
     rocketnet_xdp_host_reset();
     xdp_host_apply_config( xdp_host_config_t() );
+    const xdp_host_frame_t frame = xdp_host_frame_t();
+    const struct rocketnet_server_xdp_replay_key_t key = xdp_host_client_key( frame.family, xdp_host_client_port );
+    rocketnet_xdp_host_set_replay_entry( &key, 0 );
 
-    const std::vector<uint8_t> bytes = xdp_host_frame_bytes( xdp_host_frame_t() );
+    const std::vector<uint8_t> bytes = xdp_host_frame_bytes( frame );
     rocketnet_unit_check( rocketnet_xdp_host_run( bytes.data(), (int) bytes.size(), 5 ) == XDP_HOST_DROP );
     rocketnet_unit_check( rocketnet_xdp_host_redirect_calls() == 1 );
     rocketnet_unit_check( rocketnet_xdp_host_last_redirect_key() == 5 );
@@ -1798,6 +1803,12 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
         xdp_host_apply_config( xdp_host_config_t() );
         rocketnet_xdp_host_set_socket_slot( 0, 1 );
 
+        // a greeted session at the client's address, so the session types are
+        // judged on type and size alone (their sequence, zero, is at its
+        // high-water)
+        const struct rocketnet_server_xdp_replay_key_t sweep_key = xdp_host_client_key( families[f], xdp_host_client_port );
+        rocketnet_xdp_host_set_replay_entry( &sweep_key, 0 );
+
         uint64_t want_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = { 0 };
 
         for ( int bytes = 0; bytes <= ceiling + 1; bytes++ )
@@ -1876,8 +1887,9 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
 // replay: the read-only high-water map (proofs/tla/RNXdpReplay.tla, KernelFilter).
 // With an entry for the source address and port, a session packet whose
 // sequence is ROCKETNET_XDP_REPLAY_WINDOW or more behind the high-water
-// drops; inside the window or ahead it goes on; handshake types and sources
-// with no entry are not checked. The kernel window is the userspace replay
+// drops; inside the window or ahead it goes on; handshake types are not
+// checked; a session packet from a source with no entry drops
+// (DROPPED_NO_SESSION). The kernel window is the userspace replay
 // window (ROCKETNET_REPLAY_WINDOW_BITS, 4096 by default), so the kernel
 // never drops a reordered packet that userspace would accept.
 
@@ -1951,18 +1963,40 @@ static void xdp_host_replay_rows( int family, std::vector<xdp_host_row_t> & rows
     rows.push_back( xdp_host_replay_row( "connection response a window behind is not checked", family, ROCKETNET_CONNECTION_RESPONSE_PACKET,
                                          xdp_host_replay_behind( window ), high_water ) );
 
-    // another source port has no entry
+    // no entry for the source: no session the server has greeted, so every
+    // session type drops (DROPPED_NO_SESSION) at any sequence, and the
+    // handshake types, which carry no session, go on
+
+    const int no_session = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION );
 
     xdp_host_row_t other = xdp_host_replay_row( "another source port has no entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                                xdp_host_replay_behind( window ), high_water );
+                                                high_water, high_water );
     other.frame.source_port = xdp_host_client_port + 1;
-    rows.push_back( other );
+    rows.push_back( xdp_host_expect( other, XDP_HOST_DROP, no_session ) );
 
-    // no entry at all
+    const struct
+    {
+        uint8_t type;
+        const char * label;
+    } unsessioned[] = {
+        { ROCKETNET_CONNECTION_PAYLOAD_PACKET, "payload with no replay entry" },
+        { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, "keep-alive with no replay entry" },
+        { ROCKETNET_CONNECTION_ACK_PACKET, "ack with no replay entry" },
+        { ROCKETNET_CONNECTION_DISCONNECT_PACKET, "disconnect with no replay entry" },
+    };
+    for ( size_t i = 0; i < sizeof( unsessioned ) / sizeof( unsessioned[0] ); i++ )
+    {
+        xdp_host_row_t none = xdp_host_replay_row( unsessioned[i].label, family, unsessioned[i].type, high_water + 1, high_water );
+        none.replay_entry = false;
+        rows.push_back( xdp_host_expect( none, XDP_HOST_DROP, no_session ) );
+    }
 
-    xdp_host_row_t none = xdp_host_replay_row( "no replay entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, xdp_host_replay_behind( window ), high_water );
-    none.replay_entry = false;
-    rows.push_back( none );
+    xdp_host_row_t request = xdp_host_replay_row( "connection request with no replay entry goes on", family, ROCKETNET_CONNECTION_REQUEST_PACKET, 0, 0 );
+    request.replay_entry = false;
+    rows.push_back( request );
+    xdp_host_row_t response = xdp_host_replay_row( "connection response with no replay entry goes on", family, ROCKETNET_CONNECTION_RESPONSE_PACKET, 0, 0 );
+    response.replay_entry = false;
+    rows.push_back( response );
 
     // the wrap: the difference is modulo 2^32, read as signed
 

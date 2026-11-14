@@ -14,4 +14,12 @@ CONSTANTS s1, s2, a1, a2
 
 MCSpec == Spec
 
+\* MCRNServerReplaySlotsBrokenSkipUnmarked.cfg: the skipped slot is not
+\* marked (the walk before MarkWhileSkipped)
+MCMarkWhileSkippedBroken == FALSE
+
+\* MCRNServerReplaySlotsBrokenSkipNotRecorded.cfg: the skipped slot's mark
+\* is not recorded (the walk before RecordSkip)
+MCRecordSkipBroken == FALSE
+
 =============================================================================
