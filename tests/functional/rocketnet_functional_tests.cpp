@@ -2766,16 +2766,6 @@ void rocketnet_test_platform_socket()
 
 static void rocketnet_test_darwin_oversize_receive( const char * pump )
 {
-    rocketnet_address_t bind_address;
-    rocketnet_address_t local_address;
-    rocketnet_address_parse( &bind_address, "127.0.0.1" );
-    rocketnet_address_parse( &local_address, "127.0.0.1" );
-
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024 * 1024, 1024 * 1024, pump );
-    rocketnet_check( socket != NULL );
-    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
-    local_address.port = bind_address.port;
-
     uint8_t send_data[8192];
     for ( int i = 0; i < (int) sizeof( send_data ); ++i )
     {
@@ -2786,7 +2776,18 @@ static void rocketnet_test_darwin_oversize_receive( const char * pump )
 
     for ( int i = 0; i < 3; ++i )
     {
-        rocketnet_platform_socket_send_packet( socket, &local_address, send_data, sizes[i] );
+        // a fresh socket per size, so a late copy of one size is never read as the next
+
+        rocketnet_address_t bind_address;
+        rocketnet_address_t local_address;
+        rocketnet_address_parse( &bind_address, "127.0.0.1" );
+        rocketnet_address_parse( &local_address, "127.0.0.1" );
+
+        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024 * 1024, 1024 * 1024, pump );
+        rocketnet_check( socket != NULL );
+        rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+        local_address.port = bind_address.port;
+
         struct
         {
             uint8_t before[16];
@@ -2795,21 +2796,46 @@ static void rocketnet_test_darwin_oversize_receive( const char * pump )
         } receive;
         memset( &receive, 0xA5, sizeof( receive ) );
 
+        // Loopback UDP can lose a datagram before it reaches the socket under
+        // host memory pressure: a kernel drop, or a sendto ENOBUFS the socket
+        // only counts. This leg is about what the receive does with each size,
+        // not about one datagram surviving, so the same datagram is resent
+        // every 250 ms within the 5 s watchdog, and read once more after it.
+
         rocketnet_address_t from;
         int packet_bytes = 0;
+        int num_received = 0;
+        int sends = 0;
+        double send_time = 0.0;
         const double start_time = rocketnet_platform_time();
         while ( rocketnet_platform_time() - start_time < 5.0 )
         {
-            if ( rocketnet_platform_socket_receive_packets( socket, &from, receive.data, sizeof( receive.data ), &packet_bytes, 1 ) > 0 )
+            if ( sends == 0 || rocketnet_platform_time() - send_time >= 0.25 )
+            {
+                rocketnet_platform_socket_send_packet( socket, &local_address, send_data, sizes[i] );
+                send_time = rocketnet_platform_time();
+                sends++;
+            }
+            num_received = rocketnet_platform_socket_receive_packets( socket, &from, receive.data, sizeof( receive.data ), &packet_bytes, 1 );
+            if ( num_received > 0 )
             {
                 break;
             }
             rocketnet_platform_sleep( 0.001 );
         }
 
-        if ( packet_bytes == 0 )
+        if ( num_received <= 0 )
         {
-            fprintf( stderr, "harness timeout: darwin oversize datagram (%s, %d bytes) did not arrive within the 5 s watchdog; this is a hung harness, not a transport performance failure\n", pump, sizes[i] );
+            num_received = rocketnet_platform_socket_receive_packets( socket, &from, receive.data, sizeof( receive.data ), &packet_bytes, 1 );
+        }
+
+        if ( num_received <= 0 )
+        {
+            const char * live_pump = rocketnet_platform_socket_pump( socket );
+            fprintf( stderr, "harness timeout: darwin oversize datagram (%s, %d bytes) did not arrive within the 5 s watchdog; sender: %d sends, send_failures %llu; receiver: pump %s%s, receive_empties %llu, receive_refused_sources %llu\n",
+                     pump, sizes[i], sends, (unsigned long long) rocketnet_platform_socket_send_failures( socket ),
+                     live_pump, strcmp( live_pump, pump ) != 0 ? " (msgx paused)" : "",
+                     (unsigned long long) rocketnet_platform_receive_empties(), (unsigned long long) rocketnet_platform_receive_refused_sources() );
         }
 
         rocketnet_check( packet_bytes == sizes[i] );
@@ -2823,9 +2849,9 @@ static void rocketnet_test_darwin_oversize_receive( const char * pump )
         }
 
         rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
-    }
 
-    rocketnet_platform_socket_destroy( socket );
+        rocketnet_platform_socket_destroy( socket );
+    }
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
