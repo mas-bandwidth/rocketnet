@@ -12,7 +12,8 @@ Transport selection is runtime: one build carries every transport its
 platform has. Linux production servers have xdp (privileged), gso (SO_REUSEPORT +
 sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and io_uring; macOS production
 servers have msgx; Windows production servers have iocp and rio. Portable
-servers and clients are also available on every platform. Production server
+servers and clients are also available on every platform; the portable server
+is a fallback, not a production server transport. Production server
 auto selection ranks portable after the native transports. Loopback is on every platform and is selected
 only by name. The transport walks an ordered candidate
 list when client connect or server start activates I/O. Public create parses
@@ -93,8 +94,10 @@ line-rate performance; that requires measurements on suitable Windows hardware.
 
 ### To reach 10 Gb/s on Windows set a bind address
 
-The Windows defaults that held 1000 players at 10 Gb/s (5 RIO lanes, or 2
-IOCP completion workers and 2 send threads, on AWS m7i.16xlarge) share the
+The Windows default counts that held the measured peak workload, 1000 players at 60
+Hz and about 900,000 packets a second from the server (an estimated 9.39 Gb/s;
+[PERFORMANCE.md](PERFORMANCE.md)), with 5 RIO lanes, or 2 IOCP completion
+workers and 2 send threads, on AWS m7i.16xlarge, share the
 port by processor, which Windows allows only on a specific local address. Set
 the network card's address in `bind_ipv4_address` (or `bind_ipv6_address`),
 or `ROCKETNET_SERVER_BIND_IPV4_ADDRESS`. Without it the server binds the
@@ -141,12 +144,14 @@ real-time throttle) included.
 server's thread count before the server starts. In order:
 
 1. Choose the thread count, `num_xdp_threads` or
-   `ROCKETNET_SERVER_NUM_XDP_THREADS`, or take the default, 1 (it held 1000
-   players at 10 Gb/s on an X710 pair, main 59890655d, 2026-11-13).
+   `ROCKETNET_SERVER_NUM_XDP_THREADS`, or take the default, 1 (one thread
+   held the measured peak workload on an X710 pair: [PERFORMANCE.md](PERFORMANCE.md)).
 2. Provision the NIC with the script, before the server:
    `sudo scripts/rocketnet-provision eth0 2` for 2 threads. Given no count the
    script takes `ROCKETNET_SERVER_NUM_XDP_THREADS` from its environment, or
-   the default.
+   the default. `sudo` drops an exported variable by default: give the count
+   as the argument, or set the variable on the `sudo` line
+   (`sudo ROCKETNET_SERVER_NUM_XDP_THREADS=2 scripts/rocketnet-provision eth0`).
 3. Start the server: thread `q` runs on cpu `num_os_cpus + q`.
 4. If the counts differ the server does not start `xdp`, and says why:
 
@@ -281,22 +286,17 @@ after the interface name for more):
     #    program. Pin roots alone are inert -- a colliding create refuses
     #    loudly and names this sweep.
 
-    # (scripts/rocketnet-provision selftest holds the script's IRQ-name
-    #  matcher to the C test's case set AND drives the R3/R7 enforcement
-    #  functions end to end, both modes, against stubs replaying captured
-    #  xdp-tools output (R3) and real-shaped ethtool output (R7) -- every
-    #  fail site in both functions has a driving
-    #  case, and
-    #  the WHOLE SCRIPT is driven door-to-fail by a full-flow verify case
-    #  (there is no level above the whole script). it
-    #  needs no root and touches only a private temp dir it creates and
-    #  removes. CI runs it on every push, so neither the matcher halves nor
-    #  the enforcement paths can drift silently.)
+    # (scripts/rocketnet-provision selftest checks the script's own logic
+    #  against recorded tool output and a stub /proc and /sys tree. It
+    #  needs no root and touches only a private temporary directory it
+    #  creates and removes.)
 
-This configuration — isolated cores 1-15, the default one queue and thread,
-per-queue IRQ pinning, the busy-poll pair — held 1000 players at 10 Gb/s on a
-provisioned X710 pair (rows R5-R8, main 59890655d; two queues also passed);
-the magnitude belongs to that machine, and the claim attaches to a
+The measured XDP rows in [PERFORMANCE.md](PERFORMANCE.md) ran this
+configuration with `isolcpus=1-2` (one or two queues and threads, per-queue
+IRQ pinning, the busy-poll pair) on a provisioned X710 pair: one thread held
+the peak workload, 1000 players at 60 Hz and about 900,000 packets a second
+from the server (an estimated 9.39 Gb/s), and two threads did too.
+The magnitude belongs to that machine, and the claim attaches to a
 verified-provisioned box, never to the library alone. The isolated-core mask, the
 queue count and the IRQ pinning scale together with NIC bandwidth: one queue
 wants one isolated core, and higher-bandwidth NICs need more cores (the script
