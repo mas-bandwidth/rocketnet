@@ -185,6 +185,28 @@ struct rocketnet_server_uring_t
 // the probe's answer: -1 not yet probed, 0 no, 1 yes
 static std::atomic<int> rocketnet_server_uring_probed{ -1 };
 
+// why the probe said no, for the refusal line: the step that failed (an index
+// into rocketnet_server_uring_probe_steps) and its errno, 0 where the step
+// gives none (a kernel that lacks an opcode answers the probe, not an error)
+static std::atomic<int> rocketnet_server_uring_probe_step{ 0 };
+static std::atomic<int> rocketnet_server_uring_probe_errno{ 0 };
+
+static const char * const rocketnet_server_uring_probe_steps[] =
+{
+    "none",
+    "the ring (io_uring_setup)",
+    "the opcode probe (io_uring_register)",
+    "an opcode the workers submit",
+    "the provided buffer ring",
+    "the multishot receive",
+};
+
+#define ROCKETNET_URING_PROBE_STEP_RING                                      1
+#define ROCKETNET_URING_PROBE_STEP_PROBE                                     2
+#define ROCKETNET_URING_PROBE_STEP_OPCODE                                    3
+#define ROCKETNET_URING_PROBE_STEP_BUF_RING                                  4
+#define ROCKETNET_URING_PROBE_STEP_MULTISHOT                                 5
+
 #if ROCKETNET_DEV
 // rocketnet_server_uring_test_probe_multishot: the terminating result the
 // probe's multishot receive is given in place of the kernel's, 0 for the kernel's
@@ -205,11 +227,13 @@ static std::atomic<int> rocketnet_server_uring_test_multishot_res{ 0 };
 // ends the receive either way, so the wait is for two completions; a wait
 // for either that passes a second is a refusal too (each completion has its
 // own second, so the probe can take up to two)
-static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int bgid )
+static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int bgid, int * error )
 {
+    *error = 0;
     const int fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
     if ( fd < 0 )
     {
+        *error = errno;
         return false;
     }
 
@@ -237,7 +261,12 @@ static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int 
         {
             io_uring_prep_cancel64( cancel, ROCKETNET_URING_PROBE_RECV, 0 );
             cancel->user_data = ROCKETNET_URING_PROBE_CANCEL;
-            ok = io_uring_submit( ring ) == 2;
+            const int submitted = io_uring_submit( ring );
+            ok = submitted == 2;
+            if ( submitted < 0 )
+            {
+                *error = -submitted;
+            }
         }
     }
 
@@ -249,8 +278,10 @@ static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int 
         timeout.tv_sec = 1;
         timeout.tv_nsec = 0;
         struct io_uring_cqe * cqe = NULL;
-        if ( io_uring_wait_cqe_timeout( ring, &cqe, &timeout ) != 0 || !cqe )
+        const int waited = io_uring_wait_cqe_timeout( ring, &cqe, &timeout );
+        if ( waited != 0 || !cqe )
         {
+            *error = waited < 0 ? -waited : ETIME;
             ok = false;
             break;
         }
@@ -276,7 +307,12 @@ static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int 
 #endif // #if ROCKETNET_DEV
 
     close( fd );
-    return ok && receive_ended && ( receive_res == -ENOBUFS || receive_res == -ECANCELED );
+    const bool taken = ok && receive_ended && ( receive_res == -ENOBUFS || receive_res == -ECANCELED );
+    if ( !taken && *error == 0 && receive_res < 0 )
+    {
+        *error = -receive_res;
+    }
+    return taken;
 }
 
 bool rocketnet_server_uring_available()
@@ -294,19 +330,34 @@ bool rocketnet_server_uring_available()
     }
 
     bool ok = false;
+    int step = 0;
+    int step_errno = 0;
     struct io_uring ring;
-    if ( io_uring_queue_init( 8, &ring, 0 ) == 0 )
+    const int init_result = io_uring_queue_init( 8, &ring, 0 );
+    if ( init_result == 0 )
     {
-        struct io_uring_probe * probe = io_uring_get_probe_ring( &ring );
-        if ( probe )
+        // the opcode table on the stack: io_uring_get_probe_ring's answer
+        // drops the register's errno, which the refusal line names
+        alignas( struct io_uring_probe ) uint8_t table[sizeof( struct io_uring_probe ) + 256 * sizeof( struct io_uring_probe_op )];
+        memset( table, 0, sizeof( table ) );
+        struct io_uring_probe * probe = reinterpret_cast<struct io_uring_probe *>( table );
+        const int probe_result = io_uring_register_probe( &ring, probe, 256 );
+        if ( probe_result >= 0 )
         {
             ok = io_uring_opcode_supported( probe, IORING_OP_SENDMSG ) &&
                  io_uring_opcode_supported( probe, IORING_OP_RECVMSG ) &&
                  io_uring_opcode_supported( probe, IORING_OP_ASYNC_CANCEL ) &&
                  io_uring_opcode_supported( probe, IORING_OP_READ ) &&
                  io_uring_opcode_supported( probe, IORING_OP_TIMEOUT );
-
-            io_uring_free_probe( probe );
+            if ( !ok )
+            {
+                step = ROCKETNET_URING_PROBE_STEP_OPCODE;
+            }
+        }
+        else
+        {
+            step = ROCKETNET_URING_PROBE_STEP_PROBE;
+            step_errno = -probe_result;
         }
 
         if ( ok )
@@ -316,18 +367,31 @@ bool rocketnet_server_uring_available()
             struct io_uring_buf_ring * buf_ring = rocketnet_uring_receive_buf_ring_setup( &ring, 1, 0, &inverted_resv, &error );
             if ( buf_ring )
             {
-                ok = rocketnet_server_uring_probe_multishot( &ring, 0 );
+                ok = rocketnet_server_uring_probe_multishot( &ring, 0, &step_errno );
+                if ( !ok )
+                {
+                    step = ROCKETNET_URING_PROBE_STEP_MULTISHOT;
+                }
                 rocketnet_uring_receive_buf_ring_free( &ring, buf_ring, 1, 0, inverted_resv );
             }
             else
             {
                 ok = false;
+                step = ROCKETNET_URING_PROBE_STEP_BUF_RING;
+                step_errno = error < 0 ? -error : error;
             }
         }
 
         io_uring_queue_exit( &ring );
     }
+    else
+    {
+        step = ROCKETNET_URING_PROBE_STEP_RING;
+        step_errno = -init_result;
+    }
 
+    rocketnet_server_uring_probe_step.store( step, std::memory_order_relaxed );
+    rocketnet_server_uring_probe_errno.store( step_errno, std::memory_order_relaxed );
     available.store( ok ? 1 : 0, std::memory_order_relaxed );
 
     return ok;
@@ -952,7 +1016,22 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
     if ( !rocketnet_server_uring_available() )
     {
-        rocketnet_error( "io_uring transport refused: this kernel does not accept the io_uring ring, opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport needs" );
+        // a refusal the transport order handles (a kernel before 6.0, a seccomp
+        // profile that refuses io_uring): warned, as the order's other
+        // "refused, trying the next" lines are, never an error
+        const int step = rocketnet_server_uring_probe_step.load( std::memory_order_relaxed );
+        const int step_errno = rocketnet_server_uring_probe_errno.load( std::memory_order_relaxed );
+        const char * step_name = rocketnet_server_uring_probe_steps[( step > 0 && step <= ROCKETNET_URING_PROBE_STEP_MULTISHOT ) ? step : 0];
+        if ( step_errno != 0 )
+        {
+            rocketnet_warn( "io_uring transport refused: this kernel does not accept the io_uring ring, opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport needs: %s failed, %s",
+                step_name, rocketnet_platform_socket_error_text( step_errno ).text );
+        }
+        else
+        {
+            rocketnet_warn( "io_uring transport refused: this kernel does not accept the io_uring ring, opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport needs: %s failed (no errno: the kernel answered no)",
+                step_name );
+        }
         return NULL;
     }
 

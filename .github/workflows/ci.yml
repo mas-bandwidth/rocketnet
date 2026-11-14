@@ -554,11 +554,15 @@ jobs:
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
       # state machines and the in-memory simulator, parallel, bounded per commit. ./bin/functional is the driver matrix. On this unprivileged
       # runner the linux functional leg is the FALL made real -- xdp refused
-      # for missing privilege, gso granted -- so the functional suite runs
-      # over the gso driver here (and over the darwin msgx pump on macOS);
-      # the pin tests (test_*_transport_server_io_pin) go red if a rung stops
-      # granting, so a silent fall cannot hollow this leg out. The second
-      # functional run pins the portable floor by env.
+      # for missing privilege, io_uring granted (the runners build with
+      # liburing) -- so the functional suite's auto cases run over the
+      # io_uring driver here (and over the darwin msgx pump on macOS). gso
+      # keeps its own per-commit cases by name: the test_gso_* cases, its pin
+      # (test_gso_transport_server_io_pin), the fall from a refused io_uring
+      # (test_io_uring_transport_auto_refused_grants_gso) and its
+      # transport_matrix cells. The pin tests (test_*_transport_server_io_pin)
+      # go red if a rung stops granting, so a silent fall cannot hollow this
+      # leg out. The second functional run pins the portable floor by env.
 
       # The once-per-leg checks below run in every unsharded unit row and, in
       # a sharded leg, in the shard row whose field names them: first (the
@@ -3551,7 +3555,7 @@ jobs:
   # story or leaves the threads to luck; this is the only leg that watches the
   # transport's concurrency directly. rocketnet spawns real threads -- the
   # client transport's receive thread behind an atomic-quit and a mutex, the
-  # server's GSO worker threads on the linux gso rung, and the suite's own
+  # server's io_uring and GSO worker threads, and the suite's own
   # multi-client hammer tests that pound a transport from several threads at
   # once -- and a data race in any of those is invisible to asan, ubsan and
   # inspection alike. tsan is the instrument that sees a race the run did not
@@ -3560,9 +3564,11 @@ jobs:
   #
   # WHAT CARRIES THE THREADS, and what does not. bin/test is the unit suite
   # and starts no driver. bin/functional is the surface that used to live in
-  # that run: on this linux runner the transport order falls to the gso rung (xdp
-  # refused for privilege, gso granted), so the server's GSO worker threads
-  # run, the client receive thread runs, and the hammer tests drive the
+  # that run: on this linux runner the transport order falls to the io_uring
+  # rung (xdp refused for privilege, io_uring granted where the build has
+  # liburing), so the server's io_uring worker threads run in the auto cases
+  # and its GSO worker threads in the test_gso_* cases, the client receive
+  # thread runs, and the hammer tests drive the
   # concurrent path on purpose. bin/soak adds the real-UDP loopback -- a
   # client and a server transport, each with its receive thread and its
   # socket, exchanging over the loopback -- bounded so the leg ends.
