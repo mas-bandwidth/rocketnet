@@ -69,7 +69,10 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   past the verify; a same-address request after a disconnect finds its own
   live claim, records nothing and releases it from wherever it sits in the
   order list); a mapping swept by `Tick` at its handshake deadline
-  releases nothing, as its claim expires at the same instant. The table's
+  releases its claim (`ReleaseAddrs` over the swept addresses; the code's
+  sweep calls `rocketnet_server_release_mapping_claim`), which today
+  changes nothing because the claim expires at the same instant, but the
+  claim's lifetime does not depend on that. The table's
   `ClaimRecord` then reclaims an expired order head directly, matching
   `rocketnet_used_token_history_claim_record`; no intermediate free-list
   push is needed and no slot leaks. Claim deadlines are held at
@@ -179,7 +182,9 @@ against one table slot and a budget of two spend the budget and fill
 the table while one honest client connects. The flood clock `fclock`
 moves forward (`FloodClockForward`) and is stepped back to any earlier
 time (`FloodClockBack`: an NTP step, a VM resume; the timestamp is the
-unix wall clock whenever no game clock epoch is configured). The window
+token epoch plus the caller's time, and when no epoch is configured the
+wall clock is read once, at the first update, to set the epoch, and never
+again). The window
 (`FailWindow = 2` ticks over `0..3`) rolls over, clearing the count and
 the table, when the clock has passed it or has stepped back before its
 start. `FloodWindowBounded`: whenever a source would be refused, the

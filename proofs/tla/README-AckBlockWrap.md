@@ -8,7 +8,7 @@ builder that writes the block and the reader that decides it.
 
 | Variable | Meaning | Code |
 |---|---|---|
-| `highestSent` | the reader's highest sent session sequence, a natural from `Start - 1` | `client->send_sequence_session - 1` (sdk/rocketnet_client_protocol.cpp), `mapping->send_sequence_session - 1` (sdk/rocketnet_server_protocol.cpp) |
+| `highestSent` | the reader's highest sent session sequence, a natural from `Start - 1` | `rocketnet_client_protocol_highest_sent_session` (sdk/rocketnet_client_protocol.cpp: the ack endpoint's `highest_sequence`, the highest sequence a packet sealed) and `rocketnet_server_protocol_highest_sent_session` (sdk/rocketnet_server_protocol.cpp: the client's ack endpoint's `highest_sequence`; `mapping->send_sequence_session - 1`, floored at 0, for a protocol built without the ack bookkeeping or a mapping with no client slot, `client_index < 0`) |
 | `opened` | the sequences the other end has opened | the replay window, `rocketnet_replay_advance` (sdk/rocketnet_replay.cpp) |
 | `flight` | the block in flight: wire largest (`highest opened mod Modulus`), first range length, range count, and its ghost truth | the block `rocketnet_ack_block_write` lays out (7 bytes, plus 4 per range) |
 | `read` | the reader's last decision, with the block's ghost truth | the return of `rocketnet_ack_block_read` |

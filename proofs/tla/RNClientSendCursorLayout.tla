@@ -47,6 +47,11 @@
 (*                     completion was sent once, and a send only went to a *)
 (*                     family that was required while the slot was in      *)
 (*                     flight.                                             *)
+(*   NoneLost          once the ring is released, every live slot either   *)
+(*                     completed owing at least one family, or was dropped *)
+(*                     from a ring addressed to the losing family (the     *)
+(*                     ghost dropped[g][i]: the ring's family at the drop, *)
+(*                     -1 for none).                                       *)
 (*   InOrder           each family's sends are strictly increasing slot    *)
 (*                     indexes.                                            *)
 (*   NotAfterRelease   a released generation is not held, and its send     *)
@@ -55,17 +60,23 @@
 (* CursorAt = "slots" is the code.  CursorAt = "plus" is the reversed      *)
 (* witness cursor = send_slot + consumed, which counts batch entries and   *)
 (* not the aborted slots the walk skipped, so a later attempt sends a live *)
-(* slot again.                                                             *)
+(* slot again.  DropKept = FALSE is the code: the drop arm takes only a    *)
+(* packet whose family is not the committed one (family != committed in   *)
+(* rocketnet_client_race_send_progress).  DropKept = TRUE is the reversed  *)
+(* witness that drops an unstarted packet of the kept family too: no copy  *)
+(* is sent and none is owed, so ExactlyOnce holds and NoneLost fails.      *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS C,          \* slots in the ring array
           B,          \* live slots one batch keeps
           MaxTake,    \* rings taken, each a generation
-          CursorAt    \* "slots" the code, "plus" the reversed witness
+          CursorAt,   \* "slots" the code, "plus" the reversed witness
+          DropKept    \* FALSE the code, TRUE the reversed witness: the drop arm drops a kept-family packet too
 
 ASSUME C = 4 /\ B = 2 /\ MaxTake = 2
 ASSUME CursorAt \in {"slots", "plus"}
+ASSUME DropKept \in BOOLEAN
 
 Ids == 0..C - 1
 Fams == {0, 1}
@@ -94,16 +105,18 @@ VARIABLES slot,       \* the ring array: TRUE live, FALSE aborted
           ord,        \* ord[g][f] the slot indexes sent to that family, in order
           live,       \* live[g][i] the slot was live in that generation
           rel,        \* the generation has been released
-          snap        \* send counts recorded at release
+          snap,       \* send counts recorded at release
+          dropped     \* dropped[g][i] the family of the ring the drop arm took slot i from, -1 if none
 
 vars == <<slot, cursor, count, held, gen, takes, dest, commit, pending, req, got, pend,
-          viol, sent, touched, owed, ord, live, rel, snap>>
+          viol, sent, touched, owed, ord, live, rel, snap, dropped>>
 
 Zero == [g \in Gens |-> [i \in Ids |-> [f \in Fams |-> 0]]]
 None == [g \in Gens |-> [i \in Ids |-> {}]]
 NoOrd == [g \in Gens |-> [f \in Fams |-> <<>>]]
 NoLive == [g \in Gens |-> [i \in Ids |-> FALSE]]
 NoRel == [g \in Gens |-> FALSE]
+NoDrop == [g \in Gens |-> [i \in Ids |-> -1]]
 
 Init ==
     /\ slot = [i \in Ids |-> FALSE]
@@ -126,6 +139,7 @@ Init ==
     /\ live = NoLive
     /\ rel = NoRel
     /\ snap = Zero
+    /\ dropped = NoDrop
 
 \* send counts stop at 2: one past the at-most-once line, and no further
 Bump(s, g, i, f) ==
@@ -153,8 +167,9 @@ Run(i, st, plan, batch) ==
                                      !.consumed = Len(batch)]
     ELSE LET idx == batch[i + 1]
              starting == ~st.pending
-             drop == starting /\ commit >= 0 /\ dest # commit
-         IN IF drop THEN Run(i + 1, [st EXCEPT !.pending = FALSE, !.req = {}, !.got = {}],
+             drop == starting /\ commit >= 0 /\ (dest # commit \/ DropKept)
+         IN IF drop THEN Run(i + 1, [st EXCEPT !.pending = FALSE, !.req = {}, !.got = {},
+                                              !.dropped = [st.dropped EXCEPT ![gen][idx] = dest]],
                              plan, batch)
             ELSE LET rq == IF starting
                             THEN IF commit < 0 /\ dest = 0 THEN Fams ELSE {dest}
@@ -172,7 +187,8 @@ Run(i, st, plan, batch) ==
                      got2 == IF ok1 THEN got1 \cup {1} ELSE got1
                      touched1 == [st.touched EXCEPT ![gen][idx] = st.touched[gen][idx] \cup need]
                      mid == [pending |-> TRUE, req |-> rq, got |-> got2, consumed |-> i,
-                             sent |-> sent2, touched |-> touched1, owed |-> st.owed, ord |-> ord2]
+                             sent |-> sent2, touched |-> touched1, owed |-> st.owed, ord |-> ord2,
+                             dropped |-> st.dropped]
                  IN IF need \subseteq got2
                     THEN LET done == [mid EXCEPT !.pending = FALSE, !.req = {}, !.got = {},
                                                !.owed = [mid.owed EXCEPT ![gen][idx] = need]]
@@ -202,7 +218,7 @@ Take ==
             /\ got' = {}
             /\ pend' = 0
             /\ live' = [live EXCEPT ![takes] = [i \in Ids |-> i < n /\ i \in liveSet]]
-            /\ UNCHANGED <<commit, viol, sent, touched, owed, ord, rel, snap>>
+            /\ UNCHANGED <<commit, viol, sent, touched, owed, ord, rel, snap, dropped>>
 
 \* one progress batch.  An empty batch (only aborted slots remain) advances
 \* to the walk's end.  The plus witness adds the consumed count to the
@@ -216,15 +232,15 @@ Send ==
            nxt == picked[2]
            ns == Len(batch)
            blank == [pending |-> pending, req |-> req, got |-> got, consumed |-> 0,
-                     sent |-> sent, touched |-> touched, owed |-> owed, ord |-> ord]
+                     sent |-> sent, touched |-> touched, owed |-> owed, ord |-> ord, dropped |-> dropped]
        IN IF pending /\ (IF ns = 0 THEN TRUE ELSE batch[1] # pend)
           THEN /\ viol' = TRUE
                /\ UNCHANGED <<slot, cursor, count, held, gen, takes, dest, commit, pending,
-                              req, got, pend, sent, touched, owed, ord, live, rel, snap>>
+                              req, got, pend, sent, touched, owed, ord, live, rel, snap, dropped>>
           ELSE IF ns = 0
           THEN /\ cursor' = CursorOf(0, 0, batch, nxt)
                /\ UNCHANGED <<slot, count, held, gen, takes, dest, commit, pending, req, got,
-                              pend, viol, sent, touched, owed, ord, live, rel, snap>>
+                              pend, viol, sent, touched, owed, ord, live, rel, snap, dropped>>
           ELSE \E plan \in Plans:
                 LET r == Run(0, blank, plan, batch)
                 IN /\ cursor' = CursorOf(r.consumed, ns, batch, nxt)
@@ -236,6 +252,7 @@ Send ==
                    /\ touched' = r.touched
                    /\ owed' = r.owed
                    /\ ord' = r.ord
+                   /\ dropped' = r.dropped
                    /\ UNCHANGED <<slot, count, held, gen, takes, dest, commit, viol, live, rel, snap>>
 
 \* the caller's commit, observed by the next Send
@@ -243,7 +260,7 @@ Commit ==
     /\ commit = -1
     /\ \E f \in Fams: commit' = f
     /\ UNCHANGED <<slot, cursor, count, held, gen, takes, dest, pending, req, got, pend, viol,
-                   sent, touched, owed, ord, live, rel, snap>>
+                   sent, touched, owed, ord, live, rel, snap, dropped>>
 
 \* send_slot = committed: the ring goes back to the handoff, and its counts
 \* are the ones a later send must not change
@@ -255,7 +272,7 @@ Release ==
     /\ rel' = [rel EXCEPT ![gen] = TRUE]
     /\ snap' = [snap EXCEPT ![gen] = sent[gen]]
     /\ UNCHANGED <<slot, cursor, count, gen, takes, dest, commit, pending, req, got, pend, viol,
-                   sent, touched, owed, ord, live>>
+                   sent, touched, owed, ord, live, dropped>>
 
 \* the run has taken every ring it will take
 Done ==
@@ -292,6 +309,7 @@ TypeOK ==
     /\ live \in [Gens -> [Ids -> BOOLEAN]]
     /\ rel \in [Gens -> BOOLEAN]
     /\ snap \in [Gens -> [Ids -> [Fams -> 0..2]]]
+    /\ dropped \in [Gens -> [Ids -> {-1} \cup Fams]]
 
 AtMostOnce ==
     /\ ~viol
@@ -304,6 +322,15 @@ ExactlyOnce ==
                 live[g][i] =>
                     /\ \A f \in Fams: f \in owed[g][i] => sent[g][i][f] = 1
                     /\ \A f \in Fams: sent[g][i][f] >= 1 => f \in touched[g][i]
+
+\* a live slot never leaves the walk unaccounted: it completed owing a
+\* family, or the drop arm took it from a ring of the losing family
+\* (commit is set before any drop and never changes)
+NoneLost ==
+    \A g \in Gens, i \in Ids:
+        rel[g] /\ live[g][i] =>
+            \/ owed[g][i] # {}
+            \/ dropped[g][i] # -1 /\ dropped[g][i] # commit
 
 InOrder ==
     \A g \in Gens, f \in Fams:

@@ -77,7 +77,7 @@ id are one filler to the check.
 
 | Config | Expect | Defect restored |
 | --- | --- | --- |
-| `MCRNFillPhase.cfg` | pass (1,423,875 distinct states) | none, at 2 fillers, 2 clients, 2 main operations |
+| `MCRNFillPhase.cfg` | pass (1,446,090 distinct states) | none, at 2 fillers, 2 clients, 2 main operations |
 | `MCRNFillPhaseN3.cfg` (bench) | pass, not reached | none, at 3 fillers, 2 clients and 3 main operations. Declared timeout debt: a manual run on a 16-core bench with 2 workers and a one-hour bound (2026-11-13, with nesting at `DepthMax` 2) stopped at 233,108,552 distinct states with 48,947,054 left on the queue and still growing, at depth 33, no violation |
 | `MCRNFillPhaseBrokenLookFirst.cfg` | `Sound` fails | each side looks before it announces |
 | `MCRNFillPhaseBrokenLoadStore.cfg` | `OneFiller` fails | the lock is a load then a store, not a CAS |
@@ -92,6 +92,7 @@ id are one filler to the check.
 | `MCRNFillPhaseBrokenTakeUncounted.cfg` | `TakeSound` fails | a take does not count itself on a `fills_in` line |
 | `MCRNFillPhaseBrokenOwnerAtDecide.cfg` | `NoFalseNest` fails | the decide stores the owner and the claim, and a refused look puts them back in three stores |
 | `MCRNFillPhaseBrokenKickAll.cfg` | `NoKickOnOpenUpdate` fails | an update call that finds the update open finishes it and begins the next in the same call |
+| `MCRNFillPhaseBrokenFreshKept.cfg` | `NoKickOnOpenUpdate` fails | the deliveries a finish handed over still count as never offered to the game after its operation returns |
 | `MCRNFillPhaseBrokenShutOnEarly.cfg` | `StageShut` fails | an `update_receive` that returns before the transport's receive leaves the update open and the window shut |
 | `MCRNFillPhaseBrokenScanFirst.cfg` | `PlainChecked` fails | the plain finish and abort scan for the open message before any check |
 
@@ -150,6 +151,26 @@ witness whose trace was checked against the old code by hand:
   `update_finish` on a late join disconnected every active client. Now the
   call counts one misuse, finishes the open update and begins none
   (`KickedBy`, `NoKickOnOpenUpdate`); `test_wide_fill_split_update_open_update_call`.
+  The model carries the rule, not the flag: a finish sets `fresh`
+  (deliveries handed over that the game has had no return to receive) and
+  the operation's return clears it (`MainDrop`, the end of `MainSkip`). The
+  check reads it, so it is not a ghost: the trace walk keeps it as its own
+  bookkeeping, as it keeps `stage`, since it drives no message server. The
+  not-received check runs in every update call that finds the update closed,
+  and in `KickAll` also after the finish of an open one (`UpdateChecks`);
+  `kicked` is a check that meets a delivery handed over in the same
+  operation. Two rules keep it false, and each has its own witness. The
+  check runs only in a call that found the update closed, so no finish
+  comes before it in that call (`KickAll` breaks this). And a finish's hand
+  over is offered to the game when its operation returns, before any later
+  check (`FreshKept` breaks this). With both rules, `fresh` is set only
+  between a finish and its return, where no check runs.
+- `BrokenFreshKept` (12 states): an `update` call finds the update closed,
+  begins and finishes one (`MainEpoch(FALSE, FALSE)`, `fresh` set), returns
+  without offering the deliveries (`MainDrop` keeps `fresh`), then the next
+  `update` call finds the update closed and its check sets `kicked`. In the code nothing runs
+  inside one game call between an update's finish and the next update's
+  begin; this is the shape of a call that did both with no return between.
 - `BrokenShutOnEarly` (11 states): an `update_receive` returns before the
   transport's receive (`MainEpoch(FALSE, TRUE)`: the update open, the window
   shut), then an `other` operation's looks and `MainIn` pass. In the old code
@@ -180,7 +201,7 @@ fillers on one client and a main thread, every one of 200 rounds left the
 check broken, the client's word in with nobody inside (172) or a `fills_in`
 line wrapped to 4294967295 (30), after which every main operation was
 refused. `MCRNFillPhaseBrokenOwnerAtDecide.cfg` restores the old order. Its
-trace (22 states, 413,249 distinct), checked against the old code by hand:
+trace (22 states, 416,950 distinct), checked against the old code by hand:
 f1 fills c1 in epoch 1 and ends (the owner stays f1). A main operation
 announces (`main_calls` 1) and, still running, moves the epoch to 2. f2 locks c1, decides (owner f2, word [2, 1, in])
 and counts itself. f1 begins, loads the word [2, 1, in] (`FillPeek`). f2's

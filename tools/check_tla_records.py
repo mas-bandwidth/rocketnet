@@ -67,6 +67,7 @@ DECLARED_DEBT = frozenset(
         "MCRNFillPhaseN3.cfg",
         "MCRNGsoQueueBankLayoutFlush3.cfg",
         "MCSessionAcksLive.cfg",
+        "MCServerSessionTwoClients.cfg",
     }
 )
 

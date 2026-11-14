@@ -36,9 +36,9 @@
 (* last packet of client c (of that stamp) sent, and a flag records each  *)
 (* send that broke an order or reached another client.                    *)
 (*                                                                         *)
-(* The code has StableSort, GenBreak, PartialSkipsAborted, DeadResends    *)
-(* and PartialContinues TRUE; each broken config flips one and must fail  *)
-(* its named property (README-RNMsgxSendRuns.md).                         *)
+(* The code has StableSort, GenBreak, PartialSkipsAborted, DeadResends,   *)
+(* PartialContinues and HeadGuard TRUE; each broken config flips one and  *)
+(* must fail its named property (README-RNMsgxSendRuns.md).               *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -59,6 +59,9 @@ CONSTANTS
     DeadResends,        \* TRUE: a dead run leaves through the shared socket
     PartialContinues,   \* TRUE: a partial send goes on with the rest at once (FALSE:
                         \* the call keeps the bank and the worker waits, R124)
+    HeadGuard,          \* TRUE: the head asks the resolve only for a stamp with
+                        \* table_slot >= 0 (FALSE: the shared stamp's -1 is asked too,
+                        \* and the resolve answers a descriptor for it)
     OpenGenAt,         \* the generation each slot is open at when the send starts:
                         \* s * GenSpan + g for slot s open at generation g
     Bank                \* {}: every bank Init admits; else the one bank, as the set
@@ -113,12 +116,16 @@ bank == << count, client, slot, gen, live, tGen >>
 Min(a, b) == IF a < b THEN a ELSE b
 
 \* the slot's socket's remote: the client stamped at its open generation
-Remote(s) == IF \E i \in 0..(count - 1) : slot[i] = s /\ gen[i] = tGen[s]
+\* (the shared stamp's -1, which HeadGuard FALSE resolves: a remote outside the bank)
+Remote(s) == IF s < 0 THEN 0
+           ELSE IF \E i \in 0..(count - 1) : slot[i] = s /\ gen[i] = tGen[s]
            THEN client[CHOOSE i \in 0..(count - 1) : slot[i] = s /\ gen[i] = tGen[s]]
            ELSE 0
 
-\* rocketnet_msgx_socket_table_resolve answers a descriptor
-Resolves(i) == slot[i] >= 0 /\ tOpen[slot[i]] /\ tGen[slot[i]] = gen[i]
+\* rocketnet_msgx_socket_table_resolve answers a descriptor; the head asks it
+\* only for table_slot >= 0 (HeadGuard), and without that guard the model
+\* lets it answer one for the shared stamp
+Resolves(i) == IF slot[i] >= 0 THEN tOpen[slot[i]] /\ tGen[slot[i]] = gen[i] ELSE ~HeadGuard
 
 StampOf(i) == << slot[i], gen[i] >>
 
@@ -524,6 +531,7 @@ ResumeExact ==
     pc = "kept" => \A q \in cursor..(count - 1) : left[order[q]] = 0
 
 \* a dead report names a connected stamp, never the shared socket
+\* (MCRNMsgxSendRunsBrokenNoHeadGuard)
 DeadReportsConnected == ~bad.dead
 
 \* the call keeps the bank (and the worker waits) only on an answer that

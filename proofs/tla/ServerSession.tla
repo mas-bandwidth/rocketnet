@@ -600,14 +600,16 @@ SealWaiting(s) ==
 \* The drain's step, whole: one update's seal.
 SealStep(s) == SealWaiting(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
 
-\* disconnect_client(i) leaves its burst waiting (the immediate seal of a
-\* burst the allowance holds is this step and its SealWaiting steps); stop
-\* seals every waiting packet on the shutdown path and destroy wipes the
-\* waiting keys, so neither leaves one waiting.
+\* disconnect_client(i) and the message layer's kick (MessageEnd(i), whose
+\* link.disconnect is the same rocketnet_server_transport_disconnect_client)
+\* leave the burst waiting (the immediate seal of a burst the allowance holds
+\* is this step and its SealWaiting steps); stop seals every waiting packet
+\* on the shutdown path and destroy wipes the waiting keys, so neither leaves
+\* one waiting.
 Next ==
     \/ /\ \/ Create \/ Start \/ StartFailsKept \/ StopCompletes
           \/ \E i \in Slots : \/ Deny(i) \/ SlotTimeout(i)
-                              \/ ClientLeaves(i) \/ ServerSend(i) \/ MessageEnd(i)
+                              \/ ClientLeaves(i) \/ ServerSend(i)
           \/ \E s \in Sessions : ClientSend(s) \/ Lose(s)
        /\ UNCHANGED drain
        /\ droppedIn' = {}
@@ -622,7 +624,7 @@ Next ==
        /\ waiting' = NoneWaiting /\ discarded' = {} /\ UNCHANGED overspent
        /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn
     \/ /\ \E i \in Slots :
-             /\ DisconnectClient(i)
+             /\ DisconnectClient(i) \/ MessageEnd(i)
              /\ IF Cardinality(WaitingSessions) < DisconnectQueueCapacity
                    THEN /\ waiting' = [waiting EXCEPT ![slot[i].sess] = Burst]
                         /\ UNCHANGED discarded

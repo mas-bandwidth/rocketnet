@@ -27,7 +27,7 @@ every other client for the server's life.
 | Model | Code |
 |---|---|
 | `Queue` | each destination's queue (`rocketnet_send_queue_of`): the io_uring worker, or the gso lane, its sends go through |
-| `segOn` | each queue's segment flag: the io_uring worker's `config.segment`; the gso tier while `disable_gso` has not been set (one flag for every lane) |
+| `segOn` | each queue's segment flag: the io_uring worker's `config.segment` (`FlagScope = "queue"`); the gso tier while `disable_gso` has not been set, one flag for every lane (`FlagScope = "transport"`: `gso->features`, which `rocketnet_server_gso_send_bank` clears and every lane's `rocketnet_server_gso_flush` reads, so a fallback on one lane turns every lane off) |
 | `table`, `Slot` | each queue's `rocketnet_segment_refused_t.destination` at its layout and `rocketnet_segment_refused_entry`; `Remembered(d)` is `rocketnet_segment_refused_contains` |
 | `count` | each queue's `segment_refused.destinations`: refusals of a destination the table did not hold, saturating at `Threshold` |
 | `everRefused` | not code state: the distinct destinations that refused, the measure `KernelFallback` reads |
@@ -92,6 +92,11 @@ two workers). Every case has `Threshold = 2` and six runs.
 | `MCRNSegmentRefusalQueues.cfg` | the code on two queues: `d1` (queue 0) accepts; on queue 1 `d2` and `d3` refuse and `d4` accepts | pass | 0 | 81 | 0.7 |
 | `MCRNSegmentRefusalQueuesKernel.cfg` | the code on two queues and a kernel that refuses every destination: queue 1 (`d2`, `d3`, `d4`) turns off at two refusals, queue 0 (`d1` alone) keeps segmenting | pass | 0 | 67 | 0.7 |
 | `MCRNSegmentRefusalBrokenQueueAccepted.cfg` | `AcceptedRule = "queue"`: the io_uring code before, the accepted flag each queue's alone | `NoFallbackAfterAccepted` | 12 | 22 | 0.6 |
+| `MCRNSegmentRefusalQueuesGso.cfg` | `MCRNSegmentRefusalQueues.cfg` on the gso transport (`FlagScope = "transport"`: one segment flag, each lane its own table and count) | pass | 0 | 74 | 0.9 |
+| `MCRNSegmentRefusalQueuesKernelGso.cfg` | `MCRNSegmentRefusalQueuesKernel.cfg` on the gso transport: lane 1's fallback clears the one flag, so lane 0 stops segmenting too | pass | 0 | 67 | 0.8 |
+
+Every case but the two `Gso` ones runs `FlagScope = "queue"`, the io_uring
+transport's per-worker flag; with one queue the two scopes are the same.
 
 ## Counterexamples, checked by hand against the code
 
