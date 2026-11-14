@@ -181,11 +181,15 @@ UNIT_TEST_SKIPPED_UNLESS( test_violation_receipt_only_reliable_connection_takes_
 // sdk/rocketnet_message.cpp) and the form byte.
 // The largest single record is payload_capacity - 17 bytes; one byte more is
 // a block. The boundary size payload_capacity - 16 is written and delivered.
+// The connection asks for 300 channels, or every channel this build has when
+// it has fewer (any ceiling from 257): channel 256 is wide on all of them.
+
+#define VIOLATION_WIDE_CHANNELS ( ROCKETNET_MAX_CHANNELS < 300 ? ROCKETNET_MAX_CHANNELS : 300 )
 
 static void test_violation_wide_reliable_sequenced_boundary_is_sent()
 {
     rocketnet_message_config_t config;
-    violation_config( &config, 300 );
+    violation_config( &config, VIOLATION_WIDE_CHANNELS );
 
     violation_node_t sender, receiver;
     violation_init( &sender, &config );

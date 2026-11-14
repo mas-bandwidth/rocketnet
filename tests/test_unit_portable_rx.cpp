@@ -28,6 +28,19 @@ static void test_portable_rx_chaff_drain()
     rocketnet_unit_check( rocketnet_portable_rx_test_chaff_drain() );
 }
 
+// The fixtures run only where the portable transport is built
+// (ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE); elsewhere each fixture returns
+// false, so a case is left out with a SKIPPED line rather than passing with
+// no logic run.
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+static constexpr bool portable_rx_platform_has_event_only_wake = true;
+#else
+static constexpr bool portable_rx_platform_has_event_only_wake = false;
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+
 REGISTER_UNIT_TEST( test_portable_rx_handoff );
 REGISTER_UNIT_TEST( test_portable_rx_worker_steps );
 REGISTER_UNIT_TEST( test_portable_rx_chaff_drain );
+UNIT_TEST_SKIPPED_UNLESS( test_portable_rx_handoff, portable_rx_platform_has_event_only_wake );
+UNIT_TEST_SKIPPED_UNLESS( test_portable_rx_worker_steps, portable_rx_platform_has_event_only_wake );
+UNIT_TEST_SKIPPED_UNLESS( test_portable_rx_chaff_drain, portable_rx_platform_has_event_only_wake );

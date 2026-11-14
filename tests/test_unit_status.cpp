@@ -4,8 +4,10 @@
 */
 
 // The status code surface: the enum and its names
-// (docs/ERRORS-AND-LOGGING.md 2.1). OK is 0. The failures are -1, -2, ...
-// with no gap. The table here is the numbering and spelling: a code that
+// (docs/ERRORS-AND-LOGGING.md 2.1). OK is 0. The failures run -1 down to
+// -35 with two holes, both pinned: -9 is unassigned, and -22 is reserved (no
+// call returns it, and its name is "UNKNOWN"). The table here is the
+// numbering and spelling: a code that
 // moves, a name that changes and a name that is missing all fail. A value
 // that is no code names "UNKNOWN" and never asserts.
 //

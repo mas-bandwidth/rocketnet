@@ -725,4 +725,29 @@
    :title "The functional suite step says 'on Linux' on the macOS runner"
    :text "One step of .github/workflows/ci.yml, 'Run functional suite (automatic transport order — the fall, on Linux; RSS enforced)', runs on the Linux and the macOS rows, so docs/PLATFORMS.md's macOS 27 row, which must name the step word for word (tools/check_platform_policy.py), reads 'on Linux'. Rename the step so it names no OS (or give each OS its own step), and change tools/planted_violations.tsv and both PLATFORMS.md rows in the same commit."
    :date "2026-11-13" :origin "Review before v1.2.0")
+
+  (item "server-ipv4-address-unit" :group "after-v1-1-landing" :area "tests"
+   :title "A unit case for rocketnet_server_ipv4_address beside its IPv6 twin"
+   :text "rocketnet_server_ipv6_address has a unit case for a stopped server, a running one, the needed-1 buffer size and the wrong family (test_public_server_ipv6_address_reads_the_running_address in tests/test_unit_public_api_core.cpp); rocketnet_server_ipv4_address has only the NULL-server misuse check in sdk/rocketnet_tests.cpp and the functional tests that read it. Add the matching case for the IPv4 call on the loopback transport: stopped answers false, running answers the bound address and port, a buffer one byte short is refused, and an IPv6-only server answers false."
+   :date "2026-11-13" :origin "2026-11-10 review, tests merge row TM032 (optional: new coverage)")
+
+  (item "client-bind-family-exact-foreign-count" :group "after-v1-1-landing" :area "tests"
+   :title "Client bind family: count the late IPv6 cookie exactly"
+   :text "test_unit_client_bind_family.cpp checks ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE >= 1 after the one late IPv6 cookie the case sends (about line 416), so a double count passes. If the case's schedule fixes the count (one late cookie, no other foreign datagram), check it moved by exactly 1 from a reading taken before the cookie is sent; if it does not, say why beside the check."
+   :date "2026-11-13" :origin "2026-11-10 review, tests addendum row TA008, P7's site (optional)")
+
+  (item "portable-tx-wait-kind-witness" :group "review-v1-2" :area "sdk"
+   :title "The portable tx worker's choice of wait has no witness"
+   :text "portable_tx_worker (sdk/rocketnet_driver_builtin.cpp, the WAIT / WAIT_CARRY branch) maps the step's result to wake_wait(0.1) or wake_wait_writable(0.001) inline, and the carry_wake fixture checks only the step's enum, so swapping the two waits passes every unit case. Lift the mapping into a pure helper the worker calls (step result -> wait kind and timeout) and check it in the fixture, red on a swapped branch. The portable transport is the fallback, so this waits until it is worth an sdk change."
+   :date "2026-11-13" :origin "Tests review v1.2 merge, row TM154 (P9)")
+
+  (item "unit-transport-families-unsupported" :group "review-v1-2" :area "tests"
+   :title "A unit case that reaches ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED"
+   :text "tests/test_unit_status.cpp checks TRANSPORT_FAMILIES_UNSUPPORTED only as a name and number; no unit case makes a create return it (sdk/rocketnet_server_transport.cpp, the served-families check; sdk/rocketnet_driver_builtin.cpp). A server of both families on a transport that serves one family, refused before any socket, would reach it in the unit tier: a loopback-style fake that declares one family, or the families check read directly."
+   :date "2026-11-13" :origin "Review before v1.2.0, tests track row TM101 (optional), tests/v1.1.x/p8-status-config-units")
+
+  (item "unit-purity-file-reads" :group "review-v1-2" :area "tools"
+   :title "The unit purity gate sees file reads and host-state reads"
+   :text "tools/check_unit_purity.py exempts tests/suite_runner.h and has no pattern for a file read (fopen, /proc, /sys) or a host query (sched_getaffinity, sysctlbyname, GlobalMemoryStatusEx), so a unit case that called the runner's live helpers read the host's cgroup, memory and affinity unseen (row TM036, repaired on tests/v1.1.x/p8-status-config-units by passing those inputs in). Teach the gate those patterns for unit sources, with the runner's own use (it plans the job count) allowed by name only."
+   :date "2026-11-13" :origin "Review before v1.2.0, tests track row TM036 (Ro O-M1), tests/v1.1.x/p8-status-config-units")
  ))

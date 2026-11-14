@@ -140,6 +140,10 @@ SUITE_CASE_RSS_BOUND( test_server_stats_current_every_update, no_worker_rss_boun
 // The bound grows with the page by NO_WORKER_PAIR_PAGES pages per pair and
 // nothing else. A peak one MiB over it is recorded in both tiers; the unit
 // tier only reports it, and the functional tier (--enforce-rss) fails it.
+// The second half is a self-check of the runner (suite_check_rss) at this
+// bound, not of the bound: it holds for any bound, so it cannot catch a wrong
+// one. Only the growth check above is about the bound's arithmetic; whether
+// the bound fits the case is the measurement in the comment above it.
 static void test_server_stats_rss_bound_scales_with_page()
 {
     const long small = no_worker_rss_bound_mb_at( 4096 );

@@ -19,11 +19,12 @@
 // limit is refused at create, never clamped.
 //
 // A default is the count at which that transport passed the load test on a
-// good machine (1000 players at 60 Hz, 10 Gb/s out, every packet sent, 60
-// frames a second, every player whole), so a server with nothing configured
-// reaches that bar there. Where two machines gave different answers the
-// default is the count that passed on both. Each line names its rows (the
-// records are final-fable's REMEASURE-MAIN.md and GOAL-*.md, 2026-11-13).
+// good machine (1000 players at 60 Hz, about 900,000 packets a second out
+// at peak, an estimated 9.39 Gb/s, every packet sent, 60 frames a second,
+// every player whole), so a server with nothing configured reaches that bar
+// there. Where two machines gave different answers the default is the count
+// that passed on both. Each line names its rows; docs/PERFORMANCE.md holds
+// the published records.
 
 // XDP threads, one per NIC queue. 1: rows R5-R8, X710 pair (bench-xdp-8),
 // main 59890655d, peak and average, with and without a game load (2 also

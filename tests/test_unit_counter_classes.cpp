@@ -9,11 +9,11 @@
 // sdk/rocketnet_counters.h, and the tests here keep the rows honest -- every
 // index has a class, no outcome sits in two families, conservation reports
 // the first family that does not balance, the exact-delta helper catches a
-// move nobody named, and every counter is named by a test.
+// move nobody named, and the internal-error counter witnesses stay
+// registered. That every counter is driven and read by a test is not checked
+// here: it is tools/check_counter_observed.py, a source audit run by CI.
 //
-// Every case runs in memory. The one file access is the source audit, which
-// reads the repository's own test and sdk sources named by the build (no
-// directory walk, no network, no clock).
+// Every case runs in memory, with no file access, network or clock.
 
 #include "test_unit_registry.h"
 

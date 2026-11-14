@@ -4,9 +4,10 @@
 */
 
 // The in-memory fake client transport (tests/fake_client_driver.h) pins the I/O
-// step's transport contract (docs/CLIENT-IO.md "The I/O step"): each table opens
-// through rocketnet_client_transport_io_open, wake is level-triggered and cleared by
-// wait, and receive_batch drains in order with per-packet stride layout.
+// step's transport contract (docs/CLIENT-IO.md "The I/O step"): each of its
+// three tables opens through rocketnet_client_transport_io_open, wake is
+// level-triggered and cleared by wait, and receive_batch drains in order, each
+// datagram's bytes at its own stride.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -17,10 +18,13 @@
 
 #include "rocketnet_address.h"
 
-// Each table opens through rocketnet_client_transport_io_open with the fake as the
-// context and closes with destroy counted once.
+#include <string.h>
 
-static void test_fake_client_transport_io_opens_with_all_eight()
+// Each of the fake's three tables (base, io, batch) opens through
+// rocketnet_client_transport_io_open with the fake as the context and closes
+// with destroy counted once.
+
+static void test_fake_client_transport_io_opens_each_table()
 {
     const rocketnet_client_transport_io_operations_t * tables[] = {
         &rocketnet_fake_client_operations_base,
@@ -67,14 +71,27 @@ static void test_fake_client_wake_is_level_triggered()
     rocketnet_unit_check( fake.inbound_count == 1 );
 }
 
-// Three pushed datagrams of 10, 20 and 30 bytes from distinct ports drain by
-// receive_batch in order with stride 2048: 2, then 1, then 0, addresses and
-// bytes matching.
+// Three pushed datagrams of 10, 20 and 30 bytes from distinct ports, each of
+// its own byte pattern, drain by receive_batch in order with stride 2048: 2,
+// then 1, then 0, addresses, lengths and bytes matching, each datagram at the
+// start of its own stride and nothing written past its length.
 
 static void test_fake_client_receive_batch_layout()
 {
     rocketnet_fake_client_transport_io_t fake = {};
-    uint8_t d1[10] = {}, d2[20] = {}, d3[30] = {};
+    uint8_t d1[10], d2[20], d3[30];
+    for ( int i = 0; i < 30; i++ )
+    {
+        if ( i < 10 )
+        {
+            d1[i] = (uint8_t) ( 0x10 + i );
+        }
+        if ( i < 20 )
+        {
+            d2[i] = (uint8_t) ( 0x40 + i );
+        }
+        d3[i] = (uint8_t) ( 0x80 + i );
+    }
     rocketnet_address_t a1 = {}, a2 = {}, a3 = {};
     rocketnet_address_load_ipv4( &a1, 0x7f000001, 101 );
     rocketnet_address_load_ipv4( &a2, 0x7f000001, 202 );
@@ -84,6 +101,7 @@ static void test_fake_client_receive_batch_layout()
     rocketnet_fake_client_push( &fake, &a3, d3, 30 );
 
     uint8_t storage[2][2048];
+    memset( storage, 0xEE, sizeof( storage ) );
     rocketnet_address_t from[2];
     int bytes[2];
 
@@ -92,11 +110,16 @@ static void test_fake_client_receive_batch_layout()
     rocketnet_unit_check( bytes[0] == 10 && bytes[1] == 20 );
     rocketnet_unit_check( rocketnet_address_equal( &from[0], &a1 ) );
     rocketnet_unit_check( rocketnet_address_equal( &from[1], &a2 ) );
+    rocketnet_unit_check( memcmp( storage[0], d1, sizeof( d1 ) ) == 0 && storage[0][sizeof( d1 )] == 0xEE );
+    rocketnet_unit_check( memcmp( storage[1], d2, sizeof( d2 ) ) == 0 && storage[1][sizeof( d2 )] == 0xEE );
 
+    memset( storage, 0xEE, sizeof( storage ) );
     got = rocketnet_fake_client_operations_batch.receive_batch( &fake, from, (uint8_t *) storage, 2048, bytes, 2 );
     rocketnet_unit_check( got == 1 );
     rocketnet_unit_check( bytes[0] == 30 );
     rocketnet_unit_check( rocketnet_address_equal( &from[0], &a3 ) );
+    rocketnet_unit_check( memcmp( storage[0], d3, sizeof( d3 ) ) == 0 && storage[0][sizeof( d3 )] == 0xEE );
+    rocketnet_unit_check( storage[1][0] == 0xEE );
 
     got = rocketnet_fake_client_operations_batch.receive_batch( &fake, from, (uint8_t *) storage, 2048, bytes, 2 );
     rocketnet_unit_check( got == 0 );
@@ -154,7 +177,7 @@ static void test_fake_client_io_table_opens_with_wait_and_wake()
     rocketnet_client_transport_io_close( &transport );
 }
 
-REGISTER_UNIT_TEST( test_fake_client_transport_io_opens_with_all_eight );
+REGISTER_UNIT_TEST( test_fake_client_transport_io_opens_each_table );
 REGISTER_UNIT_TEST( test_fake_client_wake_is_level_triggered );
 REGISTER_UNIT_TEST( test_fake_client_receive_batch_layout );
 REGISTER_UNIT_TEST( test_fake_client_wait_honors_readable );

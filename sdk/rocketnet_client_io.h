@@ -24,6 +24,7 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_client_protocol.h"
+#include "rocketnet_test_seams.h"
 
 // The secret wipe of the I/O thread's open copy: sodium_memzero, the
 // repository's helper, behind a function of sdk/rocketnet_client_transport.cpp
@@ -840,6 +841,12 @@ inline void rocketnet_client_io_discard_at_stop( rocketnet_client_io_t * io )
     // call never writes to a closed, possibly reused, descriptor
     while ( !io->stop_woken.load( std::memory_order_acquire ) )
     {
+#if ROCKETNET_DEV
+        if ( rocketnet_dev_client_io_stop_wait_poll() )
+        {
+            continue;
+        }
+#endif // #if ROCKETNET_DEV
         rocketnet_platform_sleep( 0.0001 );
     }
 

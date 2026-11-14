@@ -27,10 +27,9 @@ stabilize, and qualify their own configuration. Large configurations can also
 spike in shutdown memory; the 1000-client example soak can run out of memory
 on Linux.
 
-The [LAN proof index](runs/lan-1000-proof.md) records runs on 2026-10-25:
-Linux GSO and io_uring at `1ca477339e150220f90e96bbe7c61be5b175eb51`, macOS msgx
-at `813b4adbe3dec2eee496577e3da2c0d7d66b8063`, and AF_XDP copy mode at
-`534cce2e10159b52074ea9b10f7a2f0b074f7298`. They retained 1000 connected clients
+The [LAN proof index](runs/lan-1000-proof.md) records runs of Linux GSO and
+io_uring, macOS msgx, and AF_XDP copy mode, each on an earlier version of the
+SDK that the index names. They retained 1000 connected clients
 for 600 seconds (300 for AF_XDP), with minimum per-client rates of 276–283 kbps.
 Read the individual records for topology, workload, measurements, and timing
 failures. The [preview-2 record](QUALIFICATION-v1.0.0-preview-2.md) separately
@@ -294,9 +293,7 @@ another value; the generated `rocketnet_server_xdp.h` refuses to compile into a
 library whose `ROCKETNET_MAX_CLIENTS` or `ROCKETNET_HISTORY_PACKETS` differs
 from the program's.
 
-The supported server size is 1000 clients. The 10000-client load tier was
-retired on 2026-11-01 and is not a release or audit completion requirement.
-An earlier custom build's bounded correctness results remain archived in
+The supported server size is 1000 clients. An earlier custom build's bounded correctness results remain archived in
 [QUALIFICATION-max-clients-10000.md](QUALIFICATION-max-clients-10000.md);
 they do not qualify current code or establish support above 1000 clients.
 The compile-time capacity setting remains available for callers who qualify

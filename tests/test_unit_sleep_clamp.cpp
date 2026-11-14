@@ -6,8 +6,9 @@
 // rocketnet_sleep clamps its argument before the platform sleep: a negative,
 // zero or NaN request sleeps not at all, and a request longer than
 // ROCKETNET_SLEEP_MAX_SECONDS sleeps that long, so the microsecond conversion
-// never overflows. The durations are arguments; the only real sleeps here are
-// the zero-length ones a refused request takes.
+// never overflows. The durations are arguments. A refused request makes no
+// platform call at all; in a development build a dispatch seam takes the
+// positive requests, so nothing here sleeps.
 
 #include "test_unit_registry.h"
 
@@ -85,6 +86,15 @@ static void test_sleep_clamp_bounds_negative_nan_and_huge()
     check( rocketnet_sleep_platform_dispatch_count_for_test() == before + 1 );
     check( test_dispatch_calls == 1 );
     check( test_dispatch_seconds == 0.001 );
+
+    // a request past the maximum reaches the dispatch as the maximum, never
+    // as itself
+
+    rocketnet_sleep( 1.0e300 );
+
+    check( rocketnet_sleep_platform_dispatch_count_for_test() == before + 2 );
+    check( test_dispatch_calls == 2 );
+    check( test_dispatch_seconds == ROCKETNET_SLEEP_MAX_SECONDS );
 
     rocketnet_sleep_set_platform_dispatch_for_test( NULL );
 #else

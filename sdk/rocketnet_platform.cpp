@@ -660,7 +660,10 @@ bool rocketnet_platform_send_errnos_count( rocketnet_platform_send_errnos_t * er
     const bool first = rocketnet_platform_atomic_add_u64( &errnos->counts[call][kind], 1 ) == 0;
     if ( first && kind == ROCKETNET_PLATFORM_SEND_ERRNO_OTHER )
     {
-        rocketnet_platform_atomic_add_u64( &errnos->other_error, (uint64_t) (unsigned int) error );
+        // the first OTHER errno recorded across every call is kept: stored
+        // only while the field is still 0, so a later call's first OTHER
+        // failure leaves it (two at once: whichever stores first)
+        (void) rocketnet_platform_atomic_cas_u64( &errnos->other_error, 0, (uint64_t) (unsigned int) error );
     }
     return first;
 }
@@ -3631,7 +3634,8 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 // set SCHED_RR at rocketnet_platform_network_thread_rr_priority() and nothing
 // else. On macOS it requests 32 clamped to the SCHED_RR range; elsewhere
 // it retains the minimum raised to the default thread's priority (1 on Linux).
-// No macOS server transport calls the server hook.
+// On macOS the msgx server's transmit and receive workers call the server
+// hook; the portable server's workers do not.
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {

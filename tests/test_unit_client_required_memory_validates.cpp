@@ -53,6 +53,15 @@ static void test_client_required_memory_validates()
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_required_memory( &config ) > 0 );
 
+    enum rocketnet_status_t created = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &created );
+    check( client != NULL );
+    check( created == ROCKETNET_STATUS_OK );
+    if ( client )
+    {
+        rn_test_client_stop_and_destroy( client );
+    }
+
     // each config create refuses: required_memory gives 0
 
     for ( int i = 0; i < CLIENT_REQUIRED_MEMORY_NUM_CASES; i++ )

@@ -18,7 +18,8 @@
 // The buffer's arrays are carved from the transport's one allocation, so a
 // write one slot past one of them lands in the next carve, where no guard
 // allocator or sanitizer sees it; the recorder sees it instead, as a batch
-// larger than the buffer or a frame whose length or bytes changed.
+// larger than the buffer, a frame not at its wire length, a frame repeated
+// byte for byte, or a frame missing from a count fixed in advance.
 
 #include "test_unit_registry.h"
 
@@ -30,6 +31,7 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
+#include "rocketnet_server_protocol.h"
 #include "unit_shutdown.h"
 #include "loopback_hub.h"
 
@@ -45,7 +47,10 @@ bool rocketnet_server_transport_seat_clients_for_test( struct rocketnet_server_t
 #define SEND_EDGE_CLIENTS 512
 #define SEND_EDGE_MAX_SENDS 2048
 #define SEND_EDGE_MAX_CALLS 16
+#define SEND_EDGE_FRAME_BYTES 64
 
+// Each frame is kept whole (every one here is far below 64 bytes; a longer
+// one fails the exact-length check before its bytes are compared).
 struct send_edge_record_t
 {
     int calls;
@@ -54,6 +59,7 @@ struct send_edge_record_t
     uint16_t port[SEND_EDGE_MAX_SENDS];
     int bytes[SEND_EDGE_MAX_SENDS];
     uint8_t type[SEND_EDGE_MAX_SENDS];
+    uint8_t data[SEND_EDGE_MAX_SENDS][SEND_EDGE_FRAME_BYTES];
 };
 
 static send_edge_record_t * send_edge_record;
@@ -73,6 +79,11 @@ static void send_edge_send_batch( void * instance, const rocketnet_platform_send
         record->port[record->count] = sends[i].to->port;
         record->bytes[record->count] = sends[i].packet_bytes;
         record->type[record->count] = sends[i].packet_bytes > 0 ? sends[i].packet_data[0] : 0xFF;
+        if ( sends[i].packet_bytes > 0 )
+        {
+            const int kept = sends[i].packet_bytes < SEND_EDGE_FRAME_BYTES ? sends[i].packet_bytes : SEND_EDGE_FRAME_BYTES;
+            memcpy( record->data[record->count], sends[i].packet_data, (size_t) kept );
+        }
         record->count++;
     }
 }
@@ -121,11 +132,17 @@ static void send_edge_restore( struct rocketnet_server_transport_t * server,
 
 // Every frame a client is owed went out once, whole: keep-alives to each
 // seated port but the disconnected one, the disconnect burst to that one,
-// each frame type at one length, no batch larger than the buffer.
+// no batch larger than the buffer. The lengths are the wire's own: no seated
+// client has sent anything, so no frame carries an ack and each is its type's
+// minimum (rocketnet_wire.h). Each frame is sealed at its own sequence, so no
+// two are the same bytes: a frame written twice, or a slot written over with
+// another frame's bytes, shows as a repeat.
 
 static void send_edge_check( const send_edge_record_t * record, int capacity, int disconnected, int burst )
 {
-    int keep_alive_bytes = 0, disconnect_bytes = 0, disconnects = 0;
+    const int keep_alive_bytes = ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
+    const int disconnect_bytes = ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES;
+    int disconnects = 0;
     int * seen = (int *) calloc( SEND_EDGE_CLIENTS, sizeof( int ) );
     rocketnet_unit_check( seen != NULL );
     if ( !seen )
@@ -145,7 +162,6 @@ static void send_edge_check( const send_edge_record_t * record, int capacity, in
         if ( record->type[i] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET )
         {
             rocketnet_unit_check( client != disconnected );
-            keep_alive_bytes = keep_alive_bytes == 0 ? record->bytes[i] : keep_alive_bytes;
             rocketnet_unit_check( record->bytes[i] == keep_alive_bytes );
             seen[client]++;
         }
@@ -153,9 +169,19 @@ static void send_edge_check( const send_edge_record_t * record, int capacity, in
         {
             rocketnet_unit_check( record->type[i] == ROCKETNET_CONNECTION_DISCONNECT_PACKET );
             rocketnet_unit_check( client == disconnected );
-            disconnect_bytes = disconnect_bytes == 0 ? record->bytes[i] : disconnect_bytes;
             rocketnet_unit_check( record->bytes[i] == disconnect_bytes );
             disconnects++;
+        }
+    }
+
+    for ( int i = 0; i < record->count; i++ )
+    {
+        for ( int j = i + 1; j < record->count; j++ )
+        {
+            if ( record->bytes[i] == record->bytes[j] && record->bytes[i] <= SEND_EDGE_FRAME_BYTES )
+            {
+                rocketnet_unit_check( memcmp( record->data[i], record->data[j], (size_t) record->bytes[i] ) != 0 );
+            }
         }
     }
 
@@ -231,13 +257,16 @@ static void test_server_control_buffer_full_is_flushed_before_the_next_frame()
         rocketnet_server_transport_disconnect_client( server, disconnected );
         rocketnet_server_transport_update( server, 1.0 );
 
-        const int burst = send_edge_record->count - ( SEND_EDGE_CLIENTS - 1 );
-        if ( send_edge_record->calls != 2 || send_edge_record->call_sends[0] != capacity || burst <= 1 )
+        // the whole burst is owed: ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS
+        // copies, a number the server's own count does not set
+        const int burst = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS;
+        if ( send_edge_record->calls != 2 || send_edge_record->call_sends[0] != capacity ||
+             send_edge_record->count != burst + ( SEND_EDGE_CLIENTS - 1 ) )
         {
             printf( "test_server_control_buffer_full_is_flushed_before_the_next_frame: %d batches, first %d, %d frames\n",
                     send_edge_record->calls, send_edge_record->call_sends[0], send_edge_record->count );
         }
-        rocketnet_unit_check( burst > 1 );
+        rocketnet_unit_check( send_edge_record->count == burst + ( SEND_EDGE_CLIENTS - 1 ) );
         rocketnet_unit_check( send_edge_record->calls == 2 );
         rocketnet_unit_check( send_edge_record->call_sends[0] == capacity );
         rocketnet_unit_check( send_edge_record->call_sends[1] == send_edge_record->count - capacity );

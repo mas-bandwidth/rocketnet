@@ -165,17 +165,13 @@ static void test_coalesce_send_run_equal_sizes_and_tail()
 
     const int sizes[5] = { 100, 100, 100, 40, 100 };
 
-    // sdk/rocketnet_server_gso_linux.cpp, the run builder:
-    //     if ( next->packet_bytes > segment_bytes )
-    //         break;
-    //     ...
-    //     run_count++;
-    //     run_bytes += next->packet_bytes;
-    //     batch_end++;
-    //     if ( next->packet_bytes < segment_bytes )
-    //         break;                      // the shorter tail closes the run
-    // so 100, 100, 100 are taken, the 40 is taken and closes the run, and
-    // the last 100 starts the next run: 4.
+    // rocketnet_coalesce_send_run (sdk/rocketnet_coalesce.h), the run rule
+    // the client gso send and the io_uring codec call: a packet larger than
+    // the run's segment ends the run before it, and a shorter one is taken
+    // and closes it. So 100, 100, 100 are taken, the 40 is taken and closes
+    // the run, and the last 100 starts the next run: 4. The server gso run
+    // builder (sdk/rocketnet_server_gso_linux.cpp) keeps its own copy of
+    // this rule and does not call the helper, so these cases do not test it.
 
     rocketnet_unit_check( rocketnet_coalesce_send_run( sizes, to, 5, 64, 65000 ) == 4 );
 

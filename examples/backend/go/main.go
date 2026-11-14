@@ -16,7 +16,8 @@
    Keys and settings come from the environment (see README.md). With none
    set, the backend uses the published development backend key, which the
    standard prints, so ANYONE can mint tokens a server using it accepts. It
-   is for local runs only, and a release server refuses it at start.
+   is for local runs only, and a production server (built with
+   ROCKETNET_DEV=0) refuses it at start.
 
    A real backend authenticates the player before minting a token for them;
    this one mints for any client id it is asked for.
