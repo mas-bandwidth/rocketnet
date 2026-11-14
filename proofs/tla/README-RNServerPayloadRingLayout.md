@@ -19,9 +19,9 @@ XDP, msgx) do not use it. Transport payloads fit within one packet.
 | `Stride` | `ROCKETNET_FRAME_STRIDE` |
 
 `send_capacity` is at most the ring: the capacity is the configured client
-count raised to `ROCKETNET_SERVER_MIN_SEND_PACKETS` (256), while the ring is
-that count raised to `ROCKETNET_SERVER_MIN_SIZED_CLIENTS` (512). Both are
-bounded by the build ceiling. A test override is accepted only when it fits
+count raised to `ROCKETNET_SERVER_MIN_SEND_PACKETS` (256), and the ring is
+that same count raised to the same 256-slot minimum. Both are bounded by the
+build ceiling. A test override is accepted only when it fits
 `payload_ring.size`. The counter has no bound of its
 own between flushes: every refused acquire still moves it. The model bounds
 acquires per flush by `MaxCount`, above `Cap`, so refused acquires are reached.
@@ -65,9 +65,9 @@ open across a flush is RNDriverSendStaging's.
 
 Frame stride 2 (the broken recovery divides by 1). The controls run three
 threads at a capacity of three: `MCRNServerPayloadRingLayout.cfg` with the ring
-exactly the capacity (as configured client counts at or above 512 produce) and
+exactly the capacity (as every configured client count produces) and
 four acquires per flush, `MCRNServerPayloadRingLayoutSpare.cfg` with a ring one
-larger (the relation below the ring's allocation floor) and five. The witnesses run two threads at a capacity
+larger (the relation under the unit seam's smaller capacity) and five. The witnesses run two threads at a capacity
 of two.
 
 ## Reversed witnesses

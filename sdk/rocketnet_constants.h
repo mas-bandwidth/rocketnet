@@ -158,16 +158,12 @@ ROCKETNET_STATIC_ASSERT( (long long) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_F
 // fixed in every build because it already holds two packets per client up to
 // the 32768 build ceiling.
 //
-// The sizing count is max_clients raised to ROCKETNET_SERVER_MIN_SIZED_CLIENTS,
-// 512, the smallest ROCKETNET_MAX_CLIENTS a build allows: every relation the
-// static asserts below and beside each transport prove at that count holds at
-// every count above it, since each side grows with the count at least as fast
-// as the side it is held against.
-
-#define ROCKETNET_SERVER_MIN_SIZED_CLIENTS                                 512
-
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_SIZED_CLIENTS <= ROCKETNET_MAX_CLIENTS,
-                         "every build holds the smallest sizing count" );
+// The sizing count is the configured max_clients itself, any count from 1 to
+// ROCKETNET_MAX_CLIENTS: there is no player-count floor. A structure whose
+// own arithmetic needs a minimum keeps it as a count of its own slots, stated
+// beside it with its reason (the portable send batch below, the receive budget
+// held against it, the IOCP process view, the XDP reply MAC table), and each
+// relation between them is proved for every count from 1 up, not at one count.
 
 static inline int rocketnet_server_sized_clients( int max_clients )
 {
@@ -175,7 +171,7 @@ static inline int rocketnet_server_sized_clients( int max_clients )
     {
         return ROCKETNET_MAX_CLIENTS;
     }
-    return max_clients > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? max_clients : ROCKETNET_SERVER_MIN_SIZED_CLIENTS;
+    return max_clients > 1 ? max_clients : 1;
 }
 
 // the smallest power of two at least n, for 1 <= n <= 1 << 30
@@ -189,22 +185,53 @@ static inline int rocketnet_power_of_two_at_least( int n )
     return p;
 }
 
-// One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT packets per
-// sized client (16 * 1000 = 16000 at the default), bounding its work. Every
-// receive batch in one update (the socket process batch, the per-update
-// receive budget and the payload batch) shares this one bound and one storage
-// cap.
-static inline int rocketnet_server_receive_packets_per_update( int max_clients )
+// Portable and msgx buffered batch sizes (the payload ring and the control
+// batch): one packet per configured client, and never fewer than
+// ROCKETNET_SERVER_MIN_SEND_PACKETS slots. That minimum is one connection's
+// default update (packets_per_update, 256, sdk/rocketnet_internal.h): a
+// single client can send its default update in one server update. It was the
+// ring's fixed size before the ring scaled with clients. The transport's send
+// capacity is max_clients with the same 256-slot minimum, so it never passes
+// the ring.
+#define ROCKETNET_SERVER_MIN_SEND_PACKETS                                  256
+#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS                               256
+
+static inline int rocketnet_server_send_batch_packets( int max_clients )
 {
-    return ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * rocketnet_server_sized_clients( max_clients );
+    const int sized = rocketnet_server_sized_clients( max_clients );
+    return sized > ROCKETNET_SERVER_MIN_SEND_PACKETS ? sized : ROCKETNET_SERVER_MIN_SEND_PACKETS;
 }
 
-#define ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_SERVER_MIN_SIZED_CLIENTS )
+// One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT packets per
+// configured client (16 * 1000 = 16000 at the default), bounding its work,
+// and never fewer than ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE: twice
+// the send batch's minimum, so the receive budget holds twice the portable
+// send batch at every count (the twice-send rule). Every receive batch in one
+// update (the socket process batch, the per-update receive budget and the
+// payload batch) shares this one bound and one storage cap.
+#define ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE   ( 2 * ROCKETNET_SERVER_MIN_SEND_PACKETS )
+
+static inline int rocketnet_server_receive_packets_per_update( int max_clients )
+{
+    const int budget = ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * rocketnet_server_sized_clients( max_clients );
+    return budget > ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE ? budget : ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE;
+}
+
+// receive >= 2 x send at every count n from 1: where the send batch is n
+// (n >= 256) the budget is at least 16n >= 2n; where it is its 256 minimum the
+// budget is at least its own minimum, 512.
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT >= 2,
+                         "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MIN_SEND_PACKETS,
+                         "receive budget twice send: the receive budget's minimum holds twice the send batch's minimum" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE <= ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * 512 &&
+                             ROCKETNET_SERVER_MIN_SEND_PACKETS <= 512,
+                         "neither minimum reaches a server of 512 or more clients: their sizes are the per-client ones" );
 
 #if ROCKETNET_XDP
 // The XDP process batch: the shared per-update budget, raised to XDP's own
-// minimum so it holds twice one queue's send queue at the smallest sizing
-// (512 clients, where the shared budget is 8192). At 1000 clients it is
+// minimum so it holds twice one queue's send queue at every count (the shared
+// budget is below it up to 2048 clients). At 1000 clients it is
 // 32768 against the shared 16000. Only the XDP socket's process view uses it;
 // the payload batch and every other transport's batches stay on the shared
 // budget, so a drain past the payload batch counts as a full payload batch.
@@ -217,23 +244,6 @@ static inline int rocketnet_server_xdp_receive_packets_per_update( int max_clien
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
                          "receive budget twice send: the XDP process batch holds at least twice the XDP send queue" );
 #endif // #if ROCKETNET_XDP
-
-// Portable and msgx buffered batch sizes: one packet per sized client. The
-// transport's send capacity uses max_clients with the historical 256-slot
-// floor, bounded by this batch. The per-update receive budget holds at least
-// twice the send batch (16 per client against 1).
-#define ROCKETNET_SERVER_MIN_SEND_PACKETS                                  256
-#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS                               256
-
-static inline int rocketnet_server_send_batch_packets( int max_clients )
-{
-    return rocketnet_server_sized_clients( max_clients );
-}
-
-ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT >= 2,
-                         "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_SEND_PACKETS <= ROCKETNET_SERVER_MIN_SIZED_CLIENTS,
-                         "the send capacity floor fits the smallest send batch" );
 
 // The disconnect packets one server update may seal (proofs/tla/ServerSession.tla
 // SealWaiting, sdk/rocketnet_server_transport.cpp): a disconnect

@@ -549,7 +549,8 @@ static void test_wide_fill_check_steps()
     uint64_t overlap = 0;
     uint64_t two = 0;
     static rocketnet_fill_phase_t phase;
-    rocketnet_fill_phase_init( &phase, 4, &overlap, &two );
+    static rocketnet_fill_phase_client_t phase_clients[4];
+    rocketnet_fill_phase_init( &phase, 4, phase_clients, &overlap, &two );
 
     // a fill phase with two threads on two clients: nothing flagged. Client
     // 0's filler is this thread, which stays alive: the check names a thread
@@ -679,7 +680,8 @@ static void test_wide_fill_check_depth_bound()
     uint64_t overlap = 0;
     uint64_t two = 0;
     static rocketnet_fill_phase_t phase;
-    rocketnet_fill_phase_init( &phase, 1, &overlap, &two );
+    static rocketnet_fill_phase_client_t phase_clients[1];
+    rocketnet_fill_phase_init( &phase, 1, phase_clients, &overlap, &two );
     const uint64_t misuse = rocketnet_api_misuse_count();
     const uint64_t epoch = phase.epoch.load();
 
@@ -873,7 +875,8 @@ static void test_wide_fill_check_nested_never_torn()
     uint64_t overlap = 0;
     uint64_t two = 0;
     static rocketnet_fill_phase_t phase;
-    rocketnet_fill_phase_init( &phase, 1, &overlap, &two );
+    static rocketnet_fill_phase_client_t phase_clients[1];
+    rocketnet_fill_phase_init( &phase, 1, phase_clients, &overlap, &two );
     const uint64_t misuse = rocketnet_api_misuse_count();
 
     static wide_fill_park_t park;

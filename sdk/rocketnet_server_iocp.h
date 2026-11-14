@@ -183,12 +183,20 @@ static inline int rocketnet_server_iocp_receive_queue_size( int max_clients, int
     return workers > 1 ? budget / workers : budget;
 }
 
-// The receive budget twice send, at the smallest sizing count: the process
-// batch holds sixteen packets per sized client and a lane stages at most
-// ROCKETNET_IOCP_LANE_PACKETS, so the batch holds at least two lanes' frames
-// at every count.
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_IOCP_LANE_PACKETS,
-                         "receive budget twice send: server process batch holds at least twice an IOCP lane's staging" );
+// The IOCP process batch: the shared per-update receive budget, raised to
+// twice one lane's staging so the receive budget holds twice send at every
+// count (the twice-send rule). A lane never stages fewer than
+// pow2( clients + ROCKETNET_IOCP_LANE_HEADROOM ) frames, 2048 at one client,
+// which the shared budget passes only from 512 clients up; from there this is
+// the shared budget (16 per client against at most two lanes of 4096, or of
+// pow2( clients + 1024 ) <= 2 x ( clients + 1024 )). Only the IOCP socket's
+// process view uses it, as the XDP view takes its own minimum.
+static inline int rocketnet_server_iocp_receive_packets_per_update( int max_clients )
+{
+    const int shared = rocketnet_server_receive_packets_per_update( max_clients );
+    const int twice_lane = 2 * rocketnet_server_iocp_send_queue_size( max_clients );
+    return shared > twice_lane ? shared : twice_lane;
+}
 
 // UDP segmentation offload (USO) on send and UDP receive offload (URO) on
 // receive, Windows 11 and Server 2022 or later. Each is a capability create

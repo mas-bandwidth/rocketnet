@@ -138,7 +138,7 @@ static void test_iocp_send_lane_sizing_holds_the_reserve()
     rocketnet_unit_check( rocketnet_server_iocp_lanes_for( 10000 ) == 4 );
     rocketnet_unit_check( rocketnet_server_iocp_lane_size_for( 10000 ) == 16384 );
 
-    for ( int sized = ROCKETNET_SERVER_MIN_SIZED_CLIENTS; sized <= ROCKETNET_IOCP_MAX_OPERATIONS - ROCKETNET_IOCP_LANE_HEADROOM; sized += 37 )
+    for ( int sized = 1; sized <= ROCKETNET_IOCP_MAX_OPERATIONS - ROCKETNET_IOCP_LANE_HEADROOM; sized += 37 )
     {
         const int lanes = rocketnet_server_iocp_lanes_for( sized );
         const int size = rocketnet_server_iocp_lane_size_for( sized );

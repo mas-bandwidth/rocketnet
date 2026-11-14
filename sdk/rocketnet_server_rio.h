@@ -117,12 +117,12 @@ static inline int rocketnet_server_rio_receives( int max_clients )
     return 2 * rocketnet_server_send_staging_packets( max_clients );
 }
 
-// The receive budget twice the send staging, at the smallest sizing count: the
-// staging is at most four packets per sized client and the process batch holds
-// sixteen per sized client, so the relation holds at every count. It does not
-// bound the RIO send phase's floor (ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE): the
-// posted receives are twice the staging, not twice the phase.
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ),
+// The receive budget twice the send staging, at every count n from one
+// client: the staging pow2( 2n ) is under four packets per client and the
+// process batch holds at least sixteen per client. It does not bound the RIO
+// send phase's floor (ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE): the posted receives
+// are twice the staging, not twice the phase.
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT >= 2 * 4,
                          "receive budget twice the send staging: server process batch holds at least twice the staging (not the RIO phase floor)" );
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
 
