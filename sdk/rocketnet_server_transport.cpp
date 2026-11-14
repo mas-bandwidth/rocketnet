@@ -5148,11 +5148,16 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
 // is this one and the rest, clipped at send_capacity, the line's chunk. A
 // line another thread on it refilled first keeps that one: this whole chunk
 // is marked empty here and the slot is taken from the line's chunk instead,
-// so the slots a thread takes only rise, and the flush, which walks the ring
-// in slot order, sends one client's packets in the order they were started
-// (a slot of this chunk used beside the other thread's lower chunk would
-// leave before the packets this thread starts next). Below the guard one
-// fetch-add of one slot. A slot at or past send_capacity is refused, though
+// so a lost install never makes a thread's slots fall, and the flush, which
+// walks the ring in slot order, sends one client's packets in the order they
+// were started (a slot of this chunk used beside the other thread's lower
+// chunk would leave before the packets this thread starts next). Below the
+// guard one fetch-add of one slot. The one exception: a thread whose take
+// crosses the guard while another thread on its line has claimed a chunk and
+// not yet installed it takes single slots above that chunk, and its next take
+// after the install comes from the chunk, below them; one client's packets can
+// then leave reordered within one flush. Nothing is lost or duplicated
+// (docs/roadmap.sexp ring-take-order-across-guard). A slot at or past send_capacity is refused, though
 // the counter has moved past it. Main marks each line's unused slots empty
 // before the flush reads the ring
 // (rocketnet_server_payload_ring_return_chunks), so every slot below the
