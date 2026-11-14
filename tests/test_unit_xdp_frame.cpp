@@ -1085,9 +1085,20 @@ static void test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks()
     rocketnet_unit_check( !rocketnet_server_transport_io_open( xdp->backend->server, NULL, &config, &bind, &io ) );
     rocketnet_unit_check( io.instance == NULL );
     rocketnet_unit_check( rocketnet_transport_order_parse( "auto", available, count, &transport_order ) );
-    rocketnet_unit_check( transport_order.num_candidates >= 2 );
+    // auto keeps the Linux order after xdp: io_uring where the build has
+    // liburing (the test target defines ROCKETNET_IO_URING then), gso, then
+    // portable last.
     rocketnet_unit_check( transport_order.candidates[0] == ROCKETNET_TRANSPORT_XDP );
+#if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
+    rocketnet_unit_check( transport_order.num_candidates == 4 );
+    rocketnet_unit_check( transport_order.candidates[1] == ROCKETNET_TRANSPORT_IO_URING );
+    rocketnet_unit_check( transport_order.candidates[2] == ROCKETNET_TRANSPORT_GSO );
+    rocketnet_unit_check( transport_order.candidates[3] == ROCKETNET_TRANSPORT_PORTABLE );
+#else
+    rocketnet_unit_check( transport_order.num_candidates == 3 );
     rocketnet_unit_check( transport_order.candidates[1] == ROCKETNET_TRANSPORT_GSO );
+    rocketnet_unit_check( transport_order.candidates[2] == ROCKETNET_TRANSPORT_PORTABLE );
+#endif // #if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
 }
 
 REGISTER_UNIT_TEST( test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks );
