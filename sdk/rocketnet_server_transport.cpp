@@ -1615,13 +1615,10 @@ int rocketnet_server_transport_send_capacity_to( const rocketnet_server_transpor
         return room < left ? room : left;
     }
     const struct rocketnet_client_slots_t * slots = server_transport->protocol.client_slots;
-    if ( !slots )
-    {
-        // a transport not yet given its client slots (a bare one a unit test
-        // builds) has no client to find a queue for: one capacity
-        return rocketnet_server_transport_send_capacity_available( server_transport );
-    }
-    const int mapping_index = client_index < rocketnet_client_slots_max_clients( slots ) && rocketnet_client_slots_connected( slots, client_index )
+    // a transport not yet given its client slots (a bare one a unit test
+    // builds) has no client to find a queue for: no client is placed, so 0
+    const int max_clients = slots ? rocketnet_client_slots_max_clients( slots ) : 0;
+    const int mapping_index = client_index < max_clients && rocketnet_client_slots_connected( slots, client_index )
                                   ? rocketnet_client_slots_mapping_index( slots, client_index )
                                   : -1;
     if ( mapping_index < 0 )
