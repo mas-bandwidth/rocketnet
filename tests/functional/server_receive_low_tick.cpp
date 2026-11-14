@@ -19,12 +19,14 @@
     at 20 or 30 Hz). It requires all connections and protocol-valid payloads
     to survive the measured window, while reporting kernel drops and update
     cost without turning either into a portable-server performance promise.
-    Refusals are counted from the start of traffic: in the connect phase the
-    cookie reply limit may withhold a reply (t12 rule 7: a second cookieless
-    request from one source in one update, or one whose keyed hash shares a
-    bit; the client sends again), which is not a refusal of traffic. Two
-    server updates without sends follow the traffic, so the payloads of the
-    last period are read before the counts are taken.
+    The connect phase is held to the clean-run rule (rocketnet_counters_refusals,
+    tests/counters_expect.h): every refusal counter of the server and every
+    client reads 0 when the traffic starts, except socket send drops and
+    COOKIE_REPLY_WITHHELD while its cookie reasons exceed it (the cookie reply
+    limit, t12 rule 7, withheld copies of a request it answered; the client
+    sends again). The traffic's refusals are counted from the start of
+    traffic. Two server updates without sends follow the traffic, so the
+    payloads of the last period are read before the counts are taken.
     It is absent from the default suite unless ROCKETNET_LOW_TICK_MEASURE=1.
     Linux only: the socket drop count is read from procfs.
 */
@@ -672,9 +674,18 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     struct rocketnet_server_transport_stats_t stats_before;
     rocketnet_server_transport_stats( server, &stats_before );
 
-    // the connect phase's refusals, kept apart from the traffic's
+    // the connect phase's refusals, kept apart from the traffic's and held to
+    // the clean-run rule: none but send drops and withheld copies of an
+    // answered cookie request
 
     const server_receive_low_tick_refusal_sum_t refusals_at_traffic_start = server_receive_low_tick_refusal_sum( server, clients );
+
+    static const int connect_allowed_refusals[] = { ROCKETNET_COUNTER_SEND_FAILED, -1 };
+    int connect_refusal_failures = rocketnet_counters_refusals( rocketnet_server_transport_counters( server ), connect_allowed_refusals, NULL, 0 );
+    for ( size_t i = 0; i < clients.size(); ++i )
+    {
+        connect_refusal_failures += rocketnet_counters_refusals( rocketnet_client_transport_counters( clients[i] ), connect_allowed_refusals, NULL, 0 );
+    }
 
     // traffic: every slice updates 100 clients, each sending one update's
     // worth of packets; every 10 slices the server updates once. After the
@@ -881,7 +892,8 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
                                   payloads_received > 0 && payload_bytes_received > 0 && wire_packets > 0 && wire_bytes > 0 &&
                                   payloads_checked == payloads_received && invalid_payload_lengths == 0 &&
                                   invalid_payload_clients == 0 && invalid_payload_content == 0 &&
-                                  correctness_refusals == 0 && queue_overflow_counters == 0 && disconnect_counters == 0;
+                                  connect_refusal_failures == 0 && correctness_refusals == 0 && queue_overflow_counters == 0 &&
+                                  disconnect_counters == 0;
 
     // information, never a gate: the portable server has no performance
     // guarantee and the host's load and rmem_max decide the drop count
@@ -892,7 +904,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
             "invalid_payload_lengths=%llu invalid_payload_clients=%llu invalid_payload_content=%llu "
             "per_client_wire_kbps=%.1f receive_queue_peak_bytes=%llu kernel_receive_drops=%llu "
             "server_update_seconds=%.3f clients_connected=%d server_connected=%d connection_state_failures=%llu "
-            "disconnect_counters=%llu connect_refusal_counters=%llu refusal_counters=%llu correctness_refusals=%llu "
+            "disconnect_counters=%llu connect_refusal_counters=%llu connect_refusal_failures=%d refusal_counters=%llu correctness_refusals=%llu "
             "queue_overflow_counters=%llu socket_send_drops=%llu correctness=%s\n",
             update_hz, max_clients, server_receive_low_tick_traffic_seconds, (unsigned long long) server_updates, drain_updates,
             (unsigned long long) wire_packets, (unsigned long long) wire_bytes,
@@ -907,7 +919,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
             (unsigned long long) receive_queue_peak_bytes, (unsigned long long) kernel_drops,
             server_update_seconds, clients_connected, server_connected,
             (unsigned long long) connection_state_failures, (unsigned long long) disconnect_counters,
-            (unsigned long long) connect_refusal_counters,
+            (unsigned long long) connect_refusal_counters, connect_refusal_failures,
             (unsigned long long) refusal_counters, (unsigned long long) correctness_refusals,
             (unsigned long long) queue_overflow_counters, (unsigned long long) socket_send_drops,
             correctness_pass ? "PASS" : "FAIL" );
