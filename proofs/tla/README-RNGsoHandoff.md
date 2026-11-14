@@ -47,11 +47,13 @@ functions.
   staged order; with `TxCap = 2` that is the gather's order for every
   destination assignment, since two slots never reorder.
 - `TailDroppedOnlyWhenStalled`: after shutdown a full socket's tail is
-  dropped only by an attempt that sent nothing, after `RetryBound` such
-  attempts in a row. An attempt that sent part of the tail starts the count
-  again (`rocketnet_server_gso_send_step` zeroes `retries_after_quit` when
+  dropped only by the `RetryBound + 1`-th attempt in a row that sent
+  nothing. An attempt that sent part of the tail starts the count again
+  (`rocketnet_server_gso_send_step` zeroes `retries_after_quit` when
   `held_slot` passed where the attempt began), so a socket that keeps taking
-  some of it never loses the rest.
+  some of it never loses the rest. The ghost `stalls` counts those attempts
+  apart from the model's own count, so both ways of losing the reset (count
+  the progress, or leave the count where it was) fail the invariant.
 - `MainNeverWaits`: main only try-acquires the queue's send lane mutex.
 - `RxAccounted`: every datagram the receive worker staged was consumed by
   main or is still banked (the tail's unread part, main's buffer past its
@@ -105,23 +107,24 @@ count at the end of each pass and main reads the worker's buffer in place,
 and a pass that stages nothing still commits a buffer main has started on
 and moves on, `RxMove`), which took the main case from 4762152 distinct
 states to 5291280; the shutdown count's progress reset and its ghost
-`movedDrop` took it to 5302440.
+`stalls` and `shortDrop` took it to 5302440.
 
 | Config | Expected | Distinct states | Seconds | What it shows |
 |---|---|---|---|---|
-| `MCRNGsoHandoff.cfg` | pass | 5302440 | 69.4 | Every invariant, five datagrams, four staged packets. |
+| `MCRNGsoHandoff.cfg` | pass | 5302440 | 66.6 | Every invariant, five datagrams, four staged packets. |
 | `MCRNGsoHandoffLive.cfg` | pass | 9944 | 7.4 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
-| `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 9 | 0.8 | `PublishWhileHeld = TRUE`: the worker writes into the buffer main reads after leaving it. |
+| `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 9 | 0.7 | `PublishWhileHeld = TRUE`: the worker writes into the buffer main reads after leaving it. |
 | `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 4565 | 1.9 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
 | `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 71737 | 12.2 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
 | `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 182 | 0.9 | `NoBackoff <- TRUE`. |
-| `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 9152 | 1.3 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
-| `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 10080 | 2.8 | `BoundOnQuitOnly <- TRUE`. |
+| `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 9156 | 1.2 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
+| `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 23712 | 5.0 | `BoundOnQuitOnly <- TRUE`. |
 | `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 0.7 | `MainBlocks = TRUE`: main waits on the lane mutex. |
-| `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 508 | 0.9 | Reachability: a counted hard-error drop before shutdown. |
+| `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 508 | 0.8 | Reachability: a counted hard-error drop before shutdown. |
 | `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 508 | 0.8 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
-| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 5994 | 1.5 | `CountTail <- FALSE`: the stop count forgets the unread tail. |
-| `MCRNGsoHandoffBrokenLostProgressReset.cfg` | `TailDroppedOnlyWhenStalled` | 1353 | 1.0 | `LostProgressReset <- TRUE`: an attempt that sent part of the tail still counts toward the bound. |
+| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 5994 | 1.3 | `CountTail <- FALSE`: the stop count forgets the unread tail. |
+| `MCRNGsoHandoffBrokenLostProgressReset.cfg` | `TailDroppedOnlyWhenStalled` | 1363 | 0.9 | `LostProgressReset <- TRUE`: an attempt that sent part of the tail still counts toward the bound. |
+| `MCRNGsoHandoffBrokenProgressKeepsCount.cfg` | `TailDroppedOnlyWhenStalled` | 1734 | 0.9 | `ProgressKeepsCount <- TRUE`: an attempt that sent part of the tail leaves the count where it was. |
 
 ## Counterexamples checked against the code (2026-11-11)
 
@@ -152,6 +155,13 @@ states to 5291280; the shutdown count's progress reset and its ghost
   zeroes `retries_after_quit` when `held_slot` passed where the attempt
   began, so that attempt would start the count again; skipping that reset
   is the reversal.
+- **ProgressKeepsCount (2026-11-13).** The same two packets and full socket
+  after shutdown: two attempts send nothing (count 2), a third sends packet
+  1 and, with the reversal, leaves the count at 2, and a fourth sends
+  nothing (count 3, past `RetryBound`), dropping packet 2 after one stalled
+  attempt in a row. In the code that is deleting
+  `lane->retries_after_quit = 0;` in the progress branch of
+  `rocketnet_server_gso_send_step` while keeping its `return false`.
 - **ReachErrorDropRunning.** One packet is staged, main publishes it, the
   worker takes the bank and sends it; the kernel refuses the one message
   with a hard error, so `txErrDropped = <<1>>` with `shut.on` FALSE. In the

@@ -93,11 +93,16 @@ below is for R (or, where marked, for C or the docs package) to apply.
    for the transport". For gso it is the tier (every lane); for io_uring it
    is the queue that reached the threshold. Suggested: "turns off (for the
    gso tier, or for the io_uring queue that counted them) only when ...".
-9. Not a comment fix: the `destinations` field comment and the comment above
+9. None owed: the `destinations` field comment and the comment above
    `rocketnet_segment_refused_add` say only a destination the table did not
-   hold counts; the code counts every call. That is handed up as a code
-   defect (codewrong/gso-segmentation-MM144.md); the comments state the
-   intended contract and should stay until the code is decided.
+   hold counts, which the code does since 7c8280b2 (merged here).
+10. `sdk/rocketnet_server_gso_linux.cpp`, the comment above
+   `rocketnet_server_gso_send_step`: "Once shutdown has begun each further
+   attempt counts" contradicts the reset in the same function (an attempt
+   that moved `held_slot` zeroes `retries_after_quit`). Suggested: "Once
+   shutdown has begun each further attempt that sends nothing counts (one
+   that sends some of the bank starts the count again; proofs/tla/RNGsoHandoff.tla
+   TxSendFull, TailDroppedOnlyWhenStalled)".
 
 ## For the docs package (docs/TRANSPORT-INTERNALS.md)
 
@@ -106,19 +111,21 @@ below is for R (or, where marked, for C or the docs package) to apply.
   says each queue keeps its own table and count and turns off for its own
   destinations, and documents the relaxed `segment_accepted` read. No change
   owed.
-- The same paragraph says the queue turns off when the threshold "of its
-  destinations refused" and that a remembered destination's "later runs
-  leave plain without a refusal". Both hold for runs submitted after the
-  first refusal is reaped; runs already in the kernel come back refused too
-  and each counts (MM144, handed up as a code defect). The text states the
-  intended contract; leave it until the code is decided.
+- The same paragraph says a remembered destination's "later runs leave
+  plain without a refusal". That holds for runs submitted after the first
+  refusal is reaped; runs already in the kernel come back refused too (and,
+  since 7c8280b2, do not count again). Suggested addition: "Runs already
+  in the kernel when the first refusal is reaped come back refused and are
+  resent plain the same way; the destination counts once."
 
 ## Rows closed on this branch against `aff200074`
 
 - MM135: RNGsoHandoff TxSendFull now zeroes the shutdown count on an attempt
   that moved the bank on, as `rocketnet_server_gso_send_step` does; new
-  invariant TailDroppedOnlyWhenStalled, reversed witness
-  MCRNGsoHandoffBrokenLostProgressReset.cfg.
+  invariant TailDroppedOnlyWhenStalled (a ghost count of attempts in a row
+  that sent nothing), reversed witnesses
+  MCRNGsoHandoffBrokenLostProgressReset.cfg and
+  MCRNGsoHandoffBrokenProgressKeepsCount.cfg.
 - MM136: the roadmap entry above.
 - MM137: TxInOrder's claim corrected (bank order, and the gather's order
   inside a bank, which TxCap = 2 makes exact).
@@ -126,10 +133,12 @@ below is for R (or, where marked, for C or the docs package) to apply.
   processes; the README's "Left out" points to RNSegmentRefusal.
 - MM143: FallbackScope ("queue" io_uring, "transport" gso); the per-queue
   parts and the transport's accepted flag were already in hot.
-- MM144: InFlight and stale gathered banks modelled; RefusedOnce became
-  RefusalsBounded; the count's mismatch with its comment is handed up
-  (codewrong/gso-segmentation-MM144.md), reach witness
-  MCRNSegmentRefusalReachOneDestFallback.cfg.
+- MM144: InFlight (io_uring runs in the kernel, a gso batch) and stale
+  gathered banks modelled; RefusedOnce became RefusalsBounded; the count
+  is the fixed rule of 7c8280b2 (a destination counts once while the table
+  holds it): MCRNSegmentRefusalReachOneDestFallback.cfg passes
+  NoFallbackOnFewerDests, MCRNSegmentRefusalBrokenEveryAnswer.cfg (the old
+  count) fails it.
 - MM145: PlainFails and plainDropped; NothingDropped restated as the
   refusal's own drop; reach witness MCRNSegmentRefusalReachPlainDrop.cfg and
   reversed witness MCRNSegmentRefusalBrokenTransportDrop.cfg.

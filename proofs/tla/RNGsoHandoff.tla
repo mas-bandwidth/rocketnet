@@ -835,7 +835,8 @@ NotReachedErrorDropRunning == ~( txErrDropped # << >> /\ ~shut.on )
 RefusalsBounded == shut.refusals <= RetryBound + 1
 
 (* a full socket's tail is dropped only by an attempt that sent nothing,   *)
-(* after RetryBound such attempts in a row: an attempt that sent part of   *)
+(* the RetryBound + 1-th such attempt in a row (the ghost stalls counts    *)
+(* them as the code does): an attempt that sent part of                   *)
 (* the tail starts the count again, so a socket that keeps taking some of  *)
 (* it never loses the rest                                                 *)
 TailDroppedOnlyWhenStalled == ~shut.shortDrop
