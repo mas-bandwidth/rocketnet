@@ -1,6 +1,6 @@
 # AWS performance record: io_uring and GSO
 
-Current state, measured 2026-11-13 between 22:30Z and 00:00Z on rocketnet v1.1.54. The tree is main e0f1a0fae with the load harness tools/v1.1.x/spec-verify merged in (tree 74e7be243, identical on both machines). These are reported measurements, transcribed for [Performance](../PERFORMANCE.md). Raw role logs are not published in this repository.
+Current result record supplied 2026-11-13, measured on RocketNet v1.1.54. The tree is main e0f1a0fae with the load harness tools/v1.1.x/spec-verify merged in (tree 74e7be243, identical on both machines). These are reported measurements, transcribed for [Performance](../PERFORMANCE.md). Raw role logs are not published in this repository.
 
 
 ## Machines
@@ -20,7 +20,7 @@ Current state, measured 2026-11-13 between 22:30Z and 00:00Z on rocketnet v1.1.5
 
 ## Settings
 
-- **Socket limits (server only):** `net.core.rmem_max=25000000` and `net.core.wmem_max=1000000`, as in docs/PERFORMANCE.md. The image defaults are 4194304/4194304, and the clients keep them.
+- **Socket limits (server only):** `net.core.rmem_max=25000000` and `net.core.wmem_max=1000000`. The image defaults are 4194304/4194304, and the clients keep them.
   - Both transports log what they were granted: send 1000000, receive 25000000.
 - **Left as the image has them:**
   - qdisc: mq with fq_codel on both machines.
@@ -100,7 +100,7 @@ Columns:
 - **Gb/s:** the server's interface tx. The clients' interface rx was 9.10–9.11 Gb/s at peak and 4.85–4.86 Gb/s at average in every passing row.
 - **Delay:** the receive delay of the clients' inputs at the server, from the input stamp, in ms at 60 Hz (one update is 16.7 ms).
 - **late_1ms:** the share of inputs later than their update by more than 1 ms.
-- **Main p99 and max:** the main thread's rocketnet work per frame.
+- **Main p99 and max:** the main thread's RocketNet work per frame, summarized from the per-second lines in the stated window. Do not read this table's p99 as a percentile recomputed over all frames; retain `harden_frame_run` for the whole-run result.
 
 ## io_uring, 2 workers (default)
 
@@ -120,7 +120,7 @@ All 4 workloads pass: 18 of 18 runs.
 
 ### Peak with half game load: 9 runs
 
-The first three runs and six more, run later the same night.
+Nine repeated samples of the same workload.
 
 | Run | Verdict | pkt/s | fps | Gb/s | Refused | Overruns | Lost s2c / c2s | Delay mean (ms) | Delay p99 (ms) | late_1ms | Main p99 (ms) | Main max (ms) | Worker CPU |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
