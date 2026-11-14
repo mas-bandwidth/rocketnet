@@ -53,6 +53,7 @@ enum rocketnet_test_reserved_port_slot_t
     ROCKETNET_TEST_PORT_GSO_HELD,
     ROCKETNET_TEST_PORT_URING_EXPLICIT,
     ROCKETNET_TEST_PORT_URING_HELD,
+    ROCKETNET_TEST_PORT_CLOSED_SEND,    // a port no socket binds: a connected send to it draws ICMP port unreachable
     ROCKETNET_TEST_PORT_SLOTS
 };
 
