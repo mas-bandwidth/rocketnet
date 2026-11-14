@@ -135,6 +135,8 @@ skip test_server_stop_disconnects_every_client_io_uring rocketnet_server_uring_a
 skip test_server_transport_io_fall rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_session_reconnect_isolation_io_uring rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_session_reconnect_isolation_xdp rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
+skip test_small_server_sessions_io_uring rocketnet_server_uring_available linux-s390x,linux-s390x-portable
+skip test_small_server_sessions_xdp rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_transport_all_skipped_uses_auto rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_transport_env_pin_is_honoured rocketnet_test_a_transport_pin_is_set_and_not_xdp linux-dev,linux-dev-sanitized,linux-prod,linux-s390x,macos-dev,macos-prod,windows-dev,windows-dev-sanitized,windows-prod
 skip test_unit_case_memory suite_max_case_rss_mb linux-dev-sanitized,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,windows-dev-sanitized,windows-dev-sanitized-iocp,windows-dev-sanitized-rio
