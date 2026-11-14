@@ -117,7 +117,7 @@ bool rocketnet_server_replay_marks_slot_for_test( const struct rocketnet_server_
 // The slot's record of the address it was seen at, cleared; the skip mark
 // (skip_marked, skip_address) is the other address the slot answers for and
 // is cleared only by its own forget or a supersede of that address
-// (proofs/tla/RNServerReplaySlots.tla ClearRecord)
+// (proofs/tla/RNServerReplaySlots.tla ClearRec)
 static void rocketnet_server_replay_marks_clear_record( struct rocketnet_server_replay_slot_mark_t * slot )
 {
     slot->has_mark = 0;
