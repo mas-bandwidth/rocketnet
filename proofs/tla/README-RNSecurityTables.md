@@ -354,7 +354,7 @@ The small instance:
 
 The code's run (every switch in the code's position, live-entry eviction
 included) generates 13,747,870 states and finds 2,868,212 distinct states
-in 71.8 s with no error: the invariants hold and
+in 89.6 s on aws-mut-3 (71.8 s on a quieter bench) with no error: the invariants hold and
 `DeniedTokenStaysUsable`, `RotationWindow`,
 `PreviousBoundedToOnePeriod` and `InFlightCookieSurvivesRotation` hold
 as properties. Before v1.1.2 the passing run held `EvictLiveHistory` and the

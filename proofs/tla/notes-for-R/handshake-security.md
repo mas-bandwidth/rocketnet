@@ -66,7 +66,7 @@ check)", and the count in the title raised to match.
 
 ## Cross-family rows
 
-- MM102, `proofs/tla/COVERAGE.tsv:82` (encryption-map,
+- MM102, `proofs/tla/COVERAGE.tsv`, the encryption-map row (line 82;
   `sdk/rocketnet_encryption_map.cpp`): the note says ServerConnection models
   the hashed table's layout (flat index cells, open addressing, linear
   probing, backward-shift deletion). ServerConnection's `smap` is a plain
@@ -83,46 +83,56 @@ check)", and the count in the title raised to match.
 
 Line numbers at this branch's head.
 
-- `sdk/rocketnet_server_protocol.cpp:868-870`: "A dropped client's next
+- `sdk/rocketnet_server_protocol.cpp`
+  (rocketnet_server_protocol_process_connection_request, the work-budget
+  comment, lines 868-870): "A dropped client's next
   request is processed in a later update (proofs/tla/RNSecurityTables.tla
   HonestRequest; ...". New text: "A dropped client's next request may be
   processed in a later update, if the flood leaves room in one: nothing
   reserves it, so that is an assumption about the environment
   (proofs/tla/RNSecurityTables.tla HonestRequest, FloodSpec's strong
   fairness; proofs/tla/ReceiveOrder.tla WorkBudgetOnlyForVerify)." (MM106)
-- `sdk/rocketnet_client_protocol.cpp:321-322`: "Tick (TickRule with Erase
+- `sdk/rocketnet_client_protocol.cpp` (the comment above
+  rocketnet_client_check_deadlines, lines 321-322): "Tick (TickRule with Erase
   TRUE): the deadline or the timeout goes through rocketnet_client_set_state,
   which zeroes the keys." New text: "... which runs
   rocketnet_client_connection_reset: the keys, the cookies, the client index
   and the replay window are zeroed." (MM097)
-- `sdk/rocketnet_client_protocol.cpp:798`: "proofs/tla/ClientConnection.tla
+- `sdk/rocketnet_client_protocol.cpp` (above
+  rocketnet_client_process_denied, line 798): "proofs/tla/ClientConnection.tla
   ClientRecvDenied". New text: "proofs/tla/ClientConnection.tla
   ClientRecvDenied: CONNECTION_DENIED through rocketnet_client_set_state,
   whose rocketnet_client_connection_reset zeroes the keys, the cookies, the
   client index and the replay window." (MM097)
-- `sdk/rocketnet_client_protocol.cpp:733` (the small-order check in
+- `sdk/rocketnet_client_protocol.cpp` (line 733, the small-order check in
   rocketnet_client_process_challenge): add "proofs/tla/ClientConnection.tla
   ClientRecvChallenge (SmallOrderServer): the challenge is ignored and the
   attempt is unchanged." (MM096)
-- `sdk/rocketnet_client_protocol.cpp:944`: after "ClientRecvSession
+- `sdk/rocketnet_client_protocol.cpp` (above
+  rocketnet_client_open_session, line 944): after "ClientRecvSession
   (ClientRecvSessionRule with Erase TRUE: ...)" add "; a packet refused
   after its replay mark (bad ack block, wrong size, keep-alive index past
   the slot count) is ClientRecvSessionRule's AuthenticRefusals branch: the
   id is marked and nothing else changes". (MM096)
-- `sdk/rocketnet_client_protocol.cpp:1270` (rocketnet_client_process_ack):
+- `sdk/rocketnet_client_protocol.cpp` (rocketnet_client_process_ack, line 1270):
   add "proofs/tla/ClientConnection.tla ClientRecvSession (the \"ack\" type,
   ServerAcks): the standalone ack refreshes the receive clock and moves no
   state." (MM096)
-- `sdk/rocketnet_server_protocol.cpp:2168`, before
+- `sdk/rocketnet_server_protocol.cpp` (line 2168), before
   rocketnet_server_protocol_write_ack_if_due: add
   "proofs/tla/ClientConnection.tla ServerAck" to the existing
   RNEndpoint.tla WriteAck line. (MM096)
-- `sdk/rocketnet_server_protocol.cpp:1237-1239` (the -1 from
-  rocketnet_client_slots_assign) and `:1972-1976` (the publish): add
+- `sdk/rocketnet_server_protocol.cpp`: the comment on the -1 from
+  rocketnet_client_slots_assign in
+  rocketnet_server_process_connection_response (lines 1237-1239) and the
+  one before rocketnet_client_slots_publish at the end of
+  rocketnet_server_protocol_update (lines 1972-1976): add
   "proofs/tla/ServerConnection.tla HeldSlotNotReused" to each. (MM100)
-- `sdk/rocketnet_server_protocol.h:170-171`: "(TIMED_OUT,
+- `sdk/rocketnet_server_protocol.h` (the disconnect reason comment, lines
+  170-171): "(TIMED_OUT,
   CLIENT_DISCONNECTED, SERVER_DISCONNECTED, NONE for the integrity limit)".
   The integrity-limit teardown passes PROTOCOL_VIOLATION
-  (`rocketnet_server_protocol.cpp:1334-1340`). New text: "(TIMED_OUT,
+  (`rocketnet_server_protocol.cpp`, the integrity-limit teardown, lines
+  1334-1340). New text: "(TIMED_OUT,
   CLIENT_DISCONNECTED, SERVER_DISCONNECTED, PROTOCOL_VIOLATION for the
   integrity limit)". One commit with STANDARD-ADDENDUM SA013. (MA016 part 2)

@@ -715,9 +715,9 @@ Deadline 5, one attempt, `SafetyInvariants`, `KeysErasedWhenDown`,
 `EphemeralErasedOutsideHandshake` and the action properties
 `StepsForwardOrFails`, `TimeoutPairing`, `AcceptedUnderLiveKeys`,
 `PayloadOnlyWhenConnected`, `NoSendOnArrival`, `OnlyAuthenticatedRefreshes`,
-`HandshakeNeverRewinds` and `AttemptResolves`: pass, 710,786 generated /
-136,081 distinct states, 39.0 s on the bench. `ServerAck` produces 7,419
-distinct states in that run (TLC coverage).
+`HandshakeNeverRewinds` and `AttemptResolves`: pass, 913,672 generated /
+174,849 distinct states, 50.3 s on the bench.
+The ack is sent only while one is owed (`ack_debt`).
 
 The server environment no longer refreshes a connected mapping's idle
 clock on a connection response (`ServerRecvResponse`): the code refreshes
