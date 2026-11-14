@@ -57,10 +57,13 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   whose `retire_keys` hook retires the copy), and the integrity limit inside
   `UpdateConsume` does the same: the epoch retired (seq_cst) before
   `update`'s own keys are zeroed, the session ended, and the wake set so a
-  blocked I/O thread reads the epoch. The I/O thread reads the epoch once at
+  blocked I/O thread reads the epoch. The same step zeroes `mainWin` and
+  `accWin`, as the connection reset zeroes `replay_session` and
+  `accepted_session` (`sdk/rocketnet_connection_reset.h`). The I/O thread reads the epoch once at
   the top of each drain (`fresh`, set by `IoWake` and `IoClearWake`):
-  `IoTakeKeys` takes the copy on live, `IoDropKeys` zeroes it on retired,
-  `IoKeepKeys` is a read that sees no change. It never receives or blocks
+  `IoTakeKeys` takes the copy on live, `IoDropKeys` zeroes it and `ioWin`
+  on retired (`drop_keys` zeroes `io->open`, the replay window with it,
+  `sdk/rocketnet_client_io.h`), `IoKeepKeys` is a read that sees no change. It never receives or blocks
   before that read.
 - **The I/O thread's rungs.** `IoCheck` runs the cheap rungs in the reading
   order, the replay check on `ioWin` last: a handshake datagram, any
@@ -75,7 +78,12 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
 - **update's consumption** (`UpdateConsume`), one record in arrival order,
   every verdict counted with today's counter (`nCounted`): an opened record
   passes the state check, `update`'s own replay check on `mainWin` and
-  `rocketnet_replay_advance` on `mainWin`, and its sequence is accepted. The
+  `rocketnet_replay_advance` on `mainWin`, and its sequence is accepted and
+  advanced into `accWin`, the `accepted_session` window the ack block is
+  built from (a keep-alive on open, a payload at `accept_payload`, which runs
+  in the same call while the payload acks are not deferred; the deferred
+  accept and the ack block read and size check that can refuse a packet
+  after the open are not modelled, so here `accWin` follows `mainWin`). The
   state check accepts a keep-alive from sending the response on and a payload
   only once connected; a payload before connected reaches `update` raw and
   is refused by the state check before any open, touching neither window
@@ -88,12 +96,15 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   zero-sequence rungs, the replay check on `mainWin` and the AEAD on the main
   thread). A genuine payload `update` accepts from a raw record is in
   `rawAccepted`.
-- **The fill threads** (`FillAckBuild`) read `mainWin`, as
-  `rocketnet_ack_block_build` does under the phase contract; `ackMark` is the
-  mark read.
+- **The fill threads** (`FillAckBuild`) read `accWin`, as
+  `rocketnet_session_ack_block_build` reads `accepted_session` under the
+  phase contract; `ackMark` is the mark read.
 - **Who writes what.** `Next` tags each step with its thread, and
   `wMain`, `wCount`, `wSession` and `wIo` record the thread of the last step
-  that changed `mainWin`, the counters, the session and `ioWin`.
+  that changed `mainWin` or `accWin`, the counters, the session and `ioWin`.
+- **The too-old refusal** (`tooOld`, a ghost): set when `IoCheck` gives the
+  verdict replay to a sequence at or below `ioWin.mark - W`, so the reach
+  witness below can name that branch.
 - **The end of a behaviour** (`Done`): every datagram consumed, the socket
   empty and the I/O thread blocked. Any other state without a step is a
   deadlock, and TLC checks for it.
@@ -142,11 +153,15 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   on the I/O thread and `update` refuses it as already received.
 - **`PayloadOpenedOnlyConnected`**: the I/O thread opens a payload only once
   the session is connected (or ended), TRANSPORT.md t11.3.
-- **`AcceptedOnce`**: `update` accepts a sequence at most once; `mainWin`
-  refuses every accepted sequence, and `ioWin` every one not accepted from a
-  raw record (`ReceivedIsRefused` for each).
-- **`SingleWriter`**: `mainWin`, the counters and the session change only in
-  `update`'s steps, `ioWin` only in the I/O thread's.
+- **`AcceptedOnce`**: `update` accepts a sequence at most once; while the
+  session has not ended, `mainWin` and `accWin` refuse every accepted
+  sequence, and `ioWin` every one not accepted from a raw record
+  (`ReceivedIsRefused` for each). Once the session has ended the windows are
+  zeroed and refuse nothing; `acceptedTwice` still holds the at-most-once.
+- **`RetiredZeroed`**: once the session has ended `mainWin` and `accWin` are
+  empty, and once the I/O thread has read retired `ioWin` is empty.
+- **`SingleWriter`**: `mainWin`, `accWin`, the counters and the session
+  change only in `update`'s steps, `ioWin` only in the I/O thread's.
 - **`ExposedStable`** and **`NoReceiveStall`**, from RNClientIo. A stall now
   also counts the new steps that move records toward `update`: `IoCheck`,
   `IoOpen`, `UpdateConsume` and `PublishKeys`.
@@ -188,10 +203,15 @@ java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup 
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenPayloadGate.cfg MCRNClientIoDecrypt
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenPayloadMark.cfg MCRNClientIoDecrypt
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptReachLateView.cfg MCRNClientIoDecrypt
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptReachTooOld.cfg MCRNClientIoDecrypt
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptReachCountedFailure.cfg MCRNClientIoDecrypt
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenNoRetireLive.cfg MCRNClientIoDecrypt
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenSharedWindowLive.cfg MCRNClientIoDecrypt
 ```
 
 The records come from `tlacheck run` as `proofs/tla/README.md` describes (group
-`rnclientiodecrypt`, nine cases, one shard each). The small instance:
+`rnclientiodecrypt`, thirteen cases, one shard each). The small instance (the
+reach and liveness witnesses set their own smaller constants, in each file):
 
 | Constant | Value |
 |---|---|
@@ -213,22 +233,26 @@ the copy of sequence 1 is a duplicate after sequence 1 has opened and too old
 after sequence 2 has. An integrity limit of 1 makes the forged datagram end
 the session.
 
-The full instance (`MCRNClientIoDecrypt.cfg`) generates 5,818,951 states and
-finds 2,146,403 distinct states, depth 43, with no error: the nine invariants
+The full instance (`MCRNClientIoDecrypt.cfg`) generates 5,818,687 states and
+finds 2,146,235 distinct states, depth 43, with no error: the ten invariants
 hold, and `GenuineEventuallyAccepted`, `RetiredEventuallyZeroed` and
 `PayloadsEventuallySeen` hold under
-the fairness above (a run with no time limit, two workers, 620 s on a Linux bench).
+the fairness above (a run with no time limit, two workers, 579 s on a Linux bench).
 That is over the 110-second case budget at two workers, so it is declared bench
 debt in `CASES.tsv` (`full-instance-over-budget`), its record is the timeout
 (exit 124), and `MCRNClientIoDecryptReduced.cfg` is the required control: the
 same rules and properties with three datagrams in a behaviour, 219,480 states
 generated, 90,632 distinct, depth 35, no error. In the reduced instance every
-path of the list below is reachable except the too-old replay, which needs
-sequences 1 and 2 and a copy of 1 (scratch runs of the reduced constants, one
-negated predicate each: the duplicate, the integrity limit, sequences 1 and 2
-both accepted, the copy dropped after retired, `earlyRefused`, zero sequence,
-wrong size and the retire before connected are violated; the too-old negation
-passes).
+path of the list below is reachable except two (scratch runs of the reduced
+constants, one negated predicate each: the duplicate, the integrity limit,
+sequences 1 and 2 both accepted, the copy dropped after retired,
+`earlyRefused`, zero sequence, wrong size and the retire before connected are
+violated). The two it cannot reach are the too-old replay, which needs
+sequences 1 and 2 and a copy of 1, and the integrity failure counted short of
+the limit, which needs a limit above one. Each has its own committed reach
+witness, `MCRNClientIoDecryptReachTooOld.cfg` and
+`MCRNClientIoDecryptReachCountedFailure.cfg`, with every invariant of the
+control checked on the way.
 
 Reachability, checked by scratch runs (not committed) of the committed
 constants under `Spec` with one negated predicate each, every one violated,
@@ -252,12 +276,15 @@ so reachable; a genuine keep-alive passed raw while connected is not (that
 negation passes): the arrival rule above keeps genuine keep-alives off the
 main thread's AEAD.
 
-Two scratch runs, not committed, show the liveness properties are not
-vacuous: with the retire not setting the wake, TLC exits 13 on
-`RetiredEventuallyZeroed` (the I/O thread blocks holding its copy with the
-epoch retired, and stutters); with no fairness on `UpdateConsume`, TLC exits
-13 on `GenuineEventuallyAccepted` (a genuine record waits in the exposed
-buffer forever).
+Two committed liveness witnesses show the properties are not vacuous:
+`MCRNClientIoDecryptBrokenNoRetireLive.cfg` exits 13 on
+`RetiredEventuallyZeroed` and `MCRNClientIoDecryptBrokenSharedWindowLive.cfg`
+exits 13 on `GenuineEventuallyAccepted` (traces below). Two scratch runs, not
+committed, break the properties another way: with the retire not setting the
+wake, TLC exits 13 on `RetiredEventuallyZeroed` (the I/O thread blocks
+holding its copy with the epoch retired, and stutters); with no fairness on
+`UpdateConsume`, TLC exits 13 on `GenuineEventuallyAccepted` (a genuine
+record waits in the exposed buffer forever).
 
 ## The reversed witnesses
 
@@ -303,13 +330,12 @@ states generated, 6,900 distinct).
      advances both `ioWin` and `mainWin` to mark 1: the last writer of
      `mainWin` is the I/O thread.
 - **Against the design, by hand:** the design's table row for
-  `replay_session` says "update is its only writer", read by the fill
-  threads through `rocketnet_ack_block_build` under the phase contract; the
-  I/O thread is outside that contract, so its write races the fill threads'
-  reads, and the ack block would name sequence 1 before `update` has
-  processed it. In the design the I/O thread advances only its own window of
-  the same struct; `update` advances `replay_session` when it consumes the
-  record.
+  `replay_session` says "update is its only writer"; the I/O thread's write
+  races `update`'s own replay check on the main thread, and that check then
+  refuses sequence 1 as already received, so it is never accepted (the
+  liveness witness below shows exactly that). In the design the I/O thread
+  advances only its own window of the same struct; `update` advances
+  `replay_session` when it consumes the record.
 
 ### `MCRNClientIoDecryptBrokenNoRetire.cfg`
 
@@ -419,6 +445,77 @@ the lagging view is a behaviour the model explores, not a defect. TLC exits
   the size and zero-sequence rungs, its replay check and the AEAD, and
   accepts it (`rawAccepted`), as BASE does with every payload.
 
+### `MCRNClientIoDecryptReachTooOld.cfg` (a reach witness)
+
+Every rule on, four datagrams, sequences 1 and 2, one replayed copy and no
+forged datagram, with `NoTooOldRefusal` added last. TLC exits 12:
+**`Invariant NoTooOldRefusal is violated`** (24,594 states generated, 9,817
+distinct), with every other invariant holding on the way.
+
+- **The trace:**
+  1. The challenge, `PublishKeys`, and the I/O thread takes its copy.
+  2. Genuine payload 1 arrives; the I/O thread's view of the payloads word
+     reads false, so it passes raw.
+  3. Genuine keep-alive 2 arrives; the I/O thread opens it and advances
+     `ioWin` to mark 2.
+  4. A copy of sequence 1 arrives; 1 is at or below `2 - W`, so `IoCheck`
+     gives it the verdict replay as too old before the AEAD.
+- **Against the code, by hand:** `rocketnet_replay_already_received` in
+  `sdk/rocketnet_replay.cpp` returns true for a sequence at or below
+  `highest_opened - W` before it looks at the ring, so sequence 1 is refused
+  although `io->open.replay` never marked it; `rocketnet_client_io_decrypt_datagram`
+  runs that check before `rocketnet_open_sealed_packet`.
+
+### `MCRNClientIoDecryptReachCountedFailure.cfg` (a reach witness)
+
+Every rule on, three datagrams, one forged and an integrity limit of two, with
+`NoCountedFailure` added last. TLC exits 12: **`Invariant NoCountedFailure is
+violated`** (1,628 states generated, 932 distinct), with every other
+invariant holding on the way.
+
+- **The trace:**
+  1. The challenge arrives; the I/O thread holds no copy yet, so the forged
+     session datagram after it passes raw too, and both are published.
+  2. `update` consumes the challenge (`PublishKeys`), then the raw forged
+     record: the state accepts a keep-alive while sending the connection
+     response, the main thread's AEAD fails, and the integrity failure is
+     counted, 1 of 2; the session goes on.
+- **Against the code, by hand:** `rocketnet_client_integrity_failure` in
+  `sdk/rocketnet_client_protocol.cpp` counts the failure and retires the keys
+  only when the count reaches the limit; below it the client keeps its
+  state.
+
+### `MCRNClientIoDecryptBrokenNoRetireLive.cfg` (a liveness witness)
+
+`NoRetire = TRUE` under `SpecFair`, two datagrams. TLC exits 13:
+**`Temporal properties were violated`** on `RetiredEventuallyZeroed` (8,847
+states generated, 4,286 distinct).
+
+- **The trace:** the challenge, `PublishKeys`, and the I/O thread takes its
+  copy; `RetireKeys` ends the session and sets the wake; the I/O thread
+  wakes, reads retired and keeps its copy (`ioKeys` stays true); every
+  datagram is consumed and the behaviour stutters with the copy held.
+- **Against the code, by hand:** `drop_keys` in `sdk/rocketnet_client_io.h`
+  wipes the copy and zeroes `io->open.replay` when the drain reads retired;
+  without it nothing later zeroes them.
+
+### `MCRNClientIoDecryptBrokenSharedWindowLive.cfg` (a liveness witness)
+
+`SharedWindow = TRUE` under `SpecFair`, two datagrams, no forged one. TLC exits
+13: **`Temporal properties were violated`** on `GenuineEventuallyAccepted`
+(724 states generated, 365 distinct).
+
+- **The trace:** the challenge, `PublishKeys`, and the I/O thread takes its
+  copy; genuine keep-alive 1 opens on the I/O thread, which advances both
+  `ioWin` and `mainWin` to mark 1; `update` consumes the opened record and its
+  own replay check on `mainWin` refuses it as already received; the session
+  stays sending the connection response with nothing accepted, and the
+  behaviour stutters.
+- **Against the code, by hand:** `update` runs `rocketnet_replay_already_received`
+  on `replay_session` for every opened record before it accepts it, so a
+  window the I/O thread had already advanced would refuse every genuine
+  sequence; the code keeps the I/O thread's window in `io->open.replay`.
+
 ## Findings for the implementation
 
 - **The retire must reach a blocked I/O thread.** The design reads the epoch
@@ -457,7 +554,8 @@ the lagging view is a behaviour the model explores, not a defect. TLC exits
 
 ## Runs
 
-The nine rows are in `proofs/tla/RUNS.tsv` from `tlacheck run` on a Linux bench
+The thirteen rows are in `proofs/tla/RUNS.tsv` from `tlacheck run` on a Linux bench
 (TLC 2.19, the pinned JAR): the reduced control passes with exit 0, the full
-instance is the declared bench-debt timeout (exit 124), and each reversed
-witness and the reach witness exit 12 naming the declared invariant.
+instance is the declared bench-debt timeout (exit 124), each reversed safety
+witness and each reach witness exits 12 naming the declared invariant, and
+each liveness witness exits 13.

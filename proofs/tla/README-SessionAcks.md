@@ -5,9 +5,10 @@ payloads to a receiver B over the shared lossy link `proofs/tla/Link.tla` (insta
 and B sends ack blocks back over a second instance (`R2D`). A is the session sequence
 and one `rocketnet_ack_endpoint_t` (`sdk/rocketnet_ack.cpp`: `record_sent`,
 `process_block`, `apply_run`) with the staged send of the client and server transports
-(`sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`). B is the
-replay window as a set (`sdk/rocketnet_replay.cpp`) and the block builder
-(`rocketnet_ack_block_build`).
+(`sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`). B is two
+windows as sets (`sdk/rocketnet_replay.cpp`), `replay_session` and `accepted_session`,
+and the block builder (`rocketnet_ack_block_build`, through
+`rocketnet_session_ack_block_build` on `accepted_session`).
 
 `proofs/tla/MCSessionAcks.tla` and `proofs/tla/MCSessionAcks.cfg` are the gate instance
 (safety); `proofs/tla/MCSessionAcksLive.cfg` is the liveness run on the same instance.
@@ -32,15 +33,22 @@ fill phase's staging):
 
 | Variable | Code | Meaning |
 |---|---|---|
-| `highestOpened`, `opened` | `highest_opened`, `window[]` | the replay window as the set of opened sequences in `(highestOpened - Window, highestOpened]` |
+| `highestOpened`, `opened` | `replay_session.highest_opened`, `.window[]` | the replay window as the set of opened sequences in `(highestOpened - Window, highestOpened]` |
+| `highestAccepted`, `accepted` | `accepted_session.highest_opened`, `.window[]` | the sequences the endpoint took in, in `(highestAccepted - Window, highestAccepted]`: the block is built from these |
 | `drained` | the receive drain | packets drained this update |
 
 Ghosts: `burned` (sequences spent and never sent), `surfacedCount`, `openedEver`,
 `namedEver`, `lastExpect`, `lastVisited`.
 
-A payload's packet id is its sequence. Every packet the model sends is a payload, which
-is ack-eligible once it opens (standard/TRANSPORT.md t15.3), so the block is built from
-the opened set.
+A payload's packet id is its sequence. Every packet the model sends is a payload. A
+payload enters `accepted_session` when it is accepted
+(`rocketnet_server_protocol_accept_payload`, `rocketnet_client_protocol_accept_payload`),
+not when it opens. The model takes the payload acks as not deferred, the default: the
+transport accepts each payload in the same call that processed it, so `RecvData`
+advances both windows in one step and they hold the same set. Deferred acks (the
+application accepts later, or never) are not modelled here; `ReplayWindow`'s `Accept`
+is that order, and the roadmap entry `session-acks-deferred-accept` (in the notes for
+the release) is the step that would bring it here.
 
 **Actions**, one per operation and per outside event:
 
@@ -49,9 +57,10 @@ the opened set.
 | `StartPayload` | the application | `start_packet` + `finish_packet`: one sequence, one record with the packet id |
 | `BurnOne` | a failed start or finish | a sequence spent and never sent (USAGE.md, "Not every NULL from start_packet spends one") |
 | `Flush` | `send_packets` | the staged packet goes to the wire in fill order, `Link!Send` |
-| `RecvAck` | a block arrives | `rocketnet_ack_endpoint_process_block` / `rocketnet_ack_apply_run`: the reconcile, the walk, the retained window, unknown sequences, the batch and its deferral |
-| `SendAck` | the receiver | a session packet carrying the current block, `rocketnet_ack_block_build`: the first run, then `(gap, run)` pairs to the floor, at most `MaxRanges` |
-| `RecvData` | a packet arrives | the reading order's replay check (`rocketnet_replay_already_received`, `rocketnet_replay_advance`) |
+| `RecvAck` | a block arrives | `rocketnet_ack_endpoint_process_block` / `rocketnet_ack_apply_run`: the reconcile, the walk, the retained window, unknown sequences, the batch and its deferral; an empty block (largest 0) changes nothing, as both `process_block` and `process_block_full` return before the reconcile |
+| `RecvAckRepeat` | the memo's block arrives again | the reconcile, nothing walked |
+| `SendAck` | the receiver | a session packet carrying the current block, `rocketnet_ack_block_build` on `accepted_session`: the first run, then `(gap, run)` pairs to the floor, at most `MaxRanges` |
+| `RecvData` | a packet arrives | the reading order's replay check on `replay_session` (`rocketnet_replay_already_received`, `rocketnet_replay_advance`), then the accept advancing `accepted_session` |
 | `Tick` | time | one update on both ends: the batch drains, the drain resets, both links `Age` |
 | `D2REnvironment`, `R2DEnvironment` | the path | Link's `Drop`, `Duplicate`, `Reorder`, `Delay` |
 
@@ -94,8 +103,9 @@ Reversed witnesses, one constant flip each (the code is `Witness = "none"`):
 
 ## What the model abstracts away
 
-- **The replay window's representation.** `opened` is a set; the 64-word bitmap and its
-  large-skip clear belong to the ReplayWindow module. Every block here is truthful by
+- **The windows' representation.** `opened` and `accepted` are sets; the 64-word bitmap
+  and its large-skip clear belong to the ReplayWindow module, and so does the order in
+  which a packet enters the two windows. Every block here is truthful by
   construction, so `SurfacedOnlyIfOpened` says what the ack layer does with truthful
   blocks.
 - **The 32-bit wire fields.** `largest received` is carried whole; the reconstruction
@@ -116,7 +126,8 @@ Reversed witnesses, one constant flip each (the code is `Witness = "none"`):
 ## Fairness, and why it is stated per link
 
 `Spec` is weakly fair on `Tick`, strongly fair on the four sends and receives (`Flush`,
-`SendAck`, `RecvData`, `RecvAck`), weakly fair on both links' `Age`, and assumes per link
+`SendAck`, `RecvData`, and the two receives of a block, `RecvAck \/ RecvAckRepeat`,
+written `RecvAck` below), weakly fair on both links' `Age`, and assumes per link
 that a link sent on without bound delivers without bound:
 `[]<> <<Flush>>_vars => []<> <<RecvData>>_vars`, and for the ack link
 `[]<> <<SendAck>>_vars => []<> <<RecvAck /\ Head(r2dWire).pkt = Block>>_vars`, where
@@ -152,6 +163,16 @@ warns of:
 still retains is one the receiver can still name (the code's `ROCKETNET_HISTORY_PACKETS`
 sizes both).
 
+**The lapping instance** (`MCSessionAcksLiveLap.cfg`). Every other liveness cfg has
+`MaxSeq <= SentRing` and `MaxSeq <= Window`, so no record is lapped and the receiver's
+floor stays at 1: the `~Retained(s)` disjunct of `OpenedSurfacesOrLaps` is never
+exercised there. The lapping instance sends three sequences over a ring of two and a
+window of two, on lossy links: sequence 3 overwrites the record of 1, and the floor
+rises to 2. `OpenedSurfacesOrLaps` holds, and the reach witness
+`MCSessionAcksReachLap.cfg` (the same constants under `SpecSafety`, with
+`NoLapBeforeSurface` added last) shows a payload the receiver opened lapped before its
+id surfaced, every other invariant holding on the way.
+
 ## The sent-ring bitmaps
 
 Beside the sent ring the endpoint keeps two bitmaps, one bit per slot: held (the slot
@@ -172,7 +193,11 @@ The walk then visits a named sequence s in the window only when slot `s % SentRi
 its unacked bit set and holds s.
 
 **Abstracted.** The bits are sets of slot indexes, not words; the walk's word scan is a
-set filter. The reconcile runs on every block received, including an empty one.
+set filter. The reconcile runs on every nonempty block received; an empty block
+(largest 0) changes nothing in `RecvAck`, because `process_block` and
+`process_block_full` return before `rn_ack_reconcile` when `largest == 0`. Before
+2026-11-13 the model reconciled on the empty block too, so after a burn lapped a held
+slot it could clear bits the code leaves until the next nonempty block.
 
 **The instance.** `MCSessionAcksBits.cfg` has `SentRing = 2` and `MaxSeq = 4` with burns
 on, so a burn laps a held slot: with sequence 1 in slot 1, burning 2 and 3 and sending 4
@@ -188,6 +213,8 @@ instance that exercises the clear. The two bitmap witnesses use the same instanc
 | `MCSessionAcksLive.cfg` | `Spec` | the gate instance, with `OpenedSurfacesOrLaps` | pass; over the 110 s budget, `bench` debt |
 | `MCSessionAcksLiveSmall.cfg` | `Spec` | two sequences, `Capacity` 1, duplication and reordering off | pass |
 | `MCSessionAcksLiveDup.cfg` | `Spec` | one sequence, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only | pass |
+| `MCSessionAcksLiveLap.cfg` | `Spec` | three sequences, `SentRing` 2, `Window` 2, `MaxRanges` 1, burns off, both links `"arbitrary"`, `Capacity` 1, duplication and reordering off | pass |
+| `MCSessionAcksReachLap.cfg` | `SpecSafety` | the lapping instance, with `NoLapBeforeSurface` last | `NoLapBeforeSurface` (a reach witness) |
 | `MCSessionAcksBrokenLiveness.cfg` | `Spec` | two sequences, burns off, both links `"none"`, `"dropfull"`; `OpenedSurfacesOrLaps` only | temporal: `OpenedSurfacesOrLaps` |
 | `MCSessionAcksPatNone.cfg`, `PatFirst`, `PatAlternate`, `PatBurst` | `SpecSafety` | the gate instance with both links on that Link pattern | pass |
 | `MCSessionAcksBits.cfg` | `SpecSafety` | `SentRing` 2, data link `"arbitrary"`, ack link `"none"`, `Capacity` 1, duplication and reordering off | pass |
@@ -208,7 +235,7 @@ The measured records are `proofs/tla/RUNS.tsv`.
 **wit-overclaim-surfaced.** Payloads 1 and 2 are sent; the data link drops 1; 2 opens;
 the block names `{1, 2}` although only 2 opened. The first ack surfaces 2 and defers 1
 (`BatchCap` 1), the next ack after a `Tick` surfaces 1, which never opened.
-`rocketnet_ack_block_build` builds runs only from the bits set in the ack-eligible window,
+`rocketnet_ack_block_build` builds runs only from the bits set in `accepted_session`,
 so the honest builder never names 1 here.
 
 **wit-overclaim.** A burned sequence below an opened one is named by the overclaiming

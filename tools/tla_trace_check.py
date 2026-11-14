@@ -230,7 +230,7 @@ LAYERS = {
         "modules": ["RNAckApplyPhase.tla", "TraceRNAckApplyPhase.tla"],
         "untraced": {},
         "reach": ["TakenByGameThread", "LeftForFinish", "Chained", "QueuedBehindSettled", "GatheredQueueFull",
-                  "GatheredRangesFull"],
+                  "GatheredRangesFull", "AppliedDuplicate"],
     },
     "xdp-gateway-refresh": {
         "modules": ["RNXdpGatewayRefresh.tla", "TraceRNXdpGatewayRefresh.tla"],

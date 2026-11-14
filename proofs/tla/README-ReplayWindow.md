@@ -5,10 +5,19 @@
 `proofs/tla/ReplayWindow.tla` is `struct rocketnet_replay_protection_t`
 (`sdk/rocketnet_encryption_map.h`) and the two operations in
 `sdk/rocketnet_replay.cpp` that own it, `rocketnet_replay_already_received` and
-`rocketnet_replay_advance`, together with the one reader that speaks for it on the
-wire, `rocketnet_ack_block_build` (`sdk/rocketnet_ack.cpp`), and the server
-call site that drives it (`rocketnet_server_process_sealed_packet` in `sdk/rocketnet_server_protocol.cpp`). It has no
-link under it: the window never sends, and what reaches it is a sequence that opened.
+`rocketnet_replay_advance`, and the server call site that drives it
+(`rocketnet_server_process_sealed_packet` in `sdk/rocketnet_server_protocol.cpp`).
+A mapping keeps two of these structs for session traffic: `replay_session`, the
+security window, checked before the open and advanced right after it; and
+`accepted_session`, what the endpoint took in, which is what speaks on the wire:
+`rocketnet_session_ack_block_build` hands it to `rocketnet_ack_block_build`
+(`sdk/rocketnet_ack.cpp`). A packet ack-eligible on open (every session type but
+the payload) is advanced into `accepted_session` once it has passed the ack block
+read and the opened-size check; a payload only when it is accepted
+(`rocketnet_server_protocol_accept_payload`,
+`rocketnet_client_protocol_accept_payload`: at once, or later when the payload
+acks are deferred, or never). The model has both. It has no link under it: the
+windows never send, and what reaches them is a sequence that opened.
 `proofs/tla/MCReplayWindow.tla` and `proofs/tla/MCReplayWindow.cfg` are the small instance. Every
 TLC run is a row in `proofs/tla/RUNS.tsv`.
 
@@ -25,10 +34,13 @@ zeroed in `rocketnet_encryption_map_create` (`sdk/rocketnet_encryption_map.cpp`)
 
 | Variable | Code | Meaning |
 |---|---|---|
-| `highest` | `highest_opened` | the high-water mark; 0 before any open |
-| `window` | `window[ROCKETNET_HISTORY_PACKETS / 64]` | the ring, one `BOOLEAN` per bit; sequence `s` lives at bit `s % W`, bit `b` in word `b div WordBits` |
+| `highest` | `replay_session.highest_opened` | the high-water mark; 0 before any open |
+| `window` | `replay_session.window[ROCKETNET_HISTORY_PACKETS / 64]` | the ring, one `BOOLEAN` per bit; sequence `s` lives at bit `s % W`, bit `b` in word `b div WordBits` |
 | `received` | (ghost) | the sequences that opened and are still inside the retained range: the truth the window is meant to encode |
-| `processed` | (ghost) | those of them a slot processed rather than ignored: what the ack block may truthfully speak for |
+| `accHighest`, `accWindow` | `accepted_session.highest_opened`, `.window` | the same struct for what the endpoint took in; the ack block is built from it |
+| `accepted` | (ghost) | the sequences advanced into `accepted_session`, still inside its range |
+| `delivered` | (ghost) | payloads a slot processed and handed up, not yet accepted |
+| `processed` | (ghost) | what the endpoint took in, still inside `accepted_session`'s range: an ack-eligible packet a slot processed, a payload once accepted. What the ack block may truthfully speak for |
 | `connected` | `client_index != -1` on the mapping | the mapping holds a slot |
 
 `W == Words * WordBits` is `ROCKETNET_REPLAY_WINDOW_BITS` (`sdk/rocketnet_replay.h`,
@@ -42,21 +54,23 @@ builder's floor is `largest - W + 1` (`sdk/rocketnet_ack.cpp`); the two agree.
 
 | Operator | Code | What |
 |---|---|---|
-| `AlreadyReceived(s)` | `rocketnet_replay_already_received`, `sdk/rocketnet_replay.cpp` | above `highest`: no; at or below `highest - W`: yes (too old, refused either way); inside: the ring bit |
-| `Advance(s)` | `rocketnet_replay_advance`, `sdk/rocketnet_replay.cpp` | above `highest`: clear what the advance skips past, then move the mark; always: set the bit for `s` |
-| `Cleared(s)` | `rocketnet_replay_advance` in `sdk/rocketnet_replay.cpp` | a skip shorter than `W` clears each skipped sequence's bit (`rocketnet_replay_clear_range`); a skip of `W` or more clears words `0..ClearedWords-1` (the whole ring when `ClearedWords = Words`) |
-| `AckReports(s)` | `rocketnet_ack_block_build`, `sdk/rocketnet_ack.cpp` | the block walks from `largest = highest` down to the floor reading the same ring bit, so `s` is reported received exactly when it is in range and its bit is set |
+| `AlreadyIn(h, win, s)`, `AlreadyReceived(s)`, `AlreadyAccepted(s)` | `rocketnet_replay_already_received`, `sdk/rocketnet_replay.cpp` | above the mark: no; at or below `mark - W`: yes (too old, refused either way); inside: the ring bit. On `replay_session` and on `accepted_session` |
+| `Advance(s)`, `AdvanceAccepted(s)` | `rocketnet_replay_advance`, `sdk/rocketnet_replay.cpp` | above the mark: clear what the advance skips past, then move the mark; always: set the bit for `s`. On each window |
+| `Cleared(h, win, s)` | `rocketnet_replay_advance` in `sdk/rocketnet_replay.cpp` | a skip shorter than `W` clears each skipped sequence's bit (`rocketnet_replay_clear_range`); a skip of `W` or more clears words `0..ClearedWords-1` (the whole ring when `ClearedWords = Words`) |
+| `AckReports(s)` | `rocketnet_ack_block_build` on `accepted_session`, `sdk/rocketnet_ack.cpp` | the block's word scan runs from `largest = accepted_session.highest_opened` down to the floor reading bit `s % W`, so `s` is reported received exactly when it is in `accepted_session`'s range and its bit is set |
 
 **Actions**, one per operation and per outside event:
 
 | Action | Code | What |
 |---|---|---|
-| `Receive(s)` | `sdk/rocketnet_server_protocol.cpp` | a session packet with sequence `s` arrives and opens. The check in `rocketnet_replay_already_received` refuses a duplicate or a too-old sequence before the open, so an opened packet is never one the window refuses. With `GateBeforeAdvance = TRUE` (the rule, and the code: `rocketnet_server_process_sealed_packet` checks the slot before the AEAD open and before `rocketnet_replay_advance`) a packet on a mapping without a slot leaves the window alone; with `FALSE` (the reversed witness) it advances the window and is then ignored |
+| `Receive(s, k)` | `sdk/rocketnet_server_protocol.cpp` | a session packet with sequence `s` arrives and opens. The check in `rocketnet_replay_already_received` on `replay_session` refuses a duplicate or a too-old sequence before the open, so an opened packet is never one the window refuses. With `GateBeforeAdvance = TRUE` (the rule, and the code: `rocketnet_server_process_sealed_packet` checks the slot before the AEAD open and before `rocketnet_replay_advance`) a packet on a mapping without a slot leaves the window alone; with `FALSE` (the reversed witness) it advances the window and is then ignored. On a mapping with a slot, `k` is what the packet turns out to be: `"eligible"` (an ack-eligible type past the block read and the size check: advanced into `accepted_session`, taken in), `"payload"` (handed up, `delivered`, waiting for `Accept`; with `PayloadAtAccept = FALSE`, the witness, marked in `accepted_session` at once) or `"ignored"` (refused after the open by the block read or the size check: in `replay_session` only) |
+| `Accept(s)` | `rocketnet_server_protocol_accept_payload`, `rocketnet_client_protocol_accept_payload` | a delivered payload is accepted: advanced into `accepted_session` unless that window already refuses it, and taken in |
+| `Forge(s)` | `sdk/rocketnet_server_protocol.cpp` | a sealed packet that does not open; it changes neither window, and records an open attempted on a pending mapping |
 | `Connect` | `sdk/rocketnet_server_protocol.cpp` | the connection response opens and the mapping takes a slot; once |
 
 The client is the same pair on a window that is always connected
 (`rocketnet_client_open_session` in `sdk/rocketnet_client_protocol.cpp`); `Receive` with `connected`
-covers it. The model is `replay_session` only. The handshake window (`replay_handshake`)
+covers it. The model is `replay_session` and `accepted_session`. The handshake window (`replay_handshake`)
 is the same struct, but handshake packets are exempt from replay marking and only raise
 its `highest_opened` (`rocketnet_server_process_sealed_packet` in `sdk/rocketnet_server_protocol.cpp`;
 `rocketnet_client_process_challenge` in `sdk/rocketnet_client_protocol.cpp`): `rocketnet_replay_advance` never runs on it, no ack block
@@ -73,6 +87,8 @@ is built from it, and nothing here speaks for it.
 | `GateBeforeOpen` | the server checks the slot before the AEAD open | `TRUE` (the rule, and the code) | `FALSE` (the reversed witnesses) |
 | `MarkOnAdvance` | the advance sets the bit for `s` | `TRUE` (the rule, and the code) | `FALSE` (`ReceivedIsRefused`, `HighestIsReceived`: the mark moves but its bit is not set) |
 | `RefuseBelowFloor` | at or below `highest - W` the sequence is too old | `TRUE` (the rule, and the code) | `FALSE` (`BelowFloorIsRefused`: the too-old check is omitted) |
+| `PayloadAtAccept` | a payload enters `accepted_session` when it is accepted | `TRUE` (the rule, and the code) | `FALSE` (`AckReportsOnlyProcessed`: marked as soon as it opens) |
+| `Kinds` | what an opened packet may turn out to be | `{"eligible"}` in the wide-ring runs, where `accepted_session` is `replay_session`; all three in `MCReplayWindowAccept.cfg` (2 words of 2 bits, `W = 4`, `MaxSeq = 12`) | all three in `MCReplayWindowBrokenPayloadOnOpen.cfg` |
 
 The advance follows the open, so a gate before the open is a gate before the
 advance: the module assumes `GateBeforeOpen => GateBeforeAdvance`, and the
@@ -87,17 +103,20 @@ is no liveness property here; the connection models above it carry those.
 |---|---|---|
 | `TypeOK` | | the obvious types |
 | `WindowIsTruth` | the window's one job; behind F1 | inside the retained range a bit is set exactly for the sequences that opened |
+| `AcceptedIsTruth` | the same job for `accepted_session` | inside its retained range a bit is set exactly for the sequences advanced into it, so the ack block neither names one the endpoint did not take in nor loses one it did |
 | `GenuineIsAccepted` | F1 as the card states it | a genuine sequence inside the range that has not opened is never refused as already received |
-| `AckReportsOnlyReceived` | F1's second half (`sdk/rocketnet_ack.cpp` builds the block from the same window) | the ack block names only sequences that opened |
+| `AckReportsOnlyReceived` | F1's second half, on the window the block is built from (`accepted_session` runs the same advance) | the ack block names only sequences advanced into `accepted_session` |
 | `ReceivedIsRefused` | STANDARD.md _Replay Protection_: "within the window accept a sequence only once" | everything that opened is refused thereafter |
 | `BelowFloorIsRefused` | STANDARD.md _Replay window sizing_: "an undersized window discards old legitimate packets; it never accepts a replay" | below the floor everything is refused |
-| `HighestIsReceived` | the assert at `sdk/rocketnet_ack.cpp` | the high-water mark is itself marked |
-| `NoAdvanceBeforeConnect` | STANDARD.md _Reading packets_, the slot gate before the mark (OV-34; the standard's rule, its PR pending) | the session window of a mapping without a slot never moves |
-| `AckReportsOnlyProcessed` | the harm behind OV-34, named by the STANDARD change | the ack block names only packets a slot processed |
+| `HighestIsReceived` | the assert in `rocketnet_ack_block_build` (`sdk/rocketnet_ack.cpp`: largest is always marked received) | `accepted_session`'s mark is itself advanced into it and marked |
+| `OpenNeverAcceptedFirst` | the assert in `rocketnet_replay_advance`, at the open's advance into `accepted_session`, which no caller checks first | every sequence `replay_session` lets through, `accepted_session` would take |
+| `NoAdvanceBeforeConnect` | STANDARD.md _Reading packets_, the slot gate before the mark (OV-34; the standard's rule, its PR pending) | the session windows of a mapping without a slot never move |
+| `AckReportsOnlyProcessed` | the harm behind OV-34 and behind the second window | the ack block names only packets the endpoint took in |
 | `NoOpenBeforeConnect` | TRANSPORT.md t10 step 12, the slot gate before decryption (asr pass 1 F4, approved 2026-10-21) | no AEAD open is attempted for a session packet, genuine (`Receive`) or forged (`Forge`), on a mapping without a slot |
-| `Monotone` (action property) | | the mark never goes backwards; a slot is never given up |
+| `Monotone` (action property) | | the marks never go backwards; a slot is never given up. Holds by construction (`Raised` only moves a mark up, `Connect` only sets `connected`, no witness reverses it), so TLC checking it shows nothing an action could break; it is kept for its `highest` conjunct, which `replay_monotone` in tests/dst_checks.h mirrors (`replay_session` only, not `accHighest` or `connected`) |
 
-`GenuineIsAccepted` and `AckReportsOnlyReceived` follow from `WindowIsTruth`; they are
+`GenuineIsAccepted` follows from `WindowIsTruth`, and `AckReportsOnlyReceived` from
+the same truth for `accepted_session` (one advance runs on both); they are
 stated separately because they are the sentences the F1 card uses, and each gets its
 own witness run.
 
@@ -113,7 +132,12 @@ own witness run.
   injection").
 - The ack block's truncation (`max_ranges`, the `0xFFFF` run and gap caps): it loses
   only the oldest information, which the next block restates.
-- The handshake window: see "What the model covers". Only `replay_session` is modelled.
+- The handshake window: see "What the model covers". Only `replay_session` and
+  `accepted_session` are modelled.
+- Why a packet is ignored after the open (a malformed ack block, a wrong opened
+  size): the kind `"ignored"` stands for every such refusal. What an accepted
+  packet does next (its ack block applied, the payload delivered) is the
+  connection and ack models' business.
 - Removal of the mapping. A mapping that loses its slot is removed and a new one starts
   from `Init`; the model is one mapping's lifetime.
 
@@ -128,8 +152,18 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCReplayWin
 
 `MCReplayWindow.cfg` is the committed run: the rule on every count (`ClearedWords = 6`,
 `GateBeforeAdvance = TRUE`, `GateBeforeOpen = TRUE`, `MarkOnAdvance = TRUE`,
-`RefuseBelowFloor = TRUE`), checking every invariant above and `Monotone`. It finishes
-in a few seconds: 1,917,003 states generated, 53,249 distinct, depth 16.
+`RefuseBelowFloor = TRUE`, `PayloadAtAccept = TRUE`), checking every invariant above
+and `Monotone`, with `Kinds = {"eligible"}`: every packet a slot takes is advanced into
+both windows, so `accepted_session` follows `replay_session` and the ring is wide
+enough for the long skips. It finishes in a few seconds: 1,917,003 states generated,
+53,249 distinct, depth 16, the same as before the second window.
+
+`MCReplayWindowAccept.cfg` is the accept control: every rule, every invariant and
+`Monotone`, with all three kinds on a ring of 2 words of 2 bits (`W = 4`) over
+sequences 1..12, so a payload can wait any number of steps for `Accept`, be
+accepted after its sequence has left the window, or never, and an ignored packet
+leaves `replay_session` ahead of `accepted_session`. 2,163,563 states generated,
+181,861 distinct, 10 s, no error.
 
 The reversed witnesses are the same file with one constant changed to the defective
 order the code no longer uses and `INVARIANTS` cut to the one rule under test, so TLC names that rule:
@@ -137,11 +171,12 @@ order the code no longer uses and `INVARIANTS` cut to the one rule under test, s
 | Run | Edit | `INVARIANTS` | Expected |
 |---|---|---|---|
 | `MCReplayWindow.cfg` | none | all | passes |
+| `MCReplayWindowAccept.cfg` | the accept instance, all kinds | all | passes |
+| `MCReplayWindowBrokenPayloadOnOpen.cfg` | the accept instance, `PayloadAtAccept = FALSE` | `AckReportsOnlyProcessed` | **fails**: 3 states (after `Connect`, `Receive(1, "payload")`) |
 | `MCReplayWindowBrokenLongSkip.cfg` | `ClearedWords = 4` | `WindowIsTruth` | **fails**: the 5-state trace below |
 | `MCReplayWindowBrokenGenuine.cfg` | `ClearedWords = 4` | `GenuineIsAccepted` | **fails**: 6 states, same shape |
 | `MCReplayWindowBrokenAck.cfg` | `ClearedWords = 4` | `AckReportsOnlyReceived` | **fails**: 5 states, same shape |
 | `MCReplayWindowBrokenGate.cfg` | `GateBeforeAdvance = FALSE`, `GateBeforeOpen = FALSE` | `NoAdvanceBeforeConnect` | **fails**: 2-state trace below |
-| `MCReplayWindowBrokenProcessed.cfg` | `GateBeforeAdvance = FALSE`, `GateBeforeOpen = FALSE` | `AckReportsOnlyProcessed` | **fails**: the same 2 states |
 | `MCReplayWindowBrokenOpenBeforeGate.cfg` | `GateBeforeOpen = FALSE` | `NoOpenBeforeConnect` | **fails**: 2 states, below |
 | `MCReplayWindowBrokenReceived.cfg` | `MarkOnAdvance = FALSE` | `ReceivedIsRefused` | **fails**: 3 states (after `Connect`, `Receive(1)`) |
 | `MCReplayWindowBrokenBelowFloor.cfg` | `RefuseBelowFloor = FALSE` | `BelowFloorIsRefused` | **fails**: 3 states (after `Connect`, `Receive(14)`) |
@@ -252,13 +287,25 @@ and is ignored. The window moved before connect, exactly as the witness says.
 The code today checks the slot in `rocketnet_server_process_sealed_packet` before
 the AEAD open and before `rocketnet_replay_advance`, so this order is not its order.
 
-Why the order matters, in this model's terms: a sequence marked on a pending mapping is
-reported by this end's next ack block as received although the packet was never
-processed. `w-gate-processed` checks exactly that harm: the same two states, with
-`received = {1}` and `processed = {}` in state 2, so `AckReports(1)` holds for a packet
-nothing processed and `AckReportsOnlyProcessed` is violated. With the current order every
-other invariant still holds (the window stays truthful about what opened), so the defect
-is not in the window but in what the window is then made to say.
+Why the order mattered: when the ack block was built from `replay_session`, a
+sequence marked on a pending mapping was reported by this end's next ack block as
+received although the packet was never processed. `MCReplayWindowBrokenProcessed.cfg`
+checked that harm (the same two states, `AckReportsOnlyProcessed` violated). The
+block is now built from `accepted_session`, which moves only on a mapping with a slot
+in either gate order, so that witness no longer fails and was removed (2026-11-13,
+below); the slot gate is still the standard's rule for `replay_session`, and
+`NoAdvanceBeforeConnect` still checks it. The harm `AckReportsOnlyProcessed` guards
+against now comes from the order inside a mapping with a slot: a payload marked in
+`accepted_session` before anything accepted it, `MCReplayWindowBrokenPayloadOnOpen.cfg`.
+Its trace (the `tlacheck` record, one worker): `Connect`; `Receive(1, "payload")`,
+handed up and, with `PayloadAtAccept = FALSE`, marked in `accepted_session` at once:
+`accepted = {1}`, `delivered = {1}`, `processed = {}`, so `AckReports(1)` holds for a
+payload nothing accepted. Against
+the code by hand: the open path advances `accepted_session` only for
+`rocketnet_session_ack_eligible_on_open` types
+(`sdk/rocketnet_server_protocol.cpp`, `sdk/rocketnet_client_protocol.cpp`), which
+leaves out the payload; the payload is advanced in `accept_payload`, which the
+transport calls at once unless the payload acks are deferred.
 
 The rule is the standard's. The defective code's comment follows the reading order
 STANDARD.md gave before this model: _Reading packets_ marked every opened session packet
@@ -308,6 +355,22 @@ joined with `tlacheck merge --keep proofs/tla/RUNS.tsv`: `MCReplayWindow.cfg`
 passes (1,917,003 generated / 53,249 distinct), each reversed witness reaches
 the invariant named in its configuration, and the mid case again records its
 bounded timeout as the bench row declares.
+
+### 2026-11-13: the second window
+
+The ack block is built from `accepted_session`, not from `replay_session`, and
+the model now has both (`accHighest`, `accWindow`, the ghosts `accepted` and
+`delivered`, the actions `Receive(s, k)` and `Accept(s)`, the constants
+`PayloadAtAccept` and `Kinds`, the invariant `OpenNeverAcceptedFirst`).
+`AckReports`, `AckReportsOnlyReceived`, `HighestIsReceived` and
+`AckReportsOnlyProcessed` read the second window. `MCReplayWindowBrokenProcessed.cfg`
+is removed (the gate order no longer reaches the ack block) and
+`MCReplayWindowAccept.cfg` and `MCReplayWindowBrokenPayloadOnOpen.cfg` are added.
+With `Kinds = {"eligible"}` the wide-ring runs explore the same states as before
+(`MCReplayWindow.cfg`: 1,917,003 generated / 53,249 distinct); each wide-ring
+reversed witness still fails on its named invariant. The records in
+`proofs/tla/RUNS.tsv` come from `tlacheck run` on Linux (pinned jar, one shard per
+case, `mode = bounded`, 110 s budget).
 
 ## Mid-scale instance
 
