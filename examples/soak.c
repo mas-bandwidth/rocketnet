@@ -1253,40 +1253,50 @@ int main( int argc, char ** argv )
     double cli_p50 = cli_us[soak_ticks / 2], cli_p99 = cli_us[( soak_ticks * 99 ) / 100], cli_max = cli_us[soak_ticks - 1];
     FILE * fp = soak_fopen( out_path, "w" );
     CHECK( fp != NULL );
-    const char * m_names[] = { "sent_reliable", "recv_reliable", "acked_reliable", "sent_sequenced", "recv_sequenced", "corrupt", "seq_gaps", "peak_bytes",
-                               "server_tick_us_p50", "server_tick_us_p99", "server_tick_us_max", "client_frame_us_p50", "client_frame_us_p99", "client_frame_us_max",
-                               "client_us_per_client_p50", "client_us_per_client_p99", "server_pkts_per_s_tx", "server_pkts_per_s_rx", "server_bytes_per_s_tx", "server_bytes_per_s_rx", "allocs_per_tick",
-                               "server_create_ms", "server_start_ms", "clients_create_ms", "clients_destroy_ms", "server_stop_ms", "server_destroy_ms", "running_peak_rss", "shutdown_peak_rss" };
-    double m_vals[sizeof( m_names ) / sizeof( m_names[0] )];
-    m_vals[0] = (double) sent_rel;
-    m_vals[1] = (double) recv_rel;
-    m_vals[2] = (double) acked_total;
-    m_vals[3] = (double) sent_seq;
-    m_vals[4] = (double) recv_seq;
-    m_vals[5] = (double) corrupt;
-    m_vals[6] = (double) gaps;
-    m_vals[7] = (double) allocation_stats.peak_bytes;
-    m_vals[8] = srv_p50;
-    m_vals[9] = srv_p99;
-    m_vals[10] = srv_max;
-    m_vals[11] = cli_p50;
-    m_vals[12] = cli_p99;
-    m_vals[13] = cli_max;
-    m_vals[14] = cli_p50 / num_clients;
-    m_vals[15] = cli_p99 / num_clients;
-    m_vals[16] = (double) srv_pkts_tx / seconds;
-    m_vals[17] = (double) srv_pkts_rx / seconds;
-    m_vals[18] = (double) srv_bytes_tx / seconds;
-    m_vals[19] = (double) srv_bytes_rx / seconds;
-    m_vals[20] = (double) allocation_stats.steady_allocs / soak_ticks;
-    m_vals[21] = g_life.server_create_ms;
-    m_vals[22] = g_life.server_start_ms;
-    m_vals[23] = g_life.clients_create_ms;
-    m_vals[24] = g_life.clients_destroy_ms;
-    m_vals[25] = g_life.server_stop_ms;
-    m_vals[26] = g_life.server_destroy_ms;
-    m_vals[27] = (double) g_life.running_peak_rss;
-    m_vals[28] = (double) g_life.shutdown_peak_rss;
+    // Each metric is one row holding its name and its value, so a name cannot be added
+    // without a value: a row with one argument stops the build. The names, the count and
+    // the values all come from these rows, as in tests/load/load.c.
+#define SOAK_METRICS( X )                                                        \
+    X( "sent_reliable", (double) sent_rel )                                      \
+    X( "recv_reliable", (double) recv_rel )                                      \
+    X( "acked_reliable", (double) acked_total )                                  \
+    X( "sent_sequenced", (double) sent_seq )                                     \
+    X( "recv_sequenced", (double) recv_seq )                                     \
+    X( "corrupt", (double) corrupt )                                             \
+    X( "seq_gaps", (double) gaps )                                               \
+    X( "peak_bytes", (double) allocation_stats.peak_bytes )                      \
+    X( "server_tick_us_p50", srv_p50 )                                           \
+    X( "server_tick_us_p99", srv_p99 )                                           \
+    X( "server_tick_us_max", srv_max )                                           \
+    X( "client_frame_us_p50", cli_p50 )                                          \
+    X( "client_frame_us_p99", cli_p99 )                                          \
+    X( "client_frame_us_max", cli_max )                                          \
+    X( "client_us_per_client_p50", cli_p50 / num_clients )                       \
+    X( "client_us_per_client_p99", cli_p99 / num_clients )                       \
+    X( "server_pkts_per_s_tx", (double) srv_pkts_tx / seconds )                  \
+    X( "server_pkts_per_s_rx", (double) srv_pkts_rx / seconds )                  \
+    X( "server_bytes_per_s_tx", (double) srv_bytes_tx / seconds )                \
+    X( "server_bytes_per_s_rx", (double) srv_bytes_rx / seconds )                \
+    X( "allocs_per_tick", (double) allocation_stats.steady_allocs / soak_ticks ) \
+    X( "server_create_ms", g_life.server_create_ms )                             \
+    X( "server_start_ms", g_life.server_start_ms )                               \
+    X( "clients_create_ms", g_life.clients_create_ms )                           \
+    X( "clients_destroy_ms", g_life.clients_destroy_ms )                         \
+    X( "server_stop_ms", g_life.server_stop_ms )                                 \
+    X( "server_destroy_ms", g_life.server_destroy_ms )                           \
+    X( "running_peak_rss", (double) g_life.running_peak_rss )                    \
+    X( "shutdown_peak_rss", (double) g_life.shutdown_peak_rss )
+#define SOAK_METRIC_COUNT_ONE( name, value ) + 1
+#define SOAK_METRIC_NAME_ONE( name, value ) name,
+#define SOAK_METRIC_VALUE_ONE( name, value ) m_vals[m_count++] = ( value );
+    enum
+    {
+        SOAK_METRIC_COUNT = 0 SOAK_METRICS( SOAK_METRIC_COUNT_ONE )
+    };
+    const char * m_names[SOAK_METRIC_COUNT] = { SOAK_METRICS( SOAK_METRIC_NAME_ONE ) };
+    double m_vals[SOAK_METRIC_COUNT];
+    int m_count = 0;
+    SOAK_METRICS( SOAK_METRIC_VALUE_ONE )
     fprintf( fp, "clients\tseconds\tseed\ttransport\tbuild\tmetric\tvalue\n" );
 
     const int num_metrics = (int) ( sizeof( m_vals ) / sizeof( m_vals[0] ) );

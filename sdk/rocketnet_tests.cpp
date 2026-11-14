@@ -199,14 +199,14 @@ static void rocketnet_check_handler( const char * condition,
     exit( 1 );
 }
 
-#define rocketnet_check( condition )                                                                                 \
+#define rocketnet_check( condition )                                                                            \
 do                                                                                                              \
 {                                                                                                               \
     ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     bool rocketnet_check_passed = !!(condition); /* not const: MSVC 14.29 and older flag a constant (C4127) */  \
     if ( !rocketnet_check_passed )                                                                              \
     {                                                                                                           \
-        rocketnet_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );         \
+        rocketnet_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );    \
     }                                                                                                           \
 } while(0)
 
