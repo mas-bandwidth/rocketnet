@@ -278,7 +278,8 @@ class Release(unittest.TestCase):
         self.assertIn("FAIL  nightly-soak.yml [jobs, nightly, from v1.1.8]", text)
 
     def test_point_release_is_gated_by_the_per_commit_tier_only(self):
-        # owner, 2026-11-13: each point release has fast tests only; the nightly tier gates a minor
+        # owner, 2026-11-13: each point release has fast tests only; the fixture rows exercise the
+        # minor-only code path (the real table has no nightly row since 2026-11-14)
         api = green_release(FakeApi(), version="v1.1.8")
         run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))
         api.jobs[run["id"]][1] = job("soak per transport (main / 1800 s per cell)", "failure")
