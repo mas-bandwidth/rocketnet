@@ -82,7 +82,7 @@ states between a thread's load and its swap are gone.
 
 | cfg | expected | result | states generated (distinct) | seconds |
 |---|---|---|---|---|
-| MCRNGsoQueueBankLayout.cfg | pass | pass | 4,020,027 (653,994) | 17.0 |
+| MCRNGsoQueueBankLayout.cfg | pass | pass | 4,020,027 (653,994) | 17.1 |
 | MCRNGsoQueueBankLayoutFlush3.cfg | pass | timeout at the 110 s budget: FAIL, exit 124, declared bench debt | - | 110.3 |
 | MCRNGsoQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 908 (382) | 0.8 |
 | MCRNGsoQueueBankLayoutBrokenBlindStore.cfg | NoSharedSlot | NoSharedSlot violated | 69 (49) | 0.7 |
