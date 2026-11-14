@@ -151,10 +151,14 @@ fi
 if [ $status -eq 124 ]; then
     reason="timeout_${timeout}s"
 else
-    # the measurement line names the shape (budget_multiple, incomplete, ...)
-    reason=$( printf "%s\n" "$out" | sed -n -E "s/^${case_name}: ([a-z_]+) .*/\1/p" | head -1 )
+    # the measurement line names the shape (budget_multiple, incomplete, ...):
+    # "<case>: <shape> delivered=..." (tests/functional/channel_ordered.cpp).
+    # A case banner ("<case>: one 262144-byte block ...") is not one.
+    reason=$( printf "%s\n" "$out" | sed -n -E "s/^test_${case_name#test_}: ([a-z_]+) delivered=.*/\1/p" | head -1 )
     if [ -z "$reason" ]; then
-        reason=$( printf "%s\n" "$out" | sed -n -E -e "s/^check failed: \( (.*) \), function .*/\1/p" -e "s/^[a-z ]+ failed at line [0-9]+: (.*)/\1/p" | head -1 )
+        # else the failing check: "check failed: ( <cond> ), function ...",
+        # "<what> failed at line <n>: <cond>" or "<what> failed: <cond> at line <n>"
+        reason=$( printf "%s\n" "$out" | sed -n -E -e "s/^check failed: \( (.*) \), function .*/\1/p" -e "s/^[a-z ]+ failed at line [0-9]+: (.*)/\1/p" -e "s/^[a-z ]+ failed: (.*) at line [0-9]+$/\1/p" | head -1 )
     fi
     [ -n "$reason" ] || reason="exit_${status}"
 fi

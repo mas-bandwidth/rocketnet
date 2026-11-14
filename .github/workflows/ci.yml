@@ -4806,6 +4806,18 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^ok: transport-cells-repeat self-test, [1-9][0-9]* cases$' <<<"$output"
 
+      # scripts/channel-seed-sweep drives nightly-channel-seeds.yml: a failing
+      # seed's reason is the measurement shape or the failing check line, never
+      # a word of the case's banner (fake functional binary)
+      - name: Test the channel seed sweep's reasons
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(bash tools/test_channel_seed_sweep.sh 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^ok: channel-seed-sweep self-test, [1-9][0-9]* cases$' <<<"$output"
+
       # tools/check_make_jobs.py: every make -j, cmake --build --parallel
       # and cmake --build -j in every tracked Makefile, workflow, shell,
       # Python and Go file names its job count (a bare one is unbounded under
