@@ -121,9 +121,9 @@ Every transport thread (io_uring and gso queue workers, the XDP thread, and the 
 
 From: v1.1.x review; review of the io_uring transport work
 
-### io_uring receive refusals that are not in the server's drop reasons
+### io_uring source drops: one per completion, where gso counts datagrams
 
-The rebuilt io_uring transport's receive drop totals are the worker prefilter's and the bank's reasons plus refused completions (RECEIVE_FAILED). A truncated source (URING_RECEIVE_DROPPED_SOURCE), a completion naming no buffer (URING_RECEIVE_DROPPED_NO_BUFFER) and segments past one receive (URING_RECEIVE_DROPPED_OVERFLOW) are counted only in their URING_ rows, where the replaced transport also folded them into RECEIVE_FAILED and BANK_FULL. A source drop is also counted once per completion, even for a GRO batch of several datagrams (sdk/rocketnet_uring_receive_queue.cpp about 598-624), where gso counts each datagram into RECEIVE_FAILED (sdk/rocketnet_server_gso_linux.cpp about 1052, 1197-1205). Decide the fold and the unit, and test both by value.
+The fold has landed: a truncated source (URING_RECEIVE_DROPPED_SOURCE) and a completion naming no buffer (URING_RECEIVE_DROPPED_NO_BUFFER) are added into RECEIVE_FAILED (rocketnet_uring_receive_queue_drops, standard/TRANSPORT.md's alias table), and segments past one receive (URING_RECEIVE_DROPPED_OVERFLOW) alias no shared row and are read by the clean-run gate in their own row. The unit is open: a source drop is counted once per completion, even for a GRO batch of several datagrams (sdk/rocketnet_uring_receive_queue.cpp about 598-624), where gso counts each datagram into RECEIVE_FAILED (sdk/rocketnet_server_gso_linux.cpp about 1052, 1197-1205), and the row's own doc (sdk/rocketnet_counters.h, URING_RECEIVE_DROPPED_SOURCE: 'Unit: datagrams') disagrees with TRANSPORT.md (one per receive). Decide the unit, make the code and both docs say it, and test it by value with a several-datagram batch.
 
 From: Review of the io_uring transport work; review before v1.2.0
 
@@ -695,18 +695,6 @@ standard/MESSAGES.md m9.1 samples a send that carried receipt serials and no rel
 
 From: Review before v1.2.0, models package receipts-rtt-resend-window, MM022
 
-### io_uring stop-time send retry bound counts every refusal and never resets on progress
-
-The io_uring worker's stop-time bound counts each refused send and neither waits nor resets when a send makes progress (sdk/rocketnet_uring_queue_worker.cpp about 185-196, 275-278), so a slow drain at stop can give up early; gso resets on progress and waits (sdk/rocketnet_server_gso_linux.cpp about 722-733). Only reachable when stop runs with sends outstanding. Match gso.
-
-From: Review before v1.2.0
-
-### io_uring drops a send refused with ENOBUFS or ENOMEM, where gso retries
-
-sdk/rocketnet_uring_queue_send.cpp (about 423-438) treats ENOBUFS and ENOMEM on a send as FAILED: the packets are dropped and counted. gso sends them again (sdk/rocketnet_server_gso_linux.cpp about 2554). Make the two transports treat a transient refusal the same way.
-
-From: Review before v1.2.0
-
 ### The XDP send side has models and no trace layer; the receive-ring walk never runs the real worker loop
 
 No trace layer binds the XDP send half to its models: the buffer exchange publish, claim and recycle (sdk/rocketnet_server_socket_linux.cpp about 158-210, RNBankFifoLayout.tla), the producer publish and turn bump in rocketnet_server_socket_send_packets (about 3268-3316, RNDriverSendStaging.tla Publish), the worker's claim, copy, recycle and send-frame free list (about 5008-5156, WorkerRetire), and the stop drain (rocketnet_server_socket_send_idle about 3051, rocketnet_xdp_send_stall_pass in sdk/rocketnet_server_socket.h about 108, RNXdpSendDrain.tla). Only unit cases cover them (tests/test_unit_xdp_send_staging.cpp, tests/test_xdp.cpp). The xdp-receive-ring trace (tests/tla_trace_xdp_receive_ring.cpp about 287-460) calls the pass helpers in an order the walk composes and never runs rocketnet_server_socket_xdp_thread_function (about 4825). Add send layers, and drive the receive walk through the real loop.
@@ -740,6 +728,18 @@ From: Review before v1.2.0
 ### The iocp-admit trace binds only the admit verdict
 
 tests/tla_trace_iocp.cpp (about 169-194) calls rocketnet_server_iocp_test_receive_admit for the verdict, then pushes to its own bank and increments its own full, refused and counted. rocketnet_iocp_bank_datagram (sdk/rocketnet_server_iocp_windows.cpp about 1309-1325) and the drop counters never run, so EveryDropCounted and Accounted are checked against the harness's arithmetic: a BANK_FULL datagram dropped uncounted stays green. Drive the real bank and read the library's counters.
+
+From: Review before v1.2.0
+
+### The iocp send-lanes trace keeps its own banks and posts
+
+tests/tla_trace_iocp_lanes.cpp (its header, about 33-42) and proofs/tla/README-RNIocpSendLanes.md (about 90-97): the walk reads the code's free queues, destination hash, carve release lane and send-thread lane walk, but the banks, the in-flight set, the started and posted orders, zeroed and postedBy are the walk's own; no start_packet, finish_packet, abort_packet, rocketnet_iocp_send_bank, gather or post runs, so InOrder and Conserved are checked against state the walk wrote. Drive the real staging, bank and post path (sdk/rocketnet_server_iocp_windows.cpp) in the trace walk and read the transport's state.
+
+From: Review before v1.2.0
+
+### RNRioWorker has no trace walk binding it to the code
+
+proofs/tla/README-RNRioWorker.md (about 559-563): the unit seams drive the real rio worker pass, main calls and stop pass (tests/test_iocp.cpp, test_rio_transport_stop_drains_sends among them), but no tests/tla_trace_*.cpp walk emits their steps for TLC to check against RNRioWorker.tla, so the model's checks are by hand and by those unit cases. Add the trace layer (walk, cfg, COVERAGE.tsv and RUNS.tsv rows) over the real worker pass.
 
 From: Review before v1.2.0
 
