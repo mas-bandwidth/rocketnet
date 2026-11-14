@@ -123,7 +123,7 @@ Without one, the server binds the wildcard and `rio` and `iocp` run one lane
 or one completion worker, and say so once at warning level:
 
 ```text
-rio transport: running 1 lane because the bind address is the wildcard or IPv4-mapped. The default of 5 lanes needs a specific local address: to reach 10 Gb/s set bind_ipv4_address or bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the network card's address. To run 1 lane without this warning, set num_rio_lanes (ROCKETNET_SERVER_NUM_RIO_LANES) to 1
+rio transport: running 1 lane because the bind address is the wildcard or IPv4-mapped. The default of 6 lanes needs a specific local address: to reach 10 Gb/s set bind_ipv4_address or bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the network card's address. To run 1 lane without this warning, set num_rio_lanes (ROCKETNET_SERVER_NUM_RIO_LANES) to 1
 ```
 
 A count above 1 asked for on the wildcard (`num_rio_lanes` or
@@ -136,7 +136,7 @@ Do the same.
 
 ### Worked example: RIO at 10 Gb/s
 
-1. Choose the lane count, or take the default of 5. Lane `l` sits on the first
+1. Choose the lane count, or take the default of 6. Lane `l` sits on the first
    logical processor of core `l` from core 0 and its I/O worker on the other
    processor of that core; on a machine with two logical processors a core,
    lane `l` is on processor `2l` and its worker on `2l + 1`, and the lanes use
@@ -147,21 +147,39 @@ Do the same.
 
    ```bat
    set ROCKETNET_SERVER_BIND_IPV4_ADDRESS=10.0.0.5
-   set ROCKETNET_SERVER_NUM_RIO_LANES=5
+   set ROCKETNET_SERVER_NUM_RIO_LANES=6
    ```
 
 3. Steer receive to the lanes' processors, one RSS queue a lane, from an
    elevated PowerShell (the adapter name is the one `Get-NetAdapter` lists for
-   that address). For 5 lanes on a machine with two logical processors a core:
+   that address). For 6 lanes on a machine with two logical processors a core:
 
    ```powershell
-   Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 0 -MaxProcessorNumber 8 -MaxProcessors 5 -NumberOfReceiveQueues 5
+   Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 0 -MaxProcessorNumber 10 -MaxProcessors 6 -NumberOfReceiveQueues 6
    Get-NetAdapterRss -Name "Ethernet 2"
    ```
 
    For `L` lanes: `-BaseProcessorNumber 0 -MaxProcessorNumber (2L - 2)
-   -MaxProcessors L -NumberOfReceiveQueues L`. The 6-lane rows used
-   `-MaxProcessorNumber 10 -MaxProcessors 6 -NumberOfReceiveQueues 6`.
+   -MaxProcessors L -NumberOfReceiveQueues L`.
+
+   Then check where the adapter's queue interrupts land: none may be on a
+   lane I/O worker's processor (`2l + 1`) or the main thread's. Read them as
+   Administrator with `Get-NetAdapterHardwareInfo -Name "Ethernet 2"` and
+   expand `MsixMessageAffinityArray`; each message's `ProcessorAffinityMask`
+   is one processor. Each time the adapter initialises the messages move:
+   `Restart-NetAdapter` initialises it once, and a `Set-NetAdapterRss` that
+   changes values does so several times, so read them after the RSS command
+   and restart the adapter until they are clear (each restart drops its
+   connections for a few seconds). In the bad placement the server shows it
+   from the first seconds of load: `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY`
+   counts, `RIO_SEND_WAITS` runs in the thousands rather than the tens, and
+   one lane worker's processor sits near 100% with interrupt time on it. This
+   was measured on AWS ENA (m7i.16xlarge, driver 2.11.0.0) on 2026-11-14, 6
+   of 6 observations as predicted: there the 12 messages sit on 12
+   consecutive processors, the queues on messages 1 to `L`, and each
+   initialise moves them on by 12, wrapping at the processor count. It is
+   what was seen on that adapter, not a rule of Windows: other adapters may
+   place them differently.
 4. Start the server. Its log names each lane's processors (socket on `2l`,
    worker on `2l + 1`); check them against the RSS processors read back in
    step 3.
