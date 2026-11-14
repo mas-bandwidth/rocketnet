@@ -54,4 +54,3 @@ nightly.yml	linux / mutation	glenn	2026-11-14	194 new survivors in the daily sli
 nightly.yml	linux / transport cells x50	glenn	2026-11-14	GUESS: every suite cell red, the failing case is only in the per-cell artifacts; roadmap linux-transport-cells-x50
 planted-violations.yml	planted violations / Windows	glenn	2026-11-14	GUESS: self-test fails 6 on captain: tools/planted_violations.py:460 Popen bash likely starts WSL bash from System32; roadmap planted-self-test-wsl-bash
 planted-violations.yml	planted violations / macOS	glenn	2026-11-14	PLANT-GREEN nightly-frame-budget/macos: VOID under the planted run's own host load, so the plant cannot be caught; roadmap planted-frame-budget-void
-tlc.yml	TLA+ trace check	glenn	2026-11-14	rolling seeds where the plant never fires or changes no record, and one no-behaviour plant; roadmap trace-plant-never-fires, tlc-plant-behaviour-not-printed

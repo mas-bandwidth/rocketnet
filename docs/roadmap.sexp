@@ -406,7 +406,7 @@
 
   (item "tlc-plant-behaviour-not-printed" :group "trace-check" :area "tools"
    :title "Find why TLC sometimes prints no behaviour for a plant's violation"
-   :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (one Linux host, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation."
+   :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (one Linux host, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation. The check no longer depends on it (5ac01acce): when all five attempts print none, the last matched record is read from TLC's counts, only when its state graph is one chain. At integration 70b94e882 the rolling seeds 21352-21415 of msgxsendruns printed no behaviour 5 of 5 on seeds 21369 and 21377 (aws-mut-2, 2026-11-14), both read from the counts; the TLC log ends 'Error: Invariant TraceConsistent is violated.' then the statistics, one stream for both of TLC's outputs (nova-tools pkg/tlc Execute), so nothing is lost on the way to the log."
    :date "2026-11-13" :origin "#1093 trace shard 0/6")
 
   (item "reconcile-sndbuf-resends" :group "after-v1-0-1" :area "tests/load"
@@ -1007,11 +1007,6 @@
    :title "macOS platform selftest: the soak summary selftest fails at its send-fault leg"
    :text "Nightly CI platform selftests / macos (mini-m5-1, 21543f689) failed the soak argument and summary selftest at leg 9 (send fault): --seconds 3 exited 1. Green at cbad53d3b. GUESS: a TEST tool timing leg on a loaded host. Settled by the leg-9 output on its next failure."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087")
-
-  (item "trace-plant-never-fires" :group "trace-check" :area "tools"
-   :title "Trace check: on some rolling seeds the plant never fires"
-   :text "tlc.yml TLA+ trace check (rolling seeds) at cbad53d3b failed 21 reruns: for layers msgxsendruns, receive, receive-handoff-xdp and xdp-reply-macs some seeds print 'the plant never fired: its trace proves nothing' and 'the plant changed no record: its trace is the clean one'; one msgxsendruns seed had no behaviour from TLC (tlc-plant-behaviour-not-printed). The seed's walk never reaches the planted step. Smallest fix in tools/tla_trace_check.py: draw the next seed until the plant fires, within a bound, and fail only when no seed in the bound fires it."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: tlc 43559610142")
 
   (item "windows-lifecycle-handle-count-unjudged" :group "review-v1-2" :area "tests"
    :title "Windows: judge the process handle count per create/destroy cycle"
