@@ -18,10 +18,12 @@
 (* cannot take one (Refusing, an environment fact: an IPsec policy, say), *)
 (* or to any destination when the kernel cannot segment (KernelSegments = *)
 (* FALSE), goes into the kernel (inflight) and comes back refused:         *)
-(* Refuse(d) is the worker handling that answer.  The io_uring worker can  *)
-(* have several of one destination's runs in the kernel before the first  *)
-(* answer (InFlight); the gso flush sends one message at a time and       *)
-(* handles its answer before the next (InFlight = 1).  A refused run is    *)
+(* Refuse(d) is the worker handling that answer.  Several of one           *)
+(* destination's runs can be out before the first answer (InFlight): the  *)
+(* io_uring worker's runs in the kernel, and the gso flush's sendmmsg      *)
+(* batch, built (and checked against the table) before it is sent, which  *)
+(* holds one destination's runs cut at the segment or byte cap.  A refused *)
+(* run is                                                                  *)
 (* resent plain and its destination remembered, so its later runs leave    *)
 (* plain; a plain resend can itself fail and drop its packet, counted      *)
 (* (PlainFails, plainDropped).  Segmentation turns off (for the queue, or *)
@@ -43,11 +45,15 @@
 (* takes its entry and displaces the one there, which pays a refusal again *)
 (* on its next run; a destination that never refused is never in the      *)
 (* table, because the table matches whole addresses.  The fallback counts  *)
-(* every refused answer (rocketnet_segment_refused_add, saturating at     *)
-(* Threshold): a displaced destination's next refusal, and each answer of  *)
-(* one destination's runs that were in the kernel together, so the count   *)
-(* is never below the number of distinct refusing destinations             *)
-(* (KernelFallback) and may pass it.  Mode "fillcount" is the code before: *)
+(* a refusal only when the table does not hold its destination            *)
+(* (rocketnet_segment_refused_add, saturating at Threshold): a displaced   *)
+(* destination's next refusal counts again, a destination's later answers  *)
+(* for runs out with its first do not.  So the count is never below the    *)
+(* distinct refusing destinations (KernelFallback), and with every         *)
+(* destination in its own entry never above them (NoFallbackOnFewerDests, *)
+(* MCRNSegmentRefusal.tla).  Mode "everyanswer" is the code before: every  *)
+(* refused answer counted, so one destination's runs out together could    *)
+(* reach the threshold alone.  Mode "fillcount" is the code before that:   *)
 (* it counted only a refusal that filled an empty entry, so with two       *)
 (* refusers sharing an entry the fallback never fired.                     *)
 (*                                                                         *)
@@ -82,7 +88,7 @@ CONSTANTS Dests,            \* the destinations
           KernelSegments,   \* FALSE: the kernel refuses every segmented send
           Threshold,        \* ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD
           MaxRuns,          \* bound on runs
-          Mode,             \* "perdest" (the code), "fillcount", "transport" or "consecutive"
+          Mode,             \* "perdest" (the code), "everyanswer", "fillcount", "transport" or "consecutive"
           Slot,             \* each destination's entry (rocketnet_segment_refused_entry)
           Queue,            \* each destination's queue (rocketnet_send_queue_of)
           AcceptedRule,     \* "transport" (the code) or "queue"
@@ -94,7 +100,7 @@ ASSUME Refusing \subseteq Dests
 ASSUME KernelSegments \in BOOLEAN
 ASSUME Threshold \in Nat \ {0}
 ASSUME MaxRuns \in Nat
-ASSUME Mode \in {"perdest", "fillcount", "transport", "consecutive"}
+ASSUME Mode \in {"perdest", "everyanswer", "fillcount", "transport", "consecutive"}
 ASSUME Slot \in [Dests -> Nat]
 ASSUME Queue \in [Dests -> Nat]
 ASSUME AcceptedRule \in {"transport", "queue"}
@@ -181,15 +187,20 @@ Run(d) ==
                  /\ UNCHANGED <<inflight, accepted, qAccepted, streak, segAfterOff>>
     /\ UNCHANGED <<segOn, table, count, everRefused, refusals, offAccepted, dropped, plainDropped>>
 
-\* rocketnet_segment_refused_add: every refused answer counts, saturating
-\* at Threshold (an answer for a destination already in the table, one of
-\* its runs that was in the kernel with the first, included); "fillcount"
-\* counted only a refusal that filled an empty entry
+\* rocketnet_segment_refused_add: a refusal counts, saturating at
+\* Threshold, only when the table does not hold its destination
+\* (rocketnet_segment_refused_contains), so a destination's later answers
+\* for runs that were out with its first do not count again, while a
+\* displaced destination does.  "everyanswer" is the code before: every
+\* refused answer counted.  "fillcount" counted only a refusal that filled
+\* an empty entry
 Counted(d) ==
-    LET q == Queue[d] IN
-    IF Mode = "fillcount"
-    THEN IF table[q][Slot[d]] = NoDest THEN count[q] + 1 ELSE count[q]
-    ELSE IF count[q] < Threshold THEN count[q] + 1 ELSE count[q]
+    LET q == Queue[d]
+        up == IF count[q] < Threshold THEN count[q] + 1 ELSE count[q] IN
+    CASE Mode = "fillcount" ->
+           IF table[q][Slot[d]] = NoDest THEN count[q] + 1 ELSE count[q]
+      [] Mode = "everyanswer" -> up
+      [] OTHER -> IF Remembered(d) THEN count[q] ELSE up
 
 \* the kernel's answer to one of d's segmented runs is a refusal (EINVAL,
 \* EIO or EOPNOTSUPP) and the worker handles it: it reads the accepted
@@ -202,7 +213,7 @@ Refuse(d) ==
     /\ inflight' = [inflight EXCEPT ![d] = @ - 1]
     /\ refusals' = [refusals EXCEPT ![d] = @ + 1]
     /\ everRefused' = everRefused \cup {d}
-    /\ CASE Mode \in {"perdest", "fillcount"} ->
+    /\ CASE Mode \in {"perdest", "fillcount", "everyanswer"} ->
               /\ table' = [table EXCEPT ![q][Slot[d]] = d]
               /\ count' = [count EXCEPT ![q] = Counted(d)]
               /\ segOn' = IF ~Accepted(q) /\ Counted(d) >= Threshold
@@ -286,7 +297,7 @@ RefusalsBounded ==
 \* entries
 KernelFallback ==
     \A q \in Queues :
-        (Mode \in {"perdest", "fillcount"} /\ ~KernelSegments
+        (Mode \in {"perdest", "everyanswer", "fillcount"} /\ ~KernelSegments
          /\ Cardinality({d \in everRefused : Queue[d] = q}) >= Threshold) => ~segOn[q]
 
 =============================================================================

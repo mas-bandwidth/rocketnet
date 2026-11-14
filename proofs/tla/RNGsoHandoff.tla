@@ -133,8 +133,13 @@ BoundOnQuitOnly == FALSE
 (* sent part of the tail too (the model before 2026-11-13, MM135): a tail  *)
 (* the code keeps sending a little at a time is dropped.  The reversed     *)
 (* witness MCRNGsoHandoffBrokenLostProgressReset.cfg violates              *)
-(* TailDroppedOnlyWhenStalled.  FALSE in the passing run.                  *)
+(* TailDroppedOnlyWhenStalled.  ProgressKeepsCount is the other lost      *)
+(* reset: an attempt that sent part of the tail leaves the count where it  *)
+(* was (the reset deleted, its return kept), so stalls either side of it   *)
+(* add up; MCRNGsoHandoffBrokenProgressKeepsCount.cfg violates the same    *)
+(* invariant.  Both FALSE in the passing run.                              *)
 LostProgressReset == FALSE
+ProgressKeepsCount == FALSE
 
 (* CountErrorDrops: a message the kernel refuses with a hard error (any    *)
 (* errno but a full socket's, EPERM or ENETUNREACH say) is dropped and    *)
@@ -204,11 +209,13 @@ VARIABLES
     shut,        \* [on: send_shutdown, full: the socket refuses sends (environment),
                  \*  refusals: the held bank's refused attempts in a row that sent
                  \*  nothing, since shutdown (retries_after_quit),
-                 \*  movedDrop (ghost): a tail was dropped by an attempt that sent part of it]
+                 \*  stalls (ghost): attempts in a row since shutdown that sent nothing,
+                 \*  zeroed by one that sent and by a take, capped past RetryBound,
+                 \*  shortDrop (ghost): a tail was dropped with stalls at most RetryBound]
     quit,        \* main requested stop (send_quit)
     rxExited,    \* the RX worker exited
     txExited,    \* the TX worker exited
-    joined,      \* destroy joined both workers
+    joined,      \* destroy joined the worker thread (both modelled halves exited)
     freed        \* destroy freed the transport storage
 
 vars == << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor, rxTail,
@@ -231,7 +238,7 @@ Init ==
     /\ txFinal = FALSE
     /\ txContent = [ b \in Buffers |-> << >> ]
     /\ staged = 0 /\ txSent = << >> /\ txDropped = << >> /\ txErrDropped = << >>
-    /\ shut = [ on |-> FALSE, full |-> FALSE, refusals |-> 0, movedDrop |-> FALSE ]
+    /\ shut = [ on |-> FALSE, full |-> FALSE, refusals |-> 0, stalls |-> 0, shortDrop |-> FALSE ]
     /\ quit = FALSE /\ rxExited = FALSE /\ txExited = FALSE
     /\ joined = FALSE /\ freed = FALSE
 
@@ -447,7 +454,7 @@ TxTake ==
           /\ UNCHANGED txReady
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
     \* retries_after_quit starts at 0 for each bank the worker takes
-    /\ shut' = [ shut EXCEPT !.refusals = 0 ]
+    /\ shut' = [ shut EXCEPT !.refusals = 0, !.stalls = 0 ]
     /\ UNCHANGED << rxStopped, pcRx, lock, rxWorker, rxMain, rxContent, rxCursor, rxTail,
                     rxCommitted, rxTailCursor, rxTailEnd, rxFree, rxBackoff, arrived,
                     rxConsumed, txFree, txContent, staged, txSent, txDropped, txErrDropped,
@@ -540,12 +547,18 @@ TxSendFull ==
               \* an attempt that moved the bank on (k > 0: held_slot passed
               \* before) starts the count again; one that moved nothing counts
               r1 == IF ~Counting THEN shut.refusals
+                    ELSE IF k > 0 /\ ProgressKeepsCount THEN shut.refusals
                     ELSE IF k > 0 /\ ~LostProgressReset THEN 0
-                    ELSE shut.refusals + 1 IN
+                    ELSE shut.refusals + 1
+              \* the ghost: attempts in a row since shutdown that sent nothing
+              s1 == IF ~shut.on THEN shut.stalls
+                    ELSE IF k > 0 THEN 0
+                    ELSE IF shut.stalls > RetryBound THEN shut.stalls
+                    ELSE shut.stalls + 1 IN
           /\ txSent' = txSent \o Accepted( c, k, e )
           /\ txErrDropped' = txErrDropped \o Refused( c, k, e )
-          /\ shut' = [ shut EXCEPT !.refusals = r1,
-                                   !.movedDrop = @ \/ ( r1 > RetryBound /\ k > 0 ) ]
+          /\ shut' = [ shut EXCEPT !.refusals = r1, !.stalls = s1,
+                                   !.shortDrop = @ \/ ( r1 > RetryBound /\ s1 <= RetryBound ) ]
           /\ IF r1 > RetryBound
              THEN \* TxDropTail: count - slot added to SEND_DROPPED
                   /\ txContent' = [ txContent EXCEPT ![txHeld] = << >> ]
@@ -667,7 +680,8 @@ TxWorkerExitIdle ==
 (* of the worker's buffer when it is another), counted                    *)
 (* RECEIVE_DROP_STOPPED.  The code makes *)
 (* it in the first stopped call that finds the worker exited, and destroy  *)
-(* calls stopped before it joins; once both workers have exited and main   *)
+(* calls stopped before it joins; once the worker thread has exited (both  *)
+(* modelled halves) and main                                              *)
 (* has stopped nothing moves a receive buffer, so the count is folded into *)
 (* Join, the same value without the interleavings of a separate step       *)
 StopCount ==
@@ -675,8 +689,9 @@ StopCount ==
   + ( Len(rxContent[rxMain]) - rxCursor )
   + ( IF rxWorker # rxMain THEN Len(rxContent[rxWorker]) ELSE 0 )
 
-(* destroy joins both workers, and only a joined transport is freed: a    *)
-(* destroy that arrives before the workers exit joins nothing and frees   *)
+(* destroy joins the worker thread, and only a joined transport is freed: *)
+(* a destroy that arrives before both modelled halves exit joins nothing  *)
+(* and frees                                                              *)
 (* nothing                                                                *)
 Join ==
     /\ quit /\ rxExited /\ txExited /\ ~joined /\ ~freed
@@ -740,7 +755,8 @@ TypeOK ==
     /\ arrived \in 0 .. MaxRx /\ staged \in 0 .. MaxTx
     /\ rxStopped \in 0 .. MaxRx
     /\ txProducer \in Buffers \cup { NONE } /\ txHeld \in Buffers \cup { NONE }
-    /\ shut \in [ on : BOOLEAN, full : BOOLEAN, refusals : 0 .. RetryBound + 1, movedDrop : BOOLEAN ]
+    /\ shut \in [ on : BOOLEAN, full : BOOLEAN, refusals : 0 .. RetryBound + 1,
+                  stalls : 0 .. RetryBound + 1, shortDrop : BOOLEAN ]
 
 (* every receive buffer has exactly one role: the tail, the free buffer,  *)
 (* or main's and the worker's, which may share one; a free buffer exists  *)
@@ -822,7 +838,7 @@ RefusalsBounded == shut.refusals <= RetryBound + 1
 (* after RetryBound such attempts in a row: an attempt that sent part of   *)
 (* the tail starts the count again, so a socket that keeps taking some of  *)
 (* it never loses the rest                                                 *)
-TailDroppedOnlyWhenStalled == ~shut.movedDrop
+TailDroppedOnlyWhenStalled == ~shut.shortDrop
 
 (* packets are consumed once each, in the order they arrived              *)
 RxInOrder == \A i \in 1 .. Len(rxConsumed) : rxConsumed[i] = i
@@ -846,8 +862,8 @@ TxInOrder ==
 (* main never waits on the worker's mutex                                 *)
 MainNeverWaits == pc["main"] # "waitlock"
 
-(* stop joins before free: storage is freed only after both workers       *)
-(* exited and destroy joined them                                         *)
+(* stop joins before free: storage is freed only after both modelled      *)
+(* halves of the worker thread exited and destroy joined it               *)
 StopJoinsBeforeFree ==
     /\ ( joined => ( rxExited /\ txExited ) )
     /\ ( freed => joined )

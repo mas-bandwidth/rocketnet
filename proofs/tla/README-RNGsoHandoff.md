@@ -60,7 +60,8 @@ functions.
   made in the code by the first `rocketnet_server_gso_stopped` call that
   finds the worker exited (`rocketnet_server_gso_count_stopped`); destroy
   calls stopped before it joins, and nothing moves a receive buffer once
-  both workers exited and main stopped, so the model makes it in `Join`:
+  the worker thread exited (both modelled halves) and main stopped, so the
+  model makes it in `Join`:
   the same value, without the interleavings of a separate step against
   `SocketFills` and `SocketDrains` (a separate step took the main case past
   the 110-second budget). Main claims and consumes nothing once stop is
@@ -136,7 +137,8 @@ states to 5291280; the shutdown count's progress reset and its ghost
 - **StopTail (2026-11-13).** Three datagrams arrive over three passes
   and main takes one per call (`RxCall(1)`, a budget that cuts the
   call), so the second call makes the buffer holding datagrams 2 and 3
-  the tail with datagram 3 unread; stop is asked, both workers exit, and
+  the tail with datagram 3 unread; stop is asked, both halves of the
+  worker exit, and
   `Join` makes the stop count without the tail, one short of `arrived`.
   In the code `rocketnet_server_gso_count_stopped` adds
   `tail_end - tail_cursor` to `receive_dropped_stopped`; dropping that

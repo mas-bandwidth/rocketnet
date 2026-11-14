@@ -33,6 +33,11 @@ BoundOnQuitOnlyBroken == TRUE
 \* TailDroppedOnlyWhenStalled.
 LostProgressResetBroken == TRUE
 
+\* MCRNGsoHandoffBrokenProgressKeepsCount.cfg: an attempt that sent part of
+\* the tail leaves the count where it was, so stalls either side of it add
+\* up; must fail TailDroppedOnlyWhenStalled.
+ProgressKeepsCountBroken == TRUE
+
 \* MCRNGsoHandoffBrokenUncountedErrorDrop.cfg: a hard send error drops a
 \* message uncounted; must fail SentOrHeld.
 \* MCRNGsoHandoffReachErrorDropRunning.cfg (the rule) must fail
