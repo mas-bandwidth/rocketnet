@@ -16608,6 +16608,21 @@ extern void rocketnet_test_ack_apply_jobs_match_inline();
 extern void rocketnet_test_client_io_threaded_batch_flushes_mid_ring();
 extern void rocketnet_test_client_io_threaded_single_datagrams();
 extern void rocketnet_test_session_reconnect_isolation_portable();
+extern void rocketnet_test_small_server_sessions_portable();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_small_server_sessions_gso();
+extern void rocketnet_test_small_server_sessions_io_uring();
+#if ROCKETNET_XDP
+extern void rocketnet_test_small_server_sessions_xdp();
+#endif // #if ROCKETNET_XDP
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_small_server_sessions_msgx();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_small_server_sessions_iocp();
+extern void rocketnet_test_small_server_sessions_rio();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_server_bind_address_not_reached_on_another_address();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -17385,6 +17400,21 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_client_io_threaded_batch_flushes_mid_ring", rocketnet_test_client_io_threaded_batch_flushes_mid_ring, NULL },
     { "test_client_io_threaded_single_datagrams", rocketnet_test_client_io_threaded_single_datagrams, NULL },
     { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
+    { "test_small_server_sessions_portable", rocketnet_test_small_server_sessions_portable, NULL },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_small_server_sessions_gso", rocketnet_test_small_server_sessions_gso, NULL },
+    { "test_small_server_sessions_io_uring", rocketnet_test_small_server_sessions_io_uring, rocketnet_server_uring_available },
+#if ROCKETNET_XDP
+    { "test_small_server_sessions_xdp", rocketnet_test_small_server_sessions_xdp, rocketnet_test_xdp_veth_runs_here },
+#endif // #if ROCKETNET_XDP
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_small_server_sessions_msgx", rocketnet_test_small_server_sessions_msgx, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_small_server_sessions_iocp", rocketnet_test_small_server_sessions_iocp, NULL },
+    { "test_small_server_sessions_rio", rocketnet_test_small_server_sessions_rio, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC

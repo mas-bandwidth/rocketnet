@@ -221,6 +221,28 @@ static void test_max_clients_sizing_relations_hold_at_every_count()
 
 REGISTER_UNIT_TEST( test_max_clients_sizing_relations_hold_at_every_count );
 
+// The XDP reply MAC table of every small server binds: the transport's
+// create binds a table of rocketnet_xdp_reply_mac_entries( max_clients )
+// entries, and the bind refuses fewer than four probe windows, so a table
+// sized below that minimum (1 to 15 clients without it) would refuse the
+// create. One more check: a table one window short is refused.
+
+static void test_max_clients_small_reply_mac_tables_bind()
+{
+    static struct rocketnet_xdp_reply_mac_entry_t entries[256];
+    for ( int n = 1; n <= 64; ++n )
+    {
+        const int count = rocketnet_xdp_reply_mac_entries( n );
+        check( count <= 256 );
+        struct rocketnet_xdp_reply_macs_t table;
+        check( rocketnet_xdp_reply_macs_bind( &table, entries, count ) );
+    }
+    struct rocketnet_xdp_reply_macs_t table;
+    check( !rocketnet_xdp_reply_macs_bind( &table, entries, ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES / 2 ) );
+}
+
+REGISTER_UNIT_TEST( test_max_clients_small_reply_mac_tables_bind );
+
 // A light per-client config, so a server of ROCKETNET_MAX_CLIENTS slots stays
 // small enough for the unit suite. The slot count is what the case is about,
 // not the per-client depth.
@@ -292,7 +314,8 @@ REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
 // Every transport's plan follows the configured count all the way down: it
 // grows strictly over 1, 8, 64, 512 and 1000 clients (no floor holds a small
 // server at a larger one's size), and the server transport's own block at
-// 1 and 8 clients is far below the block at 512. Only the plan is read here;
+// 8 clients is under a third of the block at 512 (with the floor it was the
+// same block). Only the plan is read here;
 // tools/check_memory.py and benchmarks/transport_memory hold each plan to
 // what create allocates.
 
@@ -339,7 +362,8 @@ static void test_server_plan_grows_with_max_clients_on_every_transport()
             }
             if ( n == 512 )
             {
-                check( 4 * transport_at_8 < plan.transport_bytes );
+                // the 8 MiB packet lease table is the one fixed part (sdk/rocketnet_constants.h)
+                check( 3 * transport_at_8 < plan.transport_bytes );
             }
         }
     }
