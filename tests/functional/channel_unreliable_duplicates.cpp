@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../check_count.h"
 
 #define DUP_KINDS               3       // code 0, code 1, one reliable type
 #define DUP_MESSAGES            400     // per kind per direction (ids 0..399)
@@ -27,6 +28,7 @@ static const char * dup_names[DUP_KINDS] = { "unreliable", "unreliable_sequenced
 
 static void dup_check( bool condition, const char * label )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

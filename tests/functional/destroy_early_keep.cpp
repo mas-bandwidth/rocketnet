@@ -25,6 +25,7 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include "../check_count.h"
 
 static void destroy_check_handler( const char * condition, const char * function, const char * file, int line )
 {
@@ -36,6 +37,7 @@ static void destroy_check_handler( const char * condition, const char * function
 #define destroy_check( condition )                                                                             \
     do                                                                                                         \
     {                                                                                                          \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                          \
         if ( !( condition ) )                                                                                  \
         {                                                                                                      \
             destroy_check_handler( #condition, (const char *) __FUNCTION__, __FILE__, __LINE__ );              \

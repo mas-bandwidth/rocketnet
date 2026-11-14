@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include "../check_count.h"
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
@@ -51,6 +52,7 @@ static void reasons_check_handler( const char * condition, const char * function
 #define reasons_check( condition )                                                                   \
     do                                                                                               \
     {                                                                                                \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                \
         if ( !( condition ) )                                                                        \
         {                                                                                            \
             reasons_check_handler( #condition, (const char *) __FUNCTION__, __FILE__, __LINE__ );    \

@@ -1,9 +1,11 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC.
    Licensed under the GNU Affero General Public License v3.0 */
 #include "channel_harness.h"
+#include "../check_count.h"
 
 static void packing_check_impl( bool ok, const char * condition, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( ok )
     {
         return;

@@ -49,6 +49,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../check_count.h"
 
 // defined in tests/functional/rocketnet_functional_tests.cpp
 void rocketnet_functional_log_ring_dump();
@@ -64,6 +65,7 @@ static void threaded_check_handler( const char * condition, const char * functio
 #define threaded_check( condition )                                                               \
     do                                                                                            \
     {                                                                                             \
+        ROCKETNET_TEST_COUNT_CHECK();                                                             \
         if ( !( condition ) )                                                                     \
         {                                                                                         \
             threaded_check_handler( #condition, (const char *) __FUNCTION__, __FILE__, __LINE__ ); \

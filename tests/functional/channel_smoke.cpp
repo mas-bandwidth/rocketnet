@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "../check_count.h"
 
 // the harness's own check: prints and exits on failure, the shape the
 // functional suite's rocketnet_check has
@@ -24,6 +25,7 @@ static void rocketnet_channel_check_handler( const char * condition, const char 
 #define rocketnet_check( condition )                                                                                 \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !(condition) )                                                                                         \
     {                                                                                                           \
         rocketnet_channel_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \

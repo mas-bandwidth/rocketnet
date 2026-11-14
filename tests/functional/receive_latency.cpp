@@ -59,6 +59,7 @@ const char * rocketnet_xdp_veth_host( bool ipv6, bool far );
 #include <string.h>
 #include <thread>
 #include <vector>
+#include "../check_count.h"
 
 // at a case time scale of 1; a scaled run (Debug, sanitizers, emulation)
 // slows the rate and shortens the run by its scale, so a thread the host
@@ -110,6 +111,7 @@ struct receive_latency_payload_t
 
 static void receive_latency_check( bool condition, const char * row, const char * what )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

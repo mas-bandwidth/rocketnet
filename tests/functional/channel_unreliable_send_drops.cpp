@@ -17,6 +17,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "../check_count.h"
 
 #define DROPS_RELIABLE_BYTES        1000
 #define DROPS_UNRELIABLE_BYTES      24
@@ -32,6 +33,7 @@ static bool drops_verbose()
 
 static void drops_check( bool condition, const char * label )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

@@ -20,12 +20,14 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include "../check_count.h"
 
 static std::atomic<int> ack_threads_failures{ 0 };
 
 #define ACK_APPLY_CHECK( condition )                                                                      \
     do                                                                                                    \
     {                                                                                                     \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                     \
         if ( !( condition ) )                                                                             \
         {                                                                                                 \
             printf( "check failed: %s (%s:%d)\n", #condition, __FILE__, __LINE__ );                     \

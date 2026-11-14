@@ -26,11 +26,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../check_count.h"
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
-#define check( c ) do { if (!(c)) { fprintf(stderr, "lifecycle transport check failed: %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
+#define check( c ) do { ROCKETNET_TEST_COUNT_CHECK(); if (!(c)) { fprintf(stderr, "lifecycle transport check failed: %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
 
 struct allocator_state
 {

@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <type_traits>
+#include "../check_count.h"
 
 #if defined( _WIN32 )
 #include <windows.h>
@@ -33,6 +34,7 @@ static void rocketnet_shared_library_token_check_handler( const char * condition
 #define rocketnet_check( condition )                                                                                 \
 do                                                                                                                  \
 {                                                                                                                   \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                                   \
     if ( !(condition) )                                                                                             \
     {                                                                                                               \
         rocketnet_shared_library_token_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \

@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include "../check_count.h"
 
 #if defined( __linux__ )
 #include <dirent.h>
@@ -27,6 +28,7 @@ static void rocketnet_process_thread_check_handler( const char * condition, cons
 #define rocketnet_check( condition )                                                                               \
 do                                                                                                                  \
 {                                                                                                                   \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                                   \
     if ( !(condition) )                                                                                             \
     {                                                                                                               \
         rocketnet_process_thread_check_handler( #condition, (const char*) __FUNCTION__,                             \

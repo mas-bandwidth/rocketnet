@@ -61,6 +61,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
+#include "../check_count.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
@@ -92,6 +93,7 @@ void rocketnet_functional_log_ring_dump();
 
 static void windows_lifecycle_check_line( bool condition, const char * expression, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

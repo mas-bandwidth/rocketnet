@@ -25,6 +25,7 @@
 #include <atomic>
 #include <chrono>
 #include <string>
+#include "../check_count.h"
 
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <libproc.h>
@@ -41,6 +42,7 @@ static void rocketnet_platform_primitives_check_handler( const char * condition,
 #define rocketnet_check( condition )                                                                                 \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !(condition) )                                                                                         \
     {                                                                                                           \
         rocketnet_platform_primitives_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \

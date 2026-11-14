@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include "../check_count.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include <stdlib.h>
@@ -29,6 +30,7 @@ static void rocketnet_environment_check_handler( const char * condition, const c
 #define rocketnet_check( condition )                                                                              \
 do                                                                                                                \
 {                                                                                                                 \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                                 \
     if ( !(condition) )                                                                                           \
     {                                                                                                             \
         rocketnet_environment_check_handler( #condition, __FUNCTION__, __FILE__, __LINE__ );                     \

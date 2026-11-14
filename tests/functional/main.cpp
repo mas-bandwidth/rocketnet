@@ -18,14 +18,20 @@
 #if ROCKETNET_DEV
 #include "channel_harness.h"
 #endif // #if ROCKETNET_DEV
+#include "rocketnet_config.h"
+#include "rocketnet_allocator.h"
 #include "../plan_rss.h"
 #include "../suite_runner.h"
 #include "../portable_crt.h"
 #include "../loopback_hub.h"
+#include "../check_count.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <algorithm>
+#include <string>
+#include <vector>
 
 int rocketnet_functional_test_count();
 const char * rocketnet_functional_test_name( int index );
@@ -37,6 +43,120 @@ int rocketnet_functional_run_named( const char * name );
 // by rocketnet_functional_require_xdp_case
 static const char * rocketnet_functional_running_case = NULL;
 #endif // #if defined( __linux__ )
+
+// The SDK configuration names a functional case must not inherit from the
+// shell, derived from the descriptor tables the SDK reads, as the unit
+// runner's clear does (tests/test.cpp, rocketnet_unit_clear_environment).
+// The two transport pins stay: CI pins functional legs through
+// ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT, and
+// tools/check_test_environment.py runs the suite with them on purpose.
+// Test-runner and diagnostic variables are not SDK configuration and stay.
+
+static bool rocketnet_functional_append_config_names( std::vector<std::string> & names, const char * prefix,
+                                                      const rocketnet_config_field_t * fields, int count )
+{
+    for ( int i = 0; i < count; ++i )
+    {
+        if ( ( fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+        {
+            continue;
+        }
+
+        char name[128];
+        if ( !rocketnet_config_env_var_name_for( prefix, fields[i].name, name, sizeof( name ) ) )
+        {
+            return false;
+        }
+        names.push_back( name );
+    }
+
+    return true;
+}
+
+static int rocketnet_functional_clear_environment()
+{
+    std::vector<std::string> names;
+    int count = 0;
+    const rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &count );
+    if ( !rocketnet_functional_append_config_names( names, "client", fields, count ) )
+    {
+        return 1;
+    }
+    fields = rocketnet_server_transport_config_fields( &count );
+    if ( !rocketnet_functional_append_config_names( names, "server", fields, count ) )
+    {
+        return 1;
+    }
+    fields = rocketnet_message_config_fields( &count );
+    if ( !rocketnet_functional_append_config_names( names, "client", fields, count ) ||
+         !rocketnet_functional_append_config_names( names, "server", fields, count ) )
+    {
+        return 1;
+    }
+#if ROCKETNET_DEV
+    fields = rocketnet_client_budget_config_fields( &count );
+    if ( !rocketnet_functional_append_config_names( names, "client", fields, count ) )
+    {
+        return 1;
+    }
+    fields = rocketnet_server_budget_config_fields( &count );
+    if ( !rocketnet_functional_append_config_names( names, "server", fields, count ) )
+    {
+        return 1;
+    }
+#else // #if ROCKETNET_DEV
+    names.push_back( "ROCKETNET_CLIENT_SEND_KBPS" );
+    names.push_back( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+#endif // #if ROCKETNET_DEV
+
+    // the reads outside the descriptor engine, as the unit runner lists them
+
+    const char * const explicit_names[] = {
+        "ROCKETNET_LOG_LEVEL",
+        "ROCKETNET_SERVER_IPV4_ADDRESS",
+        "ROCKETNET_SERVER_IPV6_ADDRESS",
+        "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES",
+        "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES",
+        "ROCKETNET_GATEWAY_ETHERNET_ADDRESS",
+#if ROCKETNET_DEV
+        "ROCKETNET_DEV_SESSION_SEQUENCE_START",
+        "ROCKETNET_DEV_CLIENT_LATENCY_MS",
+        "ROCKETNET_DEV_CLIENT_JITTER_MS",
+        "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT",
+        "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT",
+        "ROCKETNET_DEV_SERVER_LATENCY_MS",
+        "ROCKETNET_DEV_SERVER_JITTER_MS",
+        "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT",
+        "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT",
+#endif // #if ROCKETNET_DEV
+    };
+    for ( size_t i = 0; i < sizeof( explicit_names ) / sizeof( explicit_names[0] ); ++i )
+    {
+        names.push_back( explicit_names[i] );
+    }
+    std::sort( names.begin(), names.end() );
+    names.erase( std::unique( names.begin(), names.end() ), names.end() );
+
+    // names only: no configuration value is read, copied or logged
+
+    for ( size_t i = 0; i < names.size(); ++i )
+    {
+        if ( names[i] == "ROCKETNET_SERVER_TRANSPORT" || names[i] == "ROCKETNET_CLIENT_TRANSPORT" )
+        {
+            continue;
+        }
+#if defined( _WIN32 )
+        if ( _putenv_s( names[i].c_str(), "" ) != 0 )
+#else
+        if ( unsetenv( names[i].c_str() ) != 0 )
+#endif // #if defined( _WIN32 )
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
 
 static int rocketnet_functional_worker( const char * name )
 {
@@ -59,12 +179,7 @@ static int rocketnet_functional_worker( const char * name )
     setvbuf( stderr, NULL, _IOLBF, 0 );
 #endif // #if defined( _WIN32 )
 
-#if defined( _WIN32 )
-    const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
-#else
-    const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
-#endif // #if defined( _WIN32 )
-    if ( cleared != 0 )
+    if ( rocketnet_functional_clear_environment() != 0 )
     {
         return 1;
     }
@@ -87,7 +202,20 @@ static int rocketnet_functional_worker( const char * name )
     const uint64_t rio_lanes_before = rocketnet_server_rio_test_lanes_made();
     const uint64_t rio_transports_before = rocketnet_server_rio_test_transports_made();
 #endif // #if defined( _WIN32 ) && ROCKETNET_DEV
+    const uint64_t checks_before = rocketnet_test_checks_run().load( std::memory_order_relaxed );
     int result = rocketnet_functional_run_named( name );
+
+    // a case that returned having run no check verified nothing: a body
+    // compiled out here, or an early return before its checks, fails rather
+    // than passing silently; a case that cannot run here is a runs_here row
+    // and prints SKIPPED instead (every check macro of this binary counts
+    // itself through tests/check_count.h)
+
+    if ( result == 0 && rocketnet_test_checks_run().load( std::memory_order_relaxed ) == checks_before )
+    {
+        printf( "check failed: test %s returned having run no check\n", name );
+        result = 1;
+    }
 #if defined( _WIN32 ) && ROCKETNET_DEV
     // a hand run with ROCKETNET_TEST_RIO_LANES reads this: the lanes the
     // case's RIO transports really made, against how many transports it made
@@ -112,7 +240,20 @@ static int rocketnet_functional_worker( const char * name )
     {
         plan_rss_report();
     }
-    rocketnet_term();
+
+    // anything the case left allocated through the library is a leak, and
+    // rocketnet_term says so: a case that ended the library itself reads
+    // NOT_INITIALIZED here, which is not a leak
+
+    if ( rocketnet_library_initialized() )
+    {
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status == ROCKETNET_STATUS_LIVE_ALLOCATIONS )
+        {
+            printf( "check failed: test %s left library allocations live at rocketnet_term\n", name );
+            result = 1;
+        }
+    }
     fflush( stdout );
 
     return result;

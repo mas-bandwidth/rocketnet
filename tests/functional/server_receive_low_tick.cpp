@@ -38,6 +38,7 @@
 #include <string.h>
 #include <atomic>
 #include <vector>
+#include "../check_count.h"
 
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
@@ -72,6 +73,7 @@ SUITE_CASE_RSS_BOUND( test_server_receive_1000_clients_256kbps_10hz, server_rece
 
 static void server_receive_low_tick_check( bool condition, const char * expression, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

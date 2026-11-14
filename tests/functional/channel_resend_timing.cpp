@@ -79,6 +79,7 @@
 #endif // #if !ROCKETNET_DEV
 
 #include <algorithm>
+#include "../check_count.h"
 
 static void resend_timing_fail( const char * condition, int line )
 {
@@ -87,7 +88,7 @@ static void resend_timing_fail( const char * condition, int line )
     exit( 1 );
 }
 
-#define resend_timing_check( condition ) do { if ( !( condition ) ) { resend_timing_fail( #condition, __LINE__ ); } } while ( 0 )
+#define resend_timing_check( condition ) do { ROCKETNET_TEST_COUNT_CHECK(); if ( !( condition ) ) { resend_timing_fail( #condition, __LINE__ ); } } while ( 0 )
 
 #define RESEND_TIMING_MESSAGES 400
 #define RESEND_TIMING_BYTES 64

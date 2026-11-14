@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../check_count.h"
 
 // The tree is found through ROCKETNET_SOURCE_DIR (CMakeLists.txt), never
 // through __FILE__: CI's compiler cache hands the compiler paths relative to
@@ -37,6 +38,7 @@ static void corpus_consistency_check_handler( const char * condition, const char
 #define check( condition )                                                                                      \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !(condition) )                                                                                         \
     {                                                                                                           \
         corpus_consistency_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \

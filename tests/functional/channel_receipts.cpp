@@ -6,9 +6,11 @@
 // RNReceipts over the deterministic lossy, duplicating, reordering link.
 
 #include "channel_harness.h"
+#include "../check_count.h"
 
 static void receipt_functional_check( int condition, const char * what, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

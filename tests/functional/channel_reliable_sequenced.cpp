@@ -8,9 +8,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "../check_count.h"
 
 static void rs_functional_check( bool condition, const char * label )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "../check_count.h"
 
 #if defined( _WIN32 )
 #include <windows.h>
@@ -36,6 +37,7 @@ static void loopback_hub_shared_objects_check_handler( const char * condition, c
 #define rocketnet_check( condition )                                                                                    \
 do                                                                                                                     \
 {                                                                                                                      \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                                      \
     if ( !(condition) )                                                                                                \
     {                                                                                                                  \
         loopback_hub_shared_objects_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \

@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "../portable_crt.h"
+#include "../check_count.h"
 
 #if !ROCKETNET_DEV
 #include "rocketnet_base64.h"
@@ -248,6 +249,7 @@ static void rocketnet_check_handler( const char * condition, const char * functi
 #define rocketnet_check( condition )                                                                                 \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !(condition) )                                                                                         \
     {                                                                                                           \
         rocketnet_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );         \

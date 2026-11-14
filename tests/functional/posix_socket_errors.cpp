@@ -31,6 +31,7 @@
 #include <time.h>
 
 #include "../kernel_drops.h"
+#include "../check_count.h"
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
@@ -64,6 +65,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 
 static void posix_check_impl( bool condition, const char * text, const char * file, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

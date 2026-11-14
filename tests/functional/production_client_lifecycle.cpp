@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include "../check_count.h"
 
 static void production_lifecycle_check_handler( const char * condition, const char * file, int line )
 {
@@ -28,6 +29,7 @@ static void production_lifecycle_check_handler( const char * condition, const ch
 #define production_lifecycle_check( condition )                                      \
     do                                                                                \
     {                                                                                 \
+        ROCKETNET_TEST_COUNT_CHECK();                                                 \
         if ( !( condition ) )                                                         \
         {                                                                             \
             production_lifecycle_check_handler( #condition, __FILE__, __LINE__ );     \

@@ -25,6 +25,7 @@
 #include <string.h>
 #include <time.h>
 #include <vector>
+#include "../check_count.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
@@ -49,6 +50,7 @@ uint16_t rocketnet_client_transport_test_bound_port( struct rocketnet_client_tra
 
 static void windows_socket_errors_check( bool condition, const char * expression, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

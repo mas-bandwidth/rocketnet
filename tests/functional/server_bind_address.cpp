@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../check_count.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
@@ -35,6 +36,7 @@
 #define bind_check( condition )                                                                       \
     do                                                                                                \
     {                                                                                                 \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                 \
         if ( !( condition ) )                                                                         \
         {                                                                                             \
             printf( "check failed: ( %s ), file %s, line %d\n", #condition, __FILE__, __LINE__ );    \
@@ -158,6 +160,7 @@ void rocketnet_test_server_bind_address_not_reached_on_another_address()
 #define bind_check( condition )                                                                       \
     do                                                                                                \
     {                                                                                                 \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                 \
         if ( !( condition ) )                                                                         \
         {                                                                                             \
             printf( "check failed: ( %s ), file %s, line %d\n", #condition, __FILE__, __LINE__ );    \
@@ -686,6 +689,7 @@ void rocketnet_test_server_bind_refused_default_transports()
 #define bind_check( condition )                                                                       \
     do                                                                                                \
     {                                                                                                 \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                 \
         if ( !( condition ) )                                                                         \
         {                                                                                             \
             printf( "check failed: ( %s ), file %s, line %d\n", #condition, __FILE__, __LINE__ );    \

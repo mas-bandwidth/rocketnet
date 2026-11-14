@@ -69,6 +69,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
+#include "../check_count.h"
 #if defined( __linux__ )
 #include "rocketnet_server_uring.h"
 #endif // #if defined( __linux__ )
@@ -120,6 +121,7 @@ void rocketnet_functional_log_ring_dump();
 #define posix_check( condition )                                                                                      \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !( condition ) )                                                                                       \
     {                                                                                                           \
         printf( "posix lifecycle stress check failed: %s:%d: %s\n", __FILE__, __LINE__, #condition );           \

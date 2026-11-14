@@ -12,11 +12,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../check_count.h"
 
 #define CONTROL_TICK              ( 1.0 / 60.0 )
 
 static void control_check( bool condition, const char * label )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

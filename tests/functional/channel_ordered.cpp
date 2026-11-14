@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../check_count.h"
 
 static void rocketnet_ordered_check_handler( const char * condition, const char * function, const char * file, int line )
 {
@@ -23,6 +24,7 @@ static void rocketnet_ordered_check_handler( const char * condition, const char 
 #define rocketnet_ordered_check( condition )                                                   \
 do                                                                                             \
 {                                                                                              \
+    ROCKETNET_TEST_COUNT_CHECK();                                                              \
     if ( !(condition) )                                                                        \
     {                                                                                          \
         rocketnet_ordered_check_handler( #condition, (const char*) __FUNCTION__,               \

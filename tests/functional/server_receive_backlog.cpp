@@ -24,6 +24,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 
 #include "../../sdk/rocketnet_config.h"
 #include "../loopback_hub.h"
+#include "../check_count.h"
 
 #if defined( _WIN32 )
 #include <stdlib.h>
@@ -35,6 +36,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 
 static void server_receive_backlog_check( bool condition, const char * expression, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

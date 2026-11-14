@@ -4,9 +4,11 @@
 */
 
 #include "channel_harness.h"
+#include "../check_count.h"
 
 static void unreliable_budget_check_impl( bool condition, const char * label, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;

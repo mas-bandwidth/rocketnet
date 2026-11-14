@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include "../check_count.h"
 
 #if defined( __APPLE__ )
 #include <libproc.h>
@@ -47,6 +48,7 @@ static void paths_check_handler( const char * condition, const char * function, 
 #define paths_check( condition )                                                                  \
     do                                                                                            \
     {                                                                                             \
+        ROCKETNET_TEST_COUNT_CHECK();                                                             \
         if ( !( condition ) )                                                                     \
         {                                                                                         \
             paths_check_handler( #condition, (const char *) __FUNCTION__, __FILE__, __LINE__ );   \
