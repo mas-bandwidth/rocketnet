@@ -142,6 +142,30 @@ def check_result(label, result):
     return True
 
 
+def place_at_odd_path(binary, link):
+    """Put the program at link, the odd-path name it runs from; returns how.
+
+    A symlink where the system allows one. Windows refuses it to an account
+    without the symlink privilege (WinError 1314, the runner accounts): there a
+    hard link, and a copy where even that is refused (another volume). Each
+    is the same program at the odd path, which is what the run is for; the
+    example resolves its own module from where it was started, not from the
+    file a link points to."""
+    try:
+        link.symlink_to(binary)
+        return "symlink"
+    except OSError as error:
+        if os.name != "nt":
+            raise
+        refused = f"symlink refused: {error}"
+    try:
+        os.link(binary, link)
+        return f"hard link ({refused})"
+    except OSError as error:
+        shutil.copy2(binary, link)
+        return f"copy ({refused}; hard link refused: {error})"
+
+
 def run_single(name, binary, args=None, environment=None, odd_path=False, no_drive_environment=False,
                suffixless_argv0=False):
     workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{name}_")
@@ -150,7 +174,8 @@ def run_single(name, binary, args=None, environment=None, odd_path=False, no_dri
             directory = Path(workdir) / "a dir $HOME"
             directory.mkdir()
             link = directory / binary.name
-            link.symlink_to(binary)
+            how = place_at_odd_path(binary, link)
+            print(f"example_{name}: from the odd path by {how}")
             binary = link
         child_environment = {**os.environ, **(environment or {})}
         if no_drive_environment:

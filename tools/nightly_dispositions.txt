@@ -41,7 +41,6 @@ nightly-bigendian-system.yml	s390x full system	glenn	2026-11-14	fixed 10 s shutd
 nightly-channel-seeds.yml	channel-seed-sweep	glenn	2026-11-14	GUESS: test_block_resend_cost_over_long_path reason=one on rolling seeds (4917323, 4914435), class not read; roadmap channel-seed-block-resend-cost
 nightly-ci.yml	full / windows / Release / unit	glenn	2026-11-14	test waited 1800 s for the machine-wide commit lock (tests/suite_runner.h:1725), shared by both runner slots on a host; roadmap windows-commit-lock-machine-wide
 nightly-ci.yml	full / platform selftests / macos	glenn	2026-11-14	GUESS: soak argument and summary selftest, leg 9 (send fault), --seconds 3 exited 1; roadmap macos-soak-selftest-send-fault
-nightly-examples.yml	windows-2025	glenn	2026-11-14	WinError 1314 at tools/run_examples.py:153 symlink_to: the runner account lacks the symlink privilege; roadmap examples-windows-symlink-privilege
 nightly-framework.yml	framework on rocketnet main	glenn	2026-11-14	FRAMEWORK_READ_TOKEN is not set for the workflow; roadmap nightly-runner-setup-gaps
 nightly-real-load.yml	1000 clients over the LAN	glenn	2026-11-14	no inventory file on the runner; roadmap nightly-runner-setup-gaps
 nightly-soak.yml	soak (main / windows)	glenn	2026-11-14	test_secrets_wiped_destroy_writes_only_keys waited 1800 s for the machine-wide commit lock (tests/suite_runner.h:1725); roadmap windows-commit-lock-machine-wide

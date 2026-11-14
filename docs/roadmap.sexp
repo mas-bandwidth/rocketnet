@@ -973,11 +973,6 @@
    :text "Five scheduled jobs fail before testing anything: nightly-framework (FRAMEWORK_READ_TOKEN not set); nightly-toolchains v141, v143 and v145 (runs-on [self-hosted, Windows, X64, rocketnet-windows] matches runners without the toolset: MSB8020, or MSVC 14.52 not installed); nightly-windows-sanitizers appverif (NETWORK SERVICE cannot write the HKLM IFEO key); nightly-ubuntu-lts-vms 24.04 (gpg-agent fails in the cloud image verify step); nightly-real-load (no inventory file on the runner). Smallest fix: a toolset label per matrix row on the runners that hold it, the secret, the account right, the gpg setup and the inventory file, each through the fleet's own tooling."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14")
 
-  (item "examples-windows-symlink-privilege" :group "review-v1-2" :area "tools"
-   :title "Nightly examples on Windows: symlink needs a privilege the runner lacks"
-   :text "tools/run_examples.py:153 calls link.symlink_to(binary); on the aws-win runner account it raises OSError WinError 1314 (a required privilege is not held). Green on 11-13. Smallest fix: copy the binary when the symlink is refused."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-examples 43566223627")
-
   (item "fuzz-execs-floor-loaded-hosts" :group "review-v1-2" :area "tests"
    :title "Nightly fuzz macOS falls under its executions floor"
    :text "FUZZ-EXECS-FLOOR on mini-m5-1 and mini-m5-2 at a1a426851: client 4408 of 6003, server 4430 of 9000 per second; the Windows legs failed the same way at earlier shas; green on 11-12. GUESS: a floor measured on idle hosts and read on shared ones, not a regression. Settled by one run on an idle host. Fix then: a floor per host class, or a void on host load as the frame budget does."
