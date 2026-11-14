@@ -42,7 +42,7 @@ the code to the model (tools/tla_trace_check.py, layer queue-send).
 | cfg | expected | result | states (distinct) |
 |---|---|---|---|
 | MCRNUringQueueSend.cfg | pass | pass | 24,602,144 (4,336,670), 62.4 s, under MCSafetyView |
-| MCRNUringQueueSendLive.cfg | pass (Drains) | pass | 8,039,760 (1,475,334), 70.9 s; BUDGETS.tsv declares 200 s (84.3 s on bench-xdp-8) |
+| MCRNUringQueueSendLive.cfg | pass (Drains) | pass | 8,039,760 (1,475,334), 70.9 s; BUDGETS.tsv declares 1170 s (stopped at its old 200 s on a loaded hetzner1, 2026-11-14) |
 | MCRNUringQueueSendBrokenRetireAtSubmit.cfg | NoWriteWhileKernelOwned | violated | 299,007 (95,202) |
 | MCRNUringQueueSendBrokenEagainLost.cfg | Accounted | violated | 4,705 (2,262) |
 | MCRNUringQueueSendBrokenEagainStuck.cfg | Drains | violated (stuttering) | 3,193,565 (661,518), LockRule "none" |
