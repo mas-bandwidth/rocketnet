@@ -72,6 +72,7 @@ reason rocketnet_test_linux_xdp_weather_runs_here needs root inside the virtme g
 reason rocketnet_test_posix_xdp_offered the XDP lifecycle cycles need root and a veth pair (ROCKETNET_TEST_XDP_VETH=1 or the virtme guest); this host is unprivileged
 reason rocketnet_test_posix_io_uring_offered the s390x guest's kernel does not offer io_uring (every io_uring row skips there); the native Linux legs run these, where an io_uring skip is unlisted and fails
 reason rocketnet_server_uring_available the s390x guest's kernel does not offer io_uring (every io_uring row skips there); the native Linux legs run these, where an io_uring skip is unlisted and fails
+reason rocketnet_test_uring_pins_refusable io_uring is offered and the online cpu count is in num_os_cpus' range (1 to 256), so a worker cpu past every online cpu can be named; the s390x guest offers no io_uring, and a CI host with more than 256 cpus online would print an unlisted skip and fail
 reason suite_max_case_rss_mb under a sanitizer shadow memory is not a case's footprint, so the RSS row would check nothing (tests/functional/unit_case_memory.cpp); the unsanitized legs run it
 reason rocketnet_process_thread_counts_runs_here the process thread count is read from /proc/self/task, which only Linux has; the _live rows run the rest of these two cases here, and counting threads on macOS and Windows is a roadmap entry (thread-count-macos-windows)
 
@@ -91,7 +92,7 @@ skip test_io_uring_transport_server_receive_rearms_after_no_buffers rocketnet_se
 skip test_io_uring_transport_server_send_overflow rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_io_uring_transport_server_send_wrong_family rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_io_uring_transport_worker_pin rocketnet_server_uring_available linux-s390x,linux-s390x-portable
-skip test_io_uring_transport_rows_reach_the_server rocketnet_server_uring_available linux-s390x,linux-s390x-portable
+skip test_io_uring_transport_rows_reach_the_server rocketnet_test_uring_pins_refusable linux-s390x,linux-s390x-portable
 skip test_io_uring_transport_buffer_step rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_io_uring_transport_receive_left_at_stop_counted rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_io_uring_transport_server_wire_dual_stack rocketnet_server_uring_available linux-s390x,linux-s390x-portable

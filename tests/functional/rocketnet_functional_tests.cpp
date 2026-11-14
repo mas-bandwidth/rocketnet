@@ -9965,6 +9965,17 @@ static uint64_t rocketnet_test_uring_socket_drops( const int * fds, int count )
 // socket's drops, and the next datagram's SO_RXQ_OVFL carries the count),
 // URING_RECEIVE_DROPPED_SOCKET
 
+// the case refuses every worker's pin by starting the workers' cpus at the
+// online count (num_os_cpus), and that field takes at most 256
+// (sdk/rocketnet_internal.h): on a host with more cpus online no in-range
+// value is past every cpu, so the case is taken out there by name
+
+static bool rocketnet_test_uring_pins_refusable()
+{
+    const long online = sysconf( _SC_NPROCESSORS_ONLN );
+    return rocketnet_server_uring_available() && online >= 1 && online <= 256;
+}
+
 void rocketnet_test_server_uring_rows_reach_the_server()
 {
     const int queues = 2;
@@ -9976,9 +9987,12 @@ void rocketnet_test_server_uring_rows_reach_the_server()
     config.max_clients = 4;
     config.num_io_uring_workers = queues;
     // the workers' cpus start at num_os_cpus: at the online count they are
-    // past every id the library can grant on any host (a fixed 200 is a cpu a
-    // large host has)
-    config.num_os_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    // past every id the library can grant (a fixed 200 is a cpu a large host
+    // has); the row runs only where that count is in the field's range
+    // (rocketnet_test_uring_pins_refusable)
+    const long online = sysconf( _SC_NPROCESSORS_ONLN );
+    rocketnet_check( online >= 1 && online <= 256 );
+    config.num_os_cpus = (int) online;
     snprintf( config.transport, sizeof( config.transport ), "io_uring" );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &config );
@@ -17213,7 +17227,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_wrong_family", rocketnet_test_server_uring_send_wrong_family, rocketnet_server_uring_available },
     { "test_io_uring_transport_worker_pin", rocketnet_test_server_uring_worker_pin, rocketnet_server_uring_available },
-    { "test_io_uring_transport_rows_reach_the_server", rocketnet_test_server_uring_rows_reach_the_server, rocketnet_server_uring_available },
+    { "test_io_uring_transport_rows_reach_the_server", rocketnet_test_server_uring_rows_reach_the_server, rocketnet_test_uring_pins_refusable },
 #if ROCKETNET_DEV
     { "test_io_uring_transport_cpu_0_reserved_and_not", rocketnet_test_server_uring_cpu_0_reserved_and_not, rocketnet_server_uring_available },
     { "test_io_uring_transport_refused_pin_no_priority", rocketnet_test_server_uring_refused_pin_no_priority, rocketnet_server_uring_available },
@@ -17556,6 +17570,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     if ( predicate == rocketnet_server_uring_available )
     {
         return "rocketnet_server_uring_available";
+    }
+    if ( predicate == rocketnet_test_uring_pins_refusable )
+    {
+        return "rocketnet_test_uring_pins_refusable";
     }
     if ( predicate == rocketnet_test_posix_io_uring_offered )
     {
